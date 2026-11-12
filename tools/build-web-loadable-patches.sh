@@ -46,7 +46,10 @@ build_module L6max "$l6max_source" midi-sync MIDI.BIN
 build_module L6 "$l6_source" midi-sync MIDI.BIN
 build_module L6max "$l6max_source" knob-dialog KNOB.BIN
 
-python3 - "$repo_root/web/public/loadable-patches" <<'PY'
+source_fingerprint="$(cargo run --quiet --offline --locked --manifest-path "$repo_root/Cargo.toml" \
+  -p firmware-patch-wasm-prebuild -- --source-fingerprint)"
+
+python3 - "$repo_root/web/public/loadable-patches" "$source_fingerprint" "$l6max_source" "$l6_source" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -54,6 +57,9 @@ import struct
 import sys
 
 root = pathlib.Path(sys.argv[1])
+source_fingerprint = sys.argv[2]
+l6max_firmware = pathlib.Path(sys.argv[3]) / "main_firmware.bin"
+l6_firmware = pathlib.Path(sys.argv[4]) / "main_firmware.bin"
 modules = []
 for patch_id, model, file in [
     ("midi-sync", "L6max", "L6max/MIDI.BIN"),
@@ -74,7 +80,12 @@ for patch_id, model, file in [
         "sha256": hashlib.sha256(data).hexdigest(),
     })
 with open(root / "manifest.json", "w", encoding="utf-8") as manifest:
-    json.dump({"modules": modules}, manifest, indent=2)
+    json.dump({
+        "generator_source_sha256": source_fingerprint,
+        "source_firmware_sha256": hashlib.sha256(l6max_firmware.read_bytes()).hexdigest(),
+        "l6_source_firmware_sha256": hashlib.sha256(l6_firmware.read_bytes()).hexdigest(),
+        "modules": modules,
+    }, manifest, indent=2)
     manifest.write("\n")
 PY
 

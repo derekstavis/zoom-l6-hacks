@@ -1,31 +1,31 @@
 {
-  "generator_source_sha256": "46065590f64a7f60dd1c9a08b05d856109850e38ff0611f101f081a7c5ebf536",
+  "generator_source_sha256": "7e3a4b7bdcb87cb57603d5c262c9ba85cc0d29c1f477bc1b2ccd2b820c45e82d",
   "source_firmware_sha256": "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461",
   "l6_source_firmware_sha256": "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799",
   "modules": [
     {
-      "id": "midi-sync",
+      "id": "knob-dialog",
       "model": "L6max",
-      "file": "L6max/MIDI.BIN",
+      "file": "L6max/knob-dialog-1.0.0.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "8a974848ff66712bfa0c5206d99ef0a74ce5c67148313f8d01f976792097ff25"
+      "sha256": "7dbdd6a8c67d17762fd168fbec70588989ce30115fa9a9e36f7052d9508567fb"
     },
     {
       "id": "midi-sync",
       "model": "L6",
-      "file": "L6/MIDI.BIN",
+      "file": "L6/midi-sync-1.0.0.bin",
       "format_version": 1,
       "loader_abi": 1,
       "sha256": "96d9f5f1e32da66e1de4e30290e963ef7eea6713c6977ed9cc1e7180d8f7254c"
     },
     {
-      "id": "knob-dialog",
+      "id": "midi-sync",
       "model": "L6max",
-      "file": "L6max/KNOB.BIN",
+      "file": "L6max/midi-sync-1.0.0.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "a22a58b00cb0180bd07fefd5925bf45287f86a3ecfa0e604cdd812623e32ab33"
+      "sha256": "8a974848ff66712bfa0c5206d99ef0a74ce5c67148313f8d01f976792097ff25"
     }
   ]
 }

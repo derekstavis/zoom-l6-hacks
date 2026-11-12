@@ -644,9 +644,12 @@ pub fn run_wasm_patch(options: &Options) -> Result<(), String> {
     if model == l6fw::Model::L6 {
         for unsupported in ["knob-dialog", "din-mixer-control"] {
             match firmware_patch_wasm::apply_patches(&stock, &[unsupported]) {
-                Err(message)
-                    if message.contains("only the midi-sync patch is supported")
-                        || message.contains("is not available for L6 firmware") => {}
+                Err(message) if message.contains("only the midi-sync patch is supported") => {}
+                Err(message) => {
+                    return Err(format!(
+                        "WASM rejected unsupported L6 profile {unsupported} for an unexpected reason: {message}"
+                    ));
+                }
                 _ => {
                     return Err(format!(
                         "WASM accepted unsupported L6 profile {unsupported}"
@@ -3987,9 +3990,7 @@ impl State {
                         let first = chain_links.first().ok_or("empty expected hook chain")?;
                         let second = chain_links.get(1).ok_or("short expected hook chain")?;
                         if first.2 >= second.2 {
-                            return Err(
-                                "filename priority was not used to order shared hooks".into()
-                            );
+                            return Err("module hook order was not preserved in the chain".into());
                         }
                     }
                     for (index, (entry, next_slot, _order, module)) in
@@ -5295,7 +5296,7 @@ fn sd_fixture_edits(options: &Options, main: &[u8], model: l6fw::Model) -> Resul
         .map_err(|e| format!("invalid SD patch header: {e:?}"))?;
         let mut payload = vec![0; memory_len];
         let mut hooks = vec![patch_loader_core::dynamic::Hook::default(); hook_count];
-        let header = patch_loader_core::dynamic::read_body(
+        let _header = patch_loader_core::dynamic::read_body(
             &mut reader,
             pending,
             &mut payload,
@@ -5334,13 +5335,7 @@ fn sd_fixture_edits(options: &Options, main: &[u8], model: l6fw::Model) -> Resul
                 _ => return Err("invalid relocation kind".into()),
             });
         }
-        Ok((
-            edits,
-            payload,
-            (header.init_offset != 0).then_some(header.init_offset),
-            relocations,
-            module_hooks,
-        ))
+        Ok((edits, payload, None, relocations, module_hooks))
     }
     let mut all_edits = Vec::new();
     let mut all_hooks = Vec::new();

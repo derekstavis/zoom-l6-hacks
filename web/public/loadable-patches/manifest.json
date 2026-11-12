@@ -1,5 +1,5 @@
 {
-  "generator_source_sha256": "4d8d915cc550f0a083c164f5a884e290e78fbe327ade29f3554017d5e2c04f9c",
+  "generator_source_sha256": "76f182b06ddee449f634a2f994cef111e61719f26e49436002c1f0ef8998b673",
   "source_firmware_sha256": "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461",
   "l6_source_firmware_sha256": "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799",
   "modules": [
@@ -9,7 +9,7 @@
       "file": "L6max/MIDI.BIN",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "2869883f2d7369a7e161975e2dc1c664c71af958be3ee4e42427c0a8dedf4b41"
+      "sha256": "8a974848ff66712bfa0c5206d99ef0a74ce5c67148313f8d01f976792097ff25"
     },
     {
       "id": "midi-sync",
@@ -17,7 +17,7 @@
       "file": "L6/MIDI.BIN",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "f5bccddbef6cdb76927b367d410ed4d981e56f8faea65bab4b5b3c1ae6321602"
+      "sha256": "96d9f5f1e32da66e1de4e30290e963ef7eea6713c6977ed9cc1e7180d8f7254c"
     },
     {
       "id": "knob-dialog",
@@ -25,7 +25,7 @@
       "file": "L6max/KNOB.BIN",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "a48cbdb4296528668886c8549029f68a6c6835ae65e6dae2817a02d67c398725"
+      "sha256": "a22a58b00cb0180bd07fefd5925bf45287f86a3ecfa0e604cdd812623e32ab33"
     }
   ]
 }

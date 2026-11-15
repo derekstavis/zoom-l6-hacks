@@ -40,6 +40,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod fingerprint;
+
 #[derive(Clone)]
 struct HookRow {
     address: u32,
@@ -533,7 +535,15 @@ struct Unit {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args = std::env::args().skip(1);
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.as_slice() == ["--source-fingerprint"] {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()?;
+        println!("{}", fingerprint::source_fingerprint(&root)?);
+        return Ok(());
+    }
+    let mut args = args.into_iter();
     let source = PathBuf::from(args.next().ok_or(
         "Usage: firmware-patch-wasm-prebuild L6MAX_UNPACKED_FIRMWARE_DIR L6_UNPACKED_FIRMWARE_DIR",
     )?)
@@ -1091,6 +1101,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         serde_json::to_string_pretty(&serde_json::json!({
             "source_firmware_sha256": digest,
             "l6_source_firmware_sha256": L6_EXPECTED_FIRMWARE_SHA256,
+            "generator_source_sha256": fingerprint::source_fingerprint(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize()?.as_path()
+            )?,
             "units": manifest_units,
             "loaders": loader_manifest,
         }))?,

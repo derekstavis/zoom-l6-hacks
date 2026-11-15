@@ -260,6 +260,8 @@ pub enum Action {
         expected_parameter_value: Option<f32>,
         #[serde(default)]
         expected_dialog_active: Option<bool>,
+        #[serde(default)]
+        minimum_exit_ring_refreshes: Option<u32>,
     },
     ExpectHeap {
         minimum_free: u32,
@@ -314,6 +316,8 @@ pub enum Action {
         checkpoint: Option<String>,
         #[serde(default)]
         changed: bool,
+        #[serde(default)]
+        same: bool,
     },
     ExpectEffect {
         effect: String,
@@ -1172,6 +1176,14 @@ impl Scenario {
                 }
                 _ => {}
             }
+            if let Action::ExpectButtonLed {
+                same: true,
+                checkpoint: None,
+                ..
+            } = &step.action
+            {
+                return Err("expect-button-led same=true requires a checkpoint".into());
+            }
             if let Action::Encoder { channel, .. }
             | Action::ExpectRingLevel { channel, .. }
             | Action::ExpectRing { channel, .. }
@@ -1303,8 +1315,16 @@ pub fn is_switch(model: Model, target: u32) -> bool {
 }
 
 pub fn l6_button_led_index(model: Model, control: &str) -> Result<usize, String> {
+    if model == Model::L6max {
+        return match control {
+            // L6max has no SEL lamp; EFX and TAP use outputs 23 and 33.
+            "efx-select" => Ok(23),
+            "tap-button" => Ok(33),
+            _ => Err(format!("{control} has no mapped L6max lamp")),
+        };
+    }
     if model != Model::L6 {
-        return Err("button LED assertion mapping currently supports L6 only".into());
+        return Err("unsupported model for LED assertion".into());
     }
     let target = control_target(model, control)?;
     match target {

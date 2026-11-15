@@ -56,7 +56,7 @@ impl<P: HostMidi + 'static> DinMidiBridge<P> {
     /// `stream` is the host end of the pair whose other end is the guest's
     /// inherited `L6_MAIN_MIDI_UART_FD` socket. `connected` is the initial
     /// state of the native MIDI port.
-    pub fn start(stream: UnixStream, connected: bool, port_name: &'static str) -> io::Result<Self> {
+    pub fn start(stream: UnixStream, connected: bool, port_name: String) -> io::Result<Self> {
         stream.set_nonblocking(true)?;
         let stop = Arc::new(AtomicBool::new(false));
         let connected = Arc::new(AtomicBool::new(connected));
@@ -67,7 +67,7 @@ impl<P: HostMidi + 'static> DinMidiBridge<P> {
         let worker = thread::Builder::new()
             .name("l6-din-midi".into())
             .spawn(move || {
-                if let Err(e) = Self::run(stream, port_name, &flag, &worker_connected, &state) {
+                if let Err(e) = Self::run(stream, &port_name, &flag, &worker_connected, &state) {
                     if flag.load(Ordering::Acquire) {
                         return;
                     }

@@ -5,6 +5,9 @@ edition.workspace = true
 publish.workspace = true
 license.workspace = true
 
+[lib]
+path = "src/lib.rs"
+
 [dependencies]
 firmware-patch-compile.workspace = true
 firmware-patch-core.workspace = true

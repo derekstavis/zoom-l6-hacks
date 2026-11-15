@@ -1157,24 +1157,9 @@ impl Scenario {
         self.spec_state = true;
         self
     }
-    /// Native host MIDI endpoints have fixed per-model names, so two guests
-    /// publishing them at once would connect to each other's ports.
-    pub fn uses_native_midi(&self) -> bool {
-        self.step.iter().any(|step| {
-            matches!(
-                step.action,
-                Action::HostMidiRoundTrip
-                    | Action::HostMidiSync
-                    | Action::L6DinSweep
-                    | Action::L6DinUsbForwarding
-                    | Action::L6maxDinMixerControl { .. }
-            )
-        })
-    }
-
-    /// Patch builds share Cargo's target executable, so cases that invoke
-    /// `l6patch` must not run concurrently with another patch build.
-    pub fn uses_patch_builds(&self) -> bool {
+    /// Whether this scenario needs the native patch builder for its setup or
+    /// for a native-versus-WASM patch comparison.
+    pub fn needs_patch_builder(&self) -> bool {
         self.sd_patches.is_some()
             || !self.patches.is_empty()
             || !self.installed_patches.is_empty()

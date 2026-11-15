@@ -12,6 +12,7 @@ tracing.workspace = true
 smoke-core = { path = "../smoke-core" }
 l6max-host.workspace = true
 l6fw.workspace = true
+l6patch = { path = "../l6patch" }
 l6nor.workspace = true
 firmware-patch-wasm.workspace = true
 patch-loader-core = { path = "../patch-loader-core" }

@@ -144,9 +144,12 @@ grant sandbox permissions; the calling environment must provide them.
 Cases run concurrently, up to `--jobs N` at once (by default a quarter of
 the host's cores, between 1 and 4). Scenario waits use guest time, so
 concurrency lengthens wall time. Keep N well below the core count; an
-oversubscribed host can exceed wall limits. GUI cases, native host-MIDI
-scenarios and external executables run alone. `--jobs 1` runs cases
-sequentially.
+oversubscribed host can exceed wall limits. GUI cases run alone. Native MIDI
+endpoints are namespaced per guest; patch builds call the `l6patch` library API
+and write into each case's artifact directory. Debugger sockets and other
+scenario-generated files are isolated by case. Shared firmware-cache
+publication uses unique staging directories and atomic rename. `--jobs 1` runs
+cases sequentially.
 
 Add `--model l6` or `--model l6max` to focus a run. `--backend both` runs
 identical shared scenarios through headless and GPUI adapters on separate

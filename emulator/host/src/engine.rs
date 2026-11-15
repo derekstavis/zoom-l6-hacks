@@ -723,7 +723,10 @@ impl Engine {
             crate::din_midi::DinMidiBridge::start(
                 din_midi_host,
                 options.midi_enabled,
-                crate::host_midi::din_port_name_for_model(model),
+                crate::host_midi::din_port_name_for_model_with_namespace(
+                    model,
+                    env::var("L6_MIDI_NAMESPACE").ok().as_deref(),
+                ),
             )
             .map_err(|e| e.to_string())?,
         );
@@ -743,7 +746,10 @@ impl Engine {
             self.midi = Some(
                 crate::usb_midi::MidiBridge::start(
                     usb,
-                    crate::host_midi::port_names_for_model(self.model),
+                    crate::host_midi::port_names_for_model_with_namespace(
+                        self.model,
+                        env::var("L6_MIDI_NAMESPACE").ok().as_deref(),
+                    ),
                 )
                 .map_err(|e| e.to_string())?,
             );

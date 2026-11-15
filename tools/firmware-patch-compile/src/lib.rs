@@ -84,6 +84,12 @@ pub struct HookWindow {
 /// The active toolchain's `bin` directory, which holds `rust-lld` and, with the
 /// `llvm-tools` component (listed in `rust-toolchain.toml`), `llvm-nm` and
 /// `llvm-objcopy`.
+fn rustc_executable() -> Option<PathBuf> {
+    let sysroot = run(Command::new("rustc").args(["--print", "sysroot"])).ok()?;
+    let rustc = PathBuf::from(sysroot.trim()).join("bin/rustc");
+    rustc.is_file().then_some(rustc)
+}
+
 fn toolchain_bin() -> Option<PathBuf> {
     let sysroot = run(Command::new("rustc").args(["--print", "sysroot"])).ok()?;
     fs::read_dir(PathBuf::from(sysroot.trim()).join("lib/rustlib"))
@@ -413,7 +419,11 @@ fn compile_payload_pass(
         root.join("linker/link.ld")
     };
     let firmware_is_l6 = firmware.get(4..8) == Some(&0x8000_1415u32.to_le_bytes());
-    let mut command = Command::new("rustc");
+    // Resolve rustc before changing into the extracted firmware directory.
+    // Rustup selects toolchains from the current directory, and that directory
+    // does not contain this workspace's rust-toolchain.toml.
+    let rustc = rustc_executable().ok_or("could not locate the active rustc executable")?;
+    let mut command = Command::new(rustc);
     command
         .current_dir(source)
         .env("OUT_DIR", &generated)
@@ -914,15 +924,18 @@ fn patch_hook_macro_library() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let executable_dir = executable
         .parent()
         .ok_or("compiler executable has no parent directory")?;
-    let profile_dir = if executable_dir
+    let profile_dir = if let Some(directory) = std::env::var_os("L6_PATCH_ARTIFACT_DIR") {
+        PathBuf::from(directory)
+    } else if executable_dir
         .file_name()
         .is_some_and(|name| name == "deps")
     {
         executable_dir
             .parent()
             .ok_or("dependency executable has no profile directory")?
+            .to_path_buf()
     } else {
-        executable_dir
+        executable_dir.to_path_buf()
     };
     let expected_extension = std::env::consts::DLL_SUFFIX.trim_start_matches('.');
     let mut pending = vec![profile_dir.join("deps"), profile_dir.join("build")];

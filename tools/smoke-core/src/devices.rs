@@ -2,13 +2,51 @@
 use crate::{Scenario, Session, scenario::PadAssignmentSource, waveform};
 use l6max_host::{engine::Options, headless::Headless};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::{Seek, SeekFrom, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
 };
+
+/// Return a short, per-case GDB socket path. Darwin's QEMU GDB stub rejects
+/// UNIX socket paths longer than 104 bytes, while artifact directories can be
+/// arbitrarily deep. Hashing the case path preserves isolation without tying
+/// the socket name length to the artifact directory.
+pub fn gdb_socket_path(logs: &Path, purpose: &str) -> PathBuf {
+    let digest = Sha256::digest(logs.as_os_str().as_encoded_bytes());
+    let case = digest[..8]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Path::new("/tmp").join(format!("l6g{case}-{purpose}.sock"))
+}
+
+#[cfg(test)]
+mod gdb_socket_tests {
+    use super::gdb_socket_path;
+    use std::path::Path;
+
+    #[test]
+    fn paths_are_short_and_isolated_even_with_long_artifact_paths() {
+        let long = Path::new(
+            "/private/tmp/very-long-output-name/case-with-a-very-long-name-l6max-headless",
+        );
+        let main = gdb_socket_path(long, "main");
+        let panel = gdb_socket_path(long, "panel");
+        assert!(main.as_os_str().as_encoded_bytes().len() < 104);
+        assert_ne!(main, panel);
+        assert_ne!(main, gdb_socket_path(Path::new("/tmp/other-case"), "main"));
+    }
+}
+
+fn midi_namespace() -> Option<String> {
+    std::env::var("L6_MIDI_NAMESPACE")
+        .ok()
+        .filter(|namespace| !namespace.is_empty())
+}
 
 #[derive(Clone, Debug)]
 pub enum Operation {
@@ -147,8 +185,7 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
     }) {
         options.usb_enabled = false;
         options.midi_enabled = false;
-        options.gdb_socket =
-            Some(std::env::temp_dir().join(format!("l6sp-{}.sock", std::process::id())));
+        options.gdb_socket = Some(gdb_socket_path(&options.logs, "l6sp"));
     }
     if scenario.name == "factory-protocol" {
         prepare_factory_fixture(options)?;
@@ -220,7 +257,7 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
             );
         }
         options.start_paused = true;
-        options.gdb_socket = Some(options.logs.join("audio.gdb.sock"));
+        options.gdb_socket = Some(gdb_socket_path(&options.logs, "audio"));
     }
     if scenario
         .step
@@ -234,7 +271,7 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
         if hash != "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799" {
             return Err("panel-event requires the hash-verified stock L6 MAIN image".into());
         }
-        options.gdb_socket = Some(options.logs.join("panel-event-map.gdb.sock"));
+        options.gdb_socket = Some(gdb_socket_path(&options.logs, "panel-event-map"));
     }
     if scenario
         .step
@@ -248,7 +285,7 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
         if hash != "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799" {
             return Err("l6-main-gpio-event requires the hash-verified stock L6 MAIN image".into());
         }
-        options.gdb_socket = Some(options.logs.join("l6-main-gpio-event.gdb.sock"));
+        options.gdb_socket = Some(gdb_socket_path(&options.logs, "l6-main-gpio-event"));
     }
     if scenario
         .step
@@ -264,7 +301,7 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
                 "l6max-tap-handler requires the hash-verified stock L6max MAIN image".into(),
             );
         }
-        options.gdb_socket = Some(options.logs.join("l6max-tap-handler.gdb.sock"));
+        options.gdb_socket = Some(gdb_socket_path(&options.logs, "l6max-tap-handler"));
     }
     if scenario
         .step
@@ -283,7 +320,7 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
         options.start_paused = true;
         options.usb_enabled = false;
         options.midi_enabled = false;
-        options.gdb_socket = Some(options.logs.join("l6-usb-startup.gdb.sock"));
+        options.gdb_socket = Some(gdb_socket_path(&options.logs, "l6-usb-startup"));
     }
     if scenario
         .step
@@ -302,8 +339,7 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
         options.start_paused = true;
         options.usb_enabled = false;
         options.midi_enabled = false;
-        options.gdb_socket =
-            Some(std::env::temp_dir().join(format!("l6ed-{}.sock", std::process::id())));
+        options.gdb_socket = Some(gdb_socket_path(&options.logs, "l6ed"));
     }
     if scenario
         .step
@@ -319,7 +355,7 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
         }
         options.usb_enabled = false;
         options.midi_enabled = true;
-        options.gdb_socket = Some(options.logs.join("l6-din-sweep.gdb.sock"));
+        options.gdb_socket = Some(gdb_socket_path(&options.logs, "l6-din-sweep"));
     }
     if scenario.step.iter().any(|s| {
         matches!(
@@ -348,7 +384,7 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
     {
         options.usb_enabled = false;
         options.midi_enabled = false;
-        options.gdb_socket = Some(options.logs.join("l6-midi-sync.gdb.sock"));
+        options.gdb_socket = Some(gdb_socket_path(&options.logs, "l6-midi-sync"));
     }
     options.trace_sd |= scenario.trace_sd
         || scenario
@@ -448,12 +484,29 @@ pub fn run_firmware_update(options: &Options) -> Result<(), String> {
 }
 
 /// Compare the browser patcher's full model/profile matrix with the native
-/// l6patch CLI. The CLI is the reference implementation under test;
+/// l6patch library API. The native builder is the reference implementation;
 /// each supported output must match byte-for-byte, and unsupported L6 profiles
 /// must be rejected by both implementations.
+fn build_native_patch(
+    source: &Path,
+    output: &Path,
+    patches: &[&str],
+    version: Option<&str>,
+    mode: l6patch::BuildMode,
+) -> Result<(), String> {
+    l6patch::build(l6patch::BuildRequest {
+        source: source.to_path_buf(),
+        output: output.to_path_buf(),
+        patches: patches.iter().map(|patch| (*patch).to_owned()).collect(),
+        version: version.map(str::to_owned),
+        mode,
+        experimental_qemu_module_arena: false,
+    })
+    .map_err(|error| error.to_string())
+}
+
 pub fn run_wasm_patch(options: &Options) -> Result<(), String> {
     use sha2::{Digest, Sha256};
-    use std::process::Command;
 
     let main = fs::read(options.firmware_dir.join("main_firmware.bin"))
         .map_err(|error| error.to_string())?;
@@ -481,8 +534,6 @@ pub fn run_wasm_patch(options: &Options) -> Result<(), String> {
         ));
     }
 
-    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let manifest = workspace.join("tools/l6patch/Cargo.toml");
     let mut results = Vec::new();
     let profiles: Vec<Vec<&str>> = match model {
         l6fw::Model::L6max => (1u16..(1u16 << firmware_patch_core::PATCHES.len()))
@@ -500,25 +551,14 @@ pub fn run_wasm_patch(options: &Options) -> Result<(), String> {
 
     for (index, selected) in profiles.iter().enumerate() {
         let native_out = root.join(format!("native-{index}"));
-        let mut command = Command::new("cargo");
-        command
-            .current_dir(&workspace)
-            .args(["run", "--offline", "--locked", "--quiet", "--manifest-path"])
-            .arg(&manifest)
-            .arg("--")
-            .arg(&options.firmware_dir)
-            .arg(&native_out)
-            .args(["--update-version", "0111"]);
-        for patch in selected {
-            command.args(["--patch", patch]);
-        }
-        let output = command.output().map_err(|error| error.to_string())?;
-        if !output.status.success() {
-            return Err(format!(
-                "native patch build failed for {selected:?}: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
+        build_native_patch(
+            &options.firmware_dir,
+            &native_out,
+            selected,
+            Some("0111"),
+            l6patch::BuildMode::Firmware,
+        )
+        .map_err(|error| format!("native patch build failed for {selected:?}: {error}"))?;
         let filename = match model {
             l6fw::Model::L6 => "L6.BIN",
             l6fw::Model::L6max => "L6max.bin",
@@ -556,25 +596,16 @@ pub fn run_wasm_patch(options: &Options) -> Result<(), String> {
                 .map(|(_, patch)| *patch)
                 .collect();
             let native_out = root.join(format!("native-loader-{mask:03}"));
-            let mut command = Command::new("cargo");
-            command
-                .current_dir(&workspace)
-                .args(["run", "--offline", "--locked", "--quiet", "--manifest-path"])
-                .arg(&manifest)
-                .arg("--")
-                .arg(&options.firmware_dir)
-                .arg(&native_out)
-                .arg("--experimental-patch-loader");
-            for patch in &selected {
-                command.args(["--patch", patch]);
-            }
-            let output = command.output().map_err(|error| error.to_string())?;
-            if !output.status.success() {
-                return Err(format!(
-                    "native patch-loader build failed for {selected:?}: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
+            build_native_patch(
+                &options.firmware_dir,
+                &native_out,
+                &selected,
+                None,
+                l6patch::BuildMode::PatchLoader,
+            )
+            .map_err(|error| {
+                format!("native patch-loader build failed for {selected:?}: {error}")
+            })?;
             let native =
                 fs::read(native_out.join("L6max.bin")).map_err(|error| error.to_string())?;
             let (wasm, report) =
@@ -621,19 +652,23 @@ pub fn run_wasm_patch(options: &Options) -> Result<(), String> {
                 }
             }
             let native_out = root.join(format!("native-unsupported-{unsupported}"));
-            let output = Command::new("cargo")
-                .current_dir(&workspace)
-                .args(["run", "--offline", "--locked", "--quiet", "--manifest-path"])
-                .arg(&manifest)
-                .arg("--")
-                .arg(&options.firmware_dir)
-                .arg(&native_out)
-                .args(["--patch", unsupported])
-                .output()
-                .map_err(|error| error.to_string())?;
-            if output.status.success() {
+            let output = build_native_patch(
+                &options.firmware_dir,
+                &native_out,
+                &[unsupported],
+                None,
+                l6patch::BuildMode::Firmware,
+            );
+            if output.is_ok() {
                 return Err(format!(
                     "native patcher accepted unsupported L6 profile {unsupported}"
+                ));
+            } else if !output
+                .unwrap_err()
+                .contains("only the midi-sync patch is supported")
+            {
+                return Err(format!(
+                    "native patcher rejected unsupported L6 profile {unsupported} for an unexpected reason"
                 ));
             }
         }
@@ -791,9 +826,7 @@ fn run_l6_update(options: &Options, main_image: &[u8]) -> Result<(), String> {
                 &l6max_host::paths::repository_root().join("emulator/state/firmware"),
             )?
         };
-        verify.gdb_socket = Some(
-            std::env::temp_dir().join(format!("l6-post-update-midi-{}.sock", std::process::id())),
-        );
+        verify.gdb_socket = Some(gdb_socket_path(&options.logs, "post-update-midi"));
         let session = crate::Session::start(&verify)?;
         let start = session
             .engine
@@ -1038,10 +1071,7 @@ fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), String> {
                     options.update_package.as_ref().unwrap(),
                     &l6max_host::paths::repository_root().join("emulator/state/firmware"),
                 )?;
-                verify.gdb_socket = Some(std::env::temp_dir().join(format!(
-                    "l6max-post-update-knob-{}.sock",
-                    std::process::id()
-                )));
+                verify.gdb_socket = Some(gdb_socket_path(&options.logs, "post-update-knob"));
                 let session = crate::Session::start(&verify)?;
                 let start = session
                     .engine
@@ -2074,8 +2104,11 @@ fn connect_native_midi(
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn run_l6_din_sweep(session: &Session, options: &Options) -> Result<Value, String> {
-    use l6max_host::host_midi::{din_port_name_for_model, endpoint_name};
-    let endpoint = endpoint_name(din_port_name_for_model(l6fw::Model::L6));
+    use l6max_host::host_midi::{din_port_name_for_model_with_namespace, endpoint_name};
+    let endpoint = endpoint_name(&din_port_name_for_model_with_namespace(
+        l6fw::Model::L6,
+        midi_namespace().as_deref(),
+    ));
     let mut client = connect_native_midi(session, &endpoint)?;
     run_l6_din_sweep_inner(session, options, client.as_mut())
 }
@@ -2490,7 +2523,10 @@ impl State {
     ) -> Result<Value, Box<dyn std::error::Error>> {
         let model = session.engine.model();
         let endpoint = l6max_host::host_midi::endpoint_name(
-            l6max_host::host_midi::port_names_for_model(model)[1],
+            &l6max_host::host_midi::port_names_for_model_with_namespace(
+                model,
+                midi_namespace().as_deref(),
+            )[1],
         );
         let mut client: Box<dyn crate::host_midi::Client> = if let Some(cable) = direct_cable {
             Box::new(crate::host_midi::DirectUsbClient::connect(
@@ -2610,7 +2646,7 @@ impl State {
         session: &Session,
         wall_timeout_s: u64,
     ) -> Result<Value, Box<dyn std::error::Error>> {
-        use l6max_host::host_midi::{din_port_name_for_model, endpoint_name};
+        use l6max_host::host_midi::endpoint_name;
 
         if session.engine.model() != l6fw::Model::L6 {
             return Err("l6-din-usb-forwarding requires L6 firmware".into());
@@ -2621,7 +2657,12 @@ impl State {
             .as_ref()
             .ok_or("L6 DIN forwarding needs panel inputs")?;
         session.engine.connect_midi();
-        let endpoint = endpoint_name(din_port_name_for_model(l6fw::Model::L6));
+        let endpoint = endpoint_name(
+            &l6max_host::host_midi::din_port_name_for_model_with_namespace(
+                l6fw::Model::L6,
+                midi_namespace().as_deref(),
+            ),
+        );
         let endpoint_deadline = Instant::now() + Duration::from_secs(10);
         let mut din = loop {
             match crate::host_midi::connect(&endpoint) {
@@ -3018,7 +3059,10 @@ impl State {
             .ok_or("DIN mixer control needs panel inputs")?;
         let model = session.engine.model();
         let din_name = l6max_host::host_midi::endpoint_name(
-            l6max_host::host_midi::din_port_name_for_model(model),
+            &l6max_host::host_midi::din_port_name_for_model_with_namespace(
+                model,
+                midi_namespace().as_deref(),
+            ),
         );
         let mut din = connect_native_midi(session, &din_name)?;
         let usb = session
@@ -4503,17 +4547,43 @@ impl State {
             }
             Operation::PowerPress { hold_ms, powered } => {
                 let inputs = session.engine.inputs.as_ref().unwrap();
-                let started = inputs.panel.snapshot().guest_ms;
-                if powered {
-                    inputs.tap(53, hold_ms)?;
+                // Power-button events are routed to MAIN even when sent as a
+                // tap. Its acknowledgement gives the exact guest timestamp
+                // at which the press was applied. The panel publishes the
+                // continuing guest clock used to bound short presses.
+                let input = &inputs.main;
+                let sequence = if powered {
+                    inputs.tap(53, hold_ms)?
                 } else {
-                    inputs.main.down(53, hold_ms)?;
-                }
+                    inputs.main.down(53, hold_ms)?
+                };
+                let mut started_guest_ms = None;
                 let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
                 loop {
                     session.poll()?;
-                    let off = inputs.main.snapshot().powered_off;
-                    let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(started);
+                    let input_status = input.snapshot();
+                    if let Some(ack) = input_status.last_ack.filter(|ack| ack.sequence == sequence)
+                    {
+                        if !matches!(
+                            ack.kind,
+                            l6max_host::protocol::APPLIED | l6max_host::protocol::RELEASED
+                        ) {
+                            return Err("power press was rejected by the emulator".into());
+                        }
+                        started_guest_ms.get_or_insert(ack.duration_ms);
+                    }
+                    let main_status = inputs.main.snapshot();
+                    let off = main_status.powered_off;
+                    let elapsed = started_guest_ms
+                        .zip(main_status.powered_off_guest_ms)
+                        .map(|(started, stopped)| stopped.wrapping_sub(started));
+                    let guest_now = if powered {
+                        inputs.panel.snapshot().guest_ms
+                    } else {
+                        input_status.guest_ms
+                    };
+                    let guest_elapsed =
+                        started_guest_ms.map(|started| guest_now.wrapping_sub(started));
                     if powered && off {
                         return Err("short power press cut power".into());
                     }
@@ -4521,6 +4591,9 @@ impl State {
                         if session.engine.management[0].query_status()?.status != "shutdown" {
                             return Err("power-off did not shut down QEMU".into());
                         }
+                        let elapsed = elapsed.ok_or(
+                            "power-off occurred before its input timestamps were observed",
+                        )?;
                         if session.engine.model() == l6fw::Model::L6
                             && !(400..=800).contains(&elapsed)
                         {
@@ -4536,10 +4609,13 @@ impl State {
                             json!({"powered":false,"held_guest_ms":elapsed,"clock_stopped":true}),
                         );
                     }
-                    if powered && elapsed >= hold_ms + 1000 {
+                    if powered && guest_elapsed.is_some_and(|elapsed| elapsed >= hold_ms + 1000) {
                         return Ok(json!({"powered":true,"held_guest_ms":hold_ms}));
                     }
-                    if Instant::now() > deadline || elapsed > guest_timeout_ms {
+                    if Instant::now() > deadline
+                        || powered
+                            && guest_elapsed.is_some_and(|elapsed| elapsed > guest_timeout_ms)
+                    {
                         return Err("power transition timed out".into());
                     }
                     thread::sleep(Duration::from_millis(5));
@@ -6637,7 +6713,10 @@ fn run_knob_dialog(
                 break;
             }
             let now = inputs.panel.snapshot().guest_ms;
-            if now.wrapping_sub(timeout_start) >= 5_000 {
+            // The guest countdown can land on its final tick while host-side
+            // QEMU work is contending with other parallel cases. Keep a full
+            // grace interval for that last tick before treating it as stuck.
+            if now.wrapping_sub(timeout_start) >= 10_000 {
                 return Err(format!(
                     "custom scene timeout did not finish after notification expiry; {ticks} ticks remain"
                 )

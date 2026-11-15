@@ -82,6 +82,21 @@ fn has_images(directory: &Path) -> bool {
         .all(|name| directory.join(name).is_file())
 }
 
+fn publish_firmware_cache(partial: &Path, directory: &Path) -> Result<PathBuf, String> {
+    match fs::rename(partial, directory) {
+        Ok(()) => Ok(directory.to_path_buf()),
+        Err(_error) if has_images(directory) => {
+            // Another process published the same content-addressed package.
+            let _ = fs::remove_dir_all(partial);
+            Ok(directory.to_path_buf())
+        }
+        Err(error) => {
+            let _ = fs::remove_dir_all(partial);
+            Err(error.to_string())
+        }
+    }
+}
+
 /// Unpack `package` into `cache/<package SHA-256>` once and return that directory.
 pub fn unpack_cached(package: &Path, cache: &Path) -> Result<PathBuf, String> {
     let bytes = fs::read(package).map_err(|e| format!("cannot read {}: {e}", package.display()))?;
@@ -99,14 +114,21 @@ pub fn unpack_cached(package: &Path, cache: &Path) -> Result<PathBuf, String> {
     fs::create_dir_all(cache).map_err(|e| e.to_string())?;
     // Unpack beside the target, then rename, so an interrupted run leaves no
     // half-written directory that would be mistaken for a finished one.
-    let partial = cache.join(format!(".partial-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&partial);
-    l6fw::unpack(package, &partial)?;
-    if directory.exists() {
-        let _ = fs::remove_dir_all(&directory);
+    static NEXT_PARTIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let partial = cache.join(format!(
+        ".partial-{}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos(),
+        NEXT_PARTIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    if let Err(error) = l6fw::unpack(package, &partial) {
+        let _ = fs::remove_dir_all(&partial);
+        return Err(error);
     }
-    fs::rename(&partial, &directory).map_err(|e| e.to_string())?;
-    Ok(directory)
+    publish_firmware_cache(&partial, &directory)
 }
 
 pub const MISSING_FIRMWARE: &str = "no firmware found. Supply your own L6 or L6max update package \
@@ -258,5 +280,43 @@ mod tests {
         options.prepare_firmware(repository_root()).unwrap();
         assert_eq!(options.firmware_dir, dir);
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn concurrent_cache_publishers_keep_the_first_complete_directory() {
+        use std::sync::{Arc, Barrier};
+
+        let root = temp("concurrent-publish");
+        let target = root.join("package-hash");
+        let partials = [root.join("partial-a"), root.join("partial-b")];
+        for (index, partial) in partials.iter().enumerate() {
+            fs::create_dir_all(partial).unwrap();
+            fs::write(partial.join("main_firmware.bin"), [index as u8]).unwrap();
+            fs::write(partial.join("secondary_firmware.bin"), b"panel").unwrap();
+        }
+        let barrier = Arc::new(Barrier::new(2));
+        let workers = partials
+            .iter()
+            .cloned()
+            .map(|partial| {
+                let barrier = Arc::clone(&barrier);
+                let target = target.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    publish_firmware_cache(&partial, &target).unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for worker in workers {
+            assert_eq!(worker.join().unwrap(), target);
+        }
+        assert!(has_images(&target));
+        assert_eq!(
+            fs::read(target.join("secondary_firmware.bin")).unwrap(),
+            b"panel"
+        );
+        assert!(partials.iter().all(|partial| !partial.exists()));
+        fs::remove_dir_all(root).unwrap();
     }
 }

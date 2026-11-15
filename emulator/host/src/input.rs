@@ -18,6 +18,7 @@ use std::{
 pub struct InputStatus {
     pub connected: bool,
     pub powered_off: bool,
+    pub powered_off_guest_ms: Option<u32>,
     pub sent: u64,
     pub applied: u64,
     pub released: u64,
@@ -81,10 +82,11 @@ impl EngineInput {
                 loop {
                     match Message::read(&mut reader) {
                         Ok(message) if message.kind == protocol::POWER_OFF => {
-                            reader_status
+                            let mut state = reader_status
                                 .lock()
-                                .unwrap_or_else(|error| error.into_inner())
-                                .powered_off = true;
+                                .unwrap_or_else(|error| error.into_inner());
+                            state.powered_off = true;
+                            state.powered_off_guest_ms = Some(message.duration_ms);
                         }
                         Ok(message) if message.kind == protocol::CLOCK => {
                             reader_status

@@ -65,11 +65,8 @@ fn audio_device_spec(fixture: &Fixture, logs: &Path) -> String {
         .unwrap_or("driver=none,id=l6-audio")
         .replace("{logs}", &logs.display().to_string())
 }
-fn gdb_socket_path() -> PathBuf {
-    // Cases may run concurrently; each fixture copy needs its own socket.
-    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let index = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    env::temp_dir().join(format!("l6gdb-{}-{index}.sock", std::process::id()))
+fn gdb_socket_path(logs: &Path) -> PathBuf {
+    smoke_core::devices::gdb_socket_path(logs, "main")
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -446,7 +443,7 @@ fn load_config(
 
 /// Construct the experimental loader and card bundle from the configured
 /// stock package. Both outputs are per-case and recorded with the fixture.
-fn prepare_sd_patch(root: &Path, fixture: &mut Fixture, dir: &Path) -> Result<(), String> {
+fn prepare_sd_patch(fixture: &mut Fixture, dir: &Path) -> Result<(), String> {
     let Some(patches) = fixture.sd_patches.clone() else {
         return Ok(());
     };
@@ -463,34 +460,37 @@ fn prepare_sd_patch(root: &Path, fixture: &mut Fixture, dir: &Path) -> Result<()
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let source = dir.join("sd-stock-firmware");
     l6fw::unpack(package, &source)?;
-    let build = |output: &Path, option: &str, selected: &[String]| -> Result<(), String> {
-        let mut cmd = Command::new(env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
-        cmd.current_dir(root)
-            .args(["run", "--offline", "--locked", "-p", "l6patch", "--"])
-            .arg(&source)
-            .arg(output)
-            .arg(option);
-        for patch in selected {
-            cmd.arg("--patch").arg(patch);
-        }
-        let result = cmd
-            .output()
-            .map_err(|e| format!("could not start l6patch: {e}"))?;
-        let mut log = result.stdout;
-        log.extend_from_slice(&result.stderr);
-        let name = if option == "--experimental-patch-loader" {
-            "patch-loader-build.log"
-        } else {
-            "sd-patches-build.log"
+    let build =
+        |output: &Path, mode: l6patch::BuildMode, selected: &[String]| -> Result<(), String> {
+            let result = l6patch::build(l6patch::BuildRequest {
+                source: source.clone(),
+                output: output.to_path_buf(),
+                patches: selected.to_vec(),
+                version: None,
+                mode,
+                experimental_qemu_module_arena: false,
+            });
+            let name = if mode == l6patch::BuildMode::PatchLoader {
+                "patch-loader-build.log"
+            } else {
+                "sd-patches-build.log"
+            };
+            match result {
+                Ok(()) => fs::write(
+                    dir.join(name),
+                    format!("l6patch {mode:?} build succeeded\n"),
+                )
+                .map_err(|e| e.to_string())?,
+                Err(error) => {
+                    let message = format!("l6patch failed: {error}");
+                    fs::write(dir.join(name), &message).map_err(|e| e.to_string())?;
+                    return Err(message);
+                }
+            }
+            Ok(())
         };
-        fs::write(dir.join(name), &log).map_err(|e| e.to_string())?;
-        if !result.status.success() {
-            return Err(format!("l6patch failed: {}", String::from_utf8_lossy(&log)));
-        }
-        Ok(())
-    };
     let loader = dir.join("patch-loader-firmware");
-    build(&loader, "--experimental-patch-loader", &fixture.patches)?;
+    build(&loader, l6patch::BuildMode::PatchLoader, &fixture.patches)?;
     fixture.firmware_package = Some(loader.join(if fixture.model == "l6" {
         "L6.BIN"
     } else {
@@ -499,7 +499,7 @@ fn prepare_sd_patch(root: &Path, fixture: &mut Fixture, dir: &Path) -> Result<()
     fixture.patches.clear();
     if !patches.is_empty() {
         let bundle = dir.join("sd-patches-build");
-        build(&bundle, "--experimental-patch-bundle", &patches)?;
+        build(&bundle, l6patch::BuildMode::SdBundle, &patches)?;
         fixture.sd_bundle = Some(bundle.join("PATCHES"));
     }
     Ok(())
@@ -582,7 +582,7 @@ fn fixture_options(
         audio_device.clone().into(),
     ];
     if fixture.gdb {
-        args.extend(["--gdb-socket".into(), gdb_socket_path().into_os_string()]);
+        args.extend(["--gdb-socket".into(), gdb_socket_path(dir).into_os_string()]);
     }
     let sd_hash = if let Some(spec) = &fixture.card_spec {
         let target = dir.join("card.img");
@@ -838,6 +838,8 @@ fn run_case(
     case: &Case,
     backend: &str,
     dir: &Path,
+    midi_namespace: &str,
+    patch_artifact_dir: &Path,
 ) -> CaseResult {
     let mut result = CaseResult {
         case: case.id.clone(),
@@ -867,7 +869,7 @@ fn run_case(
             return Err("QEMU changed since preflight".into());
         }
         let mut selected_fixture = fixture.clone();
-        prepare_sd_patch(root, &mut selected_fixture, dir)?;
+        prepare_sd_patch(&mut selected_fixture, dir)?;
         if let Some(path) = &case.scenario {
             let patches = Scenario::load(&catalog_dir.join(path))?
                 .update_patches
@@ -966,7 +968,9 @@ fn run_case(
             .env(
                 smoke_core::STATE_SPEC_ENV,
                 if spec_state { "1" } else { "0" },
-            );
+            )
+            .env("L6_MIDI_NAMESPACE", midi_namespace);
+        command.env("L6_PATCH_ARTIFACT_DIR", patch_artifact_dir);
         command.env(
             "RUST_LOG",
             env::var("RUST_LOG").unwrap_or_else(|_| l6max_host::logging::DEFAULT_FILTER.into()),
@@ -1224,6 +1228,11 @@ fn execute() -> Result<i32, String> {
         vec![&args.backend]
     };
     let mut packages = BTreeSet::new();
+    let needs_l6patch = cases
+        .iter()
+        .filter_map(|case| case.scenario.as_ref())
+        .filter_map(|path| Scenario::load(&catalog_dir.join(path)).ok())
+        .any(|scenario| scenario.needs_patch_builder());
     for case in &cases {
         if case.blocked.is_some()
             || case.needs_configuration && case.scenario.is_none() && config.app.is_none()
@@ -1243,13 +1252,16 @@ fn execute() -> Result<i32, String> {
             packages.insert("l6max-gui");
         }
     }
-    if args.build && !packages.is_empty() {
+    if args.build && (!packages.is_empty() || needs_l6patch) {
         let mut command = Command::new("cargo");
         command
             .current_dir(root)
             .args(["build", "--offline", "--locked"]);
         for package in &packages {
             command.arg("-p").arg(package);
+        }
+        if needs_l6patch {
+            command.args(["-p", "l6patch"]);
         }
         let built = supervise(command, &output, 600);
         if !matches!(built, Ok(true)) {
@@ -1321,19 +1333,15 @@ fn execute() -> Result<i32, String> {
                 None => vec![if case.gui { "gui" } else { "headless" }],
             };
             for backend in selected {
-                // GUI windows, native host MIDI ports and Cargo's shared
-                // l6patch executable are host-wide resources; such cases run
-                // alone to avoid replacing the executable during another
-                // `cargo run` invocation.
-                let exclusive = backend == "gui"
-                    || scenario.as_ref().is_some_and(|scenario| {
-                        scenario.uses_native_midi() || scenario.uses_patch_builds()
-                    });
+                // GUI windows are the remaining host-wide exclusive resource.
+                let exclusive = backend == "gui";
+                let midi_namespace = format!("p{:x}{:x}", std::process::id(), jobs.len());
                 jobs.push(Job {
                     case,
                     model: model.clone(),
                     backend,
                     exclusive,
+                    midi_namespace,
                     dir: output.join(format!("{}-{model}-{backend}", case.id.replace('/', "-"))),
                 });
             }
@@ -1367,6 +1375,8 @@ fn execute() -> Result<i32, String> {
                 job.case,
                 job.backend,
                 &job.dir,
+                &job.midi_namespace,
+                &built_dir,
             ),
             Err(detail) => CaseResult {
                 case: job.case.id.clone(),
@@ -1457,6 +1467,7 @@ struct Job<'a> {
     model: String,
     backend: &'a str,
     exclusive: bool,
+    midi_namespace: String,
     dir: PathBuf,
 }
 /// Run jobs on up to `limit` workers. An exclusive job starts only when no
@@ -1626,7 +1637,7 @@ mod tests {
             audio_input: vec![],
             gdb: false,
         };
-        prepare_sd_patch(&root, &mut fixture, &dir).unwrap();
+        prepare_sd_patch(&mut fixture, &dir).unwrap();
         let patch_dir = fixture.sd_bundle.as_ref().unwrap();
         let report: serde_json::Value = serde_json::from_slice(
             &fs::read(patch_dir.parent().unwrap().join("patch.json")).unwrap(),
@@ -1705,7 +1716,13 @@ mod tests {
     }
     #[test]
     fn gdb_socket_path_fits_qemus_unix_socket_limit() {
-        assert!(gdb_socket_path().as_os_str().as_encoded_bytes().len() < 100);
+        assert!(
+            gdb_socket_path(Path::new("/tmp/case"))
+                .as_os_str()
+                .as_encoded_bytes()
+                .len()
+                < 100
+        );
     }
     #[test]
     fn fixture_copy_does_not_write_through_to_the_template() {
@@ -1875,16 +1892,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn patch_build_scenarios_are_marked_exclusive() {
-        let scenarios = l6max_host::paths::repository_root().join("tests/smoke/scenarios");
-        for name in ["sd-all-patches", "sd-midi-sync", "sd-knob-dialog-dynamic"] {
-            let scenario = Scenario::load(&scenarios.join(format!("{name}.toml"))).unwrap();
-            assert!(scenario.uses_patch_builds(), "{name}");
-        }
-        let scenario = Scenario::load(&scenarios.join("controls.toml")).unwrap();
-        assert!(!scenario.uses_patch_builds());
-    }
     #[test]
     fn scheduler_bounds_concurrency_and_isolates_exclusive_jobs() {
         use std::sync::atomic::{AtomicUsize, Ordering};

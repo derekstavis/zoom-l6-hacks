@@ -3,7 +3,7 @@ name = "knob-dialog-scene-prototype"
 models = ["l6max"]
 backends = ["headless"]
 state = "setup-complete"
-patches = []
+patches = ["knob-dialog"]
 card = "empty"
 gdb = true
 main_sha256 = "80417cebcce84128fde12c18ac96f9ac57b569438a6721bca8b5d93b783c8e02"
@@ -23,6 +23,7 @@ main_sha256_any = [
   "5dc2689904b7db8409919e10ac59aeece66dc72b575c42947dc0e7c2ea42f14f",
   "416b273191ecbc997e885d7986acc2a598611e5205e3125d5f91ce992995d273",
   "39033e21eae56455bfe8571c14ac66f5f914b0d12424ac9b8b5279ca8485bb4c",
+  "98898165368380606e8a76954a4da92438030ef7a3f878e5a302ce84cfa7fe5a",
 ]
 
 [[step]]

@@ -37,6 +37,15 @@ pub fn port_names_for_model(model: l6fw::Model) -> &'static [&'static str; 3] {
     }
 }
 
+/// Return USB MIDI names with an optional suffix used to isolate emulator
+/// instances that run at the same time.
+pub fn port_names_for_model_with_namespace(
+    model: l6fw::Model,
+    namespace: Option<&str>,
+) -> [String; 3] {
+    port_names_for_model(model).map(|name| namespaced_name(name, namespace))
+}
+
 pub fn din_port_name_for_model(model: l6fw::Model) -> &'static str {
     match model {
         l6fw::Model::L6 => L6_DIN_PORT_NAME,
@@ -44,10 +53,27 @@ pub fn din_port_name_for_model(model: l6fw::Model) -> &'static str {
     }
 }
 
+/// Return the DIN MIDI name with an optional per-emulator suffix.
+pub fn din_port_name_for_model_with_namespace(
+    model: l6fw::Model,
+    namespace: Option<&str>,
+) -> String {
+    namespaced_name(din_port_name_for_model(model), namespace)
+}
+
+fn namespaced_name(name: &str, namespace: Option<&str>) -> String {
+    match namespace.filter(|namespace| !namespace.is_empty()) {
+        Some(namespace) => format!("{name} [{namespace}]"),
+        None => name.to_owned(),
+    }
+}
+
 /// `names` is either one of the two 3-entry USB port arrays or a single-entry
 /// DIN port array; both shapes carry the model in their first/only name.
 fn is_l6(names: &[&str]) -> bool {
-    names.first() == Some(&L6_PORT_NAMES[0]) || names.first() == Some(&L6_DIN_PORT_NAME)
+    names.first().is_some_and(|name| {
+        name.starts_with(L6_PORT_NAMES[0]) || name.starts_with(L6_DIN_PORT_NAME)
+    })
 }
 
 pub fn client_name_for_ports(names: &[&str]) -> &'static str {
@@ -131,6 +157,22 @@ pub mod testing {
         );
         assert_eq!(model_name_for_ports(&[L6_DIN_PORT_NAME]), "L6");
         assert_eq!(model_name_for_ports(&[L6MAX_DIN_PORT_NAME]), "L6max");
+    }
+
+    #[test]
+    fn namespaced_midi_ports_are_distinct_and_keep_the_firmware_model() {
+        let first = port_names_for_model_with_namespace(l6fw::Model::L6, Some("p1231"));
+        let second = port_names_for_model_with_namespace(l6fw::Model::L6, Some("p1232"));
+        let first_refs = first.each_ref().map(String::as_str);
+
+        assert_ne!(first[0], second[0]);
+        assert_eq!(client_name_for_ports(&first_refs), L6_CLIENT_NAME);
+        assert_eq!(model_name_for_ports(&first_refs), "L6");
+        assert_eq!(
+            din_port_name_for_model_with_namespace(l6fw::Model::L6max, Some("p1233")),
+            format!("{L6MAX_DIN_PORT_NAME} [p1233]")
+        );
+        assert_eq!(client_name_for_ports(&[&first[0]]), L6_CLIENT_NAME);
     }
 
     /// In-memory back end: `incoming` is what host applications "sent",

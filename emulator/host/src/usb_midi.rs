@@ -158,7 +158,7 @@ pub struct MidiBridge<P: HostMidi = NativeMidi> {
     backend: PhantomData<fn() -> P>,
 }
 impl<P: HostMidi + 'static> MidiBridge<P> {
-    pub fn start(usb: Arc<UsbHost>, port_names: &'static [&'static str; 3]) -> io::Result<Self> {
+    pub fn start(usb: Arc<UsbHost>, port_names: [String; 3]) -> io::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
         let status = Arc::new(Mutex::new("Waiting for firmware USB startup".to_owned()));
         let flag = stop.clone();
@@ -167,7 +167,7 @@ impl<P: HostMidi + 'static> MidiBridge<P> {
         let worker = thread::Builder::new()
             .name("l6-usb-midi".into())
             .spawn(move || {
-                if let Err(e) = Self::run(&worker_usb, port_names, &flag, &state) {
+                if let Err(e) = Self::run(&worker_usb, &port_names, &flag, &state) {
                     if flag.load(Ordering::Acquire) {
                         return;
                     }
@@ -193,7 +193,7 @@ impl<P: HostMidi + 'static> MidiBridge<P> {
     }
     fn run(
         usb: &UsbHost,
-        port_names: &[&str; 3],
+        port_names: &[String; 3],
         stop: &AtomicBool,
         state: &Mutex<String>,
     ) -> io::Result<()> {
@@ -211,7 +211,8 @@ impl<P: HostMidi + 'static> MidiBridge<P> {
                             set("USB File Transfer mode; MIDI unavailable".into());
                             ports = None;
                         } else if ports.is_none() && !unsupported {
-                            match P::open(port_names) {
+                            let names = port_names.each_ref().map(String::as_str);
+                            match P::open(&names) {
                                 Ok(opened) => {
                                     ports = Some(opened);
                                     set("Three native MIDI ports connected".into());

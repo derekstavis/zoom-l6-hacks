@@ -120,6 +120,7 @@ pub enum Operation {
         expected_parameter_id: Option<u8>,
         expected_parameter_value: Option<f32>,
         expected_dialog_active: Option<bool>,
+        minimum_exit_ring_refreshes: Option<u32>,
     },
     ExpectHeap {
         minimum_free: u32,
@@ -3712,6 +3713,7 @@ impl State {
                 expected_parameter_id,
                 expected_parameter_value,
                 expected_dialog_active,
+                minimum_exit_ring_refreshes,
             } => Ok(dual_efx_state(
                 options,
                 session,
@@ -3721,6 +3723,7 @@ impl State {
                 expected_parameter_id,
                 expected_parameter_value,
                 expected_dialog_active,
+                minimum_exit_ring_refreshes,
             )
             .map_err(std::io::Error::other)?),
             Operation::ExpectSdPatch {
@@ -5855,6 +5858,7 @@ fn dual_efx_state(
     expected_parameter_id: Option<u8>,
     expected_parameter_value: Option<f32>,
     expected_dialog_active: Option<bool>,
+    minimum_exit_ring_refreshes: Option<u32>,
 ) -> Result<Value, String> {
     if session.engine.model() != l6fw::Model::L6max {
         return Err("Dual EFX state checks require L6max".into());
@@ -5908,6 +5912,16 @@ fn dual_efx_state(
         .try_into()
         .unwrap(),
     );
+    let exit_ring_refreshes = u32::from_le_bytes(
+        qmp.read_memory(
+            0,
+            module_base + offset("DUAL_EFFECT_EXIT_RING_REFRESH_HITS")?,
+            4,
+        )
+        .map_err(|error| error.to_string())?
+        .try_into()
+        .unwrap(),
+    );
     let applied = u32::from_le_bytes(
         qmp.read_memory(0, module_base + offset("DUAL_EFFECT_EDIT_APPLIED")?, 4)
             .map_err(|error| error.to_string())?
@@ -5948,6 +5962,11 @@ fn dual_efx_state(
             "Dual EFX parameter edit mode is {edit_mode}, expected {expected_edit_mode:?}"
         ));
     }
+    if minimum_exit_ring_refreshes.is_some_and(|minimum| exit_ring_refreshes < minimum) {
+        return Err(format!(
+            "Dual EFX stock exit refresh called the panel ring routine {exit_ring_refreshes} times, expected at least {minimum_exit_ring_refreshes:?}"
+        ));
+    }
     if expected_dialog_active.is_some_and(|expected| dialog_active != u8::from(expected)) {
         return Err(format!(
             "Knob Dialog active state is {dialog_active}, expected {expected_dialog_active:?}"
@@ -5975,7 +5994,7 @@ fn dual_efx_state(
         }
     }
     Ok(
-        json!({"effect_type":effect_type,"edit_mode":edit_mode,"parameter_edits_applied":applied,"parameter_id":expected_parameter_id,"parameter_value":parameter,"knob_dialog_active":dialog_active}),
+        json!({"effect_type":effect_type,"edit_mode":edit_mode,"parameter_edits_applied":applied,"parameter_id":expected_parameter_id,"parameter_value":parameter,"knob_dialog_active":dialog_active,"exit_ring_refreshes":exit_ring_refreshes}),
     )
 }
 

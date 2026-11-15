@@ -35,6 +35,19 @@ struct SceneSaveState {
     press_count: u64,
     release_count: u64,
 }
+
+fn panel_led_state(model: Model, data: PanelData, index: usize) -> bool {
+    if model == Model::L6 {
+        return l6_button_leds(data.indicators)[index];
+    }
+    // Match the L6max GUI's sampled PWM threshold so this assertion checks
+    // the lamp state the user actually sees, including firmware blink phases.
+    let (row, column) = l6max_host::indicators::LED_PINS[index];
+    let full_scale = [41u16, 42, 41, 41, 41, 41, 40, 41][row];
+    let measured = u16::from(data.indicator_levels[row][(column ^ 7) as usize]);
+    ((measured * 255 + full_scale / 2) / full_scale).min(255) >= 128
+}
+
 impl Observation {
     fn summary(&self) -> Value {
         json!({"guest_ms": self.panel.guest_ms, "rings": rings(self.data.indicators), "rows": self.data.indicators,
@@ -529,6 +542,7 @@ impl Runner {
                     expected_parameter_id,
                     expected_parameter_value,
                     expected_dialog_active,
+                    minimum_exit_ring_refreshes,
                 } => {
                     return Ok(Progress::Device(devices::Operation::DualEfxState {
                         expected_effect_type,
@@ -537,6 +551,7 @@ impl Runner {
                         expected_parameter_id,
                         expected_parameter_value,
                         expected_dialog_active,
+                        minimum_exit_ring_refreshes,
                     }));
                 }
                 Action::ExpectHeap { minimum_free } => {
@@ -921,26 +936,22 @@ impl Runner {
                     lit,
                     checkpoint,
                     changed,
+                    same,
                 } => {
-                    if self.model != Model::L6 {
-                        return Err(
-                            "button LED assertion mapping currently supports L6 only".into()
-                        );
-                    }
                     let index = crate::scenario::l6_button_led_index(self.model, &control)?;
-                    let current = l6_button_leds(obs.data.indicators);
+                    let current = panel_led_state(self.model, obs.data, index);
                     let previous = checkpoint
                         .as_ref()
                         .map(|name| {
                             self.checkpoints
                                 .get(name)
                                 .ok_or("checkpoint not executed for this model")
-                                .map(|state| l6_button_leds(state.data.indicators))
+                                .map(|state| panel_led_state(self.model, state.data, index))
                         })
                         .transpose()?;
-                    lit.is_none_or(|lit| current[index] == lit)
-                        && (!changed
-                            || previous.is_some_and(|previous| current[index] != previous[index]))
+                    lit.is_none_or(|lit| current == lit)
+                        && (!changed || previous.is_some_and(|previous| current != previous))
+                        && (!same || previous.is_some_and(|previous| current == previous))
                 }
                 Action::ExpectEffect { effect } => {
                     if self.model != Model::L6 {

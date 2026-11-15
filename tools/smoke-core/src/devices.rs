@@ -670,10 +670,11 @@ pub fn run_wasm_patch(options: &Options) -> Result<(), String> {
                 return Err(format!(
                     "native patcher accepted unsupported L6 profile {unsupported}"
                 ));
-            } else if !output
-                .unwrap_err()
-                .contains("only the midi-sync patch is supported")
-            {
+            } else if {
+                let message = output.unwrap_err().to_string();
+                !message.contains("only the midi-sync patch is supported")
+                    && !message.contains("not supported for firmware installation on L6")
+            } {
                 return Err(format!(
                     "native patcher rejected unsupported L6 profile {unsupported} for an unexpected reason"
                 ));

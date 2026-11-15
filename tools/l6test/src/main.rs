@@ -491,7 +491,6 @@ fn prepare_sd_patch(fixture: &mut Fixture, dir: &Path) -> Result<(), String> {
             }
             Ok(())
         };
-        };
     let loader = dir.join("patch-loader-firmware");
     build(&loader, l6patch::BuildMode::PatchLoader, &fixture.patches)?;
     fixture.firmware_package = Some(loader.join(if fixture.model == "l6" {

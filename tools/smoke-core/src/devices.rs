@@ -514,7 +514,8 @@ fn build_native_patch(
         patches: patches.iter().map(|patch| (*patch).to_owned()).collect(),
         version: version.map(str::to_owned),
         mode,
-        experimental_qemu_module_arena: false,
+        experimental_qemu_module_arena: mode == l6patch::BuildMode::PatchLoader
+            && patches.iter().any(|patch| *patch == "dual-efx"),
     })
     .map_err(|error| error.to_string())
 }
@@ -610,22 +611,52 @@ pub fn run_wasm_patch(options: &Options) -> Result<(), String> {
                 .map(|(_, patch)| *patch)
                 .collect();
             let native_out = root.join(format!("native-loader-{mask:03}"));
-            build_native_patch(
+            let native_result = build_native_patch(
                 &options.firmware_dir,
                 &native_out,
                 &selected,
                 None,
                 l6patch::BuildMode::PatchLoader,
-            )
-            .map_err(|error| {
-                format!("native patch-loader build failed for {selected:?}: {error}")
+            );
+            let wasm_result =
+                firmware_patch_wasm::apply_patches_with_loader(&stock, &selected, true);
+            let native = match native_result {
+                Ok(()) => {
+                    fs::read(native_out.join("L6max.bin")).map_err(|error| error.to_string())?
+                }
+                Err(native_error)
+                    if native_error
+                        .contains("installed patch payloads overlap the SD module region") =>
+                {
+                    match wasm_result {
+                        Err(wasm_error)
+                            if wasm_error.contains("overlap the Patch loader module reserve") =>
+                        {
+                            // Both builders reject a profile that cannot fit
+                            // beside the loader's reserved SD module area.
+                            continue;
+                        }
+                        Err(wasm_error) => {
+                            return Err(format!(
+                                "native and WASM reject {selected:?} for different reasons: {native_error} / {wasm_error}"
+                            ));
+                        }
+                        Ok(_) => {
+                            return Err(format!(
+                                "WASM accepted {selected:?}, which native rejects because its static payload overlaps the SD module region"
+                            ));
+                        }
+                    }
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "native patch-loader build failed for {selected:?}: {error}"
+                    ));
+                }
+            };
+            let (wasm, report) = wasm_result.map_err(|message| {
+                format!("WASM patch-loader build failed for {selected:?}: {message}")
             })?;
-            let native =
-                fs::read(native_out.join("L6max.bin")).map_err(|error| error.to_string())?;
-            let (wasm, report) =
-                firmware_patch_wasm::apply_patches_with_loader(&stock, &selected, true).map_err(
-                    |message| format!("WASM patch-loader build failed for {selected:?}: {message}"),
-                )?;
             if wasm != native {
                 fs::write(root.join(format!("wasm-loader-{mask:03}.bin")), &wasm)
                     .map_err(|error| error.to_string())?;

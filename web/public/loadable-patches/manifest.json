@@ -1,5 +1,5 @@
 {
-  "generator_source_sha256": "a665ae7e2e6b364386d9d83e81ac89c290ed13d8c12450adb267978d1edb6abb",
+  "generator_source_sha256": "9076ed5bffa735b5451183854603f9a405d568fe7d2a4c2dcdc0ad692664727b",
   "source_firmware_sha256": "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461",
   "l6_source_firmware_sha256": "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799",
   "modules": [
@@ -9,7 +9,7 @@
       "file": "L6max/knob-dialog-1.0.0.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "7fe2cb199c256a049cff434b1a8182d45609efce2d4af56189eb27e3fc8b7508"
+      "sha256": "38354893ff6883a3cadc401a936d3305d2985d2a234a28f789726b24be8b3d72"
     },
     {
       "id": "midi-sync",
@@ -33,7 +33,7 @@
       "file": "L6max/dual-efx-1.0.0-knob-dialog-1.0.0.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "8fae629080d10b85c6906346d2eb67ea6b09b5ed722ef40c53fe01344e245f73"
+      "sha256": "cf508cb54756459920eb2b0f533ecf8632abd6306e883c9893e24370a0662fdb"
     }
   ]
 }

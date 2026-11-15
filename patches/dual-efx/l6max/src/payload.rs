@@ -19,8 +19,10 @@ use crate::firmware_bindings;
 use firmware_bindings::{
     current_window, dsp_effect_workspace, dsp_effect_workspace_clear, dsp_stream_callback,
     mixer_apply_channel_parameter, mixer_apply_effect_type, mixer_get_efx_type,
-    mixer_set_efx_type, panel_handle_main_button_event, sys_main_startup_initialize,
-    xTickCount, DSP_EFFECT_WORKSPACE_BYTES,
+    mixer_apply_effect_type_from_mixer, mixer_set_efx_type,
+    l6max_encoder_ring_pattern_apply, l6max_panel_led_value_store, l6max_tap_press_handler,
+    sys_main_startup_initialize,
+    DSP_EFFECT_WORKSPACE_BYTES,
 };
 #[path = "../../../api/l6max/hooks.rs"]
 #[cfg(not(sd_composed))]
@@ -169,7 +171,107 @@ pub static DUAL_EFFECT_PROCESSOR_TYPE: AtomicU32 = AtomicU32::new(0);
 #[unsafe(no_mangle)]
 pub static DUAL_EFFECT_PARAMETER_EDIT_MODE: AtomicU32 = AtomicU32::new(0);
 #[cfg(sd_dynamic_module)]
-static DUAL_EFFECT_EFX_BUTTON_DOWN_TICK: AtomicU32 = AtomicU32::new(0);
+#[cfg(sd_dynamic_module)]
+#[unsafe(no_mangle)]
+pub static DUAL_EFFECT_RING_REFRESH_HITS: AtomicU32 = AtomicU32::new(0);
+#[cfg(sd_dynamic_module)]
+#[unsafe(no_mangle)]
+pub static DUAL_EFFECT_EXIT_RING_REFRESH_HITS: AtomicU32 = AtomicU32::new(0);
+#[cfg(sd_dynamic_module)]
+static DUAL_EFFECT_RING_POSITIONS: [AtomicU32; 8] =
+    [const { AtomicU32::new(0) }; 8];
+#[cfg(sd_dynamic_module)]
+static DUAL_EFFECT_STOCK_RING_PATTERNS: [AtomicU32; 8] =
+    [const { AtomicU32::new(0) }; 8];
+#[cfg(sd_dynamic_module)]
+static DUAL_EFFECT_STOCK_RING_VALUES: [AtomicU32; 8] =
+    [const { AtomicU32::new(0) }; 8];
+#[cfg(sd_dynamic_module)]
+static DUAL_EFFECT_STOCK_RING_VALID: AtomicU32 = AtomicU32::new(0);
+#[cfg(sd_dynamic_module)]
+static DUAL_EFFECT_DRAWING_PARAMETER_RINGS: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(sd_dynamic_module)]
+fn selected_parameter_bank() -> Option<parameters::ParameterBank> {
+    match unsafe { mixer_get_efx_type(0) } {
+        1 => Some(parameters::ParameterBank::Velvet),
+        2 => Some(parameters::ParameterBank::Plateau),
+        _ => None,
+    }
+}
+
+#[cfg(sd_dynamic_module)]
+fn update_ring_positions(processor: &DualEfxProcessor, bank: parameters::ParameterBank) {
+    for ring in 0..8 {
+        if let Some(position) = parameters::ring_position(bank, ring, processor) {
+            DUAL_EFFECT_RING_POSITIONS[ring].store(position, Ordering::Release);
+        }
+    }
+}
+
+#[cfg(sd_dynamic_module)]
+unsafe fn draw_parameter_rings() {
+    for ring in 0..8 {
+        let position = ring_pattern_row(DUAL_EFFECT_RING_POSITIONS[ring].load(Ordering::Acquire));
+        unsafe { apply_parameter_ring(ring as u32, position) };
+    }
+}
+
+fn ring_pattern_row(position_q16: u32) -> u32 {
+    (position_q16.saturating_add(0x8000) >> 16).min(40)
+}
+
+/// Uses the normal panel refresh routine, substituting Dual EFX's current
+/// parameter position while the inspector is open.
+#[cfg(sd_dynamic_module)]
+#[function_entry_hook(l6max_encoder_ring_pattern_apply)]
+pub unsafe fn dual_efx_ring_refresh(ring: u32, pattern: u32, value: u32) {
+    DUAL_EFFECT_RING_REFRESH_HITS.fetch_add(1, Ordering::Relaxed);
+    if ring < 8 && DUAL_EFFECT_DRAWING_PARAMETER_RINGS.load(Ordering::Acquire) == 0 {
+        DUAL_EFFECT_STOCK_RING_PATTERNS[ring as usize].store(pattern, Ordering::Relaxed);
+        DUAL_EFFECT_STOCK_RING_VALUES[ring as usize].store(value, Ordering::Relaxed);
+        DUAL_EFFECT_STOCK_RING_VALID.fetch_or(1 << ring, Ordering::Release);
+    }
+    if ring < 8 && DUAL_EFFECT_PARAMETER_EDIT_MODE.load(Ordering::Acquire) != 0 {
+        let position = ring_pattern_row(
+            DUAL_EFFECT_RING_POSITIONS[ring as usize].load(Ordering::Acquire),
+        );
+        return hook_continue(ring, 1, position);
+    }
+    hook_continue(ring, pattern, value)
+}
+
+#[cfg(sd_dynamic_module)]
+unsafe fn apply_parameter_ring(ring: u32, position: u32) {
+    DUAL_EFFECT_DRAWING_PARAMETER_RINGS.store(1, Ordering::Release);
+    unsafe { l6max_encoder_ring_pattern_apply(ring, 1, position) };
+    DUAL_EFFECT_DRAWING_PARAMETER_RINGS.store(0, Ordering::Release);
+}
+
+#[cfg(sd_dynamic_module)]
+unsafe fn restore_stock_parameter_rings() {
+    let valid = DUAL_EFFECT_STOCK_RING_VALID.load(Ordering::Acquire);
+    let refreshes_before = DUAL_EFFECT_RING_REFRESH_HITS.load(Ordering::Relaxed);
+    for ring in 0..8 {
+        if valid & (1 << ring) == 0 {
+            continue;
+        }
+        let pattern = DUAL_EFFECT_STOCK_RING_PATTERNS[ring].load(Ordering::Relaxed);
+        let value = DUAL_EFFECT_STOCK_RING_VALUES[ring].load(Ordering::Relaxed);
+        unsafe { l6max_encoder_ring_pattern_apply(ring as u32, pattern, value) };
+    }
+    let refreshes_after = DUAL_EFFECT_RING_REFRESH_HITS.load(Ordering::Relaxed);
+    DUAL_EFFECT_EXIT_RING_REFRESH_HITS.store(
+        refreshes_after.wrapping_sub(refreshes_before),
+        Ordering::Release,
+    );
+}
+
+#[cfg(sd_dynamic_module)]
+unsafe fn set_tap_edit_indicator(enabled: bool) {
+    const TAP_LED_SLOT: usize = 33;
+    unsafe { l6max_panel_led_value_store(TAP_LED_SLOT as u32, 0, if enabled { 0x10 } else { 0 }) };
+}
 
 #[cfg(sd_dynamic_module)]
 unsafe fn show_edit_mode(enabled: bool) {
@@ -177,51 +279,32 @@ unsafe fn show_edit_mode(enabled: bool) {
     let value = if enabled { b"ON".as_slice() } else { b"OFF".as_slice() };
     let _ = crate::knob_dialog::prepare_external_text();
     let _ = crate::knob_dialog::show_external_text(title, value);
+    if enabled {
+        unsafe { set_tap_edit_indicator(true) };
+        unsafe { draw_parameter_rings() };
+    } else {
+        // Ask the stock mixer to repaint its normal EFX ring state, then put
+        // the TAP lamp back at its previous state.
+        unsafe { mixer_apply_effect_type_from_mixer(1) };
+        unsafe { restore_stock_parameter_rings() };
+        unsafe { set_tap_edit_indicator(false) };
+    }
 }
 
-/// Delay EFX selection until the release edge distinguishes a tap from a hold.
+/// Route TAP presses to the editor toggle while Dual EFX is selected. In all
+/// other screens, continue through the stock tap-tempo/AINR handler.
 #[cfg(sd_dynamic_module)]
-#[function_entry_hook(panel_handle_main_button_event)]
-pub unsafe fn dual_efx_edit_button_event(event: *const u32, context: *mut u32) {
-    if !event.is_null() {
-        let source = unsafe { core::ptr::read_volatile(event) };
-        let kind = unsafe { core::ptr::read_volatile(event.add(1)) };
-        let code = unsafe { core::ptr::read_volatile(event.add(2)) };
-        if source == 0
-            && code == 36
-            && unsafe { current_window.read() } == 0x8020_0408
-        {
-            if kind == 0 {
-                // Delay the stock selection until the matching release tells
-                // us whether this was a tap or a sustained hold.
-                DUAL_EFFECT_EFX_BUTTON_DOWN_TICK.store(
-                    unsafe { xTickCount.read() }.wrapping_add(1),
-                    Ordering::Release,
-                );
-                return hook_done();
-            }
-            if kind == 1 {
-                let down = DUAL_EFFECT_EFX_BUTTON_DOWN_TICK.swap(0, Ordering::AcqRel);
-                if down != 0 {
-                    let elapsed = unsafe { xTickCount.read() }.wrapping_sub(down - 1);
-                    if elapsed >= 500 {
-                        let enabled = DUAL_EFFECT_PARAMETER_EDIT_MODE.fetch_xor(1, Ordering::AcqRel) == 0;
-                        unsafe { show_edit_mode(enabled) };
-                        return hook_done();
-                    }
-                    // Replay the press edge after deciding this was a tap.
-                    // The stock handler selects on press, while the physical
-                    // press was held back until we could distinguish a hold.
-                    let event_kind = unsafe { event.add(1) as *mut u32 };
-                    unsafe { core::ptr::write_volatile(event_kind, 0) };
-                    let _ = hook_continue(event, context);
-                    unsafe { core::ptr::write_volatile(event_kind, 1) };
-                    return hook_done();
-                }
-            }
-        }
+#[function_entry_hook(l6max_tap_press_handler)]
+pub unsafe fn dual_efx_edit_button_event() {
+    let effect_type = unsafe { mixer_get_efx_type(0) };
+    let dual_effect_active = (effect_type == 1 || effect_type == 2)
+        && DUAL_EFFECT_PROCESSOR_TYPE.load(Ordering::Acquire) == effect_type;
+    if unsafe { current_window.read() } == 0x8020_0408 && dual_effect_active {
+        let enabled = DUAL_EFFECT_PARAMETER_EDIT_MODE.fetch_xor(1, Ordering::AcqRel) == 0;
+        unsafe { show_edit_mode(enabled) };
+        return hook_done();
     }
-    hook_continue(event, context)
+    hook_continue()
 }
 
 /// Static payloads put their small control state in the beginning of stock's
@@ -318,6 +401,10 @@ fn initialize_processor(effect_type: u32) {
     }
     #[cfg(sd_dynamic_module)]
     PARAMETER_HANDOFF.restore(processor);
+    #[cfg(sd_dynamic_module)]
+    if let Some(bank) = selected_parameter_bank() {
+        update_ring_positions(processor, bank);
+    }
     DUAL_EFFECT_EDIT_EVENT.store(0, Ordering::Relaxed);
     DUAL_EFFECT_ROUTED_CALLBACK.store(0, Ordering::Relaxed);
     DUAL_EFFECT_PROCESSOR_TYPE.store(effect_type, Ordering::Release);
@@ -459,6 +546,19 @@ pub unsafe fn dual_efx_parameter_edit(
         .is_err()
     {
         DUAL_EFFECT_EDIT_DROPPED.fetch_add(1, Ordering::Relaxed);
+    } else {
+        #[cfg(sd_dynamic_module)]
+        if DUAL_EFFECT_PARAMETER_EDIT_MODE.load(Ordering::Acquire) != 0 {
+            if let Some(position) = parameters::preview_ring_position(
+                bank,
+                channel as usize,
+                DUAL_EFFECT_RING_POSITIONS[channel as usize].load(Ordering::Acquire),
+                step as i32,
+            ) {
+                DUAL_EFFECT_RING_POSITIONS[channel as usize].store(position, Ordering::Release);
+                unsafe { apply_parameter_ring(channel, ring_pattern_row(position)) };
+            }
+        }
     }
     hook_done()
 }
@@ -698,6 +798,10 @@ unsafe fn process_effect_block(descriptor: *mut u8) -> bool {
             #[cfg(sd_dynamic_module)]
             {
                 PARAMETER_HANDOFF.record(id, processor);
+                if DUAL_EFFECT_PARAMETER_EDIT_MODE.load(Ordering::Acquire) != 0 {
+                    let position = parameters::snapshot_parameter(id, processor).ring_position_q16();
+                    DUAL_EFFECT_RING_POSITIONS[encoder].store(position, Ordering::Release);
+                }
                 unsafe { show_parameter_dialog(id, processor) };
             }
             DUAL_EFFECT_EDIT_APPLIED.fetch_add(1, Ordering::Relaxed);

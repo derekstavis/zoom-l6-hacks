@@ -61,6 +61,52 @@ pub struct ParameterSnapshot {
 }
 
 impl ParameterSnapshot {
+    /// Q16.16 position in the stock encoder-ring pattern range, 0 through 40.
+    pub fn ring_position_q16(self) -> u32 {
+        use EfxParamId::*;
+        let (min, max) = match self.id {
+            VndAmount | PlatDiffusion | GlobalCascade => (0.0, 100.0),
+            VndTimeSpread => (1.0, 100.0),
+            VndDensity => (10.0, 4600.0),
+            VndDecay => (-120.0, 0.0),
+            VndRefresh => (0.1, 60.0),
+            VndTransition => (1.0, 54000.0),
+            PlatPreDelay => (
+                0.0,
+                if cfg!(experimental_plateau_32k) {
+                    500.0
+                } else {
+                    190.0
+                },
+            ),
+            PlatSize => (
+                1.0,
+                if cfg!(experimental_plateau_32k) {
+                    400.0
+                } else {
+                    120.0
+                },
+            ),
+            PlatDecay => (10.0, 99.9),
+            PlatLowCut | PlatHighCut => (
+                20.0,
+                if cfg!(experimental_plateau_32k) {
+                    32000.0 * 0.49
+                } else {
+                    48000.0 * 0.49
+                },
+            ),
+            PlatModDepth => (0.0, 16.0),
+            VndMode | PlatFreeze => (0.0, 1.0),
+        };
+        (((self.value - min) / (max - min)).clamp(0.0, 1.0) * (40.0 * 65536.0) + 0.5) as u32
+    }
+
+    /// Rounded row accepted by the stock encoder-ring pattern routine.
+    pub fn ring_position(self) -> u32 {
+        (self.ring_position_q16() + 0x8000) >> 16
+    }
+
     /// Decodes the two words used to transfer a value to the display task.
     pub fn from_words(index: u32, bits: u32) -> Option<Self> {
         let id = EfxParamId::from_index(index)?;

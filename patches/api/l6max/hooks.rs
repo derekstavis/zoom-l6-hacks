@@ -92,6 +92,18 @@ define_function_hooks! {
         continuation: Linear,
         dynamic_dispatch: true,
     };
+    l6max_tap_press_handler {
+        displaced_len: 4,
+        guard_sha256: "2fbccadb605d6b64f6c861ee86093ac997c730539c2bc7e2b83d9e6a9dc150e2",
+        continuation: Linear,
+        dynamic_dispatch: true,
+    };
+    l6max_encoder_ring_pattern_apply {
+        displaced_len: 4,
+        guard_sha256: "90d0f4dca8b9cfa14674e9ea1f57cd8990bc17f089a15557bb19199796fb4535",
+        continuation: Linear,
+        dynamic_dispatch: true,
+    };
     midi_uart_rcv_msg_task {
         displaced_len: 4,
         guard_sha256: "a30a13e40c913a9c20c780f50b9e3c685038c53dca0f06a916ca7dad691d1a70",

@@ -8,6 +8,114 @@ pub enum ParameterBank {
     Plateau,
 }
 
+/// The eight recorder encoders expose one parameter each in the selected bank.
+pub const fn encoder_parameter(bank: ParameterBank, encoder: usize) -> Option<EfxParamId> {
+    use EfxParamId::*;
+    let ids = match bank {
+        ParameterBank::Velvet => [
+            VndAmount,
+            VndTimeSpread,
+            VndDensity,
+            VndDecay,
+            VndRefresh,
+            VndMode,
+            VndTransition,
+            GlobalCascade,
+        ],
+        ParameterBank::Plateau => [
+            PlatPreDelay,
+            PlatSize,
+            PlatDecay,
+            PlatLowCut,
+            PlatHighCut,
+            PlatDiffusion,
+            PlatModDepth,
+            PlatFreeze,
+        ],
+    };
+    if encoder < ids.len() {
+        Some(ids[encoder])
+    } else {
+        None
+    }
+}
+
+pub fn ring_position(
+    bank: ParameterBank,
+    encoder: usize,
+    processor: &super::routing::DualEfxProcessor,
+) -> Option<u32> {
+    encoder_parameter(bank, encoder).map(|id| snapshot_parameter(id, processor).ring_position_q16())
+}
+
+/// Predicts a ring row from the control task's encoder delta. The audio task
+/// replaces this estimate with the applied processor value after consuming
+/// the edit event.
+pub fn preview_ring_position(
+    bank: ParameterBank,
+    encoder: usize,
+    current_q16: u32,
+    delta: i32,
+) -> Option<u32> {
+    use EfxParamId::*;
+    let id = encoder_parameter(bank, encoder)?;
+    let snapshot = match id {
+        VndAmount | PlatDiffusion | GlobalCascade => (0.0, 100.0),
+        VndTimeSpread => (1.0, 100.0),
+        VndDensity => (10.0, 4600.0),
+        VndDecay => (-120.0, 0.0),
+        VndRefresh => (0.1, 60.0),
+        VndTransition => (1.0, 54000.0),
+        PlatPreDelay => (0.0, super::plateau::MAX_PREDELAY_MS),
+        PlatSize => (
+            1.0,
+            if cfg!(experimental_plateau_32k) {
+                400.0
+            } else {
+                120.0
+            },
+        ),
+        PlatDecay => (10.0, 99.9),
+        PlatLowCut | PlatHighCut => (
+            20.0,
+            if cfg!(experimental_plateau_32k) {
+                32000.0 * 0.49
+            } else {
+                48000.0 * 0.49
+            },
+        ),
+        PlatModDepth => (0.0, 16.0),
+        VndMode | PlatFreeze => {
+            return Some(if delta > 0 { 40 << 16 } else { 0 });
+        }
+    };
+    let display_delta = match (bank, encoder) {
+        (ParameterBank::Velvet, 0) => delta as f32 * 2.0,
+        (ParameterBank::Velvet, 1) => delta as f32,
+        (ParameterBank::Velvet, 2) => delta as f32 * 50.0,
+        (ParameterBank::Velvet, 3) => delta as f32 * 2.0,
+        (ParameterBank::Velvet, 4) => delta as f32 * 0.5,
+        (ParameterBank::Velvet, 6) => delta as f32 * 25.0,
+        (ParameterBank::Velvet, 7) => delta as f32 * 10.0,
+        (ParameterBank::Plateau, 0) => delta as f32 * 2.0,
+        (ParameterBank::Plateau, 1 | 2) => delta as f32 * 2.0,
+        (ParameterBank::Plateau, 3) => delta as f32 * 20.0,
+        (ParameterBank::Plateau, 4) => delta as f32 * 250.0,
+        (ParameterBank::Plateau, 5) => delta as f32 * 5.0,
+        (ParameterBank::Plateau, 6) => delta as f32 * 0.25,
+        _ => return None,
+    };
+    let (min, max) = snapshot;
+    let change = display_delta * (40.0 * 65536.0) / (max - min);
+    let position = current_q16 as f32 + change;
+    let rounded = if position >= 0.0 {
+        (position + 0.5) as i64
+    } else {
+        (position - 0.5) as i64
+    };
+    Some(rounded.clamp(0, (40 << 16) as i64) as u32)
+}
+
 /// Latest applied value for each inspector parameter. One audio task writes
 /// individual entries; selection can read them without borrowing DSP state.
 /// This does not reserve memory or synchronize callback lifetime.

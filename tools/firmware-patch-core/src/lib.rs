@@ -563,8 +563,6 @@ mod tests {
         assert!(!supports_firmware_patch("knob-dialog", FirmwareModel::L6));
         assert!(supports_sd_patch("midi-sync", FirmwareModel::L6));
         assert!(patch_package("patch-loader").is_some_and(|package| package.kind == "loader"));
-        assert!(supports_sd_patch("dual-efx", FirmwareModel::L6max));
-        assert!(patch_package("dual-efx").unwrap().effects.is_empty());
         for (package_name, effect_id) in [("efx-plateau", "plateau"), ("efx-velvet", "velvet")] {
             let package = patch_package(package_name).unwrap();
             assert_eq!(package.author, "VegaDeftwing");
@@ -668,13 +666,13 @@ mod tests {
 
     #[test]
     fn dependency_resolution_uses_package_order_and_includes_shared_dependency_once() {
-        let requested = ["dual-efx".to_owned(), "midi-control".to_owned()];
+        let requested = ["efx-plateau".to_owned(), "midi-control".to_owned()];
         assert_eq!(
             resolve_patch_dependencies(&requested).unwrap(),
             [
                 "knob-dialog".to_owned(),
                 "midi-control".to_owned(),
-                "dual-efx".to_owned(),
+                "efx-plateau".to_owned(),
             ]
         );
     }

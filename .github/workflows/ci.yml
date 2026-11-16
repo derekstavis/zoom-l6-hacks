@@ -56,11 +56,17 @@ jobs:
       - name: Fetch locked Rust dependencies
         run: cargo fetch --locked
       - name: Check Rust formatting
-        run: cargo fmt --all --check
+        run: |
+          cargo fmt --all --check
+          cargo fmt --manifest-path patches/efx-plateau/tests/Cargo.toml -- --check
+          cargo fmt --manifest-path patches/efx-velvet/tests/Cargo.toml -- --check
       - name: Check all Rust targets
         run: cargo check --locked --workspace --all-targets
       - name: Test Rust workspace
-        run: cargo test --locked --workspace
+        run: |
+          cargo test --locked --workspace
+          cargo test --locked --manifest-path patches/efx-plateau/tests/Cargo.toml
+          cargo test --locked --manifest-path patches/efx-velvet/tests/Cargo.toml
       - name: Test GPIO indicator decoder
         run: |
           cc -std=c11 -Wall -Wextra -Werror emulator/qemu/tests/indicators.c -o "$RUNNER_TEMP/l6-indicators"
@@ -153,11 +159,17 @@ jobs:
       - name: Fetch locked Rust dependencies
         run: cargo fetch --locked
       - name: Check Rust formatting
-        run: cargo fmt --all --check
+        run: |
+          cargo fmt --all --check
+          cargo fmt --manifest-path patches/efx-plateau/tests/Cargo.toml -- --check
+          cargo fmt --manifest-path patches/efx-velvet/tests/Cargo.toml -- --check
       - name: Check all Rust targets
         run: cargo check --locked --workspace --all-targets
       - name: Test Rust workspace
-        run: cargo test --locked --workspace
+        run: |
+          cargo test --locked --workspace
+          cargo test --locked --manifest-path patches/efx-plateau/tests/Cargo.toml
+          cargo test --locked --manifest-path patches/efx-velvet/tests/Cargo.toml
       - if: ${{ !inputs.release && github.ref == 'refs/heads/main' && steps.rust-cache.outputs.hit != 'true' }}
         uses: ./.github/actions/rust-cache/save
 

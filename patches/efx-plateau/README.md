@@ -7,3 +7,11 @@ exposes state initialization and sample processing to the shared effect router,
 and owns its encoder map, ranges, display values, and DSP updates. It is a
 build-time component and is not a separately installed SD file. The package
 depends on `knob-dialog` for parameter display.
+
+## DSP tests
+
+Run the host-side DSP unit tests with:
+
+```sh
+cargo test --manifest-path patches/efx-plateau/tests/Cargo.toml
+```

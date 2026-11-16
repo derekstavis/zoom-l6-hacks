@@ -470,8 +470,8 @@ fn prepare_sd_patch(fixture: &mut Fixture, dir: &Path) -> Result<(), String> {
                  selected: &[String],
                  effect_replacements: &[(String, String)]|
      -> Result<(), String> {
-        let experimental_qemu_module_arena = mode == l6patch::BuildMode::PatchLoader
-            && (patches.iter().any(|patch| patch == "dual-efx") || has_effect_replacements);
+        let experimental_qemu_module_arena =
+            mode == l6patch::BuildMode::PatchLoader && has_effect_replacements;
         let result = l6patch::build(l6patch::BuildRequest {
             source: source.clone(),
             output: output.to_path_buf(),
@@ -696,14 +696,11 @@ fn fixture_options(
                     if !members.iter().any(|member| member == "efx-loader")
                         || !members.iter().any(|member| member == "knob-dialog")
                         || effect_modules == 0
-                        || members.iter().any(|member| member == "dual-efx")
                     {
                         return Err("effect replacement bundle is missing the router, knob dialog, or selected effect modules".into());
                     }
-                } else if !members.iter().any(|member| member == "dual-efx")
-                    || !members.iter().any(|member| member == "knob-dialog")
-                {
-                    return Err("composed hook-chain fixture did not include both patches".into());
+                } else if members.is_empty() {
+                    return Err("composed module report has no package members".into());
                 }
                 let file = module["file"]
                     .as_str()

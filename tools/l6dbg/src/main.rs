@@ -2,6 +2,8 @@
 mod input;
 mod midi;
 mod popup_trigger;
+#[cfg(test)]
+mod probes;
 mod usb;
 use l6max_diagnostics::gdb::Gdb;
 use l6max_host::{engine::Options, headless::Headless, indicators::rings, panel::PanelData};

@@ -13,9 +13,6 @@ stock slots.
   initialization/sample processing entry points.
 - `efx-velvet` owns the Velvet decorrelator DSP, parameter editor, and its state
   initialization/sample processing entry points.
-- `dual-efx` remains the original combined patch with its parameter editor.
-  Its source now reuses the Plateau and Velvet DSP source files. It is not a
-  dependency of the replacement bundles.
 
 The effect packages declare their implementation IDs and optional controls in
 `package.toml`. Any implementation can be assigned to any supported stock
@@ -59,8 +56,7 @@ The emulator's **File → Firmware Patches…** window has separate Room and Spr
 selectors on L6max. Choose Stock, Plateau Plate, or Velvet Noise for each slot,
 then apply and restart. The emulator writes the matching combined bundle to the
 configured SD card and saves the assignments in `config.toml` under
-`[emulator.l6max.effect_replacements]`. These assignments require an SD card and
-cannot be combined with the legacy Dual EFX patch.
+`[emulator.l6max.effect_replacements]`. These assignments require an SD card.
 
 ## Composition and runtime
 
@@ -69,7 +65,7 @@ includes `efx-loader` and each distinct selected effect package. Every effect
 implementation is available for both Room and Spring. AINR is outside the
 assignable slot list. For
 example, `room = "velvet", spring = "stock"` links the router and `efx-velvet`
-only; it does not link `efx-plateau` or the legacy `dual-efx` package. Assigning
+only; it does not link `efx-plateau`. Assigning
 Velvet to both slots still links its code once. The selected-slot registry is generated
 by the composer and compiled into the module; there is no runtime plugin ABI.
 
@@ -101,8 +97,7 @@ module. Each module owns its encoder map, parameter ranges, display formatting,
 and DSP updates. For the editor, the effect supplies the label and formatted
 value through the knob-dialog API; knob-dialog renders that text. The router
 owns editor visibility, input routing, and ring feedback, and does not interpret
-parameter names, units, or values. Velvet exposes seven controls because the
-eighth Dual EFX encoder was a Dual-only cascade control.
+parameter names, units, or values. Velvet exposes seven controls.
 
 ## Validation
 
@@ -135,8 +130,6 @@ eighth Dual EFX encoder was a Dual-only cascade control.
 - The packaged `gui-menu` case selects a Room and Spring implementation in the
   emulator workflow, checks the saved assignments and generated SD bundle, then
   removes the effect selection and verifies that the card and firmware are restored.
-- The `sd-dual-efx-emulator` case continues to cover the original combined
-  patch and parameter editor.
 
 Memory ownership, callback timing, signal mapping, and audio quality are based
 on L6max MAIN 1.10 emulator observations and still need hardware qualification.

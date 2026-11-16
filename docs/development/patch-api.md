@@ -234,26 +234,34 @@ configuration rather than a runtime patch dependency.
 
 ```toml
 [package]
-name = "dual-efx"
+name = "efx-plateau"
 version = "1.0.0"
 kind = "patch"
-order = 50
-title = "Dual EFX"
+order = 52
+title = "Plateau Plate"
 author = "VegaDeftwing"
-summary = "Run two effects at once."
-description = "Runs both send effects with per-channel routing and editable parameters."
+summary = "Replace a stock effect with a plate reverb."
+description = "A lush, dense plate reverb inspired by the Valley Plateau design."
 models = ["L6max"]
-firmware_models = ["L6max"]
+firmware_models = []
 sd_card_models = ["L6max"]
 wasm_models = []
 website = false
-website_order = 0
+website_order = 52
 website_sd_models = []
 emulator_gui = false
-emulator_order = 0
+emulator_order = 52
 emulator_sd_models = []
 readme = "README.md"
 requires = ["knob-dialog"]
+
+[[effects]]
+id = "plateau"
+title = "Plateau Plate"
+based_on = { title = "Valley Plateau", url = "https://github.com/digitalartifactmusic/PlateauNEVersio" }
+learn_more = { title = "Plate reverb", url = "https://en.wikipedia.org/wiki/Reverb_effect#Plate_reverb" }
+controls = ["encoder-parameters"]
+tap_action = "toggle-editor"
 ```
 
 `firmware-patch-core` validates and enumerates these files through
@@ -263,7 +271,7 @@ as JSON instead of maintaining a second patch list.
 
 Composition is a build-time operation. It creates one BIN file named from the
 requested patch names and versions followed by dependency-only patch names and
-versions, such as `dual-efx-1.0.0-knob-dialog-1.0.0.bin`. A dependency shared
+versions, such as `efx-plateau-1.0.0-knob-dialog-1.0.0.bin`. A dependency shared
 by multiple requested patches is included once in that combined file. Separate
 builds each contain their own dependency copy. Removing the file removes all
 included features together. No runtime patch registry, initializer, or

@@ -61,6 +61,10 @@ fn collect_inputs(directory: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> 
     for entry in fs::read_dir(directory)? {
         let path = entry?.path();
         if path.is_dir() {
+            // Host-side test harnesses do not affect generated patch payloads.
+            if path.file_name().is_some_and(|name| name == "tests") {
+                continue;
+            }
             collect_inputs(&path, files)?;
         } else if matches!(
             path.extension().and_then(|extension| extension.to_str()),

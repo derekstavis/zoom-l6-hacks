@@ -356,6 +356,14 @@ export default function App() {
                   <div className="min-h-0 overflow-hidden">
                     <CardContent className={`flex flex-col gap-1 pt-3 ${supported ? '' : 'opacity-45'}`}>
                       <p className="text-muted-foreground text-sm leading-relaxed">{patch.description}</p>
+                      <a
+                        className="text-muted-foreground mt-0.5 w-fit text-xs underline underline-offset-3 hover:text-foreground"
+                        href={patch.readmeUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Read the docs
+                      </a>
                       <ModelSupportTags models={patch.models} />
                       {'demoImage' in patch && patch.demoImage && (
                         <img
@@ -375,22 +383,14 @@ export default function App() {
                       )}
                       <div className="mt-1 flex items-center justify-between gap-4">
                         <span className="text-xs font-medium">Installation method</span>
-                        <a
-                          className="text-muted-foreground text-right text-xs underline underline-offset-3 hover:text-foreground"
-                          href={patch.readmeUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Technical details
-                        </a>
-                      </div>
-                      <div className="inline-flex w-fit rounded-md border p-0.5" role="group" aria-label={`Installation method for ${patch.title}`}>
-                        <button type="button" disabled={!canLoadFromSd} aria-pressed={!selectedForSd} onClick={() => choosePatchDelivery(patch.id, false)} className={`rounded px-3 py-1.5 text-xs font-medium ${!selectedForSd ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'} disabled:cursor-not-allowed disabled:opacity-50`}>
-                        Firmware
+                        <div className="inline-flex w-fit rounded-md border p-0.5" role="group" aria-label={`Installation method for ${patch.title}`}>
+                          <button type="button" disabled={!canLoadFromSd} aria-pressed={!selectedForSd} onClick={() => choosePatchDelivery(patch.id, false)} className={`rounded px-3 py-1.5 text-xs font-medium ${!selectedForSd ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'} disabled:cursor-not-allowed disabled:opacity-50`}>
+                            Firmware
+                          </button>
+                          <button type="button" disabled={!canLoadFromSd} aria-pressed={selectedForSd} onClick={() => choosePatchDelivery(patch.id, true)} className={`rounded px-3 py-1.5 text-xs font-medium ${selectedForSd ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'} disabled:cursor-not-allowed disabled:opacity-50`}>
+                            SD card
                         </button>
-                        <button type="button" disabled={!canLoadFromSd} aria-pressed={selectedForSd} onClick={() => choosePatchDelivery(patch.id, true)} className={`rounded px-3 py-1.5 text-xs font-medium ${selectedForSd ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'} disabled:cursor-not-allowed disabled:opacity-50`}>
-                        SD card
-                        </button>
+                        </div>
                       </div>
                       {!loadablePatch && (
                         <p className="text-muted-foreground text-xs">Only available as a firmware patch.</p>
@@ -431,45 +431,70 @@ export default function App() {
                 <div className="min-h-0 overflow-hidden">
                   <CardContent className={`flex flex-col gap-2 pt-3 ${supported ? '' : 'opacity-45'}`}>
                     <p className="text-muted-foreground text-sm leading-relaxed">{effect.description}</p>
-                    <ModelSupportTags models={effect.models} />
-                    <div className="mt-1 flex items-center justify-between gap-4">
-                      <span className="text-xs font-medium">Installation method</span>
-                      <span className="text-muted-foreground text-xs">SD card</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-4">
-                      <span className="text-xs font-medium">Assign to a stock effect</span>
-                      <a
-                        className="text-muted-foreground text-right text-xs underline underline-offset-3 hover:text-foreground"
-                        href={effect.readmeUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Technical details
-                      </a>
-                    </div>
-                    <p className="text-muted-foreground text-xs">Choose Room and/or Spring. Each slot can use one effect.</p>
-                    <div className="inline-flex w-fit rounded-md border p-0.5" role="group" aria-label={`Stock effect assignment for ${effect.title}`}>
-                      {(['room', 'spring'] as const).map((slot) => {
-                        const assigned = effectReplacements[slot] ?? ''
-                        const isAssigned = assigned === effect.id
-                        const assignedEffect = EFFECT_REPLACEMENTS.find((candidate) => candidate.id === assigned)
-                        const unavailable = assigned !== '' && !isAssigned
-                        return (
-                          <button
-                            key={slot}
-                            type="button"
-                            aria-pressed={isAssigned}
-                            aria-label={`${slot === 'room' ? 'Room' : 'Spring'}${unavailable ? `, assigned to ${assignedEffect?.title ?? 'another effect'}` : ''}`}
-                            title={unavailable ? `Assigned to ${assignedEffect?.title ?? 'another effect'}` : undefined}
-                            disabled={!supported || unavailable}
-                            onClick={() => toggleEffectAssignment(effect.id, slot)}
-                            className={`rounded px-3 py-1.5 text-xs font-medium capitalize ${isAssigned ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'} disabled:cursor-not-allowed disabled:opacity-50`}
+                    <a
+                      className="text-muted-foreground mt-0.5 w-fit text-xs underline underline-offset-3 hover:text-foreground"
+                      href={effect.readmeUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Read the docs
+                    </a>
+                    {(effect.basedOn || effect.learnMore) && (
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                        {effect.basedOn && (
+                          <a
+                            className="text-muted-foreground underline underline-offset-3 hover:text-foreground"
+                            href={effect.basedOn.url}
+                            target="_blank"
+                            rel="noreferrer"
                           >
-                            {slot}
-                            {unavailable && assignedEffect && ` · Assigned to ${assignedEffect.title}`}
-                          </button>
-                        )
-                      })}
+                            Based on {effect.basedOn.title}
+                          </a>
+                        )}
+                        {effect.learnMore && (
+                          <a
+                            className="text-muted-foreground underline underline-offset-3 hover:text-foreground"
+                            href={effect.learnMore.url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Learn about {effect.learnMore.title}
+                          </a>
+                        )}
+                      </div>
+                    )}
+                    <ModelSupportTags models={effect.models} />
+                    <div className="mt-1 flex flex-wrap items-center justify-end gap-x-6 gap-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium">Installation method</span>
+                        <span className="text-muted-foreground text-xs">SD card</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium">Assign to</span>
+                        <div className="inline-flex w-fit rounded-md border p-0.5" role="group" aria-label={`Stock effect assignment for ${effect.title}`}>
+                          {(['room', 'spring'] as const).map((slot) => {
+                            const assigned = effectReplacements[slot] ?? ''
+                            const isAssigned = assigned === effect.id
+                            const assignedEffect = EFFECT_REPLACEMENTS.find((candidate) => candidate.id === assigned)
+                            const unavailable = assigned !== '' && !isAssigned
+                            return (
+                              <button
+                                key={slot}
+                                type="button"
+                                aria-pressed={isAssigned}
+                                aria-label={`${slot === 'room' ? 'Room' : 'Spring'}${unavailable ? `, assigned to ${assignedEffect?.title ?? 'another effect'}` : ''}`}
+                                title={unavailable ? `Assigned to ${assignedEffect?.title ?? 'another effect'}` : undefined}
+                                disabled={!supported || unavailable}
+                                onClick={() => toggleEffectAssignment(effect.id, slot)}
+                                className={`rounded px-3 py-1.5 text-xs font-medium capitalize ${isAssigned ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'} disabled:cursor-not-allowed disabled:opacity-50`}
+                              >
+                                {slot}
+                                {unavailable && assignedEffect && ` · Assigned to ${assignedEffect.title}`}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
                     </div>
                     {!supported && (
                       <p className="text-muted-foreground text-xs">Not available for {model}.</p>

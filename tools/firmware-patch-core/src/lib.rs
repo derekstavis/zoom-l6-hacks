@@ -46,9 +46,20 @@ pub struct EffectPackage {
     pub id: String,
     pub title: String,
     #[serde(default)]
+    pub based_on: Option<EffectLink>,
+    #[serde(default)]
+    pub learn_more: Option<EffectLink>,
+    #[serde(default)]
     pub controls: Vec<String>,
     #[serde(default = "default_tap_action")]
     pub tap_action: String,
+}
+
+/// Optional attribution or background link for an effect package.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EffectLink {
+    pub title: String,
+    pub url: String,
 }
 
 fn default_tap_action() -> String {
@@ -521,6 +532,8 @@ mod tests {
             effects: vec![EffectPackage {
                 id: id.into(),
                 title: id.into(),
+                based_on: None,
+                learn_more: None,
                 controls: Vec::new(),
                 tap_action: "stock".into(),
             }],

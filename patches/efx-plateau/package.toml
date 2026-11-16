@@ -6,7 +6,7 @@ order = 52
 title = "Plateau Plate"
 author = "VegaDeftwing"
 summary = "Replace a stock effect with a plate reverb."
-description = "A plate reverb effect for a supported stock effect slot."
+description = "A lush, dense plate reverb inspired by the Valley Plateau design."
 models = ["L6max"]
 firmware_models = []
 sd_card_models = ["L6max"]
@@ -23,5 +23,7 @@ requires = ["knob-dialog"]
 [[effects]]
 id = "plateau"
 title = "Plateau Plate"
+based_on = { title = "Valley Plateau", url = "https://github.com/digitalartifactmusic/PlateauNEVersio" }
+learn_more = { title = "Plate reverb", url = "https://en.wikipedia.org/wiki/Reverb_effect#Plate_reverb" }
 controls = ["encoder-parameters"]
 tap_action = "toggle-editor"

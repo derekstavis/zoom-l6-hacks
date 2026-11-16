@@ -32,6 +32,8 @@ export interface EffectReplacementInfo {
   packageId: string
   packageVersion: string
   readmeUrl: string
+  basedOn: { title: string; url: string } | null
+  learnMore: { title: string; url: string } | null
 }
 
 const readmeUrl = (patch: Package) =>
@@ -76,6 +78,8 @@ export const EFFECT_REPLACEMENTS: EffectReplacementInfo[] = catalog.packages
       packageId: patch.name,
       packageVersion: patch.version,
       readmeUrl: readmeUrl(patch),
+      basedOn: effect.based_on,
+      learnMore: effect.learn_more,
     })),
   )
 

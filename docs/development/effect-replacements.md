@@ -30,9 +30,14 @@ declare a TAP tempo action without exposing the parameter editor.
 [[effects]]
 id = "velvet"
 title = "Velvet Noise"
+based_on = { title = "Velvet Noise Decorrelator VST3", url = "https://github.com/115dkk/Velvet-Noise-Decorrelator-VST3" }
+learn_more = { title = "Velvet-noise decorrelation", url = "https://research.aalto.fi/en/publications/velvet-noise-decorrelator/" }
 controls = ["encoder-parameters"]
 tap_action = "toggle-editor"
 ```
+
+`based_on` and `learn_more` are optional HTTPS links. The web patcher displays
+them alongside the package documentation link when an effect provides them.
 
 An effect without encoder controls can leave `controls` empty and use stock TAP
 behavior, or declare `controls = ["tap-tempo"]` and `tap_action = "tempo"` to

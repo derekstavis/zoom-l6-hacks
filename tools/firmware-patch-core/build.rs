@@ -280,6 +280,29 @@ fn validate_effect_metadata(name: &str, effects: Option<&toml::Value>) {
             !title.trim().is_empty(),
             "{name}: effect title cannot be empty"
         );
+        for key in ["based_on", "learn_more"] {
+            if let Some(link) = effect.get(key) {
+                let link = link
+                    .as_table()
+                    .unwrap_or_else(|| panic!("{name}: effect {key} must be a table"));
+                let title = link
+                    .get("title")
+                    .and_then(toml::Value::as_str)
+                    .unwrap_or_else(|| panic!("{name}: effect {key}.title must be a string"));
+                let url = link
+                    .get("url")
+                    .and_then(toml::Value::as_str)
+                    .unwrap_or_else(|| panic!("{name}: effect {key}.url must be a string"));
+                assert!(
+                    !title.trim().is_empty(),
+                    "{name}: effect {key}.title cannot be empty"
+                );
+                assert!(
+                    url.starts_with("https://") && url.len() > "https://".len(),
+                    "{name}: effect {key}.url must be an HTTPS URL"
+                );
+            }
+        }
         let controls = effect
             .get("controls")
             .and_then(toml::Value::as_array)

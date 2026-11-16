@@ -72,14 +72,14 @@ function AuthorByline({ author }: { author: string }) {
   )
 }
 
-function FirmwareOnlyInfo() {
+function InstallMethodInfo({ message }: { message: string }) {
   return (
     <Tooltip.Provider delayDuration={250}>
       <Tooltip.Root>
         <Tooltip.Trigger asChild>
           <button
             type="button"
-            aria-label="Why is SD card installation unavailable?"
+            aria-label="Installation method information"
             className="text-muted-foreground inline-flex size-4 items-center justify-center rounded-full hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
             <Info aria-hidden="true" className="size-3.5" />
@@ -91,12 +91,56 @@ function FirmwareOnlyInfo() {
             sideOffset={6}
             className="bg-primary text-primary-foreground z-50 max-w-56 rounded-md px-3 py-1.5 text-xs shadow-md"
           >
-            This patch can only be installed through a firmware update.
+            {message}
             <Tooltip.Arrow className="fill-primary" />
           </Tooltip.Content>
         </Tooltip.Portal>
       </Tooltip.Root>
     </Tooltip.Provider>
+  )
+}
+
+function InstallationMethodLabel({ info }: { info?: string }) {
+  return (
+    <span className="flex items-center gap-1.5 text-xs font-medium">
+      Installation method
+      {info && <InstallMethodInfo message={info} />}
+    </span>
+  )
+}
+
+function InstallationMethodControl({
+  title,
+  selected,
+  disabled,
+  onChange,
+}: {
+  title: string
+  selected: 'firmware' | 'sd-card'
+  disabled: boolean
+  onChange?: (method: 'firmware' | 'sd-card') => void
+}) {
+  return (
+    <div className="inline-flex w-fit rounded-md border p-0.5" role="group" aria-label={`Installation method for ${title}`}>
+      {([
+        ['firmware', 'Firmware'],
+        ['sd-card', 'SD card'],
+      ] as const).map(([method, label]) => {
+        const isSelected = selected === method
+        return (
+          <button
+            key={method}
+            type="button"
+            disabled={disabled}
+            aria-pressed={isSelected}
+            onClick={() => onChange?.(method)}
+            className={`rounded px-3 py-1.5 text-xs font-medium ${isSelected ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'} disabled:cursor-not-allowed disabled:opacity-50`}
+          >
+            {label}
+          </button>
+        )
+      })}
+    </div>
   )
 }
 
@@ -411,18 +455,15 @@ export default function App() {
                         <p className="text-muted-foreground text-xs">Not available for {model}.</p>
                       )}
                       <div className="mt-1 flex items-center justify-between gap-4">
-                        <span className="flex items-center gap-1.5 text-xs font-medium">
-                          Installation method
-                          {!loadablePatch && <FirmwareOnlyInfo />}
-                        </span>
-                        <div className="inline-flex w-fit rounded-md border p-0.5" role="group" aria-label={`Installation method for ${patch.title}`}>
-                          <button type="button" disabled={!canLoadFromSd} aria-pressed={!selectedForSd} onClick={() => choosePatchDelivery(patch.id, false)} className={`rounded px-3 py-1.5 text-xs font-medium ${!selectedForSd ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'} disabled:cursor-not-allowed disabled:opacity-50`}>
-                            Firmware
-                          </button>
-                          <button type="button" disabled={!canLoadFromSd} aria-pressed={selectedForSd} onClick={() => choosePatchDelivery(patch.id, true)} className={`rounded px-3 py-1.5 text-xs font-medium ${selectedForSd ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'} disabled:cursor-not-allowed disabled:opacity-50`}>
-                            SD card
-                        </button>
-                        </div>
+                        <InstallationMethodLabel
+                          info={!loadablePatch ? 'This patch can only be installed through a firmware update.' : undefined}
+                        />
+                        <InstallationMethodControl
+                          title={patch.title}
+                          selected={selectedForSd ? 'sd-card' : 'firmware'}
+                          disabled={!canLoadFromSd}
+                          onChange={(method) => choosePatchDelivery(patch.id, method === 'sd-card')}
+                        />
                       </div>
                     </CardContent>
                   </div>
@@ -502,10 +543,17 @@ export default function App() {
                       Read the docs
                     </a>
                     <ModelSupportTags models={effect.models} />
-                    <div className="mt-1 grid w-full grid-cols-[minmax(0,1fr)_auto] items-center justify-end gap-x-3 gap-y-2">
-                      <span className="text-right text-xs font-medium">Installation method</span>
-                      <span className="text-muted-foreground text-xs">SD card</span>
-                      <span className="text-right text-xs font-medium">Assign to</span>
+                    <div className="mt-1 flex flex-col gap-2">
+                      <div className="flex items-center justify-between gap-4">
+                        <InstallationMethodLabel info="This effect can only be installed from an SD card." />
+                        <InstallationMethodControl
+                          title={effect.title}
+                          selected="sd-card"
+                          disabled
+                        />
+                      </div>
+                      <div className="flex items-center justify-between gap-4">
+                      <span className="text-xs font-medium">Assign to</span>
                       <DropdownMenu.Root>
                         <DropdownMenu.Trigger asChild>
                           <Button
@@ -558,6 +606,7 @@ export default function App() {
                           </DropdownMenu.Content>
                         </DropdownMenu.Portal>
                       </DropdownMenu.Root>
+                      </div>
                     </div>
                     {!supported && (
                       <p className="text-muted-foreground text-xs">Not available for {model}.</p>

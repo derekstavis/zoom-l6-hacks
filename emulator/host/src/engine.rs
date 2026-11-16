@@ -5,6 +5,7 @@ use crate::{
     shared_memory::SharedRam,
 };
 use std::{
+    collections::BTreeMap,
     env,
     ffi::OsString,
     fs::{self, File},
@@ -37,6 +38,8 @@ pub struct Options {
     /// Patches the Patch loader reads from the SD card, chosen for this run in
     /// place of the configured ones.
     pub sd_patches: Option<Vec<String>>,
+    /// Custom effect assignments compiled into the SD effect bundle.
+    pub effect_replacements: Option<BTreeMap<String, String>>,
     /// Which configured firmware to run; L6max when both are configured.
     pub model: Option<l6fw::Model>,
     pub firmware_dir: PathBuf,
@@ -216,6 +219,15 @@ impl Options {
         })
     }
 
+    /// The custom effects assigned to the model's Room and Spring slots.
+    pub fn selected_effect_replacements(&self, model: l6fw::Model) -> BTreeMap<String, String> {
+        self.effect_replacements.clone().unwrap_or_else(|| {
+            self.config.as_ref().map_or_else(BTreeMap::new, |config| {
+                config.effect_replacements(model).clone()
+            })
+        })
+    }
+
     /// Reread the configuration after saving a change to it.
     pub fn reload_config(&mut self) -> Result<(), String> {
         if let Some(file) = &self.config_path {
@@ -238,6 +250,7 @@ impl Options {
             config_path: None,
             patches: None,
             sd_patches: None,
+            effect_replacements: None,
             model: None,
             firmware_dir: workspace.join("unpacked"),
             firmware_package: env::var_os("L6_FIRMWARE").map(PathBuf::from),
@@ -279,6 +292,21 @@ impl Options {
                     crate::config::check_patch(&name)?;
                     options.sd_patches.get_or_insert_default().push(name);
                 }
+                "--effect-replacement" => {
+                    let value = args
+                        .next()
+                        .ok_or("--effect-replacement requires SLOT=EFFECT")?
+                        .into_string()
+                        .map_err(|_| "--effect-replacement must be valid UTF-8")?;
+                    let (slot, effect) = value
+                        .split_once('=')
+                        .filter(|(slot, effect)| !slot.is_empty() && !effect.is_empty())
+                        .ok_or("--effect-replacement requires SLOT=EFFECT")?;
+                    options
+                        .effect_replacements
+                        .get_or_insert_default()
+                        .insert(slot.to_owned(), effect.to_owned());
+                }
                 "--no-patches" => no_patches = true,
                 "--ui-input-smoke" => {
                     return Err("the standalone UI smoke was migrated; run `cargo run -p l6test -- run --case panel --model MODEL --backend gui` instead".into());
@@ -319,7 +347,7 @@ impl Options {
                 "--volatile" => options.state_dir = None,
                 "--help" | "-h" => {
                     println!(
-                        "Engine options: [QEMU] [--qemu PATH] [--audio-device 'driver=...,id=...'] [--config FILE] [--model l6|l6max] [--patch NAME]... [--sd-patch NAME]... [--no-patches] [--firmware-dir DIR | --firmware-package PACKAGE] [--update-package PACKAGE] [--no-auto-setup] [--logs DIR] [--state-dir DIR | --volatile] [--sd-image FILE | --no-sd] [--update-bootloader] [--usb] [--midi] [--trace-sd] [--smoke-scenario FILE] [--gdb-socket PATH] [--control-socket PATH] [--start-paused]"
+                        "Engine options: [QEMU] [--qemu PATH] [--audio-device 'driver=...,id=...'] [--config FILE] [--model l6|l6max] [--patch NAME]... [--sd-patch NAME]... [--effect-replacement SLOT=EFFECT]... [--no-patches] [--firmware-dir DIR | --firmware-package PACKAGE] [--update-package PACKAGE] [--no-auto-setup] [--logs DIR] [--state-dir DIR | --volatile] [--sd-image FILE | --no-sd] [--update-bootloader] [--usb] [--midi] [--trace-sd] [--smoke-scenario FILE] [--gdb-socket PATH] [--control-socket PATH] [--start-paused]"
                     );
                     std::process::exit(0);
                 }
@@ -332,11 +360,18 @@ impl Options {
             return Err("--no-sd conflicts with --sd-image".into());
         }
         if no_patches {
-            if options.patches.is_some() || options.sd_patches.is_some() {
-                return Err("--no-patches conflicts with --patch and --sd-patch".into());
+            if options.patches.is_some()
+                || options.sd_patches.is_some()
+                || options.effect_replacements.is_some()
+            {
+                return Err(
+                    "--no-patches conflicts with --patch, --sd-patch, and --effect-replacement"
+                        .into(),
+                );
             }
             options.patches = Some(Vec::new());
             options.sd_patches = Some(Vec::new());
+            options.effect_replacements = Some(BTreeMap::new());
         }
         options.qemu = options.qemu.or_else(crate::setup::existing_qemu);
         options.apply_config(config_file, &workspace)?;

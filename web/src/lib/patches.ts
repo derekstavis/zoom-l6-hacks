@@ -22,6 +22,14 @@ export interface LoadablePatchInfo {
   order: number
 }
 
+export interface EffectReplacementInfo {
+  id: string
+  title: string
+  packageId: string
+  packageVersion: string
+  slots: readonly string[]
+}
+
 const readmeUrl = (patch: Package) =>
   `https://github.com/derekstavis/zoom-l6max/blob/main/patches/${patch.name}/${patch.readme}`
 const models = (values: string[]) => values as ('L6' | 'L6max')[]
@@ -51,3 +59,26 @@ export const LOADABLE_PATCHES: LoadablePatchInfo[] = visiblePackages
     fileName: patch.file_name,
     order: patch.order,
   }))
+
+export const EFFECT_REPLACEMENTS: EffectReplacementInfo[] = catalog.packages
+  .flatMap((patch) =>
+    (patch.effects ?? []).map((effect) => ({
+      id: effect.id,
+      title: effect.title,
+      packageId: patch.name,
+      packageVersion: patch.version,
+      slots: effect.stock_slots,
+    })),
+  )
+
+export function effectReplacementFileName(replacements: Record<string, string>) {
+  const selectedIds = [...new Set(Object.values(replacements).filter(Boolean))]
+  const packages = selectedIds
+    .map((id) => EFFECT_REPLACEMENTS.find((effect) => effect.id === id))
+    .filter((effect): effect is EffectReplacementInfo => effect !== undefined)
+    .map((effect) => `${effect.packageId}-${effect.packageVersion}`)
+  const packagePart = [...new Set(packages)].join('-')
+  const room = replacements.room || 'stock'
+  const spring = replacements.spring || 'stock'
+  return `effect-replacements-${packagePart}-room-${room}-spring-${spring}.bin`
+}

@@ -7,7 +7,12 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { applyPatches, detectFirmwareModel, type FirmwareModel, type PatchOutcome } from '@/lib/wasm'
-import { LOADABLE_PATCHES, PATCHES } from '@/lib/patches'
+import {
+  EFFECT_REPLACEMENTS,
+  LOADABLE_PATCHES,
+  PATCHES,
+  effectReplacementFileName,
+} from '@/lib/patches'
 
 type Status =
   | { kind: 'idle' }
@@ -60,13 +65,18 @@ export default function App() {
   const [loadFromSd, setLoadFromSd] = useState<Set<string>>(
     () => new Set(LOADABLE_PATCHES.map((patch) => patch.id)),
   )
+  const [effectReplacements, setEffectReplacements] = useState<Record<string, string>>({
+    room: '',
+    spring: '',
+  })
   const [file, setFile] = useState<File | null>(null)
   const [model, setModel] = useState<FirmwareModel | null>(null)
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
   const [archiveStatus, setArchiveStatus] = useState<ArchiveStatus>({ kind: 'idle' })
   const fileInputRef = useRef<HTMLInputElement>(null)
   const fileRequest = useRef(0)
-  const installPatchLoader = [...selected].some((id) => loadFromSd.has(id))
+  const hasEffectReplacements = Object.values(effectReplacements).some(Boolean)
+  const installPatchLoader = hasEffectReplacements || [...selected].some((id) => loadFromSd.has(id))
   const sdPatchesToDownload = model
     ? LOADABLE_PATCHES.filter(
         (patch) =>
@@ -75,8 +85,8 @@ export default function App() {
     : []
 
   const canApply = useMemo(
-    () => file !== null && model !== null && selected.size > 0 && status.kind !== 'working',
-    [file, model, selected, status],
+    () => file !== null && model !== null && (selected.size > 0 || hasEffectReplacements) && status.kind !== 'working',
+    [file, model, selected, hasEffectReplacements, status],
   )
 
   function togglePatch(id: string, checked: boolean) {
@@ -115,6 +125,7 @@ export default function App() {
       setModel(detected)
       setSelected(new Set(PATCHES.filter((patch) => patch.models.includes(detected)).map((patch) => patch.id)))
       setLoadFromSd(new Set(LOADABLE_PATCHES.filter((patch) => patch.models.includes(detected)).map((patch) => patch.id)))
+      setEffectReplacements({ room: '', spring: '' })
     } catch (error) {
       if (request !== fileRequest.current) return
       setStatus({ kind: 'error', message: error instanceof Error ? error.message : String(error) })
@@ -152,6 +163,14 @@ export default function App() {
           return [`PATCHES/${prefix}-${patch.fileName}`, new Uint8Array(await response.arrayBuffer())] as const
         }),
       )
+      if (hasEffectReplacements && model === 'L6max') {
+        const fileName = effectReplacementFileName(effectReplacements)
+        const response = await fetch(
+          `${import.meta.env.BASE_URL}loadable-patches/${model}/${fileName}`,
+        )
+        if (!response.ok) throw new Error("Couldn't load the selected effect replacements.")
+        entries.push([`PATCHES/50-${fileName}`, new Uint8Array(await response.arrayBuffer())])
+      }
       const files: Record<string, Uint8Array> = Object.fromEntries(entries)
       files[`${model}.BIN`] = status.outcome.package
       const archive = zipSync(files, { level: 0 })
@@ -337,6 +356,47 @@ export default function App() {
               </Card>
             )
           })}
+      </section>
+
+      <section className="flex flex-col gap-4" aria-labelledby="effect-replacement-title">
+        <div className="flex flex-col gap-1">
+          <h2 id="effect-replacement-title" className="text-xl font-semibold tracking-tight">
+            Effect replacements
+          </h2>
+          <p className="text-muted-foreground text-sm leading-relaxed">
+            Choose a replacement for each stock effect. The mixer still runs one selected effect at a time.
+          </p>
+        </div>
+        <Card>
+          <CardContent className="flex flex-col gap-4">
+            {(['room', 'spring'] as const).map((slot) => (
+              <div key={slot} className="flex flex-col gap-1.5">
+                <Label htmlFor={`effect-${slot}`} className="text-sm font-medium capitalize">
+                  {slot === 'room' ? 'Room' : 'Spring'}
+                </Label>
+                <select
+                  id={`effect-${slot}`}
+                  value={effectReplacements[slot] ?? ''}
+                  disabled={model !== 'L6max'}
+                  onChange={(event) => {
+                    setEffectReplacements((previous) => ({ ...previous, [slot]: event.target.value }))
+                    setStatus({ kind: 'idle' })
+                    setArchiveStatus({ kind: 'idle' })
+                  }}
+                  className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full rounded-md border px-3 text-sm outline-none focus-visible:ring-3 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <option value="">Stock effect</option>
+                  {EFFECT_REPLACEMENTS.filter((effect) => effect.slots.includes(slot)).map((effect) => (
+                    <option key={effect.id} value={effect.id}>{effect.title}</option>
+                  ))}
+                </select>
+              </div>
+            ))}
+            {model !== 'L6max' && (
+              <p className="text-muted-foreground text-xs">Effect replacements are currently available for L6max.</p>
+            )}
+          </CardContent>
+        </Card>
       </section>
 
       <section className="flex flex-col gap-4" aria-labelledby="download-update-title">

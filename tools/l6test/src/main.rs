@@ -42,6 +42,7 @@ struct Fixture {
     installed_patches: Vec<String>,
     installed_sd_patches: Vec<String>,
     sd_patches: Option<Vec<String>>,
+    effect_replacements: BTreeMap<String, String>,
     sd_bundle_mode: Option<String>,
     sd_bundle: Option<PathBuf>,
     update_package: Option<PathBuf>,
@@ -357,6 +358,7 @@ fn case_fixture(
         installed_patches: scenario.map_or_else(Vec::new, |s| s.installed_patches.clone()),
         installed_sd_patches: scenario.map_or_else(Vec::new, |s| s.installed_sd_patches.clone()),
         sd_patches: scenario.and_then(|s| s.sd_patches.clone()),
+        effect_replacements: scenario.map_or_else(BTreeMap::new, |s| s.effect_replacements.clone()),
         sd_bundle_mode: scenario.and_then(|s| s.sd_bundle_mode.clone()),
         sd_bundle: None,
         update_package: None,
@@ -450,7 +452,9 @@ fn prepare_sd_patch(fixture: &mut Fixture, dir: &Path) -> Result<(), String> {
     if !fixture.installed_patches.is_empty() {
         return Err("SD patch fixtures cannot combine installed_patches".into());
     }
-    if !patches.is_empty() && fixture.card_spec.is_none() {
+    if (!patches.is_empty() || !fixture.effect_replacements.is_empty())
+        && fixture.card_spec.is_none()
+    {
         return Err("SD patches need a card spec".into());
     }
     let package = fixture
@@ -460,48 +464,68 @@ fn prepare_sd_patch(fixture: &mut Fixture, dir: &Path) -> Result<(), String> {
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let source = dir.join("sd-stock-firmware");
     l6fw::unpack(package, &source)?;
-    let build =
-        |output: &Path, mode: l6patch::BuildMode, selected: &[String]| -> Result<(), String> {
-            let experimental_qemu_module_arena = mode == l6patch::BuildMode::PatchLoader
-                && patches.iter().any(|patch| patch == "dual-efx");
-            let result = l6patch::build(l6patch::BuildRequest {
-                source: source.clone(),
-                output: output.to_path_buf(),
-                patches: selected.to_vec(),
-                version: None,
-                mode,
-                experimental_qemu_module_arena,
-            });
-            let name = if mode == l6patch::BuildMode::PatchLoader {
-                "patch-loader-build.log"
-            } else {
-                "sd-patches-build.log"
-            };
-            match result {
-                Ok(()) => fs::write(
-                    dir.join(name),
-                    format!("l6patch {mode:?} build succeeded\n"),
-                )
-                .map_err(|e| e.to_string())?,
-                Err(error) => {
-                    let message = format!("l6patch failed: {error}");
-                    fs::write(dir.join(name), &message).map_err(|e| e.to_string())?;
-                    return Err(message);
-                }
-            }
-            Ok(())
+    let has_effect_replacements = !fixture.effect_replacements.is_empty();
+    let build = |output: &Path,
+                 mode: l6patch::BuildMode,
+                 selected: &[String],
+                 effect_replacements: &[(String, String)]|
+     -> Result<(), String> {
+        let experimental_qemu_module_arena = mode == l6patch::BuildMode::PatchLoader
+            && (patches.iter().any(|patch| patch == "dual-efx") || has_effect_replacements);
+        let result = l6patch::build(l6patch::BuildRequest {
+            source: source.clone(),
+            output: output.to_path_buf(),
+            patches: selected.to_vec(),
+            effect_replacements: effect_replacements.to_vec(),
+            version: None,
+            mode,
+            experimental_qemu_module_arena,
+        });
+        let name = if mode == l6patch::BuildMode::PatchLoader {
+            "patch-loader-build.log"
+        } else {
+            "sd-patches-build.log"
         };
+        match result {
+            Ok(()) => fs::write(
+                dir.join(name),
+                format!("l6patch {mode:?} build succeeded\n"),
+            )
+            .map_err(|e| e.to_string())?,
+            Err(error) => {
+                let message = format!("l6patch failed: {error}");
+                fs::write(dir.join(name), &message).map_err(|e| e.to_string())?;
+                return Err(message);
+            }
+        }
+        Ok(())
+    };
     let loader = dir.join("patch-loader-firmware");
-    build(&loader, l6patch::BuildMode::PatchLoader, &fixture.patches)?;
+    build(
+        &loader,
+        l6patch::BuildMode::PatchLoader,
+        &fixture.patches,
+        &[],
+    )?;
     fixture.firmware_package = Some(loader.join(if fixture.model == "l6" {
         "L6.BIN"
     } else {
         "L6max.bin"
     }));
     fixture.patches.clear();
-    if !patches.is_empty() {
+    if !patches.is_empty() || !fixture.effect_replacements.is_empty() {
         let bundle = dir.join("sd-patches-build");
-        build(&bundle, l6patch::BuildMode::SdBundle, &patches)?;
+        let effect_replacements = fixture
+            .effect_replacements
+            .iter()
+            .map(|(slot, effect)| (slot.clone(), effect.clone()))
+            .collect::<Vec<_>>();
+        build(
+            &bundle,
+            l6patch::BuildMode::SdBundle,
+            &patches,
+            &effect_replacements,
+        )?;
         fixture.sd_bundle = Some(bundle.join("PATCHES"));
     }
     Ok(())
@@ -663,7 +687,19 @@ fn fixture_options(
                 let members = module["members"]
                     .as_array()
                     .ok_or("composed module report has no members")?;
-                if !members.iter().any(|member| member == "dual-efx")
+                if !fixture.effect_replacements.is_empty() {
+                    let effect_modules = members
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .filter(|member| *member == "efx-plateau" || *member == "efx-velvet")
+                        .count();
+                    if !members.iter().any(|member| member == "effect-replacements")
+                        || effect_modules == 0
+                        || members.iter().any(|member| member == "dual-efx")
+                    {
+                        return Err("effect replacement bundle did not contain only the router and selected effect modules".into());
+                    }
+                } else if !members.iter().any(|member| member == "dual-efx")
                     || !members.iter().any(|member| member == "knob-dialog")
                 {
                     return Err("composed hook-chain fixture did not include both patches".into());
@@ -735,7 +771,7 @@ fn fixture_options(
         args.extend(["--sd-patch".into(), patch.into()]);
     }
     let options = Options::parse_args(args)?;
-    let manifest = json!({"fixture":fixture.name,"model":fixture.model,"firmware":files(&firmware)?,"package_sha256":selected_package.as_ref().map(|p|hash(p)).transpose()?,"patches":fixture.patches,"sd_patches":fixture.sd_patches,"installed_patches":fixture.installed_patches,"installed_sd_patches":fixture.installed_sd_patches,"sd_bundle_mode":fixture.sd_bundle_mode,"sd_patch_set_sha256":fixture.sd_bundle.as_ref().map(|p|hash_patch_directory(p)).transpose()?,"update_package_sha256":fixture.update_package.as_ref().map(|p|hash(p)).transpose()? ,"state_spec":state_spec,"sd_sha256":sd_hash,"audio_device":audio_device,"qemu_sha256":config.qemu_sha256});
+    let manifest = json!({"fixture":fixture.name,"model":fixture.model,"firmware":files(&firmware)?,"package_sha256":selected_package.as_ref().map(|p|hash(p)).transpose()?,"patches":fixture.patches,"sd_patches":fixture.sd_patches,"effect_replacements":fixture.effect_replacements,"installed_patches":fixture.installed_patches,"installed_sd_patches":fixture.installed_sd_patches,"sd_bundle_mode":fixture.sd_bundle_mode,"sd_patch_set_sha256":fixture.sd_bundle.as_ref().map(|p|hash_patch_directory(p)).transpose()?,"update_package_sha256":fixture.update_package.as_ref().map(|p|hash(p)).transpose()? ,"state_spec":state_spec,"sd_sha256":sd_hash,"audio_device":audio_device,"qemu_sha256":config.qemu_sha256});
     Ok((options, manifest))
 }
 fn engine_args(options: &Options) -> Vec<String> {
@@ -1664,6 +1700,7 @@ mod tests {
             installed_patches: vec![],
             installed_sd_patches: vec![],
             sd_patches: Some(selected.clone()),
+            effect_replacements: BTreeMap::new(),
             sd_bundle_mode: None,
             sd_bundle: None,
             update_package: None,
@@ -1726,6 +1763,7 @@ mod tests {
             installed_patches: vec![],
             installed_sd_patches: vec![],
             sd_patches: None,
+            effect_replacements: BTreeMap::new(),
             sd_bundle_mode: None,
             sd_bundle: None,
             update_package: None,

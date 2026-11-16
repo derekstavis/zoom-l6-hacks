@@ -14,8 +14,8 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-const USAGE: &str = "Usage: l6patch INPUT_UNPACKED_DIR OUTPUT_DIR [--patch NAME]... [--update-version FOUR_DIGITS] [--experimental-patch-bundle | --experimental-patch-loader] [--experimental-qemu-module-arena]\n\
-Patch names come from patches/<name>/package.toml. Repeat --patch to select multiple patches; dependencies are included automatically. The Patch loader is experimental and unqualified.";
+const USAGE: &str = "Usage: l6patch INPUT_UNPACKED_DIR OUTPUT_DIR [--patch NAME]... [--effect-replacement SLOT=ID]... [--update-version FOUR_DIGITS] [--experimental-patch-bundle | --experimental-patch-loader] [--experimental-qemu-module-arena]\n\
+Patch names come from patches/<name>/package.toml. Repeat --patch to select multiple patches; dependencies are included automatically. Effect replacement assignments build one composed SD module. The Patch loader is experimental and unqualified.";
 
 const SD_MODULE_BASE: u32 = 0x8011_0000;
 const SD_MODULE_END: u32 = 0x8011_8000;
@@ -27,6 +27,7 @@ struct Options {
     output: PathBuf,
     patches: Option<Vec<String>>,
     requested_patches: Vec<String>,
+    effect_replacements: Vec<(String, String)>,
     version: Option<String>,
     experimental_sd_bundle: bool,
     experimental_patch_loader: bool,
@@ -38,6 +39,7 @@ fn parse_args() -> Result<Options, Box<dyn std::error::Error>> {
         return Err(USAGE.into());
     };
     let mut requested = Vec::new();
+    let mut effect_replacements = Vec::new();
     let mut version = None;
     let mut experimental_sd_bundle = false;
     let mut experimental_patch_loader = false;
@@ -60,10 +62,20 @@ fn parse_args() -> Result<Options, Box<dyn std::error::Error>> {
             "--patch" => {
                 requested.push(value);
             }
+            "--effect-replacement" => {
+                let (slot, id) = value
+                    .split_once('=')
+                    .ok_or("effect replacement must be SLOT=ID")?;
+                if slot.is_empty() || id.is_empty() {
+                    return Err("effect replacement must be SLOT=ID".into());
+                }
+                effect_replacements.push((slot.to_owned(), id.to_owned()));
+            }
             "--update-version" => version = Some(value),
             _ => return Err(USAGE.into()),
         }
     }
+    merge_effect_replacement_packages(&mut requested, &effect_replacements)?;
     let patches = if requested.is_empty() {
         None
     } else {
@@ -78,6 +90,9 @@ fn parse_args() -> Result<Options, Box<dyn std::error::Error>> {
     if experimental_sd_bundle && experimental_patch_loader {
         return Err("build the loader and SD bundle in separate output directories".into());
     }
+    if !effect_replacements.is_empty() && !experimental_sd_bundle {
+        return Err("effect replacements are available only in an SD patch bundle".into());
+    }
     if experimental_qemu_module_arena && !experimental_patch_loader {
         return Err("the QEMU module arena requires --experimental-patch-loader".into());
     }
@@ -86,6 +101,7 @@ fn parse_args() -> Result<Options, Box<dyn std::error::Error>> {
         output: PathBuf::from(output),
         patches,
         requested_patches: requested,
+        effect_replacements,
         version,
         experimental_sd_bundle,
         experimental_patch_loader,
@@ -292,6 +308,7 @@ pub struct BuildRequest {
     pub source: PathBuf,
     pub output: PathBuf,
     pub patches: Vec<String>,
+    pub effect_replacements: Vec<(String, String)>,
     pub version: Option<String>,
     pub mode: BuildMode,
     pub experimental_qemu_module_arena: bool,
@@ -302,7 +319,11 @@ pub fn build(request: BuildRequest) -> Result<(), Box<dyn std::error::Error>> {
     if request.experimental_qemu_module_arena && request.mode != BuildMode::PatchLoader {
         return Err("the QEMU module arena requires patch-loader mode".into());
     }
-    let requested_patches = request.patches;
+    if !request.effect_replacements.is_empty() && request.mode != BuildMode::SdBundle {
+        return Err("effect replacements are available only in an SD patch bundle".into());
+    }
+    let mut requested_patches = request.patches;
+    merge_effect_replacement_packages(&mut requested_patches, &request.effect_replacements)?;
     let patches = if requested_patches.is_empty() {
         None
     } else {
@@ -313,11 +334,27 @@ pub fn build(request: BuildRequest) -> Result<(), Box<dyn std::error::Error>> {
         output: request.output,
         patches,
         requested_patches,
+        effect_replacements: request.effect_replacements,
         version: request.version,
         experimental_sd_bundle: request.mode == BuildMode::SdBundle,
         experimental_patch_loader: request.mode == BuildMode::PatchLoader,
         experimental_qemu_module_arena: request.experimental_qemu_module_arena,
     })
+}
+
+fn merge_effect_replacement_packages(
+    requested: &mut Vec<String>,
+    effect_replacements: &[(String, String)],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for package in firmware_patch_core::effect_replacement_packages(
+        effect_replacements,
+        firmware_patch_core::patch_catalog(),
+    )? {
+        if !requested.contains(&package) {
+            requested.push(package);
+        }
+    }
+    Ok(())
 }
 
 /// Run the command-line interface using process arguments.
@@ -438,8 +475,14 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             .collect::<Vec<_>>();
         let bundle_name = composed_bundle_name(&options.requested_patches, &patches)?;
         let link_name = "composed-patches";
-        let (module, memory_len, symbols, relocations) =
-            compile_sd_relocatable_composed(&source, &root_refs, &output, link_name, 0)?;
+        let (module, memory_len, symbols, relocations) = compile_sd_relocatable_composed(
+            &source,
+            &root_refs,
+            &options.effect_replacements,
+            &output,
+            link_name,
+            0,
+        )?;
         let sites = function_hook_sites(&output.join(format!("{link_name}.payload.elf")))?;
         let registrations = hook_registrations(&symbols)?;
         if registrations.is_empty() {
@@ -521,11 +564,16 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             .into());
         }
         let file = sd_bundle::build_dynamic_v1(&module, memory_len, &handlers, &relocations)?;
-        let filename = firmware_patch_core::composed_patch_file_name(&options.requested_patches)?;
+        let filename = if options.effect_replacements.is_empty() {
+            firmware_patch_core::composed_patch_file_name(&options.requested_patches)?
+        } else {
+            firmware_patch_core::effect_replacement_file_name(&options.effect_replacements)?
+        };
         fs::write(patch_dir.join(&filename), &file)?;
         let report_patch = serde_json::json!({
             "name": bundle_name,
             "members": patches,
+            "effect_replacements": options.effect_replacements.iter().map(|(slot, id)| (slot, id)).collect::<std::collections::BTreeMap<_, _>>(),
             "file": format!("PATCHES/{filename}"),
             "payload_length": module.len(),
             "memory_length": memory_len,

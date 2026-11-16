@@ -726,6 +726,22 @@ needs_configuration = true
 wall_timeout_s = 1800
 
 [[case]]
+id = "sd-effect-replacement-map"
+suites = ["sd-matrix"]
+models = ["l6max"]
+scenario = "scenarios/sd-effect-replacement-map.toml"
+needs_configuration = true
+wall_timeout_s = 600
+
+[[case]]
+id = "sd-effect-replacement-plateau"
+suites = ["sd-matrix"]
+models = ["l6max"]
+scenario = "scenarios/sd-effect-replacement-plateau.toml"
+needs_configuration = true
+wall_timeout_s = 600
+
+[[case]]
 id = "sd-dual-efx-shared-hook-chain"
 suites = ["sd-matrix"]
 models = ["l6max"]

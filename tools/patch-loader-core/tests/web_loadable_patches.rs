@@ -35,8 +35,10 @@ fn hosted_modules_load_with_the_current_loader() {
     let manifest: serde_json::Value =
         serde_json::from_slice(&fs::read(root.join("manifest.json")).unwrap()).unwrap();
     let modules = manifest["modules"].as_array().unwrap();
+    let effects = manifest["effect_replacements"].as_array().unwrap();
     assert!(!modules.is_empty());
-    for module in modules {
+    assert!(!effects.is_empty());
+    for module in modules.iter().chain(effects.iter()) {
         let file = module["file"].as_str().unwrap();
         let bytes = fs::read(root.join(file)).unwrap();
         assert_eq!(
@@ -82,6 +84,7 @@ fn hosted_modules_load_with_the_current_loader() {
     hosted.sort();
     let mut listed: Vec<String> = modules
         .iter()
+        .chain(effects.iter())
         .map(|module| module["file"].as_str().unwrap().to_owned())
         .collect();
     listed.sort();

@@ -426,7 +426,12 @@ impl MenuSmoke {
                 }
                 let card = panel.options.sd_image.clone().ok_or("No SD card")?;
                 // Nothing to write means the card already holds exactly the module.
-                if l6max_host::sd_patches::install(&card, panel.model, &["midi-sync".into()])? {
+                if l6max_host::sd_patches::install(
+                    &card,
+                    panel.model,
+                    &["midi-sync".into()],
+                    &Default::default(),
+                )? {
                     return Err("The SD card did not hold the midi-sync module".into());
                 }
                 if !panel.saved_patches().is_empty()
@@ -436,6 +441,54 @@ impl MenuSmoke {
                     return Err("SD card delivery did not restart and save it".into());
                 }
                 println!("PASS: loading a patch from the SD card installs the loader and module");
+                let selection = if panel.model == l6fw::Model::L6max {
+                    crate::patches_window::Selection::default().with_effect_replacements(
+                        [
+                            ("room".to_owned(), "velvet".to_owned()),
+                            ("spring".to_owned(), "plateau".to_owned()),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    )
+                } else {
+                    crate::patches_window::Selection::default()
+                };
+                panel.apply_patches(selection, cx);
+                self.stage = if panel.model == l6fw::Model::L6max {
+                    19
+                } else {
+                    16
+                };
+            }
+            19 if !panel.applying_patches => {
+                if let Some(error) = &panel.patch_error {
+                    return Err(format!("Loading custom effect bundles failed: {error}"));
+                }
+                let state = panel.options.state_dir.clone().ok_or("No device state")?;
+                check_installed(&state, &state.join("patched-firmware/main_firmware.bin"))?;
+                let expected = [("room", "velvet"), ("spring", "plateau")]
+                    .into_iter()
+                    .map(|(slot, effect)| (slot.to_owned(), effect.to_owned()))
+                    .collect::<std::collections::BTreeMap<_, _>>();
+                let saved = panel
+                    .options
+                    .config
+                    .as_ref()
+                    .map_or_else(std::collections::BTreeMap::new, |config| {
+                        config.effect_replacements(panel.model).clone()
+                    });
+                if saved != expected || panel.options.selected_sd_patches(panel.model).len() != 0 {
+                    return Err(
+                        "Custom effects were not saved independently of ordinary SD patches".into(),
+                    );
+                }
+                let card = panel.options.sd_image.clone().ok_or("No SD card")?;
+                if !l6max_host::sd_patches::contains_effect_bundle(&card, panel.model, &expected)? {
+                    return Err("The SD card does not contain the selected effect bundle".into());
+                }
+                println!(
+                    "PASS: custom effects install the Patch loader, save assignments and write their generated SD bundle"
+                );
                 panel.apply_patches(Default::default(), cx);
                 self.stage = 16;
             }
@@ -450,13 +503,17 @@ impl MenuSmoke {
                 )?;
                 if !panel.saved_patches().is_empty()
                     || !panel.saved_sd_patches().is_empty()
+                    || !panel
+                        .options
+                        .selected_effect_replacements(panel.model)
+                        .is_empty()
                     || panel.controls.is_none()
                     || state.join("patched-firmware").exists()
                 {
                     return Err("Removing patches did not restore the stock firmware".into());
                 }
                 let card = panel.options.sd_image.clone().ok_or("No SD card")?;
-                if l6max_host::sd_patches::install(&card, panel.model, &[])? {
+                if l6max_host::sd_patches::install(&card, panel.model, &[], &Default::default())? {
                     return Err("Removing patches left the module on the SD card".into());
                 }
                 println!("PASS: removing patches restores the stock firmware");

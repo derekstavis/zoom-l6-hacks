@@ -537,6 +537,7 @@ impl Runner {
                 }
                 Action::DualEfxState {
                     expected_effect_type,
+                    expected_processor_type,
                     expected_edit_mode,
                     minimum_parameter_edits,
                     expected_parameter_id,
@@ -546,6 +547,7 @@ impl Runner {
                 } => {
                     return Ok(Progress::Device(devices::Operation::DualEfxState {
                         expected_effect_type,
+                        expected_processor_type,
                         expected_edit_mode,
                         minimum_parameter_edits,
                         expected_parameter_id,

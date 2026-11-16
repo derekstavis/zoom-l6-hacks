@@ -1,0 +1,20 @@
+[package]
+name = "effect-replacements"
+version = "1.0.0"
+kind = "patch"
+order = 50
+title = "Effect Replacements"
+summary = "Replace selected stock effects."
+description = "Choose which custom effects replace the Room and Spring slots."
+models = ["L6max"]
+firmware_models = []
+sd_card_models = ["L6max"]
+wasm_models = []
+website = false
+website_order = 50
+website_sd_models = []
+emulator_gui = false
+emulator_order = 50
+emulator_sd_models = []
+readme = "README.md"
+requires = []

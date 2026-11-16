@@ -1,5 +1,5 @@
 {
-  "generator_source_sha256": "26e5a45fd4b353ef86e2df108f6bdb8a0bda8d00002964417710ddbf69b307d0",
+  "generator_source_sha256": "3e46645ef3482db304687de9143c53279717d9f828ea30e95c87af7942add1f0",
   "source_firmware_sha256": "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461",
   "l6_source_firmware_sha256": "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799",
   "modules": [
@@ -33,7 +33,73 @@
       "file": "L6max/dual-efx-1.0.0-knob-dialog-1.0.0.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "b943a73570228ad8be49bb2753a6382b83d1c6a7885a56cbaa7060cda14e0aea"
+      "sha256": "524c71561db550cd0f3fd8f477f44a1ad9152fef750ce524b9589e62e6358a05"
+    }
+  ],
+  "effect_replacements": [
+    {
+      "room": "stock",
+      "spring": "plateau",
+      "file": "L6max/effect-replacements-efx-plateau-1.0.0-room-stock-spring-plateau.bin",
+      "format_version": 1,
+      "loader_abi": 1,
+      "sha256": "18e40899d061746eb6fbbd3ea2b1c3c58d21c41b84791e3438933c1efa580831"
+    },
+    {
+      "room": "stock",
+      "spring": "velvet",
+      "file": "L6max/effect-replacements-efx-velvet-1.0.0-room-stock-spring-velvet.bin",
+      "format_version": 1,
+      "loader_abi": 1,
+      "sha256": "ce35b23c6a7b1900aebcc52ea54f0e6d18978625b2561fb9f03860c45481a731"
+    },
+    {
+      "room": "plateau",
+      "spring": "stock",
+      "file": "L6max/effect-replacements-efx-plateau-1.0.0-room-plateau-spring-stock.bin",
+      "format_version": 1,
+      "loader_abi": 1,
+      "sha256": "b65936760bce6af9afc54ce385404ccbadee749b44933057454a17f50db6e224"
+    },
+    {
+      "room": "plateau",
+      "spring": "plateau",
+      "file": "L6max/effect-replacements-efx-plateau-1.0.0-room-plateau-spring-plateau.bin",
+      "format_version": 1,
+      "loader_abi": 1,
+      "sha256": "2b3ad43b6088e4fa73dcb3565c2bf81abf29090b2d1e131ba4dd2915a1e2dc3f"
+    },
+    {
+      "room": "plateau",
+      "spring": "velvet",
+      "file": "L6max/effect-replacements-efx-plateau-1.0.0-efx-velvet-1.0.0-room-plateau-spring-velvet.bin",
+      "format_version": 1,
+      "loader_abi": 1,
+      "sha256": "6ea4827d14c258d37becc3408c8f1af6224649192a311476ec7fbff75af056e8"
+    },
+    {
+      "room": "velvet",
+      "spring": "stock",
+      "file": "L6max/effect-replacements-efx-velvet-1.0.0-room-velvet-spring-stock.bin",
+      "format_version": 1,
+      "loader_abi": 1,
+      "sha256": "d42cb57a47ed1dfed14450d6eebb979c3265466691f4c595565aa2394ff626c1"
+    },
+    {
+      "room": "velvet",
+      "spring": "plateau",
+      "file": "L6max/effect-replacements-efx-velvet-1.0.0-efx-plateau-1.0.0-room-velvet-spring-plateau.bin",
+      "format_version": 1,
+      "loader_abi": 1,
+      "sha256": "c4fae99e59ddc946bea57bfbeb32a1e4012c4a111b8a2a3a1f6cae75dd2c0f9f"
+    },
+    {
+      "room": "velvet",
+      "spring": "velvet",
+      "file": "L6max/effect-replacements-efx-velvet-1.0.0-room-velvet-spring-velvet.bin",
+      "format_version": 1,
+      "loader_abi": 1,
+      "sha256": "2aa44f67057e4b573f8dafed14070906eeb33dde7d86becf153bfecffb4d97ad"
     }
   ]
 }

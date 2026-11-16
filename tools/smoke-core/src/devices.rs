@@ -115,6 +115,7 @@ pub enum Operation {
     },
     DualEfxState {
         expected_effect_type: Option<u8>,
+        expected_processor_type: Option<u8>,
         expected_edit_mode: Option<bool>,
         minimum_parameter_edits: Option<u32>,
         expected_parameter_id: Option<u8>,
@@ -513,6 +514,7 @@ fn build_native_patch(
         source: source.to_path_buf(),
         output: output.to_path_buf(),
         patches: patches.iter().map(|patch| (*patch).to_owned()).collect(),
+        effect_replacements: Vec::new(),
         version: version.map(str::to_owned),
         mode,
         experimental_qemu_module_arena: mode == l6patch::BuildMode::PatchLoader
@@ -3708,6 +3710,7 @@ impl State {
             }
             Operation::DualEfxState {
                 expected_effect_type,
+                expected_processor_type,
                 expected_edit_mode,
                 minimum_parameter_edits,
                 expected_parameter_id,
@@ -3718,6 +3721,7 @@ impl State {
                 options,
                 session,
                 expected_effect_type,
+                expected_processor_type,
                 expected_edit_mode,
                 minimum_parameter_edits,
                 expected_parameter_id,
@@ -5853,6 +5857,7 @@ fn dual_efx_state(
     options: &Options,
     session: &Session,
     expected_effect_type: Option<u8>,
+    expected_processor_type: Option<u8>,
     expected_edit_mode: Option<bool>,
     minimum_parameter_edits: Option<u32>,
     expected_parameter_id: Option<u8>,
@@ -5872,7 +5877,9 @@ fn dual_efx_state(
         .and_then(|patch| patch["exports"].as_object())
         .ok_or("Dual EFX debug symbols are missing from its module report")?;
     let offset = |name: &str| -> Result<u32, String> {
-        symbols[name]
+        symbols
+            .get(name)
+            .ok_or_else(|| format!("Dual EFX symbol {name} is missing"))?
             .as_u64()
             .and_then(|value| u32::try_from(value).ok())
             .ok_or_else(|| format!("Dual EFX symbol {name} is missing"))
@@ -5902,6 +5909,40 @@ fn dual_efx_state(
         .map_err(|error| error.to_string())?
         .first()
         .copied();
+    let modular_replacement = composed_module_report(&report)
+        .and_then(|patch| patch["members"].as_array())
+        .is_some_and(|members| {
+            members.iter().any(|member| member == "effect-replacements")
+                && !members.iter().any(|member| member == "dual-efx")
+        });
+    if modular_replacement {
+        if expected_edit_mode.is_some()
+            || minimum_parameter_edits.is_some()
+            || expected_parameter_id.is_some()
+            || expected_parameter_value.is_some()
+            || expected_dialog_active.is_some()
+            || minimum_exit_ring_refreshes.is_some()
+        {
+            return Err("parameter-editor assertions require the dual-efx package".into());
+        }
+        let processor_type = u32::from_le_bytes(
+            qmp.read_memory(0, module_base + offset("DUAL_EFFECT_PROCESSOR_TYPE")?, 4)
+                .map_err(|error| error.to_string())?
+                .try_into()
+                .unwrap(),
+        );
+        if expected_effect_type.is_some_and(|expected| effect_type != Some(expected)) {
+            return Err(format!(
+                "Selected effect is {effect_type:?}, expected {expected_effect_type:?}"
+            ));
+        }
+        if expected_processor_type.is_some_and(|expected| processor_type != u32::from(expected)) {
+            return Err(format!(
+                "Replacement processor has type {processor_type}, expected {expected_processor_type:?}"
+            ));
+        }
+        return Ok(json!({"effect_type":effect_type,"processor_type":processor_type}));
+    }
     let edit_mode = u32::from_le_bytes(
         qmp.read_memory(
             0,
@@ -5911,6 +5952,12 @@ fn dual_efx_state(
         .map_err(|error| error.to_string())?
         .try_into()
         .unwrap(),
+    );
+    let processor_type = u32::from_le_bytes(
+        qmp.read_memory(0, module_base + offset("DUAL_EFFECT_PROCESSOR_TYPE")?, 4)
+            .map_err(|error| error.to_string())?
+            .try_into()
+            .unwrap(),
     );
     let exit_ring_refreshes = u32::from_le_bytes(
         qmp.read_memory(
@@ -5957,6 +6004,11 @@ fn dual_efx_state(
             "Dual EFX selected effect is {effect_type:?}, expected {expected_effect_type:?}"
         ));
     }
+    if expected_processor_type.is_some_and(|expected| processor_type != u32::from(expected)) {
+        return Err(format!(
+            "Dual EFX replacement processor has type {processor_type}, expected {expected_processor_type:?}"
+        ));
+    }
     if expected_edit_mode.is_some_and(|expected| edit_mode != u32::from(expected)) {
         return Err(format!(
             "Dual EFX parameter edit mode is {edit_mode}, expected {expected_edit_mode:?}"
@@ -5994,7 +6046,7 @@ fn dual_efx_state(
         }
     }
     Ok(
-        json!({"effect_type":effect_type,"edit_mode":edit_mode,"parameter_edits_applied":applied,"parameter_id":expected_parameter_id,"parameter_value":parameter,"knob_dialog_active":dialog_active,"exit_ring_refreshes":exit_ring_refreshes}),
+        json!({"effect_type":effect_type,"processor_type":processor_type,"edit_mode":edit_mode,"parameter_edits_applied":applied,"parameter_id":expected_parameter_id,"parameter_value":parameter,"knob_dialog_active":dialog_active,"exit_ring_refreshes":exit_ring_refreshes}),
     )
 }
 

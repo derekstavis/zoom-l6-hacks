@@ -289,6 +289,7 @@ pub fn compile_sd_relocatable(
 pub fn compile_sd_relocatable_composed(
     source: &Path,
     roots: &[(&str, &Path)],
+    effect_replacements: &[(String, String)],
     output: &Path,
     name: &str,
     base: u32,
@@ -327,10 +328,93 @@ pub fn compile_sd_relocatable_composed(
         let module_name = patch_name.replace('-', "_");
         let payload = root.join("src/payload.rs").canonicalize()?;
         source_text.push_str(&format!(
-            "#[path = {:?}]\nmod {module_name};\n",
+            "#[path = {:?}]\npub mod {module_name};\n",
             payload.display().to_string()
         ));
     }
+    let assignments = effect_replacements
+        .iter()
+        .map(|(slot, id)| (slot.as_str(), id.as_str()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let selected_effects = assignments
+        .iter()
+        .map(|(slot, id)| {
+            let package = firmware_patch_core::patch_catalog()
+                .iter()
+                .find(|package| package.effects.iter().any(|effect| effect.id == **id))
+                .ok_or_else(|| format!("unknown selected effect `{id}`"))?;
+            Ok((
+                *slot,
+                *id,
+                package.name.replace('-', "_"),
+                package
+                    .effects
+                    .iter()
+                    .find(|effect| effect.id == **id)
+                    .expect("effect package was found")
+                    .title
+                    .clone(),
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    source_text.push_str("pub mod effect_replacement_config {\n");
+    source_text.push_str(&format!(
+        "pub const EXPLICIT: bool = {};\n",
+        !assignments.is_empty()
+    ));
+    source_text.push_str(
+        "pub fn effect_for_stock_slot(slot: u32) -> Option<&'static str> { match slot {\n",
+    );
+    for (slot, effect_id, _, _) in &selected_effects {
+        let stock_type = match *slot {
+            "room" => 1,
+            "spring" => 2,
+            _ => unreachable!("effect slots are validated by firmware-patch-core"),
+        };
+        source_text.push_str(&format!("{stock_type} => Some({effect_id:?}),\n"));
+    }
+    source_text.push_str("_ => None, } }\n");
+    source_text.push_str("pub fn state_size(slot: u32) -> Option<usize> { match slot {\n");
+    for (slot, _, module_name, _) in &selected_effects {
+        let stock_type = if *slot == "room" { 1 } else { 2 };
+        source_text.push_str(&format!(
+            "{stock_type} => Some(crate::{module_name}::EFFECT_STATE_BYTES),\n"
+        ));
+    }
+    source_text.push_str("_ => None, } }\n");
+    let mut state_sizes = selected_effects
+        .iter()
+        .map(|(_, _, module_name, _)| format!("crate::{module_name}::EFFECT_STATE_BYTES"));
+    let maximum_state_size = state_sizes
+        .next()
+        .map(|first| {
+            state_sizes.fold(first, |largest, next| {
+                format!("if {largest} > {next} {{ {largest} }} else {{ {next} }}")
+            })
+        })
+        .unwrap_or_else(|| "0".to_owned());
+    source_text.push_str(&format!(
+        "pub const MAX_EFFECT_STATE_BYTES: usize = {maximum_state_size};\n"
+    ));
+    source_text
+        .push_str("pub unsafe fn initialize(slot: u32, state: *mut u8) -> bool { match slot {\n");
+    for (slot, _, module_name, _) in &selected_effects {
+        let stock_type = if *slot == "room" { 1 } else { 2 };
+        source_text.push_str(&format!(
+            "{stock_type} => {{ unsafe {{ crate::{module_name}::initialize_effect(state) }}; true }},\n"
+        ));
+    }
+    source_text.push_str("_ => false, } }\n");
+    source_text.push_str(
+        "pub unsafe fn process_sample(slot: u32, state: *mut u8, input: f32) -> Option<(f32, f32)> { match slot {\n",
+    );
+    for (slot, _, module_name, _) in &selected_effects {
+        let stock_type = if *slot == "room" { 1 } else { 2 };
+        source_text.push_str(&format!(
+            "{stock_type} => Some(unsafe {{ crate::{module_name}::process_sample(state, input) }}),\n"
+        ));
+    }
+    source_text.push_str("_ => None, } }\n}\n");
     let composed_root = output.join(format!("{}_composed.rs", name.replace('-', "_")));
     fs::write(&composed_root, source_text)?;
     let link_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../patches/api/composed");

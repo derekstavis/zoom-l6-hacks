@@ -601,13 +601,16 @@ impl NativePanel {
         let patches_window::Selection {
             firmware: selected,
             sd_card: sd_selected,
+            effect_replacements,
         } = selection;
         let mut options = self.options.clone();
         options.patches = Some(selected.clone());
         options.sd_patches = Some(sd_selected.clone());
+        options.effect_replacements = Some(effect_replacements.clone());
         let previous = (
             self.options.patches.clone(),
             self.options.sd_patches.clone(),
+            self.options.effect_replacements.clone(),
         );
         let starting = self.starting_engine.clone();
         cx.spawn(async move |this, cx| {
@@ -650,10 +653,12 @@ impl NativePanel {
                                     panel.model,
                                     &selected,
                                     &sd_selected,
+                                    &effect_replacements,
                                 )?;
                                 panel.options.reload_config()?;
                                 panel.options.patches = None;
                                 panel.options.sd_patches = None;
+                                panel.options.effect_replacements = None;
                             }
                             Ok(())
                         })
@@ -667,7 +672,11 @@ impl NativePanel {
             let _ = this.update(cx, |panel, cx| {
                 panel.applying_patches = false;
                 if let Err(error) = result {
-                    (panel.options.patches, panel.options.sd_patches) = previous;
+                    (
+                        panel.options.patches,
+                        panel.options.sd_patches,
+                        panel.options.effect_replacements,
+                    ) = previous;
                     // With no guest left, the main window has to say why.
                     if panel.controls.is_none() {
                         panel.firmware_error = Some(error.clone());
@@ -1032,8 +1041,14 @@ impl NativePanel {
         // the selected patches before it goes in. With none selected, the card
         // is used as it is.
         let sd_selected = self.options.selected_sd_patches(self.model);
-        if !sd_selected.is_empty() {
-            l6max_host::sd_patches::install(&image, self.model, &sd_selected)?;
+        let effect_replacements = self.options.selected_effect_replacements(self.model);
+        if !sd_selected.is_empty() || !effect_replacements.is_empty() {
+            l6max_host::sd_patches::install(
+                &image,
+                self.model,
+                &sd_selected,
+                &effect_replacements,
+            )?;
         }
         engine.insert_sd(&image)?;
         self.ejected_card = None;

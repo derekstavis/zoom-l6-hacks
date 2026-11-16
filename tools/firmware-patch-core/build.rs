@@ -46,7 +46,19 @@ fn main() {
             .and_then(toml::Value::as_str)
             .expect("[package].version must be a string");
         assert!(valid_version(version), "invalid package version {version}");
-        packages.push(serde_json::to_value(package).expect("serialize package metadata"));
+        let mut metadata = serde_json::to_value(package).expect("serialize package metadata");
+        let effects = value.get("effects");
+        validate_effect_metadata(name, effects);
+        if let Some(effects) = effects {
+            metadata
+                .as_object_mut()
+                .expect("package metadata must be an object")
+                .insert(
+                    "effects".into(),
+                    serde_json::to_value(effects).expect("serialize effect metadata"),
+                );
+        }
+        packages.push(metadata);
     }
 
     packages.sort_by(|left, right| {
@@ -55,6 +67,19 @@ fn main() {
             .cmp(&order(right))
             .then_with(|| left["name"].as_str().cmp(&right["name"].as_str()))
     });
+
+    let mut effect_ids = BTreeSet::new();
+    for package in &packages {
+        if let Some(effects) = package.get("effects").and_then(Value::as_array) {
+            for effect in effects {
+                let id = effect["id"].as_str().expect("validated effect id");
+                assert!(
+                    effect_ids.insert(id),
+                    "duplicate effect implementation id {id}"
+                );
+            }
+        }
+    }
 
     let by_name = packages
         .iter()
@@ -202,6 +227,64 @@ fn validate_models(package: &Value) {
     }
     if package["emulator_gui"] == true {
         assert!(package["emulator_order"].is_number());
+    }
+}
+
+fn validate_effect_metadata(name: &str, effects: Option<&toml::Value>) {
+    let Some(effects) = effects else {
+        return;
+    };
+    let effects = effects
+        .as_array()
+        .unwrap_or_else(|| panic!("{name}: [[effects]] must be an array"));
+    assert!(!effects.is_empty(), "{name}: [[effects]] cannot be empty");
+    let mut effect_ids = BTreeSet::new();
+    for effect in effects {
+        let id = effect
+            .get("id")
+            .and_then(toml::Value::as_str)
+            .unwrap_or_else(|| panic!("{name}: effect id must be a string"));
+        assert!(
+            !id.is_empty()
+                && id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'),
+            "{name}: effect id must be a lowercase kebab-case identifier"
+        );
+        assert!(effect_ids.insert(id), "{name}: duplicate effect id {id}");
+        let title = effect
+            .get("title")
+            .and_then(toml::Value::as_str)
+            .unwrap_or_else(|| panic!("{name}: effect title must be a string"));
+        assert!(
+            !title.trim().is_empty(),
+            "{name}: effect title cannot be empty"
+        );
+        let slots = effect
+            .get("stock_slots")
+            .and_then(toml::Value::as_array)
+            .unwrap_or_else(|| panic!("{name}: effect stock_slots must be an array"));
+        assert!(
+            !slots.is_empty(),
+            "{name}: effect stock_slots cannot be empty"
+        );
+        let mut unique_slots = BTreeSet::new();
+        for slot in slots {
+            let slot = slot
+                .as_str()
+                .unwrap_or_else(|| panic!("{name}: effect stock slots must be strings"));
+            assert!(
+                !slot.is_empty()
+                    && slot.bytes().all(|byte| {
+                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
+                    }),
+                "{name}: stock slot identifiers must be lowercase kebab-case"
+            );
+            assert!(
+                unique_slots.insert(slot),
+                "{name}: duplicate stock slot {slot} for effect {id}"
+            );
+        }
     }
 }
 

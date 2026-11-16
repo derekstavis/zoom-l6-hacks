@@ -226,8 +226,8 @@ fn option<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
 /// test of its layout.
 pub fn render_patches(args: &[String]) -> Result<(), String> {
     use crate::patches_window::{HEIGHT, PatchesWindow, Selection, Status, WIDTH};
-    let usage = "usage: --render-patches <l6|l6max> [--firmware a,b] [--sd-card a,b] \
-                 [--active-firmware a,b] [--active-sd-card a,b] [--no-card] [--error TEXT] \
+    let usage = "usage: --render-patches <l6|l6max> [--firmware a,b] [--sd-card a,b] [--effects slot=id,...] \
+                 [--active-firmware a,b] [--active-sd-card a,b] [--active-effects slot=id,...] [--no-card] [--error TEXT] \
                  --output <path.png>";
     let model = match args.first().map(String::as_str) {
         Some("l6") => l6fw::Model::L6,
@@ -250,8 +250,23 @@ pub fn render_patches(args: &[String]) -> Result<(), String> {
             .unwrap_or_default()
     };
     let active = Selection::new(list("--active-firmware"), list("--active-sd-card"));
-    let selection = if option(args, "--firmware").is_some() || option(args, "--sd-card").is_some() {
+    let effects = |name: &str| -> std::collections::BTreeMap<String, String> {
+        option(args, name)
+            .into_iter()
+            .flat_map(|value| value.split(','))
+            .filter_map(|entry| {
+                let (slot, effect) = entry.split_once('=')?;
+                Some((slot.to_owned(), effect.to_owned()))
+            })
+            .collect()
+    };
+    let active = active.with_effect_replacements(effects("--active-effects"));
+    let selection = if option(args, "--firmware").is_some()
+        || option(args, "--sd-card").is_some()
+        || option(args, "--effects").is_some()
+    {
         Selection::new(list("--firmware"), list("--sd-card"))
+            .with_effect_replacements(effects("--effects"))
     } else {
         active.clone()
     };

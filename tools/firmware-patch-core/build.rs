@@ -46,7 +46,27 @@ fn main() {
             .and_then(toml::Value::as_str)
             .expect("[package].version must be a string");
         assert!(valid_version(version), "invalid package version {version}");
-        packages.push(serde_json::to_value(package).expect("serialize package metadata"));
+        let author = package
+            .get("author")
+            .and_then(toml::Value::as_str)
+            .unwrap_or_else(|| panic!("{name}: [package].author must be a GitHub username"));
+        assert!(
+            valid_github_username(author),
+            "{name}: invalid GitHub username `{author}`"
+        );
+        let mut metadata = serde_json::to_value(package).expect("serialize package metadata");
+        let effects = value.get("effects");
+        validate_effect_metadata(name, effects);
+        if let Some(effects) = effects {
+            metadata
+                .as_object_mut()
+                .expect("package metadata must be an object")
+                .insert(
+                    "effects".into(),
+                    serde_json::to_value(effects).expect("serialize effect metadata"),
+                );
+        }
+        packages.push(metadata);
     }
 
     packages.sort_by(|left, right| {
@@ -55,6 +75,19 @@ fn main() {
             .cmp(&order(right))
             .then_with(|| left["name"].as_str().cmp(&right["name"].as_str()))
     });
+
+    let mut effect_ids = BTreeSet::new();
+    for package in &packages {
+        if let Some(effects) = package.get("effects").and_then(Value::as_array) {
+            for effect in effects {
+                let id = effect["id"].as_str().expect("validated effect id");
+                assert!(
+                    effect_ids.insert(id),
+                    "duplicate effect implementation id {id}"
+                );
+            }
+        }
+    }
 
     let by_name = packages
         .iter()
@@ -127,6 +160,18 @@ fn valid_version(version: &str) -> bool {
         && [major, minor, patch]
             .iter()
             .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+fn valid_github_username(username: &str) -> bool {
+    let bytes = username.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 39
+        && bytes[0].is_ascii_alphanumeric()
+        && bytes[bytes.len() - 1].is_ascii_alphanumeric()
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
+        && !username.contains("--")
 }
 
 fn package_names(
@@ -202,6 +247,97 @@ fn validate_models(package: &Value) {
     }
     if package["emulator_gui"] == true {
         assert!(package["emulator_order"].is_number());
+    }
+}
+
+fn validate_effect_metadata(name: &str, effects: Option<&toml::Value>) {
+    let Some(effects) = effects else {
+        return;
+    };
+    let effects = effects
+        .as_array()
+        .unwrap_or_else(|| panic!("{name}: [[effects]] must be an array"));
+    assert!(!effects.is_empty(), "{name}: [[effects]] cannot be empty");
+    let mut effect_ids = BTreeSet::new();
+    for effect in effects {
+        let id = effect
+            .get("id")
+            .and_then(toml::Value::as_str)
+            .unwrap_or_else(|| panic!("{name}: effect id must be a string"));
+        assert!(
+            !id.is_empty()
+                && id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'),
+            "{name}: effect id must be a lowercase kebab-case identifier"
+        );
+        assert!(effect_ids.insert(id), "{name}: duplicate effect id {id}");
+        let title = effect
+            .get("title")
+            .and_then(toml::Value::as_str)
+            .unwrap_or_else(|| panic!("{name}: effect title must be a string"));
+        assert!(
+            !title.trim().is_empty(),
+            "{name}: effect title cannot be empty"
+        );
+        for key in ["based_on", "learn_more"] {
+            if let Some(link) = effect.get(key) {
+                let link = link
+                    .as_table()
+                    .unwrap_or_else(|| panic!("{name}: effect {key} must be a table"));
+                let title = link
+                    .get("title")
+                    .and_then(toml::Value::as_str)
+                    .unwrap_or_else(|| panic!("{name}: effect {key}.title must be a string"));
+                let url = link
+                    .get("url")
+                    .and_then(toml::Value::as_str)
+                    .unwrap_or_else(|| panic!("{name}: effect {key}.url must be a string"));
+                assert!(
+                    !title.trim().is_empty(),
+                    "{name}: effect {key}.title cannot be empty"
+                );
+                assert!(
+                    url.starts_with("https://") && url.len() > "https://".len(),
+                    "{name}: effect {key}.url must be an HTTPS URL"
+                );
+            }
+        }
+        let controls = effect
+            .get("controls")
+            .and_then(toml::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut unique_controls = BTreeSet::<String>::new();
+        for control in controls {
+            let control = control
+                .as_str()
+                .unwrap_or_else(|| panic!("{name}: effect controls entries must be strings"));
+            assert!(
+                ["encoder-parameters", "tap-tempo"].contains(&control),
+                "{name}: unsupported effect control mode {control}"
+            );
+            assert!(
+                unique_controls.insert(control.to_owned()),
+                "{name}: duplicate effect control mode {control}"
+            );
+        }
+        let tap_action = effect
+            .get("tap_action")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("stock");
+        assert!(
+            ["stock", "toggle-editor", "tempo"].contains(&tap_action),
+            "{name}: unsupported effect tap action {tap_action}"
+        );
+        assert!(
+            tap_action != "toggle-editor" || unique_controls.contains("encoder-parameters"),
+            "{name}: toggle-editor requires encoder-parameters"
+        );
+        assert!(
+            tap_action != "tempo" || unique_controls.contains("tap-tempo"),
+            "{name}: tempo tap action requires tap-tempo control mode"
+        );
     }
 }
 

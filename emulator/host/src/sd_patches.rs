@@ -1,6 +1,6 @@
 //! Patches the Patch loader reads from the SD card. The modules are the ones the
 //! web patcher hosts; the `patch-loader-core` tests check them against the loader.
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 
 /// The card folder the loader scans.
 const FOLDER: &str = "PATCHES";
@@ -8,6 +8,13 @@ const FOLDER: &str = "PATCHES";
 struct Module {
     patch: &'static str,
     model: l6fw::Model,
+    bytes: &'static [u8],
+}
+
+struct EffectBundle {
+    room: Option<&'static str>,
+    spring: Option<&'static str>,
+    file_name: &'static str,
     bytes: &'static [u8],
 }
 
@@ -42,6 +49,74 @@ fn module(model: l6fw::Model, patch: &str) -> Option<&'static Module> {
         .find(|module| module.model == model && module.patch == patch)
 }
 
+fn effect_bundle(
+    model: l6fw::Model,
+    replacements: &BTreeMap<String, String>,
+) -> Result<Option<&'static EffectBundle>, String> {
+    if replacements.is_empty() {
+        return Ok(None);
+    }
+    if model != l6fw::Model::L6max {
+        return Err("custom effect replacements are supported on L6max only".into());
+    }
+    let entries = replacements
+        .iter()
+        .map(|(slot, effect)| (slot.clone(), effect.clone()))
+        .collect::<Vec<_>>();
+    let file_name = firmware_patch_core::effect_replacement_file_name(&entries)?;
+    EFFECT_BUNDLES
+        .iter()
+        .find(|bundle| {
+            bundle.file_name == file_name
+                && bundle.room == replacements.get("room").map(String::as_str)
+                && bundle.spring == replacements.get("spring").map(String::as_str)
+        })
+        .map(Some)
+        .ok_or_else(|| format!("effect replacement bundle {file_name} is not embedded"))
+}
+
+/// Validate an effect map and ensure its generated SD module is available.
+pub fn check_effect_replacements(
+    model: l6fw::Model,
+    replacements: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    if replacements.is_empty() {
+        return Ok(());
+    }
+    let entries = replacements
+        .iter()
+        .map(|(slot, effect)| (slot.clone(), effect.clone()))
+        .collect::<Vec<_>>();
+    firmware_patch_core::effect_replacement_packages(
+        &entries,
+        firmware_patch_core::patch_catalog(),
+    )?;
+    effect_bundle(model, replacements)?;
+    Ok(())
+}
+
+fn effect_card_file_name(bundle: &EffectBundle) -> String {
+    let order = firmware_patch_core::patch_package("efx-loader")
+        .expect("effect replacement package is in the catalog")
+        .order;
+    format!("{order:02}-{}", bundle.file_name)
+}
+
+/// Check whether a card contains the exact hosted bundle for this selection.
+pub fn contains_effect_bundle(
+    card: &Path,
+    model: l6fw::Model,
+    replacements: &BTreeMap<String, String>,
+) -> Result<bool, String> {
+    let Some(bundle) = effect_bundle(model, replacements)? else {
+        return Ok(true);
+    };
+    let mut volume =
+        sd_image::open(card).map_err(|error| format!("SD card {}: {error}", card.display()))?;
+    let path = format!("{FOLDER}/{}", effect_card_file_name(bundle));
+    Ok(volume.read(&path).is_ok_and(|bytes| bytes == bundle.bytes))
+}
+
 /// Check that each patch in `selected` loads from `model`'s card.
 pub fn check(model: l6fw::Model, selected: &[String]) -> Result<(), String> {
     for patch in selected {
@@ -58,14 +133,22 @@ pub fn check(model: l6fw::Model, selected: &[String]) -> Result<(), String> {
 /// Bring the card's `PATCHES` folder to `selected`. Only files that are
 /// byte-for-byte one of these modules are removed, so a card's own patch files
 /// stay. Returns whether the card changed.
-pub fn install(card: &Path, model: l6fw::Model, selected: &[String]) -> Result<bool, String> {
+pub fn install(
+    card: &Path,
+    model: l6fw::Model,
+    selected: &[String],
+    effect_replacements: &BTreeMap<String, String>,
+) -> Result<bool, String> {
     check(model, selected)?;
+    check_effect_replacements(model, effect_replacements)?;
     let error = |e: std::io::Error| format!("SD card {}: {e}", card.display());
     let mut volume = sd_image::open(card).map_err(error)?;
     let wanted: Vec<&Module> = selected
         .iter()
         .filter_map(|patch| module(model, patch))
         .collect();
+    let selected_effect = effect_bundle(model, effect_replacements)?;
+    let has_wanted = !wanted.is_empty() || selected_effect.is_some();
     let mut changed = false;
     if volume.exists(FOLDER) {
         for entry in volume.entries(FOLDER).map_err(error)? {
@@ -73,23 +156,34 @@ pub fn install(card: &Path, model: l6fw::Model, selected: &[String]) -> Result<b
                 continue;
             }
             let path = format!("{FOLDER}/{}", entry.name);
-            let keep = wanted
+            let known_length = MODULES
                 .iter()
-                .any(|module| card_file_name(module).eq_ignore_ascii_case(&entry.name));
-            if keep
-                || !MODULES
+                .any(|module| module.bytes.len() as u64 == entry.length)
+                || EFFECT_BUNDLES
                     .iter()
-                    .any(|module| module.bytes.len() as u64 == entry.length)
-            {
+                    .any(|bundle| bundle.bytes.len() as u64 == entry.length);
+            if !known_length {
                 continue;
             }
             let bytes = volume.read(&path).map_err(error)?;
-            if MODULES.iter().any(|module| module.bytes == bytes) {
+            let hosted = MODULES.iter().any(|module| module.bytes == bytes)
+                || EFFECT_BUNDLES.iter().any(|bundle| bundle.bytes == bytes);
+            if !hosted {
+                continue;
+            }
+            let keep_patch = wanted.iter().any(|module| {
+                card_file_name(module).eq_ignore_ascii_case(&entry.name) && module.bytes == bytes
+            });
+            let keep_effect = selected_effect.is_some_and(|bundle| {
+                effect_card_file_name(bundle).eq_ignore_ascii_case(&entry.name)
+                    && bundle.bytes == bytes
+            });
+            if !keep_patch && !keep_effect {
                 volume.remove(&path).map_err(error)?;
                 changed = true;
             }
         }
-    } else if !wanted.is_empty() {
+    } else if has_wanted {
         volume.create_dir(FOLDER).map_err(error)?;
         changed = true;
     }
@@ -101,6 +195,13 @@ pub fn install(card: &Path, model: l6fw::Model, selected: &[String]) -> Result<b
         volume.write(&path, module.bytes).map_err(error)?;
         changed = true;
     }
+    if let Some(bundle) = selected_effect {
+        let path = format!("{FOLDER}/{}", effect_card_file_name(bundle));
+        if !volume.read(&path).is_ok_and(|bytes| bytes == bundle.bytes) {
+            volume.write(&path, bundle.bytes).map_err(error)?;
+            changed = true;
+        }
+    }
     if changed {
         volume.flush().map_err(error)?;
     }
@@ -110,6 +211,10 @@ pub fn install(card: &Path, model: l6fw::Model, selected: &[String]) -> Result<b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn no_effects() -> BTreeMap<String, String> {
+        BTreeMap::new()
+    }
 
     fn card(name: &str) -> std::path::PathBuf {
         let path =
@@ -148,7 +253,15 @@ mod tests {
     #[test]
     fn installs_composed_dual_efx_with_its_versioned_filename() {
         let path = card("dual-efx");
-        assert!(install(&path, l6fw::Model::L6max, &["dual-efx".into()]).unwrap());
+        assert!(
+            install(
+                &path,
+                l6fw::Model::L6max,
+                &["dual-efx".into()],
+                &no_effects()
+            )
+            .unwrap()
+        );
         assert_eq!(files(&path), ["50-DUAL-EFX-1.0.0-KNOB-DIALOG-1.0.0.BIN"]);
         let mut volume = sd_image::open(&path).unwrap();
         assert_eq!(
@@ -164,7 +277,7 @@ mod tests {
     fn writes_selected_modules_and_removes_only_its_own() {
         let path = card("install");
         let both = ["knob-dialog".to_owned(), "midi-sync".to_owned()];
-        assert!(install(&path, l6fw::Model::L6max, &both).unwrap());
+        assert!(install(&path, l6fw::Model::L6max, &both, &no_effects()).unwrap());
         assert_eq!(
             files(&path),
             ["10-KNOB-DIALOG-1.0.0.BIN", "30-MIDI-SYNC-1.0.0.BIN"]
@@ -177,10 +290,18 @@ mod tests {
         volume.write("PATCHES/02-MINE.BIN", b"user patch").unwrap();
         volume.flush().unwrap();
         drop(volume);
-        assert!(!install(&path, l6fw::Model::L6max, &both).unwrap());
-        assert!(install(&path, l6fw::Model::L6max, &["midi-sync".into()]).unwrap());
+        assert!(!install(&path, l6fw::Model::L6max, &both, &no_effects()).unwrap());
+        assert!(
+            install(
+                &path,
+                l6fw::Model::L6max,
+                &["midi-sync".into()],
+                &no_effects()
+            )
+            .unwrap()
+        );
         assert_eq!(files(&path), ["02-MINE.BIN", "30-MIDI-SYNC-1.0.0.BIN"]);
-        assert!(install(&path, l6fw::Model::L6max, &[]).unwrap());
+        assert!(install(&path, l6fw::Model::L6max, &[], &no_effects()).unwrap());
         assert_eq!(files(&path), ["02-MINE.BIN"]);
         std::fs::remove_file(path).unwrap();
     }
@@ -188,7 +309,21 @@ mod tests {
     #[test]
     fn an_unselected_card_stays_untouched() {
         let path = card("untouched");
-        assert!(!install(&path, l6fw::Model::L6, &[]).unwrap());
+        assert!(!install(&path, l6fw::Model::L6, &[], &no_effects()).unwrap());
+        assert!(files(&path).is_empty());
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn installs_and_removes_the_selected_effect_bundle() {
+        let path = card("effect-bundle");
+        let effects = [("room".to_owned(), "velvet".to_owned())]
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+        assert!(install(&path, l6fw::Model::L6max, &[], &effects).unwrap());
+        assert!(contains_effect_bundle(&path, l6fw::Model::L6max, &effects).unwrap());
+        assert_eq!(files(&path).len(), 1);
+        assert!(install(&path, l6fw::Model::L6max, &[], &no_effects()).unwrap());
         assert!(files(&path).is_empty());
         std::fs::remove_file(path).unwrap();
     }

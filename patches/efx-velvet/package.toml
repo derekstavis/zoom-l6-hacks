@@ -1,0 +1,29 @@
+[package]
+name = "efx-velvet"
+version = "1.0.0"
+kind = "patch"
+order = 51
+title = "Velvet Noise"
+author = "VegaDeftwing"
+summary = "Replace a stock effect with a stereo decorrelator."
+description = "A stereo decorrelator that widens the sound without adding a conventional reverb tail."
+models = ["L6max"]
+firmware_models = []
+sd_card_models = ["L6max"]
+wasm_models = []
+website = false
+website_order = 51
+website_sd_models = []
+emulator_gui = false
+emulator_order = 51
+emulator_sd_models = []
+readme = "README.md"
+requires = ["knob-dialog"]
+
+[[effects]]
+id = "velvet"
+title = "Velvet Noise"
+based_on = { title = "Velvet Noise Decorrelator VST3", url = "https://github.com/115dkk/Velvet-Noise-Decorrelator-VST3" }
+learn_more = { title = "Velvet-noise decorrelation", url = "https://research.aalto.fi/en/publications/velvet-noise-decorrelator/" }
+controls = ["encoder-parameters"]
+tap_action = "toggle-editor"

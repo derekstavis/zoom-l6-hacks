@@ -18,6 +18,7 @@ pub struct PatchPackage {
     pub kind: String,
     pub order: u32,
     pub title: String,
+    pub author: String,
     pub summary: String,
     pub description: String,
     pub models: Vec<String>,
@@ -35,7 +36,40 @@ pub struct PatchPackage {
     pub request_command: Option<String>,
     pub requires: Vec<String>,
     pub file_name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<EffectPackage>,
 }
+
+/// Build-time registration metadata for a custom effect implementation.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EffectPackage {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub based_on: Option<EffectLink>,
+    #[serde(default)]
+    pub learn_more: Option<EffectLink>,
+    #[serde(default)]
+    pub controls: Vec<String>,
+    #[serde(default = "default_tap_action")]
+    pub tap_action: String,
+}
+
+/// Optional attribution or background link for an effect package.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EffectLink {
+    pub title: String,
+    pub url: String,
+}
+
+fn default_tap_action() -> String {
+    "stock".into()
+}
+
+/// Stable identifiers for L6max MAIN 1.10 stock effect slots exposed to
+/// build-time replacement. Names are also used in package metadata.
+pub const STOCK_EFFECT_SLOTS: [&str; 2] = ["room", "spring"];
+pub const EFFECT_REPLACEMENT_ROUTER_PACKAGE: &str = "efx-loader";
 
 /// Every package's metadata in package order. This is generated at build time
 /// from the checked-in `patches/*/package.toml` files and is available to
@@ -152,6 +186,87 @@ pub fn resolve_patch_dependencies(requested: &[String]) -> Result<Vec<String>, S
         result.push(next);
     }
     Ok(result)
+}
+
+/// Resolve slot-to-effect assignments into the package set for one composed
+/// replacement bundle. The `replacements` pairs are `(stock_slot, effect_id)`;
+/// an effect assigned to multiple slots is included only once.
+pub fn resolve_effect_replacements(
+    replacements: &[(String, String)],
+) -> Result<Vec<String>, String> {
+    let requested = effect_replacement_packages(replacements, patch_catalog())?;
+    resolve_patch_dependencies(&requested)
+}
+
+/// Versioned filename for a composed effect-replacement map. Stock slots are
+/// written explicitly so each supported mapping has a unique SD asset name.
+pub fn effect_replacement_file_name(replacements: &[(String, String)]) -> Result<String, String> {
+    let requested = effect_replacement_packages(replacements, patch_catalog())?;
+    if requested.is_empty() {
+        return Err("effect replacement bundle needs at least one assigned effect".into());
+    }
+    let resolved = resolve_patch_dependencies(&requested)?;
+    let package_names = resolved
+        .iter()
+        .filter(|name| name.as_str() != EFFECT_REPLACEMENT_ROUTER_PACKAGE)
+        .map(|name| {
+            let package = patch_package(name).ok_or("missing effect implementation package")?;
+            Ok(format!("{}-{}", package.name, package.version))
+        })
+        .collect::<Result<Vec<_>, String>>()?
+        .join("-");
+    let assignment = |slot: &str| {
+        replacements
+            .iter()
+            .find(|(selected_slot, _)| selected_slot == slot)
+            .map(|(_, id)| id.as_str())
+            .unwrap_or("stock")
+    };
+    Ok(format!(
+        "efx-loader-{}-room-{}-spring-{}.bin",
+        package_names,
+        assignment("room"),
+        assignment("spring")
+    ))
+}
+
+/// Validate a slot-to-effect map against a package catalog and return the
+/// distinct selected effect package names in first-assignment order.
+pub fn effect_replacement_packages(
+    replacements: &[(String, String)],
+    catalog: &[PatchPackage],
+) -> Result<Vec<String>, String> {
+    let mut slots = std::collections::BTreeSet::new();
+    let mut packages = Vec::new();
+    if !replacements.is_empty() {
+        if !catalog
+            .iter()
+            .any(|package| package.name == EFFECT_REPLACEMENT_ROUTER_PACKAGE)
+        {
+            return Err(format!(
+                "missing effect replacement router package `{EFFECT_REPLACEMENT_ROUTER_PACKAGE}`"
+            ));
+        }
+        packages.push(EFFECT_REPLACEMENT_ROUTER_PACKAGE.to_owned());
+    }
+    for (slot, effect_id) in replacements {
+        if !STOCK_EFFECT_SLOTS.contains(&slot.as_str()) {
+            return Err(format!("unknown stock effect slot `{slot}`"));
+        }
+        if !slots.insert(slot) {
+            return Err(format!(
+                "stock effect slot `{slot}` has multiple replacements"
+            ));
+        }
+        let package = catalog
+            .iter()
+            .find(|package| package.effects.iter().any(|effect| effect.id == *effect_id))
+            .ok_or_else(|| format!("unknown effect implementation `{effect_id}`"))?;
+        if !packages.contains(&package.name) {
+            packages.push(package.name.clone());
+        }
+    }
+    Ok(packages)
 }
 
 /// Return a versioned filename for a composed module. Requested packages are
@@ -389,6 +504,42 @@ pub fn write_image_length_and_version(
 mod tests {
     use super::*;
 
+    fn effect_package(name: &str, id: &str) -> PatchPackage {
+        PatchPackage {
+            name: name.into(),
+            version: "1.0.0".into(),
+            kind: "patch".into(),
+            order: 0,
+            title: name.into(),
+            author: "derekstavis".into(),
+            summary: String::new(),
+            description: String::new(),
+            models: vec!["L6max".into()],
+            firmware_models: Vec::new(),
+            sd_card_models: vec!["L6max".into()],
+            wasm_models: Vec::new(),
+            website: false,
+            website_order: 0,
+            website_sd_models: Vec::new(),
+            emulator_gui: false,
+            emulator_order: 0,
+            emulator_sd_models: Vec::new(),
+            readme: "README.md".into(),
+            demo_image: None,
+            request_command: None,
+            requires: Vec::new(),
+            file_name: format!("{name}-1.0.0.bin"),
+            effects: vec![EffectPackage {
+                id: id.into(),
+                title: id.into(),
+                based_on: None,
+                learn_more: None,
+                controls: Vec::new(),
+                tap_action: "stock".into(),
+            }],
+        }
+    }
+
     #[test]
     fn package_catalog_is_generated_from_package_files() {
         let catalog = patch_catalog();
@@ -407,11 +558,47 @@ mod tests {
         let knob = patch_package("knob-dialog").unwrap();
         assert_eq!(knob.version, "1.0.0");
         assert_eq!(knob.title, "Show knob values on display");
+        assert_eq!(knob.author, "derekstavis");
         assert!(supports_firmware_patch("knob-dialog", FirmwareModel::L6max));
         assert!(!supports_firmware_patch("knob-dialog", FirmwareModel::L6));
         assert!(supports_sd_patch("midi-sync", FirmwareModel::L6));
         assert!(patch_package("patch-loader").is_some_and(|package| package.kind == "loader"));
         assert!(supports_sd_patch("dual-efx", FirmwareModel::L6max));
+        assert!(patch_package("dual-efx").unwrap().effects.is_empty());
+        for (package_name, effect_id) in [("efx-plateau", "plateau"), ("efx-velvet", "velvet")] {
+            let package = patch_package(package_name).unwrap();
+            assert_eq!(package.author, "VegaDeftwing");
+            assert!(
+                package
+                    .requires
+                    .iter()
+                    .any(|dependency| dependency == "knob-dialog")
+            );
+            let effect = package
+                .effects
+                .iter()
+                .find(|effect| effect.id == effect_id)
+                .unwrap();
+            assert_eq!(effect.controls, ["encoder-parameters"]);
+            assert_eq!(effect.tap_action, "toggle-editor");
+            for slot in STOCK_EFFECT_SLOTS {
+                assert!(
+                    effect_replacement_packages(
+                        &[(slot.to_owned(), effect_id.to_owned())],
+                        catalog,
+                    )
+                    .is_ok()
+                );
+            }
+        }
+        assert_eq!(
+            resolve_effect_replacements(&[("room".into(), "velvet".into())]).unwrap(),
+            ["knob-dialog", "efx-loader", "efx-velvet"]
+        );
+        assert_eq!(
+            effect_replacement_file_name(&[("room".into(), "velvet".into())]).unwrap(),
+            "efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-room-velvet-spring-stock.bin"
+        );
     }
 
     #[test]
@@ -432,6 +619,50 @@ mod tests {
         assert_eq!(
             resolve_patch_dependencies(&requested).unwrap(),
             ["midi-control".to_owned(), "midi-sync".to_owned(),]
+        );
+    }
+
+    #[test]
+    fn effect_replacement_resolution_accepts_empty_map_and_rejects_unknown_effects() {
+        assert!(resolve_effect_replacements(&[]).unwrap().is_empty());
+        assert_eq!(
+            resolve_effect_replacements(&[("room".into(), "missing-effect".into())]).unwrap_err(),
+            "unknown effect implementation `missing-effect`"
+        );
+    }
+
+    #[test]
+    fn effect_slot_map_accepts_any_known_slot_and_deduplicates_packages() {
+        let catalog = [
+            effect_package("efx-loader", "unused-router-effect"),
+            effect_package("efx-velvet", "velvet"),
+        ];
+        assert_eq!(
+            effect_replacement_packages(
+                &[
+                    ("room".into(), "velvet".into()),
+                    ("spring".into(), "velvet".into())
+                ],
+                &catalog,
+            )
+            .unwrap(),
+            ["efx-loader", "efx-velvet"]
+        );
+        assert!(
+            effect_replacement_packages(&[("ainr".into(), "velvet".into())], &catalog)
+                .unwrap_err()
+                .contains("unknown stock effect slot")
+        );
+        assert!(
+            effect_replacement_packages(
+                &[
+                    ("room".into(), "velvet".into()),
+                    ("room".into(), "velvet".into())
+                ],
+                &catalog
+            )
+            .unwrap_err()
+            .contains("multiple replacements")
         );
     }
 

@@ -10,22 +10,22 @@ pub mod event_queue;
 pub mod handoff_protocol;
 #[path = "../probe/heap_range.rs"]
 pub mod heap_range;
-#[path = "../../../patches/dual-efx/l6max/src/math.rs"]
+#[path = "../../../patches/efx-velvet/l6max/src/math.rs"]
 pub mod math;
 #[path = "../../../patches/dual-efx/l6max/src/parameter_view.rs"]
 pub mod parameter_view;
 #[path = "../../../patches/dual-efx/l6max/src/parameters.rs"]
 pub mod parameters;
-#[path = "../../../patches/dual-efx/l6max/src/plateau.rs"]
+#[path = "../../../patches/efx-plateau/l6max/src/plateau.rs"]
 pub mod plateau;
 #[cfg(experimental_plateau_32k)]
-#[path = "../../../patches/dual-efx/l6max/src/plateau_rate.rs"]
+#[path = "../../../patches/efx-plateau/l6max/src/plateau_rate.rs"]
 mod plateau_rate;
 #[path = "../probe/refresh_handoff.rs"]
 pub mod refresh_handoff;
 #[path = "../../../patches/dual-efx/l6max/src/routing.rs"]
 pub mod routing;
-#[path = "../../../patches/dual-efx/l6max/src/velvet.rs"]
+#[path = "../../../patches/efx-velvet/l6max/src/velvet.rs"]
 pub mod velvet;
 
 #[cfg(test)]

@@ -36,6 +36,10 @@ fn patches_window_renders_its_states() {
                 "SD card patches need an SD card",
             ][..],
         ),
+        (
+            "custom-effects",
+            &["l6max", "--effects", "room=velvet,spring=plateau"][..],
+        ),
     ] {
         let output = directory.join(format!("{name}.png"));
         let status = Command::new(env!("CARGO_BIN_EXE_l6max-gui"))

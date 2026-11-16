@@ -109,12 +109,13 @@ pub enum Operation {
         callbacks_active: bool,
         stock_passthrough: bool,
     },
-    DualEfxParameterEdit {
+    EffectParameterEdit {
         encoder: usize,
         steps: i32,
     },
-    DualEfxState {
+    EffectReplacementState {
         expected_effect_type: Option<u8>,
+        expected_processor_type: Option<u8>,
         expected_edit_mode: Option<bool>,
         minimum_parameter_edits: Option<u32>,
         expected_parameter_id: Option<u8>,
@@ -513,6 +514,7 @@ fn build_native_patch(
         source: source.to_path_buf(),
         output: output.to_path_buf(),
         patches: patches.iter().map(|patch| (*patch).to_owned()).collect(),
+        effect_replacements: Vec::new(),
         version: version.map(str::to_owned),
         mode,
         experimental_qemu_module_arena: mode == l6patch::BuildMode::PatchLoader
@@ -3702,22 +3704,24 @@ impl State {
                 }
                 Ok(json!({"address":format!("{address:#010x}"),"bytes":actual}))
             }
-            Operation::DualEfxParameterEdit { encoder, steps } => {
-                Ok(dual_efx_parameter_edit(options, session, encoder, steps)
+            Operation::EffectParameterEdit { encoder, steps } => {
+                Ok(effect_parameter_edit(options, session, encoder, steps)
                     .map_err(std::io::Error::other)?)
             }
-            Operation::DualEfxState {
+            Operation::EffectReplacementState {
                 expected_effect_type,
+                expected_processor_type,
                 expected_edit_mode,
                 minimum_parameter_edits,
                 expected_parameter_id,
                 expected_parameter_value,
                 expected_dialog_active,
                 minimum_exit_ring_refreshes,
-            } => Ok(dual_efx_state(
+            } => Ok(effect_replacement_state(
                 options,
                 session,
                 expected_effect_type,
+                expected_processor_type,
                 expected_edit_mode,
                 minimum_parameter_edits,
                 expected_parameter_id,
@@ -5678,30 +5682,30 @@ fn composed_export_offset(report: &Value, name: &str) -> Option<u32> {
     u32::try_from(composed_module_report(report)?["exports"][name].as_u64()?).ok()
 }
 
-fn dual_efx_parameter_edit(
+fn effect_parameter_edit(
     options: &Options,
     session: &Session,
     encoder: usize,
     steps: i32,
 ) -> Result<Value, String> {
     if session.engine.model() != l6fw::Model::L6max {
-        return Err("Dual EFX parameter edit requires L6max".into());
+        return Err("L6max effect parameter editing requires L6max".into());
     }
     let socket = options
         .gdb_socket
         .as_ref()
-        .ok_or("Dual EFX parameter edit requires GDB")?;
+        .ok_or("L6max effect parameter editing requires GDB")?;
     let root = sd_fixture_root(options)?;
     let report: Value = serde_json::from_slice(
         &fs::read(root.join("sd-patches-build/patch.json")).map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())?;
     let symbol_offset = composed_export_offset(&report, "DUAL_EFFECT_EDIT_APPLIED")
-        .ok_or("Dual EFX edit counter is missing from its module report")?;
+        .ok_or("Effect editor counter is missing from its module report")?;
     let event_offset = composed_export_offset(&report, "DUAL_EFFECT_EDIT_EVENT")
-        .ok_or("Dual EFX edit event is missing from its module report")?;
+        .ok_or("Effect editor event is missing from its module report")?;
     let callback_hits_offset = composed_export_offset(&report, "DUAL_EFFECT_CALLBACK_HITS")
-        .ok_or("Dual EFX callback counter is missing from its module report")?;
+        .ok_or("Effect callback counter is missing from its module report")?;
     let qmp = &session.engine.management[0];
     const CURRENT_WINDOW: u32 = 0x8020_2610;
     const EFX_TYPE: u32 = 0x8046_00b2;
@@ -5714,7 +5718,7 @@ fn dual_efx_parameter_edit(
         .ok_or("missing selected effect type")?;
     if effect_type != 1 && effect_type != 2 {
         return Err(format!(
-            "Dual EFX parameter edit requires Room or Spring, selected type is {effect_type}"
+            "Effect parameter edit requires Room or Spring, selected type is {effect_type}"
         ));
     }
     let registry = u32::from_le_bytes(
@@ -5734,8 +5738,36 @@ fn dual_efx_parameter_edit(
         .unwrap(),
     );
     if module_base == 0 {
-        return Err("Dual EFX module is not loaded".into());
+        return Err("Effect replacement module is not loaded".into());
     }
+    let edit_mode_offset = composed_export_offset(&report, "DUAL_EFFECT_PARAMETER_EDIT_MODE")
+        .ok_or("Effect editor mode is missing from its module report")?;
+    let ring_positions_offset = composed_export_offset(&report, "PARAMETER_RING_POSITIONS")
+        .ok_or("Effect ring state is missing from its module report")?;
+    let edit_mode = u32::from_le_bytes(
+        qmp.read_memory(0, module_base + edit_mode_offset, 4)
+            .map_err(|error| error.to_string())?
+            .try_into()
+            .unwrap(),
+    );
+    if edit_mode == 0 {
+        return Err(
+            "Enable the selected effect's editor with TAP before turning an encoder".into(),
+        );
+    }
+    let parameter_count = if effect_type == 1 { 8 } else { 7 };
+    if encoder == 0 || encoder > parameter_count {
+        return Err(format!(
+            "selected effect has {parameter_count} editable encoders"
+        ));
+    }
+    let ring_address = module_base + ring_positions_offset + ((encoder - 1) as u32) * 4;
+    let ring_before = u32::from_le_bytes(
+        qmp.read_memory(0, ring_address, 4)
+            .map_err(|error| error.to_string())?
+            .try_into()
+            .unwrap(),
+    );
     let edit_counter = module_base
         .checked_add(symbol_offset)
         .ok_or("Dual EFX edit counter address overflow")?;
@@ -5752,10 +5784,10 @@ fn dual_efx_parameter_edit(
     let mut debugger = l6max_diagnostics::gdb::Gdb::connect(socket)
         .map_err(|error| format!("connecting to emulator GDB: {error}"))?;
     qmp.stop()
-        .map_err(|error| format!("stopping QEMU for Dual EFX parameter edit: {error}"))?;
+        .map_err(|error| format!("stopping QEMU for effect parameter edit: {error}"))?;
     let inject = (|| {
         debugger
-            .write(CURRENT_WINDOW, &0x8020_03ecu32.to_le_bytes())
+            .write(CURRENT_WINDOW, &0x8020_0408u32.to_le_bytes())
             .map_err(|error| format!("selecting parameter-edit context: {error}"))?;
         let stop = debugger
             .call_thumb(
@@ -5778,7 +5810,7 @@ fn dual_efx_parameter_edit(
         .map_err(|error| format!("restoring current window: {error}"));
     let resume = qmp
         .resume()
-        .map_err(|error| format!("resuming QEMU after Dual EFX parameter edit: {error}"));
+        .map_err(|error| format!("resuming QEMU after effect parameter edit: {error}"));
     restore_window?;
     resume?;
     let (stop_reply, event_after_hook) = inject?;
@@ -5792,8 +5824,19 @@ fn dual_efx_parameter_edit(
                 .unwrap(),
         );
         if applied > before {
+            let ring_after = u32::from_le_bytes(
+                qmp.read_memory(0, ring_address, 4)
+                    .map_err(|error| error.to_string())?
+                    .try_into()
+                    .unwrap(),
+            );
+            if ring_after == ring_before {
+                return Err(format!(
+                    "encoder {encoder} edit left its ring unchanged at Q16.16 position {ring_after}"
+                ));
+            }
             qmp.stop()
-                .map_err(|error| format!("stopping QEMU after Dual EFX parameter edit: {error}"))?;
+                .map_err(|error| format!("stopping QEMU after effect parameter edit: {error}"))?;
             debugger
                 .write(CURRENT_WINDOW, &previous_window)
                 .map_err(|error| format!("restoring current window: {error}"))?;
@@ -5806,6 +5849,8 @@ fn dual_efx_parameter_edit(
                 "effect_type": effect_type,
                 "edit_counter_before": before,
                 "edit_counter_after": applied,
+                "ring_position_before": ring_before,
+                "ring_position_after": ring_after,
                 "input": "patched mixer_apply_channel_parameter call",
             }));
         }
@@ -5842,17 +5887,18 @@ fn dual_efx_parameter_edit(
             qmp.resume()
                 .map_err(|error| format!("resuming QEMU after edit timeout: {error}"))?;
             return Err(format!(
-                "Dual EFX audio callback did not apply the parameter edit (counter {before}->{applied}, event={event:#010x}, event_after_hook={event_after_hook:#010x}, callbacks={callback_hits}, effect_type={effect_type}, active_callback={active_callback:#010x}, current_window={current_window:#010x}, module_base={module_base:#010x}, gdb_stop={stop_reply})"
+                "effect audio callback did not apply the parameter edit (counter {before}->{applied}, event={event:#010x}, event_after_hook={event_after_hook:#010x}, callbacks={callback_hits}, effect_type={effect_type}, active_callback={active_callback:#010x}, current_window={current_window:#010x}, module_base={module_base:#010x}, gdb_stop={stop_reply})"
             ));
         }
         thread::sleep(Duration::from_millis(10));
     }
 }
 
-fn dual_efx_state(
+fn effect_replacement_state(
     options: &Options,
     session: &Session,
     expected_effect_type: Option<u8>,
+    expected_processor_type: Option<u8>,
     expected_edit_mode: Option<bool>,
     minimum_parameter_edits: Option<u32>,
     expected_parameter_id: Option<u8>,
@@ -5872,7 +5918,9 @@ fn dual_efx_state(
         .and_then(|patch| patch["exports"].as_object())
         .ok_or("Dual EFX debug symbols are missing from its module report")?;
     let offset = |name: &str| -> Result<u32, String> {
-        symbols[name]
+        symbols
+            .get(name)
+            .ok_or_else(|| format!("Dual EFX symbol {name} is missing"))?
             .as_u64()
             .and_then(|value| u32::try_from(value).ok())
             .ok_or_else(|| format!("Dual EFX symbol {name} is missing"))
@@ -5902,6 +5950,19 @@ fn dual_efx_state(
         .map_err(|error| error.to_string())?
         .first()
         .copied();
+    let modular_replacement = composed_module_report(&report)
+        .and_then(|patch| patch["members"].as_array())
+        .is_some_and(|members| {
+            members.iter().any(|member| member == "efx-loader")
+                && !members.iter().any(|member| member == "dual-efx")
+        });
+    if modular_replacement {
+        if expected_parameter_id.is_some() || expected_parameter_value.is_some() {
+            return Err(
+                "Dual EFX parameter handoff assertions do not apply to modular effects".into(),
+            );
+        }
+    }
     let edit_mode = u32::from_le_bytes(
         qmp.read_memory(
             0,
@@ -5912,30 +5973,57 @@ fn dual_efx_state(
         .try_into()
         .unwrap(),
     );
-    let exit_ring_refreshes = u32::from_le_bytes(
-        qmp.read_memory(
-            0,
-            module_base + offset("DUAL_EFFECT_EXIT_RING_REFRESH_HITS")?,
-            4,
-        )
-        .map_err(|error| error.to_string())?
-        .try_into()
-        .unwrap(),
-    );
-    let applied = u32::from_le_bytes(
-        qmp.read_memory(0, module_base + offset("DUAL_EFFECT_EDIT_APPLIED")?, 4)
+    let processor_type = u32::from_le_bytes(
+        qmp.read_memory(0, module_base + offset("DUAL_EFFECT_PROCESSOR_TYPE")?, 4)
             .map_err(|error| error.to_string())?
             .try_into()
             .unwrap(),
     );
-    let dialog_active_offset = composed_export_offset(&report, "KNOB_DIALOG_EXTERNAL_TEXT_ACTIVE")
-        .ok_or("Knob Dialog active-state symbol is missing from the composed module report")?;
-    let dialog_active = qmp
-        .read_memory(0, module_base + dialog_active_offset, 1)
-        .map_err(|error| error.to_string())?
-        .first()
-        .copied()
-        .ok_or("Knob Dialog active-state byte is missing")?;
+    let exit_ring_refreshes = if minimum_exit_ring_refreshes.is_some() {
+        u32::from_le_bytes(
+            qmp.read_memory(
+                0,
+                module_base + offset("DUAL_EFFECT_EXIT_RING_REFRESH_HITS")?,
+                4,
+            )
+            .map_err(|error| error.to_string())?
+            .try_into()
+            .unwrap(),
+        )
+    } else {
+        0
+    };
+    let applied = if minimum_parameter_edits.is_some() {
+        u32::from_le_bytes(
+            qmp.read_memory(0, module_base + offset("DUAL_EFFECT_EDIT_APPLIED")?, 4)
+                .map_err(|error| error.to_string())?
+                .try_into()
+                .unwrap(),
+        )
+    } else {
+        0
+    };
+    let check_dialog = expected_dialog_active.is_some()
+        || (expected_edit_mode == Some(true) && minimum_parameter_edits.is_some());
+    let dialog_active = if check_dialog {
+        if let Some(dialog_active_offset) =
+            composed_export_offset(&report, "KNOB_DIALOG_EXTERNAL_TEXT_ACTIVE")
+        {
+            qmp.read_memory(0, module_base + dialog_active_offset, 1)
+                .map_err(|error| error.to_string())?
+                .first()
+                .copied()
+                .ok_or("Knob Dialog active-state byte is missing")?
+        } else if expected_dialog_active == Some(false) {
+            0
+        } else {
+            return Err(
+                "Knob Dialog active-state symbol is missing from the composed module report".into(),
+            );
+        }
+    } else {
+        0
+    };
     let parameter = if let Some(parameter_id) = expected_parameter_id {
         if parameter_id >= 16 {
             return Err(format!(
@@ -5955,6 +6043,11 @@ fn dual_efx_state(
     if expected_effect_type.is_some_and(|expected| effect_type != Some(expected)) {
         return Err(format!(
             "Dual EFX selected effect is {effect_type:?}, expected {expected_effect_type:?}"
+        ));
+    }
+    if expected_processor_type.is_some_and(|expected| processor_type != u32::from(expected)) {
+        return Err(format!(
+            "Dual EFX replacement processor has type {processor_type}, expected {expected_processor_type:?}"
         ));
     }
     if expected_edit_mode.is_some_and(|expected| edit_mode != u32::from(expected)) {
@@ -5994,7 +6087,7 @@ fn dual_efx_state(
         }
     }
     Ok(
-        json!({"effect_type":effect_type,"edit_mode":edit_mode,"parameter_edits_applied":applied,"parameter_id":expected_parameter_id,"parameter_value":parameter,"knob_dialog_active":dialog_active,"exit_ring_refreshes":exit_ring_refreshes}),
+        json!({"effect_type":effect_type,"processor_type":processor_type,"edit_mode":edit_mode,"parameter_edits_applied":applied,"parameter_id":expected_parameter_id,"parameter_value":parameter,"knob_dialog_active":dialog_active,"exit_ring_refreshes":exit_ring_refreshes}),
     )
 }
 

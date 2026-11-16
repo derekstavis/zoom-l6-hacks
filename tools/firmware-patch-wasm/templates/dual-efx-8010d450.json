@@ -5,7 +5,7 @@
       "address": "0x80024678",
       "continuation_handler": "dual_efx_effect_workspace_clear",
       "continuation_site": "dsp_effect_workspace_clear",
-      "continuation_slot_offset": 11748,
+      "continuation_slot_offset": 840,
       "length": 4,
       "symbol": "dual_efx_effect_workspace_clear",
       "target": "0x8010d530"
@@ -14,7 +14,7 @@
       "address": "0x80066180",
       "continuation_handler": "dsp_stream_entry_probe",
       "continuation_site": "dsp_stream_callback",
-      "continuation_slot_offset": 11768,
+      "continuation_slot_offset": 860,
       "length": 4,
       "symbol": "dsp_stream_entry_probe",
       "target": "0x8010d450"
@@ -23,7 +23,7 @@
       "address": "0x80053b28",
       "continuation_handler": "dual_efx_parameter_edit",
       "continuation_site": "mixer_apply_channel_parameter",
-      "continuation_slot_offset": 11788,
+      "continuation_slot_offset": 880,
       "length": 4,
       "symbol": "dual_efx_parameter_edit",
       "target": "0x8010d5bc"
@@ -32,7 +32,7 @@
       "address": "0x80054340",
       "continuation_handler": "dual_efx_select_callback",
       "continuation_site": "mixer_apply_effect_type",
-      "continuation_slot_offset": 11808,
+      "continuation_slot_offset": 900,
       "length": 4,
       "symbol": "dual_efx_select_callback",
       "target": "0x8010d668"
@@ -41,7 +41,7 @@
       "address": "0x8000bd78",
       "continuation_handler": "dual_efx_set_effect_type",
       "continuation_site": "mixer_set_efx_type",
-      "continuation_slot_offset": 11828,
+      "continuation_slot_offset": 920,
       "length": 4,
       "symbol": "dual_efx_set_effect_type",
       "target": "0x8010d6a0"
@@ -50,7 +50,7 @@
       "address": "0x8000fe08",
       "continuation_handler": "dual_efx_initialize_static_state",
       "continuation_site": "sys_main_startup_initialize",
-      "continuation_slot_offset": 11848,
+      "continuation_slot_offset": 940,
       "length": 4,
       "symbol": "dual_efx_initialize_static_state",
       "target": "0x8010d580"
@@ -59,38 +59,38 @@
   "model": "L6max",
   "name": "dual-efx",
   "payload_file": "dual-efx-8010d450.bin",
-  "payload_length": 24850,
+  "payload_length": 23392,
   "window_byte_total": 24,
   "windows": [
     {
       "firmware_address": "0x80024678",
       "length": 4,
-      "payload_offset": 11560
+      "payload_offset": 652
     },
     {
       "firmware_address": "0x80066180",
       "length": 4,
-      "payload_offset": 11592
+      "payload_offset": 684
     },
     {
       "firmware_address": "0x80053b28",
       "length": 4,
-      "payload_offset": 11624
+      "payload_offset": 716
     },
     {
       "firmware_address": "0x80054340",
       "length": 4,
-      "payload_offset": 11656
+      "payload_offset": 748
     },
     {
       "firmware_address": "0x8000bd78",
       "length": 4,
-      "payload_offset": 11688
+      "payload_offset": 780
     },
     {
       "firmware_address": "0x8000fe08",
       "length": 4,
-      "payload_offset": 11720
+      "payload_offset": 812
     }
   ]
 }

@@ -28,17 +28,20 @@ use firmware_bindings::{
 #[cfg(not(sd_composed))]
 mod hook_catalog;
 
-#[path = "math.rs"]
+#[path = "../../../efx-velvet/l6max/src/math.rs"]
 mod math;
 #[path = "parameter_view.rs"]
 mod parameter_view;
 #[path = "parameters.rs"]
 mod parameters;
-#[path = "plateau.rs"]
+#[cfg(experimental_plateau_32k)]
+#[path = "../../../efx-plateau/l6max/src/plateau_rate.rs"]
+mod plateau_rate;
+#[path = "../../../efx-plateau/l6max/src/plateau.rs"]
 mod plateau;
 #[path = "routing.rs"]
 mod routing;
-#[path = "velvet.rs"]
+#[path = "../../../efx-velvet/l6max/src/velvet.rs"]
 mod velvet;
 
 use core::mem::MaybeUninit;
@@ -191,12 +194,44 @@ static DUAL_EFFECT_STOCK_RING_VALID: AtomicU32 = AtomicU32::new(0);
 #[cfg(sd_dynamic_module)]
 static DUAL_EFFECT_DRAWING_PARAMETER_RINGS: AtomicU32 = AtomicU32::new(0);
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReplacementEffect {
+    Velvet,
+    Plateau,
+}
+
+fn replacement_effect(stock_slot: u32) -> Option<ReplacementEffect> {
+    #[cfg(sd_composed)]
+    {
+        let selected = crate::effect_replacement_config::effect_for_stock_slot(stock_slot);
+        if selected.is_none() && !crate::effect_replacement_config::EXPLICIT {
+            return match stock_slot {
+                1 => Some(ReplacementEffect::Plateau),
+                2 => Some(ReplacementEffect::Velvet),
+                _ => None,
+            };
+        }
+        return match selected {
+            Some("velvet") => Some(ReplacementEffect::Velvet),
+            Some("plateau") => Some(ReplacementEffect::Plateau),
+            _ => None,
+        };
+    }
+    #[cfg(not(sd_composed))]
+    {
+        match stock_slot {
+            1 => Some(ReplacementEffect::Plateau),
+            2 => Some(ReplacementEffect::Velvet),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(sd_dynamic_module)]
 fn selected_parameter_bank() -> Option<parameters::ParameterBank> {
-    match unsafe { mixer_get_efx_type(0) } {
-        1 => Some(parameters::ParameterBank::Velvet),
-        2 => Some(parameters::ParameterBank::Plateau),
-        _ => None,
+    match replacement_effect(unsafe { mixer_get_efx_type(0) })? {
+        ReplacementEffect::Velvet => Some(parameters::ParameterBank::Velvet),
+        ReplacementEffect::Plateau => Some(parameters::ParameterBank::Plateau),
     }
 }
 
@@ -414,6 +449,9 @@ fn initialize_processor(effect_type: u32) {
 /// when the SD module is loaded after mixer startup. If a callback is active,
 /// leave this block to stock; the setter hook will handle a selector change.
 fn ensure_processor_ready(effect_type: u32) -> bool {
+    if replacement_effect(effect_type).is_none() {
+        return false;
+    }
     let gate = DUAL_EFFECT_CALLBACK_GATE.load(Ordering::Acquire);
     let claimed = if gate == CALLBACK_CLOSED {
         true
@@ -454,7 +492,7 @@ fn close_and_drain_callbacks() {
 }
 
 fn finish_effect_selection(effect_type: u32) {
-    if effect_type == 1 || effect_type == 2 {
+    if (effect_type == 1 || effect_type == 2) && replacement_effect(effect_type).is_some() {
         if DUAL_EFFECT_PROCESSOR_TYPE.load(Ordering::Acquire) != effect_type {
             initialize_processor(effect_type);
         }
@@ -675,7 +713,7 @@ pub unsafe fn dsp_stream_entry_probe() {
             SPRING_CALLBACK => 2,
             _ => 0,
         };
-        if selected_type != 0 {
+        if selected_type != 0 && replacement_effect(selected_type).is_some() {
             if DUAL_EFFECT_SELECTION_PENDING.load(Ordering::Acquire) != 0 {
                 prepare_static_callback(selected_type);
             } else if ensure_processor_ready(selected_type) {
@@ -774,11 +812,18 @@ unsafe fn process_effect_block(descriptor: *mut u8) -> bool {
     // closes the gate and drains leases before changing this storage.
     let processor = unsafe { workspace.processor.assume_init_mut() };
     let original = DUAL_EFFECT_CALLBACK_ORIGINAL.load(Ordering::Acquire);
+    let stock_slot = match original {
+        ROOM_CALLBACK => 1,
+        SPRING_CALLBACK => 2,
+        _ => return false,
+    };
+    let Some(replacement) = replacement_effect(stock_slot) else {
+        return false;
+    };
     if DUAL_EFFECT_ROUTED_CALLBACK.load(Ordering::Relaxed) != original {
-        let default_route = match original {
-            ROOM_CALLBACK => RoutingMode::SendB,
-            SPRING_CALLBACK => RoutingMode::SendA,
-            _ => RoutingMode::Neither,
+        let default_route = match replacement {
+            ReplacementEffect::Velvet => RoutingMode::SendA,
+            ReplacementEffect::Plateau => RoutingMode::SendB,
         };
         for channel in 0..MAX_CHANNELS {
             processor.set_channel_routing(channel, default_route);
@@ -810,10 +855,13 @@ unsafe fn process_effect_block(descriptor: *mut u8) -> bool {
     for frame in 0..BLOCK_SIZE {
         let mut send_a = 0.0f32;
         let mut send_b = 0.0f32;
-        let mut send_cascade = 0.0f32;
         for slot in 0..MAX_CHANNELS {
             let mode = processor.channel_routing[slot];
-            if mode == RoutingMode::Neither {
+            let selected_route = match replacement {
+                ReplacementEffect::Velvet => mode == RoutingMode::SendA,
+                ReplacementEffect::Plateau => mode == RoutingMode::SendB,
+            };
+            if !selected_route {
                 continue;
             }
             let ramp_descriptor = (0x2001_61d0usize + 16 * slot) as *const u32;
@@ -841,15 +889,13 @@ unsafe fn process_effect_block(descriptor: *mut u8) -> bool {
             if contribution != 0.0 {
                 DUAL_EFFECT_INPUT_NONZERO.fetch_add(1, Ordering::Relaxed);
             }
-            match mode {
-                RoutingMode::SendA => send_a += contribution,
-                RoutingMode::SendB => send_b += contribution,
-                RoutingMode::SendAtoB => send_cascade += contribution,
-                RoutingMode::Neither => {}
+            match replacement {
+                ReplacementEffect::Velvet => send_a += contribution,
+                ReplacementEffect::Plateau => send_b += contribution,
             }
         }
 
-        if send_a != 0.0 || send_b != 0.0 || send_cascade != 0.0 {
+        if send_a != 0.0 || send_b != 0.0 {
             DUAL_EFFECT_SEND_NONZERO.fetch_add(1, Ordering::Relaxed);
         }
 
@@ -859,7 +905,11 @@ unsafe fn process_effect_block(descriptor: *mut u8) -> bool {
                 core::ptr::read_volatile(control_source.add(frame)),
             );
         }
-        let (left, right) = processor.process_bus_sample(send_a, send_b, send_cascade);
+        let (left, right) = match replacement {
+            ReplacementEffect::Velvet => processor.velvet.process_sample(send_a, send_a),
+            ReplacementEffect::Plateau => processor.plateau.process_sample(send_b, send_b),
+        };
+        let (left, right) = (math::soft_clip(left), math::soft_clip(right));
         if left.is_finite() && right.is_finite() {
             if left != 0.0 || right != 0.0 {
                 DUAL_EFFECT_OUTPUT_NONZERO.fetch_add(1, Ordering::Relaxed);

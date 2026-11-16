@@ -11,6 +11,11 @@ use std::{
 
 pub const FILE_NAME: &str = "config.toml";
 
+fn empty_effect_replacements() -> &'static BTreeMap<String, String> {
+    static EMPTY: std::sync::OnceLock<BTreeMap<String, String>> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(BTreeMap::new)
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -35,6 +40,9 @@ struct Emulator {
     /// the loader in the firmware.
     #[serde(default)]
     sd_patches: Vec<String>,
+    /// Custom effect implementations assigned to the Room and Spring slots.
+    #[serde(default)]
+    effect_replacements: BTreeMap<String, String>,
     /// WAV files by input channel.
     #[serde(default)]
     input_patch: BTreeMap<String, PathBuf>,
@@ -84,6 +92,10 @@ impl Config {
                 .iter()
                 .try_for_each(|name| check_patch(name))?;
             crate::sd_patches::check(parse_model(model)?, &emulator.sd_patches)?;
+            crate::sd_patches::check_effect_replacements(
+                parse_model(model)?,
+                &emulator.effect_replacements,
+            )?;
         }
         Ok(config)
     }
@@ -130,6 +142,13 @@ impl Config {
         self.emulator
             .get(model_name(model))
             .map_or(&[], |emulator| &emulator.sd_patches)
+    }
+
+    pub fn effect_replacements(&self, model: l6fw::Model) -> &BTreeMap<String, String> {
+        self.emulator.get(model_name(model)).map_or_else(
+            || empty_effect_replacements(),
+            |emulator| &emulator.effect_replacements,
+        )
     }
 
     /// A model's files by one-based channel, without checking that they exist, so
@@ -250,6 +269,7 @@ pub fn save_patches(
     model: l6fw::Model,
     patches: &[String],
     sd_patches: &[String],
+    effect_replacements: &BTreeMap<String, String>,
 ) -> Result<(), String> {
     edit(path, |document| {
         let emulator = emulator_table(document, model);
@@ -259,6 +279,16 @@ pub fn save_patches(
             } else {
                 emulator[key] = toml_edit::value(list.iter().collect::<toml_edit::Array>());
             }
+        }
+        if effect_replacements.is_empty() {
+            emulator.remove("effect_replacements");
+        } else {
+            let mut table = toml_edit::InlineTable::new();
+            for (slot, effect) in effect_replacements {
+                table.insert(slot, toml_edit::Value::from(effect.as_str()));
+            }
+            emulator["effect_replacements"] =
+                toml_edit::value(toml_edit::Value::InlineTable(table));
         }
     })
 }
@@ -376,16 +406,40 @@ mod tests {
             config.input_patch(l6fw::Model::L6).unwrap().unwrap()[&2],
             wav
         );
-        save_patches(&file, l6fw::Model::L6, &["midi-sync".to_owned()], &[]).unwrap();
+        save_patches(
+            &file,
+            l6fw::Model::L6,
+            &["midi-sync".to_owned()],
+            &[],
+            &BTreeMap::new(),
+        )
+        .unwrap();
         assert_eq!(
             Config::load(&file).unwrap().patches(l6fw::Model::L6),
             ["midi-sync"]
         );
-        save_patches(&file, l6fw::Model::L6, &[], &["midi-sync".to_owned()]).unwrap();
+        save_patches(
+            &file,
+            l6fw::Model::L6,
+            &[],
+            &["midi-sync".to_owned()],
+            &BTreeMap::new(),
+        )
+        .unwrap();
         let config = Config::load(&file).unwrap();
         assert!(config.patches(l6fw::Model::L6).is_empty());
         assert_eq!(config.sd_patches(l6fw::Model::L6), ["midi-sync"]);
-        save_patches(&file, l6fw::Model::L6, &[], &[]).unwrap();
+        let effects = [("room".to_owned(), "velvet".to_owned())]
+            .into_iter()
+            .collect();
+        save_patches(&file, l6fw::Model::L6max, &[], &[], &effects).unwrap();
+        assert_eq!(
+            Config::load(&file)
+                .unwrap()
+                .effect_replacements(l6fw::Model::L6max),
+            &effects
+        );
+        save_patches(&file, l6fw::Model::L6, &[], &[], &BTreeMap::new()).unwrap();
         assert!(!fs::read_to_string(&file).unwrap().contains("patches"));
         save_input_patch(&file, l6fw::Model::L6, &BTreeMap::new()).unwrap();
         assert!(

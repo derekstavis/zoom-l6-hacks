@@ -228,6 +228,10 @@ the user's requested patch order.
 The same package record is the source for patch names, versions, model and
 installation support, dependency resolution, and the web and emulator catalogs:
 
+For the build-time effect replacement composition, see
+[`effect-replacements.md`](effect-replacements.md). Its slot map is composition
+configuration rather than a runtime patch dependency.
+
 ```toml
 [package]
 name = "dual-efx"
@@ -235,6 +239,7 @@ version = "1.0.0"
 kind = "patch"
 order = 50
 title = "Dual EFX"
+author = "VegaDeftwing"
 summary = "Run two effects at once."
 description = "Runs both send effects with per-channel routing and editable parameters."
 models = ["L6max"]

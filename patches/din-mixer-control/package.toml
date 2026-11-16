@@ -4,6 +4,7 @@ version = "1.0.0"
 kind = "patch"
 order = 40
 title = "Mixer control over MIDI jack"
+author = "derekstavis"
 summary = "Let the MIDI IN/OUT jacks control the mixer."
 description = "Makes the mixer's documented \"Mixer Control via MIDI\" setting work over the physical TRS MIDI IN jack, not just USB — the stock firmware never implements that direction despite the setting existing."
 models = ["L6max"]

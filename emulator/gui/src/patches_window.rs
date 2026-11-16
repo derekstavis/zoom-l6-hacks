@@ -3,7 +3,7 @@
 use crate::NativePanel;
 use firmware_patch_core::{PATCHES, PatchPackage, patch_catalog};
 use gpui::{Context, CursorStyle, Entity, MouseButton, Render, Window, div, prelude::*, px, rgb};
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 pub const WIDTH: f32 = 520.0;
 pub const HEIGHT: f32 = 380.0;
@@ -30,15 +30,37 @@ pub enum Delivery {
 pub struct Selection {
     pub firmware: Vec<String>,
     pub sd_card: Vec<String>,
+    pub effect_replacements: BTreeMap<String, String>,
 }
 
 impl Selection {
     pub fn new(firmware: Vec<String>, sd_card: Vec<String>) -> Self {
-        let mut selection = Self { firmware, sd_card };
+        let mut selection = Self {
+            firmware,
+            sd_card,
+            ..Self::default()
+        };
         selection
             .firmware
             .retain(|patch| !selection.sd_card.contains(patch));
         selection.ordered()
+    }
+
+    pub fn with_effect_replacements(mut self, replacements: BTreeMap<String, String>) -> Self {
+        self.effect_replacements = replacements;
+        self
+    }
+
+    pub fn set_effect(&mut self, slot: &str, effect: Option<&str>) {
+        match effect {
+            Some(effect) => {
+                self.effect_replacements
+                    .insert(slot.to_owned(), effect.to_owned());
+            }
+            None => {
+                self.effect_replacements.remove(slot);
+            }
+        }
     }
 
     pub fn delivery(&self, patch: &str) -> Option<Delivery> {
@@ -81,6 +103,7 @@ impl Selection {
         Self {
             firmware: order(self.firmware),
             sd_card: order(self.sd_card),
+            effect_replacements: self.effect_replacements,
         }
     }
 }
@@ -107,7 +130,8 @@ impl Status {
             active: Selection::new(
                 panel.options.selected_patches(model),
                 panel.options.selected_sd_patches(model),
-            ),
+            )
+            .with_effect_replacements(panel.options.selected_effect_replacements(model)),
             has_card: panel.options.sd_image.is_some(),
             patch_error: panel.patch_error.clone(),
         }
@@ -132,7 +156,7 @@ pub struct PatchesWindow {
 /// A small two-way switch for a row's delivery.
 fn segment(
     id: String,
-    label: &'static str,
+    label: impl Into<gpui::SharedString>,
     selected: bool,
     bright: bool,
 ) -> gpui::Stateful<gpui::Div> {
@@ -147,7 +171,7 @@ fn segment(
             (false, true) => 0x8b95aa,
             (false, false) => 0x4a5266,
         }))
-        .child(label)
+        .child(label.into())
 }
 
 impl PatchesWindow {
@@ -178,7 +202,8 @@ impl PatchesWindow {
     /// Close and restart with the selection. The main window shows the progress,
     /// and this window comes back if the selection cannot apply.
     pub fn apply(&mut self, selection: Selection, window: &mut Window, cx: &mut Context<Self>) {
-        let selection = Selection::new(selection.firmware, selection.sd_card);
+        let selection = Selection::new(selection.firmware, selection.sd_card)
+            .with_effect_replacements(selection.effect_replacements);
         if let Source::Panel(panel) = &self.source {
             panel.update(cx, |panel, cx| panel.apply_patches(selection, cx));
         }
@@ -364,6 +389,71 @@ impl Render for PatchesWindow {
         } else {
             None
         };
+        let effect_rows = if model == l6fw::Model::L6max {
+            ["room", "spring"]
+                .into_iter()
+                .map(|slot| {
+                    let selected = self
+                        .selection
+                        .effect_replacements
+                        .get(slot)
+                        .map(String::as_str);
+                    let choices = std::iter::once((None, "Stock".to_owned()))
+                        .chain(
+                            firmware_patch_core::patch_catalog()
+                                .iter()
+                                .flat_map(|package| package.effects.iter())
+                                .map(|effect| (Some(effect.id.as_str()), effect.title.clone())),
+                        )
+                        .collect::<Vec<_>>();
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .w(px(72.0))
+                                .text_sm()
+                                .text_color(rgb(0x8b95aa))
+                                .child(if slot == "room" { "Room" } else { "Spring" }),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(rgb(0x34405c))
+                                .overflow_hidden()
+                                .children(choices.into_iter().map(|(effect, title)| {
+                                    let enabled =
+                                        effect.is_none() || has_card || selected == effect;
+                                    let choose_slot = slot.to_owned();
+                                    let chosen_effect = effect.map(str::to_owned);
+                                    segment(
+                                        format!("effect-{slot}-{}", effect.unwrap_or("stock")),
+                                        title,
+                                        selected == effect,
+                                        enabled,
+                                    )
+                                    .when(enabled, |segment| {
+                                        segment.cursor(CursorStyle::PointingHand).on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(move |window, _, _, cx| {
+                                                window.selection.set_effect(
+                                                    &choose_slot,
+                                                    chosen_effect.as_deref(),
+                                                );
+                                                cx.notify();
+                                            }),
+                                        )
+                                    })
+                                })),
+                        )
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         let message = patch_error.or_else(|| self.available.as_ref().err().cloned());
         div()
             .size_full()
@@ -382,6 +472,15 @@ impl Render for PatchesWindow {
                     .flex()
                     .flex_col()
                     .gap_3()
+                    .when(model == l6fw::Model::L6max, |list| {
+                        list.child(
+                            div()
+                                .text_sm()
+                                .text_color(rgb(0xe8eef8))
+                                .child("Effect replacements"),
+                        )
+                    })
+                    .children(effect_rows)
                     .children(rows),
             )
             .children(
@@ -456,6 +555,19 @@ mod tests {
         selection.set("knob-dialog", Some(Delivery::SdCard));
         selection.toggle_with_default("knob-dialog", Delivery::Firmware);
         assert_eq!(selection, Selection::default());
+    }
+
+    #[test]
+    fn effect_assignments_are_independent_and_stock_removes_a_slot() {
+        let mut selection = Selection::default();
+        selection.set_effect("room", Some("velvet"));
+        selection.set_effect("spring", Some("plateau"));
+        selection.set("midi-sync", Some(Delivery::SdCard));
+        assert_eq!(selection.effect_replacements["room"], "velvet");
+        assert_eq!(selection.effect_replacements["spring"], "plateau");
+        selection.set_effect("room", None);
+        assert!(!selection.effect_replacements.contains_key("room"));
+        assert_eq!(selection.effect_replacements["spring"], "plateau");
     }
 
     #[test]

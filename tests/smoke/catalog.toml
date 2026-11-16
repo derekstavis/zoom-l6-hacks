@@ -726,6 +726,70 @@ needs_configuration = true
 wall_timeout_s = 1800
 
 [[case]]
+id = "sd-effect-replacement-map"
+suites = ["sd-matrix", "effect-replacement-matrix"]
+models = ["l6max"]
+scenario = "scenarios/sd-effect-replacement-map.toml"
+needs_configuration = true
+wall_timeout_s = 600
+
+[[case]]
+id = "sd-effect-replacement-plateau"
+suites = ["sd-matrix", "effect-replacement-matrix"]
+models = ["l6max"]
+scenario = "scenarios/sd-effect-replacement-plateau.toml"
+needs_configuration = true
+wall_timeout_s = 600
+
+[[case]]
+id = "sd-effect-assignment-spring-plateau"
+suites = ["sd-matrix", "effect-replacement-matrix"]
+models = ["l6max"]
+scenario = "scenarios/sd-effect-assignment-spring-plateau.toml"
+needs_configuration = true
+wall_timeout_s = 600
+
+[[case]]
+id = "sd-effect-assignment-spring-velvet"
+suites = ["sd-matrix", "effect-replacement-matrix"]
+models = ["l6max"]
+scenario = "scenarios/sd-effect-assignment-spring-velvet.toml"
+needs_configuration = true
+wall_timeout_s = 600
+
+[[case]]
+id = "sd-effect-assignment-plateau-plateau"
+suites = ["sd-matrix", "effect-replacement-matrix"]
+models = ["l6max"]
+scenario = "scenarios/sd-effect-assignment-plateau-plateau.toml"
+needs_configuration = true
+wall_timeout_s = 600
+
+[[case]]
+id = "sd-effect-assignment-velvet-velvet"
+suites = ["sd-matrix", "effect-replacement-matrix"]
+models = ["l6max"]
+scenario = "scenarios/sd-effect-assignment-velvet-velvet.toml"
+needs_configuration = true
+wall_timeout_s = 600
+
+[[case]]
+id = "sd-effect-assignment-plateau-velvet"
+suites = ["sd-matrix", "effect-replacement-matrix"]
+models = ["l6max"]
+scenario = "scenarios/sd-effect-assignment-plateau-velvet.toml"
+needs_configuration = true
+wall_timeout_s = 600
+
+[[case]]
+id = "sd-effect-assignment-velvet-plateau"
+suites = ["sd-matrix", "effect-replacement-matrix"]
+models = ["l6max"]
+scenario = "scenarios/sd-effect-assignment-velvet-plateau.toml"
+needs_configuration = true
+wall_timeout_s = 600
+
+[[case]]
 id = "sd-dual-efx-shared-hook-chain"
 suites = ["sd-matrix"]
 models = ["l6max"]

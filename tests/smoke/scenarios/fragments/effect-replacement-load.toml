@@ -1,0 +1,23 @@
+[[step]]
+action = "audio-input-transport"
+command = "play"
+
+[[step]]
+action = "wait"
+until = "mixer-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "expect-heap"
+minimum_free = 131072
+
+[[step]]
+action = "delay"
+guest_ms = 5000
+guest_timeout_ms = 10000
+wall_timeout_s = 60
+
+[[step]]
+action = "select-mode"
+mode = "efx"

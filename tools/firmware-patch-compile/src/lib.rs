@@ -289,6 +289,7 @@ pub fn compile_sd_relocatable(
 pub fn compile_sd_relocatable_composed(
     source: &Path,
     roots: &[(&str, &Path)],
+    effect_replacements: &[(String, String)],
     output: &Path,
     name: &str,
     base: u32,
@@ -327,10 +328,168 @@ pub fn compile_sd_relocatable_composed(
         let module_name = patch_name.replace('-', "_");
         let payload = root.join("src/payload.rs").canonicalize()?;
         source_text.push_str(&format!(
-            "#[path = {:?}]\nmod {module_name};\n",
+            "#[path = {:?}]\npub mod {module_name};\n",
             payload.display().to_string()
         ));
     }
+    let assignments = effect_replacements
+        .iter()
+        .map(|(slot, id)| (slot.as_str(), id.as_str()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let selected_effects = assignments
+        .iter()
+        .map(|(slot, id)| {
+            let package = firmware_patch_core::patch_catalog()
+                .iter()
+                .find(|package| package.effects.iter().any(|effect| effect.id == **id))
+                .ok_or_else(|| format!("unknown selected effect `{id}`"))?;
+            let effect = package
+                .effects
+                .iter()
+                .find(|effect| effect.id == **id)
+                .expect("effect package was found");
+            Ok((
+                *slot,
+                *id,
+                package.name.replace('-', "_"),
+                effect.title.clone(),
+                effect.controls.clone(),
+                effect.tap_action.clone(),
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    source_text.push_str("pub mod effect_replacement_config {\n");
+    source_text.push_str(&format!(
+        "pub const EXPLICIT: bool = {};\n",
+        !assignments.is_empty()
+    ));
+    source_text.push_str(
+        "pub fn effect_for_stock_slot(slot: u32) -> Option<&'static str> { match slot {\n",
+    );
+    for (slot, effect_id, _, _, _, _) in &selected_effects {
+        let stock_type = match *slot {
+            "room" => 1,
+            "spring" => 2,
+            _ => unreachable!("effect slots are validated by firmware-patch-core"),
+        };
+        source_text.push_str(&format!("{stock_type} => Some({effect_id:?}),\n"));
+    }
+    source_text.push_str("_ => None, } }\n");
+    source_text.push_str("pub fn state_size(slot: u32) -> Option<usize> { match slot {\n");
+    for (slot, _, module_name, _, _, _) in &selected_effects {
+        let stock_type = if *slot == "room" { 1 } else { 2 };
+        source_text.push_str(&format!(
+            "{stock_type} => Some(crate::{module_name}::EFFECT_STATE_BYTES),\n"
+        ));
+    }
+    source_text.push_str("_ => None, } }\n");
+    let mut state_sizes = selected_effects
+        .iter()
+        .map(|(_, _, module_name, _, _, _)| format!("crate::{module_name}::EFFECT_STATE_BYTES"));
+    let maximum_state_size = state_sizes
+        .next()
+        .map(|first| {
+            state_sizes.fold(first, |largest, next| {
+                format!("if {largest} > {next} {{ {largest} }} else {{ {next} }}")
+            })
+        })
+        .unwrap_or_else(|| "0".to_owned());
+    source_text.push_str(&format!(
+        "pub const MAX_EFFECT_STATE_BYTES: usize = {maximum_state_size};\n"
+    ));
+    source_text
+        .push_str("pub unsafe fn initialize(slot: u32, state: *mut u8) -> bool { match slot {\n");
+    for (slot, _, module_name, _, _, _) in &selected_effects {
+        let stock_type = if *slot == "room" { 1 } else { 2 };
+        source_text.push_str(&format!(
+            "{stock_type} => {{ unsafe {{ crate::{module_name}::initialize_effect(state) }}; true }},\n"
+        ));
+    }
+    source_text.push_str("_ => false, } }\n");
+    source_text.push_str(
+        "pub unsafe fn process_sample(slot: u32, state: *mut u8, input: f32) -> Option<(f32, f32)> { match slot {\n",
+    );
+    for (slot, _, module_name, _, _, _) in &selected_effects {
+        let stock_type = if *slot == "room" { 1 } else { 2 };
+        source_text.push_str(&format!(
+            "{stock_type} => Some(unsafe {{ crate::{module_name}::process_sample(state, input) }}),\n"
+        ));
+    }
+    source_text.push_str("_ => None, } }\n");
+    source_text.push_str("pub fn tap_action(slot: u32) -> u32 { match slot {\n");
+    for (slot, _, _, _, _, tap_action) in &selected_effects {
+        let stock_type = if *slot == "room" { 1 } else { 2 };
+        let action = match tap_action.as_str() {
+            "toggle-editor" => 1,
+            "tempo" => 2,
+            _ => 0,
+        };
+        source_text.push_str(&format!("{stock_type} => {action},\n"));
+    }
+    source_text.push_str("_ => 0, } }\n");
+    source_text.push_str("pub fn parameter_count(slot: u32) -> usize { match slot {\n");
+    for (slot, _, module_name, _, controls, _) in &selected_effects {
+        if controls
+            .iter()
+            .any(|control| control == "encoder-parameters")
+        {
+            let stock_type = if *slot == "room" { 1 } else { 2 };
+            source_text.push_str(&format!(
+                "{stock_type} => crate::{module_name}::PARAMETER_COUNT,\n"
+            ));
+        }
+    }
+    source_text.push_str("_ => 0, } }\n");
+    source_text.push_str("pub unsafe fn parameter_position(slot: u32, state: *mut u8, encoder: usize) -> Option<u32> { match slot {\n");
+    for (slot, _, module_name, _, controls, _) in &selected_effects {
+        if controls
+            .iter()
+            .any(|control| control == "encoder-parameters")
+        {
+            let stock_type = if *slot == "room" { 1 } else { 2 };
+            source_text.push_str(&format!(
+                "{stock_type} => unsafe {{ crate::{module_name}::parameter_ring_position(state, encoder) }},\n"
+            ));
+        }
+    }
+    source_text.push_str("_ => None, } }\n");
+    source_text.push_str("pub unsafe fn edit_parameter(slot: u32, state: *mut u8, encoder: usize, delta: i32) -> Option<u32> { match slot {\n");
+    for (slot, _, module_name, _, controls, _) in &selected_effects {
+        if controls
+            .iter()
+            .any(|control| control == "encoder-parameters")
+        {
+            let stock_type = if *slot == "room" { 1 } else { 2 };
+            source_text.push_str(&format!(
+                "{stock_type} => unsafe {{ crate::{module_name}::edit_parameter(state, encoder, delta) }},\n"
+            ));
+        }
+    }
+    source_text.push_str("_ => None, } }\n");
+    source_text
+        .push_str("pub unsafe fn show_editor_state(slot: u32, enabled: bool) { match slot {\n");
+    for (slot, _, module_name, _, controls, _) in &selected_effects {
+        if controls
+            .iter()
+            .any(|control| control == "encoder-parameters")
+        {
+            let stock_type = if *slot == "room" { 1 } else { 2 };
+            source_text.push_str(&format!(
+                "{stock_type} => unsafe {{ crate::{module_name}::show_editor_state(enabled) }},\n"
+            ));
+        }
+    }
+    source_text.push_str("_ => {}, } }\n");
+    source_text.push_str("pub unsafe fn tap_tempo(slot: u32, state: *mut u8) { match slot {\n");
+    for (slot, _, module_name, _, controls, _) in &selected_effects {
+        if controls.iter().any(|control| control == "tap-tempo") {
+            let stock_type = if *slot == "room" { 1 } else { 2 };
+            source_text.push_str(&format!(
+                "{stock_type} => unsafe {{ crate::{module_name}::tap_tempo(state) }},\n"
+            ));
+        }
+    }
+    source_text.push_str("_ => {}, } }\n}\n");
     let composed_root = output.join(format!("{}_composed.rs", name.replace('-', "_")));
     fs::write(&composed_root, source_text)?;
     let link_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../patches/api/composed");

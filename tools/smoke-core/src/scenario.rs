@@ -37,6 +37,9 @@ pub struct Scenario {
     /// Build the experimental persistent Patch loader and the selected SD bundle.
     /// An empty list installs only the loader for a no-module baseline.
     pub sd_patches: Option<Vec<String>>,
+    /// Explicit stock effect slot assignments for the composed SD bundle.
+    #[serde(default)]
+    pub effect_replacements: std::collections::BTreeMap<String, String>,
     /// SD bundle content: valid (default), absent, or deliberately corrupted.
     pub sd_bundle_mode: Option<String>,
     /// Patches for the update package, per model, applied to the configured package.
@@ -243,13 +246,17 @@ pub enum Action {
         #[serde(default)]
         stock_passthrough: bool,
     },
-    DualEfxParameterEdit {
+    #[serde(alias = "dual-efx-parameter-edit")]
+    EffectParameterEdit {
         encoder: usize,
         steps: i32,
     },
-    DualEfxState {
+    #[serde(alias = "dual-efx-state")]
+    EffectReplacementState {
         #[serde(default)]
         expected_effect_type: Option<u8>,
+        #[serde(default)]
+        expected_processor_type: Option<u8>,
         #[serde(default)]
         expected_edit_mode: Option<bool>,
         #[serde(default)]
@@ -484,8 +491,13 @@ impl Scenario {
                 "installed_sd_patches need a card spec and cannot combine sd_patches".into(),
             );
         }
+        if !value.effect_replacements.is_empty() && value.sd_patches.is_none() {
+            return Err("effect_replacements require sd_patches".into());
+        }
         if let Some(patches) = &value.sd_patches {
-            if !patches.is_empty() && value.card.is_none() {
+            if (!patches.is_empty() || !value.effect_replacements.is_empty())
+                && value.card.is_none()
+            {
                 return Err("sd_patches require a card spec".into());
             }
             if !value.installed_patches.is_empty() || !value.update_patches.is_empty() {
@@ -511,7 +523,22 @@ impl Scenario {
                         "patch {name} does not support SD loading on {model}"
                     ));
                 }
+                if !value.effect_replacements.is_empty()
+                    && firmware_model != firmware_patch_core::FirmwareModel::L6max
+                {
+                    return Err("effect_replacements are currently supported on L6max only".into());
+                }
             }
+            let replacements = value
+                .effect_replacements
+                .iter()
+                .map(|(slot, effect)| (slot.clone(), effect.clone()))
+                .collect::<Vec<_>>();
+            firmware_patch_core::effect_replacement_packages(
+                &replacements,
+                firmware_patch_core::patch_catalog(),
+            )
+            .map_err(|error| format!("invalid effect_replacements: {error}"))?;
         }
         if value.backends.is_empty() || value.backends.iter().any(|b| b != "headless" && b != "gui")
         {
@@ -982,8 +1009,8 @@ impl Scenario {
                 | Action::SoundPadPlayback { .. }
                 | Action::ExpectMemory { .. }
                 | Action::ExpectSdPatch { .. }
-                | Action::DualEfxParameterEdit { .. }
-                | Action::DualEfxState { .. }
+                | Action::EffectParameterEdit { .. }
+                | Action::EffectReplacementState { .. }
                 | Action::ExpectHeap { .. }
                 | Action::HoldChord { .. }
                 | Action::AudioCallbacks
@@ -1145,18 +1172,18 @@ impl Scenario {
                             .into(),
                     );
                 }
-                Action::DualEfxParameterEdit { encoder, steps }
+                Action::EffectParameterEdit { encoder, steps }
                     if *encoder == 0
                         || *encoder > 8
                         || *steps == 0
                         || steps.unsigned_abs() > 120 =>
                 {
                     return Err(
-                        "dual-efx-parameter-edit needs encoder 1..8 and nonzero steps up to 120"
+                        "effect-parameter-edit needs encoder 1..8 and nonzero steps up to 120"
                             .into(),
                     );
                 }
-                Action::DualEfxState { .. } => {}
+                Action::EffectReplacementState { .. } => {}
                 Action::ExpectRingLevel { channel, min, max } if *channel == 0 || min > max => {
                     return Err("ring level assertion needs a channel and min <= max".into());
                 }

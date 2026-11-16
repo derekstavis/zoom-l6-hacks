@@ -15,7 +15,13 @@ These are L6max MAIN 1.10 emulator observations; physical memory ownership,
 signal mapping, callback concurrency, audio quality, and timing still need
 qualification.
 
-Replaces the stock mono/reconstructed send effects with high-end modern DSP engines:
+The effect replacement bundle lets the user assign either custom algorithm to
+the Room and Spring stock slots. The mixer's selector still runs only one
+effect at a time; unassigned slots use their stock implementation. The current
+prototype packages both algorithms together and does not yet prune unselected
+DSP state from the shared workspace.
+
+Available replacements:
 1. **Velvet Noise Decorrelator (VND)** (Effect A):
    Ported from [115dkk/Velvet-Noise-Decorrelator-VST3](https://github.com/115dkk/Velvet-Noise-Decorrelator-VST3) to bare-metal `no_std` ARM Cortex-M7. Replaces Spring Reverb (`efx_type = 2`). Generates a sparse, unit-energy impulse sequence to decorrelate stereo audio channels without comb filtering or transient smearing.
    Each generated bank begins with the reference's positive zero-delay tap.
@@ -31,9 +37,7 @@ Replaces the stock mono/reconstructed send effects with high-end modern DSP engi
    nonzero, until reset. Other malformed state is not generally validated.
 2. **Valley Plateau Plate Reverb** (Effect B):
    Ported from [digitalartifactmusic/PlateauNEVersio](https://github.com/digitalartifactmusic/PlateauNEVersio) / Dattorro 1997 topology to bare-metal `no_std` ARM Cortex-M7. Replaces Room Reverb (`efx_type = 1`). Features 4 input diffusers, 2 cross-coupled modulated feedback delay loops, predelay, damping, and freeze mode.
-3. **Dual Concurrent Send & Routing Matrix**:
-   Allows running both effects simultaneously with flexible per-channel routing (`Neither`, `Send A`, `Send B`, `Send A -> B` [cascade]) and optional Pre-AINR (AI Noise Reduction) chaining.
-4. **Extended Parameter Control**:
+3. **Extended Parameter Control**:
    Expands beyond the stock 2-parameter limitation using all 8 physical channel
    encoders. In dynamic mode, a long press on EFX SEL enters or exits parameter
    edit mode; encoder turns update the selected Room or Spring DSP bank, and
@@ -91,9 +95,11 @@ along unobserved firmware paths.
 
 ## Source Layout
 
-- `l6max/src/math.rs`: Fast, standalone math functions (`sin`, `cos`, `sqrt`, `pow10`, `exp2`, `clamp`).
-- `l6max/src/velvet.rs`: Velvet Noise Decorrelator core DSP engine.
-- `l6max/src/plateau.rs`: Valley Plateau Dattorro plate reverb core DSP engine.
+- `patches/efx-velvet/l6max/src/velvet.rs`: Velvet Noise Decorrelator DSP engine.
+- `patches/efx-plateau/l6max/src/plateau.rs`: Valley Plateau Dattorro plate reverb DSP engine.
+- `patches/efx-plateau/l6max/src/plateau_rate.rs`: Experimental Plateau rate converter.
+- `patches/efx-velvet/l6max/src/math.rs`: Shared standalone math functions used by both DSP engines.
+- `l6max/src/routing.rs`: Routing matrix and `DualEfxProcessor` audio engine.
 - `l6max/src/routing.rs`: Routing matrix and `DualEfxProcessor` audio engine.
   Weighted routing can use a caller-owned 768-byte workspace to avoid its
   block-sized temporary buses on the stack; simultaneous callers need separate
@@ -102,7 +108,7 @@ along unobserved firmware paths.
 - `l6max/src/admission.rs`: Standalone callback admission model; not connected to firmware.
 - `l6max/src/parameter_view.rs`: Validation and formatting of copied display values.
 - `l6max/src/firmware.rs`: Includes shared L6max firmware declarations.
-- `l6max/src/payload.rs`: Static and dynamic DSP/workspace hooks and the
+- `l6max/src/payload.rs`: Static and dynamic workspace hooks and the
   Room/Spring replacement callback.
 - `l6max/linker/link.ld`: Dynamic module layout.
 - `l6max/linker/link-static.ld`: Static control state placement in the stock
@@ -113,6 +119,11 @@ functions as dynamic hook sites. The callback pointer is selected by the stock
 firmware; the dynamic stream hook interposes only when Room or Spring is active.
 The old `hooks.tsv` call-site hook at `0x8000277c` was removed because it
 intercepts effect selection and parameter handling, not audio processing.
+
+The Plateau and Velvet DSP engines are maintained as independent effect
+packages so effect-replacement bundles can link either one without the other.
+The legacy Dual EFX package imports those same source files; it does not keep
+private copies of either engine.
 
 On the recorder screen, a short EFX SEL tap retains stock Room/Spring selection.
 A long hold toggles edit mode without changing the selected effect. Encoder

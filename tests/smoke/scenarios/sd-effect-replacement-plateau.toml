@@ -1,0 +1,85 @@
+version = 1
+name = "sd-effect-replacement-plateau"
+models = ["l6max"]
+backends = ["headless"]
+state = "dual-efx-room"
+card = "empty"
+sd_patches = []
+sd_bundle_mode = "composed-module"
+effect_replacements = { room = "plateau" }
+gdb = true
+
+[[audio_input]]
+channel = 1
+loop-tone = { hz = 440.0, seconds = 1.0, amplitude = 0.1 }
+
+[[step]]
+action = "include"
+path = "fragments/effect-replacement-load.toml"
+
+[[step]]
+action = "effect-replacement-state"
+expected_effect_type = 1
+expected_processor_type = 1
+
+[[step]]
+action = "press"
+control = "tap-button"
+
+[[step]]
+action = "delay"
+guest_ms = 100
+
+[[step]]
+action = "effect-replacement-state"
+expected_effect_type = 1
+expected_processor_type = 1
+expected_edit_mode = true
+
+[[step]]
+action = "effect-parameter-edit"
+encoder = 1
+steps = 1
+
+[[step]]
+action = "delay"
+guest_ms = 300
+
+[[step]]
+action = "expect-display-image"
+image = "images/dual-efx-plateau-parameter.png"
+
+[[step]]
+action = "effect-replacement-state"
+expected_effect_type = 1
+expected_processor_type = 1
+expected_edit_mode = true
+minimum_parameter_edits = 1
+expected_dialog_active = true
+
+[[step]]
+action = "press"
+control = "tap-button"
+
+[[step]]
+action = "delay"
+guest_ms = 100
+
+[[step]]
+action = "effect-replacement-state"
+expected_effect_type = 1
+expected_processor_type = 1
+expected_edit_mode = false
+
+[[step]]
+action = "press"
+control = "efx-select"
+
+[[step]]
+action = "delay"
+guest_ms = 500
+
+[[step]]
+action = "effect-replacement-state"
+expected_effect_type = 2
+expected_processor_type = 0

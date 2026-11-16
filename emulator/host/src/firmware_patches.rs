@@ -54,21 +54,33 @@ pub fn check(
     sd_selected: &[String],
 ) -> Result<(), String> {
     crate::sd_patches::check(model, sd_selected)?;
+    let effect_replacements = options.selected_effect_replacements(model);
+    crate::sd_patches::check_effect_replacements(model, &effect_replacements)?;
+    if !effect_replacements.is_empty()
+        && (selected.iter().any(|patch| patch == "dual-efx")
+            || sd_selected.iter().any(|patch| patch == "dual-efx"))
+    {
+        return Err("custom effect replacements cannot be combined with Dual EFX".into());
+    }
     if let Some(patch) = selected.iter().find(|patch| sd_selected.contains(patch)) {
         return Err(format!(
             "{patch} is selected both in the firmware and on the SD card"
         ));
     }
-    if !sd_selected.is_empty() && options.no_sd {
+    if (!sd_selected.is_empty() || !effect_replacements.is_empty()) && options.no_sd {
         return Err("SD card patches need an SD card".into());
     }
-    if selected.is_empty() && sd_selected.is_empty() {
+    if selected.is_empty() && sd_selected.is_empty() && effect_replacements.is_empty() {
         return Ok(());
     }
     let package = stock_package(options, &options.firmware_dir, model)?;
     let names: Vec<&str> = selected.iter().map(String::as_str).collect();
-    firmware_patch_wasm::apply_patches_with_loader(&package, &names, !sd_selected.is_empty())
-        .map(|_| ())
+    firmware_patch_wasm::apply_patches_with_loader(
+        &package,
+        &names,
+        !sd_selected.is_empty() || !effect_replacements.is_empty(),
+    )
+    .map(|_| ())
 }
 
 fn read_segments(directory: &Path) -> Result<[Vec<u8>; 3], String> {
@@ -98,28 +110,25 @@ pub fn prepare(
 ) -> Result<PathBuf, String> {
     let selected = options.selected_patches(model);
     let sd_selected = options.selected_sd_patches(model);
+    let effect_replacements = options.selected_effect_replacements(model);
     let state = options.state_dir.as_deref();
     match card {
-        Some(card) if !sd_selected.is_empty() => {
-            crate::sd_patches::install(card, model, &sd_selected)?;
+        Some(card) if !sd_selected.is_empty() || !effect_replacements.is_empty() => {
+            crate::sd_patches::install(card, model, &sd_selected, &effect_replacements)?;
             if let Some(state) = state {
-                fs::write(state.join(SD_INSTALLED), sd_selected.join("\n"))
-                    .map_err(|e| e.to_string())?;
+                fs::write(state.join(SD_INSTALLED), "hosted\n").map_err(|e| e.to_string())?;
             }
         }
         Some(card) => {
             if let Some(marker) = state.map(|state| state.join(SD_INSTALLED))
                 && marker.is_file()
             {
-                crate::sd_patches::install(card, model, &[])?;
+                crate::sd_patches::install(card, model, &[], &Default::default())?;
                 fs::remove_file(marker).map_err(|e| e.to_string())?;
             }
         }
-        None if !sd_selected.is_empty() => {
-            return Err(format!(
-                "SD card patches ({}) need an SD card",
-                sd_selected.join(", ")
-            ));
+        None if !sd_selected.is_empty() || !effect_replacements.is_empty() => {
+            return Err(format!("SD card patches or custom effects need an SD card"));
         }
         None => {}
     }
@@ -128,7 +137,7 @@ pub fn prepare(
         fs::remove_dir_all(&directory).map_err(|e| e.to_string())?;
     }
     let installed = state.map(|state| state.join(INSTALLED));
-    if selected.is_empty() && sd_selected.is_empty() {
+    if selected.is_empty() && sd_selected.is_empty() && effect_replacements.is_empty() {
         if let (Some(state), Some(installed)) = (state, installed.filter(|path| path.is_file())) {
             install(state, stock)?;
             fs::remove_file(installed).map_err(|e| e.to_string())?;
@@ -137,7 +146,7 @@ pub fn prepare(
     }
     let package = stock_package(options, stock, model)?;
     let names: Vec<&str> = selected.iter().map(String::as_str).collect();
-    let loader = !sd_selected.is_empty();
+    let loader = !sd_selected.is_empty() || !effect_replacements.is_empty();
     let (patched, _) = firmware_patch_wasm::apply_patches_with_loader(&package, &names, loader)
         .map_err(|e| {
             let mut all = selected.clone();

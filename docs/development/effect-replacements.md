@@ -93,9 +93,11 @@ selected effect declares.
 
 Parameter values persist across stock workspace clears in each loaded effect
 module. Each module owns its encoder map, parameter ranges, display formatting,
-and DSP updates; the loader owns editor-mode input routing and ring feedback.
-Velvet exposes seven controls because the eighth Dual EFX encoder was a
-Dual-only cascade control.
+and DSP updates. For the editor, the effect supplies the label and formatted
+value through the knob-dialog API; knob-dialog renders that text. The router
+owns editor visibility, input routing, and ring feedback, and does not interpret
+parameter names, units, or values. Velvet exposes seven controls because the
+eighth Dual EFX encoder was a Dual-only cascade control.
 
 ## Validation
 
@@ -104,6 +106,27 @@ Dual-only cascade control.
 - The `sd-effect-replacement-map` smoke case composes and loads a Velvet-only
   bundle, checks the router and selected implementation members, and observes
   custom DSP output while the mixer selects the matching slot.
+- The effect assignment smoke cases cover all eight non-stock Room/Spring maps:
+
+  | Room | Spring | Smoke case |
+  | --- | --- | --- |
+  | Plateau | Stock | `sd-effect-replacement-plateau` |
+  | Velvet | Stock | `sd-effect-replacement-map` |
+  | Stock | Plateau | `sd-effect-assignment-spring-plateau` |
+  | Stock | Velvet | `sd-effect-assignment-spring-velvet` |
+  | Plateau | Plateau | `sd-effect-assignment-plateau-plateau` |
+  | Velvet | Velvet | `sd-effect-assignment-velvet-velvet` |
+  | Plateau | Velvet | `sd-effect-assignment-plateau-velvet` |
+  | Velvet | Plateau | `sd-effect-assignment-velvet-plateau` |
+
+  Each case boots its composed SD bundle, selects Room and Spring in turn, and
+  verifies that the router activates the assigned processor or passes through
+  stock processing for an unassigned slot. Stock/Stock has no replacement
+  bundle and remains the default firmware behavior. Run just this matrix with:
+
+  ```sh
+  cargo run --offline --locked -p l6test -- run --config config.toml --suite effect-replacement-matrix --model l6max --backend headless
+  ```
 - The packaged `gui-menu` case selects a Room and Spring implementation in the
   emulator workflow, checks the saved assignments and generated SD bundle, then
   removes the effect selection and verifies that the card and firmware are restored.

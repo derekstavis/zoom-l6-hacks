@@ -7,6 +7,10 @@ size, initialization, sample processor, and any optional controls declared in
 selected for Room and Spring, so a Velvet-only build does not carry Plateau's
 DSP code or state.
 
+For parameter editing, the effect formats and submits the parameter label and
+value through the `knob-dialog` API. The shared dialog draws that text; the
+router handles editor visibility, encoder routing, and ring feedback.
+
 This package is the router implementation, not a standalone user-selected
 effect. Select effects through the website's per-slot controls; each resulting
 composition is a single `.BIN` file for the SD card. See

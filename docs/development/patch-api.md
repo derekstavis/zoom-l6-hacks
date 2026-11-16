@@ -239,6 +239,7 @@ version = "1.0.0"
 kind = "patch"
 order = 50
 title = "Dual EFX"
+author = "VegaDeftwing"
 summary = "Run two effects at once."
 description = "Runs both send effects with per-channel routing and editable parameters."
 models = ["L6max"]

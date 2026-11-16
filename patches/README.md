@@ -7,9 +7,9 @@ in ignored output directories.
 ## Catalog
 
 Each package's `package.toml` is the catalog record for its name, version,
-user-facing copy, supported models, installation methods, and web/emulator
-visibility. `firmware-patch-core::patch_catalog()` enumerates those records;
-the web catalog is exported from that API when the site builds.
+GitHub author, user-facing copy, supported models, installation methods, and
+web/emulator visibility. `firmware-patch-core::patch_catalog()` enumerates
+those records; the web catalog is exported from that API when the site builds.
 
 The emulator's **File → Firmware Patches…** list and the browser patcher read
 the same package catalog. CLI and test tools also use it to check model support
@@ -25,7 +25,7 @@ patches/
     l6/                # L6 1.10 declarations, grouped by subsystem
     l6max/             # L6max 1.10 declarations, grouped by subsystem
   <patch-name>/
-    package.toml        # Identity, version, support and display metadata
+    package.toml        # Identity, version, author, support and display metadata
     README.md            # Overview when the patch has multiple profiles
     common/              # Optional code shared across model profiles
     l6/                  # Optional L6 profile
@@ -94,7 +94,7 @@ transfers have not been measured.
 ## Adding a patch
 
 1. Create `patches/<patch-name>/package.toml` with its identity, version,
-   supported models and installation methods, then add the patch README with
+   GitHub author, supported models and installation methods, then add the patch README with
    its purpose, supported firmware hash, changed code/data, build command, and
    validation commands.
 2. Put payload code in `src/` and placement rules in `linker/`. Document space

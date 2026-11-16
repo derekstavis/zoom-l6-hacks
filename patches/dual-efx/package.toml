@@ -4,6 +4,7 @@ version = "1.0.0"
 kind = "patch"
 order = 50
 title = "Dual EFX"
+author = "VegaDeftwing"
 summary = "Velvet and Plateau effects with parameter editing."
 description = "The original combined effect patch. Use Effect Replacements to build a smaller bundle with only the effect you want."
 models = ["L6max"]

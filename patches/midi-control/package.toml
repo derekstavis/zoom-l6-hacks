@@ -4,6 +4,7 @@ version = "1.0.0"
 kind = "patch"
 order = 20
 title = "MIDI Control"
+author = "PRUNOS"
 summary = "Control recorder and blue-page buttons over MIDI."
 description = "Controls recorder transport and blue pages over MIDI, and reports recorder and page state back to the configured MIDI output."
 models = ["L6max"]

@@ -46,6 +46,14 @@ fn main() {
             .and_then(toml::Value::as_str)
             .expect("[package].version must be a string");
         assert!(valid_version(version), "invalid package version {version}");
+        let author = package
+            .get("author")
+            .and_then(toml::Value::as_str)
+            .unwrap_or_else(|| panic!("{name}: [package].author must be a GitHub username"));
+        assert!(
+            valid_github_username(author),
+            "{name}: invalid GitHub username `{author}`"
+        );
         let mut metadata = serde_json::to_value(package).expect("serialize package metadata");
         let effects = value.get("effects");
         validate_effect_metadata(name, effects);
@@ -152,6 +160,18 @@ fn valid_version(version: &str) -> bool {
         && [major, minor, patch]
             .iter()
             .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+fn valid_github_username(username: &str) -> bool {
+    let bytes = username.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 39
+        && bytes[0].is_ascii_alphanumeric()
+        && bytes[bytes.len() - 1].is_ascii_alphanumeric()
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
+        && !username.contains("--")
 }
 
 fn package_names(

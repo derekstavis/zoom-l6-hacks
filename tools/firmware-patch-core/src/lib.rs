@@ -18,6 +18,7 @@ pub struct PatchPackage {
     pub kind: String,
     pub order: u32,
     pub title: String,
+    pub author: String,
     pub summary: String,
     pub description: String,
     pub models: Vec<String>,
@@ -499,6 +500,7 @@ mod tests {
             kind: "patch".into(),
             order: 0,
             title: name.into(),
+            author: "derekstavis".into(),
             summary: String::new(),
             description: String::new(),
             models: vec!["L6max".into()],
@@ -543,6 +545,7 @@ mod tests {
         let knob = patch_package("knob-dialog").unwrap();
         assert_eq!(knob.version, "1.0.0");
         assert_eq!(knob.title, "Show knob values on display");
+        assert_eq!(knob.author, "derekstavis");
         assert!(supports_firmware_patch("knob-dialog", FirmwareModel::L6max));
         assert!(!supports_firmware_patch("knob-dialog", FirmwareModel::L6));
         assert!(supports_sd_patch("midi-sync", FirmwareModel::L6));
@@ -551,6 +554,7 @@ mod tests {
         assert!(patch_package("dual-efx").unwrap().effects.is_empty());
         for (package_name, effect_id) in [("efx-plateau", "plateau"), ("efx-velvet", "velvet")] {
             let package = patch_package(package_name).unwrap();
+            assert_eq!(package.author, "VegaDeftwing");
             assert!(
                 package
                     .requires

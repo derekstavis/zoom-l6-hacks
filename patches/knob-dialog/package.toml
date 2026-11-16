@@ -4,6 +4,7 @@ version = "1.0.0"
 kind = "patch"
 order = 10
 title = "Show knob values on display"
+author = "derekstavis"
 summary = "Show channel encoder values on the display."
 description = "Shows a popup with the actual value — dB, Hz, percent, or pan position — when you turn a channel knob. The stock firmware changes the value but never displays it."
 models = ["L6max"]

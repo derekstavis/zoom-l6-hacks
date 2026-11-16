@@ -4,6 +4,7 @@ version = "1.0.0"
 kind = "patch"
 order = 50
 title = "EFX Loader"
+author = "derekstavis"
 summary = "Load custom effects in selected stock slots."
 description = "Choose which custom effects replace the Room and Spring slots."
 models = ["L6max"]

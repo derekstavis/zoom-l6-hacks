@@ -6,6 +6,7 @@ export interface PatchInfo {
   id: string
   models: readonly ('L6' | 'L6max')[]
   title: string
+  author: string
   description: string
   readmeUrl: string
   demoImage?: string
@@ -25,8 +26,12 @@ export interface LoadablePatchInfo {
 export interface EffectReplacementInfo {
   id: string
   title: string
+  author: string
+  description: string
+  models: readonly ('L6' | 'L6max')[]
   packageId: string
   packageVersion: string
+  readmeUrl: string
 }
 
 const readmeUrl = (patch: Package) =>
@@ -41,6 +46,7 @@ export const PATCHES: PatchInfo[] = visiblePackages.map((patch) => ({
   id: patch.name,
   models: models(patch.models),
   title: patch.title,
+  author: patch.author,
   description: patch.description,
   readmeUrl: readmeUrl(patch),
   ...(patch.demo_image ? { demoImage: patch.demo_image } : {}),
@@ -64,8 +70,12 @@ export const EFFECT_REPLACEMENTS: EffectReplacementInfo[] = catalog.packages
     (patch.effects ?? []).map((effect) => ({
       id: effect.id,
       title: effect.title,
+      author: patch.author,
+      description: patch.description,
+      models: models(patch.models),
       packageId: patch.name,
       packageVersion: patch.version,
+      readmeUrl: readmeUrl(patch),
     })),
   )
 

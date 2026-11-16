@@ -58,6 +58,19 @@ function ModelSupportTags({ models }: { models: readonly FirmwareModel[] }) {
   )
 }
 
+function AuthorByline({ author }: { author: string }) {
+  return (
+    <a
+      className="text-muted-foreground text-xs underline underline-offset-2 hover:text-foreground"
+      href={`https://github.com/${author}`}
+      target="_blank"
+      rel="noreferrer"
+    >
+      by @{author}
+    </a>
+  )
+}
+
 export default function App() {
   const [selected, setSelected] = useState<Set<string>>(
     () => new Set(PATCHES.map((patch) => patch.id)),
@@ -69,6 +82,7 @@ export default function App() {
     room: '',
     spring: '',
   })
+  const [enabledEffects, setEnabledEffects] = useState<Set<string>>(() => new Set())
   const [file, setFile] = useState<File | null>(null)
   const [model, setModel] = useState<FirmwareModel | null>(null)
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
@@ -126,10 +140,38 @@ export default function App() {
       setSelected(new Set(PATCHES.filter((patch) => patch.models.includes(detected)).map((patch) => patch.id)))
       setLoadFromSd(new Set(LOADABLE_PATCHES.filter((patch) => patch.models.includes(detected)).map((patch) => patch.id)))
       setEffectReplacements({ room: '', spring: '' })
+      setEnabledEffects(new Set())
     } catch (error) {
       if (request !== fileRequest.current) return
       setStatus({ kind: 'error', message: error instanceof Error ? error.message : String(error) })
     }
+  }
+
+  function toggleEffect(id: string, enabled: boolean) {
+    setEnabledEffects((previous) => {
+      const next = new Set(previous)
+      if (enabled) next.add(id)
+      else next.delete(id)
+      return next
+    })
+    if (!enabled) {
+      setEffectReplacements((previous) => ({
+        room: previous.room === id ? '' : previous.room,
+        spring: previous.spring === id ? '' : previous.spring,
+      }))
+    }
+    setStatus({ kind: 'idle' })
+    setArchiveStatus({ kind: 'idle' })
+  }
+
+  function toggleEffectAssignment(id: string, slot: 'room' | 'spring') {
+    setEffectReplacements((previous) => ({
+      ...previous,
+      [slot]: previous[slot] === id ? '' : id,
+    }))
+    setEnabledEffects((previous) => new Set(previous).add(id))
+    setStatus({ kind: 'idle' })
+    setArchiveStatus({ kind: 'idle' })
   }
 
   async function handleApply() {
@@ -270,7 +312,7 @@ export default function App() {
             2. Choose the patches
           </h2>
           <p className="text-muted-foreground text-sm leading-relaxed">
-            Choose one or more patches, then choose whether each one is installed in the firmware or from the SD card.
+            Turn patches on, choose their installation method, and assign effects to Room and/or Spring.
           </p>
         </div>
         {installPatchLoader && (
@@ -291,9 +333,12 @@ export default function App() {
               <Card key={patch.id} className="gap-0">
                 <CardHeader className={supported ? '' : 'opacity-45'}>
                   <div className="flex items-center justify-between gap-3">
-                    <Label htmlFor={patch.id} className="text-sm font-medium">
-                      {patch.title}
-                    </Label>
+                    <div className="flex flex-col items-start gap-0.5">
+                      <Label htmlFor={patch.id} className="text-sm font-medium">
+                        {patch.title}
+                      </Label>
+                      <AuthorByline author={patch.author} />
+                    </div>
                     <Switch
                       id={patch.id}
                       aria-label={`Enable ${patch.title}`}
@@ -356,47 +401,85 @@ export default function App() {
               </Card>
             )
           })}
-      </section>
-
-      <section className="flex flex-col gap-4" aria-labelledby="effect-replacement-title">
-        <div className="flex flex-col gap-1">
-          <h2 id="effect-replacement-title" className="text-xl font-semibold tracking-tight">
-            Effect replacements
-          </h2>
-          <p className="text-muted-foreground text-sm leading-relaxed">
-            Choose a replacement for each stock effect. The mixer still runs one selected effect at a time.
-          </p>
-        </div>
-        <Card>
-          <CardContent className="flex flex-col gap-4">
-            {(['room', 'spring'] as const).map((slot) => (
-              <div key={slot} className="flex flex-col gap-1.5">
-                <Label htmlFor={`effect-${slot}`} className="text-sm font-medium capitalize">
-                  {slot === 'room' ? 'Room' : 'Spring'}
-                </Label>
-                <select
-                  id={`effect-${slot}`}
-                  value={effectReplacements[slot] ?? ''}
-                  disabled={model !== 'L6max'}
-                  onChange={(event) => {
-                    setEffectReplacements((previous) => ({ ...previous, [slot]: event.target.value }))
-                    setStatus({ kind: 'idle' })
-                    setArchiveStatus({ kind: 'idle' })
-                  }}
-                  className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full rounded-md border px-3 text-sm outline-none focus-visible:ring-3 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <option value="">Stock effect</option>
-                  {EFFECT_REPLACEMENTS.map((effect) => (
-                    <option key={effect.id} value={effect.id}>{effect.title}</option>
-                  ))}
-                </select>
+        {EFFECT_REPLACEMENTS.map((effect) => {
+          const supported = model === null || effect.models.includes(model)
+          const effectEnabled = enabledEffects.has(effect.id)
+          return (
+            <Card key={effect.id} className="gap-0">
+              <CardHeader className={supported ? '' : 'opacity-45'}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-col items-start gap-0.5">
+                    <Label htmlFor={`effect-enabled-${effect.id}`} className="text-sm font-medium">
+                      {effect.title}
+                    </Label>
+                    <AuthorByline author={effect.author} />
+                  </div>
+                  <Switch
+                    id={`effect-enabled-${effect.id}`}
+                    aria-label={`Enable ${effect.title}`}
+                    checked={effectEnabled}
+                    disabled={!supported}
+                    onCheckedChange={(checked) => toggleEffect(effect.id, checked)}
+                  />
+                </div>
+              </CardHeader>
+              <div
+                className={`grid transition-[grid-template-rows,opacity] duration-200 ease-in-out motion-reduce:transition-none ${effectEnabled ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}
+                aria-hidden={!effectEnabled}
+                inert={!effectEnabled}
+              >
+                <div className="min-h-0 overflow-hidden">
+                  <CardContent className={`flex flex-col gap-2 pt-3 ${supported ? '' : 'opacity-45'}`}>
+                    <p className="text-muted-foreground text-sm leading-relaxed">{effect.description}</p>
+                    <ModelSupportTags models={effect.models} />
+                    <div className="mt-1 flex items-center justify-between gap-4">
+                      <span className="text-xs font-medium">Installation method</span>
+                      <span className="text-muted-foreground text-xs">SD card</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="text-xs font-medium">Assign to a stock effect</span>
+                      <a
+                        className="text-muted-foreground text-right text-xs underline underline-offset-3 hover:text-foreground"
+                        href={effect.readmeUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Technical details
+                      </a>
+                    </div>
+                    <p className="text-muted-foreground text-xs">Choose Room and/or Spring. Each slot can use one effect.</p>
+                    <div className="inline-flex w-fit rounded-md border p-0.5" role="group" aria-label={`Stock effect assignment for ${effect.title}`}>
+                      {(['room', 'spring'] as const).map((slot) => {
+                        const assigned = effectReplacements[slot] ?? ''
+                        const isAssigned = assigned === effect.id
+                        const assignedEffect = EFFECT_REPLACEMENTS.find((candidate) => candidate.id === assigned)
+                        const unavailable = assigned !== '' && !isAssigned
+                        return (
+                          <button
+                            key={slot}
+                            type="button"
+                            aria-pressed={isAssigned}
+                            aria-label={`${slot === 'room' ? 'Room' : 'Spring'}${unavailable ? `, assigned to ${assignedEffect?.title ?? 'another effect'}` : ''}`}
+                            title={unavailable ? `Assigned to ${assignedEffect?.title ?? 'another effect'}` : undefined}
+                            disabled={!supported || unavailable}
+                            onClick={() => toggleEffectAssignment(effect.id, slot)}
+                            className={`rounded px-3 py-1.5 text-xs font-medium capitalize ${isAssigned ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'} disabled:cursor-not-allowed disabled:opacity-50`}
+                          >
+                            {slot}
+                            {unavailable && assignedEffect && ` · Assigned to ${assignedEffect.title}`}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    {!supported && (
+                      <p className="text-muted-foreground text-xs">Not available for {model}.</p>
+                    )}
+                  </CardContent>
+                </div>
               </div>
-            ))}
-            {model !== 'L6max' && (
-              <p className="text-muted-foreground text-xs">Effect replacements are currently available for L6max.</p>
-            )}
-          </CardContent>
-        </Card>
+            </Card>
+          )
+        })}
       </section>
 
       <section className="flex flex-col gap-4" aria-labelledby="download-update-title">

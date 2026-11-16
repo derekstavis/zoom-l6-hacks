@@ -4,6 +4,7 @@ version = "1.0.0"
 kind = "patch"
 order = 52
 title = "Plateau Plate"
+author = "VegaDeftwing"
 summary = "Replace a stock effect with a plate reverb."
 description = "A plate reverb effect for a supported stock effect slot."
 models = ["L6max"]

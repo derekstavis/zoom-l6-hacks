@@ -4,6 +4,7 @@ version = "1.0.0"
 kind = "patch"
 order = 51
 title = "Velvet Noise"
+author = "VegaDeftwing"
 summary = "Replace a stock effect with a stereo decorrelator."
 description = "A stereo decorrelator effect for a supported stock effect slot."
 models = ["L6max"]

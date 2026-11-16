@@ -260,31 +260,6 @@ fn validate_effect_metadata(name: &str, effects: Option<&toml::Value>) {
             !title.trim().is_empty(),
             "{name}: effect title cannot be empty"
         );
-        let slots = effect
-            .get("stock_slots")
-            .and_then(toml::Value::as_array)
-            .unwrap_or_else(|| panic!("{name}: effect stock_slots must be an array"));
-        assert!(
-            !slots.is_empty(),
-            "{name}: effect stock_slots cannot be empty"
-        );
-        let mut unique_slots = BTreeSet::new();
-        for slot in slots {
-            let slot = slot
-                .as_str()
-                .unwrap_or_else(|| panic!("{name}: effect stock slots must be strings"));
-            assert!(
-                !slot.is_empty()
-                    && slot.bytes().all(|byte| {
-                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
-                    }),
-                "{name}: stock slot identifiers must be lowercase kebab-case"
-            );
-            assert!(
-                unique_slots.insert(slot),
-                "{name}: duplicate stock slot {slot} for effect {id}"
-            );
-        }
         let controls = effect
             .get("controls")
             .and_then(toml::Value::as_array)

@@ -34,19 +34,13 @@ fn main() {
         .iter()
         .flat_map(|package| package.effects.iter())
         .collect::<Vec<_>>();
-    let choices = |slot: &str| {
+    let choices = || {
         std::iter::once(None)
-            .chain(effects.iter().filter_map(|effect| {
-                effect
-                    .stock_slots
-                    .iter()
-                    .any(|supported| supported == slot)
-                    .then_some(Some(effect.id.as_str()))
-            }))
+            .chain(effects.iter().map(|effect| Some(effect.id.as_str())))
             .collect::<Vec<_>>()
     };
-    for room in choices("room") {
-        for spring in choices("spring") {
+    for room in choices() {
+        for spring in choices() {
             if room.is_none() && spring.is_none() {
                 continue;
             }

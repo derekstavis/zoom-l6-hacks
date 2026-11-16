@@ -27,7 +27,6 @@ export interface EffectReplacementInfo {
   title: string
   packageId: string
   packageVersion: string
-  slots: readonly string[]
 }
 
 const readmeUrl = (patch: Package) =>
@@ -67,7 +66,6 @@ export const EFFECT_REPLACEMENTS: EffectReplacementInfo[] = catalog.packages
       title: effect.title,
       packageId: patch.name,
       packageVersion: patch.version,
-      slots: effect.stock_slots,
     })),
   )
 

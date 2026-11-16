@@ -17,10 +17,12 @@ stock slots.
   Its source now reuses the Plateau and Velvet DSP source files. It is not a
   dependency of the replacement bundles.
 
-The effect packages declare their implementation IDs, compatible stock slots,
-and optional controls in `package.toml`. The loader dispatches input according
-to the selected effect's control declaration; it does not require every effect
-to expose the same controls. The first two effect packages declare encoder
+The effect packages declare their implementation IDs and optional controls in
+`package.toml`. Any implementation can be assigned to any supported stock
+slot. The assignable slots are Room and Spring; AINR is not a replaceable slot.
+The loader dispatches input according to the selected effect's control
+declaration; it does not require every effect to expose the same controls. The
+first two effect packages declare encoder
 parameter editing and use TAP to toggle the editor. A future tempo effect can
 declare a TAP tempo action without exposing the parameter editor.
 
@@ -28,7 +30,6 @@ declare a TAP tempo action without exposing the parameter editor.
 [[effects]]
 id = "velvet"
 title = "Velvet Noise"
-stock_slots = ["room", "spring"]
 controls = ["encoder-parameters"]
 tap_action = "toggle-editor"
 ```
@@ -58,8 +59,10 @@ cannot be combined with the legacy Dual EFX patch.
 
 ## Composition and runtime
 
-The resolver validates that each effect supports its assigned slot, then
-includes `efx-loader` and each distinct selected effect package. For
+The resolver validates that each assignment uses a supported stock slot, then
+includes `efx-loader` and each distinct selected effect package. Every effect
+implementation is available for both Room and Spring. AINR is outside the
+assignable slot list. For
 example, `room = "velvet", spring = "stock"` links the router and `efx-velvet`
 only; it does not link `efx-plateau` or the legacy `dual-efx` package. Assigning
 Velvet to both slots still links its code once. The selected-slot registry is generated
@@ -96,7 +99,7 @@ Dual-only cascade control.
 
 ## Validation
 
-- Catalog tests validate effect IDs, stock-slot compatibility, package
+- Catalog tests validate effect IDs, supported slots, AINR exclusion, package
   deduplication, and generated filenames.
 - The `sd-effect-replacement-map` smoke case composes and loads a Velvet-only
   bundle, checks the router and selected implementation members, and observes

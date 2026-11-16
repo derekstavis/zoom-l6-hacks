@@ -44,9 +44,9 @@ catalog = json.load(open(sys.argv[1], encoding="utf-8"))
 effects = {}
 for package in catalog["packages"]:
     for effect in package.get("effects", []):
-        effects[effect["id"]] = (package["name"], set(effect["stock_slots"]))
+        effects[effect["id"]] = package["name"]
 slots = ("room", "spring")
-choices = {slot: ["stock"] + sorted(effect_id for effect_id, (_, supported) in effects.items() if slot in supported) for slot in slots}
+choices = {slot: ["stock"] + sorted(effects) for slot in slots}
 for room, spring in itertools.product(choices["room"], choices["spring"]):
     if room == spring == "stock":
         continue

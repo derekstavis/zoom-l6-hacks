@@ -386,7 +386,7 @@ export default function App() {
                   className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full rounded-md border px-3 text-sm outline-none focus-visible:ring-3 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <option value="">Stock effect</option>
-                  {EFFECT_REPLACEMENTS.filter((effect) => effect.slots.includes(slot)).map((effect) => (
+                  {EFFECT_REPLACEMENTS.map((effect) => (
                     <option key={effect.id} value={effect.id}>{effect.title}</option>
                   ))}
                 </select>

@@ -403,9 +403,6 @@ impl Render for PatchesWindow {
                             firmware_patch_core::patch_catalog()
                                 .iter()
                                 .flat_map(|package| package.effects.iter())
-                                .filter(|effect| {
-                                    effect.stock_slots.iter().any(|candidate| candidate == slot)
-                                })
                                 .map(|effect| (Some(effect.id.as_str()), effect.title.clone())),
                         )
                         .collect::<Vec<_>>();

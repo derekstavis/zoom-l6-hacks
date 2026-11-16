@@ -44,7 +44,6 @@ pub struct PatchPackage {
 pub struct EffectPackage {
     pub id: String,
     pub title: String,
-    pub stock_slots: Vec<String>,
     #[serde(default)]
     pub controls: Vec<String>,
     #[serde(default = "default_tap_action")]
@@ -247,21 +246,10 @@ pub fn effect_replacement_packages(
                 "stock effect slot `{slot}` has multiple replacements"
             ));
         }
-        let (package, effect) = catalog
+        let package = catalog
             .iter()
-            .find_map(|package| {
-                package
-                    .effects
-                    .iter()
-                    .find(|effect| effect.id == *effect_id)
-                    .map(|effect| (package, effect))
-            })
+            .find(|package| package.effects.iter().any(|effect| effect.id == *effect_id))
             .ok_or_else(|| format!("unknown effect implementation `{effect_id}`"))?;
-        if !effect.stock_slots.iter().any(|supported| supported == slot) {
-            return Err(format!(
-                "effect `{effect_id}` cannot replace stock slot `{slot}`"
-            ));
-        }
         if !packages.contains(&package.name) {
             packages.push(package.name.clone());
         }
@@ -504,7 +492,7 @@ pub fn write_image_length_and_version(
 mod tests {
     use super::*;
 
-    fn effect_package(name: &str, id: &str, stock_slots: &[&str]) -> PatchPackage {
+    fn effect_package(name: &str, id: &str) -> PatchPackage {
         PatchPackage {
             name: name.into(),
             version: "1.0.0".into(),
@@ -531,7 +519,6 @@ mod tests {
             effects: vec![EffectPackage {
                 id: id.into(),
                 title: id.into(),
-                stock_slots: stock_slots.iter().map(|slot| (*slot).into()).collect(),
                 controls: Vec::new(),
                 tap_action: "stock".into(),
             }],
@@ -577,6 +564,15 @@ mod tests {
                 .unwrap();
             assert_eq!(effect.controls, ["encoder-parameters"]);
             assert_eq!(effect.tap_action, "toggle-editor");
+            for slot in STOCK_EFFECT_SLOTS {
+                assert!(
+                    effect_replacement_packages(
+                        &[(slot.to_owned(), effect_id.to_owned())],
+                        catalog,
+                    )
+                    .is_ok()
+                );
+            }
         }
         assert_eq!(
             resolve_effect_replacements(&[("room".into(), "velvet".into())]).unwrap(),
@@ -619,10 +615,10 @@ mod tests {
     }
 
     #[test]
-    fn effect_slot_map_validates_compatibility_and_deduplicates_packages() {
+    fn effect_slot_map_accepts_any_known_slot_and_deduplicates_packages() {
         let catalog = [
-            effect_package("efx-loader", "unused-router-effect", &[]),
-            effect_package("efx-velvet", "velvet", &["room", "spring"]),
+            effect_package("efx-loader", "unused-router-effect"),
+            effect_package("efx-velvet", "velvet"),
         ];
         assert_eq!(
             effect_replacement_packages(
@@ -636,7 +632,7 @@ mod tests {
             ["efx-loader", "efx-velvet"]
         );
         assert!(
-            effect_replacement_packages(&[("other".into(), "velvet".into())], &catalog)
+            effect_replacement_packages(&[("ainr".into(), "velvet".into())], &catalog)
                 .unwrap_err()
                 .contains("unknown stock effect slot")
         );
@@ -650,16 +646,6 @@ mod tests {
             )
             .unwrap_err()
             .contains("multiple replacements")
-        );
-
-        let room_only = [
-            effect_package("efx-loader", "unused-router-effect", &[]),
-            effect_package("room-effect", "room-only", &["room"]),
-        ];
-        assert!(
-            effect_replacement_packages(&[("spring".into(), "room-only".into())], &room_only)
-                .unwrap_err()
-                .contains("cannot replace stock slot")
         );
     }
 

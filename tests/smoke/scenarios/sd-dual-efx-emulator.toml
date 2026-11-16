@@ -53,9 +53,8 @@ action = "checkpoint"
 name = "dual-efx-plateau-before-edit"
 
 [[step]]
-action = "hold"
-control = "efx-select"
-duration_ms = 1000
+action = "press"
+control = "tap-button"
 
 [[step]]
 action = "dual-efx-state"
@@ -69,6 +68,27 @@ guest_ms = 100
 [[step]]
 action = "checkpoint"
 name = "dual-efx-plateau-edit-mode"
+
+[[step]]
+action = "expect-ring-level"
+channel = 1
+min = 30
+max = 72
+
+[[step]]
+action = "delay"
+guest_ms = 600
+
+[[step]]
+action = "checkpoint"
+name = "dual-efx-plateau-tap-indicator"
+
+[[step]]
+action = "expect-button-led"
+control = "tap-button"
+checkpoint = "dual-efx-room-selected"
+lit = true
+changed = true
 
 [[step]]
 action = "expect-display-image"
@@ -100,6 +120,30 @@ expected_parameter_id = 6
 expected_parameter_value = 12.0
 
 [[step]]
+action = "encoder"
+channel = 1
+steps = 20
+
+[[step]]
+action = "delay"
+guest_ms = 300
+
+[[step]]
+action = "expect-ring"
+channel = 1
+changed = true
+only = true
+settle_ms = 250
+
+[[step]]
+action = "dual-efx-state"
+expected_effect_type = 1
+expected_edit_mode = true
+minimum_parameter_edits = 2
+expected_parameter_id = 6
+expected_parameter_value = 52.0
+
+[[step]]
 action = "delay"
 guest_ms = 2500
 
@@ -116,7 +160,7 @@ guest_ms = 100
 action = "dual-efx-state"
 expected_effect_type = 1
 expected_edit_mode = true
-minimum_parameter_edits = 2
+minimum_parameter_edits = 3
 expected_parameter_id = 7
 expected_parameter_value = 1.02
 
@@ -133,7 +177,7 @@ guest_ms = 100
 action = "dual-efx-state"
 expected_effect_type = 1
 expected_edit_mode = true
-minimum_parameter_edits = 3
+minimum_parameter_edits = 4
 expected_parameter_id = 8
 expected_parameter_value = 0.87
 
@@ -150,7 +194,7 @@ guest_ms = 100
 action = "dual-efx-state"
 expected_effect_type = 1
 expected_edit_mode = true
-minimum_parameter_edits = 4
+minimum_parameter_edits = 5
 expected_parameter_id = 9
 expected_parameter_value = 100.0
 
@@ -167,7 +211,7 @@ guest_ms = 100
 action = "dual-efx-state"
 expected_effect_type = 1
 expected_edit_mode = true
-minimum_parameter_edits = 5
+minimum_parameter_edits = 6
 expected_parameter_id = 10
 expected_parameter_value = 6750.0
 
@@ -184,7 +228,7 @@ guest_ms = 100
 action = "dual-efx-state"
 expected_effect_type = 1
 expected_edit_mode = true
-minimum_parameter_edits = 6
+minimum_parameter_edits = 7
 expected_parameter_id = 11
 expected_parameter_value = 0.8
 
@@ -201,7 +245,7 @@ guest_ms = 100
 action = "dual-efx-state"
 expected_effect_type = 1
 expected_edit_mode = true
-minimum_parameter_edits = 7
+minimum_parameter_edits = 8
 expected_parameter_id = 12
 expected_parameter_value = 8.25
 
@@ -218,19 +262,30 @@ guest_ms = 100
 action = "dual-efx-state"
 expected_effect_type = 1
 expected_edit_mode = true
-minimum_parameter_edits = 8
+minimum_parameter_edits = 9
 expected_parameter_id = 13
 expected_parameter_value = 1.0
 
 [[step]]
-action = "hold"
-control = "efx-select"
-duration_ms = 1000
+action = "press"
+control = "tap-button"
 
 [[step]]
 action = "dual-efx-state"
 expected_effect_type = 1
 expected_edit_mode = false
+minimum_exit_ring_refreshes = 8
+
+[[step]]
+action = "checkpoint"
+name = "dual-efx-plateau-edit-exited"
+
+[[step]]
+action = "expect-button-led"
+control = "tap-button"
+checkpoint = "dual-efx-room-selected"
+lit = false
+same = true
 
 [[step]]
 action = "press"
@@ -254,14 +309,20 @@ action = "checkpoint"
 name = "before-dual-efx-edit"
 
 [[step]]
-action = "hold"
-control = "efx-select"
-duration_ms = 1000
+action = "press"
+control = "tap-button"
 
 [[step]]
 action = "dual-efx-state"
 expected_effect_type = 2
 expected_edit_mode = true
+
+[[step]]
+action = "expect-button-led"
+control = "tap-button"
+checkpoint = "before-dual-efx-edit"
+lit = true
+changed = true
 
 [[step]]
 action = "delay"
@@ -462,14 +523,25 @@ expected_parameter_id = 14
 expected_parameter_value = 0.9
 
 [[step]]
-action = "hold"
-control = "efx-select"
-duration_ms = 1000
+action = "press"
+control = "tap-button"
 
 [[step]]
 action = "dual-efx-state"
 expected_effect_type = 2
 expected_edit_mode = false
+minimum_exit_ring_refreshes = 8
+
+[[step]]
+action = "checkpoint"
+name = "dual-efx-velvet-edit-exited"
+
+[[step]]
+action = "expect-button-led"
+control = "tap-button"
+checkpoint = "before-dual-efx-edit"
+lit = false
+same = true
 
 
 [[step]]
@@ -482,3 +554,44 @@ wall_timeout_s = 60
 action = "expect-sd-patch"
 loaded = true
 callbacks_active = true
+
+[[step]]
+action = "press"
+control = "efx-select"
+
+[[step]]
+action = "delay"
+guest_ms = 500
+
+[[step]]
+action = "dual-efx-state"
+expected_effect_type = 3
+expected_edit_mode = false
+
+[[step]]
+action = "press"
+control = "tap-button"
+
+[[step]]
+action = "dual-efx-state"
+expected_effect_type = 3
+expected_edit_mode = false
+expected_dialog_active = false
+
+[[step]]
+action = "press"
+control = "recorder.menu"
+
+[[step]]
+action = "delay"
+guest_ms = 1500
+
+[[step]]
+action = "press"
+control = "tap-button"
+
+[[step]]
+action = "dual-efx-state"
+expected_effect_type = 3
+expected_edit_mode = false
+expected_dialog_active = false

@@ -17,9 +17,11 @@ emulator_gui = false
 emulator_order = 51
 emulator_sd_models = []
 readme = "README.md"
-requires = []
+requires = ["knob-dialog"]
 
 [[effects]]
 id = "velvet"
 title = "Velvet Noise"
 stock_slots = ["room", "spring"]
+controls = ["encoder-parameters"]
+tap_action = "toggle-editor"

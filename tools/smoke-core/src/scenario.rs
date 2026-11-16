@@ -246,11 +246,13 @@ pub enum Action {
         #[serde(default)]
         stock_passthrough: bool,
     },
-    DualEfxParameterEdit {
+    #[serde(alias = "dual-efx-parameter-edit")]
+    EffectParameterEdit {
         encoder: usize,
         steps: i32,
     },
-    DualEfxState {
+    #[serde(alias = "dual-efx-state")]
+    EffectReplacementState {
         #[serde(default)]
         expected_effect_type: Option<u8>,
         #[serde(default)]
@@ -1007,8 +1009,8 @@ impl Scenario {
                 | Action::SoundPadPlayback { .. }
                 | Action::ExpectMemory { .. }
                 | Action::ExpectSdPatch { .. }
-                | Action::DualEfxParameterEdit { .. }
-                | Action::DualEfxState { .. }
+                | Action::EffectParameterEdit { .. }
+                | Action::EffectReplacementState { .. }
                 | Action::ExpectHeap { .. }
                 | Action::HoldChord { .. }
                 | Action::AudioCallbacks
@@ -1170,18 +1172,18 @@ impl Scenario {
                             .into(),
                     );
                 }
-                Action::DualEfxParameterEdit { encoder, steps }
+                Action::EffectParameterEdit { encoder, steps }
                     if *encoder == 0
                         || *encoder > 8
                         || *steps == 0
                         || steps.unsigned_abs() > 120 =>
                 {
                     return Err(
-                        "dual-efx-parameter-edit needs encoder 1..8 and nonzero steps up to 120"
+                        "effect-parameter-edit needs encoder 1..8 and nonzero steps up to 120"
                             .into(),
                     );
                 }
-                Action::DualEfxState { .. } => {}
+                Action::EffectReplacementState { .. } => {}
                 Action::ExpectRingLevel { channel, min, max } if *channel == 0 || min > max => {
                     return Err("ring level assertion needs a channel and min <= max".into());
                 }

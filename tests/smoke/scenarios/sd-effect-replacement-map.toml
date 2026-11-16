@@ -38,9 +38,58 @@ action = "select-mode"
 mode = "efx"
 
 [[step]]
-action = "dual-efx-state"
+action = "effect-replacement-state"
 expected_effect_type = 1
 expected_processor_type = 1
+
+[[step]]
+action = "press"
+control = "tap-button"
+
+[[step]]
+action = "delay"
+guest_ms = 100
+
+[[step]]
+action = "effect-replacement-state"
+expected_effect_type = 1
+expected_processor_type = 1
+expected_edit_mode = true
+
+[[step]]
+action = "effect-parameter-edit"
+encoder = 2
+steps = 1
+
+[[step]]
+action = "delay"
+guest_ms = 300
+
+[[step]]
+action = "expect-display-image"
+image = "images/dual-efx-velvet-parameter.png"
+
+[[step]]
+action = "effect-replacement-state"
+expected_effect_type = 1
+expected_processor_type = 1
+expected_edit_mode = true
+minimum_parameter_edits = 1
+expected_dialog_active = true
+
+[[step]]
+action = "press"
+control = "tap-button"
+
+[[step]]
+action = "delay"
+guest_ms = 100
+
+[[step]]
+action = "effect-replacement-state"
+expected_effect_type = 1
+expected_processor_type = 1
+expected_edit_mode = false
 
 [[step]]
 action = "press"
@@ -51,6 +100,6 @@ action = "delay"
 guest_ms = 500
 
 [[step]]
-action = "dual-efx-state"
+action = "effect-replacement-state"
 expected_effect_type = 2
 expected_processor_type = 0

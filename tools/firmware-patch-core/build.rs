@@ -285,6 +285,41 @@ fn validate_effect_metadata(name: &str, effects: Option<&toml::Value>) {
                 "{name}: duplicate stock slot {slot} for effect {id}"
             );
         }
+        let controls = effect
+            .get("controls")
+            .and_then(toml::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut unique_controls = BTreeSet::<String>::new();
+        for control in controls {
+            let control = control
+                .as_str()
+                .unwrap_or_else(|| panic!("{name}: effect controls entries must be strings"));
+            assert!(
+                ["encoder-parameters", "tap-tempo"].contains(&control),
+                "{name}: unsupported effect control mode {control}"
+            );
+            assert!(
+                unique_controls.insert(control.to_owned()),
+                "{name}: duplicate effect control mode {control}"
+            );
+        }
+        let tap_action = effect
+            .get("tap_action")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("stock");
+        assert!(
+            ["stock", "toggle-editor", "tempo"].contains(&tap_action),
+            "{name}: unsupported effect tap action {tap_action}"
+        );
+        assert!(
+            tap_action != "toggle-editor" || unique_controls.contains("encoder-parameters"),
+            "{name}: toggle-editor requires encoder-parameters"
+        );
+        assert!(
+            tap_action != "tempo" || unique_controls.contains("tap-tempo"),
+            "{name}: tempo tap action requires tap-tempo control mode"
+        );
     }
 }
 

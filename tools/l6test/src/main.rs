@@ -694,10 +694,11 @@ fn fixture_options(
                         .filter(|member| *member == "efx-plateau" || *member == "efx-velvet")
                         .count();
                     if !members.iter().any(|member| member == "efx-loader")
+                        || !members.iter().any(|member| member == "knob-dialog")
                         || effect_modules == 0
                         || members.iter().any(|member| member == "dual-efx")
                     {
-                        return Err("effect replacement bundle did not contain only the router and selected effect modules".into());
+                        return Err("effect replacement bundle is missing the router, knob dialog, or selected effect modules".into());
                     }
                 } else if !members.iter().any(|member| member == "dual-efx")
                     || !members.iter().any(|member| member == "knob-dialog")

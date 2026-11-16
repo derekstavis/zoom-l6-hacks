@@ -1,7 +1,9 @@
 # Velvet Noise
 
-This package contains the Velvet Noise Decorrelator DSP implementation and
-its effect metadata. The effect composer links it into an SD bundle only when
-Velvet is assigned to a compatible stock effect slot. It exposes state size,
-initialization, and sample processing to the shared effect router; it is a
-build-time component and is not a separately installed SD file.
+This package contains the Velvet Noise Decorrelator DSP implementation, its
+parameter editor, and its effect metadata. The effect composer links it into an
+SD bundle only when Velvet is assigned to a compatible stock effect slot. It
+exposes state initialization and sample processing to the shared effect router,
+and owns its encoder map, ranges, display values, and DSP updates. It is a
+build-time component and is not a separately installed SD file. The package
+depends on `knob-dialog` for parameter display.

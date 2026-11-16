@@ -19,8 +19,11 @@ use firmware as firmware_bindings;
 #[cfg(sd_composed)]
 use crate::firmware_bindings;
 use firmware_bindings::{
+    current_window,
     dsp_effect_workspace, dsp_effect_workspace_clear, dsp_stream_callback, mixer_apply_effect_type,
-    mixer_get_efx_type, mixer_set_efx_type, DSP_EFFECT_WORKSPACE_BYTES,
+    mixer_apply_channel_parameter, mixer_apply_effect_type_from_mixer, mixer_get_efx_type,
+    mixer_set_efx_type, l6max_encoder_ring_pattern_apply, l6max_panel_led_value_store,
+    l6max_tap_press_handler, DSP_EFFECT_WORKSPACE_BYTES,
 };
 
 #[path = "../../../api/l6max/hooks.rs"]
@@ -105,9 +108,94 @@ pub static DUAL_EFFECT_PARAMETER_EDIT_MODE: AtomicU32 = AtomicU32::new(0);
 pub static DUAL_EFFECT_EXIT_RING_REFRESH_HITS: AtomicU32 = AtomicU32::new(0);
 #[unsafe(no_mangle)]
 pub static PARAMETER_HANDOFF: [AtomicU32; 16] = [const { AtomicU32::new(u32::MAX) }; 16];
+#[unsafe(no_mangle)]
+pub static PARAMETER_RING_POSITIONS: [AtomicU32; 8] = [const { AtomicU32::new(0) }; 8];
+static STOCK_RING_PATTERNS: [AtomicU32; 8] = [const { AtomicU32::new(0) }; 8];
+static STOCK_RING_VALUES: [AtomicU32; 8] = [const { AtomicU32::new(0) }; 8];
+static STOCK_RING_VALID: AtomicU32 = AtomicU32::new(0);
+static DRAWING_PARAMETER_RINGS: AtomicU32 = AtomicU32::new(0);
+
+const EVENT_PENDING: u32 = 1;
+const EVENT_TAP_TEMPO: u32 = 1 << 31;
+const RECORDER_WINDOW: u32 = 0x8020_0408;
 
 fn replacement_for(slot: u32) -> Option<&'static str> {
     effect_replacement_config::effect_for_stock_slot(slot)
+}
+
+fn ring_pattern_row(position_q16: u32) -> u32 {
+    (position_q16.saturating_add(0x8000) >> 16).min(40)
+}
+
+fn refresh_parameter_positions(slot: u32) {
+    let count = effect_replacement_config::parameter_count(slot);
+    for encoder in 0..8 {
+        let position = if encoder < count {
+            unsafe {
+                effect_replacement_config::parameter_position(
+                    slot,
+                    EFFECT_STATE as *mut u8,
+                    encoder,
+                )
+            }
+            .unwrap_or(0)
+        } else {
+            0
+        };
+        PARAMETER_RING_POSITIONS[encoder].store(position, Ordering::Release);
+    }
+}
+
+unsafe fn apply_parameter_ring(ring: u32, position: u32) {
+    DRAWING_PARAMETER_RINGS.store(1, Ordering::Release);
+    unsafe { l6max_encoder_ring_pattern_apply(ring, 1, position) };
+    DRAWING_PARAMETER_RINGS.store(0, Ordering::Release);
+}
+
+unsafe fn draw_parameter_rings(slot: u32) {
+    let count = effect_replacement_config::parameter_count(slot);
+    for ring in 0..8 {
+        let position = if ring < count {
+            ring_pattern_row(PARAMETER_RING_POSITIONS[ring].load(Ordering::Acquire))
+        } else {
+            0
+        };
+        unsafe { apply_parameter_ring(ring as u32, position) };
+    }
+}
+
+unsafe fn restore_stock_parameter_rings() {
+    let valid = STOCK_RING_VALID.load(Ordering::Acquire);
+    for ring in 0..8 {
+        if valid & (1 << ring) == 0 {
+            continue;
+        }
+        unsafe {
+            l6max_encoder_ring_pattern_apply(
+                ring as u32,
+                STOCK_RING_PATTERNS[ring].load(Ordering::Relaxed),
+                STOCK_RING_VALUES[ring].load(Ordering::Relaxed),
+            )
+        };
+    }
+}
+
+unsafe fn set_tap_edit_indicator(enabled: bool) {
+    const TAP_LED_SLOT: usize = 33;
+    unsafe { l6max_panel_led_value_store(TAP_LED_SLOT as u32, 0, if enabled { 0x10 } else { 0 }) };
+}
+
+unsafe fn set_parameter_edit_mode(slot: u32, enabled: bool) {
+    DUAL_EFFECT_PARAMETER_EDIT_MODE.store(u32::from(enabled), Ordering::Release);
+    unsafe { effect_replacement_config::show_editor_state(slot, enabled) };
+    if enabled {
+        unsafe { set_tap_edit_indicator(true) };
+        unsafe { draw_parameter_rings(slot) };
+    } else {
+        unsafe { mixer_apply_effect_type_from_mixer(1) };
+        unsafe { restore_stock_parameter_rings() };
+        unsafe { set_tap_edit_indicator(false) };
+    }
 }
 
 fn close_and_drain() {
@@ -132,6 +220,8 @@ fn initialize_effect(slot: u32) -> bool {
 
 fn finish_effect_selection(slot: u32) {
     if initialize_effect(slot) {
+        DUAL_EFFECT_PARAMETER_EDIT_MODE.store(0, Ordering::Release);
+        refresh_parameter_positions(slot);
         DUAL_EFFECT_PROCESSOR_TYPE.store(slot, Ordering::Release);
         DUAL_EFFECT_SELECTION_PENDING.store(0, Ordering::Release);
         DUAL_EFFECT_CALLBACK_GATE.store(0, Ordering::Release);
@@ -139,6 +229,7 @@ fn finish_effect_selection(slot: u32) {
         DUAL_EFFECT_PROCESSOR_TYPE.store(0, Ordering::Release);
         DUAL_EFFECT_ROUTED_CALLBACK.store(0, Ordering::Relaxed);
         DUAL_EFFECT_EDIT_EVENT.store(0, Ordering::Relaxed);
+        DUAL_EFFECT_PARAMETER_EDIT_MODE.store(0, Ordering::Release);
         DUAL_EFFECT_SELECTION_PENDING.store(0, Ordering::Release);
         DUAL_EFFECT_CALLBACK_GATE.store(CALLBACK_CLOSED, Ordering::Release);
     }
@@ -220,6 +311,81 @@ pub unsafe fn effect_replacements_select_callback(effect_type: u32, force_refres
     continuation
 }
 
+#[function_entry_hook(mixer_apply_channel_parameter)]
+pub unsafe fn effect_replacements_encoder_event(
+    channel: u32,
+    mode: u32,
+    absolute: u32,
+    delta: i32,
+    value: u32,
+) {
+    let slot = unsafe { mixer_get_efx_type(0) };
+    let count = effect_replacement_config::parameter_count(slot);
+    if unsafe { current_window.read() } != RECORDER_WINDOW
+        || DUAL_EFFECT_PARAMETER_EDIT_MODE.load(Ordering::Acquire) == 0
+        || DUAL_EFFECT_PROCESSOR_TYPE.load(Ordering::Acquire) != slot
+        || mode != 6
+        || channel as usize >= count
+        || delta == 0
+    {
+        return hook_continue(channel, mode, absolute, delta, value);
+    }
+    let step = delta.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+    let encoded = EVENT_PENDING
+        | ((channel & 0x7) << 1)
+        | ((step as u16 as u32) << 8);
+    if DUAL_EFFECT_EDIT_EVENT
+        .compare_exchange(0, encoded, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        DUAL_EFFECT_EDIT_DROPPED.fetch_add(1, Ordering::Relaxed);
+    }
+    hook_done()
+}
+
+#[function_entry_hook(l6max_tap_press_handler)]
+pub unsafe fn effect_replacements_tap_event() {
+    if unsafe { current_window.read() } != RECORDER_WINDOW {
+        return hook_continue();
+    }
+    let slot = unsafe { mixer_get_efx_type(0) };
+    match effect_replacement_config::tap_action(slot) {
+        1 if replacement_for(slot).is_some()
+            && DUAL_EFFECT_PROCESSOR_TYPE.load(Ordering::Acquire) == slot =>
+        {
+            let enabled = DUAL_EFFECT_PARAMETER_EDIT_MODE.fetch_xor(1, Ordering::AcqRel) == 0;
+            unsafe { set_parameter_edit_mode(slot, enabled) };
+            hook_done()
+        }
+        2 if replacement_for(slot).is_some() => {
+            if DUAL_EFFECT_EDIT_EVENT
+                .compare_exchange(0, EVENT_PENDING | EVENT_TAP_TEMPO, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+            {
+                DUAL_EFFECT_EDIT_DROPPED.fetch_add(1, Ordering::Relaxed);
+            }
+            hook_done()
+        }
+        _ => hook_continue(),
+    }
+}
+
+#[function_entry_hook(l6max_encoder_ring_pattern_apply)]
+pub unsafe fn effect_replacements_ring_refresh(ring: u32, pattern: u32, value: u32) {
+    if ring < 8 && DRAWING_PARAMETER_RINGS.load(Ordering::Acquire) == 0 {
+        STOCK_RING_PATTERNS[ring as usize].store(pattern, Ordering::Relaxed);
+        STOCK_RING_VALUES[ring as usize].store(value, Ordering::Relaxed);
+        STOCK_RING_VALID.fetch_or(1 << ring, Ordering::Release);
+    }
+    if ring < effect_replacement_config::parameter_count(unsafe { mixer_get_efx_type(0) }) as u32
+        && DUAL_EFFECT_PARAMETER_EDIT_MODE.load(Ordering::Acquire) != 0
+    {
+        let position = ring_pattern_row(PARAMETER_RING_POSITIONS[ring as usize].load(Ordering::Acquire));
+        return hook_continue(ring, 1, position);
+    }
+    hook_continue(ring, pattern, value)
+}
+
 /// Install the selected effect callback only after the stock stream wrapper
 /// has refreshed the active callback pointer.
 #[function_entry_hook(dsp_stream_callback)]
@@ -285,6 +451,7 @@ unsafe fn process_effect_block(slot: u32, descriptor: *mut u8) -> bool {
     if buffer.is_null() || control_target.is_null() || control_source.is_null() {
         return false;
     }
+    process_control_event(slot);
     for frame in 0..BLOCK_SIZE {
         let mut input = 0.0f32;
         for channel in 0..MAX_CHANNELS {
@@ -353,4 +520,28 @@ unsafe fn process_effect_block(slot: u32, descriptor: *mut u8) -> bool {
         }
     }
     true
+}
+
+fn process_control_event(slot: u32) {
+    let event = DUAL_EFFECT_EDIT_EVENT.swap(0, Ordering::AcqRel);
+    if event & EVENT_PENDING == 0 {
+        return;
+    }
+    if event & EVENT_TAP_TEMPO != 0 {
+        unsafe { effect_replacement_config::tap_tempo(slot, EFFECT_STATE as *mut u8) };
+        return;
+    }
+    let encoder = ((event >> 1) & 0x7) as usize;
+    let delta = ((event >> 8) as u16 as i16) as i32;
+    if let Some(position) = unsafe {
+        effect_replacement_config::edit_parameter(
+            slot,
+            EFFECT_STATE as *mut u8,
+            encoder,
+            delta,
+        )
+    } {
+        PARAMETER_RING_POSITIONS[encoder].store(position, Ordering::Release);
+        DUAL_EFFECT_EDIT_APPLIED.fetch_add(1, Ordering::Relaxed);
+    }
 }

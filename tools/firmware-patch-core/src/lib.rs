@@ -45,6 +45,14 @@ pub struct EffectPackage {
     pub id: String,
     pub title: String,
     pub stock_slots: Vec<String>,
+    #[serde(default)]
+    pub controls: Vec<String>,
+    #[serde(default = "default_tap_action")]
+    pub tap_action: String,
+}
+
+fn default_tap_action() -> String {
+    "stock".into()
 }
 
 /// Stable identifiers for L6max MAIN 1.10 stock effect slots exposed to
@@ -186,7 +194,8 @@ pub fn effect_replacement_file_name(replacements: &[(String, String)]) -> Result
     if requested.is_empty() {
         return Err("effect replacement bundle needs at least one assigned effect".into());
     }
-    let package_names = requested
+    let resolved = resolve_patch_dependencies(&requested)?;
+    let package_names = resolved
         .iter()
         .filter(|name| name.as_str() != EFFECT_REPLACEMENT_ROUTER_PACKAGE)
         .map(|name| {
@@ -523,6 +532,8 @@ mod tests {
                 id: id.into(),
                 title: id.into(),
                 stock_slots: stock_slots.iter().map(|slot| (*slot).into()).collect(),
+                controls: Vec::new(),
+                tap_action: "stock".into(),
             }],
         }
     }
@@ -551,13 +562,29 @@ mod tests {
         assert!(patch_package("patch-loader").is_some_and(|package| package.kind == "loader"));
         assert!(supports_sd_patch("dual-efx", FirmwareModel::L6max));
         assert!(patch_package("dual-efx").unwrap().effects.is_empty());
+        for (package_name, effect_id) in [("efx-plateau", "plateau"), ("efx-velvet", "velvet")] {
+            let package = patch_package(package_name).unwrap();
+            assert!(
+                package
+                    .requires
+                    .iter()
+                    .any(|dependency| dependency == "knob-dialog")
+            );
+            let effect = package
+                .effects
+                .iter()
+                .find(|effect| effect.id == effect_id)
+                .unwrap();
+            assert_eq!(effect.controls, ["encoder-parameters"]);
+            assert_eq!(effect.tap_action, "toggle-editor");
+        }
         assert_eq!(
             resolve_effect_replacements(&[("room".into(), "velvet".into())]).unwrap(),
-            ["efx-loader", "efx-velvet"]
+            ["knob-dialog", "efx-loader", "efx-velvet"]
         );
         assert_eq!(
             effect_replacement_file_name(&[("room".into(), "velvet".into())]).unwrap(),
-            "efx-loader-efx-velvet-1.0.0-room-velvet-spring-stock.bin"
+            "efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-room-velvet-spring-stock.bin"
         );
     }
 

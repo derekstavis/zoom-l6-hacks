@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { zipSync } from 'fflate'
-import { AlertTriangle, CheckCircle2, Download, ExternalLink, Upload } from 'lucide-react'
+import { AlertTriangle, Check, CheckCircle2, ChevronDown, Download, ExternalLink, Info, Upload } from 'lucide-react'
+import { DropdownMenu, Tooltip } from 'radix-ui'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
@@ -68,6 +69,34 @@ function AuthorByline({ author }: { author: string }) {
     >
       by @{author}
     </a>
+  )
+}
+
+function FirmwareOnlyInfo() {
+  return (
+    <Tooltip.Provider delayDuration={250}>
+      <Tooltip.Root>
+        <Tooltip.Trigger asChild>
+          <button
+            type="button"
+            aria-label="Why is SD card installation unavailable?"
+            className="text-muted-foreground inline-flex size-4 items-center justify-center rounded-full hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Info aria-hidden="true" className="size-3.5" />
+          </button>
+        </Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Content
+            side="top"
+            sideOffset={6}
+            className="bg-primary text-primary-foreground z-50 max-w-56 rounded-md px-3 py-1.5 text-xs shadow-md"
+          >
+            This patch can only be installed through a firmware update.
+            <Tooltip.Arrow className="fill-primary" />
+          </Tooltip.Content>
+        </Tooltip.Portal>
+      </Tooltip.Root>
+    </Tooltip.Provider>
   )
 }
 
@@ -382,7 +411,10 @@ export default function App() {
                         <p className="text-muted-foreground text-xs">Not available for {model}.</p>
                       )}
                       <div className="mt-1 flex items-center justify-between gap-4">
-                        <span className="text-xs font-medium">Installation method</span>
+                        <span className="flex items-center gap-1.5 text-xs font-medium">
+                          Installation method
+                          {!loadablePatch && <FirmwareOnlyInfo />}
+                        </span>
                         <div className="inline-flex w-fit rounded-md border p-0.5" role="group" aria-label={`Installation method for ${patch.title}`}>
                           <button type="button" disabled={!canLoadFromSd} aria-pressed={!selectedForSd} onClick={() => choosePatchDelivery(patch.id, false)} className={`rounded px-3 py-1.5 text-xs font-medium ${!selectedForSd ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'} disabled:cursor-not-allowed disabled:opacity-50`}>
                             Firmware
@@ -392,9 +424,6 @@ export default function App() {
                         </button>
                         </div>
                       </div>
-                      {!loadablePatch && (
-                        <p className="text-muted-foreground text-xs">Only available as a firmware patch.</p>
-                      )}
                     </CardContent>
                   </div>
                 </div>
@@ -404,6 +433,15 @@ export default function App() {
         {EFFECT_REPLACEMENTS.map((effect) => {
           const supported = model === null || effect.models.includes(model)
           const effectEnabled = enabledEffects.has(effect.id)
+          const slots = ['room', 'spring'] as const
+          const slotLabel = (slot: (typeof slots)[number]) => slot === 'room' ? 'Room' : 'Spring'
+          const assignedSlots = slots.filter((slot) => effectReplacements[slot] === effect.id)
+          const firstAssignedSlot = assignedSlots[0]
+          const selectionLabel = assignedSlots.length === 0
+            ? 'Choose slots'
+            : assignedSlots.length === 1 && firstAssignedSlot
+              ? slotLabel(firstAssignedSlot)
+              : `${assignedSlots.length} slots selected`
           return (
             <Card key={effect.id} className="gap-0">
               <CardHeader className={supported ? '' : 'opacity-45'}>
@@ -431,14 +469,6 @@ export default function App() {
                 <div className="min-h-0 overflow-hidden">
                   <CardContent className={`flex flex-col gap-2 pt-3 ${supported ? '' : 'opacity-45'}`}>
                     <p className="text-muted-foreground text-sm leading-relaxed">{effect.description}</p>
-                    <a
-                      className="text-muted-foreground mt-0.5 w-fit text-xs underline underline-offset-3 hover:text-foreground"
-                      href={effect.readmeUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Read the docs
-                    </a>
                     {(effect.basedOn || effect.learnMore) && (
                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
                         {effect.basedOn && (
@@ -463,38 +493,71 @@ export default function App() {
                         )}
                       </div>
                     )}
+                    <a
+                      className="text-muted-foreground mt-0.5 w-fit text-xs underline underline-offset-3 hover:text-foreground"
+                      href={effect.readmeUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Read the docs
+                    </a>
                     <ModelSupportTags models={effect.models} />
-                    <div className="mt-1 flex flex-wrap items-center justify-end gap-x-6 gap-y-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-medium">Installation method</span>
-                        <span className="text-muted-foreground text-xs">SD card</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-medium">Assign to</span>
-                        <div className="inline-flex w-fit rounded-md border p-0.5" role="group" aria-label={`Stock effect assignment for ${effect.title}`}>
-                          {(['room', 'spring'] as const).map((slot) => {
-                            const assigned = effectReplacements[slot] ?? ''
-                            const isAssigned = assigned === effect.id
-                            const assignedEffect = EFFECT_REPLACEMENTS.find((candidate) => candidate.id === assigned)
-                            const unavailable = assigned !== '' && !isAssigned
-                            return (
-                              <button
-                                key={slot}
-                                type="button"
-                                aria-pressed={isAssigned}
-                                aria-label={`${slot === 'room' ? 'Room' : 'Spring'}${unavailable ? `, assigned to ${assignedEffect?.title ?? 'another effect'}` : ''}`}
-                                title={unavailable ? `Assigned to ${assignedEffect?.title ?? 'another effect'}` : undefined}
-                                disabled={!supported || unavailable}
-                                onClick={() => toggleEffectAssignment(effect.id, slot)}
-                                className={`rounded px-3 py-1.5 text-xs font-medium capitalize ${isAssigned ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'} disabled:cursor-not-allowed disabled:opacity-50`}
-                              >
-                                {slot}
-                                {unavailable && assignedEffect && ` · Assigned to ${assignedEffect.title}`}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </div>
+                    <div className="mt-1 grid w-full grid-cols-[minmax(0,1fr)_auto] items-center justify-end gap-x-3 gap-y-2">
+                      <span className="text-right text-xs font-medium">Installation method</span>
+                      <span className="text-muted-foreground text-xs">SD card</span>
+                      <span className="text-right text-xs font-medium">Assign to</span>
+                      <DropdownMenu.Root>
+                        <DropdownMenu.Trigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={!supported}
+                            aria-label={`Assign ${effect.title} to stock effects`}
+                            className="min-w-36 justify-between"
+                          >
+                            <span>{selectionLabel}</span>
+                            <ChevronDown aria-hidden="true" className="size-4 opacity-60" />
+                          </Button>
+                        </DropdownMenu.Trigger>
+                        <DropdownMenu.Portal>
+                          <DropdownMenu.Content
+                            align="end"
+                            sideOffset={4}
+                            className="bg-popover text-popover-foreground z-50 min-w-48 overflow-hidden rounded-md border p-1 shadow-md"
+                          >
+                            <DropdownMenu.Label className="text-muted-foreground px-2 py-1.5 text-xs font-medium">
+                              Replace stock effect
+                            </DropdownMenu.Label>
+                            {slots.map((slot) => {
+                              const assigned = effectReplacements[slot] ?? ''
+                              const isAssigned = assigned === effect.id
+                              const assignedEffect = EFFECT_REPLACEMENTS.find((candidate) => candidate.id === assigned)
+                              const unavailable = assigned !== '' && !isAssigned
+                              return (
+                                <DropdownMenu.CheckboxItem
+                                  key={slot}
+                                  checked={isAssigned}
+                                  disabled={!supported || unavailable}
+                                  onCheckedChange={() => toggleEffectAssignment(effect.id, slot)}
+                                  onSelect={(event) => event.preventDefault()}
+                                  className="focus:bg-accent focus:text-accent-foreground relative flex cursor-default select-none items-center rounded-sm py-1.5 pr-2 pl-8 text-sm outline-none before:absolute before:left-2 before:top-1/2 before:size-4 before:-translate-y-1/2 before:rounded-[3px] before:border before:border-input data-[state=checked]:before:border-primary data-[state=checked]:before:bg-primary data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                                >
+                                  <span>{slotLabel(slot)}</span>
+                                  {unavailable && assignedEffect && (
+                                    <span className="text-muted-foreground ml-auto pl-4 text-xs">
+                                      Used by {assignedEffect.title}
+                                    </span>
+                                  )}
+                                  <DropdownMenu.ItemIndicator className="absolute left-2 inline-flex items-center justify-center">
+                                    <Check aria-hidden="true" className="text-primary-foreground size-4" />
+                                  </DropdownMenu.ItemIndicator>
+                                </DropdownMenu.CheckboxItem>
+                              )
+                            })}
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu.Root>
                     </div>
                     {!supported && (
                       <p className="text-muted-foreground text-xs">Not available for {model}.</p>

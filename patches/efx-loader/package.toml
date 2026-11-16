@@ -1,10 +1,10 @@
 [package]
-name = "effect-replacements"
+name = "efx-loader"
 version = "1.0.0"
 kind = "patch"
 order = 50
-title = "Effect Replacements"
-summary = "Replace selected stock effects."
+title = "EFX Loader"
+summary = "Load custom effects in selected stock slots."
 description = "Choose which custom effects replace the Room and Spring slots."
 models = ["L6max"]
 firmware_models = []

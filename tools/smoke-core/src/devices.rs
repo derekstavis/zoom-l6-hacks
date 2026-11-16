@@ -5912,7 +5912,7 @@ fn dual_efx_state(
     let modular_replacement = composed_module_report(&report)
         .and_then(|patch| patch["members"].as_array())
         .is_some_and(|members| {
-            members.iter().any(|member| member == "effect-replacements")
+            members.iter().any(|member| member == "efx-loader")
                 && !members.iter().any(|member| member == "dual-efx")
         });
     if modular_replacement {

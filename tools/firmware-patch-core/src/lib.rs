@@ -50,7 +50,7 @@ pub struct EffectPackage {
 /// Stable identifiers for L6max MAIN 1.10 stock effect slots exposed to
 /// build-time replacement. Names are also used in package metadata.
 pub const STOCK_EFFECT_SLOTS: [&str; 2] = ["room", "spring"];
-pub const EFFECT_REPLACEMENT_ROUTER_PACKAGE: &str = "effect-replacements";
+pub const EFFECT_REPLACEMENT_ROUTER_PACKAGE: &str = "efx-loader";
 
 /// Every package's metadata in package order. This is generated at build time
 /// from the checked-in `patches/*/package.toml` files and is available to
@@ -203,7 +203,7 @@ pub fn effect_replacement_file_name(replacements: &[(String, String)]) -> Result
             .unwrap_or("stock")
     };
     Ok(format!(
-        "effect-replacements-{}-room-{}-spring-{}.bin",
+        "efx-loader-{}-room-{}-spring-{}.bin",
         package_names,
         assignment("room"),
         assignment("spring")
@@ -553,11 +553,11 @@ mod tests {
         assert!(patch_package("dual-efx").unwrap().effects.is_empty());
         assert_eq!(
             resolve_effect_replacements(&[("room".into(), "velvet".into())]).unwrap(),
-            ["effect-replacements", "efx-velvet"]
+            ["efx-loader", "efx-velvet"]
         );
         assert_eq!(
             effect_replacement_file_name(&[("room".into(), "velvet".into())]).unwrap(),
-            "effect-replacements-efx-velvet-1.0.0-room-velvet-spring-stock.bin"
+            "efx-loader-efx-velvet-1.0.0-room-velvet-spring-stock.bin"
         );
     }
 
@@ -594,7 +594,7 @@ mod tests {
     #[test]
     fn effect_slot_map_validates_compatibility_and_deduplicates_packages() {
         let catalog = [
-            effect_package("effect-replacements", "unused-router-effect", &[]),
+            effect_package("efx-loader", "unused-router-effect", &[]),
             effect_package("efx-velvet", "velvet", &["room", "spring"]),
         ];
         assert_eq!(
@@ -606,7 +606,7 @@ mod tests {
                 &catalog,
             )
             .unwrap(),
-            ["effect-replacements", "efx-velvet"]
+            ["efx-loader", "efx-velvet"]
         );
         assert!(
             effect_replacement_packages(&[("other".into(), "velvet".into())], &catalog)
@@ -626,7 +626,7 @@ mod tests {
         );
 
         let room_only = [
-            effect_package("effect-replacements", "unused-router-effect", &[]),
+            effect_package("efx-loader", "unused-router-effect", &[]),
             effect_package("room-effect", "room-only", &["room"]),
         ];
         assert!(

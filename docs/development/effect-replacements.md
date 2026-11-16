@@ -7,7 +7,7 @@ stock slots.
 
 ## Packages
 
-- `effect-replacements` owns the firmware hooks, callback lifecycle, and
+- `efx-loader` owns the firmware hooks, callback lifecycle, and
   dispatch from a stock effect slot to its configured implementation.
 - `efx-plateau` owns the Plateau reverb DSP and its state initialization/sample
   processing entry points.
@@ -49,7 +49,7 @@ cannot be combined with the legacy Dual EFX patch.
 ## Composition and runtime
 
 The resolver validates that each effect supports its assigned slot, then
-includes `effect-replacements` and each distinct selected effect package. For
+includes `efx-loader` and each distinct selected effect package. For
 example, `room = "velvet", spring = "stock"` links the router and `efx-velvet`
 only; it does not link `efx-plateau` or the legacy `dual-efx` package. Assigning
 Velvet to both slots still links its code once. The selected-slot registry is generated

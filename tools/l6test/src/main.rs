@@ -693,7 +693,7 @@ fn fixture_options(
                         .filter_map(serde_json::Value::as_str)
                         .filter(|member| *member == "efx-plateau" || *member == "efx-velvet")
                         .count();
-                    if !members.iter().any(|member| member == "effect-replacements")
+                    if !members.iter().any(|member| member == "efx-loader")
                         || effect_modules == 0
                         || members.iter().any(|member| member == "dual-efx")
                     {

@@ -80,5 +80,5 @@ export function effectReplacementFileName(replacements: Record<string, string>) 
   const packagePart = [...new Set(packages)].join('-')
   const room = replacements.room || 'stock'
   const spring = replacements.spring || 'stock'
-  return `effect-replacements-${packagePart}-room-${room}-spring-${spring}.bin`
+  return `efx-loader-${packagePart}-room-${room}-spring-${spring}.bin`
 }

@@ -96,7 +96,7 @@ pub fn check_effect_replacements(
 }
 
 fn effect_card_file_name(bundle: &EffectBundle) -> String {
-    let order = firmware_patch_core::patch_package("effect-replacements")
+    let order = firmware_patch_core::patch_package("efx-loader")
         .expect("effect replacement package is in the catalog")
         .order;
     format!("{order:02}-{}", bundle.file_name)

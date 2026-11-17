@@ -1,5 +1,5 @@
 {
-  "generator_source_sha256": "67263bd7a3badafc09ae2ddaf03245d1af10c976adf410e87896cc1c6d204c44",
+  "generator_source_sha256": "f1009054cc4abd47cd1dfaef6982b91294ef466d0c7df2c4c9a0bc8ee26ab64c",
   "source_firmware_sha256": "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461",
   "l6_source_firmware_sha256": "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799",
   "modules": [
@@ -9,7 +9,7 @@
       "file": "L6max/knob-dialog-1.0.0.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "277f1872a163920531994edf86300ddf05c299bffa516607046a106a2f6cf16b"
+      "sha256": "966e4a92e1f05e75d513eff9e9d1cd251971e1263f175cf35cbf350bd19ea3bd"
     },
     {
       "id": "midi-sync",
@@ -25,7 +25,7 @@
       "file": "L6max/midi-sync-1.0.0.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "2fc23e2302e8a426f210a91843df1edfbdcb32e4ccd29a621d4fc203dbbe1c7f"
+      "sha256": "a9e484f879642741232562163f8d5cf313fcdf1d236a76bb817f77fcac0096a0"
     }
   ],
   "effect_replacements": [
@@ -35,7 +35,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-plateau-1.0.0-room-stock-spring-plateau.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "4c1d17a0b1f8b4a3782dedcfa3e503b7b14e7f367a0ffbf97d2c5797c1e880a1"
+      "sha256": "dbbfa351910281175fa05cc4cdc91347bf7e933b6e0dda7bb2c7e41f5966a454"
     },
     {
       "room": "stock",
@@ -43,7 +43,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-room-stock-spring-velvet.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "003965f91f543b82b22edf29c4db44e2edb641cc52e20b2dbe12bf72e4a1fcce"
+      "sha256": "3591686674925a8689ecc5f9fbb8b76acc1493f13969bd00090c906019e8ad6e"
     },
     {
       "room": "plateau",
@@ -51,7 +51,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-plateau-1.0.0-room-plateau-spring-stock.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "c33b8372b5d4eeac896fcd22f147986cf1570a48fcea7dabf722bda4c3743d00"
+      "sha256": "078c7a445b80f1d6505628320c3ba61345a176f8e8b561ceb36410722c4b6415"
     },
     {
       "room": "plateau",
@@ -59,7 +59,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-plateau-1.0.0-room-plateau-spring-plateau.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "cd1659a066b7bdfc50747cde0412db5e9b846dcf808382f7e334c7caae43ca0b"
+      "sha256": "a060654c2557352705982d69bd2c62a0c3507a9a6a47a243dafaee79af441581"
     },
     {
       "room": "plateau",
@@ -67,7 +67,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-efx-plateau-1.0.0-room-plateau-spring-velvet.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "f5101b0d668db3c0cfc62f09421c53a8bd2b03272a4c0cb4c07dab18d943f8ed"
+      "sha256": "2a52ef3639d0ca0c06564700f8aaddab6cd331d1b277e6c77f6e020adf75b821"
     },
     {
       "room": "velvet",
@@ -75,7 +75,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-room-velvet-spring-stock.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "6bbd606699b722b8679cbc181825d021c2a38c273831d5a9d2a6b33f35b85a85"
+      "sha256": "fd5778f46641e7142a41a05bddf7719d583dac2d77d3ea005a438e0f3a7b75c3"
     },
     {
       "room": "velvet",
@@ -83,7 +83,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-efx-plateau-1.0.0-room-velvet-spring-plateau.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "60c41c449ff59b0b44d77d5a92a7ea03914ca14176b6beb08f663f04a547a42d"
+      "sha256": "896b7b9daa9853b4873d33800a2401a72eea75478f6fd9ee4264a730fe92dadb"
     },
     {
       "room": "velvet",
@@ -91,7 +91,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-room-velvet-spring-velvet.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "cbdc1fc9a59c2e9e08acf653349d7d40779dff930b348130008c88254d992144"
+      "sha256": "dc769c1b23539b881e1e06c38b09e944dff463d26554bd6e7d71650a7af5b5e4"
     }
   ]
 }

@@ -4,23 +4,42 @@
 extern crate std;
 
 /// The resident Patch loader's hook registry. The loader allocates it from the
-/// FreeRTOS heap on the first card mount and publishes its address in a single
-/// fixed word, the only firmware RAM the loader claims. Dispatch stubs and the
-/// test harness follow that word; zero means no registry yet, and every
-/// dispatch then takes the stock path.
+/// FreeRTOS heap on the first card mount and publishes its address in a root
+/// word. Dispatch stubs, consumers such as menu-loader, and the test harness
+/// follow that word. Until the loader publishes a registry, the root holds its
+/// stock value, which never points at the registry magic, so every dispatch
+/// takes the stock path.
 pub mod registry {
-    /// The registry pointer on L6 1.10. The L6 scatter table places `.data` at
+    /// The registry root on L6 1.10. The L6 scatter table places `.data` at
     /// 0x801f5400, and the firmware never references the RAM below it from
     /// 0x801f0000. An earlier fixed registry at 0x801f8000 overwrote live
     /// `.data`, and the L6 then never started its USB controller.
     pub const L6_POINTER: u32 = 0x801f_0000;
-    /// The registry pointer on L6max 1.10.
-    pub const L6MAX_POINTER: u32 = 0x8021_8000;
+    /// The root's value before the loader publishes a registry on L6. Reset
+    /// does not reinitialize this word, so the loader's reset hook restores it.
+    pub const L6_POINTER_STOCK: u32 = 0;
+    /// The registry root on L6max 1.10: the language 6 entry of the
+    /// per-language text pointer table at 0x80205118. Only language 0 has
+    /// text, `gui_current_language` always returns 0, and every table reader
+    /// indexes by that value, so the firmware never reads this entry. It is
+    /// part of `.data`, so every reset restores its stock value.
+    pub const L6MAX_POINTER: u32 = 0x8020_5130;
+    /// The stock `.data` value of the L6max root: the address of the empty
+    /// language 6 string pointer array.
+    pub const L6MAX_POINTER_STOCK: u32 = 0x8020_69e4;
 
-    pub const MAGIC: u32 = 0x4c36_5244;
+    /// Registry layout 2 ("L6R2"): adds the module table.
+    pub const MAGIC: u32 = 0x4c36_5232;
     pub const MAGIC_OFFSET: u32 = 0;
     pub const DEBUG_OFFSET: u32 = 4;
     pub const CLAIM_OFFSET: u32 = 8;
+    /// Number of entries used in the module table.
+    pub const MODULE_COUNT_OFFSET: u32 = 12;
+    /// One `(base, memory_len)` pair per loaded module, in load order.
+    pub const MODULE_TABLE_OFFSET: u32 = 16;
+    pub const MODULE_TABLE_ENTRY_LEN: u32 = 8;
+    pub const MAX_MODULES: u32 = 16;
+    /// The most recently loaded module, kept for diagnostics.
     pub const MODULE_PTR_OFFSET: u32 = 160;
     pub const MODULE_LEN_OFFSET: u32 = 164;
     pub const HOOK_CHAINS_OFFSET: u32 = 0x100;
@@ -34,19 +53,29 @@ pub mod registry {
     pub const LEN: u32 = ARENA_NEXT_OFFSET + 4;
 
     const _: () = assert!(
-        MODULE_LEN_OFFSET < HOOK_CHAINS_OFFSET
+        MODULE_TABLE_OFFSET + MAX_MODULES * MODULE_TABLE_ENTRY_LEN <= MODULE_PTR_OFFSET
+            && MODULE_LEN_OFFSET < HOOK_CHAINS_OFFSET
             && HANDLER_TABLE_OFFSET + super::dynamic::MAX_FUNCTION_CHAINS as u32 * 4
                 <= ARENA_NEXT_OFFSET
             // Dispatch stubs reach each handler with a 12-bit load offset.
             && ARENA_NEXT_OFFSET < 0x1000
     );
 
-    /// The registry pointer word for a MAIN image loaded at `main_base`.
+    /// The registry root word for a MAIN image loaded at `main_base`.
     pub const fn pointer_for_main_base(main_base: u32) -> u32 {
         if main_base == 0x8000_1000 {
             L6_POINTER
         } else {
             L6MAX_POINTER
+        }
+    }
+
+    /// The root's value before a registry is published.
+    pub const fn stock_pointer_for_main_base(main_base: u32) -> u32 {
+        if main_base == 0x8000_1000 {
+            L6_POINTER_STOCK
+        } else {
+            L6MAX_POINTER_STOCK
         }
     }
 }

@@ -1,16 +1,16 @@
 {
-  "base": "0x800b9a90",
+  "base": "0x800b9ab0",
   "hooks": [
     {
       "address": "0x8002f490",
       "length": 4,
       "symbol": "midi_in_hook",
-      "target": "0x800b9ab4"
+      "target": "0x800b9ad4"
     }
   ],
   "model": "L6",
   "name": "midi-sync",
-  "payload_file": "midi-sync-l6-loader-800b9a90.bin",
+  "payload_file": "midi-sync-l6-loader-800b9ab0.bin",
   "payload_length": 252,
   "window_byte_total": 4,
   "windows": [

@@ -89,12 +89,29 @@ that hold pointers; the loader applies the allocation address as the load
 delta. Firmware function and data bindings stay at supported firmware
 addresses. External statics are addressed directly, so a module has no GOT and
 needs no PIC base register. The builder refuses a module with more than 256
-relocation records or 16 hooks, the loader's limits. The
-registry is allocated once from the FreeRTOS heap on the first card mount. Its
-address is the only firmware RAM the loader reserves: one word at `0x801f0000` on
-L6 and `0x80218000` on L6max, which reset clears. Dispatch stubs follow that word
-and take the stock path while it is zero. Registering a hook allocates no more
-heap memory. Each patch still gets one exact-size allocation
+relocation records or 16 hooks, the loader's limits.
+
+The registry is allocated once from the FreeRTOS heap on the first card mount
+and published in one root word. Dispatch stubs run at firmware function entries
+before any patch code, so they need that root at a fixed address:
+
+- **L6max:** `0x80205130`, the language 6 entry of the firmware's per-language
+  text pointer table. Only language 0 has text and every reader of the table
+  indexes it with `gui_current_language`, which always returns 0, so the
+  firmware never reads this entry. It is initialized `.data`, so every reset
+  restores its stock value `0x802069e4`.
+- **L6:** `0x801f0000`, RAM below `.data` that the firmware never references.
+  Its stock value is 0, and the loader's reset hook restores it.
+
+Until the loader publishes a registry, the root holds its stock value, which
+does not point at the registry magic, so dispatch stubs take the stock path.
+Registering a hook allocates no more heap memory.
+
+Registry layout 2 (magic `L6R2`) records every loaded module, up to sixteen, as
+a `(base, memory length)` pair in load order, so tools and other patches can
+find each module. Loader packages built with this layout use update version
+marker `0115`; a layout 1 loader (`0114`) must be reinstalled. Each patch still
+gets one exact-size allocation
 for its code. The loader image has dispatch stubs for the cataloged `midi_in`
 site on both models and `mixer_apply_channel_parameter` on L6max. Other
 functions must be added to the catalog and loader dispatch before dynamic

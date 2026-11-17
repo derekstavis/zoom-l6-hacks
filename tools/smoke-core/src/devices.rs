@@ -5933,18 +5933,18 @@ fn sd_registry(
         .ok_or_else(|| "the Patch loader has not allocated its registry".into())
 }
 
-/// The registry, or `None` while the pointer word is still zero.
+/// The registry, or `None` while the root word still holds its stock value.
 fn sd_registry_if_allocated(
     qmp: &l6max_host::qmp::QmpClient,
     model: l6fw::Model,
 ) -> Result<Option<u32>, Box<dyn std::error::Error>> {
     use patch_loader_core::registry;
-    let pointer = match model {
-        l6fw::Model::L6 => registry::L6_POINTER,
-        l6fw::Model::L6max => registry::L6MAX_POINTER,
+    let (pointer, stock) = match model {
+        l6fw::Model::L6 => (registry::L6_POINTER, registry::L6_POINTER_STOCK),
+        l6fw::Model::L6max => (registry::L6MAX_POINTER, registry::L6MAX_POINTER_STOCK),
     };
     let base = u32::from_le_bytes(qmp.read_memory(0, pointer, 4)?.try_into().unwrap());
-    if base == 0 {
+    if base == stock {
         return Ok(None);
     }
     let magic = u32::from_le_bytes(qmp.read_memory(0, base, 4)?.try_into().unwrap());

@@ -22,6 +22,10 @@ const IMAGE_LEN: usize = 0xb5ae4;
 const REGISTRY_POINTER: usize = core_loader::registry::L6MAX_POINTER as usize;
 #[cfg(sd_l6)]
 const REGISTRY_POINTER: usize = core_loader::registry::L6_POINTER as usize;
+#[cfg(not(sd_l6))]
+const REGISTRY_STOCK: u32 = core_loader::registry::L6MAX_POINTER_STOCK;
+#[cfg(sd_l6)]
+const REGISTRY_STOCK: u32 = core_loader::registry::L6_POINTER_STOCK;
 // Cap a single code + zero-filled state allocation at 384 KiB. Larger modules
 // are rejected before allocating from the shared FreeRTOS heap.
 const MODULE_CAPACITY: usize = 0x60000;
@@ -31,9 +35,11 @@ const MODULE_ARENA_BASE: usize = 0x83e0_0000;
 const MODULE_ARENA_END: usize = MODULE_ARENA_BASE + 0x80000;
 const MAX_FUNCTION_CHAINS: usize = core_loader::dynamic::MAX_FUNCTION_CHAINS;
 
-/// The heap-allocated registry, or zero before the first card mount.
+/// The heap-allocated registry, or zero while the root still holds its stock
+/// value (before the first card mount).
 fn registry_base() -> usize {
-    unsafe { ptr::read_volatile(REGISTRY_POINTER as *const u32) as usize }
+    let root = unsafe { ptr::read_volatile(REGISTRY_POINTER as *const u32) };
+    if root == REGISTRY_STOCK { 0 } else { root as usize }
 }
 fn registry_word(offset: u32) -> usize {
     registry_base() + offset as usize
@@ -126,7 +132,7 @@ unsafe fn ensure_registry() -> bool {
         ptr::write_volatile(base as *mut u32, core_loader::registry::MAGIC);
         let primask: u32;
         asm!("dmb", "mrs {0}, PRIMASK", "cpsid i", out(reg) primask, options(nostack, preserves_flags));
-        let published = ptr::read_volatile(REGISTRY_POINTER as *const u32) == 0;
+        let published = ptr::read_volatile(REGISTRY_POINTER as *const u32) == REGISTRY_STOCK;
         if published {
             ptr::write_volatile(REGISTRY_POINTER as *mut u32, base as u32);
         }
@@ -146,7 +152,7 @@ unsafe fn ensure_registry() -> bool {
 #[unsafe(link_section = ".text.sd_reset_registry")]
 pub unsafe extern "C" fn sd_reset_registry() {
     unsafe {
-        ptr::write_volatile(REGISTRY_POINTER as *mut u32, 0);
+        ptr::write_volatile(REGISTRY_POINTER as *mut u32, REGISTRY_STOCK);
     }
 }
 
@@ -642,6 +648,20 @@ unsafe fn load_dynamic<R: core_loader::bundle::Reader>(reader: &mut R, order: u3
         }
         ptr::write_volatile(module_ptr_word() as *mut u32, loaded_base as u32);
         ptr::write_volatile(module_len_word() as *mut u32, header.memory_len as u32);
+        // Record every module for consumers such as menu-loader. Entries are
+        // written before the count, so a reader never sees a partial entry.
+        let count_word = registry_word(core_loader::registry::MODULE_COUNT_OFFSET) as *mut u32;
+        let count = ptr::read_volatile(count_word);
+        if count < core_loader::registry::MAX_MODULES {
+            let entry = registry_word(
+                core_loader::registry::MODULE_TABLE_OFFSET
+                    + count * core_loader::registry::MODULE_TABLE_ENTRY_LEN,
+            ) as *mut u32;
+            ptr::write_volatile(entry, loaded_base as u32);
+            ptr::write_volatile(entry.add(1), header.memory_len as u32);
+            asm!("dmb", options(nostack, preserves_flags));
+            ptr::write_volatile(count_word, count + 1);
+        }
         ptr::write_volatile(debug_word() as *mut u32, 0x327);
         asm!("msr PRIMASK, {0}", in(reg) primask, options(nostack, preserves_flags));
     }

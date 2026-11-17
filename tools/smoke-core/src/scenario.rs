@@ -241,17 +241,11 @@ pub enum Action {
         loaded: bool,
         #[serde(default)]
         chain_count: Option<u8>,
-        #[serde(default)]
-        callbacks_active: bool,
-        #[serde(default)]
-        stock_passthrough: bool,
     },
-    #[serde(alias = "dual-efx-parameter-edit")]
     EffectParameterEdit {
         encoder: usize,
         steps: i32,
     },
-    #[serde(alias = "dual-efx-state")]
     EffectReplacementState {
         #[serde(default)]
         expected_effect_type: Option<u8>,
@@ -892,22 +886,10 @@ impl Scenario {
             if let Action::ExpectSdPatch {
                 loaded,
                 chain_count,
-                callbacks_active,
-                stock_passthrough,
             } = &step.action
                 && (value.sd_patches.is_none()
                     || *loaded && value.sd_patches.as_ref().is_some_and(Vec::is_empty)
-                    || chain_count.is_some_and(|count| count == 0 || count > 8)
-                    || *callbacks_active
-                        && !value
-                            .sd_patches
-                            .as_ref()
-                            .is_some_and(|patches| patches.iter().any(|name| name == "dual-efx"))
-                    || *stock_passthrough
-                        && !value
-                            .sd_patches
-                            .as_ref()
-                            .is_some_and(|patches| patches.iter().any(|name| name == "dual-efx")))
+                    || chain_count.is_some_and(|count| count == 0 || count > 8))
             {
                 return Err("expect-patch-loader requires an Patch loader fixture (and a selected patch when loaded=true)".into());
             }

@@ -56,12 +56,6 @@ pub fn check(
     crate::sd_patches::check(model, sd_selected)?;
     let effect_replacements = options.selected_effect_replacements(model);
     crate::sd_patches::check_effect_replacements(model, &effect_replacements)?;
-    if !effect_replacements.is_empty()
-        && (selected.iter().any(|patch| patch == "dual-efx")
-            || sd_selected.iter().any(|patch| patch == "dual-efx"))
-    {
-        return Err("custom effect replacements cannot be combined with Dual EFX".into());
-    }
     if let Some(patch) = selected.iter().find(|patch| sd_selected.contains(patch)) {
         return Err(format!(
             "{patch} is selected both in the firmware and on the SD card"

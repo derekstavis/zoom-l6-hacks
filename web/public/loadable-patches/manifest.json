@@ -1,5 +1,5 @@
 {
-  "generator_source_sha256": "f0e115bb586dcb075ced9422d8cdef9e323c68c0fcb47503e09cee16c11bd1f8",
+  "generator_source_sha256": "67263bd7a3badafc09ae2ddaf03245d1af10c976adf410e87896cc1c6d204c44",
   "source_firmware_sha256": "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461",
   "l6_source_firmware_sha256": "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799",
   "modules": [
@@ -26,14 +26,6 @@
       "format_version": 1,
       "loader_abi": 1,
       "sha256": "2fc23e2302e8a426f210a91843df1edfbdcb32e4ccd29a621d4fc203dbbe1c7f"
-    },
-    {
-      "id": "dual-efx",
-      "model": "L6max",
-      "file": "L6max/dual-efx-1.0.0-knob-dialog-1.0.0.bin",
-      "format_version": 1,
-      "loader_abi": 1,
-      "sha256": "524c71561db550cd0f3fd8f477f44a1ad9152fef750ce524b9589e62e6358a05"
     }
   ],
   "effect_replacements": [

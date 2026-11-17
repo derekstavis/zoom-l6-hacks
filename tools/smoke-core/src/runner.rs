@@ -519,14 +519,10 @@ impl Runner {
                 Action::ExpectSdPatch {
                     loaded,
                     chain_count,
-                    callbacks_active,
-                    stock_passthrough,
                 } => {
                     return Ok(Progress::Device(devices::Operation::ExpectSdPatch {
                         loaded,
                         chain_count,
-                        callbacks_active,
-                        stock_passthrough,
                     }));
                 }
                 Action::EffectParameterEdit { encoder, steps } => {

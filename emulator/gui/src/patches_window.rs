@@ -535,7 +535,6 @@ mod tests {
                 package.name
             );
         }
-        assert!(offered().iter().any(|package| package.name == "dual-efx"));
     }
 
     #[test]
@@ -568,17 +567,6 @@ mod tests {
         selection.set_effect("room", None);
         assert!(!selection.effect_replacements.contains_key("room"));
         assert_eq!(selection.effect_replacements["spring"], "plateau");
-    }
-
-    #[test]
-    fn dual_efx_can_be_assigned_to_either_delivery() {
-        let mut selection = Selection::default();
-        selection.toggle_with_default("dual-efx", Delivery::Firmware);
-        assert_eq!(selection.delivery("dual-efx"), Some(Delivery::Firmware));
-        selection.set("dual-efx", Some(Delivery::SdCard));
-        assert_eq!(selection.delivery("dual-efx"), Some(Delivery::SdCard));
-        selection.toggle_with_default("dual-efx", Delivery::SdCard);
-        assert_eq!(selection, Selection::default());
     }
 
     #[test]

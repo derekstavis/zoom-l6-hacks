@@ -1,0 +1,15 @@
+[package]
+name = "efx-plateau-dsp-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "GPL-3.0-or-later"
+
+[workspace]
+
+[lib]
+path = "lib.rs"
+
+[lints.rust]
+warnings = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(experimental_plateau_32k)'] }

@@ -718,14 +718,6 @@ needs_configuration = true
 wall_timeout_s = 1200
 
 [[case]]
-id = "sd-dual-efx-emulator"
-suites = ["sd-matrix"]
-models = ["l6max"]
-scenario = "scenarios/sd-dual-efx-emulator.toml"
-needs_configuration = true
-wall_timeout_s = 1800
-
-[[case]]
 id = "sd-effect-replacement-map"
 suites = ["sd-matrix", "effect-replacement-matrix"]
 models = ["l6max"]
@@ -788,14 +780,6 @@ models = ["l6max"]
 scenario = "scenarios/sd-effect-assignment-velvet-plateau.toml"
 needs_configuration = true
 wall_timeout_s = 600
-
-[[case]]
-id = "sd-dual-efx-shared-hook-chain"
-suites = ["sd-matrix"]
-models = ["l6max"]
-scenario = "scenarios/sd-dual-efx-shared-hook-chain.toml"
-needs_configuration = true
-wall_timeout_s = 2400
 
 [[case]]
 id = "sd-knob-midi"

@@ -508,6 +508,12 @@ fn preserved_instructions(
     if strategy == 1 {
         return Ok(vec![(0, 2)]);
     }
+    if strategy == 3 {
+        // PushCbz relocation decodes the opening PUSH and CBZ/CBNZ as a pair.
+        // Keep both instructions intact in sentinel firmware so the
+        // continuation generator sees the same prologue as the real build.
+        return Ok(vec![(0, 4)]);
+    }
     if strategy != 2 {
         return Ok(Vec::new());
     }

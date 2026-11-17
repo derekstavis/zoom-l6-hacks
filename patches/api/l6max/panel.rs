@@ -15,6 +15,10 @@ firmware_functions! {
     /// Handles a physical TAP button press on L6max MAIN.
     pub unsafe fn l6max_tap_press_handler() at 0x8005_5468;
 
+    /// Selects the recorder's encoder parameter page (`mode` 6 is EFX).
+    /// `event` 1 applies the selection through the stock panel path.
+    pub unsafe fn l6max_panel_select_parameter_mode(mode: u32, event: u32) at 0x8005_3bb0;
+
     /// Enqueue a five-word event through the stock UI queue. The fifth word is
     /// passed on the caller's stack per AAPCS.
     pub unsafe fn panel_ui_event_queue_send(source: u32, kind: u32, event: u32, reserved: u32, reserved2: u32) -> u32, at 0x8002_8088;

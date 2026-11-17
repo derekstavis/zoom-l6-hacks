@@ -25,7 +25,7 @@ allocates its small state on first use. `din-mixer-control` uses an
 instruction-offset hook and remains static-only. The loader itself is installed
 through the ordinary firmware update.
 
-Each file can register up to eight hooks across cataloged functions. Multiple
+Each file can register up to sixteen hooks across cataloged functions. Multiple
 files can hook the same function; their handlers are linked in numeric
 filename-prefix order. The dynamic knob-dialog emulator case loads two ordered
 modules for the same callee and exercises the recorder guard, dialog rendering,
@@ -59,7 +59,7 @@ filename array on the task stack. It streams each file independently and skips
 corrupt or unsupported candidates.
 
 Hooks are stored in a fixed-capacity firmware table: up to eight function chains,
-with up to eight hooks per function. The loader has dynamic dispatch stubs for
+with up to sixteen hooks per module and eight hooks per function. The loader has dynamic dispatch stubs for
 catalog sites marked dynamic in the model-specific function catalog. Each module carries a
 `next` function-pointer slot. The loader connects modules in filename order and
 preserves hook-record order within each module before pointing the tail at the

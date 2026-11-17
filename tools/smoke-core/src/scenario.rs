@@ -252,6 +252,8 @@ pub enum Action {
         #[serde(default)]
         expected_processor_type: Option<u8>,
         #[serde(default)]
+        expected_panel_mode: Option<u8>,
+        #[serde(default)]
         expected_edit_mode: Option<bool>,
         #[serde(default)]
         minimum_parameter_edits: Option<u32>,
@@ -410,6 +412,7 @@ pub enum Action {
     ExpectRing {
         channel: usize,
         mask: Option<u32>,
+        same_as_checkpoint: Option<String>,
         #[serde(default)]
         changed: bool,
         #[serde(default)]
@@ -421,6 +424,8 @@ pub enum Action {
     /// The brightest segment of a ring must read this raw PWM level.
     ExpectRingLevel {
         channel: usize,
+        #[serde(default)]
+        segment: Option<u8>,
         min: u8,
         max: u8,
     },
@@ -966,6 +971,10 @@ impl Scenario {
                 | Action::ExpectRing {
                     checkpoint: Some(checkpoint),
                     ..
+                }
+                | Action::ExpectRing {
+                    same_as_checkpoint: Some(checkpoint),
+                    ..
                 } => {
                     if !checkpoints.contains(checkpoint) {
                         return Err(format!("unknown checkpoint {checkpoint}"));
@@ -1166,8 +1175,18 @@ impl Scenario {
                     );
                 }
                 Action::EffectReplacementState { .. } => {}
-                Action::ExpectRingLevel { channel, min, max } if *channel == 0 || min > max => {
-                    return Err("ring level assertion needs a channel and min <= max".into());
+                Action::ExpectRingLevel {
+                    channel,
+                    segment,
+                    min,
+                    max,
+                } if *channel == 0
+                    || segment.is_some_and(|segment| !(1..=9).contains(&segment))
+                    || min > max =>
+                {
+                    return Err(
+                        "ring level assertion needs a channel, optional segment 1..9, and min <= max".into(),
+                    );
                 }
                 Action::ExpectRing {
                     channel,

@@ -73,6 +73,8 @@ impl_firmware_function_output!(A0, A1, A2, A3, A4, A5, A6, A7);
 pub enum HookContinuationStrategy {
     Linear,
     Cbz,
+    /// Replay an initial Thumb PUSH and relocate the following CBZ/CBNZ.
+    PushCbz,
     /// Re-encode displaced Thumb BL instructions in the generated
     /// continuation. Other instruction classes are copied as-is.
     RelocatedBl,
@@ -257,6 +259,7 @@ macro_rules! define_function_hooks {
     (@strategy Linear) => { 0 };
     (@strategy Cbz) => { 1 };
     (@strategy RelocatedBl) => { 2 };
+    (@strategy PushCbz) => { 3 };
 }
 
 #[macro_export]

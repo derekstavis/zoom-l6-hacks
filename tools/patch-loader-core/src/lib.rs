@@ -596,7 +596,7 @@ pub mod dynamic {
     /// Maximum hook records accepted in one patch file. This covers the
     /// current multi-site patch prototypes while keeping loader stack use
     /// bounded.
-    pub const MAX_HOOKS_PER_MODULE: usize = 8;
+    pub const MAX_HOOKS_PER_MODULE: usize = 16;
     pub const MAX_HOOKS_PER_FUNCTION: usize = 8;
 
     #[repr(C)]

@@ -11,6 +11,7 @@ use super::math::*;
 
 pub const SAMPLE_RATE: f32 = 48000.0;
 pub const MAX_DELAY_SAMPLES: usize = 4802; // Up to 100 ms at 48 kHz
+pub const MAX_TRANSITION_MS_PER_REFRESH_SECOND: f32 = 900.0;
 // The Multistomp range reaches 100 ms at 4,000 impulses per second.
 pub const MAX_TAPS: usize = 400;
 const AMOUNT_FADE_SAMPLES: u32 = 64;
@@ -289,7 +290,11 @@ impl VelvetDecorrelator {
         params.length_ms = clamp(params.length_ms, 1.0, 100.0);
         params.density = clamp(params.density, 10.0, 4000.0);
         params.refresh_seconds = clamp(params.refresh_seconds, 0.1, 60.0);
-        params.transition_ms = clamp(params.transition_ms, 1.0, params.refresh_seconds * 900.0);
+        params.transition_ms = clamp(
+            params.transition_ms,
+            1.0,
+            params.refresh_seconds * MAX_TRANSITION_MS_PER_REFRESH_SECOND,
+        );
         params.decay_db = clamp(params.decay_db, -120.0, 0.0);
 
         let filter_changed = params.length_ms != self.current.length_ms

@@ -1,0 +1,251 @@
+version = 1
+name = "sd-effect-velvet-ring-scale"
+models = ["l6max"]
+backends = ["headless"]
+state = "effects-room"
+card = "empty"
+sd_patches = []
+sd_bundle_mode = "composed-module"
+effect_replacements = { room = "velvet" }
+gdb = true
+
+[[step]]
+action = "include"
+path = "fragments/effect-replacement-load.toml"
+
+[[step]]
+action = "effect-replacement-state"
+expected_effect_type = 1
+expected_processor_type = 1
+
+[[step]]
+action = "checkpoint"
+name = "velvet-before-editor"
+
+[[step]]
+action = "press"
+control = "tap-button"
+
+[[step]]
+action = "delay"
+guest_ms = 100
+
+[[step]]
+action = "effect-replacement-state"
+expected_panel_mode = 6
+expected_edit_mode = true
+
+[[step]]
+action = "expect-button-led"
+control = "tap-button"
+lit = true
+
+[[step]]
+action = "encoder"
+channel = 3
+steps = 120
+
+[[step]]
+action = "delay"
+guest_ms = 300
+
+[[step]]
+action = "expect-ring"
+channel = 3
+mask = 0x1ff
+only = true
+settle_ms = 100
+
+[[step]]
+action = "expect-ring-level"
+channel = 3
+segment = 9
+min = 40
+max = 40
+
+[[step]]
+action = "encoder"
+channel = 5
+steps = -120
+
+[[step]]
+action = "delay"
+guest_ms = 300
+
+[[step]]
+action = "expect-ring"
+channel = 5
+mask = 0x001
+only = true
+settle_ms = 100
+
+[[step]]
+action = "encoder"
+channel = 7
+steps = 1
+
+[[step]]
+action = "delay"
+guest_ms = 300
+
+[[step]]
+action = "expect-ring"
+channel = 7
+mask = 0x1ff
+only = true
+settle_ms = 100
+
+[[step]]
+action = "expect-ring-level"
+channel = 7
+segment = 9
+min = 40
+max = 40
+
+[[step]]
+action = "checkpoint"
+name = "velvet-unused-encoder"
+
+[[step]]
+action = "encoder"
+channel = 8
+steps = 20
+
+[[step]]
+action = "delay"
+guest_ms = 300
+
+[[step]]
+action = "expect-ring"
+channel = 8
+same_as_checkpoint = "velvet-unused-encoder"
+only = true
+settle_ms = 100
+
+[[step]]
+action = "checkpoint"
+name = "velvet-editor-rings"
+
+[[step]]
+action = "press"
+control = "tap-button"
+
+[[step]]
+action = "delay"
+guest_ms = 100
+
+[[step]]
+action = "effect-replacement-state"
+expected_edit_mode = false
+
+[[step]]
+action = "expect-button-led"
+control = "tap-button"
+lit = false
+
+[[step]]
+action = "expect-ring"
+channel = 3
+same_as_checkpoint = "velvet-before-editor"
+settle_ms = 100
+
+[[step]]
+action = "expect-ring"
+channel = 5
+same_as_checkpoint = "velvet-before-editor"
+settle_ms = 100
+
+[[step]]
+action = "expect-ring"
+channel = 7
+same_as_checkpoint = "velvet-before-editor"
+settle_ms = 100
+
+[[step]]
+action = "expect-ring"
+channel = 8
+same_as_checkpoint = "velvet-before-editor"
+settle_ms = 100
+
+[[step]]
+action = "press"
+control = "tap-button"
+
+[[step]]
+action = "delay"
+guest_ms = 100
+
+[[step]]
+action = "effect-replacement-state"
+expected_panel_mode = 6
+expected_edit_mode = true
+
+[[step]]
+action = "expect-button-led"
+control = "tap-button"
+lit = true
+
+[[step]]
+action = "expect-ring"
+channel = 3
+same_as_checkpoint = "velvet-editor-rings"
+settle_ms = 100
+
+[[step]]
+action = "expect-ring"
+channel = 5
+same_as_checkpoint = "velvet-editor-rings"
+settle_ms = 100
+
+[[step]]
+action = "expect-ring"
+channel = 7
+same_as_checkpoint = "velvet-editor-rings"
+settle_ms = 100
+
+[[step]]
+action = "expect-ring"
+channel = 8
+same_as_checkpoint = "velvet-editor-rings"
+settle_ms = 100
+
+[[step]]
+action = "press"
+control = "tap-button"
+
+[[step]]
+action = "delay"
+guest_ms = 100
+
+[[step]]
+action = "effect-replacement-state"
+expected_edit_mode = false
+
+[[step]]
+action = "expect-button-led"
+control = "tap-button"
+lit = false
+
+[[step]]
+action = "expect-ring"
+channel = 3
+same_as_checkpoint = "velvet-before-editor"
+settle_ms = 100
+
+[[step]]
+action = "expect-ring"
+channel = 5
+same_as_checkpoint = "velvet-before-editor"
+settle_ms = 100
+
+[[step]]
+action = "expect-ring"
+channel = 7
+same_as_checkpoint = "velvet-before-editor"
+settle_ms = 100
+
+[[step]]
+action = "expect-ring"
+channel = 8
+same_as_checkpoint = "velvet-before-editor"
+settle_ms = 100

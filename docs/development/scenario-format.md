@@ -89,7 +89,8 @@ card-reader mode), stays unmarked.
 | `expect-startup-report` | `control` | Check the expected startup report for a mapped control |
 | `press` | `control` | Real down/up pair, 50 guest-ms minimum hold; await both applied acknowledgements; UP is acknowledged after release |
 | `encoder` | `channel`, `steps`, optional `gesture` | Positive steps raise the knob; use production polarity mapping; await application |
-| `expect-ring` | `channel`, `mask`, `checkpoint` and/or `changed = true`, optional `only = true`, `settle_ms` | Verify output and exact encoder firmware report count relative to the preceding action |
+| `expect-ring` | `channel`, `mask`, `checkpoint` and/or `changed = true`, optional `same_as_checkpoint`, `only = true`, `settle_ms` | Verify output and exact encoder firmware report count relative to the preceding action; `same_as_checkpoint` asserts the ring mask matches a named checkpoint |
+| `expect-ring-level` | `channel`, `min`, `max`, optional one-based `segment` (1–9) | Check the brightest ring segment, or a specific segment's PWM level |
 | `expect-encoder-reports` | — | Exact firmware report count for the preceding encoder command, without assuming its editing mode changes a ring |
 | `expect-mode` | `mode` | Verify the model-specific mode lamp before taking ring baselines |
 | `expect-mute` | `channel` | Verify the model-specific mute lamp toggled relative to the preceding action |

@@ -1,8 +1,12 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use super::velvet::{Parameters, SAMPLE_RATE, VelvetDecorrelator};
+use super::velvet::{
+    MAX_TRANSITION_MS_PER_REFRESH_SECOND, Parameters, SAMPLE_RATE, VelvetDecorrelator,
+};
 
 pub const PARAMETER_COUNT: usize = 7;
+const MIN_DENSITY_PPS: f32 = 100.0;
+const MAX_DENSITY_PPS: f32 = 4000.0;
 static SAVED: [AtomicU32; PARAMETER_COUNT] = [const { AtomicU32::new(u32::MAX) }; PARAMETER_COUNT];
 
 unsafe fn processor<'a>(state: *mut u8) -> &'a mut VelvetDecorrelator {
@@ -33,20 +37,67 @@ pub unsafe fn initialize(state: *mut u8) {
 
 pub unsafe fn parameter_ring_position(state: *mut u8, encoder: usize) -> Option<u32> {
     let processor = unsafe { processor(state) };
-    let params = processor.current;
+    position_for_params(processor, processor.current, encoder)
+}
+
+pub unsafe fn preview_parameter_ring_position(
+    state: *mut u8,
+    encoder: usize,
+    delta: i32,
+) -> Option<u32> {
+    if delta == 0 || encoder >= PARAMETER_COUNT {
+        return None;
+    }
+    let processor = unsafe { processor(state) };
+    let mut params = processor.current;
+    let step = delta as f32;
+    match encoder {
+        0 => params.amount = clamp(params.amount + step * 0.02, 0.0, 1.0),
+        1 => params.length_ms = clamp(params.length_ms + step, 1.0, 100.0),
+        2 => {
+            params.density = clamp(
+                params.density + step * 50.0,
+                MIN_DENSITY_PPS,
+                MAX_DENSITY_PPS,
+            )
+        }
+        3 => params.decay_db = clamp(params.decay_db + step * 2.0, -120.0, 0.0),
+        4 => params.refresh_seconds = clamp(params.refresh_seconds + step * 0.5, 0.1, 60.0),
+        5 => params.dynamic = delta > 0,
+        6 => {
+            params.transition_ms = clamp(
+                params.transition_ms + step * 25.0,
+                1.0,
+                params.refresh_seconds * MAX_TRANSITION_MS_PER_REFRESH_SECOND,
+            )
+        }
+        _ => unreachable!(),
+    }
+    position_for_params(processor, params, encoder)
+}
+
+fn position_for_params(
+    processor: &VelvetDecorrelator,
+    params: Parameters,
+    encoder: usize,
+) -> Option<u32> {
     let (value, min, max) = match encoder {
         0 => (params.amount * 100.0, 0.0, 100.0),
         1 => (params.length_ms, 1.0, 100.0),
         2 => (
             processor.tap_count(params.density) as f32
                 * (SAMPLE_RATE / processor.current_tail_samples as f32),
-            10.0,
-            4600.0,
+            MIN_DENSITY_PPS,
+            MAX_DENSITY_PPS,
         ),
         3 => (params.decay_db, -120.0, 0.0),
         4 => (params.refresh_seconds, 0.1, 60.0),
-        5 => return Some(if params.dynamic { 40 << 16 } else { 0 }),
-        6 => (params.transition_ms, 1.0, 54000.0),
+        5 => return Some(if params.dynamic { 44 << 16 } else { 0 }),
+        6 => (
+            params.transition_ms,
+            1.0,
+            params.refresh_seconds * MAX_TRANSITION_MS_PER_REFRESH_SECOND,
+        ),
         _ => return None,
     };
     Some(ring_q16(value, min, max))
@@ -62,11 +113,23 @@ pub unsafe fn edit_parameter(state: *mut u8, encoder: usize, delta: i32) -> Opti
     match encoder {
         0 => params.amount = clamp(params.amount + step * 0.02, 0.0, 1.0),
         1 => params.length_ms = clamp(params.length_ms + step, 1.0, 100.0),
-        2 => params.density = clamp(params.density + step * 50.0, 100.0, 4000.0),
+        2 => {
+            params.density = clamp(
+                params.density + step * 50.0,
+                MIN_DENSITY_PPS,
+                MAX_DENSITY_PPS,
+            )
+        }
         3 => params.decay_db = clamp(params.decay_db + step * 2.0, -120.0, 0.0),
         4 => params.refresh_seconds = clamp(params.refresh_seconds + step * 0.5, 0.1, 60.0),
         5 => params.dynamic = delta > 0,
-        6 => params.transition_ms = clamp(params.transition_ms + step * 25.0, 1.0, params.refresh_seconds * 900.0),
+        6 => {
+            params.transition_ms = clamp(
+                params.transition_ms + step * 25.0,
+                1.0,
+                params.refresh_seconds * MAX_TRANSITION_MS_PER_REFRESH_SECOND,
+            )
+        }
         _ => unreachable!(),
     }
     processor.set_parameters(params);
@@ -122,7 +185,7 @@ fn show_external_text(title: &[u8], value: &[u8]) {
 }
 
 fn ring_q16(value: f32, min: f32, max: f32) -> u32 {
-    (clamp((value - min) / (max - min), 0.0, 1.0) * (40.0 * 65536.0) + 0.5) as u32
+    (clamp((value - min) / (max - min), 0.0, 1.0) * (44.0 * 65536.0) + 0.5) as u32
 }
 
 fn clamp(value: f32, min: f32, max: f32) -> f32 {

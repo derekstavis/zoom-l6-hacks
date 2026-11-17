@@ -89,8 +89,11 @@ define_function_hooks! {
 ```
 
 The guard covers the bytes replaced by a function-entry redirect. `Linear`
-replays those instructions and resumes after them; special control-flow
-instructions need an explicit continuation strategy. `dynamic_dispatch`
+replays ordinary instructions and resumes after them. `Cbz` relocates a
+displaced CBZ/CBNZ; `PushCbz` replays an initial PUSH and relocates the
+following CBZ/CBNZ; `RelocatedBl` re-encodes displaced Thumb BL instructions.
+Use an explicit strategy when the displaced instructions contain PC-relative
+control flow. `dynamic_dispatch`
 marks sites supported by the resident Patch loader. Patch declarations that name
 a function absent from this catalog are rejected by the builder.
 

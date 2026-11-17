@@ -326,44 +326,66 @@ impl Render for PatchesWindow {
                 .border_color(rgb(0x34405c))
                 .p_3()
                 .child(
-                    div().flex().items_center().justify_between().gap_3().child(
-                        div()
-                            .id(gpui::SharedString::from(format!("{patch}-toggle")))
-                            .flex()
-                            .flex_1()
-                            .min_w_0()
-                            .items_center()
-                            .gap_3()
-                            .when(togglable, |row| {
-                                row.cursor(CursorStyle::PointingHand).on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |window, _, _, cx| {
-                                        window
-                                            .selection
-                                            .toggle_with_default(patch, default_delivery);
-                                        cx.notify();
-                                    }),
-                                )
-                            })
-                            .child(switch)
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .flex()
-                                    .items_baseline()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .text_color(rgb(if togglable {
-                                                0xe8eef8
-                                            } else {
-                                                0x6a7388
-                                            }))
-                                            .child(package.title.as_str()),
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_3()
+                        .child(
+                            div()
+                                .id(gpui::SharedString::from(format!("{patch}-title")))
+                                .flex()
+                                .flex_1()
+                                .min_w_0()
+                                .items_baseline()
+                                .gap_2()
+                                .when(togglable, |row| {
+                                    row.cursor(CursorStyle::PointingHand).on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |window, _, _, cx| {
+                                            window
+                                                .selection
+                                                .toggle_with_default(patch, default_delivery);
+                                            cx.notify();
+                                        }),
                                     )
-                                    .child(div().text_xs().text_color(rgb(0x6a7388)).child(patch)),
-                            ),
-                    ),
+                                })
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .flex()
+                                        .items_baseline()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .text_color(rgb(if togglable {
+                                                    0xe8eef8
+                                                } else {
+                                                    0x6a7388
+                                                }))
+                                                .child(package.title.as_str()),
+                                        )
+                                        .child(
+                                            div().text_xs().text_color(rgb(0x6a7388)).child(patch),
+                                        ),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .id(gpui::SharedString::from(format!("{patch}-toggle")))
+                                .when(togglable, |control| {
+                                    control.cursor(CursorStyle::PointingHand).on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |window, _, _, cx| {
+                                            window
+                                                .selection
+                                                .toggle_with_default(patch, default_delivery);
+                                            cx.notify();
+                                        }),
+                                    )
+                                })
+                                .child(switch),
+                        ),
                 )
                 .child(
                     div()
@@ -456,6 +478,7 @@ impl Render for PatchesWindow {
                     };
                     let opened = self.open_effect_menu.as_deref() == Some(id);
                     let toggle_id = id.to_owned();
+                    let title_toggle_id = id.to_owned();
                     let toggle_enabled = checked;
                     let assign_id = id.to_owned();
                     div()
@@ -474,11 +497,37 @@ impl Render for PatchesWindow {
                                 .gap_3()
                                 .child(
                                     div()
-                                        .id(gpui::SharedString::from(format!("effect-{id}-toggle")))
+                                        .id(gpui::SharedString::from(format!("effect-{id}-title")))
                                         .flex()
                                         .flex_1()
-                                        .items_center()
-                                        .gap_3()
+                                        .min_w_0()
+                                        .flex_col()
+                                        .cursor(CursorStyle::PointingHand)
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(move |window, _, _, cx| {
+                                                window.set_effect_enabled(
+                                                        &title_toggle_id,
+                                                    !toggle_enabled,
+                                                );
+                                                cx.notify();
+                                            }),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_color(rgb(0xe8eef8))
+                                                .child(effect.title.as_str()),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(0x6a7388))
+                                                .child(format!("by {}", package.author)),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id(gpui::SharedString::from(format!("effect-{id}-toggle")))
                                         .cursor(CursorStyle::PointingHand)
                                         .on_mouse_down(
                                             MouseButton::Left,
@@ -507,25 +556,8 @@ impl Render for PatchesWindow {
                                                         .bg(rgb(0xe8eef8))
                                                         .when(checked, |knob| knob.ml(px(14.0))),
                                                 ),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .flex()
-                                                .flex_col()
-                                                .child(
-                                                    div()
-                                                        .text_color(rgb(0xe8eef8))
-                                                        .child(effect.title.as_str()),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(rgb(0x6a7388))
-                                                        .child(format!("by {}", package.author)),
-                                                ),
                                         ),
-                                )
+                                ),
                         )
                         .child(
                             div()

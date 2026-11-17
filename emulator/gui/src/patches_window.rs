@@ -326,115 +326,100 @@ impl Render for PatchesWindow {
                 .border_color(rgb(0x34405c))
                 .p_3()
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_3()
-                        .child(
-                            div()
-                                .id(gpui::SharedString::from(format!("{patch}-toggle")))
-                                .flex()
-                                .flex_1()
-                                .min_w_0()
-                                .items_center()
-                                .gap_3()
-                                .when(togglable, |row| {
-                                    row.cursor(CursorStyle::PointingHand).on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(move |window, _, _, cx| {
-                                            window
-                                                .selection
-                                                .toggle_with_default(patch, default_delivery);
-                                            cx.notify();
-                                        }),
-                                    )
-                                })
-                                .child(switch)
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .flex()
-                                        .flex_col()
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .items_baseline()
-                                                .gap_2()
-                                                .child(
-                                                    div()
-                                                        .text_color(rgb(if togglable {
-                                                            0xe8eef8
-                                                        } else {
-                                                            0x6a7388
-                                                        }))
-                                                        .child(package.title.as_str()),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(rgb(0x6a7388))
-                                                        .child(patch),
-                                                ),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .text_color(rgb(0x8b95aa))
-                                                .child(package.summary.as_str()),
-                                        ),
-                                ),
-                        )
-                        .when(from_card, |row| {
-                            row.child(
+                    div().flex().items_center().justify_between().gap_3().child(
+                        div()
+                            .id(gpui::SharedString::from(format!("{patch}-toggle")))
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .items_center()
+                            .gap_3()
+                            .when(togglable, |row| {
+                                row.cursor(CursorStyle::PointingHand).on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |window, _, _, cx| {
+                                        window
+                                            .selection
+                                            .toggle_with_default(patch, default_delivery);
+                                        cx.notify();
+                                    }),
+                                )
+                            })
+                            .child(switch)
+                            .child(
                                 div()
+                                    .min_w_0()
                                     .flex()
-                                    .flex_none()
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(rgb(0x34405c))
-                                    .overflow_hidden()
+                                    .items_baseline()
+                                    .gap_2()
                                     .child(
-                                        segment(
-                                            format!("{patch}-firmware"),
-                                            "Firmware",
-                                            delivery == Some(Delivery::Firmware),
-                                            usable && checked,
-                                        )
-                                        .when(
-                                            usable,
-                                            |segment| {
-                                                segment
-                                                    .cursor(CursorStyle::PointingHand)
-                                                    .on_mouse_down(
-                                                        MouseButton::Left,
-                                                        choose(Delivery::Firmware),
-                                                    )
-                                            },
-                                        ),
+                                        div()
+                                            .text_color(rgb(if togglable {
+                                                0xe8eef8
+                                            } else {
+                                                0x6a7388
+                                            }))
+                                            .child(package.title.as_str()),
                                     )
-                                    .child(
-                                        segment(
-                                            format!("{patch}-sd-card"),
-                                            "SD card",
-                                            delivery == Some(Delivery::SdCard),
-                                            card_enabled && checked,
-                                        )
-                                        .when(
-                                            card_enabled,
-                                            |segment| {
-                                                segment
-                                                    .cursor(CursorStyle::PointingHand)
-                                                    .on_mouse_down(
-                                                        MouseButton::Left,
-                                                        choose(Delivery::SdCard),
-                                                    )
-                                            },
-                                        ),
-                                    ),
-                            )
-                        }),
+                                    .child(div().text_xs().text_color(rgb(0x6a7388)).child(patch)),
+                            ),
+                    ),
                 )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(0x8b95aa))
+                        .child(package.summary.as_str()),
+                )
+                .when(from_card, |card| {
+                    let installation_method = div()
+                        .flex()
+                        .flex_none()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(rgb(0x34405c))
+                        .overflow_hidden()
+                        .child(
+                            segment(
+                                format!("{patch}-firmware"),
+                                "Firmware",
+                                delivery == Some(Delivery::Firmware),
+                                usable && checked,
+                            )
+                            .when(usable, |segment| {
+                                segment
+                                    .cursor(CursorStyle::PointingHand)
+                                    .on_mouse_down(MouseButton::Left, choose(Delivery::Firmware))
+                            }),
+                        )
+                        .child(
+                            segment(
+                                format!("{patch}-sd-card"),
+                                "SD card",
+                                delivery == Some(Delivery::SdCard),
+                                card_enabled && checked,
+                            )
+                            .when(card_enabled, |segment| {
+                                segment
+                                    .cursor(CursorStyle::PointingHand)
+                                    .on_mouse_down(MouseButton::Left, choose(Delivery::SdCard))
+                            }),
+                        );
+                    card.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(0x8b95aa))
+                                    .child("Installation method"),
+                            )
+                            .child(installation_method),
+                    )
+                })
         });
         let card_note: Option<&str> = if !has_card {
             Some("Insert an SD card (File → Use SD Card Folder…) to load patches from it.")
@@ -541,6 +526,25 @@ impl Render for PatchesWindow {
                                                 ),
                                         ),
                                 )
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(rgb(0x8b95aa))
+                                .child(package.description.as_str()),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap_3()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(0x8b95aa))
+                                        .child("Installation method"),
+                                )
                                 .child(
                                     div()
                                         .flex()
@@ -562,12 +566,6 @@ impl Render for PatchesWindow {
                                             true,
                                         )),
                                 ),
-                        )
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(rgb(0x8b95aa))
-                                .child(package.description.as_str()),
                         )
                         .when(checked, |card| {
                             card.child(

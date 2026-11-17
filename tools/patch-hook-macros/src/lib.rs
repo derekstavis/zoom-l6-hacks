@@ -163,6 +163,7 @@ fn call_hook(args: TokenStream, input: TokenStream, phase: &str) -> TokenStream 
         .push(syn::parse_quote!(#[unsafe(link_section = ".text.patch_hook")]));
 
     let caller_return = address_literal.clone();
+    let continuation_name = format!("original_{function_name}_{handler}");
     let wrapper_output = quote!(
         <#function_name::Abi as crate::patch_api::FirmwareFunctionOutput>::Output
     );
@@ -200,9 +201,13 @@ fn call_hook(args: TokenStream, input: TokenStream, phase: &str) -> TokenStream 
                 unsafe { #handler(#(#names),*) };
             }
 
-            let __l6_result = unsafe {
-                crate::call_original_from_hook!(#function_name, #handler, #(#names),*)
-            };
+            // Call this handler's generated continuation stub directly. A
+            // direct call is PC-relative, so it needs no load-time relocation.
+            unsafe extern "C" {
+                #[link_name = #continuation_name]
+                fn __l6_continuation(#(#names: #types),*) -> #wrapper_output;
+            }
+            let __l6_result = unsafe { __l6_continuation(#(#names),*) };
 
             if #phase == "post" && __l6_caller_return == __l6_callsite_return {
                 unsafe { #handler(#(#names),*) };
@@ -256,18 +261,19 @@ pub fn function_entry_hook(args: TokenStream, input: TokenStream) -> TokenStream
     let signature_check = format_ident!("__l6_patch_signature_check_{handler}");
     let body = function.block;
     let metadata = format_ident!("__l6_patch_hook_entry__{site}__{handler}");
+    // Each handler continues through its own generated stub, which the
+    // builder names `original_<site>_<handler>`.
+    let continuation_name = format!("original_{site}_{handler}");
 
     let wrapped_body = if let Some(result) = result {
         quote! {{
             let hook_continue = |#(#names: #types),*| {
-                let address: usize = crate::patch_api::__continuations::handler_address(
-                    stringify!(#site),
-                    stringify!(#handler),
-                );
-                let continuation: unsafe extern "C" fn(#(#types),*) -> #result =
-                    unsafe { core::mem::transmute(address | 1usize) };
+                unsafe extern "C" {
+                    #[link_name = #continuation_name]
+                    fn __l6_continuation(#(#names: #types),*) -> #result;
+                }
                 crate::patch_api::EntryHookAction::Continue(
-                    unsafe { continuation(#(#names),*) }
+                    unsafe { __l6_continuation(#(#names),*) }
                 )
             };
             let hook_done = |value: #result| crate::patch_api::EntryHookAction::Done(value);
@@ -280,14 +286,12 @@ pub fn function_entry_hook(args: TokenStream, input: TokenStream) -> TokenStream
     } else {
         quote! {{
             let hook_continue = |#(#names: #types),*| {
-                let address: usize = crate::patch_api::__continuations::handler_address(
-                    stringify!(#site),
-                    stringify!(#handler),
-                );
-                let continuation: unsafe extern "C" fn(#(#types),*) =
-                    unsafe { core::mem::transmute(address | 1usize) };
+                unsafe extern "C" {
+                    #[link_name = #continuation_name]
+                    fn __l6_continuation(#(#names: #types),*);
+                }
                 crate::patch_api::EntryHookAction::Continue(
-                    unsafe { continuation(#(#names),*) }
+                    unsafe { __l6_continuation(#(#names),*) }
                 )
             };
             let hook_done = || crate::patch_api::EntryHookAction::Done(());

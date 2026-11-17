@@ -630,7 +630,7 @@ fn compile_inner_with_payload(
     let hook_macro = patch_hook_macro_library()?;
     fs::write(
         generated.join("continuations.rs"),
-        "pub fn address(_: &str) -> usize { 0 }\npub fn handler_address(_: &str, _: &str) -> usize { 0 }\n",
+        "pub fn address(_: &str) -> usize { 0 }\n",
     )?;
     let _ = compile_payload_pass(
         source,
@@ -645,6 +645,7 @@ fn compile_inner_with_payload(
         &blob,
         &hook_macro,
         payload,
+        true,
     )?;
 
     let first_symbols = run(
@@ -676,6 +677,7 @@ fn compile_inner_with_payload(
         &blob,
         &hook_macro,
         payload,
+        false,
     )
 }
 
@@ -693,6 +695,7 @@ fn compile_payload_pass(
     blob: &Path,
     hook_macro: &Path,
     payload: &Path,
+    discovery: bool,
 ) -> Result<(Vec<u8>, String), Box<dyn std::error::Error>> {
     let firmware = fs::read(source.join("main_firmware.bin"))?;
     let dynamic_linker = root.join("linker/link-dynamic.ld");
@@ -743,6 +746,13 @@ fn compile_payload_pass(
         .arg(format!("link-arg=-T{}", linker_script.display()))
         .arg("-o")
         .arg(&elf);
+    if discovery {
+        // The discovery pass only reports hook metadata. Hook handlers call
+        // their `original_<site>_<handler>` continuation stubs directly, and
+        // those stubs are generated from this pass's output, so they cannot
+        // resolve yet. The output of this pass is never installed.
+        command.args(["-C", "link-arg=--unresolved-symbols=ignore-all"]);
+    }
     if emit_relocations {
         command
             .arg("--cfg")
@@ -836,7 +846,6 @@ fn generate_continuations_from_metadata(
 
     let mut assembly = String::from(".thumb\n");
     let mut address_arms = Vec::new();
-    let mut handler_address_arms = Vec::new();
     let mut externs = Vec::new();
     let mut wrappers = Vec::new();
     for name in needed {
@@ -952,9 +961,9 @@ fn generate_continuations_from_metadata(
             .ok_or_else(|| {
                 format!("hook site {site_name} is missing from define_function_hooks!")
             })?;
+        // The hook macro calls this stub by name, so it needs no lookup.
         let original = format!("original_{site_name}_{handler_name}");
         validate_asm_symbol(&original)?;
-        externs.push(format!("unsafe extern \"C\" {{ fn {original}(); }}"));
 
         if dynamic && site.dynamic_dispatch {
             let slot = format!("dynamic_next_{site_name}_{handler_name}_slot");
@@ -975,9 +984,6 @@ fn generate_continuations_from_metadata(
                 ".section .text.continuation_{site_name}_{handler_name}, \"ax\"\n.global {original}\n.thumb_func\n{original}:\n    ldr r12, ={slot}\n    ldr r12, [r12]\n    bx r12\n.align 2\n.global {slot}\n{slot}:\n    .word {target}\n"
             ));
         }
-        handler_address_arms.push(format!(
-            "({site_name:?}, {handler_name:?}) => {original} as *const () as usize,"
-        ));
     }
 
     // The resident loader patches every catalog entry marked for dynamic
@@ -1157,15 +1163,14 @@ fn generate_continuations_from_metadata(
 
     if !assembly.trim().eq(".thumb") {
         Ok(format!(
-            "use core::arch::global_asm;\nglobal_asm!(r####\"{assembly}\"####, options(raw));\n{}\npub fn address(name: &str) -> usize {{ match name {{ {} _ => 0 }} }}\npub fn handler_address(site: &str, handler: &str) -> usize {{ match (site, handler) {{ {} _ => 0 }} }}\n{}\n{}\n",
+            "use core::arch::global_asm;\nglobal_asm!(r####\"{assembly}\"####, options(raw));\n{}\npub fn address(name: &str) -> usize {{ match name {{ {} _ => 0 }} }}\n{}\n{}\n",
             externs.join("\n"),
             address_arms.join(" "),
-            handler_address_arms.join(" "),
             offset_wrappers.join("\n"),
             wrappers.join("\n"),
         ))
     } else {
-        Ok("pub fn address(_: &str) -> usize { 0 }\npub fn handler_address(_: &str, _: &str) -> usize { 0 }\n".to_owned())
+        Ok("pub fn address(_: &str) -> usize { 0 }\n".to_owned())
     }
 }
 

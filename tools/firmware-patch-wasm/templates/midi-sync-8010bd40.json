@@ -14,7 +14,7 @@
   "model": "L6max",
   "name": "midi-sync",
   "payload_file": "midi-sync-8010bd40.bin",
-  "payload_length": 1215,
+  "payload_length": 1207,
   "window_byte_total": 4,
   "windows": [
     {

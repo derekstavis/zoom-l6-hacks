@@ -11,7 +11,7 @@
   "model": "L6",
   "name": "midi-sync",
   "payload_file": "midi-sync-l6-loader-800b9a90.bin",
-  "payload_length": 276,
+  "payload_length": 268,
   "window_byte_total": 4,
   "windows": [
     {

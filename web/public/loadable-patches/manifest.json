@@ -1,5 +1,5 @@
 {
-  "generator_source_sha256": "2f287b15640a955afbe0748c383cd1f8e35124d010293dbba4ac89d9777a2a4a",
+  "generator_source_sha256": "8f2aef1ee4c1e76f288f5b2a3ff60cd6d5476087e63fec57fbde425b2abe64a6",
   "source_firmware_sha256": "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461",
   "l6_source_firmware_sha256": "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799",
   "modules": [
@@ -9,7 +9,7 @@
       "file": "L6max/knob-dialog-1.0.0.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "610804f3ff290656e8b419066f1be66405ada73e055494be43cb64d8f62367b9"
+      "sha256": "2fd662c4d5968aa36e05fa2ed48ed971b7abf644c15a46a1f1e01494f40105cc"
     },
     {
       "id": "midi-sync",
@@ -25,7 +25,7 @@
       "file": "L6max/midi-sync-1.0.0.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "a3d6efcb6dd85e9e0307eb487d869623f223ff9c830352b16350c5abc52908f4"
+      "sha256": "70a1427addb886393aace18d05448bfb1c74d787e8b5d617be3cf84e129d971b"
     }
   ],
   "effect_replacements": [
@@ -35,7 +35,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-plateau-1.0.0-room-stock-spring-plateau.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "2ddff7f294972b1122435847a328b2a48a66507b393e0952b4fac5052bc3804d"
+      "sha256": "eb6c258223f6f06dac0c36fe13391c6fb74449cc3ec833e24ac1d1b95fe375f3"
     },
     {
       "room": "stock",
@@ -43,7 +43,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-room-stock-spring-velvet.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "08e8f36a928204722ab05ebd762877e1811470bbe35bca8076e9408cf44c3630"
+      "sha256": "4843cb37c6999ea9e7cee2d06cb29ea143a478e3ed457c93f684faf659e89dca"
     },
     {
       "room": "plateau",
@@ -51,7 +51,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-plateau-1.0.0-room-plateau-spring-stock.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "91ec74f1626bffbba8b54b9053efb960aeff1919b9929761b46aaaf126516131"
+      "sha256": "c5db1447df6cff39981e460bbe9ff89e2c3889a740e002ae13a3309d78c69e76"
     },
     {
       "room": "plateau",
@@ -59,7 +59,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-plateau-1.0.0-room-plateau-spring-plateau.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "7c0ed4e9c6a6f422024e55b61aeef54b4cf9d2351c3698139061d36f1c904c5f"
+      "sha256": "d699d39a88da7da2f450a7c6c464e49430d4390831c5af163e819f4c4fd123e1"
     },
     {
       "room": "plateau",
@@ -67,7 +67,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-efx-plateau-1.0.0-room-plateau-spring-velvet.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "27377c0eab1a35e4489a51997f4128e4327540e084e1058a29c519a3cc9962c6"
+      "sha256": "37e2a421ae03a53fda49e253f68bdd4392b4ec61f06b327394f04a5bfeecb457"
     },
     {
       "room": "velvet",
@@ -75,7 +75,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-room-velvet-spring-stock.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "ee1ed2cc33f31015ed0cab9199404ea8b832d43143847b829c7ae10ccc44b248"
+      "sha256": "62301adb0407e2a55a48c5c700f7174b2aa7f7da02d81a5f694647f081131c59"
     },
     {
       "room": "velvet",
@@ -83,7 +83,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-efx-plateau-1.0.0-room-velvet-spring-plateau.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "c8dcf93ce8b1e1b158cdf4edfd42b11a46eaa7495e82af15899ef3148b8ab867"
+      "sha256": "6c575999469f66afa98082a3ead79dfe3d801c0b2c9d2dc5a213d443a2f9bd89"
     },
     {
       "room": "velvet",
@@ -91,7 +91,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-room-velvet-spring-velvet.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "0e47e5f3e152ac7f684cc98234e64d72e05d9a8736fc0971e110b3a75f8cf409"
+      "sha256": "8a4a957593cecaabed5dc22cb1cf311903d15cca31334408f8d6637f52b48b52"
     }
   ]
 }

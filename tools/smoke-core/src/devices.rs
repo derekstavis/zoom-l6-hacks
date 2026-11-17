@@ -114,6 +114,7 @@ pub enum Operation {
     EffectReplacementState {
         expected_effect_type: Option<u8>,
         expected_processor_type: Option<u8>,
+        expected_panel_mode: Option<u8>,
         expected_edit_mode: Option<bool>,
         minimum_parameter_edits: Option<u32>,
         expected_parameter_id: Option<u8>,
@@ -3708,6 +3709,7 @@ impl State {
             Operation::EffectReplacementState {
                 expected_effect_type,
                 expected_processor_type,
+                expected_panel_mode,
                 expected_edit_mode,
                 minimum_parameter_edits,
                 expected_parameter_id,
@@ -3719,6 +3721,7 @@ impl State {
                 session,
                 expected_effect_type,
                 expected_processor_type,
+                expected_panel_mode,
                 expected_edit_mode,
                 minimum_parameter_edits,
                 expected_parameter_id,
@@ -5562,6 +5565,7 @@ fn effect_replacement_state(
     session: &Session,
     expected_effect_type: Option<u8>,
     expected_processor_type: Option<u8>,
+    expected_panel_mode: Option<u8>,
     expected_edit_mode: Option<bool>,
     minimum_parameter_edits: Option<u32>,
     expected_parameter_id: Option<u8>,
@@ -5625,6 +5629,12 @@ fn effect_replacement_state(
     );
     let processor_type = u32::from_le_bytes(
         qmp.read_memory(0, module_base + offset("DUAL_EFFECT_PROCESSOR_TYPE")?, 4)
+            .map_err(|error| error.to_string())?
+            .try_into()
+            .unwrap(),
+    );
+    let panel_mode = u32::from_le_bytes(
+        qmp.read_memory(0, module_base + offset("DUAL_EFFECT_PANEL_MODE")?, 4)
             .map_err(|error| error.to_string())?
             .try_into()
             .unwrap(),
@@ -5700,6 +5710,11 @@ fn effect_replacement_state(
             "effect replacement replacement processor has type {processor_type}, expected {expected_processor_type:?}"
         ));
     }
+    if expected_panel_mode.is_some_and(|expected| panel_mode != u32::from(expected)) {
+        return Err(format!(
+            "effect replacement selected panel mode is {panel_mode}, expected {expected_panel_mode:?}"
+        ));
+    }
     if expected_edit_mode.is_some_and(|expected| edit_mode != u32::from(expected)) {
         return Err(format!(
             "effect replacement parameter edit mode is {edit_mode}, expected {expected_edit_mode:?}"
@@ -5737,7 +5752,7 @@ fn effect_replacement_state(
         }
     }
     Ok(
-        json!({"effect_type":effect_type,"processor_type":processor_type,"edit_mode":edit_mode,"parameter_edits_applied":applied,"parameter_id":expected_parameter_id,"parameter_value":parameter,"knob_dialog_active":dialog_active,"exit_ring_refreshes":exit_ring_refreshes}),
+        json!({"effect_type":effect_type,"processor_type":processor_type,"panel_mode":panel_mode,"edit_mode":edit_mode,"parameter_edits_applied":applied,"parameter_id":expected_parameter_id,"parameter_value":parameter,"knob_dialog_active":dialog_active,"exit_ring_refreshes":exit_ring_refreshes}),
     )
 }
 

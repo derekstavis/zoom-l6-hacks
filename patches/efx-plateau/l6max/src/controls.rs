@@ -1,8 +1,12 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use super::plateau::{MAX_PREDELAY_MS, MAX_SIZE, PlateauParameters, PlateauReverb, SAMPLE_RATE};
+use super::plateau::{MAX_PREDELAY_MS, MAX_SIZE, PlateauParameters, PlateauReverb};
 
 pub const PARAMETER_COUNT: usize = 8;
+const LOW_CUT_MIN_HZ: f32 = 20.0;
+const LOW_CUT_MAX_HZ: f32 = 1000.0;
+const HIGH_CUT_MIN_HZ: f32 = 1000.0;
+const HIGH_CUT_MAX_HZ: f32 = 16000.0;
 static SAVED: [AtomicU32; PARAMETER_COUNT] = [const { AtomicU32::new(u32::MAX) }; PARAMETER_COUNT];
 
 unsafe fn processor<'a>(state: *mut u8) -> &'a mut PlateauReverb {
@@ -33,16 +37,55 @@ pub unsafe fn initialize(state: *mut u8) {
 }
 
 pub unsafe fn parameter_ring_position(state: *mut u8, encoder: usize) -> Option<u32> {
-    let params = unsafe { processor(state) }.params;
+    position_for_params(unsafe { processor(state) }.params, encoder)
+}
+
+pub unsafe fn preview_parameter_ring_position(
+    state: *mut u8,
+    encoder: usize,
+    delta: i32,
+) -> Option<u32> {
+    if delta == 0 || encoder >= PARAMETER_COUNT {
+        return None;
+    }
+    let mut params = unsafe { processor(state) }.params;
+    let step = delta as f32;
+    match encoder {
+        0 => params.predelay_ms = clamp(params.predelay_ms + step * 2.0, 0.0, MAX_PREDELAY_MS),
+        1 => params.size = clamp(params.size + step * 0.02, 0.01, MAX_SIZE),
+        2 => params.decay = clamp(params.decay + step * 0.02, 0.1, 0.999),
+        3 => {
+            params.low_cut_hz = clamp(
+                params.low_cut_hz + step * 20.0,
+                LOW_CUT_MIN_HZ,
+                LOW_CUT_MAX_HZ,
+            )
+        }
+        4 => {
+            params.high_cut_hz = clamp(
+                params.high_cut_hz + step * 250.0,
+                HIGH_CUT_MIN_HZ,
+                HIGH_CUT_MAX_HZ,
+            )
+        }
+        5 => params.diffusion = clamp(params.diffusion + step * 0.05, 0.0, 1.0),
+        6 => params.mod_depth = clamp(params.mod_depth + step * 0.25, 0.0, 16.0),
+        7 => params.freeze = delta > 0,
+        _ => unreachable!(),
+    }
+    position_for_params(params, encoder)
+}
+
+fn position_for_params(params: PlateauParameters, encoder: usize) -> Option<u32> {
     let (value, min, max) = match encoder {
         0 => (params.predelay_ms, 0.0, MAX_PREDELAY_MS),
         1 => (params.size * 100.0, 1.0, MAX_SIZE * 100.0),
         2 => (params.decay * 100.0, 10.0, 99.9),
-        3 => (params.low_cut_hz, 20.0, SAMPLE_RATE * 0.49),
-        4 => (params.high_cut_hz, 20.0, SAMPLE_RATE * 0.49),
+        3 => (params.low_cut_hz, LOW_CUT_MIN_HZ, LOW_CUT_MAX_HZ),
+        4 => (params.high_cut_hz, HIGH_CUT_MIN_HZ, HIGH_CUT_MAX_HZ),
         5 => (params.diffusion * 100.0, 0.0, 100.0),
         6 => (params.mod_depth, 0.0, 16.0),
-        7 => return Some(if params.freeze { 40 << 16 } else { 0 }),
+        7 => return Some(if params.freeze { 44 << 16 } else { 0 }),
         _ => return None,
     };
     Some(ring_q16(value, min, max))
@@ -69,11 +112,19 @@ pub unsafe fn edit_parameter(state: *mut u8, encoder: usize, delta: i32) -> Opti
             processor.set_live_parameters(params);
         }
         3 => {
-            params.low_cut_hz = clamp(params.low_cut_hz + step * 20.0, 20.0, 1000.0);
+            params.low_cut_hz = clamp(
+                params.low_cut_hz + step * 20.0,
+                LOW_CUT_MIN_HZ,
+                LOW_CUT_MAX_HZ,
+            );
             processor.set_parameters(params);
         }
         4 => {
-            params.high_cut_hz = clamp(params.high_cut_hz + step * 250.0, 1000.0, 16000.0);
+            params.high_cut_hz = clamp(
+                params.high_cut_hz + step * 250.0,
+                HIGH_CUT_MIN_HZ,
+                HIGH_CUT_MAX_HZ,
+            );
             processor.set_parameters(params);
         }
         5 => {
@@ -142,7 +193,7 @@ fn show_external_text(title: &[u8], value: &[u8]) {
 }
 
 fn ring_q16(value: f32, min: f32, max: f32) -> u32 {
-    (clamp((value - min) / (max - min), 0.0, 1.0) * (40.0 * 65536.0) + 0.5) as u32
+    (clamp((value - min) / (max - min), 0.0, 1.0) * (44.0 * 65536.0) + 0.5) as u32
 }
 
 fn clamp(value: f32, min: f32, max: f32) -> f32 {

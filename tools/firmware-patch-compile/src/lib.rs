@@ -453,6 +453,19 @@ pub fn compile_sd_relocatable_composed(
         }
     }
     source_text.push_str("_ => None, } }\n");
+    source_text.push_str("pub unsafe fn preview_parameter_position(slot: u32, state: *mut u8, encoder: usize, delta: i32) -> Option<u32> { match slot {\n");
+    for (slot, _, module_name, _, controls, _) in &selected_effects {
+        if controls
+            .iter()
+            .any(|control| control == "encoder-parameters")
+        {
+            let stock_type = if *slot == "room" { 1 } else { 2 };
+            source_text.push_str(&format!(
+                "{stock_type} => unsafe {{ crate::{module_name}::preview_parameter_ring_position(state, encoder, delta) }},\n"
+            ));
+        }
+    }
+    source_text.push_str("_ => None, } }\n");
     source_text.push_str("pub unsafe fn edit_parameter(slot: u32, state: *mut u8, encoder: usize, delta: i32) -> Option<u32> { match slot {\n");
     for (slot, _, module_name, _, controls, _) in &selected_effects {
         if controls
@@ -884,6 +897,7 @@ fn generate_continuations_from_metadata(
                     main_base,
                     resume,
                 )?,
+                3 => emit_push_cbz_continuation(&mut assembly, site.address, displaced, resume)?,
                 value => return Err(format!("unsupported continuation strategy {value}").into()),
             }
         } else {
@@ -911,6 +925,7 @@ fn generate_continuations_from_metadata(
                     main_base,
                     resume,
                 )?,
+                3 => emit_push_cbz_continuation(&mut assembly, site.address, displaced, resume)?,
                 value => return Err(format!("unsupported continuation strategy {value}").into()),
             }
         }
@@ -1408,6 +1423,56 @@ fn emit_cbz_continuation(
     Ok(())
 }
 
+/// Relocate a CBZ/CBNZ that follows an initial 16-bit PUSH. This is used by
+/// firmware functions whose four-byte hook window starts with a register-save
+/// prologue followed by a short PC-relative branch.
+fn emit_push_cbz_continuation(
+    assembly: &mut String,
+    address: u32,
+    displaced: &[u8],
+    resume: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if displaced.len() < 4 || displaced.len() % 2 != 0 {
+        return Err("PUSH+CBZ continuation requires at least four even bytes".into());
+    }
+    let push = u16::from_le_bytes(displaced[..2].try_into()?);
+    if push & 0xfe00 != 0xb400 {
+        return Err(format!("expected Thumb PUSH at {address:#x}").into());
+    }
+    let branch_offset = 2usize;
+    let instruction = u16::from_le_bytes(displaced[branch_offset..branch_offset + 2].try_into()?);
+    if instruction & 0xf500 != 0xb100 {
+        return Err(format!("expected CBZ/CBNZ at {:#x}", address + 2).into());
+    }
+    let encoded_offset =
+        (((instruction & 0x0200) as u32) >> 3) | (((instruction & 0x00f8) as u32) >> 2);
+    let target = address
+        .checked_add(branch_offset as u32 + 4)
+        .and_then(|pc| pc.checked_add(encoded_offset))
+        .ok_or("CBZ target overflow")?;
+    if (address..address + displaced.len() as u32).contains(&target) {
+        return Err(format!("CBZ target lands inside displaced bytes at {target:#x}").into());
+    }
+    // The local label follows the relocated span and the resume literal load.
+    // CBZ's PC is the relocated instruction address plus four bytes.
+    let local_offset = displaced.len() - branch_offset;
+    if local_offset > 0x7e {
+        return Err("displaced PUSH+CBZ span is too long for generated local branch".into());
+    }
+    let local_offset = local_offset as u32;
+    let relocated = (instruction & !0x02f8)
+        | (((local_offset & 0x40) << 3) as u16)
+        | (((local_offset & 0x3e) << 2) as u16);
+    emit_bytes(assembly, &displaced[..branch_offset]);
+    assembly.push_str(&format!("    .hword 0x{relocated:04x}\n"));
+    emit_bytes(assembly, &displaced[branch_offset + 2..]);
+    assembly.push_str(&format!(
+        "    ldr pc, ={resume:#x}\n1: ldr pc, ={:#x}\n.ltorg\n",
+        target | 1
+    ));
+    Ok(())
+}
+
 fn parse_relocations(
     elf: &Path,
     base: u32,
@@ -1553,7 +1618,7 @@ pub fn function_hook_sites(
         let guard_sha256 = std::str::from_utf8(guard_bytes)?.to_owned();
         if address & 1 != 0
             || displaced_len < 2
-            || !matches!(continuation, 0 | 1 | 2)
+            || !matches!(continuation, 0 | 1 | 2 | 3)
             || !matches!(dynamic_dispatch, 0 | 1)
             || name.is_empty()
             || guard_sha256.len() != 64

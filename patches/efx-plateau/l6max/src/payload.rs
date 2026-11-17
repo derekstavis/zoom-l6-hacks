@@ -24,6 +24,14 @@ pub unsafe fn parameter_ring_position(state: *mut u8, encoder: usize) -> Option<
     unsafe { controls::parameter_ring_position(state, encoder) }
 }
 
+pub unsafe fn preview_parameter_ring_position(
+    state: *mut u8,
+    encoder: usize,
+    delta: i32,
+) -> Option<u32> {
+    unsafe { controls::preview_parameter_ring_position(state, encoder, delta) }
+}
+
 pub unsafe fn edit_parameter(state: *mut u8, encoder: usize, delta: i32) -> Option<u32> {
     unsafe { controls::edit_parameter(state, encoder, delta) }
 }

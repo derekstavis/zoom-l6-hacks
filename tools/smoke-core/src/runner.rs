@@ -51,6 +51,7 @@ fn panel_led_state(model: Model, data: PanelData, index: usize) -> bool {
 impl Observation {
     fn summary(&self) -> Value {
         json!({"guest_ms": self.panel.guest_ms, "rings": rings(self.data.indicators), "rows": self.data.indicators,
+            "ring_levels": l6max_host::indicators::ring_levels(self.data.indicator_levels),
             "main": {"sent":self.main.sent,"applied":self.main.applied,"released":self.main.released,"frames":self.main.frame_ready,"frame_guest_ms":self.main.frame_guest_ms},
             "panel": {"sent":self.panel.sent,"applied":self.panel.applied,"released":self.panel.released}, "encoder_reports":self.reports,"trace_counts":self.traces})
     }
@@ -534,6 +535,7 @@ impl Runner {
                 Action::EffectReplacementState {
                     expected_effect_type,
                     expected_processor_type,
+                    expected_panel_mode,
                     expected_edit_mode,
                     minimum_parameter_edits,
                     expected_parameter_id,
@@ -545,6 +547,7 @@ impl Runner {
                         devices::Operation::EffectReplacementState {
                             expected_effect_type,
                             expected_processor_type,
+                            expected_panel_mode,
                             expected_edit_mode,
                             minimum_parameter_edits,
                             expected_parameter_id,
@@ -1026,6 +1029,7 @@ impl Runner {
                 Action::ExpectRing {
                     channel,
                     mask,
+                    same_as_checkpoint,
                     changed,
                     only,
                     checkpoint,
@@ -1037,6 +1041,11 @@ impl Runner {
                         .ok_or("ring assertion needs a preceding action")?;
                     let before = rings(base.data.indicators);
                     let after = rings(obs.data.indicators);
+                    let same_as_checkpoint = same_as_checkpoint.as_ref().is_none_or(|name| {
+                        self.checkpoints.get(name).is_some_and(|checkpoint| {
+                            rings(checkpoint.data.indicators)[channel - 1] == after[channel - 1]
+                        })
+                    });
                     let reports_ready = self.encoder_reports_ready(&obs)?;
                     if only
                         && after
@@ -1067,14 +1076,21 @@ impl Runner {
                             }
                         })
                         && mask.is_none_or(|v| after[channel - 1] == v)
+                        && same_as_checkpoint
                         && (!changed || before[channel - 1] != after[channel - 1])
                 }
-                Action::ExpectRingLevel { channel, min, max } => {
-                    let level = l6max_host::indicators::ring_levels(obs.data.indicator_levels)
-                        [channel - 1]
-                        .into_iter()
-                        .max()
-                        .unwrap_or(0);
+                Action::ExpectRingLevel {
+                    channel,
+                    segment,
+                    min,
+                    max,
+                } => {
+                    let levels =
+                        l6max_host::indicators::ring_levels(obs.data.indicator_levels)[channel - 1];
+                    let level = segment.map_or_else(
+                        || levels.into_iter().max().unwrap_or(0),
+                        |segment| levels[usize::from(segment - 1)],
+                    );
                     (min..=max).contains(&level)
                 }
                 Action::ExpectMute { channel } => {

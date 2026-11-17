@@ -98,6 +98,12 @@ define_function_hooks! {
         continuation: Linear,
         dynamic_dispatch: true,
     };
+    l6max_panel_select_parameter_mode {
+        displaced_len: 4,
+        guard_sha256: "62298fb3842d96cf081ef787289cfff05489d6d382f442edcc38b0ee99a6b95f",
+        continuation: PushCbz,
+        dynamic_dispatch: true,
+    };
     l6max_encoder_ring_pattern_apply {
         displaced_len: 4,
         guard_sha256: "90d0f4dca8b9cfa14674e9ea1f57cd8990bc17f089a15557bb19199796fb4535",

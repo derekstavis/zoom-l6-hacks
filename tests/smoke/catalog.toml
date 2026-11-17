@@ -734,6 +734,22 @@ needs_configuration = true
 wall_timeout_s = 600
 
 [[case]]
+id = "sd-effect-editor-mode-restore"
+suites = ["sd-matrix", "effect-replacement-matrix"]
+models = ["l6max"]
+scenario = "scenarios/sd-effect-editor-mode-restore.toml"
+needs_configuration = true
+wall_timeout_s = 600
+
+[[case]]
+id = "sd-effect-velvet-ring-scale"
+suites = ["sd-matrix", "effect-replacement-matrix"]
+models = ["l6max"]
+scenario = "scenarios/sd-effect-velvet-ring-scale.toml"
+needs_configuration = true
+wall_timeout_s = 600
+
+[[case]]
 id = "sd-effect-assignment-spring-plateau"
 suites = ["sd-matrix", "effect-replacement-matrix"]
 models = ["l6max"]

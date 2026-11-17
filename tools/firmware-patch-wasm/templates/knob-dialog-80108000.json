@@ -14,7 +14,7 @@
   "model": "L6max",
   "name": "knob-dialog",
   "payload_file": "knob-dialog-80108000.bin",
-  "payload_length": 3172,
+  "payload_length": 3244,
   "window_byte_total": 4,
   "windows": [
     {

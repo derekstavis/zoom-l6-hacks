@@ -25,6 +25,7 @@ api/
     cfg.rs
     dsp.rs
     gui.rs
+    menu.rs
     hooks.rs
     midi.rs
     mixer.rs
@@ -107,6 +108,13 @@ bindings instead hold root pointers, so call `.read()` to obtain their
 tables. These common bindings let GUI patches share the reviewed address
 definitions without moving feature-specific descriptor layouts or state into
 the common module.
+
+The L6max menu bindings in `menu.rs` cover the main menu window entry, the
+stock submenu and no-op actions, the 40-byte node layout and the context 0
+nodes patches can extend. The language 0 entries of the text root bindings
+belong to [menu-loader](../menu-loader/README.md) once it is installed,
+because it moves the tables to add text IDs, and the language 6 pointer entry
+holds the [Patch loader](../patch-loader/README.md)'s registry root.
 
 The function-hook attributes are re-exported from `patchrt.rs` and
 implemented in the `patch-hook-macros` proc-macro crate. `define_function_hooks!`

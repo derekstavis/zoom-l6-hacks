@@ -27,6 +27,7 @@ bindings only for functions or variables that are genuinely patch-specific.
 | Inject at a function instruction offset | `#[function_offset_hook(function, at = OFFSET)]` | Generates a register-preserving static veneer; `hook_continue()` replays displaced instructions and `hook_done()` skips them. |
 | Add behavior around a call to a function | `#[function_call_pre_hook(function, at = ADDRESS)]`, `#[function_call_post_hook(...)]` | Adds typed handler calls selected by the caller return address; the original `BL` stays in place. |
 | Call a generated stock continuation | `call_original!(function, args...)` | Calls the guarded stock path without requiring a repeated ABI signature. |
+| Add L6max menu items | `menu_items! { PARENT => "Title" => action(function); }` | Records items that [menu-loader](../../patches/menu-loader/README.md) adds to a stock menu; needs no hook. |
 
 All addresses and guards are specific to a firmware model and revision. The
 builder validates hook metadata against the selected firmware before writing a
@@ -279,6 +280,49 @@ by multiple requested patches is included once in that combined file. Separate
 builds each contain their own dependency copy. Removing the file removes all
 included features together. No runtime patch registry, initializer, or
 patch-to-patch function table is required.
+
+## Patch identity and menu items
+
+The builder generates an identity record (`patchrt::PatchInfo`, exported as
+`__l6_patch_info`) into every payload. It holds:
+
+- the name and version of each patch in the payload, from `package.toml`.
+  A static payload has one; a composed SD module lists its patches in
+  dependency order;
+- one group per patch that declares `menu_items!`;
+- `next`, which links static records.
+
+The record is how [menu-loader](../../patches/menu-loader/README.md) lists
+patches and finds their menu items:
+
+- **Static images:** `l6patch` links the records of the Patch loader and every
+  installed payload into a ring in placement order, so any record leads to
+  all of them.
+- **SD modules:** the composed linker script places the record at offset 0,
+  where the loader's relocation fixes its pointers. The Patch loader records
+  each module's base in its registry. A loader without registry layout 2
+  still loads these modules and ignores the record.
+
+`menu_items!` exports its item array as `__l6_menu_items_<module path>`.
+The compiler's first pass finds those symbols with `nm`; the second pass
+references them from the identity record. Both passes keep the record and the
+arrays through section garbage collection with `--undefined` and
+`--undefined-glob`, so payloads need no linker-script changes.
+
+```rust
+menu_items! {
+    SYSTEM => "Send MIDI State" => action(send_state_from_menu);
+    MIXER => "Knob Dialog" => info;
+    PROJECT => "Export Take" => action(export_take), requires 0x01;
+}
+```
+
+Declare the items once per patch, at the payload root. Parents are `MAIN`,
+`PROJECT`, `SOUND_PAD`, `MIXER` and `SYSTEM`. Titles are printable ASCII of
+up to 23 characters, checked at compile time. An action is an
+`unsafe extern "C" fn() -> u32` that the stock menu calls on the UI task;
+nonzero redraws the menu. `info` adds a read-only row. `requires` takes the
+stock requirement bits. The record layout is `PATCH_INFO_LAYOUT` 1.
 
 ## Calling an original continuation
 

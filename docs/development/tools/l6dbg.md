@@ -18,7 +18,9 @@ that documentation cites, such as
 for the [L6max USB modes](../../emulator/usb.md#l6max-usb-modes) and
 [`heap-load-l6.toml`](../../../tools/l6dbg/recipes/heap-load-l6.toml) and
 [`heap-load-l6max.toml`](../../../tools/l6dbg/recipes/heap-load-l6max.toml)
-for [heap headroom](../../../patches/README.md#heap-headroom). A
+for [heap headroom](../../../patches/README.md#heap-headroom), and
+[`menu-loader-l6max.toml`](../../../tools/l6dbg/recipes/menu-loader-l6max.toml)
+for [menu-loader](../../../patches/menu-loader/README.md). A
 first-boot recipe confirms setup with two `recorder.confirm` presses before
 USB starts.
 

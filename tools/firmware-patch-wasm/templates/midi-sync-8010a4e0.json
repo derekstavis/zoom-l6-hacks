@@ -1,5 +1,5 @@
 {
-  "base": "0x8010b100",
+  "base": "0x8010a4e0",
   "hooks": [
     {
       "address": "0x8003f7c8",
@@ -8,13 +8,13 @@
       "continuation_slot_offset": 32,
       "length": 4,
       "symbol": "midi_in_hook",
-      "target": "0x8010b124"
+      "target": "0x8010a640"
     }
   ],
   "model": "L6max",
   "name": "midi-sync",
-  "payload_file": "midi-sync-8010b100.bin",
-  "payload_length": 863,
+  "payload_file": "midi-sync-8010a4e0.bin",
+  "payload_length": 996,
   "window_byte_total": 4,
   "windows": [
     {

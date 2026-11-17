@@ -2,6 +2,9 @@ ENTRY(0)
 SECTIONS {
   . = PAYLOAD_BASE;
   .text : {
+    /* The identity record comes first so the loader and menu-loader find it
+       at the module base. */
+    KEEP(*(.rodata.l6_patch_info))
     KEEP(*(.text.*_hook))
     *(.text*)
     *(.rodata*)

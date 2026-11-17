@@ -17,6 +17,144 @@ pub mod __continuations {
     include!(concat!(env!("OUT_DIR"), "/continuations.rs"));
 }
 
+/// Generated identity record for this payload: the names and versions of the
+/// patches it contains and the menu items they declare. See `PatchInfo`.
+#[doc(hidden)]
+pub mod __identity {
+    #[allow(unused_imports)]
+    use super::{MenuGroup, MenuItem, PatchInfo, PatchRecord};
+    include!(concat!(env!("OUT_DIR"), "/patch_identity.rs"));
+}
+
+/// "L6PI": marks a payload's identity record.
+pub const PATCH_INFO_MAGIC: u32 = 0x4950_364c;
+/// Layout of `PatchInfo`, `PatchRecord` and `MenuItem`.
+pub const PATCH_INFO_LAYOUT: u16 = 1;
+
+/// One patch included in a payload. Text is ASCII, NUL-padded.
+#[repr(C)]
+pub struct PatchRecord {
+    pub name: [u8; 32],
+    pub version: [u8; 16],
+}
+
+/// Identity record emitted into every payload by the patch builder. A static
+/// firmware image links its records into a ring through `next`; an SD module
+/// places its record at offset 0 and leaves `next` zero.
+#[repr(C)]
+pub struct PatchInfo {
+    pub magic: u32,
+    pub layout: u16,
+    pub patch_count: u16,
+    pub patches: *const PatchRecord,
+    pub menu_group_count: u32,
+    pub menu_groups: *const MenuGroup,
+    /// Next static record (address), written by the builder.
+    pub next: u32,
+}
+unsafe impl Sync for PatchInfo {}
+
+/// The menu items one patch module declares with `menu_items!`.
+#[repr(C)]
+pub struct MenuGroup {
+    pub items: *const MenuItem,
+    pub count: u32,
+}
+unsafe impl Sync for MenuGroup {}
+
+/// Stock menus a patch can add items to.
+pub mod menu_parent {
+    pub const MAIN: u32 = 0;
+    pub const PROJECT: u32 = 1;
+    pub const SOUND_PAD: u32 = 2;
+    pub const MIXER: u32 = 3;
+    pub const SYSTEM: u32 = 4;
+}
+
+/// Longest menu item title, in characters.
+pub const MENU_TITLE_LEN: usize = 23;
+
+/// One menu item. `action` runs on the UI task when the item is entered, with
+/// the stock menu action contract: return nonzero to redraw the menu. An item
+/// without an action is a read-only row. `requires` uses the stock
+/// requirement bits (0x01 SD card present, 0x02 valid card, 0x10 recorder not
+/// recording, 0x20 recorder not playing).
+#[repr(C)]
+pub struct MenuItem {
+    pub parent: u32,
+    pub title: [u8; MENU_TITLE_LEN + 1],
+    pub action: Option<unsafe extern "C" fn() -> u32>,
+    pub requires: u32,
+}
+
+impl MenuItem {
+    pub const fn new(
+        parent: u32,
+        title: &str,
+        action: Option<unsafe extern "C" fn() -> u32>,
+        requires: u32,
+    ) -> Self {
+        Self {
+            parent,
+            title: fixed_text(title),
+            action,
+            requires,
+        }
+    }
+}
+
+/// Copy ASCII text into a NUL-padded array, failing the build when it does
+/// not fit with a terminator or is not printable ASCII.
+pub const fn fixed_text<const N: usize>(text: &str) -> [u8; N] {
+    let source = text.as_bytes();
+    assert!(source.len() < N, "text is too long");
+    let mut result = [0; N];
+    let mut index = 0;
+    while index < source.len() {
+        assert!(
+            source[index] >= 0x20 && source[index] < 0x7f,
+            "text must be printable ASCII"
+        );
+        result[index] = source[index];
+        index += 1;
+    }
+    result
+}
+
+/// Declare menu items for this patch. Use it once per patch, at the payload's
+/// root. menu-loader adds the items when it is installed; without it they are
+/// ignored.
+///
+/// ```ignore
+/// menu_items! {
+///     SYSTEM => "Send MIDI State" => action(send_state);
+///     MIXER => "Knob Dialog On" => info;
+///     PROJECT => "Export Take" => action(export_take), requires 0x01;
+/// }
+/// ```
+#[macro_export]
+macro_rules! menu_items {
+    ($($parent:ident => $title:literal => $kind:ident $(($action:path))? $(, requires $requires:expr)?;)+) => {
+        #[used]
+        #[unsafe(export_name = concat!("__l6_menu_items_", module_path!()))]
+        #[unsafe(link_section = ".rodata.l6_menu_items")]
+        static __L6_MENU_ITEMS: [$crate::patch_api::MenuItem; $crate::menu_items!(@count $($title)+)] = [
+            $(
+                $crate::patch_api::MenuItem::new(
+                    $crate::patch_api::menu_parent::$parent,
+                    $title,
+                    $crate::menu_items!(@action $kind $(($action))?),
+                    0 $(| $requires)?,
+                ),
+            )+
+        ];
+    };
+    (@count $($title:literal)+) => { <[()]>::len(&[$($crate::menu_items!(@unit $title)),+]) };
+    (@unit $title:literal) => { () };
+    (@action action($action:path)) => { Some($action) };
+    (@action info) => { None };
+}
+
 /// Required terminal handler for patch payloads. Payloads are built with
 /// `panic=immediate-abort`, so a panic traps without reaching it.
 ///

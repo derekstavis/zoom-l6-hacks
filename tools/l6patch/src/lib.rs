@@ -625,6 +625,8 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     };
     let initial_payload = end;
     let mut applied = Vec::new();
+    // Identity records of every static payload, in placement order.
+    let mut static_identities = Vec::new();
     if options.experimental_patch_loader {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../patches/patch-loader")
@@ -646,6 +648,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
                 compile_with_continuations(&source, &root, &[], &output, "patch-loader", end)?
             }
         };
+        static_identities.push(symbol(&symbols, firmware_patch_compile::PATCH_INFO_SYMBOL)?);
         let catalog = function_hook_sites(&output.join("patch-loader.payload.elf"))?;
         let registrations = hook_registrations(&symbols)?;
         let hooks = resolve_compiled_hooks(
@@ -846,6 +849,14 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    if !options.experimental_sd_bundle {
+        for patch in &compiled_patches {
+            static_identities.push(symbol(
+                &patch.symbols,
+                firmware_patch_compile::PATCH_INFO_SYMBOL,
+            )?);
+        }
+    }
     let mut installed_hook_sites = std::collections::BTreeSet::new();
     for patch in compiled_patches {
         let name = patch.name;
@@ -914,6 +925,24 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             })
             .collect::<Vec<_>>();
         applied.push(serde_json::json!({"name":name,"payload_address":format!("{base:#x}"),"payload_length":applied_patch.payload_len,"hooks":applied_hooks,"call_site_hooks":call_site_hooks}));
+    }
+    // Link the static identity records into a ring so menu-loader can list
+    // every installed payload starting from its own record.
+    for (index, &record) in static_identities.iter().enumerate() {
+        let next = static_identities[(index + 1) % static_identities.len()];
+        let offset = usize::try_from(
+            record
+                .checked_add(firmware_patch_compile::PATCH_INFO_NEXT_OFFSET)
+                .and_then(|address| address.checked_sub(firmware_base))
+                .ok_or("identity record outside the MAIN image")?,
+        )?;
+        let word = firmware
+            .get_mut(offset..offset + 4)
+            .ok_or("identity record outside the MAIN image")?;
+        if word != [0; 4] {
+            return Err(format!("identity record at {record:#x} is already linked").into());
+        }
+        word.copy_from_slice(&next.to_le_bytes());
     }
     if options.experimental_patch_loader {
         let reserved_end = (module_end - firmware_base) as usize;

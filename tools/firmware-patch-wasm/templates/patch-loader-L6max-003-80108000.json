@@ -4,7 +4,7 @@
   "module_base": "0x80110000",
   "name": "patch-loader",
   "payload_file": "patch-loader-L6max-003-80108000.bin",
-  "payload_length": 9360,
+  "payload_length": 9432,
   "reserve_end": "0x80118000",
   "sites": [
     {

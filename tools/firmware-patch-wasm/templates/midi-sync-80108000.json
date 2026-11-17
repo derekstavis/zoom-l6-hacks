@@ -8,13 +8,13 @@
       "continuation_slot_offset": 32,
       "length": 4,
       "symbol": "midi_in_hook",
-      "target": "0x80108024"
+      "target": "0x80108160"
     }
   ],
   "model": "L6max",
   "name": "midi-sync",
   "payload_file": "midi-sync-80108000.bin",
-  "payload_length": 863,
+  "payload_length": 996,
   "window_byte_total": 4,
   "windows": [
     {

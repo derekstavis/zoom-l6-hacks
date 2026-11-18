@@ -54,10 +54,13 @@ loader use these model-specific catalogs. Loader implementation remains in
 `patch-loader`; the hook catalog is shared API metadata.
 
 The shared module also provides the default `no_std` panic handler for each
-payload. It halts in a spin loop and does not call back into firmware, since a
-panic may occur while firmware locks or interrupts are in an unsafe state.
-This handles Rust panics only; Cortex-M faults use the firmware's exception
-vectors.
+static payload. It halts in a spin loop and does not call back into firmware,
+since a panic may occur while firmware locks or interrupts are in an unsafe
+state. SD modules are built with the immediate-abort panic strategy instead,
+against a `core` the builder compiles once from the `rust-src` component: a
+panic is a single trap instruction, without the message formatting and source
+locations the handler would ignore. The trap, like any other Cortex-M fault,
+goes to the firmware's exception vectors.
 
 `firmware_functions!` declares typed, unsafe calls. It adds the Thumb bit and
 converts the address to the declared C ABI signature in one place:

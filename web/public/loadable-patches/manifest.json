@@ -1,5 +1,5 @@
 {
-  "generator_source_sha256": "fbc38d78a98ae69c58d28a876cf35e1d889ae9e5d05e0aba16eb75df711af1b7",
+  "generator_source_sha256": "92e104ad87c567c56dcc46731cceb18ba887a36fbc26b0045cf47940536df41b",
   "source_firmware_sha256": "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461",
   "l6_source_firmware_sha256": "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799",
   "modules": [
@@ -9,7 +9,7 @@
       "file": "L6max/knob-dialog-1.0.0.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "5295f851f16d2e3290898700bd3ccb1c9f41114fafbd56d07a2204c150a758a5"
+      "sha256": "610804f3ff290656e8b419066f1be66405ada73e055494be43cb64d8f62367b9"
     },
     {
       "id": "midi-sync",
@@ -25,7 +25,7 @@
       "file": "L6max/midi-sync-1.0.0.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "83d36af40a71a2c63aba1845d86577926adae0a9842a8b128492d98d21bcb122"
+      "sha256": "a3d6efcb6dd85e9e0307eb487d869623f223ff9c830352b16350c5abc52908f4"
     }
   ],
   "effect_replacements": [
@@ -35,7 +35,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-plateau-1.0.0-room-stock-spring-plateau.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "f7cf618733a0015bdb62ba6b838612e050248dca547efe2e94fd63b6f3802f25"
+      "sha256": "8c0d75fcde30e8e8a3bc2b43ce353d9e975678725c9359f69f78e4d3ad62ef10"
     },
     {
       "room": "stock",
@@ -43,7 +43,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-room-stock-spring-velvet.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "9487b9ab127fdd26295e1fab6b4db1abb87250573ce328d2021083c75ce58302"
+      "sha256": "c0799698a8979bf42de9747fe3986f93b520ef85a2c61e54b7adc8aef4a58628"
     },
     {
       "room": "plateau",
@@ -51,7 +51,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-plateau-1.0.0-room-plateau-spring-stock.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "ea2f391ba81d7ce539b390817d417f962035ac86634c6e310f6dece08a502888"
+      "sha256": "4d324f66bcb214638246c0e52d2c8c24d8dcce3b4873e0d7d89b42c3bed4684a"
     },
     {
       "room": "plateau",
@@ -59,7 +59,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-plateau-1.0.0-room-plateau-spring-plateau.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "6faf66e0285563dfffe5f391ff3844b9ba149d1f3ca75b07c7965038afea7b50"
+      "sha256": "489645c448865641ed56300c8e9f3e3786fc1eb60863d39625b10c3fdc52c97c"
     },
     {
       "room": "plateau",
@@ -67,7 +67,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-efx-plateau-1.0.0-room-plateau-spring-velvet.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "2f0e26996e20ef50508f492ac9c1b1a83450d3ca9417dd5f41283f00fc8ee70b"
+      "sha256": "9ab55612a15a9f963c501cc633a6da876242a99297d8427ad6501cb97c740f71"
     },
     {
       "room": "velvet",
@@ -75,7 +75,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-room-velvet-spring-stock.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "e7c7dd9b789138b7e69869ee69f8faaca05f78f67081fdccb67e8e61b81e733d"
+      "sha256": "98fae54637ec143953ffe6a2c12c4cb7a5110aa36b954ea425ebf727815b1718"
     },
     {
       "room": "velvet",
@@ -83,7 +83,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-efx-plateau-1.0.0-room-velvet-spring-plateau.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "d082c485948e91af79b27bd28d4f652f7502cd90d5ead6b1348aecab1f126749"
+      "sha256": "f10cc381361d7158f949cf03cf8e72e51d1a4a7335a19565b3fd3a3139eee3f6"
     },
     {
       "room": "velvet",
@@ -91,7 +91,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-room-velvet-spring-velvet.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "59f08d756c0fe0a803440834b1abae13f7aacb812f5d1dfa2e1bae4d9725e94c"
+      "sha256": "debac36e633b14a67ccd7a929323bb05dcfbc4f03fbf1e744f49af4c165ca6aa"
     }
   ]
 }

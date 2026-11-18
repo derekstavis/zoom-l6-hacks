@@ -90,6 +90,104 @@ fn rustc_executable() -> Option<PathBuf> {
     rustc.is_file().then_some(rustc)
 }
 
+/// Target-library flags for the immediate-abort sysroot. Changing them
+/// changes the cache key in [`immediate_abort_sysroot`].
+const IMMEDIATE_ABORT_LIBRARY_FLAGS: &[&str] = &[
+    "--target=thumbv7em-none-eabihf",
+    "--edition=2024",
+    "-Copt-level=z",
+    "-Cdebuginfo=0",
+    "-Zunstable-options",
+    "-Cpanic=immediate-abort",
+    "-Zforce-unstable-if-unmarked",
+];
+
+/// Build `core` and `compiler_builtins` with the immediate-abort panic
+/// strategy into a sysroot, once per toolchain, and return its path.
+///
+/// SD modules use it so that a panic compiles to a single trap instruction.
+/// The prebuilt `core` formats a panic message and passes source locations to
+/// the panic handler; in a relocatable module, that costs about 1.4 KB of
+/// formatting code and one relocation per location, and the handler ignores
+/// both. Both crates come from the `rust-src` component and have no crates.io
+/// dependencies, so the build needs no network access.
+fn immediate_abort_sysroot(rustc: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let toolchain = run(Command::new(rustc).args(["--print", "sysroot"]))?;
+    let library = Path::new(toolchain.trim()).join("lib/rustlib/src/rust/library");
+    if !library.join("core/src/lib.rs").is_file() {
+        return Err(format!(
+            "the rust-src component is missing from {}; it is listed in rust-toolchain.toml",
+            toolchain.trim()
+        )
+        .into());
+    }
+    let mut key = Sha256::new();
+    key.update(run(Command::new(rustc).arg("-vV"))?);
+    key.update(IMMEDIATE_ABORT_LIBRARY_FLAGS.join(" "));
+    let key = format!("{:x}", key.finalize());
+    let cache =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/l6-immediate-abort-sysroot");
+    let root = cache.join(&key[..16]);
+    let target_lib = |root: &Path| root.join("lib/rustlib/thumbv7em-none-eabihf/lib");
+    if target_lib(&root)
+        .join("libcompiler_builtins.rlib")
+        .is_file()
+    {
+        return Ok(root);
+    }
+
+    // Build in a private directory and rename it into place, so concurrent
+    // builders never see a partial sysroot.
+    let staging = cache.join(format!("{}.{}.tmp", &key[..16], std::process::id()));
+    let _ = fs::remove_dir_all(&staging);
+    let lib = target_lib(&staging);
+    fs::create_dir_all(&lib)?;
+    run(Command::new(rustc)
+        .args(IMMEDIATE_ABORT_LIBRARY_FLAGS)
+        .args(["--crate-name", "core", "--crate-type", "rlib"])
+        .arg(library.join("core/src/lib.rs"))
+        .arg("--out-dir")
+        .arg(&lib))?;
+    // These configuration values are what compiler-builtins' build script
+    // selects for thumbv7em-none-eabihf as a dependency of the standard
+    // library: memory intrinsics, unmangled symbol names and Thumb-2 code.
+    run(Command::new(rustc)
+        .args(IMMEDIATE_ABORT_LIBRARY_FLAGS)
+        .args(["--crate-name", "compiler_builtins", "--crate-type", "rlib"])
+        .args(["-Ccodegen-units=10000", "--sysroot"])
+        .arg(&staging)
+        .args([
+            "--cfg",
+            "feature=\"compiler-builtins\"",
+            "--cfg",
+            "feature=\"mem\"",
+            "--cfg",
+            "feature=\"unmangled-names\"",
+            "--cfg",
+            "feature=\"arch\"",
+            "--cfg",
+            "thumb",
+            "--cfg",
+            "intrinsics_enabled",
+            "--cfg",
+            "optimizations_enabled",
+        ])
+        .arg(library.join("compiler-builtins/compiler-builtins/src/lib.rs"))
+        .arg("--out-dir")
+        .arg(&lib))?;
+    if fs::rename(&staging, &root).is_err() {
+        // Another builder finished first; use its sysroot.
+        let _ = fs::remove_dir_all(&staging);
+        if !target_lib(&root)
+            .join("libcompiler_builtins.rlib")
+            .is_file()
+        {
+            return Err(format!("could not install the sysroot at {}", root.display()).into());
+        }
+    }
+    Ok(root)
+}
+
 fn toolchain_bin() -> Option<PathBuf> {
     let sysroot = run(Command::new("rustc").args(["--print", "sysroot"])).ok()?;
     fs::read_dir(PathBuf::from(sysroot.trim()).join("lib/rustlib"))
@@ -713,7 +811,7 @@ fn compile_payload_pass(
     // Rustup selects toolchains from the current directory, and that directory
     // does not contain this workspace's rust-toolchain.toml.
     let rustc = rustc_executable().ok_or("could not locate the active rustc executable")?;
-    let mut command = Command::new(rustc);
+    let mut command = Command::new(&rustc);
     command
         .current_dir(source)
         .env("OUT_DIR", &generated)
@@ -730,8 +828,6 @@ fn compile_payload_pass(
             "--target=thumbv7em-none-eabihf",
             "-C",
             "opt-level=z",
-            "-C",
-            "panic=abort",
             "-C",
         ])
         .arg(format!(
@@ -764,8 +860,14 @@ fn compile_payload_pass(
             "-Z",
             "direct-access-external-data=yes",
         ]);
+        // A panic in an SD module traps instead of formatting a message the
+        // panic handler would ignore. See `immediate_abort_sysroot`.
+        command
+            .arg("--sysroot")
+            .arg(immediate_abort_sysroot(&rustc)?)
+            .args(["-Zunstable-options", "-Cpanic=immediate-abort"]);
     } else {
-        command.args(["-C", "relocation-model=static"]);
+        command.args(["-C", "relocation-model=static", "-C", "panic=abort"]);
     }
     if emit_relocations {
         command

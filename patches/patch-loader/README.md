@@ -81,12 +81,15 @@ validation. It makes no whole-file staging allocation. The CRC covers the
 header except its CRC field plus all declared code and records; trailing bytes
 are rejected. It detects accidental damage, not malicious code.
 
-The payload is linked at base zero. The builder retains ARM relocation records
-for module-internal absolute references; the loader applies the allocation
-address as the load delta. Relative calls and PC-relative references need no
-fixup when the complete module moves. Firmware function and data bindings stay
-at supported firmware addresses. This is load-time relocation rather than
-zero-fixup PIC, avoiding a per-module PIC base register and writable GOT. The
+The payload is linked at base zero and built as position-independent code, so
+references within the module are PC-relative and need no fixup when the
+complete module moves. The builder retains ARM relocation records only for
+absolute addresses the code cannot compute, which are mostly constant tables
+that hold pointers; the loader applies the allocation address as the load
+delta. Firmware function and data bindings stay at supported firmware
+addresses. External statics are addressed directly, so a module has no GOT and
+needs no PIC base register. The builder refuses a module with more than 256
+relocation records or 16 hooks, the loader's limits. The
 registry is allocated once from the FreeRTOS heap on the first card mount. Its
 address is the only firmware RAM the loader reserves: one word at `0x801f0000` on
 L6 and `0x80218000` on L6max, which reset clears. Dispatch stubs follow that word

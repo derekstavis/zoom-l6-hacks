@@ -181,6 +181,8 @@ pub enum Operation {
     },
     ExpectCardEntry {
         path: String,
+        size: Option<u64>,
+        matches_state: Option<String>,
     },
     L6InputSweep,
     L6DinSweep,
@@ -4426,22 +4428,68 @@ impl State {
                 }
                 Ok(evidence)
             }
-            Operation::ExpectCardEntry { path } => {
+            Operation::ExpectCardEntry {
+                path,
+                size,
+                matches_state,
+            } => {
                 let card = options
                     .sd_image
                     .as_ref()
                     .ok_or("expect-card-entry requires an SD card")?;
                 let deadline =
                     std::time::Instant::now() + std::time::Duration::from_secs(wall_timeout_s);
-                loop {
-                    if sd_image::entry_exists(card, &path)? {
-                        return Ok(json!({ "card_entry": path }));
-                    }
+                while !sd_image::entry_exists(card, &path)? {
                     if std::time::Instant::now() >= deadline {
                         return Err(format!("{path} did not appear on the SD card").into());
                     }
                     std::thread::sleep(std::time::Duration::from_millis(250));
                 }
+                let mut evidence = json!({ "card_entry": path });
+                let expected = match &matches_state {
+                    Some(name) => {
+                        let state = options
+                            .state_dir
+                            .as_ref()
+                            .ok_or("expect-card-entry matches_state requires a state directory")?;
+                        Some(fs::read(state.join(name))?)
+                    }
+                    None => None,
+                };
+                let limit = size
+                    .or(expected.as_ref().map(|bytes| bytes.len() as u64))
+                    .map(|length| length + 1);
+                if let Some(limit) = limit {
+                    let actual = sd_image::read_file(card, &path, limit)?;
+                    if let Some(size) = size
+                        && actual.len() as u64 != size
+                    {
+                        return Err(
+                            format!("{path} is {} bytes, expected {size}", actual.len()).into()
+                        );
+                    }
+                    if let (Some(expected), Some(name)) = (&expected, &matches_state) {
+                        if actual.len() != expected.len() {
+                            return Err(format!(
+                                "{path} is {} bytes, {name} is {}",
+                                actual.len(),
+                                expected.len()
+                            )
+                            .into());
+                        }
+                        if let Some(offset) = actual.iter().zip(expected).position(|(a, b)| a != b)
+                        {
+                            return Err(format!(
+                                "{path} differs from {name} at offset {offset:#x}"
+                            )
+                            .into());
+                        }
+                        evidence["matches_state"] = json!(name);
+                    }
+                    evidence["size"] = json!(actual.len());
+                    evidence["sha256"] = json!(format!("{:x}", Sha256::digest(&actual)));
+                }
+                Ok(evidence)
             }
             Operation::L6maxTapHandler => {
                 const TAP_TARGET: u32 = 48;

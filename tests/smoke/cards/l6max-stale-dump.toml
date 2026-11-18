@@ -1,0 +1,8 @@
+# A file larger than the NOR dump already named L6MAX_NOR.BIN, so the dump
+# case shows an earlier, longer file is replaced rather than overwritten in place.
+version = 1
+model = "l6max"
+
+[[file]]
+path = "L6MAX_NOR.BIN"
+tone = { hz = 440.0, seconds = 30.0, amplitude = 0.5 }

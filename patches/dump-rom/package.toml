@@ -1,0 +1,22 @@
+[package]
+name = "dump-rom"
+version = "1.0.0"
+kind = "patch"
+category = "display"
+order = 6
+title = "Memory dump"
+author = "derekstavis"
+summary = "Copy the NOR flash, boot ROM and RAM to the SD card."
+description = "Adds System > Dump ROM, which writes the main NOR flash (including the bootloader, which update packages do not carry), the boot ROM, tightly coupled memories, on-chip RAM and SDRAM to .BIN files on the SD card, with a manifest. Needs menu-loader."
+models = ["L6max"]
+firmware_models = ["L6max"]
+sd_card_models = []
+wasm_models = []
+website = false
+website_order = 6
+website_sd_models = []
+emulator_gui = false
+emulator_order = 6
+emulator_sd_models = []
+readme = "README.md"
+requires = [{ name = "menu-loader", version = "1.0.0" }]

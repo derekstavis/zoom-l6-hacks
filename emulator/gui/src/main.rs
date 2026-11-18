@@ -385,12 +385,31 @@ fn defer_panel_update(
     cx.defer(move |cx| view.update(cx, update));
 }
 
+fn should_show_firmware_dialog(
+    has_bundle: bool,
+    dialog_open: bool,
+    choosing_firmware: bool,
+    applying_patches: bool,
+    waiting_for_startup_firmware: bool,
+    has_error: bool,
+) -> bool {
+    has_bundle
+        && !dialog_open
+        && !choosing_firmware
+        && !applying_patches
+        && (waiting_for_startup_firmware || has_error)
+}
+
 impl NativePanel {
     fn firmware_dialog_state(&self) -> Option<(Option<String>, bool)> {
-        let should_show = !self.selection_dialog_open
-            && self.bundle.is_some()
-            && !self.applying_patches
-            && (self.controls.is_none() && !self.powered_off || self.firmware_error.is_some());
+        let should_show = should_show_firmware_dialog(
+            self.bundle.is_some(),
+            self.selection_dialog_open,
+            self.choosing_firmware,
+            self.applying_patches,
+            self.controls.is_none() && !self.powered_off,
+            self.firmware_error.is_some(),
+        );
         should_show.then(|| (self.firmware_error.clone(), self.controls.is_some()))
     }
 
@@ -2124,6 +2143,21 @@ mod startup_key_tests {
 
         let l6max_layout = Layout::for_model(l6fw::Model::L6max);
         assert!(startup_key_targets(l6fw::Model::L6max, &l6max_layout, &pressed).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod firmware_dialog_tests {
+    use super::should_show_firmware_dialog;
+
+    #[test]
+    fn startup_dialog_stays_closed_while_firmware_picker_is_open() {
+        assert!(should_show_firmware_dialog(
+            true, false, false, false, true, false
+        ));
+        assert!(!should_show_firmware_dialog(
+            true, false, true, false, true, false
+        ));
     }
 }
 

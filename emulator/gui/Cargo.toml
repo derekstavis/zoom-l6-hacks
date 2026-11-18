@@ -8,6 +8,10 @@ license.workspace = true
 [features]
 headless-screenshots = ["gpui/test-support", "gpui_platform/test-support"]
 
+[[example]]
+name = "render_ui"
+required-features = ["headless-screenshots"]
+
 [dependencies]
 tracing.workspace = true
 smoke-core = { path = "../../tools/smoke-core" }

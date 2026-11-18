@@ -2237,7 +2237,7 @@ mod menu_tests {
             labels(&app_menus(MenuState::default()), "Audio Input")[0],
             "Channels and Playback…"
         );
-        let binding = KeyBinding::new("secondary-alt-i", OpenAudioWindow, None);
+        let binding = KeyBinding::new(AUDIO_INPUT_SHORTCUT, OpenAudioWindow, None);
         let keystroke = &binding.keystrokes()[0];
         assert_eq!(keystroke.key(), "i");
         assert!(keystroke.modifiers().alt);

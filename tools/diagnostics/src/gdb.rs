@@ -6,6 +6,10 @@ use std::{
     time::Duration,
 };
 pub struct Gdb(UnixStream);
+/// QEMU's GDB register number for xPSR on M-profile cores.
+const XPSR: u32 = 25;
+/// The active exception number in xPSR; zero in thread mode.
+const IPSR_MASK: u32 = 0x1ff;
 impl Gdb {
     pub fn connect(path: &Path) -> io::Result<Self> {
         let socket = UnixStream::connect(path)?;
@@ -70,6 +74,25 @@ impl Gdb {
     pub fn interrupt(&mut self) -> io::Result<String> {
         self.0.write_all(&[3])?;
         self.receive_packet()
+    }
+    /// Bring a stopped target to thread mode. A stop can land inside an
+    /// exception handler; an injected call there would run in that
+    /// handler's context, where FreeRTOS calls such as taking a mutex assert
+    /// and never return. Let the guest run briefly and stop it again until
+    /// IPSR is zero.
+    pub fn stop_in_thread_mode(&mut self) -> io::Result<()> {
+        for _ in 0..200 {
+            if self.read_register(XPSR)? & IPSR_MASK == 0 {
+                return Ok(());
+            }
+            let checksum = b'c';
+            self.0.write_all(format!("$c#{checksum:02x}").as_bytes())?;
+            std::thread::sleep(Duration::from_millis(1));
+            self.interrupt()?;
+        }
+        Err(io::Error::other(
+            "target stayed in exception context; cannot inject a call",
+        ))
     }
     /// Resume the selected target until a breakpoint/exception, allowing a
     /// longer wait for firmware boot or a deliberately injected call.
@@ -136,7 +159,8 @@ impl Gdb {
 
     /// Call a Thumb routine on the selected QEMU CPU, using a temporary
     /// return trap just below the saved stack pointer. The target must be
-    /// stopped by the caller before invoking this method.
+    /// stopped by the caller before invoking this method; the call is made
+    /// from thread mode (see [`Self::stop_in_thread_mode`]).
     pub fn call_thumb(
         &mut self,
         address: u32,
@@ -148,6 +172,7 @@ impl Gdb {
                 "Thumb call needs an even address and 1..5 arguments",
             ));
         }
+        self.stop_in_thread_mode()?;
         let saved = (0..16)
             .map(|index| self.read_register(index))
             .collect::<io::Result<Vec<_>>>()
@@ -175,9 +200,28 @@ impl Gdb {
             }
             self.register(14, return_address | 1)?;
             self.register(15, address | 1)?;
-            self.continue_until_stop(timeout).map_err(|error| {
-                io::Error::other(format!("wait for firmware return breakpoint: {error}"))
-            })
+            match self.continue_until_stop(timeout) {
+                Ok(stop) => Ok(stop),
+                Err(error) => {
+                    // Stop the guest and report where the routine was, so a
+                    // timeout shows whether it faulted (IPSR is the exception
+                    // number) or was waiting in firmware code.
+                    let location = self
+                        .interrupt()
+                        .and_then(|_| {
+                            Ok(format!(
+                                "; stopped at pc={:#010x} lr={:#010x} xpsr={:#010x}",
+                                self.read_register(15)?,
+                                self.read_register(14)?,
+                                self.read_register(XPSR)?,
+                            ))
+                        })
+                        .unwrap_or_default();
+                    Err(io::Error::other(format!(
+                        "wait for firmware return breakpoint: {error}{location}"
+                    )))
+                }
+            }
         })();
 
         // The caller stops QEMU after the trap and before restoring this

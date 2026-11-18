@@ -19,7 +19,7 @@ emulator_gui = false
 emulator_order = 52
 emulator_sd_models = []
 readme = "README.md"
-requires = ["knob-dialog"]
+requires = [{ name = "knob-dialog", version = "1.0.0" }]
 
 [[effects]]
 id = "plateau"

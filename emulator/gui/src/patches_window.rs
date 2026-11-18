@@ -42,6 +42,45 @@ fn effect_ids(selection: &Selection) -> BTreeSet<String> {
     selection.effect_replacements.values().cloned().collect()
 }
 
+fn required_patches(
+    selection: &Selection,
+    effects: &BTreeSet<String>,
+) -> BTreeMap<String, Delivery> {
+    fn include(name: &str, delivery: Delivery, required: &mut BTreeMap<String, Delivery>) {
+        if let Some(package) = firmware_patch_core::patch_package(name) {
+            for dependency in &package.requires {
+                if required.insert(dependency.name.clone(), delivery).is_none() {
+                    include(&dependency.name, delivery, required);
+                }
+            }
+        }
+    }
+    let mut required = BTreeMap::new();
+    for name in &selection.firmware {
+        include(name, Delivery::Firmware, &mut required);
+    }
+    for name in &selection.sd_card {
+        include(name, Delivery::SdCard, &mut required);
+    }
+    for (package, effect) in offered_effects() {
+        if effects.contains(&effect.id) {
+            include(&package.name, Delivery::SdCard, &mut required);
+        }
+    }
+    required
+}
+
+fn installation_selection(mut selection: Selection) -> Selection {
+    let required = required_patches(&selection, &effect_ids(&selection));
+    selection
+        .firmware
+        .retain(|name| !required.contains_key(name));
+    selection
+        .sd_card
+        .retain(|name| !required.contains_key(name));
+    selection
+}
+
 fn slot_label(slot: &str) -> &str {
     match slot {
         "room" => "Room",
@@ -251,8 +290,10 @@ impl PatchesWindow {
     /// Close and restart with the selection. The main window shows the progress,
     /// and this window comes back if the selection cannot apply.
     pub fn apply(&mut self, selection: Selection, window: &mut Window, cx: &mut Context<Self>) {
-        let selection = Selection::new(selection.firmware, selection.sd_card)
-            .with_effect_replacements(selection.effect_replacements);
+        let selection = installation_selection(
+            Selection::new(selection.firmware, selection.sd_card)
+                .with_effect_replacements(selection.effect_replacements),
+        );
         if let Source::Panel(panel) = &self.source {
             panel.update(cx, |panel, cx| panel.apply_patches(selection, cx));
         }
@@ -299,7 +340,7 @@ fn effect_title(
             div()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
-                .child(format!("by {}", package.author))
+                .child(format!("v{} · by {}", package.version, package.author))
                 .into_any_element(),
         )
         .into_any_element();
@@ -478,6 +519,9 @@ fn effect_card(
             .child(package.description.as_str())
             .into_any_element(),
     );
+    if !package.requires.is_empty() {
+        children.push(dependency_label(package, cx));
+    }
     children.push(effect_installation(id, cx));
     if checked {
         children.push(effect_assignment(
@@ -493,6 +537,20 @@ fn effect_card(
         .outline()
         .gap_2()
         .children(children)
+        .into_any_element()
+}
+
+fn dependency_label(package: &PatchPackage, cx: &mut Context<PatchesWindow>) -> gpui::AnyElement {
+    let dependencies = package
+        .requires
+        .iter()
+        .map(|dependency| format!("{} v{}", dependency.name, dependency.version))
+        .collect::<Vec<_>>()
+        .join(", ");
+    div()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child(format!("Requires: {dependencies}"))
         .into_any_element()
 }
 
@@ -547,7 +605,7 @@ fn patch_header(
             div()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
-                .child(patch)
+                .child(format!("{patch} · v{}", package.version))
                 .into_any_element(),
         )
         .into_any_element();
@@ -566,6 +624,7 @@ fn patch_installation(
     delivery: Option<Delivery>,
     usable: bool,
     card_enabled: bool,
+    required: bool,
     cx: &mut Context<PatchesWindow>,
 ) -> gpui::AnyElement {
     let method = ToggleGroup::new(format!("{patch}-delivery"))
@@ -576,13 +635,13 @@ fn patch_installation(
             Toggle::new(format!("{patch}-firmware"))
                 .label("Firmware")
                 .checked(delivery == Some(Delivery::Firmware))
-                .disabled(!usable),
+                .disabled(!usable || required),
         )
         .child(
             Toggle::new(format!("{patch}-sd-card"))
                 .label("SD card")
                 .checked(delivery == Some(Delivery::SdCard))
-                .disabled(!card_enabled),
+                .disabled(!card_enabled || required),
         )
         .on_click(cx.listener(move |window, values: &Vec<bool>, _, cx| {
             if values.first() == Some(&true) {
@@ -615,11 +674,12 @@ fn patch_card(
     available: &[&str],
     loadable: &[&str],
     has_card: bool,
+    required: Option<Delivery>,
     cx: &mut Context<PatchesWindow>,
 ) -> gpui::AnyElement {
     let patch = package.name.as_str();
     let usable = available.contains(&patch);
-    let delivery = selection.delivery(patch);
+    let delivery = required.or_else(|| selection.delivery(patch));
     let checked = delivery.is_some();
     let from_card = loadable.contains(&patch);
     let card_enabled = has_card || delivery == Some(Delivery::SdCard);
@@ -628,7 +688,7 @@ fn patch_card(
     } else {
         Delivery::SdCard
     };
-    let togglable = usable || checked || (from_card && card_enabled);
+    let togglable = required.is_none() && (usable || checked || (from_card && card_enabled));
     let mut children = vec![
         patch_header(package, patch, checked, togglable, default_delivery, cx),
         div()
@@ -637,12 +697,25 @@ fn patch_card(
             .child(package.summary.as_str())
             .into_any_element(),
     ];
+    if required.is_some() {
+        children.push(
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child("Included with a selected patch or effect")
+                .into_any_element(),
+        );
+    }
+    if !package.requires.is_empty() {
+        children.push(dependency_label(package, cx));
+    }
     if from_card {
         children.push(patch_installation(
             patch,
             delivery,
             usable,
             card_enabled,
+            required.is_some(),
             cx,
         ));
     }
@@ -684,6 +757,7 @@ impl PatchesWindow {
         let available = self.available.as_deref().unwrap_or(&[]).to_vec();
         let enabled = self.selection != active && can_start;
         let selected_category = self.category;
+        let required = required_patches(&self.selection, &self.enabled_effects);
         let rows = offered()
             .into_iter()
             .filter(|package| package.category == Some(selected_category))
@@ -694,6 +768,7 @@ impl PatchesWindow {
                     &available,
                     &loadable,
                     has_card,
+                    required.get(&package.name).copied(),
                     cx,
                 )
             })
@@ -863,5 +938,26 @@ mod tests {
         selection.set("din-mixer-control", Some(Delivery::Firmware));
         assert_eq!(selection.sd_card, names(&["knob-dialog", "midi-sync"]));
         assert_eq!(selection.firmware, names(&["din-mixer-control"]));
+    }
+
+    #[test]
+    fn effects_require_their_dependency_on_sd_without_installing_it_twice() {
+        let mut selection = Selection::new(names(&["knob-dialog"]), vec![]);
+        let effects = ["velvet".to_owned(), "plateau".to_owned()]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            required_patches(&selection, &effects).get("knob-dialog"),
+            Some(&Delivery::SdCard)
+        );
+        selection.set_effect("room", Some("velvet"));
+        let installed = installation_selection(selection.clone());
+        assert_eq!(installed.delivery("knob-dialog"), None);
+        assert_eq!(installed.effect_replacements["room"], "velvet");
+        selection.set_effect("room", None);
+        assert_eq!(
+            installation_selection(selection).delivery("knob-dialog"),
+            Some(Delivery::Firmware)
+        );
     }
 }

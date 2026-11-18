@@ -220,7 +220,7 @@ is determined by the selected payloads and the static builder, not SD filenames.
 
 ### Build-time patch dependencies
 
-Patches can list other patch names in `requires` in
+Patches can list exact dependency versions in `requires` in
 `patches/<patch>/package.toml`. The SD builder resolves the dependency closure,
 checks for missing patches and cycles, then compiles the selected patches and
 their dependencies into one loadable module. The source modules share one
@@ -256,7 +256,7 @@ emulator_gui = false
 emulator_order = 52
 emulator_sd_models = []
 readme = "README.md"
-requires = ["knob-dialog"]
+requires = [{ name = "knob-dialog", version = "1.0.0" }]
 
 [[effects]]
 id = "plateau"

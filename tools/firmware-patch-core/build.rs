@@ -110,12 +110,25 @@ fn main() {
             .as_array()
             .expect("requires must be an array")
         {
-            let dependency = dependency
+            let dependency_name = dependency["name"]
                 .as_str()
-                .expect("dependency must be a package name");
+                .expect("dependency name must be a string");
+            let version = dependency["version"]
+                .as_str()
+                .expect("dependency version must be a string");
+            assert!(
+                valid_version(version),
+                "{name}: invalid dependency version {version}"
+            );
+            let dependency = dependency_name;
             assert!(
                 by_name.contains_key(dependency),
                 "package {name} requires missing package {dependency}"
+            );
+            assert_eq!(
+                by_name[dependency]["version"].as_str(),
+                Some(version),
+                "package {name} requires {dependency} version {version}"
             );
         }
         validate_dependencies(name, &by_name, &mut BTreeSet::new(), &mut BTreeSet::new());
@@ -366,7 +379,12 @@ fn validate_dependencies(
         "package dependency cycle at {name}"
     );
     for dependency in packages[name]["requires"].as_array().unwrap() {
-        validate_dependencies(dependency.as_str().unwrap(), packages, active, complete);
+        validate_dependencies(
+            dependency["name"].as_str().unwrap(),
+            packages,
+            active,
+            complete,
+        );
     }
     active.remove(name);
     complete.insert(name.to_owned());
@@ -383,7 +401,12 @@ fn composed_file_name(name: &str, packages: &BTreeMap<&str, &Value>) -> String {
             return;
         }
         for dependency in packages[name]["requires"].as_array().unwrap() {
-            visit(dependency.as_str().unwrap(), packages, complete, ordered);
+            visit(
+                dependency["name"].as_str().unwrap(),
+                packages,
+                complete,
+                ordered,
+            );
         }
         ordered.push(name.to_owned());
     }

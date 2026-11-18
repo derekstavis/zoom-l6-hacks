@@ -36,10 +36,16 @@ pub struct PatchPackage {
     pub readme: String,
     pub demo_image: Option<String>,
     pub request_command: Option<String>,
-    pub requires: Vec<String>,
+    pub requires: Vec<PatchDependency>,
     pub file_name: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<EffectPackage>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PatchDependency {
+    pub name: String,
+    pub version: String,
 }
 
 /// User-facing category used to organize selectable patches.
@@ -156,7 +162,7 @@ pub fn resolve_patch_dependencies(requested: &[String]) -> Result<Vec<String>, S
             return Err(format!("patch dependency cycle at `{name}`"));
         }
         for dependency in &package.requires {
-            visit(dependency, active, complete, ordered)?;
+            visit(&dependency.name, active, complete, ordered)?;
         }
         active.remove(name);
         complete.insert(name.to_owned());
@@ -183,7 +189,7 @@ pub fn resolve_patch_dependencies(requested: &[String]) -> Result<Vec<String>, S
                     package
                         .requires
                         .iter()
-                        .all(|dependency| !remaining.contains(dependency))
+                        .all(|dependency| !remaining.contains(&dependency.name))
                 })
             })
             .min_by_key(|name| {
@@ -582,7 +588,7 @@ mod tests {
                 package
                     .requires
                     .iter()
-                    .any(|dependency| dependency == "knob-dialog")
+                    .any(|dependency| dependency.name == "knob-dialog")
             );
             let effect = package
                 .effects

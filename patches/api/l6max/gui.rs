@@ -6,6 +6,10 @@ firmware_functions! {
     pub unsafe fn gui_notification_tick() at 0x8000_64c0;
     pub unsafe fn gui_notification_show(message: u32) -> u32, at 0x8000_6660;
     pub unsafe fn gui_notification_draw() at 0x8000_68f8;
+    /// Busy overlay: mode 0 is an hourglass, 1 an SD card, 2 a bar. It
+    /// animates from DisplayCycle2 and pauses notifications until hidden.
+    pub unsafe fn gui_busy_overlay_show(mode: u32) at 0x8000_68a1;
+    pub unsafe fn gui_busy_overlay_hide() at 0x8000_6371;
     pub unsafe fn gui_notification_bind_text(message: u32) -> u32, at 0x8000_69b0;
     pub unsafe fn gui_notification_request_redraw() -> u32, at 0x8000_65f8;
     pub unsafe fn gui_draw_background(layer: u32) at 0x8000_5e70;

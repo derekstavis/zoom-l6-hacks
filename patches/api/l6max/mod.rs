@@ -1,6 +1,7 @@
 // Shared typed firmware API for L6max MAIN 1.10 patches.
 
 include!("fs.rs");
+include!("nor.rs");
 include!("cfg.rs");
 include!("sys.rs");
 include!("rtos.rs");

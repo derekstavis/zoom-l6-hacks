@@ -106,7 +106,7 @@ impl RenderOnce for EncoderWithLeds {
                 });
             }
             if let Some(on_scroll) = input.scroll {
-                encoder = encoder.on_scroll_wheel(move |event, _, cx| {
+                encoder = encoder.on_scroll(move |event, _, cx| {
                     let delta = match event.delta {
                         ScrollDelta::Lines(p) => {
                             if p.y.abs() >= p.x.abs() {

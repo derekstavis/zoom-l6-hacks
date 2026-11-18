@@ -16,6 +16,8 @@ pub struct PatchPackage {
     pub name: String,
     pub version: String,
     pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<PatchCategory>,
     pub order: u32,
     pub title: String,
     pub author: String,
@@ -38,6 +40,15 @@ pub struct PatchPackage {
     pub file_name: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<EffectPackage>,
+}
+
+/// User-facing category used to organize selectable patches.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PatchCategory {
+    Display,
+    Midi,
+    Effects,
 }
 
 /// Build-time registration metadata for a custom effect implementation.
@@ -509,6 +520,7 @@ mod tests {
             name: name.into(),
             version: "1.0.0".into(),
             kind: "patch".into(),
+            category: Some(PatchCategory::Effects),
             order: 0,
             title: name.into(),
             author: "derekstavis".into(),

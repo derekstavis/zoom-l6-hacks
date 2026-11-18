@@ -1,16 +1,26 @@
 //! The window that selects which patches the guest runs, and whether each is
 //! installed in the firmware or loaded from the SD card by the Patch loader.
 use crate::NativePanel;
-use firmware_patch_core::{EffectPackage, PATCHES, PatchPackage, patch_catalog};
-use gpui::{Context, CursorStyle, Entity, MouseButton, Render, Window, div, prelude::*, px, rgb};
+use firmware_patch_core::{EffectPackage, PATCHES, PatchCategory, PatchPackage, patch_catalog};
+use gpui::{Context, CursorStyle, Entity, MouseButton, Render, Window, div, prelude::*, px};
+use gpui_component::{
+    ActiveTheme, Disableable,
+    alert::Alert,
+    button::{Button, ButtonVariants, Toggle, ToggleGroup, ToggleVariants},
+    checkbox::Checkbox,
+    group_box::{GroupBox, GroupBoxVariants},
+    popover::Popover,
+    scroll::ScrollableElement,
+    switch::Switch,
+    tab::{Tab as KitTab, TabBar},
+};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
 };
 
 pub const WIDTH: f32 = 520.0;
-pub const HEIGHT: f32 = 380.0;
-
+pub const HEIGHT: f32 = 700.0;
 fn offered() -> Vec<&'static PatchPackage> {
     let mut packages = patch_catalog()
         .iter()
@@ -176,27 +186,7 @@ pub struct PatchesWindow {
     selection: Selection,
     enabled_effects: BTreeSet<String>,
     open_effect_menu: Option<String>,
-}
-
-/// A small two-way switch for a row's delivery.
-fn segment(
-    id: String,
-    label: impl Into<gpui::SharedString>,
-    selected: bool,
-    bright: bool,
-) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(gpui::SharedString::from(id))
-        .px_2()
-        .py(px(2.0))
-        .text_sm()
-        .bg(rgb(if selected { 0x2a3550 } else { 0x171d2c }))
-        .text_color(rgb(match (selected, bright) {
-            (true, _) => 0xe8eef8,
-            (false, true) => 0x8b95aa,
-            (false, false) => 0x4a5266,
-        }))
-        .child(label.into())
+    category: PatchCategory,
 }
 
 impl PatchesWindow {
@@ -208,6 +198,7 @@ impl PatchesWindow {
             selection: Selection::default(),
             enabled_effects: BTreeSet::new(),
             open_effect_menu: None,
+            category: PatchCategory::Display,
         }
     }
 
@@ -224,8 +215,26 @@ impl PatchesWindow {
             enabled_effects: effect_ids(&selection),
             selection,
             open_effect_menu: None,
+            category: PatchCategory::Display,
             source: Source::Fixed(status),
         }
+    }
+
+    #[cfg(feature = "headless-screenshots")]
+    #[allow(dead_code)]
+    pub fn select_category_for_screenshot(&mut self, category: &str) {
+        self.category = match category {
+            "display" => PatchCategory::Display,
+            "midi" => PatchCategory::Midi,
+            "effects" => PatchCategory::Effects,
+            _ => panic!("unknown patch category: {category}"),
+        };
+    }
+
+    #[cfg(feature = "headless-screenshots")]
+    #[allow(dead_code)]
+    pub fn open_effect_menu_for_screenshot(&mut self, effect: &str) {
+        self.open_effect_menu = Some(effect.to_owned());
     }
 
     fn set_effect_enabled(&mut self, effect: &str, enabled: bool) {
@@ -251,8 +260,401 @@ impl PatchesWindow {
     }
 }
 
-impl Render for PatchesWindow {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+fn effect_title(
+    package: &'static PatchPackage,
+    effect: &'static EffectPackage,
+    checked: bool,
+    cx: &mut Context<PatchesWindow>,
+) -> gpui::AnyElement {
+    let id = effect.id.as_str();
+    let title_toggle_id = id.to_owned();
+    let switch = Switch::new(format!("effect-{id}-toggle"))
+        .checked(checked)
+        .accessibility_label(format!("Enable {}", effect.title))
+        .on_change(cx.listener(move |window, value, _, cx| {
+            window.set_effect_enabled(id, *value);
+            cx.notify();
+        }));
+    let title = div()
+        .id(gpui::SharedString::from(format!("effect-{id}-title")))
+        .flex()
+        .flex_1()
+        .min_w_0()
+        .flex_col()
+        .cursor(CursorStyle::PointingHand)
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |window, _, _, cx| {
+                window.set_effect_enabled(&title_toggle_id, !checked);
+                cx.notify();
+            }),
+        )
+        .child(
+            div()
+                .text_color(cx.theme().foreground)
+                .child(effect.title.as_str())
+                .into_any_element(),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(format!("by {}", package.author))
+                .into_any_element(),
+        )
+        .into_any_element();
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_3()
+        .child(title)
+        .child(switch.into_any_element())
+        .into_any_element()
+}
+
+fn effect_installation(id: &str, cx: &mut Context<PatchesWindow>) -> gpui::AnyElement {
+    let label = div()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child("Installation method")
+        .into_any_element();
+    let toggle = ToggleGroup::new(format!("effect-{id}-delivery"))
+        .single()
+        .segmented()
+        .outline()
+        .disabled(true)
+        .child(
+            Toggle::new(format!("effect-{id}-firmware"))
+                .label("Firmware")
+                .checked(false)
+                .disabled(true),
+        )
+        .child(
+            Toggle::new(format!("effect-{id}-sd-card"))
+                .label("SD card")
+                .checked(true)
+                .disabled(true),
+        )
+        .into_any_element();
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_3()
+        .child(label)
+        .child(toggle)
+        .into_any_element()
+}
+
+fn effect_slot_row(
+    id: &'static str,
+    slot: &'static str,
+    selection: &Selection,
+    has_card: bool,
+    cx: &mut Context<PatchesWindow>,
+) -> gpui::AnyElement {
+    let current = selection.effect_replacements.get(slot);
+    let selected = current.is_some_and(|assigned| assigned == id);
+    let occupied_by = current.filter(|assigned| assigned.as_str() != id);
+    let checkbox = Checkbox::new(format!("effect-{id}-slot-{slot}"))
+        .label(slot_label(slot))
+        .checked(selected)
+        .disabled(!(has_card || selected))
+        .on_change(cx.listener({
+            let slot_id = slot.to_owned();
+            let effect_id = id.to_owned();
+            move |window, value, _, cx| {
+                window
+                    .selection
+                    .set_effect(&slot_id, if *value { Some(&effect_id) } else { None });
+                window.enabled_effects.insert(effect_id.clone());
+                cx.notify();
+            }
+        }))
+        .into_any_element();
+    let note = occupied_by.map(|other| {
+        let title = firmware_patch_core::patch_catalog()
+            .iter()
+            .flat_map(|package| package.effects.iter().map(move |effect| (package, effect)))
+            .find(|(_, effect)| effect.id == *other)
+            .map(|(_, effect)| effect.title.as_str())
+            .unwrap_or(other.as_str());
+        div()
+            .text_xs()
+            .text_color(cx.theme().muted_foreground)
+            .child(format!("Used by {title}"))
+            .into_any_element()
+    });
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_3()
+        .child(checkbox)
+        .children(note)
+        .into_any_element()
+}
+
+fn effect_assignment(
+    id: &'static str,
+    label: String,
+    opened: bool,
+    selection: &Selection,
+    has_card: bool,
+    cx: &mut Context<PatchesWindow>,
+) -> gpui::AnyElement {
+    let options = ["room", "spring"]
+        .into_iter()
+        .map(|slot| effect_slot_row(id, slot, selection, has_card, cx))
+        .collect::<Vec<_>>();
+    let assign_id = id.to_owned();
+    let trigger = gpui_component::button::Button::new(format!("effect-{id}-assignment-trigger"))
+        .secondary()
+        .label(label);
+    let popover = Popover::new(format!("effect-{id}-assignment"))
+        .anchor(gpui::Anchor::BottomLeft)
+        .trigger(trigger)
+        .open(opened)
+        .on_open_change(cx.listener(move |window, open, _, cx| {
+            window.open_effect_menu = if *open { Some(assign_id.clone()) } else { None };
+            cx.notify();
+        }))
+        .child(
+            div()
+                .w(px(220.0))
+                .flex()
+                .flex_col()
+                .gap_1()
+                .children(options)
+                .into_any_element(),
+        )
+        .into_any_element();
+    let label = div()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child("Assign to")
+        .into_any_element();
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .w_full()
+        .child(label)
+        .child(popover)
+        .into_any_element()
+}
+
+fn effect_card(
+    package: &'static PatchPackage,
+    effect: &'static EffectPackage,
+    selection: &Selection,
+    enabled_effects: &BTreeSet<String>,
+    open_effect_menu: Option<&str>,
+    has_card: bool,
+    cx: &mut Context<PatchesWindow>,
+) -> gpui::AnyElement {
+    let id = effect.id.as_str();
+    let assigned_slots = ["room", "spring"]
+        .into_iter()
+        .filter(|slot| {
+            selection
+                .effect_replacements
+                .get(*slot)
+                .is_some_and(|assigned| assigned == id)
+        })
+        .collect::<Vec<_>>();
+    let checked = enabled_effects.contains(id) || !assigned_slots.is_empty();
+    let assignment_label = match assigned_slots.as_slice() {
+        [] => "Choose slots".to_owned(),
+        [slot] => slot_label(slot).to_owned(),
+        _ => "Room, Spring".to_owned(),
+    };
+    let mut children = vec![effect_title(package, effect, checked, cx)];
+    children.push(
+        div()
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child(package.description.as_str())
+            .into_any_element(),
+    );
+    children.push(effect_installation(id, cx));
+    if checked {
+        children.push(effect_assignment(
+            id,
+            assignment_label,
+            open_effect_menu == Some(id),
+            selection,
+            has_card,
+            cx,
+        ));
+    }
+    GroupBox::new()
+        .outline()
+        .gap_2()
+        .children(children)
+        .into_any_element()
+}
+
+fn patch_header(
+    package: &'static PatchPackage,
+    patch: &'static str,
+    checked: bool,
+    togglable: bool,
+    default_delivery: Delivery,
+    cx: &mut Context<PatchesWindow>,
+) -> gpui::AnyElement {
+    let switch = Switch::new(format!("{patch}-toggle"))
+        .checked(checked)
+        .disabled(!togglable)
+        .accessibility_label(format!("Enable {}", package.title))
+        .on_change(cx.listener(move |window, value, _, cx| {
+            window
+                .selection
+                .set(patch, if *value { Some(default_delivery) } else { None });
+            cx.notify();
+        }))
+        .into_any_element();
+    let title = div()
+        .id(gpui::SharedString::from(format!("{patch}-title")))
+        .flex()
+        .flex_1()
+        .min_w_0()
+        .items_baseline()
+        .gap_2()
+        .when(togglable, |row| {
+            row.cursor(CursorStyle::PointingHand).on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |window, _, _, cx| {
+                    window
+                        .selection
+                        .toggle_with_default(patch, default_delivery);
+                    cx.notify();
+                }),
+            )
+        })
+        .child(
+            div()
+                .text_color(if togglable {
+                    cx.theme().foreground
+                } else {
+                    cx.theme().muted_foreground
+                })
+                .child(package.title.as_str())
+                .into_any_element(),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(patch)
+                .into_any_element(),
+        )
+        .into_any_element();
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_3()
+        .child(title)
+        .child(switch)
+        .into_any_element()
+}
+
+fn patch_installation(
+    patch: &'static str,
+    delivery: Option<Delivery>,
+    usable: bool,
+    card_enabled: bool,
+    cx: &mut Context<PatchesWindow>,
+) -> gpui::AnyElement {
+    let method = ToggleGroup::new(format!("{patch}-delivery"))
+        .single()
+        .segmented()
+        .outline()
+        .child(
+            Toggle::new(format!("{patch}-firmware"))
+                .label("Firmware")
+                .checked(delivery == Some(Delivery::Firmware))
+                .disabled(!usable),
+        )
+        .child(
+            Toggle::new(format!("{patch}-sd-card"))
+                .label("SD card")
+                .checked(delivery == Some(Delivery::SdCard))
+                .disabled(!card_enabled),
+        )
+        .on_click(cx.listener(move |window, values: &Vec<bool>, _, cx| {
+            if values.first() == Some(&true) {
+                window.selection.set(patch, Some(Delivery::Firmware));
+                cx.notify();
+            } else if values.get(1) == Some(&true) {
+                window.selection.set(patch, Some(Delivery::SdCard));
+                cx.notify();
+            }
+        }))
+        .into_any_element();
+    let label = div()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child("Installation method")
+        .into_any_element();
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_3()
+        .child(label)
+        .child(method)
+        .into_any_element()
+}
+
+fn patch_card(
+    package: &'static PatchPackage,
+    selection: &Selection,
+    available: &[&str],
+    loadable: &[&str],
+    has_card: bool,
+    cx: &mut Context<PatchesWindow>,
+) -> gpui::AnyElement {
+    let patch = package.name.as_str();
+    let usable = available.contains(&patch);
+    let delivery = selection.delivery(patch);
+    let checked = delivery.is_some();
+    let from_card = loadable.contains(&patch);
+    let card_enabled = has_card || delivery == Some(Delivery::SdCard);
+    let default_delivery = if usable {
+        Delivery::Firmware
+    } else {
+        Delivery::SdCard
+    };
+    let togglable = usable || checked || (from_card && card_enabled);
+    let mut children = vec![
+        patch_header(package, patch, checked, togglable, default_delivery, cx),
+        div()
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child(package.summary.as_str())
+            .into_any_element(),
+    ];
+    if from_card {
+        children.push(patch_installation(
+            patch,
+            delivery,
+            usable,
+            card_enabled,
+            cx,
+        ));
+    }
+    GroupBox::new()
+        .outline()
+        .gap_2()
+        .children(children)
+        .into_any_element()
+}
+
+impl PatchesWindow {
+    fn render_element(&mut self, _: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let status = match &self.source {
             Source::Panel(panel) => {
                 let panel = panel.read(cx);
@@ -281,168 +683,21 @@ impl Render for PatchesWindow {
         let loadable = l6max_host::sd_patches::available(model);
         let available = self.available.as_deref().unwrap_or(&[]).to_vec();
         let enabled = self.selection != active && can_start;
-        let rows = offered().into_iter().map(|package| {
-            let patch = package.name.as_str();
-            let usable = available.contains(&patch);
-            let delivery = self.selection.delivery(patch);
-            let checked = delivery.is_some();
-            let from_card = loadable.contains(&patch);
-            let card_enabled = has_card || delivery == Some(Delivery::SdCard);
-            let default_delivery = if usable {
-                Delivery::Firmware
-            } else {
-                Delivery::SdCard
-            };
-            // A saved patch can always be turned off, so that the guest can start again.
-            let togglable = usable || checked || (from_card && card_enabled);
-            let choose = |delivery: Delivery| {
-                cx.listener(move |window: &mut Self, _, _, cx| {
-                    window.selection.set(patch, Some(delivery));
-                    cx.notify();
-                })
-            };
-            let switch = div()
-                .w(px(32.0))
-                .h(px(18.0))
-                .rounded_full()
-                .bg(rgb(if checked { 0x5b8def } else { 0x34405c }))
-                .flex()
-                .items_center()
-                .justify_start()
-                .px(px(2.0))
-                .child(
-                    div()
-                        .size(px(14.0))
-                        .rounded_full()
-                        .bg(rgb(0xe8eef8))
-                        .when(checked, |knob| knob.ml(px(14.0))),
-                );
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .rounded_md()
-                .border_1()
-                .border_color(rgb(0x34405c))
-                .p_3()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_3()
-                        .child(
-                            div()
-                                .id(gpui::SharedString::from(format!("{patch}-title")))
-                                .flex()
-                                .flex_1()
-                                .min_w_0()
-                                .items_baseline()
-                                .gap_2()
-                                .when(togglable, |row| {
-                                    row.cursor(CursorStyle::PointingHand).on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(move |window, _, _, cx| {
-                                            window
-                                                .selection
-                                                .toggle_with_default(patch, default_delivery);
-                                            cx.notify();
-                                        }),
-                                    )
-                                })
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .flex()
-                                        .items_baseline()
-                                        .gap_2()
-                                        .child(
-                                            div()
-                                                .text_color(rgb(if togglable {
-                                                    0xe8eef8
-                                                } else {
-                                                    0x6a7388
-                                                }))
-                                                .child(package.title.as_str()),
-                                        )
-                                        .child(
-                                            div().text_xs().text_color(rgb(0x6a7388)).child(patch),
-                                        ),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .id(gpui::SharedString::from(format!("{patch}-toggle")))
-                                .when(togglable, |control| {
-                                    control.cursor(CursorStyle::PointingHand).on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(move |window, _, _, cx| {
-                                            window
-                                                .selection
-                                                .toggle_with_default(patch, default_delivery);
-                                            cx.notify();
-                                        }),
-                                    )
-                                })
-                                .child(switch),
-                        ),
+        let selected_category = self.category;
+        let rows = offered()
+            .into_iter()
+            .filter(|package| package.category == Some(selected_category))
+            .map(|package| {
+                patch_card(
+                    package,
+                    &self.selection,
+                    &available,
+                    &loadable,
+                    has_card,
+                    cx,
                 )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(0x8b95aa))
-                        .child(package.summary.as_str()),
-                )
-                .when(from_card, |card| {
-                    let installation_method = div()
-                        .flex()
-                        .flex_none()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(rgb(0x34405c))
-                        .overflow_hidden()
-                        .child(
-                            segment(
-                                format!("{patch}-firmware"),
-                                "Firmware",
-                                delivery == Some(Delivery::Firmware),
-                                usable && checked,
-                            )
-                            .when(usable, |segment| {
-                                segment
-                                    .cursor(CursorStyle::PointingHand)
-                                    .on_mouse_down(MouseButton::Left, choose(Delivery::Firmware))
-                            }),
-                        )
-                        .child(
-                            segment(
-                                format!("{patch}-sd-card"),
-                                "SD card",
-                                delivery == Some(Delivery::SdCard),
-                                card_enabled && checked,
-                            )
-                            .when(card_enabled, |segment| {
-                                segment
-                                    .cursor(CursorStyle::PointingHand)
-                                    .on_mouse_down(MouseButton::Left, choose(Delivery::SdCard))
-                            }),
-                        );
-                    card.child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap_3()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(0x8b95aa))
-                                    .child("Installation method"),
-                            )
-                            .child(installation_method),
-                    )
-                })
-        });
+            })
+            .collect::<Vec<_>>();
         let card_note: Option<&str> = if !has_card {
             Some("Insert an SD card (File → Use SD Card Folder…) to load patches from it.")
         } else if !self.selection.sd_card.is_empty()
@@ -455,306 +710,44 @@ impl Render for PatchesWindow {
         } else {
             None
         };
-        let effect_rows = if model == l6fw::Model::L6max {
-            offered_effects()
-                .into_iter()
-                .map(|(package, effect)| {
-                    let id = effect.id.as_str();
-                    let assigned_slots = ["room", "spring"]
-                        .into_iter()
-                        .filter(|slot| {
-                            self.selection
-                                .effect_replacements
-                                .get(*slot)
-                                .is_some_and(|assigned| assigned == id)
-                        })
-                        .collect::<Vec<_>>();
-                    let checked =
-                        self.enabled_effects.contains(id) || !assigned_slots.is_empty();
-                    let assignment_label = match assigned_slots.as_slice() {
-                        [] => "Choose slots".to_owned(),
-                        [slot] => slot_label(slot).to_owned(),
-                        _ => "Room, Spring".to_owned(),
-                    };
-                    let opened = self.open_effect_menu.as_deref() == Some(id);
-                    let toggle_id = id.to_owned();
-                    let title_toggle_id = id.to_owned();
-                    let toggle_enabled = checked;
-                    let assign_id = id.to_owned();
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(rgb(0x34405c))
-                        .p_3()
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .gap_3()
-                                .child(
-                                    div()
-                                        .id(gpui::SharedString::from(format!("effect-{id}-title")))
-                                        .flex()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .flex_col()
-                                        .cursor(CursorStyle::PointingHand)
-                                        .on_mouse_down(
-                                            MouseButton::Left,
-                                            cx.listener(move |window, _, _, cx| {
-                                                window.set_effect_enabled(
-                                                        &title_toggle_id,
-                                                    !toggle_enabled,
-                                                );
-                                                cx.notify();
-                                            }),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_color(rgb(0xe8eef8))
-                                                .child(effect.title.as_str()),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(rgb(0x6a7388))
-                                                .child(format!("by {}", package.author)),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .id(gpui::SharedString::from(format!("effect-{id}-toggle")))
-                                        .cursor(CursorStyle::PointingHand)
-                                        .on_mouse_down(
-                                            MouseButton::Left,
-                                            cx.listener(move |window, _, _, cx| {
-                                                window.set_effect_enabled(
-                                                    &toggle_id,
-                                                    !toggle_enabled,
-                                                );
-                                                cx.notify();
-                                            }),
-                                        )
-                                        .child(
-                                            div()
-                                                .w(px(32.0))
-                                                .h(px(18.0))
-                                                .rounded_full()
-                                                .bg(rgb(if checked { 0x5b8def } else { 0x34405c }))
-                                                .flex()
-                                                .items_center()
-                                                .justify_start()
-                                                .px(px(2.0))
-                                                .child(
-                                                    div()
-                                                        .size(px(14.0))
-                                                        .rounded_full()
-                                                        .bg(rgb(0xe8eef8))
-                                                        .when(checked, |knob| knob.ml(px(14.0))),
-                                                ),
-                                        ),
-                                ),
+        let effect_rows =
+            if model == l6fw::Model::L6max && selected_category == PatchCategory::Effects {
+                offered_effects()
+                    .into_iter()
+                    .map(|(package, effect)| {
+                        effect_card(
+                            package,
+                            effect,
+                            &self.selection,
+                            &self.enabled_effects,
+                            self.open_effect_menu.as_deref(),
+                            has_card,
+                            cx,
                         )
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(rgb(0x8b95aa))
-                                .child(package.description.as_str()),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .gap_3()
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(rgb(0x8b95aa))
-                                        .child("Installation method"),
-                                )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_none()
-                                        .rounded_md()
-                                        .border_1()
-                                        .border_color(rgb(0x34405c))
-                                        .overflow_hidden()
-                                        .child(segment(
-                                            format!("effect-{id}-firmware"),
-                                            "Firmware",
-                                            false,
-                                            false,
-                                        ))
-                                        .child(segment(
-                                            format!("effect-{id}-sd-card"),
-                                            "SD card",
-                                            true,
-                                            true,
-                                        )),
-                                ),
-                        )
-                        .when(checked, |card| {
-                            card.child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .relative()
-                                            .flex()
-                                            .flex_col()
-                                            .items_end()
-                                            .gap_1()
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_between()
-                                                    .w_full()
-                                                    .child(
-                                                        div()
-                                                            .text_xs()
-                                                            .text_color(rgb(0x8b95aa))
-                                                            .child("Assign to"),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .id(gpui::SharedString::from(format!("effect-{id}-assignment")))
-                                                            .min_w(px(160.0))
-                                                            .flex()
-                                                            .items_center()
-                                                            .justify_between()
-                                                            .gap_3()
-                                                            .rounded_md()
-                                                            .border_1()
-                                                            .border_color(rgb(0x34405c))
-                                                            .bg(rgb(0x171d2c))
-                                                            .px_2()
-                                                            .py_1()
-                                                            .text_sm()
-                                                            .cursor(CursorStyle::PointingHand)
-                                                            .on_mouse_down(
-                                                                MouseButton::Left,
-                                                                cx.listener(move |window, _, _, cx| {
-                                                                    window.open_effect_menu =
-                                                                        if window.open_effect_menu.as_deref()
-                                                                            == Some(&assign_id)
-                                                                        {
-                                                                            None
-                                                                        } else {
-                                                                            Some(assign_id.clone())
-                                                                        };
-                                                                    cx.notify();
-                                                                }),
-                                                            )
-                                                            .child(assignment_label)
-                                                            .child(if opened { "▴" } else { "▾" }),
-                                                    ),
-                                            )
-                                            .when(opened, |dropdown| {
-                                                dropdown.child(
-                                                    div()
-                                                        .w(px(220.0))
-                                                        .rounded_md()
-                                                        .border_1()
-                                                        .border_color(rgb(0x34405c))
-                                                        .bg(rgb(0x171d2c))
-                                                        .p_1()
-                                                        .flex()
-                                                        .flex_col()
-                                                        .children(["room", "spring"].into_iter().map(
-                                                            |slot| {
-                                                                let current = self
-                                                                    .selection
-                                                                    .effect_replacements
-                                                                    .get(slot);
-                                                                let selected = current
-                                                                    .is_some_and(|assigned| assigned == id);
-                                                                let occupied_by = current
-                                                                    .filter(|assigned| assigned.as_str() != id);
-                                                                let can_change = has_card || selected;
-                                                                let slot_id = slot.to_owned();
-                                                                let effect_id = id.to_owned();
-                                                                div()
-                                                                    .id(gpui::SharedString::from(format!(
-                                                                        "effect-{id}-slot-{slot}"
-                                                                    )))
-                                                                    .flex()
-                                                                    .items_center()
-                                                                    .gap_2()
-                                                                    .rounded_sm()
-                                                                    .px_2()
-                                                                    .py_1()
-                                                                    .text_sm()
-                                                                    .text_color(rgb(if can_change {
-                                                                        0xe8eef8
-                                                                    } else {
-                                                                        0x6a7388
-                                                                    }))
-                                                                    .when(can_change, |item| {
-                                                                        item.cursor(
-                                                                            CursorStyle::PointingHand,
-                                                                        )
-                                                                        .on_mouse_down(
-                                                                            MouseButton::Left,
-                                                                            cx.listener(
-                                                                                move |window, _, _, cx| {
-                                                                                    window.selection.set_effect(
-                                                                                        &slot_id,
-                                                                                        if selected {
-                                                                                            None
-                                                                                        } else {
-                                                                                            Some(&effect_id)
-                                                                                        },
-                                                                                    );
-                                                                                    window.enabled_effects.insert(
-                                                                                        effect_id.clone(),
-                                                                                    );
-                                                                                    cx.notify();
-                                                                                },
-                                                                            ),
-                                                                        )
-                                                                    })
-                                                                    .child(if selected { "✓" } else { "□" })
-                                                                    .child(slot_label(slot))
-                                                                    .when_some(occupied_by, |item, other| {
-                                                                        let title = firmware_patch_core::patch_catalog()
-                                                                            .iter()
-                                                                            .flat_map(|package| {
-                                                                                package.effects.iter().map(
-                                                                                    move |effect| (package, effect),
-                                                                                )
-                                                                            })
-                                                                            .find(|(_, effect)| effect.id == *other)
-                                                                            .map(|(_, effect)| effect.title.as_str())
-                                                                            .unwrap_or(other.as_str());
-                                                                        item.child(
-                                                                            div()
-                                                                                .ml_auto()
-                                                                                .text_xs()
-                                                                                .text_color(rgb(0x6a7388))
-                                                                                .child(format!("Used by {title}")),
-                                                                        )
-                                                                    })
-                                                            },
-                                                        )),
-                                                )
-                                            }),
-                                    ),
-                            )
-                        })
-                })
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+        let category_index = match selected_category {
+            PatchCategory::Display => 0,
+            PatchCategory::Midi => 1,
+            PatchCategory::Effects => 2,
         };
+        let category_tabs = TabBar::new("patch-category")
+            .underline()
+            .selected_index(category_index)
+            .child(KitTab::new().label("Display"))
+            .child(KitTab::new().label("MIDI"))
+            .child(KitTab::new().label("Effects"))
+            .on_click(cx.listener(|window, index: &usize, _, cx| {
+                window.category = match index {
+                    0 => PatchCategory::Display,
+                    1 => PatchCategory::Midi,
+                    _ => PatchCategory::Effects,
+                };
+                cx.notify();
+            }));
         let message = patch_error.or_else(|| self.available.as_ref().err().cloned());
         div()
             .size_full()
@@ -762,60 +755,52 @@ impl Render for PatchesWindow {
             .flex_col()
             .gap_4()
             .p_4()
-            .bg(rgb(0x10131c))
-            .text_color(rgb(0xe8eef8))
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
+            .child(category_tabs)
             .child(
                 div()
                     .id("patch-list")
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
+                    .overflow_y_scrollbar()
                     .flex()
                     .flex_col()
                     .gap_3()
-                    .when(model == l6fw::Model::L6max, |list| {
-                        list.child(
-                            div()
-                                .text_sm()
-                                .text_color(rgb(0xe8eef8))
-                                .child("Effect patches"),
-                        )
-                    })
                     .children(effect_rows)
                     .children(rows),
             )
-            .children(
-                message.map(|message| div().text_sm().text_color(rgb(0xf0a0a0)).child(message)),
-            )
-            .children(card_note.map(|note| div().text_sm().text_color(rgb(0x8b95aa)).child(note)))
+            .children(message.map(|message| Alert::error("patch-error", message)))
+            .children(card_note.map(|note| {
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(note)
+            }))
             .child(
                 div()
                     .text_sm()
-                    .text_color(rgb(0x8b95aa))
+                    .text_color(cx.theme().muted_foreground)
                     .child("Applying restarts the emulator. Settings are kept."),
             )
             .child(
                 div().flex().justify_end().child(
-                    div()
-                        .id("apply")
-                        .rounded_md()
-                        .px_3()
-                        .py_1()
-                        .border_1()
-                        .border_color(rgb(0x34405c))
-                        .bg(rgb(if enabled { 0x2a3550 } else { 0x171d2c }))
-                        .text_color(rgb(if enabled { 0xe8eef8 } else { 0x6a7388 }))
-                        .child("Apply and Restart")
-                        .when(enabled, |button| {
-                            button.cursor(CursorStyle::PointingHand).on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, window, cx| {
-                                    this.apply(this.selection.clone(), window, cx)
-                                }),
-                            )
-                        }),
+                    Button::new("apply")
+                        .label("Apply and Restart")
+                        .primary()
+                        .disabled(!enabled)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.apply(this.selection.clone(), window, cx)
+                        })),
                 ),
             )
+            .into_any_element()
+    }
+}
+
+impl Render for PatchesWindow {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.render_element(window, cx)
     }
 }
 

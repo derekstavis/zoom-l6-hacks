@@ -17,7 +17,7 @@ pub fn knob_with_input(
         });
     }
     if let Some(on_scroll) = input.scroll {
-        knob = knob.on_scroll_wheel(move |event, _, cx| {
+        knob = knob.on_scroll(move |event, _, cx| {
             let delta = match event.delta {
                 gpui::ScrollDelta::Lines(p) => {
                     if p.y.abs() >= p.x.abs() {

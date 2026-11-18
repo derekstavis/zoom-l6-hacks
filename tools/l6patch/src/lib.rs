@@ -563,6 +563,14 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             )
             .into());
         }
+        if relocations.len() > patch_loader_core::dynamic::MAX_RELOCATIONS_PER_MODULE {
+            return Err(format!(
+                "composed module has {} relocations; loader limit is {}",
+                relocations.len(),
+                patch_loader_core::dynamic::MAX_RELOCATIONS_PER_MODULE
+            )
+            .into());
+        }
         let file = sd_bundle::build_dynamic_v1(&module, memory_len, &handlers, &relocations)?;
         let filename = if options.effect_replacements.is_empty() {
             firmware_patch_core::composed_patch_file_name(&options.requested_patches)?

@@ -598,6 +598,9 @@ pub mod dynamic {
     /// bounded.
     pub const MAX_HOOKS_PER_MODULE: usize = 16;
     pub const MAX_HOOKS_PER_FUNCTION: usize = 8;
+    /// Maximum relocation records accepted in one patch file. The builder
+    /// refuses larger modules, because the loader would reject them.
+    pub const MAX_RELOCATIONS_PER_MODULE: usize = 256;
 
     #[repr(C)]
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

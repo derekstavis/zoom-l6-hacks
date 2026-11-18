@@ -733,8 +733,6 @@ fn compile_payload_pass(
             "-C",
             "panic=abort",
             "-C",
-            "relocation-model=static",
-            "-C",
         ])
         .arg(format!(
             "linker={}",
@@ -752,6 +750,22 @@ fn compile_payload_pass(
         // those stubs are generated from this pass's output, so they cannot
         // resolve yet. The output of this pass is never installed.
         command.args(["-C", "link-arg=--unresolved-symbols=ignore-all"]);
+    }
+    if emit_relocations {
+        // SD modules are linked at base zero and moved by the loader. With
+        // position-independent code, references within the module are
+        // PC-relative and need no load-time fixup. Every symbol a module uses
+        // is linked into it or is a fixed firmware address, so rustc may
+        // address external statics directly instead of through a GOT, which
+        // the loader does not support.
+        command.args([
+            "-C",
+            "relocation-model=pie",
+            "-Z",
+            "direct-access-external-data=yes",
+        ]);
+    } else {
+        command.args(["-C", "relocation-model=static"]);
     }
     if emit_relocations {
         command
@@ -844,6 +858,8 @@ fn generate_continuations_from_metadata(
         }
     }
 
+    // Continuation stubs load their slot word with a PC-relative literal
+    // load (`ldr.w r12, slot`), so a relocated module needs no fixup for them.
     let mut assembly = String::from(".thumb\n");
     let mut address_arms = Vec::new();
     let mut externs = Vec::new();
@@ -878,7 +894,7 @@ fn generate_continuations_from_metadata(
         if dynamic && site.dynamic_dispatch {
             let slot = format!("dynamic_next_{name}_slot");
             assembly.push_str(&format!(
-                ".section .text.continuation_{name}, \"ax\"\n.global {original}\n.thumb_func\n{original}:\n    ldr r12, ={slot}\n    ldr r12, [r12]\n    bx r12\n.align 2\n.global {slot}\n{slot}:\n    .word 0\n"
+                ".section .text.continuation_{name}, \"ax\"\n.global {original}\n.thumb_func\n{original}:\n    ldr.w r12, {slot}\n    bx r12\n.align 2\n.global {slot}\n{slot}:\n    .word 0\n"
             ));
         } else if generate_dynamic_sites {
             // The resident loader's dispatch fallback must stay a direct
@@ -913,7 +929,7 @@ fn generate_continuations_from_metadata(
             let slot = format!("static_next_{name}_slot");
             let stock = format!("static_stock_{name}");
             assembly.push_str(&format!(
-                ".section .text.continuation_{name}, \"ax\"\n.global {original}\n.thumb_func\n{original}:\n    ldr r12, ={slot}\n    ldr r12, [r12]\n    bx r12\n.align 2\n.global {slot}\n{slot}:\n    .word {stock}\n.thumb_func\n{stock}:\n"
+                ".section .text.continuation_{name}, \"ax\"\n.global {original}\n.thumb_func\n{original}:\n    ldr.w r12, {slot}\n    bx r12\n.align 2\n.global {slot}\n{slot}:\n    .word {stock}\n.thumb_func\n{stock}:\n"
             ));
             let resume = site
                 .address
@@ -969,7 +985,7 @@ fn generate_continuations_from_metadata(
             let slot = format!("dynamic_next_{site_name}_{handler_name}_slot");
             validate_asm_symbol(&slot)?;
             assembly.push_str(&format!(
-                ".section .text.continuation_{site_name}_{handler_name}, \"ax\"\n.global {original}\n.thumb_func\n{original}:\n    ldr r12, ={slot}\n    ldr r12, [r12]\n    bx r12\n.align 2\n.global {slot}\n{slot}:\n    .word 0\n"
+                ".section .text.continuation_{site_name}_{handler_name}, \"ax\"\n.global {original}\n.thumb_func\n{original}:\n    ldr.w r12, {slot}\n    bx r12\n.align 2\n.global {slot}\n{slot}:\n    .word 0\n"
             ));
         } else {
             let slot = format!("static_next_{site_name}_{handler_name}_slot");
@@ -981,7 +997,7 @@ fn generate_continuations_from_metadata(
             validate_asm_symbol(&slot)?;
             validate_asm_symbol(&target)?;
             assembly.push_str(&format!(
-                ".section .text.continuation_{site_name}_{handler_name}, \"ax\"\n.global {original}\n.thumb_func\n{original}:\n    ldr r12, ={slot}\n    ldr r12, [r12]\n    bx r12\n.align 2\n.global {slot}\n{slot}:\n    .word {target}\n"
+                ".section .text.continuation_{site_name}_{handler_name}, \"ax\"\n.global {original}\n.thumb_func\n{original}:\n    ldr.w r12, {slot}\n    bx r12\n.align 2\n.global {slot}\n{slot}:\n    .word {target}\n"
             ));
         }
     }
@@ -1494,17 +1510,36 @@ fn parse_relocations(
     let end = base
         .checked_add(u32::try_from(memory_len).map_err(|_| "module too large")?)
         .ok_or("payload address overflow")?;
-    let mut in_text = false;
+    let mut in_loaded = false;
     let mut records = Vec::new();
     let mut movw = Vec::<(u32, u32, String)>::new();
     let mut movt = Vec::<(u32, u32, String)>::new();
 
     for line in output.lines() {
-        if line.starts_with("Relocation section ") {
-            in_text = line.contains(".rel.text'") || line.contains(".rela.text'");
+        if let Some(rest) = line.strip_prefix("Relocation section '") {
+            let section = rest.split('\'').next().unwrap_or_default();
+            in_loaded = match section {
+                // Code, read-only data and writable data are all part of the
+                // loaded image, so their absolute references move with it.
+                ".rel.text" | ".rela.text" | ".rel.data" | ".rela.data" => true,
+                // Hook metadata is stripped from the image, and debug and
+                // attribute sections are never loaded.
+                ".rel.patch_hooks" | ".rela.patch_hooks" => false,
+                name if name.starts_with(".rel.debug_")
+                    || name.starts_with(".rela.debug_")
+                    || name.starts_with(".rel.ARM.")
+                    || name.starts_with(".rela.ARM.") =>
+                {
+                    false
+                }
+                // A relocation section this function does not know could
+                // hold pointers that the loader must fix. Refuse the module
+                // instead of producing one with broken pointers.
+                name => return Err(format!("unsupported relocation section {name}").into()),
+            };
             continue;
         }
-        if !in_text {
+        if !in_loaded {
             continue;
         }
         let columns = line.split_whitespace().collect::<Vec<_>>();

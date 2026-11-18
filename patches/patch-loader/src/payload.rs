@@ -30,7 +30,6 @@ const MODULE_ARENA_BASE: usize = 0x83e0_0000;
 #[cfg(sd_qemu_module_arena)]
 const MODULE_ARENA_END: usize = MODULE_ARENA_BASE + 0x80000;
 const MAX_FUNCTION_CHAINS: usize = core_loader::dynamic::MAX_FUNCTION_CHAINS;
-const MAX_RELOCATIONS: u32 = 256;
 
 /// The heap-allocated registry, or zero before the first card mount.
 fn registry_base() -> usize {
@@ -452,7 +451,7 @@ unsafe fn load_dynamic<R: core_loader::bundle::Reader>(reader: &mut R, order: u3
         reader,
         MODULE_CAPACITY,
         MAX_HOOKS,
-        MAX_RELOCATIONS as usize,
+        core_loader::dynamic::MAX_RELOCATIONS_PER_MODULE,
     ) {
         Ok(header) => header,
         Err(_) => {

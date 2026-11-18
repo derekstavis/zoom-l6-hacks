@@ -1,5 +1,5 @@
 {
-  "base": "0x80109c70",
+  "base": "0x801084b0",
   "hooks": [
     {
       "address": "0x8003e8ee",
@@ -8,12 +8,12 @@
       "continuation_slot_offset": null,
       "length": 4,
       "symbol": "__l6_offset_veneer_din_mixer_forward",
-      "target": "0x80109c70"
+      "target": "0x801084b0"
     }
   ],
   "model": "L6max",
   "name": "din-mixer-control",
-  "payload_file": "din-mixer-control-80109c70.bin",
+  "payload_file": "din-mixer-control-801084b0.bin",
   "payload_length": 84,
   "window_byte_total": 4,
   "windows": [

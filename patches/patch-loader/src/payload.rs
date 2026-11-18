@@ -33,7 +33,22 @@ const MODULE_CAPACITY: usize = 0x60000;
 const MODULE_ARENA_BASE: usize = 0x83e0_0000;
 #[cfg(sd_qemu_module_arena)]
 const MODULE_ARENA_END: usize = MODULE_ARENA_BASE + 0x80000;
-const MAX_FUNCTION_CHAINS: usize = core_loader::dynamic::MAX_FUNCTION_CHAINS;
+/// Dynamic dispatch sites in this loader's hook catalog. The registry holds
+/// one record per site, so no set of SD modules can outgrow it.
+const SITES: usize = {
+    let sites = hook_catalog::FUNCTION_HOOK_SITES;
+    let mut count = 0;
+    let mut index = 0;
+    while index < sites.len() {
+        if sites[index].dynamic_dispatch {
+            count += 1;
+        }
+        index += 1;
+    }
+    count
+};
+const _: () = assert!(SITES as u32 <= core_loader::registry::MAX_SITES);
+const REGISTRY_LEN: usize = core_loader::registry::len(SITES as u32) as usize;
 
 /// The heap-allocated registry, or zero while the root still holds its stock
 /// value (before the first card mount).
@@ -56,11 +71,16 @@ fn module_ptr_word() -> usize {
 fn module_len_word() -> usize {
     registry_word(core_loader::registry::MODULE_LEN_OFFSET)
 }
-fn hook_chain_table() -> usize {
-    registry_word(core_loader::registry::HOOK_CHAINS_OFFSET)
+fn site_record(index: usize) -> *mut core_loader::dynamic::SiteChain {
+    registry_word(core_loader::registry::site_offset(index as u32))
+        as *mut core_loader::dynamic::SiteChain
 }
-fn dynamic_handler_table() -> usize {
-    registry_word(core_loader::registry::HANDLER_TABLE_OFFSET)
+/// The catalog entry for dispatch site `index`.
+fn dynamic_site(index: usize) -> Option<&'static patch_api::FunctionHookSite> {
+    hook_catalog::FUNCTION_HOOK_SITES
+        .iter()
+        .filter(|site| site.dynamic_dispatch)
+        .nth(index)
 }
 #[cfg(sd_qemu_module_arena)]
 fn module_arena_next_word() -> usize {
@@ -116,7 +136,7 @@ unsafe fn ensure_registry() -> bool {
     if current != 0 {
         return unsafe { ptr::read_volatile(current as *const u32) } == core_loader::registry::MAGIC;
     }
-    let len = core_loader::registry::LEN as usize;
+    let len = REGISTRY_LEN;
     let fresh = unsafe { pvPortMalloc(len) };
     if fresh.is_null() {
         return false;
@@ -124,6 +144,10 @@ unsafe fn ensure_registry() -> bool {
     let base = fresh as usize;
     unsafe {
         ptr::write_bytes(fresh, 0, len);
+        ptr::write_volatile(
+            (base + core_loader::registry::SITE_COUNT_OFFSET as usize) as *mut u32,
+            SITES as u32,
+        );
         #[cfg(sd_qemu_module_arena)]
         ptr::write_volatile(
             (base + core_loader::registry::ARENA_NEXT_OFFSET as usize) as *mut u32,
@@ -427,227 +451,125 @@ unsafe fn clear_payload(base: usize, len: usize) {
     }
 }
 
-unsafe fn find_hook_chain(
-    address: u32,
-    reserved: &[*mut core_loader::dynamic::FunctionHookChain],
-) -> Option<*mut core_loader::dynamic::FunctionHookChain> {
-    let mut free = None;
-    for index in 0..MAX_FUNCTION_CHAINS {
-        let chain = (hook_chain_table()
-            + index * core::mem::size_of::<core_loader::dynamic::FunctionHookChain>())
-            as *mut core_loader::dynamic::FunctionHookChain;
-        let value = unsafe { ptr::read_volatile(chain) };
-        if value.count != 0 && value.address == address {
-            return Some(chain);
-        }
-        if free.is_none() && value.count == 0 && !reserved.contains(&chain) {
-            free = Some(chain);
-        }
+/// Discard a module that will not be installed: poison its code and free the
+/// allocation that also holds its links.
+unsafe fn discard(block: *mut u8, loaded_base: usize, memory_len: usize) {
+    unsafe {
+        clear_payload(loaded_base, memory_len);
+        free(block);
     }
-    free
 }
 
-/// Load one compact version-1 module directly into its final heap allocation. Hook
-/// registrations stay local until the streaming CRC, relocations, and every
-/// site/capacity check pass. The complete module's hook set is published under
-/// one interrupt-masked registry update.
+/// Load one compact version-1 module directly into its final allocation:
+/// its hook links first, then its code and state. Hook registrations stay
+/// local until the streaming CRC, relocations and every site check pass. The
+/// complete module's hook set is published under one interrupt-masked
+/// registry update.
 unsafe fn load_dynamic<R: core_loader::bundle::Reader>(reader: &mut R, order: u32) -> bool {
-    const MAX_HOOKS: usize = core_loader::dynamic::MAX_HOOKS_PER_MODULE;
+    use core_loader::dynamic::{Hook, HookLink, LINK_LEN};
     let pending = match core_loader::dynamic::read_header(
         reader,
         MODULE_CAPACITY,
-        MAX_HOOKS,
+        core_loader::dynamic::MAX_HOOKS_PER_MODULE,
         core_loader::dynamic::MAX_RELOCATIONS_PER_MODULE,
     ) {
         Ok(header) => header,
-        Err(_) => {
-            return false;
-        }
+        Err(_) => return false,
     };
-    let module = unsafe { alloc(pending.header.memory_len) };
-    if module.is_null() || module as usize > u32::MAX as usize {
-        if !module.is_null() {
-            unsafe { free(module) };
+    let hook_count = pending.header.hook_count;
+    let memory_len = pending.header.memory_len;
+    // The load order and record index share the link's order word.
+    if hook_count > 0xffff || order > 0xffff {
+        return false;
+    }
+    let links_len = hook_count * LINK_LEN;
+    let block = unsafe { alloc(links_len + memory_len) };
+    if block.is_null() || block as usize + links_len + memory_len > u32::MAX as usize {
+        if !block.is_null() {
+            unsafe { free(block) };
         }
         return false;
     }
-    let loaded_base = module as usize;
-    let mut hooks = [core_loader::dynamic::Hook::default(); MAX_HOOKS];
-    let code = unsafe { slice::from_raw_parts_mut(module, pending.header.memory_len) };
-    let header = match core_loader::dynamic::read_body(
-        reader,
-        pending,
-        code,
-        &mut hooks,
-        0,
-        loaded_base as u32,
-    ) {
-        Ok(header) => header,
-        Err(error) => {
-            let error_code = match error {
-                core_loader::dynamic::Error::Read(core_loader::bundle::ReadError::Io) => 1,
-                core_loader::dynamic::Error::Read(core_loader::bundle::ReadError::Truncated) => 2,
-                core_loader::dynamic::Error::Read(core_loader::bundle::ReadError::Invalid) => 3,
-                core_loader::dynamic::Error::Read(core_loader::bundle::ReadError::TooLarge) => 4,
-                core_loader::dynamic::Error::Invalid => 5,
-                core_loader::dynamic::Error::TooLarge => 6,
-                core_loader::dynamic::Error::Relocation => 7,
-                core_loader::dynamic::Error::Checksum => 8,
-            };
-            unsafe {
-                clear_payload(loaded_base, code.len());
-                free(module);
-            }
+    let links = block as *mut HookLink;
+    let loaded_base = block as usize + links_len;
+    {
+        let code = unsafe { slice::from_raw_parts_mut(loaded_base as *mut u8, memory_len) };
+        // The hook records are read into the start of the link area.
+        let hooks = unsafe { slice::from_raw_parts_mut(block as *mut Hook, hook_count) };
+        if core_loader::dynamic::read_body(reader, pending, code, hooks, 0, loaded_base as u32)
+            .is_err()
+        {
+            unsafe { discard(block, loaded_base, memory_len) };
             return false;
         }
-    };
-    #[derive(Clone, Copy)]
-    struct HookPlan {
-        address: u32,
-        entry: u32,
-        next_slot: u32,
-        order: u32,
-        chain: *mut core_loader::dynamic::FunctionHookChain,
-        expected_count: u32,
-        dispatch_index: usize,
     }
-
-    let mut plans = [HookPlan {
-        address: 0,
-        entry: 0,
-        next_slot: 0,
-        order: 0,
-        chain: ptr::null_mut(),
-        expected_count: 0,
-        dispatch_index: 0,
-    }; MAX_HOOKS];
-    let mut reserved_chains = [ptr::null_mut(); MAX_HOOKS];
-    let mut planned = 0usize;
-    for (hook_index, hook) in hooks.iter().take(header.hook_count).copied().enumerate() {
-        if hook.next_slot_offset == u32::MAX {
-            unsafe {
-                clear_payload(loaded_base, header.memory_len);
-                free(module);
-            }
-            return false;
-        }
-        let Some(dispatch_index) = hook_catalog::FUNCTION_HOOK_SITES
+    // Turn each record into its link, last first, so no unread record is
+    // overwritten (see `_HOOK_RECORDS_FIT_IN_LINKS`).
+    for index in (0..hook_count).rev() {
+        let hook = unsafe { ptr::read((block as *const Hook).add(index)) };
+        let site = hook_catalog::FUNCTION_HOOK_SITES
             .iter()
             .filter(|site| site.dynamic_dispatch)
-            .position(|site| site.address == hook.address)
-        else {
-            unsafe {
-                clear_payload(loaded_base, header.memory_len);
-                free(module);
-            }
+            .position(|site| site.address == hook.address);
+        let Some(site) = site.filter(|_| hook.next_slot_offset != u32::MAX) else {
+            unsafe { discard(block, loaded_base, memory_len) };
             return false;
         };
-        // Several handlers in one composed module may target the same
-        // function. Reuse their reserved chain row instead of reserving one
-        // empty row per hook record.
-        let chain = plans[..planned]
-            .iter()
-            .find(|plan| plan.address == hook.address)
-            .map(|plan| plan.chain)
-            .or_else(|| unsafe { find_hook_chain(hook.address, &reserved_chains[..planned]) });
-        let Some(chain) = chain else {
-            unsafe {
-                clear_payload(loaded_base, header.memory_len);
-                free(module);
-            }
-            return false;
-        };
-        let mut chain_value = unsafe { ptr::read_volatile(chain) };
-        let expected_count = chain_value.count;
-        let entry = loaded_base as u32 + hook.entry_offset | 1;
-        let next_slot = loaded_base as u32 + hook.next_slot_offset;
-        let hook_order = order * core_loader::dynamic::MAX_HOOKS_PER_MODULE as u32
-            + hook_index as u32;
-        let previous_slot =
-            chain_value.append(hook.address, entry, next_slot, hook_order, loaded_base as u32);
-        if previous_slot.is_err() {
-            unsafe {
-                clear_payload(loaded_base, header.memory_len);
-                free(module);
-            }
-            return false;
-        }
-        plans[planned] = HookPlan {
-            address: hook.address,
-            entry,
-            next_slot,
-            order: hook_order,
-            chain,
-            expected_count,
-            dispatch_index,
-        };
-        reserved_chains[planned] = chain;
-        planned += 1;
-    }
-    if planned != header.hook_count {
         unsafe {
-            clear_payload(loaded_base, header.memory_len);
-            free(module);
+            ptr::write(
+                links.add(index),
+                HookLink {
+                    entry: (loaded_base as u32 + hook.entry_offset) | 1,
+                    next_slot: loaded_base as u32 + hook.next_slot_offset,
+                    order: order << 16 | index as u32,
+                    module_base: loaded_base as u32,
+                    next: 0,
+                    site: site as u32,
+                },
+            );
         }
-        return false;
     }
     unsafe {
-        clean_cache(loaded_base, header.memory_len);
+        clean_cache(block as usize, links_len + memory_len);
         synchronize_instructions();
         let primask: u32;
         asm!("mrs {0}, PRIMASK", "cpsid i", out(reg) primask, options(nostack, preserves_flags));
-        // Verify every registry row before changing any row or handler head.
+        // Verify every site record this module joins before changing any.
         // `claim()` excludes competing loader transactions; this catches
-        // corrupt/stale registry state without exposing a partially installed
-        // multi-site module.
-        for plan in &plans[..planned] {
-            let current_chain = ptr::read_volatile(plan.chain);
-            let slot = (dynamic_handler_table() + plan.dispatch_index * 4) as *mut u32;
-            let current_head = ptr::read_volatile(slot);
-            if (current_chain.address != plan.address
-                && !(current_chain.count == 0 && current_chain.address == 0))
-                || current_chain.count != plan.expected_count
-                || (current_chain.count == 0 && current_head != 0)
-                || (current_chain.count != 0 && current_head != current_chain.links[0].entry)
-            {
+        // corrupt or stale registry state without exposing a partially
+        // installed multi-site module.
+        for index in 0..hook_count {
+            let link = ptr::read(links.add(index));
+            let chain = ptr::read_volatile(site_record(link.site as usize));
+            if !chain.is_consistent(|address| ptr::read_volatile(address as *const u32)) {
                 asm!("msr PRIMASK, {0}", in(reg) primask, options(nostack, preserves_flags));
-                clear_payload(loaded_base, header.memory_len);
-                free(module);
+                discard(block, loaded_base, memory_len);
                 return false;
             }
         }
         // Initialize each module continuation before exposing any handler.
-        for plan in &plans[..planned] {
-            let site_name = hook_catalog::FUNCTION_HOOK_SITES
-                .iter()
-                .filter(|site| site.dynamic_dispatch)
-                .nth(plan.dispatch_index)
-                .unwrap()
-                .name;
-            let continuation = (crate::patch_api::__continuations::address(site_name) as u32) | 1;
-            ptr::write_volatile(plan.next_slot as *mut u32, continuation);
+        for index in 0..hook_count {
+            let link = ptr::read(links.add(index));
+            let site = dynamic_site(link.site as usize).unwrap();
+            let continuation = (crate::patch_api::__continuations::address(site.name) as u32) | 1;
+            ptr::write_volatile(link.next_slot as *mut u32, continuation);
         }
-        for plan in &plans[..planned] {
-            let slot = (dynamic_handler_table() + plan.dispatch_index * 4) as *mut u32;
-            let mut updated_chain = ptr::read_volatile(plan.chain);
-            let previous_slot = updated_chain
-                .append(
-                    plan.address,
-                    plan.entry,
-                    plan.next_slot,
-                    plan.order,
-                    loaded_base as u32,
-                )
-                .unwrap();
-            ptr::write_volatile(plan.chain, updated_chain);
-            if let Some(previous_slot) = previous_slot {
-                ptr::write_volatile(previous_slot as *mut u32, plan.entry);
-            } else {
-                ptr::write_volatile(slot, plan.entry);
+        // Append each link to its site in load order. A first link publishes
+        // the site's handler; a later one is reached through the previous
+        // tail's continuation.
+        for index in 0..hook_count {
+            let link = links.add(index);
+            let record = site_record((*link).site as usize);
+            let mut chain = ptr::read_volatile(record);
+            if let Some(previous) = chain.append(link as u32, (*link).entry) {
+                let previous = previous as *mut HookLink;
+                (*previous).next = link as u32;
+                ptr::write_volatile((*previous).next_slot as *mut u32, (*link).entry);
             }
+            ptr::write_volatile(record, chain);
         }
         ptr::write_volatile(module_ptr_word() as *mut u32, loaded_base as u32);
-        ptr::write_volatile(module_len_word() as *mut u32, header.memory_len as u32);
+        ptr::write_volatile(module_len_word() as *mut u32, memory_len as u32);
         // Record every module for consumers such as menu-loader. Entries are
         // written before the count, so a reader never sees a partial entry.
         let count_word = registry_word(core_loader::registry::MODULE_COUNT_OFFSET) as *mut u32;
@@ -658,7 +580,7 @@ unsafe fn load_dynamic<R: core_loader::bundle::Reader>(reader: &mut R, order: u3
                     + count * core_loader::registry::MODULE_TABLE_ENTRY_LEN,
             ) as *mut u32;
             ptr::write_volatile(entry, loaded_base as u32);
-            ptr::write_volatile(entry.add(1), header.memory_len as u32);
+            ptr::write_volatile(entry.add(1), memory_len as u32);
             asm!("dmb", options(nostack, preserves_flags));
             ptr::write_volatile(count_word, count + 1);
         }

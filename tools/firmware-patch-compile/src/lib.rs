@@ -1119,14 +1119,17 @@ fn generate_continuations_from_metadata(
             let dispatcher = format!("dispatch_{}", site.name);
             let original = format!("original_{}", site.name);
             validate_asm_symbol(&dispatcher)?;
-            let slot_offset = registry::HANDLER_TABLE_OFFSET
-                .checked_add(u32::try_from(
-                    dynamic_index
-                        .checked_mul(4)
-                        .ok_or("handler slot overflow")?,
-                )?)
-                .filter(|offset| *offset < registry::ARENA_NEXT_OFFSET)
-                .ok_or("handler table offset overflow")?;
+            // The handler is the first word of the site's registry record.
+            let index = u32::try_from(dynamic_index)?;
+            if index >= registry::MAX_SITES {
+                return Err(format!(
+                    "{} dynamic dispatch sites exceed the registry's {} sites",
+                    index + 1,
+                    registry::MAX_SITES
+                )
+                .into());
+            }
+            let slot_offset = registry::site_offset(index);
             assembly.push_str(&format!(
                 ".section .text.{dispatcher}, \"ax\"\n.global {dispatcher}\n.thumb_func\n{dispatcher}:\n    push {{r0, r1}}\n    ldr r0, ={pointer:#x}\n    ldr r0, [r0]\n    cbz r0, 1f\n    ldr r1, [r0]\n    ldr r12, ={magic:#x}\n    cmp r1, r12\n    bne 1f\n    ldr.w r12, [r0, #{slot_offset}]\n    cmp r12, #0\n    bne 2f\n1:  ldr r12, ={original}\n2:  pop {{r0, r1}}\n    bx r12\n.ltorg\n",
                 magic = registry::MAGIC,

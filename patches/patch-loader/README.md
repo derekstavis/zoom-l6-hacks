@@ -25,8 +25,8 @@ allocates its small state on first use. `din-mixer-control` uses an
 instruction-offset hook and remains static-only. The loader itself is installed
 through the ordinary firmware update.
 
-Each file can register up to sixteen hooks across cataloged functions. Multiple
-files can hook the same function; their handlers are linked in numeric
+A file can register any number of hooks on the catalog's dynamic sites; only
+free memory limits them. Multiple files can hook the same function; their handlers are linked in numeric
 filename-prefix order. The dynamic knob-dialog emulator case loads two ordered
 modules for the same callee and exercises the recorder guard, dialog rendering,
 timeout, cleanup, and task context.
@@ -57,9 +57,12 @@ bounded directory scan to choose the next filename instead of retaining a large
 filename array on the task stack. It streams each file independently and skips
 corrupt or unsupported candidates.
 
-Hooks are stored in a fixed-capacity firmware table: up to eight function chains,
-with up to sixteen hooks per module and eight hooks per function. The loader has dynamic dispatch stubs for
-catalog sites marked dynamic in the model-specific function catalog. Each module carries a
+The loader has dynamic dispatch stubs for the catalog sites marked dynamic in
+the model-specific function catalog, and its registry holds one record per
+such site. A module's hook links live at the start of the module's own
+allocation, so the number of modules and handlers on a site is limited only
+by free memory. Adding a site needs a new loader, because each site needs its
+dispatch stub in firmware. Each module carries a
 `next` function-pointer slot. The loader connects modules in filename order and
 preserves hook-record order within each module before pointing the tail at the
 displaced stock handler. A hook keeps the target function's calling convention;
@@ -89,7 +92,7 @@ that hold pointers; the loader applies the allocation address as the load
 delta. Firmware function and data bindings stay at supported firmware
 addresses. External statics are addressed directly, so a module has no GOT and
 needs no PIC base register. The builder refuses a module with more than 256
-relocation records or 16 hooks, the loader's limits.
+relocation records, the loader's limit.
 
 The registry is allocated once from the FreeRTOS heap on the first card mount
 and published in one root word. Dispatch stubs run at firmware function entries
@@ -105,16 +108,26 @@ before any patch code, so they need that root at a fixed address:
 
 Until the loader publishes a registry, the root holds its stock value, which
 does not point at the registry magic, so dispatch stubs take the stock path.
-Registering a hook allocates no more heap memory.
+Registering a hook allocates no more heap memory: each module gets one
+allocation, its hook links followed by its code and state.
 
-Registry layout 2 (magic `L6R2`) records every loaded module, up to sixteen, as
-a `(base, memory length)` pair in load order, so tools and other patches can
-find each module. Loader packages built with this layout use update version
-marker `0115`; a layout 1 loader (`0114`) must be reinstalled. Each patch still
-gets one exact-size allocation
-for its code. The loader image has dispatch stubs for the cataloged `midi_in`
-site on both models and `mixer_apply_channel_parameter` on L6max. Other
-functions must be added to the catalog and loader dispatch before dynamic
+Registry layout 2 (magic `L6R2`):
+
+| Offset | Contents |
+| --- | --- |
+| `0` | Magic, loader stage, claim word |
+| `12` | Module count, then up to sixteen `(base, memory length)` pairs in load order, so tools and other patches can find each module |
+| `160` | The most recently loaded module's base and length |
+| `168` | Number of dispatch sites |
+| `172` | The emulator module arena's next address |
+| `0x100` | One 16-byte record per dispatch site: handler, first link, last link, link count |
+
+A dispatch stub loads its site's handler, the record's first word, with a
+12-bit offset, which allows up to 240 sites. Each link records the handler's
+entry, its module's continuation slot, its load order, its module and the next
+link on the same site. Loader packages built with this layout use update
+version marker `0115`; a layout 1 loader (`0114`) must be reinstalled.
+Functions must be added to the catalog and loader dispatch before dynamic
 modules can use them.
 
 ## Emulator scenarios

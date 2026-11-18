@@ -3820,27 +3820,15 @@ impl State {
                 } else {
                     module_hooks.first().map(|hook| hook.address)
                 };
-                let chain_row_size =
-                    core::mem::size_of::<patch_loader_core::dynamic::FunctionHookChain>() as u32;
                 let mut expected_chains = std::collections::BTreeMap::<u32, u32>::new();
                 for module_hook in &module_hooks {
                     *expected_chains.entry(module_hook.address).or_default() += 1;
                 }
                 for (address, module_count) in expected_chains {
-                    let row = (0..patch_loader_core::dynamic::MAX_FUNCTION_CHAINS)
-                        .map(|index| registry + 0x100 + index as u32 * chain_row_size)
-                        .find(|row| {
-                            qmp.read_memory(0, *row, 4).ok().is_some_and(|bytes| {
-                                u32::from_le_bytes(bytes.try_into().unwrap()) == address
-                            })
-                        });
-                    let actual_count = row
-                        .map(|row| {
-                            qmp.read_memory(0, row + 4, 4)
-                                .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
-                        })
-                        .transpose()?
-                        .unwrap_or(0);
+                    let record =
+                        sd_dynamic_handler_slot(options, session.engine.model(), registry, address)
+                            .map_err(std::io::Error::other)?;
+                    let (chain, _) = sd_site_chain(qmp, record)?;
                     let expected_count = if !loaded {
                         0
                     } else if Some(address) == expected_function {
@@ -3848,108 +3836,52 @@ impl State {
                     } else {
                         module_count
                     };
-                    if actual_count != expected_count {
+                    if chain.count != expected_count {
                         return Err(format!(
-                            "SD hook site {address:#010x} has {actual_count} registered modules, expected {expected_count}"
+                            "SD hook site {address:#010x} has {} registered hooks, expected {expected_count}",
+                            chain.count
                         )
                         .into());
-                    }
-                    if loaded {
-                        let row = row.ok_or("registered hook site has no chain row")?;
-                        let chain_head =
-                            u32::from_le_bytes(qmp.read_memory(0, row + 8, 4)?.try_into().unwrap());
-                        let slot = sd_dynamic_handler_slot(
-                            options,
-                            session.engine.model(),
-                            registry,
-                            address,
-                        )
-                        .map_err(std::io::Error::other)?;
-                        let published_head =
-                            u32::from_le_bytes(qmp.read_memory(0, slot, 4)?.try_into().unwrap());
-                        if published_head != chain_head {
-                            return Err(format!(
-                                "dispatch slot for {address:#010x} points to {published_head:#010x}, chain head is {chain_head:#010x}"
-                            )
-                            .into());
-                        }
                     }
                 }
 
-                let chain_address = if let Some(address) = expected_function {
-                    (0..patch_loader_core::dynamic::MAX_FUNCTION_CHAINS)
-                        .map(|index| registry + 0x100 + index as u32 * chain_row_size)
-                        .find(|row| {
-                            qmp.read_memory(0, *row, 4).ok().is_some_and(|bytes| {
-                                u32::from_le_bytes(bytes.try_into().unwrap()) == address
-                            })
-                        })
-                        .unwrap_or(registry + 0x100)
+                let (registered_count, chain_head, chain_links) = if let Some(address) =
+                    expected_function
+                {
+                    let record =
+                        sd_dynamic_handler_slot(options, session.engine.model(), registry, address)
+                            .map_err(std::io::Error::other)?;
+                    let (chain, links) = sd_site_chain(qmp, record)?;
+                    (chain.count, chain.handler, links)
                 } else {
-                    registry + 0x100
+                    (0, 0, Vec::new())
                 };
-                let registered_function =
-                    u32::from_le_bytes(qmp.read_memory(0, chain_address, 4)?.try_into().unwrap());
-                let registered_count = u32::from_le_bytes(
-                    qmp.read_memory(0, chain_address + 4, 4)?
-                        .try_into()
-                        .unwrap(),
-                );
-                if registered_count > patch_loader_core::dynamic::MAX_HOOKS_PER_FUNCTION as u32
-                    || loaded != (registered_count != 0)
-                    || (registered_count != 0 && Some(registered_function) != expected_function)
+                if loaded != (registered_count != 0)
                     || chain_count.is_some_and(|expected| registered_count != u32::from(expected))
                 {
                     return Err(format!(
-                        "SD hook chain state loaded={loaded}, function={registered_function:#010x}, count={registered_count}, expected function={expected_function:?}, expected count={chain_count:?}"
+                        "SD hook chain state loaded={loaded}, count={registered_count}, expected function={expected_function:?}, expected count={chain_count:?}"
                     )
                     .into());
                 }
-                let chain_head = if registered_count == 0 {
-                    0
-                } else {
-                    u32::from_le_bytes(
-                        qmp.read_memory(0, chain_address + 8, 4)?
-                            .try_into()
-                            .unwrap(),
-                    )
-                };
-                let published_head = if let Some(address) = expected_function {
-                    let slot =
-                        sd_dynamic_handler_slot(options, session.engine.model(), registry, address)
-                            .map_err(std::io::Error::other)?;
-                    u32::from_le_bytes(qmp.read_memory(0, slot, 4)?.try_into().unwrap())
-                } else {
-                    0
-                };
-                if published_head != chain_head {
-                    return Err(format!(
-                        "dynamic dispatch head {published_head:#010x} differs from hook-array head {chain_head:#010x}"
-                    )
-                    .into());
-                }
-                let mut chain_links = Vec::with_capacity(registered_count as usize);
                 let mut prior_order = None;
-                for index in 0..registered_count as usize {
-                    let link = chain_address + 8 + index as u32 * 16;
-                    let mut bytes = [0; 16];
-                    bytes.copy_from_slice(&qmp.read_memory(0, link, 16)?);
-                    let entry = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-                    let next_slot = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-                    let order = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
-                    let module = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
-                    if entry & 1 == 0
-                        || module == 0
-                        || prior_order.is_some_and(|prior| order < prior)
+                for (index, link) in chain_links.iter().enumerate() {
+                    if link.entry & 1 == 0
+                        || link.module_base == 0
+                        || prior_order.is_some_and(|prior| link.order < prior)
                     {
                         return Err(format!(
-                            "invalid SD hook link {index}: entry={entry:#010x}, module={module:#010x}, order={order}"
+                            "invalid SD hook link {index}: entry={:#010x}, module={:#010x}, order={}",
+                            link.entry, link.module_base, link.order
                         )
                         .into());
                     }
-                    prior_order = Some(order);
-                    chain_links.push((entry, next_slot, order, module));
+                    prior_order = Some(link.order);
                 }
+                let chain_links: Vec<(u32, u32, u32, u32)> = chain_links
+                    .iter()
+                    .map(|link| (link.entry, link.next_slot, link.order, link.module_base))
+                    .collect();
                 for (address, _, _entry_offset) in &edits {
                     let slot = if module_hooks.iter().any(|hook| hook.address == *address) {
                         sd_dynamic_handler_slot(options, session.engine.model(), registry, *address)
@@ -5980,11 +5912,70 @@ fn sd_dynamic_handler_slot(
         .iter()
         .position(|site| site["address"].as_u64() == Some(u64::from(function_address)))
         .ok_or_else(|| format!("function {function_address:#010x} has no SD dispatch slot"))?;
-    let table_offset = patch_loader_core::registry::HANDLER_TABLE_OFFSET;
+    let index = u32::try_from(index).map_err(|e| e.to_string())?;
     registry
-        .checked_add(table_offset)
-        .and_then(|base| base.checked_add(u32::try_from(index).ok()?.checked_mul(4)?))
+        .checked_add(patch_loader_core::registry::site_offset(index))
         .ok_or_else(|| "dynamic handler slot address overflow".into())
+}
+
+/// A dispatch site's registry record, at the record's address, and the links
+/// it chains, read from guest memory.
+fn sd_site_chain(
+    qmp: &l6max_host::qmp::QmpClient,
+    record: u32,
+) -> Result<
+    (
+        patch_loader_core::dynamic::SiteChain,
+        Vec<patch_loader_core::dynamic::HookLink>,
+    ),
+    Box<dyn std::error::Error>,
+> {
+    let words = |address: u32, count: usize| -> Result<Vec<u32>, Box<dyn std::error::Error>> {
+        Ok(qmp
+            .read_memory(0, address, count * 4)?
+            .chunks_exact(4)
+            .map(|word| u32::from_le_bytes(word.try_into().unwrap()))
+            .collect())
+    };
+    let value = words(record, 4)?;
+    let chain = patch_loader_core::dynamic::SiteChain {
+        handler: value[0],
+        first: value[1],
+        last: value[2],
+        count: value[3],
+    };
+    let mut links = Vec::new();
+    let mut next = chain.first;
+    while next != 0 {
+        if links.len() >= chain.count as usize {
+            return Err(format!(
+                "site record {record:#010x} chains more than {} links",
+                chain.count
+            )
+            .into());
+        }
+        let value = words(next, 6)?;
+        links.push(patch_loader_core::dynamic::HookLink {
+            entry: value[0],
+            next_slot: value[1],
+            order: value[2],
+            module_base: value[3],
+            next: value[4],
+            site: value[5],
+        });
+        next = value[4];
+    }
+    if links.len() != chain.count as usize
+        || links.last().is_some_and(|_| chain.last == 0)
+        || (chain.count != 0 && chain.handler != links[0].entry)
+    {
+        return Err(format!(
+            "site record {record:#010x} is inconsistent: {chain:?}, {} links",
+            links.len()
+        )
+        .into());
+    }
+    Ok((chain, links))
 }
 
 fn sd_knob_edits(options: &Options, main: &[u8]) -> Result<Vec<(u32, Vec<u8>)>, String> {

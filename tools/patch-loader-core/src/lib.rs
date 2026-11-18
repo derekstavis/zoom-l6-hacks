@@ -28,7 +28,11 @@ pub mod registry {
     /// language 6 string pointer array.
     pub const L6MAX_POINTER_STOCK: u32 = 0x8020_69e4;
 
-    /// Registry layout 2 ("L6R2"): adds the module table.
+    /// Registry layout 2 ("L6R2"): a fixed header with the module table, then
+    /// one [`SiteChain`](super::dynamic::SiteChain) record per dynamic dispatch
+    /// site in the installed hook catalog. Hook links live in each module's
+    /// own allocation, so the only limit on how many SD patches can hook a
+    /// site is free memory.
     pub const MAGIC: u32 = 0x4c36_5232;
     pub const MAGIC_OFFSET: u32 = 0;
     pub const DEBUG_OFFSET: u32 = 4;
@@ -42,24 +46,33 @@ pub mod registry {
     /// The most recently loaded module, kept for diagnostics.
     pub const MODULE_PTR_OFFSET: u32 = 160;
     pub const MODULE_LEN_OFFSET: u32 = 164;
-    pub const HOOK_CHAINS_OFFSET: u32 = 0x100;
-    /// One handler word per dynamic dispatch site, after the hook chains.
-    pub const HANDLER_TABLE_OFFSET: u32 = HOOK_CHAINS_OFFSET
-        + (super::dynamic::MAX_FUNCTION_CHAINS
-            * core::mem::size_of::<super::dynamic::FunctionHookChain>()) as u32;
+    /// Number of site records after the header, from the loader's catalog.
+    pub const SITE_COUNT_OFFSET: u32 = 168;
     /// The QEMU-only module arena's next free address.
-    pub const ARENA_NEXT_OFFSET: u32 = 0x700;
-    /// Bytes allocated for the registry.
-    pub const LEN: u32 = ARENA_NEXT_OFFSET + 4;
+    pub const ARENA_NEXT_OFFSET: u32 = 172;
+    /// First site record. Site `n`'s record is at `SITES_OFFSET + n * 16`.
+    pub const SITES_OFFSET: u32 = 0x100;
+    pub const SITE_RECORD_LEN: u32 = 16;
+    /// Dispatch stubs load a site's handler with a 12-bit offset, which
+    /// bounds the number of sites a registry can hold.
+    pub const MAX_SITES: u32 = (0x1000 - SITES_OFFSET) / SITE_RECORD_LEN;
 
     const _: () = assert!(
         MODULE_TABLE_OFFSET + MAX_MODULES * MODULE_TABLE_ENTRY_LEN <= MODULE_PTR_OFFSET
-            && MODULE_LEN_OFFSET < HOOK_CHAINS_OFFSET
-            && HANDLER_TABLE_OFFSET + super::dynamic::MAX_FUNCTION_CHAINS as u32 * 4
-                <= ARENA_NEXT_OFFSET
-            // Dispatch stubs reach each handler with a 12-bit load offset.
-            && ARENA_NEXT_OFFSET < 0x1000
+            && MODULE_LEN_OFFSET < SITE_COUNT_OFFSET
+            && ARENA_NEXT_OFFSET + 4 <= SITES_OFFSET
+            && SITE_RECORD_LEN as usize == core::mem::size_of::<super::dynamic::SiteChain>()
     );
+
+    /// Offset of site `index`'s record, whose first word is its handler.
+    pub const fn site_offset(index: u32) -> u32 {
+        SITES_OFFSET + index * SITE_RECORD_LEN
+    }
+
+    /// Bytes allocated for a registry with `sites` dispatch sites.
+    pub const fn len(sites: u32) -> u32 {
+        site_offset(sites)
+    }
 
     /// The registry root word for a MAIN image loaded at `main_base`.
     pub const fn pointer_for_main_base(main_base: u32) -> u32 {
@@ -617,55 +630,79 @@ pub mod dynamic {
     pub const LOADER_ABI: u16 = 1;
     pub const HOOK_RECORD_LEN: usize = 12;
     pub const RELOCATION_RECORD_LEN: usize = 12;
-    /// Maximum number of distinct hook sites the resident loader can index.
-    /// The registry layout in [`crate::registry`] is sized from it.
-    // The L6max catalog exposes ten dynamic sites. Keep the registry sized
-    // for the complete catalog and bound per-module loader stack use.
-    pub const MAX_FUNCTION_CHAINS: usize = 10;
-    /// Maximum hook records accepted in one patch file. This covers the
-    /// current multi-site patch prototypes while keeping loader stack use
-    /// bounded.
-    pub const MAX_HOOKS_PER_MODULE: usize = 16;
-    pub const MAX_HOOKS_PER_FUNCTION: usize = 8;
+    /// Upper bound on hook records in one patch file. The loader keeps each
+    /// module's hook links in the module's own allocation, so this only
+    /// rejects nonsensical headers before allocating.
+    pub const MAX_HOOKS_PER_MODULE: usize = 1024;
     /// Maximum relocation records accepted in one patch file. The builder
     /// refuses larger modules, because the loader would reject them.
     pub const MAX_RELOCATIONS_PER_MODULE: usize = 256;
 
+    /// One installed hook. The loader places a module's links at the start of
+    /// the module's allocation, ahead of its code, so a link lives exactly as
+    /// long as the handler it describes.
     #[repr(C)]
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub struct HookLink {
         pub entry: u32,
         /// Address of this module's writable continuation pointer.
         pub next_slot: u32,
-        /// Zero-based position in the filename-sorted load sequence.
+        /// Load position: the file's place in filename order in the high 16
+        /// bits, the hook record's index in the low 16 bits.
         pub order: u32,
         pub module_base: u32,
+        /// The next link on the same site, or zero at the tail.
+        pub next: u32,
+        /// Dispatch site index in the loader's hook catalog.
+        pub site: u32,
     }
+    pub const LINK_LEN: usize = core::mem::size_of::<HookLink>();
 
+    /// A dispatch site's record in the registry. The dispatch stub reads
+    /// `handler`; the loader keeps the chain of links behind it.
     #[repr(C)]
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub struct FunctionHookChain {
-        pub address: u32,
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct SiteChain {
+        /// The first link's entry, or zero for the stock path.
+        pub handler: u32,
+        pub first: u32,
+        pub last: u32,
         pub count: u32,
-        pub links: [HookLink; MAX_HOOKS_PER_FUNCTION],
     }
 
-    impl Default for FunctionHookChain {
-        fn default() -> Self {
-            Self {
-                address: 0,
-                count: 0,
-                links: [HookLink::default(); MAX_HOOKS_PER_FUNCTION],
+    impl SiteChain {
+        /// Whether the record is empty or describes a chain whose head is
+        /// published. `entry_of` reads a link's entry.
+        pub fn is_consistent(&self, entry_of: impl Fn(u32) -> u32) -> bool {
+            if self.count == 0 {
+                self.handler == 0 && self.first == 0 && self.last == 0
+            } else {
+                self.first != 0 && self.last != 0 && self.handler == entry_of(self.first)
             }
+        }
+
+        /// Append the link at `link` with entry `entry`. Returns the previous
+        /// tail's address, whose `next` and continuation must then point at
+        /// the new link, or `None` when the link is the first and `handler`
+        /// now publishes it.
+        pub fn append(&mut self, link: u32, entry: u32) -> Option<u32> {
+            let previous = (self.count != 0).then_some(self.last);
+            if previous.is_none() {
+                self.first = link;
+                self.handler = entry;
+            }
+            self.last = link;
+            self.count += 1;
+            previous
         }
     }
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub enum ChainError {
-        DifferentFunction,
-        Full,
-        MissingContinuation,
-    }
+    /// Hook records are read into the start of the link area, then turned
+    /// into links from the last to the first: link `i` covers bytes
+    /// `24i..24i+24`, and every record `j < i` ends at or before `12i`, so no
+    /// unread record is overwritten.
+    pub const _HOOK_RECORDS_FIT_IN_LINKS: () =
+        assert!(core::mem::size_of::<Hook>() <= LINK_LEN && LINK_LEN % 8 == 0);
 
     pub trait PatchFilename {
         fn name_len(&self) -> usize;
@@ -726,45 +763,7 @@ pub mod dynamic {
             .cmp((0..right.name_len()).map(|i| right.name_byte(i)))
     }
 
-    impl FunctionHookChain {
-        /// Append a hook in already-sorted filename order. Returns the prior
-        /// tail's continuation slot, which the loader links to the new entry.
-        pub fn append(
-            &mut self,
-            address: u32,
-            entry: u32,
-            next_slot: u32,
-            order: u32,
-            module_base: u32,
-        ) -> Result<Option<u32>, ChainError> {
-            if address == 0 || entry == 0 || next_slot == 0 {
-                return Err(ChainError::MissingContinuation);
-            }
-            if self.count == 0 {
-                self.address = address;
-            } else if self.address != address {
-                return Err(ChainError::DifferentFunction);
-            }
-            let index = self.count as usize;
-            if index >= self.links.len() {
-                return Err(ChainError::Full);
-            }
-            let previous_slot = (index > 0).then(|| self.links[index - 1].next_slot);
-            self.links[index] = HookLink {
-                entry,
-                next_slot,
-                order,
-                module_base,
-            };
-            self.count += 1;
-            Ok(previous_slot)
-        }
-
-        pub fn head(&self) -> Option<u32> {
-            (self.count != 0).then_some(self.links[0].entry)
-        }
-    }
-
+    #[repr(C)]
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub struct Hook {
         pub address: u32,
@@ -1109,39 +1108,24 @@ mod dynamic_stream_tests {
     }
 
     #[test]
-    fn fixed_function_chain_preserves_append_order_and_rejects_overflow() {
-        let mut chain = dynamic::FunctionHookChain::default();
-        assert_eq!(
-            chain.append(0x8000_1000, 0x2001, 0x2100, 0, 0x2000),
-            Ok(None)
-        );
-        assert_eq!(
-            chain.append(0x8000_1000, 0x2201, 0x2300, 1, 0x2200),
-            Ok(Some(0x2100))
-        );
-        assert_eq!(chain.head(), Some(0x2001));
-        assert_eq!(chain.count, 2);
-        assert_eq!(chain.links[1].entry, 0x2201);
-        assert_eq!(chain.links[1].order, 1);
-        assert_eq!(
-            chain.append(0x8000_2000, 0x2401, 0x2500, 2, 0x2400),
-            Err(dynamic::ChainError::DifferentFunction)
-        );
-        for index in 2..dynamic::MAX_HOOKS_PER_FUNCTION {
-            chain
-                .append(
-                    0x8000_1000,
-                    0x3001 + (index as u32) * 0x100,
-                    0x3100,
-                    index as u32,
-                    0x3000,
-                )
-                .unwrap();
+    fn site_chain_appends_in_load_order_without_a_limit() {
+        let mut chain = dynamic::SiteChain::default();
+        assert!(chain.is_consistent(|_| 0));
+        assert_eq!(chain.append(0x2000, 0x2101), None);
+        assert_eq!(chain.handler, 0x2101);
+        let mut tail = 0x2000;
+        for index in 1..64u32 {
+            let link = 0x2000 + index * 0x100;
+            assert_eq!(chain.append(link, link + 0x101), Some(tail));
+            tail = link;
         }
+        assert_eq!(chain.count, 64);
         assert_eq!(
-            chain.append(0x8000_1000, 0x4001, 0x4100, 8, 0x4000),
-            Err(dynamic::ChainError::Full)
+            (chain.first, chain.last, chain.handler),
+            (0x2000, tail, 0x2101)
         );
+        assert!(chain.is_consistent(|link| if link == 0x2000 { 0x2101 } else { 0 }));
+        assert!(!chain.is_consistent(|_| 0x9999));
     }
 
     #[test]

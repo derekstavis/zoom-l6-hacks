@@ -114,9 +114,9 @@ Control Change messages on USB MIDI.
 
 ## Limitations
 
-- L6max 1.10 only, and installable in firmware only. The browser patcher and
-  the emulator's patch selector build firmware from precompiled templates,
-  which do not yet link identity records, so they do not offer menu-loader.
+- L6max 1.10 only, and installable in firmware only with `l6patch`. The
+  browser patcher and the emulator's patch selector link the identity records
+  of the patches they install, but do not offer menu-loader itself yet.
 - Items can extend the five stock menus above. Patch-defined submenus and
   value lists are not supported yet.
 - Only language 0 exists in this firmware, and titles are ASCII.

@@ -13,6 +13,7 @@
   ],
   "model": "L6max",
   "name": "din-mixer-control",
+  "patch_info_offset": 132,
   "payload_file": "din-mixer-control-80108cb0.bin",
   "payload_length": 156,
   "window_byte_total": 4,

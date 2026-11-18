@@ -13,6 +13,7 @@
   ],
   "model": "L6max",
   "name": "midi-sync",
+  "patch_info_offset": 972,
   "payload_file": "midi-sync-8010a4e0.bin",
   "payload_length": 996,
   "window_byte_total": 4,

@@ -295,9 +295,12 @@ The builder generates an identity record (`patchrt::PatchInfo`, exported as
 The record is how [menu-loader](../../patches/menu-loader/README.md) lists
 patches and finds their menu items:
 
-- **Static images:** `l6patch` links the records of the Patch loader and every
-  installed payload into a ring in placement order, so any record leads to
-  all of them.
+- **Static images:** `l6patch` and the browser patcher link the records of the
+  Patch loader and every installed payload into a ring in placement order, so
+  any record leads to all of them. Both call
+  `firmware_patch_core::link_identity_ring`, and browser templates record each
+  payload's `patch_info_offset`. A record's patch name comes from the payload
+  root's package directory, not the builder's output name.
 - **SD modules:** the composed linker script places the record at offset 0,
   where the loader's relocation fixes its pointers. The Patch loader records
   each module's base in its registry. A loader without registry layout 2

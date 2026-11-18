@@ -928,22 +928,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     }
     // Link the static identity records into a ring so menu-loader can list
     // every installed payload starting from its own record.
-    for (index, &record) in static_identities.iter().enumerate() {
-        let next = static_identities[(index + 1) % static_identities.len()];
-        let offset = usize::try_from(
-            record
-                .checked_add(firmware_patch_compile::PATCH_INFO_NEXT_OFFSET)
-                .and_then(|address| address.checked_sub(firmware_base))
-                .ok_or("identity record outside the MAIN image")?,
-        )?;
-        let word = firmware
-            .get_mut(offset..offset + 4)
-            .ok_or("identity record outside the MAIN image")?;
-        if word != [0; 4] {
-            return Err(format!("identity record at {record:#x} is already linked").into());
-        }
-        word.copy_from_slice(&next.to_le_bytes());
-    }
+    firmware_patch_core::link_identity_ring(&mut firmware, firmware_base, &static_identities)?;
     if options.experimental_patch_loader {
         let reserved_end = (module_end - firmware_base) as usize;
         let consumed = reserved_end - original_length;

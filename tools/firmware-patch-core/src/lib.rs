@@ -505,6 +505,36 @@ pub fn apply_patch_with_map(
 /// Writes the new main image length and update-version marker into a copy of
 /// `main_trailer.bin` (8 bytes: little-endian length, then 4 ASCII digits)
 /// and `package_footer.bin` (same two fields at its own fixed offsets).
+/// Offset of `patchrt::PatchInfo::next` within a payload's identity record.
+pub const PATCH_INFO_NEXT_OFFSET: u32 = 20;
+
+/// Link the identity records of every static payload into a ring, in the
+/// order given, by writing each record's `next` word. menu-loader starts from
+/// its own record and follows the ring to list every installed payload. The
+/// native and browser patchers both call this, so they produce identical
+/// images.
+pub fn link_identity_ring(
+    firmware: &mut [u8],
+    firmware_base: u32,
+    records: &[u32],
+) -> Result<(), String> {
+    for (index, &record) in records.iter().enumerate() {
+        let next = records[(index + 1) % records.len()];
+        let offset = record
+            .checked_add(PATCH_INFO_NEXT_OFFSET)
+            .and_then(|address| address.checked_sub(firmware_base))
+            .ok_or("identity record outside the MAIN image")? as usize;
+        let word = firmware
+            .get_mut(offset..offset + 4)
+            .ok_or("identity record outside the MAIN image")?;
+        if word != [0; 4] {
+            return Err(format!("identity record at {record:#x} is already linked"));
+        }
+        word.copy_from_slice(&next.to_le_bytes());
+    }
+    Ok(())
+}
+
 pub fn write_image_length_and_version(
     trailer: &mut [u8],
     footer: &mut [u8],

@@ -38,6 +38,8 @@ struct Unit {
     hooks: Vec<HookEdit>,
     hook_symbols: Vec<String>,
     continuation_slots: Vec<Option<ContinuationSlot>>,
+    /// Offset of the payload's identity record from `base`.
+    patch_info_offset: u32,
 }
 
 #[derive(Clone)]
@@ -63,6 +65,7 @@ struct LoaderUnit {
     template: Vec<u8>,
     windows: Vec<Window>,
     sites: Vec<LoaderSite>,
+    patch_info_offset: u32,
 }
 
 fn parse_hex(value: &Value) -> Result<u32, String> {
@@ -144,7 +147,15 @@ fn parse_unit(payload: &[u8], metadata_json: &str) -> Result<Unit, String> {
         hooks,
         hook_symbols,
         continuation_slots,
+        patch_info_offset: patch_info_offset(&meta)?,
     })
+}
+
+fn patch_info_offset(meta: &Value) -> Result<u32, String> {
+    meta["patch_info_offset"]
+        .as_u64()
+        .and_then(|offset| u32::try_from(offset).ok())
+        .ok_or_else(|| "template metadata missing patch_info_offset".to_owned())
 }
 
 /// Finds the one embedded unit for `name` at exactly `base` — every
@@ -233,6 +244,7 @@ fn parse_loader(payload: &[u8], metadata_json: &str) -> Result<LoaderUnit, Strin
         template: payload.to_vec(),
         windows,
         sites,
+        patch_info_offset: patch_info_offset(&meta)?,
     })
 }
 
@@ -361,9 +373,12 @@ pub fn apply_patches_with_loader(
     let mut loader_dispatch_targets = std::collections::BTreeMap::<u32, u32>::new();
     let mut output_version = UPDATE_VERSION;
     let mut loader_reserve = None;
+    // Identity records of every static payload, in placement order.
+    let mut identities = Vec::new();
     if install_patch_loader {
         let loader_base = base;
         let unit = find_loader(model, loader_base, &ordered)?;
+        identities.push(loader_base + unit.patch_info_offset);
         let mut payload = unit.template.clone();
         for window in &unit.windows {
             let offset = window
@@ -433,6 +448,7 @@ pub fn apply_patches_with_loader(
     }
     for &name in &ordered {
         let unit = find_unit(name, model, base)?;
+        identities.push(base + unit.patch_info_offset);
         diagnostic_hooks.extend(unit.hooks.iter().zip(&unit.hook_symbols).map(|(hook, symbol)| {
             serde_json::json!({"address": hook.address, "target": hook.target, "symbol": symbol, "displaced_length": hook.length})
         }));
@@ -540,6 +556,7 @@ pub fn apply_patches_with_loader(
             return Err("firmware feature payloads overlap the Patch loader module reserve".into());
         }
     }
+    firmware_patch_core::link_identity_ring(&mut firmware, firmware_base, &identities)?;
     if let Some((_, reserve_end)) = loader_reserve {
         let reserve_offset = reserve_end
             .checked_sub(firmware_base)

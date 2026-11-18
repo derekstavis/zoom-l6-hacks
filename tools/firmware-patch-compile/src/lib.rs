@@ -712,8 +712,21 @@ fn compile_inner(
         validate_guards,
         extra_cfgs,
         &root.join("src/payload.rs"),
-        &[patch_identity(name)],
+        &[patch_identity(
+            &package_name_for_root(root).unwrap_or_else(|| name.to_owned()),
+        )],
     )
+}
+
+/// The package a payload root belongs to: the directory name of the nearest
+/// ancestor holding a `package.toml`. Callers name their output files freely
+/// (for example `l6-midi-sync`), so the output name is not the patch name.
+fn package_name_for_root(root: &Path) -> Option<String> {
+    root.ancestors()
+        .find(|dir| dir.join("package.toml").is_file())
+        .and_then(|dir| dir.file_name())
+        .and_then(|name| name.to_str())
+        .map(str::to_owned)
 }
 
 /// The catalog name and version recorded in a payload's identity record.
@@ -732,8 +745,7 @@ pub const MENU_ITEM_LEN: u32 = 36;
 pub const MENU_ITEMS_SYMBOL_PREFIX: &str = "__l6_menu_items_";
 /// Symbol of the identity record in every payload.
 pub const PATCH_INFO_SYMBOL: &str = "__l6_patch_info";
-/// Offset of `PatchInfo::next`, which the static builder fills.
-pub const PATCH_INFO_NEXT_OFFSET: u32 = 20;
+pub use firmware_patch_core::PATCH_INFO_NEXT_OFFSET;
 
 fn rust_string(text: &str) -> String {
     format!("{text:?}")
@@ -2171,5 +2183,18 @@ mod tests {
         );
         // An ".rs" without a path is not a source location.
         assert_eq!(diagnostic_text(b"\x00a.rs\x00errs\x00"), None);
+    }
+
+    #[test]
+    fn identity_names_come_from_the_package_directory() {
+        let patches = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../patches");
+        assert_eq!(
+            package_name_for_root(&patches.join("midi-sync/l6")).as_deref(),
+            Some("midi-sync")
+        );
+        assert_eq!(
+            package_name_for_root(&patches.join("knob-dialog")).as_deref(),
+            Some("knob-dialog")
+        );
     }
 }

@@ -40,7 +40,7 @@ image = { version = "0.25.1", default-features = false, features = ["png"] }
 [profile.dev.package.l6max-host]
 opt-level = 3
 
-[profile.dev.package.gpui]
+[profile.dev.package.gpui-pre]
 opt-level = 1
 [profile.dev.package.resvg]
 opt-level = 2

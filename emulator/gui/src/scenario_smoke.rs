@@ -5,7 +5,7 @@ use crate::components::{
 };
 use gpui::{
     App, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, ScrollDelta,
-    ScrollWheelEvent, Window, point, px,
+    ScrollEvent, Window, point, px,
 };
 use l6max_host::input::InputHub;
 use smoke_core::{Command, Gesture, Progress, Runner};
@@ -146,7 +146,7 @@ fn dispatch(
     }
     if let Some((steps, Gesture::Scroll)) = gesture {
         window.dispatch_event(
-            PlatformInput::ScrollWheel(ScrollWheelEvent {
+            PlatformInput::Scroll(ScrollEvent {
                 position,
                 delta: ScrollDelta::Lines(point(0.0, steps as f32)),
                 ..Default::default()

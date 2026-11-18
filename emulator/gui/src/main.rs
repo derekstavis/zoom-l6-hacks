@@ -12,9 +12,13 @@ mod scenario_smoke;
 
 use components::layout::Layout;
 use gpui::{
-    AnimationExt, App, Bounds, Context, CursorStyle, ImageSource, KeyBinding, Menu, MenuItem,
-    MouseButton, PathPromptOptions, Render, RenderImage, SharedString, Window, WindowBounds,
-    WindowOptions, actions, div, img, prelude::*, px, rgb, rgba, size,
+    App, Bounds, Context, Entity, ImageSource, KeyBinding, Menu, MenuItem, PathPromptOptions,
+    Render, RenderImage, SharedString, Window, WindowBounds, WindowOptions, actions, div, img,
+    prelude::*, px, rgb, size,
+};
+use gpui_component::{
+    Icon, Root, Sizable, StyledExt, WindowExt, alert::Alert, dialog::DialogEntrance,
+    shimmer::ShimmerText,
 };
 use gpui_platform::application;
 use image::{Frame, ImageBuffer, Rgba};
@@ -34,6 +38,10 @@ use std::{
 const LCD_BUFFER_WIDTH: u32 = 128;
 const LCD_BUFFER_HEIGHT: u32 = 64;
 const DEFAULT_BUTTON_PRESS_TICKS: u32 = 50;
+#[cfg(target_os = "macos")]
+const AUDIO_INPUT_SHORTCUT: &str = "cmd-alt-i";
+#[cfg(not(target_os = "macos"))]
+const AUDIO_INPUT_SHORTCUT: &str = "ctrl-alt-i";
 
 fn startup_key_targets(
     model: l6fw::Model,
@@ -184,8 +192,7 @@ fn app_menus(state: MenuState) -> Vec<Menu> {
 }
 
 /// A message shown along the top of the main window, over the jacks rather than
-/// the controls. Errors and hints stay until
-/// dismissed or resolved; confirmations fade.
+/// the controls. Errors and hints stay until resolved; confirmations fade.
 struct Notice {
     text: SharedString,
     error: bool,
@@ -212,31 +219,119 @@ pub(crate) fn notice_anchor(model: l6fw::Model, scale: f32) -> gpui::Div {
 }
 
 /// The notice element, shared with headless rendering.
-pub(crate) fn notice_view(text: SharedString, error: bool) -> gpui::Div {
-    div()
+pub(crate) fn notice_view(text: SharedString, error: bool) -> Alert {
+    let (background, border) = if error {
+        (0x3a1c22, 0x7a3a40)
+    } else {
+        (0x171f30, 0x34405c)
+    };
+    let alert = if error {
+        Alert::error("emulator-notice", text)
+    } else {
+        Alert::info("emulator-notice", text)
+    };
+    alert
+        .with_size(gpui_component::Size::Small)
+        .icon(Icon::default().w(px(1.0)).h(px(1.0)))
+        .w_auto()
         .max_w(px(560.0))
-        .px_4()
-        .py_2()
-        .rounded_lg()
-        .border_1()
-        .border_color(rgb(if error { 0x7a3a40 } else { 0x34405c }))
-        .bg(rgb(if error { 0x3a1c22 } else { 0x171f30 }))
-        .text_sm()
-        .text_color(rgb(if error { 0xffb3a7 } else { 0xe8eef8 }))
-        .child(text)
+        .pl(px(8.5))
+        .pr(px(15.5))
+        .text_center()
+        .bg(rgb(background))
+        .border_color(rgb(border))
+}
+
+fn open_firmware_selection_dialog(
+    window: &mut Window,
+    cx: &mut App,
+    panel_view: Entity<NativePanel>,
+    error: Option<String>,
+    has_firmware: bool,
+) {
+    let description: SharedString = match error {
+        Some(error) => format!("{error}\nChoose another firmware file to try again.").into(),
+        None if has_firmware => {
+            "Choose another L6 or L6max firmware update. The current firmware will keep running until it is ready.".into()
+        }
+        None => "Choose your L6 or L6max firmware update to start the emulator. Firmware is not included.".into(),
+    };
+
+    window.open_alert_dialog(cx, move |alert, _, _| {
+        let action_view = panel_view.clone();
+        let alert = alert
+            .title(div().text_2xl().child("Select firmware"))
+            .description(description.clone())
+            .centered()
+            .width(px(420.0))
+            .entrance(DialogEntrance::Fade)
+            .keyboard(false)
+            .ok_text(if has_firmware {
+                "Choose firmware…"
+            } else {
+                "Select firmware…"
+            })
+            .on_ok(move |_, _, cx| {
+                action_view.update(cx, |panel, cx| {
+                    panel.selection_dialog_open = false;
+                    panel.choose_firmware(cx);
+                });
+                true
+            });
+
+        if has_firmware {
+            let keep_view = panel_view.clone();
+            alert
+                .confirm()
+                .cancel_text("Keep current firmware")
+                .on_cancel(move |_, _, cx| {
+                    keep_view.update(cx, |panel, cx| {
+                        panel.firmware_error = None;
+                        panel.selection_dialog_open = false;
+                        cx.notify();
+                    });
+                    true
+                })
+        } else {
+            alert
+        }
+    });
+}
+
+fn open_patch_application_dialog(window: &mut Window, cx: &mut App) {
+    window.open_dialog(cx, |dialog, _, _| {
+        dialog
+            .centered()
+            .width(px(420.0))
+            .entrance(DialogEntrance::Fade)
+            .keyboard(false)
+            .overlay_closable(false)
+            .close_button(false)
+            .child(
+                div()
+                    .w_full()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(ShimmerText::new("Applying patches...").font_semibold()),
+            )
+    });
 }
 
 struct NativePanel {
     /// The model the window is sized for.
     window_model: l6fw::Model,
     window_settling_frames: u8,
-    audio_window: Option<gpui::WindowHandle<audio_window::AudioWindow>>,
-    patches_window: Option<gpui::WindowHandle<patches_window::PatchesWindow>>,
+    audio_window: Option<gpui::WindowHandle<Root>>,
+    patches_window: Option<gpui::WindowHandle<Root>>,
+    root_window: Option<gpui::WindowHandle<Root>>,
     /// The card taken out with Eject SD Card, which Insert SD Card puts back.
     ejected_card: Option<std::path::PathBuf>,
     notice: Option<Notice>,
     /// Set while a restart for a new patch selection runs in the background.
     applying_patches: bool,
+    patch_application_dialog_open: bool,
     patch_error: Option<String>,
     /// The engine that restart is starting, locked for as long as it takes.
     starting_engine: Arc<Mutex<Option<Engine>>>,
@@ -252,6 +347,7 @@ struct NativePanel {
     model: l6fw::Model,
     bundle: Option<bundle::Bundle>,
     firmware_error: Option<String>,
+    selection_dialog_open: bool,
     choosing_firmware: bool,
     importing_sd: bool,
     display: Option<PanelFeed>,
@@ -280,7 +376,43 @@ struct NativePanel {
     menu_smoke: Option<menu_smoke::MenuSmoke>,
 }
 
+fn defer_panel_update(
+    cx: &mut App,
+    view: &Entity<NativePanel>,
+    update: impl FnOnce(&mut NativePanel, &mut Context<NativePanel>) + 'static,
+) {
+    let view = view.clone();
+    cx.defer(move |cx| view.update(cx, update));
+}
+
+fn should_show_firmware_dialog(
+    has_bundle: bool,
+    dialog_open: bool,
+    choosing_firmware: bool,
+    applying_patches: bool,
+    waiting_for_startup_firmware: bool,
+    has_error: bool,
+) -> bool {
+    has_bundle
+        && !dialog_open
+        && !choosing_firmware
+        && !applying_patches
+        && (waiting_for_startup_firmware || has_error)
+}
+
 impl NativePanel {
+    fn firmware_dialog_state(&self) -> Option<(Option<String>, bool)> {
+        let should_show = should_show_firmware_dialog(
+            self.bundle.is_some(),
+            self.selection_dialog_open,
+            self.choosing_firmware,
+            self.applying_patches,
+            self.controls.is_none() && !self.powered_off,
+            self.firmware_error.is_some(),
+        );
+        should_show.then(|| (self.firmware_error.clone(), self.controls.is_some()))
+    }
+
     fn panel_data(&self) -> components::panel::PanelData {
         let switches = std::array::from_fn(|id| {
             self.button_pressed[id].load(std::sync::atomic::Ordering::Relaxed)
@@ -436,24 +568,48 @@ impl NativePanel {
             multiple: false,
             prompt: Some("Select L6 or L6max firmware".into()),
         });
-        cx.spawn(async move |this, cx| {
+        let panel_view = cx.entity();
+        let root_window = self.root_window;
+        cx.spawn(async move |_this, cx| {
             let selection = prompt.await;
-            let _ = this.update(cx, |panel, cx| {
+            let dialog_state = panel_view.update(cx, |panel, cx| {
                 panel.choosing_firmware = false;
+                let mut reopen = false;
                 match selection {
                     Ok(Ok(Some(paths))) => {
                         if let Some(path) = paths.first() {
                             if let Err(error) = panel.load_firmware(path) {
                                 panel.firmware_error = Some(error);
+                                reopen = true;
                             }
+                        } else {
+                            reopen = panel.controls.is_none();
                         }
                     }
-                    Ok(Ok(None)) => {}
-                    Ok(Err(error)) => panel.firmware_error = Some(error.to_string()),
-                    Err(error) => panel.firmware_error = Some(error.to_string()),
+                    Ok(Ok(None)) => reopen = panel.controls.is_none(),
+                    Ok(Err(error)) => {
+                        panel.firmware_error = Some(error.to_string());
+                        reopen = true;
+                    }
+                    Err(error) => {
+                        panel.firmware_error = Some(error.to_string());
+                        reopen = true;
+                    }
                 }
+                reopen |= panel.firmware_error.is_some();
+                let dialog_state =
+                    reopen.then(|| (panel.firmware_error.clone(), panel.controls.is_some()));
+                panel.selection_dialog_open = reopen;
                 cx.notify();
+                dialog_state
             });
+            if let (Some((error, has_firmware)), Some(root_window)) = (dialog_state, root_window) {
+                let panel_view = panel_view.clone();
+                let _ = cx.update_window(root_window.into(), move |_, window, cx| {
+                    window.close_dialog(cx);
+                    open_firmware_selection_dialog(window, cx, panel_view, error, has_firmware);
+                });
+            }
         })
         .detach();
         cx.notify();
@@ -468,7 +624,7 @@ impl NativePanel {
             return;
         }
         if self.controls.is_none() {
-            self.firmware_error = Some("Select firmware before adding an SD card.".into());
+            self.report("Select firmware before adding an SD card.", true);
             cx.notify();
             return;
         }
@@ -486,8 +642,7 @@ impl NativePanel {
                 Ok(Ok(None)) => None,
                 result => {
                     let _ = this.update(cx, |panel, cx| {
-                        panel.firmware_error =
-                            Some(format!("Could not select SD folder: {result:?}"));
+                        panel.report(format!("Could not select SD folder: {result:?}"), true);
                         cx.notify();
                     });
                     None
@@ -521,7 +676,7 @@ impl NativePanel {
                     panel.importing_sd = false;
                     let result = result.and_then(|image| panel.use_sd_image(image));
                     if let Err(error) = result {
-                        panel.firmware_error = Some(format!("SD card folder: {error}"));
+                        panel.report(format!("SD card folder: {error}"), true);
                     }
                     cx.notify();
                 });
@@ -559,7 +714,8 @@ impl NativePanel {
                 },
                 |window, cx| {
                     window.set_window_title("Firmware Patches");
-                    cx.new(|cx| patches_window::PatchesWindow::new(view, cx))
+                    let patches = cx.new(|cx| patches_window::PatchesWindow::new(view, cx));
+                    cx.new(|cx| Root::new(patches, window, cx))
                 },
             );
             panel.update(cx, |panel, cx| match window {
@@ -595,8 +751,21 @@ impl NativePanel {
             return;
         }
         self.applying_patches = true;
+        self.patch_application_dialog_open = true;
         self.patch_error = None;
         cx.notify();
+        let root_window = self.root_window;
+        let panel_view = cx.entity();
+        cx.defer(move |cx| {
+            if !panel_view.read(cx).patch_application_dialog_open {
+                return;
+            }
+            if let Some(root_window) = root_window {
+                let _ = cx.update_window(root_window.into(), move |_, window, cx| {
+                    open_patch_application_dialog(window, cx);
+                });
+            }
+        });
         let model = self.model;
         let patches_window::Selection {
             firmware: selected,
@@ -669,8 +838,10 @@ impl NativePanel {
                     adopted
                 }
             };
-            let _ = this.update(cx, |panel, cx| {
+            let close_dialog = this.update(cx, |panel, cx| {
                 panel.applying_patches = false;
+                let close_dialog =
+                    std::mem::replace(&mut panel.patch_application_dialog_open, false);
                 if let Err(error) = result {
                     (
                         panel.options.patches,
@@ -685,7 +856,15 @@ impl NativePanel {
                     panel.open_patches_window(cx);
                 }
                 cx.notify();
+                close_dialog
             });
+            if matches!(close_dialog, Ok(true))
+                && let Some(root_window) = root_window
+            {
+                let _ = cx.update_window(root_window.into(), |_, window, cx| {
+                    window.close_dialog(cx);
+                });
+            }
         })
         .detach();
     }
@@ -712,7 +891,8 @@ impl NativePanel {
                 },
                 |window, cx| {
                     window.set_window_title("Audio Input");
-                    cx.new(|cx| audio_window::AudioWindow::new(view, cx))
+                    let audio = cx.new(|cx| audio_window::AudioWindow::new(view, cx));
+                    cx.new(|cx| Root::new(audio, window, cx))
                 },
             );
             panel.update(cx, |panel, cx| match window {
@@ -1238,7 +1418,7 @@ impl NativePanel {
 }
 
 impl Render for NativePanel {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let viewport = window.viewport_size();
         let scale = (viewport.width.as_f32() / self.layout.width)
             .min(viewport.height.as_f32() / self.layout.height)
@@ -1250,9 +1430,6 @@ impl Render for NativePanel {
         let lcd_width = LCD_BUFFER_WIDTH as f32 * lcd_scale;
         let lcd_height = LCD_BUFFER_HEIGHT as f32 * lcd_scale;
         let interactions = self.panel_interactions(scale);
-        let show_selection = self.bundle.is_some()
-            && !self.applying_patches
-            && (self.controls.is_none() && !self.powered_off || self.firmware_error.is_some());
         let drag_move = interactions.encoder_drag_move.clone();
         let channels = components::layout::interactive_knob_indices(self.model);
         div()
@@ -1314,92 +1491,12 @@ impl Render for NativePanel {
                             .map(|notice| (notice.text.clone(), notice.error)),
                         |element, (text, error)| {
                             element.child(
-                                notice_anchor(self.model, scale).child(
-                                    notice_view(text, error)
-                                        .id("notice")
-                                        .cursor(CursorStyle::PointingHand)
-                                        .on_mouse_down(
-                                            MouseButton::Left,
-                                            cx.listener(|panel, _, _, cx| {
-                                                cx.stop_propagation();
-                                                panel.notice = None;
-                                                cx.notify();
-                                            }),
-                                        ),
-                                ),
+                                notice_anchor(self.model, scale).child(notice_view(text, error)),
                             )
                         },
                     ),
             )
-            .when(self.applying_patches, |element| {
-                element.child(
-                    div()
-                        .absolute()
-                        .size_full()
-                        .occlude()
-                        .bg(rgba(0x080c18dd))
-                        .flex()
-                        .flex_col()
-                        .gap_3()
-                        .items_center()
-                        .justify_center()
-                        .text_color(rgb(0xe8eef8))
-                        .child("Applying firmware patches…")
-                        .child(progress("panel-applying", 240.0)),
-                )
-            })
-            .when(show_selection, |element| element.child(
-                div().absolute().size_full().occlude().bg(rgba(0x080c18dd))
-                    .flex().items_center().justify_center()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(div().id("firmware-dialog").w(px(420.0)).max_h(px((viewport.height.as_f32() - 24.0).max(120.0))).overflow_y_scroll().p_8().rounded_xl().bg(rgb(0x171f30))
-                        .border_1().border_color(rgb(0x34405c)).text_color(rgb(0xe8eef8))
-                        .flex().flex_col().gap_4()
-                        .child(div().text_2xl().child(if self.controls.is_some() { "Unable to open selection" } else { "Select firmware" }))
-                        .child(if self.controls.is_some() { "Use the File menu to choose another firmware or SD card folder." } else { "Choose your L6 or L6max update file to start the emulator. Firmware is not included." })
-                        .when(self.firmware_error.is_some(), |element| element.child(
-                            div().text_color(rgb(0xffb3a7)).child(self.firmware_error.clone().unwrap_or_default())
-                        ))
-                        .child(div().id("select-firmware").rounded_md().px_4().py_3()
-                            .bg(rgb(0x5367df)).cursor(CursorStyle::PointingHand)
-                            .child(if self.choosing_firmware { "Choosing…" } else { "Select firmware…" })
-                            .on_mouse_down(MouseButton::Left, cx.listener(|panel, _, _, cx| panel.choose_firmware(cx))))
-                        .when(self.controls.is_some(), |element| element.child(
-                            div().id("dismiss-firmware-error").cursor(CursorStyle::PointingHand)
-                                .child("Keep current firmware")
-                                .on_mouse_down(MouseButton::Left, cx.listener(|panel, _, _, cx| {
-                                    panel.firmware_error = None;
-                                    cx.notify();
-                                }))
-                        ))
-                    )
-            ))
     }
-}
-
-/// An indicator for work of unknown length.
-fn progress(id: &'static str, width: f32) -> gpui::Div {
-    let segment = width / 3.0;
-    div()
-        .relative()
-        .w(px(width))
-        .h(px(6.0))
-        .rounded_sm()
-        .overflow_hidden()
-        .bg(rgb(0x171d2c))
-        .child(
-            div()
-                .absolute()
-                .h_full()
-                .w(px(segment))
-                .rounded_sm()
-                .bg(rgb(0x5b8def))
-                .with_animation(
-                    id,
-                    gpui::Animation::new(Duration::from_millis(1200)).repeat(),
-                    move |bar, delta| bar.left(px(delta * (width + segment) - segment)),
-                ),
-        )
 }
 
 #[cfg(target_os = "macos")]
@@ -1655,12 +1752,60 @@ fn main() {
         });
     let passed = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let result = passed.clone();
-    application().run(move |cx: &mut App| {
+    let application = application().with_assets(gpui_kit_assets::Assets);
+    application.run(move |cx: &mut App| {
+        components::theme::init(cx);
         let layout = Layout::for_model(model);
         let device_width = components::layout::window_width(model);
         let device_height = device_width * layout.height / layout.width;
         let bounds = Bounds::centered(None, size(px(device_width), px(device_height)), cx);
-        let view = cx
+        let panel = cx.new(|_| NativePanel {
+            window_model: model,
+            window_settling_frames: 0,
+            audio_window: None,
+            patches_window: None,
+            root_window: None,
+            ejected_card: None,
+            notice: None,
+            applying_patches: false,
+            patch_application_dialog_open: false,
+            patch_error: None,
+            starting_engine: Arc::new(Mutex::new(None)),
+            audio_patch,
+            audio_conversion: None,
+            audio_sync_needed: true,
+            audio_length_ms: 0,
+            audio_error: None,
+            layout,
+            model,
+            bundle,
+            firmware_error,
+            selection_dialog_open: false,
+            choosing_firmware: false,
+            importing_sd: false,
+            display,
+            frame: Arc::new(RenderImage::new(SmallVec::new())),
+            last_frame: [0; 1024],
+            last_control_revision: None,
+            status: "Waiting for firmware".into(),
+            controls: controls.clone(),
+            button_pressed: std::array::from_fn(|_| {
+                Arc::new(std::sync::atomic::AtomicBool::new(false))
+            }),
+            scenario_press_duration: Arc::new(AtomicU32::new(0)),
+            knob_drags: std::array::from_fn(|_| Arc::new(Mutex::new(KnobInput::default()))),
+            _qemu: Some(qemu_processes),
+            powered_off: false,
+            powered_off_signal: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            power_on_requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            physical_analog: [512; 5],
+            scenario_smoke,
+            bundle_smoke: bundle_smoke::BundleSmoke::from_environment(),
+            menu_smoke: menu_smoke::MenuSmoke::from_environment(),
+            options,
+        });
+        let view = panel.clone();
+        let panel_window = cx
             .open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -1668,178 +1813,101 @@ fn main() {
                     window_min_size: Some(size(px(600.0), px(device_height / 2.0))),
                     ..Default::default()
                 },
-                |window, cx| {
+                move |window, cx| {
                     configure_window(window, device_width, device_height);
                     window.set_window_title(&format!("{} Emulator", model_name(model)));
-                    cx.new(|_| NativePanel {
-                        window_model: model,
-                        window_settling_frames: 0,
-                        audio_window: None,
-                        patches_window: None,
-                        ejected_card: None,
-                        notice: None,
-                        applying_patches: false,
-                        patch_error: None,
-                        starting_engine: Arc::new(Mutex::new(None)),
-                        audio_patch,
-                        audio_conversion: None,
-                        audio_sync_needed: true,
-                        audio_length_ms: 0,
-                        audio_error: None,
-                        layout,
-                        model,
-                        bundle,
-                        firmware_error,
-                        choosing_firmware: false,
-                        importing_sd: false,
-                        display,
-                        frame: Arc::new(RenderImage::new(SmallVec::new())),
-                        last_frame: [0; 1024],
-                        last_control_revision: None,
-                        status: "Waiting for firmware".into(),
-                        controls: controls.clone(),
-                        button_pressed: std::array::from_fn(|_| {
-                            Arc::new(std::sync::atomic::AtomicBool::new(false))
-                        }),
-                        scenario_press_duration: Arc::new(AtomicU32::new(0)),
-                        knob_drags: std::array::from_fn(|_| {
-                            Arc::new(Mutex::new(KnobInput::default()))
-                        }),
-                        _qemu: Some(qemu_processes),
-                        powered_off: false,
-                        powered_off_signal: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                        power_on_requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                        physical_analog: [512; 5],
-                        scenario_smoke,
-                        bundle_smoke: bundle_smoke::BundleSmoke::from_environment(),
-                        menu_smoke: menu_smoke::MenuSmoke::from_environment(),
-                        options,
-                    })
+                    cx.new(|cx| Root::new(panel, window, cx))
                 },
             )
             .expect("open L6 family native window");
+        let selection_dialog = view.update(cx, |panel, _| {
+            panel.root_window = Some(panel_window);
+            let dialog = panel.firmware_dialog_state();
+            panel.selection_dialog_open = dialog.is_some();
+            dialog
+        });
+        if let Some((error, has_firmware)) = selection_dialog {
+            let panel_view = view.clone();
+            let _ = cx.update_window(panel_window.into(), move |_, window, cx| {
+                open_firmware_selection_dialog(window, cx, panel_view, error, has_firmware);
+            });
+        }
         if bundled {
+            let action_view = view.clone();
             cx.on_action(move |_: &OpenFirmware, cx| {
                 // Global actions bubble while GPUI holds the active window. Updating
                 // it here fails with "window not found"; defer until dispatch ends.
-                cx.defer(move |cx| {
-                    if let Err(error) = view.update(cx, |panel, _, cx| panel.choose_firmware(cx)) {
-                        tracing::error!(%error, "Open Firmware action failed");
-                    }
-                });
+                defer_panel_update(cx, &action_view, |panel, cx| panel.choose_firmware(cx));
             });
+            let action_view = view.clone();
             cx.on_action(move |_: &OpenSdFolder, cx| {
-                cx.defer(move |cx| {
-                    if let Err(error) = view.update(cx, |panel, _, cx| panel.choose_sd_folder(cx)) {
-                        tracing::error!(%error, "SD Card Folder action failed");
-                    }
-                });
+                defer_panel_update(cx, &action_view, |panel, cx| panel.choose_sd_folder(cx));
             });
         }
         cx.on_action(|_: &Quit, cx| cx.quit());
+        let action_view = view.clone();
         cx.on_action(move |_: &OpenPatchesWindow, cx| {
-            cx.defer(move |cx| {
-                if let Err(error) = view.update(cx, |panel, _, cx| {
-                    panel.patch_error = None;
-                    panel.open_patches_window(cx)
-                }) {
-                    tracing::error!(%error, "Patches window action failed");
-                }
+            defer_panel_update(cx, &action_view, |panel, cx| {
+                panel.patch_error = None;
+                panel.open_patches_window(cx)
             });
         });
+        let action_view = view.clone();
         cx.on_action(move |_: &OpenAudioWindow, cx| {
-            cx.defer(move |cx| {
-                if let Err(error) = view.update(cx, |panel, _, cx| panel.open_audio_window(cx)) {
-                    tracing::error!(%error, "Audio window action failed");
-                }
-            });
+            defer_panel_update(cx, &action_view, |panel, cx| panel.open_audio_window(cx));
         });
+        let action_view = view.clone();
         cx.on_action(move |_: &PlayAudioInputs, cx| {
-            cx.defer(move |cx| {
-                let result = view.update(cx, |panel, _, cx| {
-                    panel.audio_input_transport(l6max_host::protocol::AUDIO_INPUT_PLAY, cx)
-                });
-                if let Err(error) = result {
-                    tracing::error!(%error, "Play audio action failed");
-                }
+            defer_panel_update(cx, &action_view, |panel, cx| {
+                panel.audio_input_transport(l6max_host::protocol::AUDIO_INPUT_PLAY, cx)
             });
         });
+        let action_view = view.clone();
         cx.on_action(move |_: &PauseAudioInputs, cx| {
-            cx.defer(move |cx| {
-                let result = view.update(cx, |panel, _, cx| {
-                    panel.audio_input_transport(l6max_host::protocol::AUDIO_INPUT_PAUSE, cx)
-                });
-                if let Err(error) = result {
-                    tracing::error!(%error, "Pause audio action failed");
-                }
+            defer_panel_update(cx, &action_view, |panel, cx| {
+                panel.audio_input_transport(l6max_host::protocol::AUDIO_INPUT_PAUSE, cx)
             });
         });
+        let action_view = view.clone();
         cx.on_action(move |_: &StopAudioInputs, cx| {
-            cx.defer(move |cx| {
-                let result = view.update(cx, |panel, _, cx| {
-                    panel.audio_input_transport(l6max_host::protocol::AUDIO_INPUT_STOP, cx)
-                });
-                if let Err(error) = result {
-                    tracing::error!(%error, "Stop audio action failed");
-                }
+            defer_panel_update(cx, &action_view, |panel, cx| {
+                panel.audio_input_transport(l6max_host::protocol::AUDIO_INPUT_STOP, cx)
             });
         });
+        let action_view = view.clone();
         cx.on_action(move |_: &RewindAudioInputs, cx| {
-            cx.defer(move |cx| {
-                let result = view.update(cx, |panel, _, cx| panel.audio_input_seek(0, cx));
-                if let Err(error) = result {
-                    tracing::error!(%error, "Rewind audio action failed");
-                }
-            });
+            defer_panel_update(cx, &action_view, |panel, cx| panel.audio_input_seek(0, cx));
         });
+        let action_view = view.clone();
         cx.on_action(move |_: &ConnectUsb, cx| {
-            cx.defer(move |cx| {
-                if let Err(error) = view.update(cx, |panel, _, cx| panel.connect_usb(cx)) {
-                    tracing::error!(%error, "Connect USB action failed");
-                }
-            });
+            defer_panel_update(cx, &action_view, |panel, cx| panel.connect_usb(cx));
         });
+        let action_view = view.clone();
         cx.on_action(move |_: &DisconnectUsb, cx| {
-            cx.defer(move |cx| {
-                if let Err(error) = view.update(cx, |panel, _, cx| panel.disconnect_usb(cx)) {
-                    tracing::error!(%error, "Disconnect USB action failed");
-                }
-            });
+            defer_panel_update(cx, &action_view, |panel, cx| panel.disconnect_usb(cx));
         });
+        let action_view = view.clone();
         cx.on_action(move |_: &ConnectMidi, cx| {
-            cx.defer(move |cx| {
-                if let Err(error) = view.update(cx, |panel, _, cx| panel.connect_midi(cx)) {
-                    tracing::error!(%error, "Connect MIDI action failed");
-                }
-            });
+            defer_panel_update(cx, &action_view, |panel, cx| panel.connect_midi(cx));
         });
+        let action_view = view.clone();
         cx.on_action(move |_: &DisconnectMidi, cx| {
-            cx.defer(move |cx| {
-                if let Err(error) = view.update(cx, |panel, _, cx| panel.disconnect_midi(cx)) {
-                    tracing::error!(%error, "Disconnect MIDI action failed");
-                }
-            });
+            defer_panel_update(cx, &action_view, |panel, cx| panel.disconnect_midi(cx));
         });
+        let action_view = view.clone();
         cx.on_action(move |_: &InsertSdCard, cx| {
-            cx.defer(move |cx| {
-                if let Err(error) = view.update(cx, |panel, _, cx| panel.insert_sd_card(cx)) {
-                    tracing::error!(%error, "Insert SD card action failed");
-                }
-            });
+            defer_panel_update(cx, &action_view, |panel, cx| panel.insert_sd_card(cx));
         });
+        let action_view = view.clone();
         cx.on_action(move |_: &EjectSdCard, cx| {
-            cx.defer(move |cx| {
-                if let Err(error) = view.update(cx, |panel, _, cx| panel.eject_sd_card(cx)) {
-                    tracing::error!(%error, "Eject SD card action failed");
-                }
-            });
+            defer_panel_update(cx, &action_view, |panel, cx| panel.eject_sd_card(cx));
         });
         cx.bind_keys([
             KeyBinding::new("cmd-o", OpenFirmware, None),
             KeyBinding::new("cmd-shift-o", OpenSdFolder, None),
             KeyBinding::new("cmd-q", Quit, None),
             // Command on macOS, Control elsewhere.
-            KeyBinding::new("secondary-alt-i", OpenAudioWindow, None),
+            KeyBinding::new(AUDIO_INPUT_SHORTCUT, OpenAudioWindow, None),
         ]);
         cx.set_menus(app_menus(MenuState::default()));
         // macOS normally keeps apps alive after their last window closes.
@@ -1847,13 +1915,13 @@ fn main() {
             let panel_open = cx
                 .windows()
                 .iter()
-                .any(|window| window.window_id() == view.window_id());
+                .any(|window| window.window_id() == panel_window.window_id());
             if !panel_open {
                 cx.quit();
             }
         })
         .detach();
-        view.update(cx, |_, _, cx| {
+        view.update(cx, |_, cx| {
             cx.on_app_quit(|panel, _| {
                 // Platform termination does not necessarily unwind Rust.
                 // Stop and reap QEMU before permitting the app to exit.
@@ -1862,8 +1930,7 @@ fn main() {
                 std::future::ready(())
             })
             .detach();
-        })
-        .expect("register emulator shutdown");
+        });
         cx.activate(true);
         if run_tick {
             cx.spawn(async move |cx| {
@@ -1876,7 +1943,7 @@ fn main() {
                     // the tick running.
                     let frame = next_frame::Signal::default();
                     let fired = frame.clone();
-                    if view
+                    if panel_window
                         .update(cx, |_, window, _| {
                             window.on_next_frame(move |_, _| fired.fire());
                         })
@@ -1892,142 +1959,155 @@ fn main() {
                     })
                     .detach();
                     frame.await;
-                    if view
-                        .update(cx, |panel, window, cx| {
-                            // This state changes from the menus, the windows, a
-                            // restart or a failure, so follow the emulator's.
-                            let state = panel.menu_state();
-                            if state != menu_state {
-                                menu_state = state;
-                                // Outside this window update: rebuilding the
-                                // menu bar can validate items against it.
-                                cx.defer(move |cx| cx.set_menus(app_menus(state)));
-                            }
-                            if panel.window_model != panel.model {
-                                panel.window_model = panel.model;
-                                let width = components::layout::window_width(panel.model);
-                                let height = width * panel.layout.height / panel.layout.width;
-                                // Change the shape lock first, then resize through GPUI so
-                                // that it lays out for the new size straight away.
-                                lock_window_shape(window, width, height);
-                                window.resize(size(px(width), px(height)));
-                                panel.window_settling_frames = 60;
-                                window.set_window_title(&format!(
-                                    "{} Emulator",
-                                    model_name(panel.model)
-                                ));
-                            }
-                            // A resize lands asynchronously and does not redraw by itself.
-                            if panel.window_settling_frames > 0 {
-                                panel.window_settling_frames -= 1;
-                                window.refresh();
-                            }
-                            if panel.audio_sync_needed && panel.options.smoke_scenario.is_none() {
-                                panel.audio_sync_needed = false;
-                                panel.sync_audio_inputs(cx);
-                            }
-                            let previous = panel.status.clone();
-                            let previous_powered_off = panel.powered_off;
-                            panel.refresh_power();
-                            let guest_restarted = previous_powered_off && !panel.powered_off;
-                            let frame_changed = panel.refresh_frame();
-                            let indicator_updates = panel
-                                .controls
-                                .as_ref()
-                                .map_or(0, |controls| controls.panel.snapshot().indicator_updates);
-                            let analog = panel
-                                .controls
-                                .as_ref()
-                                .map_or(panel.physical_analog, |controls| {
-                                    controls.analog_positions()
+                    if panel_window
+                        .update(cx, |root, window, root_cx| {
+                            let panel_view = root
+                                .view()
+                                .clone()
+                                .downcast::<NativePanel>()
+                                .expect("panel window root is NativePanel");
+                            panel_view.update(root_cx, |panel, cx| {
+                                // This state changes from the menus, the windows, a
+                                // restart or a failure, so follow the emulator's.
+                                let state = panel.menu_state();
+                                if state != menu_state {
+                                    menu_state = state;
+                                    // Outside this window update: rebuilding the
+                                    // menu bar can validate items against it.
+                                    cx.defer(move |cx| cx.set_menus(app_menus(state)));
+                                }
+                                if panel.window_model != panel.model {
+                                    panel.window_model = panel.model;
+                                    let width = components::layout::window_width(panel.model);
+                                    let height = width * panel.layout.height / panel.layout.width;
+                                    // Change the shape lock first, then resize through GPUI so
+                                    // that it lays out for the new size straight away.
+                                    lock_window_shape(window, width, height);
+                                    window.resize(size(px(width), px(height)));
+                                    panel.window_settling_frames = 60;
+                                    window.set_window_title(&format!(
+                                        "{} Emulator",
+                                        model_name(panel.model)
+                                    ));
+                                }
+                                // A resize lands asynchronously and does not redraw by itself.
+                                if panel.window_settling_frames > 0 {
+                                    panel.window_settling_frames -= 1;
+                                    window.refresh();
+                                }
+                                if panel.audio_sync_needed && panel.options.smoke_scenario.is_none()
+                                {
+                                    panel.audio_sync_needed = false;
+                                    panel.sync_audio_inputs(cx);
+                                }
+                                let previous = panel.status.clone();
+                                let previous_powered_off = panel.powered_off;
+                                panel.refresh_power();
+                                let guest_restarted = previous_powered_off && !panel.powered_off;
+                                let frame_changed = panel.refresh_frame();
+                                let indicator_updates =
+                                    panel.controls.as_ref().map_or(0, |controls| {
+                                        controls.panel.snapshot().indicator_updates
+                                    });
+                                let analog = panel
+                                    .controls
+                                    .as_ref()
+                                    .map_or(panel.physical_analog, |controls| {
+                                        controls.analog_positions()
+                                    });
+                                let button_pressed = std::array::from_fn(|id| {
+                                    panel.button_pressed[id]
+                                        .load(std::sync::atomic::Ordering::Relaxed)
                                 });
-                            let button_pressed = std::array::from_fn(|id| {
-                                panel.button_pressed[id].load(std::sync::atomic::Ordering::Relaxed)
-                            });
-                            let knob_dragging = std::array::from_fn(|id| {
-                                panel.knob_drags[id].lock().unwrap().dragging()
-                            });
-                            let control_revision = Some((
-                                indicator_updates,
-                                analog,
-                                panel.powered_off,
-                                button_pressed,
-                                knob_dragging,
-                            ));
-                            let controls_changed = control_revision != panel.last_control_revision;
-                            panel.last_control_revision = control_revision;
-                            if let Some(mut test) = panel.menu_smoke.take() {
-                                match test.tick(panel, cx) {
-                                    Ok(true) => {
-                                        passed.store(true, std::sync::atomic::Ordering::Relaxed);
-                                        cx.quit();
-                                    }
-                                    Ok(false) => panel.menu_smoke = Some(test),
-                                    Err(error) => {
-                                        tracing::error!(%error, "Menu smoke failed");
-                                        panel._qemu.take();
-                                        std::process::exit(1);
-                                    }
-                                }
-                            }
-                            if let Some(mut test) = panel.bundle_smoke.take() {
-                                match test.tick(panel, window, cx) {
-                                    Ok(true) => {
-                                        passed.store(true, std::sync::atomic::Ordering::Relaxed);
-                                        cx.quit();
-                                    }
-                                    Ok(false) => panel.bundle_smoke = Some(test),
-                                    Err(error) => {
-                                        tracing::error!(%error, "Bundle smoke failed");
-                                        panel._qemu.take();
-                                        std::process::exit(1);
-                                    }
-                                }
-                            }
-                            let panel_data = panel.panel_data();
-                            if guest_restarted {
-                                if let Some(test) = &mut panel.scenario_smoke {
-                                    test.guest_restarted(&panel.options.logs);
-                                }
-                            }
-                            if let Some(test) = &mut panel.scenario_smoke {
-                                match scenario_smoke::tick(
-                                    test,
-                                    &panel.layout,
-                                    panel.controls.as_deref(),
-                                    panel_data,
-                                    &panel.scenario_press_duration,
-                                    window,
-                                    cx,
-                                ) {
-                                    Ok(true) => {
-                                        passed.store(true, std::sync::atomic::Ordering::Relaxed);
-                                        cx.quit();
-                                    }
-                                    Ok(false) => {}
-                                    Err(error) => {
-                                        tracing::error!(%error, "Scenario failed");
-                                        panel._qemu.take();
-                                        std::process::exit(1);
-                                    }
-                                }
-                            }
-                            if panel.status != previous {
-                                window.set_window_title(&format!(
-                                    "{} Emulator — {}",
-                                    model_name(panel.model),
-                                    panel.status
+                                let knob_dragging = std::array::from_fn(|id| {
+                                    panel.knob_drags[id].lock().unwrap().dragging()
+                                });
+                                let control_revision = Some((
+                                    indicator_updates,
+                                    analog,
+                                    panel.powered_off,
+                                    button_pressed,
+                                    knob_dragging,
                                 ));
-                            }
-                            let notice_expired = panel.expire_notice();
-                            if panel.status != previous
-                                || notice_expired
-                                || panel.powered_off != previous_powered_off
-                                || frame_changed
-                                || controls_changed
-                            {
-                                cx.notify();
-                            }
+                                let controls_changed =
+                                    control_revision != panel.last_control_revision;
+                                panel.last_control_revision = control_revision;
+                                if let Some(mut test) = panel.menu_smoke.take() {
+                                    match test.tick(panel, cx) {
+                                        Ok(true) => {
+                                            passed
+                                                .store(true, std::sync::atomic::Ordering::Relaxed);
+                                            cx.quit();
+                                        }
+                                        Ok(false) => panel.menu_smoke = Some(test),
+                                        Err(error) => {
+                                            tracing::error!(%error, "Menu smoke failed");
+                                            panel._qemu.take();
+                                            std::process::exit(1);
+                                        }
+                                    }
+                                }
+                                if let Some(mut test) = panel.bundle_smoke.take() {
+                                    match test.tick(panel, window, cx) {
+                                        Ok(true) => {
+                                            passed
+                                                .store(true, std::sync::atomic::Ordering::Relaxed);
+                                            cx.quit();
+                                        }
+                                        Ok(false) => panel.bundle_smoke = Some(test),
+                                        Err(error) => {
+                                            tracing::error!(%error, "Bundle smoke failed");
+                                            panel._qemu.take();
+                                            std::process::exit(1);
+                                        }
+                                    }
+                                }
+                                let panel_data = panel.panel_data();
+                                if guest_restarted {
+                                    if let Some(test) = &mut panel.scenario_smoke {
+                                        test.guest_restarted(&panel.options.logs);
+                                    }
+                                }
+                                if let Some(test) = &mut panel.scenario_smoke {
+                                    match scenario_smoke::tick(
+                                        test,
+                                        &panel.layout,
+                                        panel.controls.as_deref(),
+                                        panel_data,
+                                        &panel.scenario_press_duration,
+                                        window,
+                                        cx,
+                                    ) {
+                                        Ok(true) => {
+                                            passed
+                                                .store(true, std::sync::atomic::Ordering::Relaxed);
+                                            cx.quit();
+                                        }
+                                        Ok(false) => {}
+                                        Err(error) => {
+                                            tracing::error!(%error, "Scenario failed");
+                                            panel._qemu.take();
+                                            std::process::exit(1);
+                                        }
+                                    }
+                                }
+                                if panel.status != previous {
+                                    window.set_window_title(&format!(
+                                        "{} Emulator — {}",
+                                        model_name(panel.model),
+                                        panel.status
+                                    ));
+                                }
+                                let notice_expired = panel.expire_notice();
+                                if panel.status != previous
+                                    || notice_expired
+                                    || panel.powered_off != previous_powered_off
+                                    || frame_changed
+                                    || controls_changed
+                                {
+                                    cx.notify();
+                                }
+                            });
                         })
                         .is_err()
                     {
@@ -2063,6 +2143,21 @@ mod startup_key_tests {
 
         let l6max_layout = Layout::for_model(l6fw::Model::L6max);
         assert!(startup_key_targets(l6fw::Model::L6max, &l6max_layout, &pressed).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod firmware_dialog_tests {
+    use super::should_show_firmware_dialog;
+
+    #[test]
+    fn startup_dialog_stays_closed_while_firmware_picker_is_open() {
+        assert!(should_show_firmware_dialog(
+            true, false, false, false, true, false
+        ));
+        assert!(!should_show_firmware_dialog(
+            true, false, true, false, true, false
+        ));
     }
 }
 
@@ -2176,7 +2271,7 @@ mod menu_tests {
             labels(&app_menus(MenuState::default()), "Audio Input")[0],
             "Channels and Playback…"
         );
-        let binding = KeyBinding::new("secondary-alt-i", OpenAudioWindow, None);
+        let binding = KeyBinding::new(AUDIO_INPUT_SHORTCUT, OpenAudioWindow, None);
         let keystroke = &binding.keystrokes()[0];
         assert_eq!(keystroke.key(), "i");
         assert!(keystroke.modifiers().alt);

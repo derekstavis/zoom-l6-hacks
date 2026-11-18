@@ -1,5 +1,7 @@
 //! Opt-in packaged-app check; exercises import/relaunch without the host pointer.
 use crate::NativePanel;
+use gpui::AppContext;
+use gpui_component::WindowExt;
 use std::{
     path::PathBuf,
     sync::Arc,
@@ -99,7 +101,23 @@ impl BundleSmoke {
                     self.select_sd_folder(panel)?;
                     return Ok(false);
                 }
+                panel.selection_dialog_open = false;
+                // Match the OK action: close the prompt and keep it suppressed
+                // while the native firmware picker is open.
+                panel.choosing_firmware = true;
+                if let Some(root_window) = panel.root_window.clone() {
+                    cx.defer(move |cx| {
+                        let _ = cx.update_window(root_window.into(), |_, window, cx| {
+                            window.close_dialog(cx);
+                        });
+                    });
+                }
+                self.stage = 4;
+                return Ok(false);
+            }
+            4 => {
                 panel.load_firmware(&self.first)?;
+                panel.choosing_firmware = false;
                 println!("PASS: empty bundle imported first firmware and started QEMU");
                 self.stage = 1;
             }

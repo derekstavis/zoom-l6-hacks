@@ -8,6 +8,10 @@ license.workspace = true
 [features]
 headless-screenshots = ["gpui/test-support", "gpui_platform/test-support"]
 
+[[example]]
+name = "render_ui"
+required-features = ["headless-screenshots"]
+
 [dependencies]
 tracing.workspace = true
 smoke-core = { path = "../../tools/smoke-core" }
@@ -19,13 +23,15 @@ libc.workspace = true
 image.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
-gpui = { git = "https://github.com/zed-industries/zed.git", rev = "17d3378bb9724867ab875dd865e7d22147d684fa" }
-gpui_platform = { git = "https://github.com/zed-industries/zed.git", rev = "17d3378bb9724867ab875dd865e7d22147d684fa", features = ["font-kit"] }
+gpui = { package = "gpui-pre", version = "=0.3.12" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.12", features = ["font-kit"] }
+gpui-kit-assets = "0.10.0"
+gpui-component = "0.10.0"
 smallvec = "1.15"
 
 # GPUI selects Linux window-system backends by feature; none is on by default.
 [target.'cfg(target_os = "linux")'.dependencies]
-gpui_platform = { git = "https://github.com/zed-industries/zed.git", rev = "17d3378bb9724867ab875dd865e7d22147d684fa", features = ["font-kit", "wayland"] }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.12", features = ["font-kit", "wayland"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 raw-window-handle = "0.6"

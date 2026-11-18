@@ -8,6 +8,7 @@ pub mod midi_jack;
 pub mod panel;
 pub mod power_button;
 pub mod switch;
+pub mod theme;
 pub mod trs_jack;
 pub mod usb_c_port;
 pub mod vu_meter;

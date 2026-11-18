@@ -3,6 +3,8 @@ use gpui::{
     App, Context, HeadlessAppContext, ImageSource, Render, RenderImage, Window, div, img,
     prelude::*, px, rgb, size,
 };
+use gpui_component::ActiveTheme;
+use gpui_component::StyledExt;
 use gpui_platform::{current_headless_renderer, current_platform};
 use image::{Frame, ImageBuffer, Rgba};
 use l6max_host::panel::PanelData;
@@ -16,17 +18,53 @@ struct PanelSnapshot {
     frame: Arc<RenderImage>,
     /// A notice over the panel, and whether it reports an error.
     notice: Option<(gpui::SharedString, bool)>,
+    applying: bool,
+    firmware_dialog: bool,
 }
 
-impl Render for PanelSnapshot {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+impl PanelSnapshot {
+    fn render_element(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let layout = Layout::for_model(self.model);
+        let dialog_overlay = cx.theme().overlay;
         let scale = super::components::layout::window_width(self.model) / layout.width;
         let lcd = layout.lcd;
         let lcd_scale = (lcd.width / 128.0).min(lcd.height / 64.0);
         let lcd_width = 128.0 * lcd_scale;
         let lcd_height = 64.0 * lcd_scale;
-        div()
+        let firmware_dialog = self.firmware_dialog.then(|| {
+            gpui_component::dialog::AlertDialog::new(cx)
+                .title(gpui::div().text_2xl().child("Select firmware"))
+                .description("Choose your L6 or L6max update file to start the emulator. Firmware is not included.")
+                .centered()
+                .width(px(420.0))
+                .entrance(gpui_component::dialog::DialogEntrance::Fade)
+                .keyboard(false)
+                .ok_text("Select firmware…")
+                .into_any_element()
+        });
+        let applying_dialog = self.applying.then(|| {
+            gpui_component::dialog::Dialog::new(cx)
+                .centered()
+                .width(px(420.0))
+                .entrance(gpui_component::dialog::DialogEntrance::Fade)
+                .keyboard(false)
+                .overlay_closable(false)
+                .close_button(false)
+                .child(
+                    div()
+                        .w_full()
+                        .h_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            gpui_component::shimmer::ShimmerText::new("Applying patches...")
+                                .font_semibold(),
+                        ),
+                )
+                .into_any_element()
+        });
+        let panel = div()
             .relative()
             .flex()
             .items_center()
@@ -73,7 +111,22 @@ impl Render for PanelSnapshot {
                                 .child(crate::notice_view(text, error)),
                         )
                     }),
-            )
+            );
+        let panel = if self.firmware_dialog || self.applying {
+            panel.child(div().absolute().inset_0().bg(dialog_overlay))
+        } else {
+            panel
+        };
+        panel
+            .when_some(firmware_dialog, |element, dialog| element.child(dialog))
+            .when_some(applying_dialog, |element, dialog| element.child(dialog))
+            .into_any_element()
+    }
+}
+
+impl Render for PanelSnapshot {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.render_element(window, cx)
     }
 }
 
@@ -96,7 +149,7 @@ pub fn render(args: &[String]) -> Result<(), String> {
         Some("l6max") => l6fw::Model::L6max,
         _ => {
             return Err(
-                "usage: --render-panel <l6|l6max> [--data panel.json] [--powered-off] [--notice TEXT [--notice-error]] --output <path.png>".into(),
+                "usage: --render-panel <l6|l6max> [--data panel.json] [--powered-off] [--notice TEXT [--notice-error]] [--applying] [--firmware-dialog] --output <path.png>".into(),
             );
         }
     };
@@ -180,11 +233,14 @@ pub fn render(args: &[String]) -> Result<(), String> {
     let mut app = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
         current_headless_renderer()
     });
+    let firmware_dialog = args.iter().any(|arg| arg == "--firmware-dialog");
+    let applying = args.iter().any(|arg| arg == "--applying");
     let handle = app
         .open_window(
             size(px(device_width), px(device_height)),
-            |_, cx: &mut App| {
-                cx.new(|_| PanelSnapshot {
+            |window, cx: &mut App| {
+                crate::components::theme::init(cx);
+                let snapshot = cx.new(|_| PanelSnapshot {
                     model,
                     data,
                     frame,
@@ -194,7 +250,10 @@ pub fn render(args: &[String]) -> Result<(), String> {
                             args.iter().any(|arg| arg == "--notice-error"),
                         )
                     }),
-                })
+                    applying,
+                    firmware_dialog,
+                });
+                cx.new(|cx| gpui_component::Root::new(snapshot, window, cx))
             },
         )
         .map_err(|error| error.to_string())?;
@@ -285,12 +344,15 @@ pub fn render_patches(args: &[String]) -> Result<(), String> {
     };
     let platform = current_platform(true);
     let text_system = platform.text_system();
-    let mut app = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
-        current_headless_renderer()
-    });
+    let mut app =
+        HeadlessAppContext::with_platform(text_system, Arc::new(gpui_kit_assets::Assets), || {
+            current_headless_renderer()
+        });
     let handle = app
-        .open_window(size(px(WIDTH), px(HEIGHT)), |_, cx: &mut App| {
-            cx.new(|_| PatchesWindow::fixed(status, available, selection))
+        .open_window(size(px(WIDTH), px(HEIGHT)), |window, cx: &mut App| {
+            crate::components::theme::init(cx);
+            let patches = cx.new(|_| PatchesWindow::fixed(status, available, selection));
+            cx.new(|cx| gpui_component::Root::new(patches, window, cx))
         })
         .map_err(|error| error.to_string())?;
     app.run_until_parked();

@@ -2,6 +2,7 @@
 name = "efx-plateau"
 version = "1.0.0"
 kind = "patch"
+category = "effects"
 order = 52
 title = "Plateau Plate"
 author = "VegaDeftwing"

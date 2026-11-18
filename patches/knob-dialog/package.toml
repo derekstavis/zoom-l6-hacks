@@ -2,6 +2,7 @@
 name = "knob-dialog"
 version = "1.0.0"
 kind = "patch"
+category = "display"
 order = 10
 title = "Show knob values on display"
 author = "derekstavis"

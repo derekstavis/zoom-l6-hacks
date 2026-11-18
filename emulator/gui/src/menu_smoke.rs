@@ -374,9 +374,14 @@ impl MenuSmoke {
                 // Applying updates the panel, which this tick is still updating.
                 cx.defer(move |cx| {
                     let _ = patches.update(cx, |patches, window, cx| {
+                        let patches = patches
+                            .view()
+                            .clone()
+                            .downcast::<crate::patches_window::PatchesWindow>()
+                            .expect("patches window root is PatchesWindow");
                         let selection =
                             crate::patches_window::Selection::new(vec!["midi-sync".into()], vec![]);
-                        patches.apply(selection, window, cx)
+                        patches.update(cx, |patches, cx| patches.apply(selection, window, cx))
                     });
                 });
                 self.stage = 17;

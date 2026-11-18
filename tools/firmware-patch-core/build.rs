@@ -46,6 +46,17 @@ fn main() {
             .and_then(toml::Value::as_str)
             .expect("[package].version must be a string");
         assert!(valid_version(version), "invalid package version {version}");
+        let kind = package
+            .get("kind")
+            .and_then(toml::Value::as_str)
+            .expect("[package].kind must be a string");
+        let category = package.get("category").and_then(toml::Value::as_str);
+        if kind == "patch" {
+            assert!(
+                matches!(category, Some("display" | "midi" | "effects")),
+                "{name}: [package].category must be display, midi, or effects"
+            );
+        }
         let author = package
             .get("author")
             .and_then(toml::Value::as_str)

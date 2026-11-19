@@ -4890,27 +4890,23 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
     clock_set_hz(s->refclk, 1000000);
     if (!panel) {
         l6_prepare_nor(s, kernel_filename);
-        /* The stock 1.10 MAIN hash scopes these bootloader 1.00 settings.
-         * Hash installed NOR, which may differ from the selected package. */
+        /* The default L6max board models the recovered bootloader 1.00
+         * handoff regardless of changes to the installed MAIN image. */
         if (profile == &L6MAX_PROFILE) {
-            g_autofree char *sha = g_compute_checksum_for_data(
-                G_CHECKSUM_SHA256, s->nor_flash + 0x50000, 0x107fe8);
-            if (!strcmp(sha, "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461")) {
-                static const hwaddr offsets[] = {
-                    L6_CCM_CACRR_OFFSET, L6_CCM_CBCDR_OFFSET, L6_CCM_CBCMR_OFFSET,
-                    L6_CCM_CSCMR1_OFFSET, L6_CCM_CS1CDR_OFFSET,
-                    L6_CCM_ANALOG_PLL_ARM, L6_CCM_ANALOG_PLL_SYS,
-                    L6_CCM_ANALOG_PLL_SYS_NUM, L6_CCM_ANALOG_PLL_SYS_DENOM,
-                    L6_CCM_ANALOG_MISC2, L6_CCM_ANALOG_PLL_AUDIO,
-                    L6_CCM_ANALOG_PLL_AUDIO_NUM, L6_CCM_ANALOG_PLL_AUDIO_DENOM,
-                    L6_CCM_ANALOG_PFD_480, L6_CCM_ANALOG_PFD_528,
-                };
-                for (unsigned i = 0; i < ARRAY_SIZE(offsets); i++) {
-                    gpointer key = GUINT_TO_POINTER((offsets[i] >> 2) + 1);
-                    uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
-                    g_hash_table_insert(s->registers, key,
-                        GUINT_TO_POINTER(l6max_boot_clock_value(offsets[i], old)));
-                }
+            static const hwaddr offsets[] = {
+                L6_CCM_CACRR_OFFSET, L6_CCM_CBCDR_OFFSET, L6_CCM_CBCMR_OFFSET,
+                L6_CCM_CSCMR1_OFFSET, L6_CCM_CS1CDR_OFFSET,
+                L6_CCM_ANALOG_PLL_ARM, L6_CCM_ANALOG_PLL_SYS,
+                L6_CCM_ANALOG_PLL_SYS_NUM, L6_CCM_ANALOG_PLL_SYS_DENOM,
+                L6_CCM_ANALOG_MISC2, L6_CCM_ANALOG_PLL_AUDIO,
+                L6_CCM_ANALOG_PLL_AUDIO_NUM, L6_CCM_ANALOG_PLL_AUDIO_DENOM,
+                L6_CCM_ANALOG_PFD_480, L6_CCM_ANALOG_PFD_528,
+            };
+            for (unsigned i = 0; i < ARRAY_SIZE(offsets); i++) {
+                gpointer key = GUINT_TO_POINTER((offsets[i] >> 2) + 1);
+                uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
+                g_hash_table_insert(s->registers, key,
+                    GUINT_TO_POINTER(l6max_boot_clock_value(offsets[i], old)));
             }
         }
     }

@@ -33,7 +33,7 @@
 #define L6_CCM_ANALOG_PFD_528 0x0d8100
 #define L6_CCM_ANALOG_PFD_528_RESET 0x1018101bu
 
-/* L6max bootloader 1.00, applied to the supported stock 1.10 MAIN image.
+/* Default L6max handoff, based on the recovered bootloader 1.00.
  * Only fields established by the recovered boot routine are changed; bits
  * inherited from earlier boot stages retain the board's existing seed. */
 static inline uint32_t l6max_boot_clock_value(uint32_t offset, uint32_t old)

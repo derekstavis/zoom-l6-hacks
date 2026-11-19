@@ -1220,8 +1220,12 @@ impl NativePanel {
         // The Patch loader scans the card when it mounts, so a new card needs
         // the selected patches before it goes in. With none selected, the card
         // is used as it is.
-        let sd_selected = self.options.selected_sd_patches(self.model);
         let effect_replacements = self.options.selected_effect_replacements(self.model);
+        let (_, sd_selected) = l6max_host::firmware_patches::installation_patches(
+            &self.options.selected_patches(self.model),
+            &self.options.selected_sd_patches(self.model),
+            &effect_replacements,
+        )?;
         if !sd_selected.is_empty() || !effect_replacements.is_empty() {
             l6max_host::sd_patches::install(
                 &image,

@@ -4749,6 +4749,10 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
                 { 0x0fc020, 0x13192f06u }, { 0x0fc024, 0x06490b00u },
                 { 0x0fc030, 0x33f71f92u }, { 0x0fc038, 0x00029150u },
                 { 0x0fc060, 0x000a0001u },
+                { 0x0fc068, 0xffffffffu }, { 0x0fc06c, 0xffffffffu },
+                { 0x0fc070, 0xfc3fffffu }, { 0x0fc074, 0xffffffcfu },
+                { 0x0fc078, 0xffffffffu }, { 0x0fc07c, 0xffffffffu },
+                { 0x0fc080, 0xffffffffu }, { 0x0fc084, 0xffffffffu },
             };
             for (unsigned i = 0; i < ARRAY_SIZE(ccm1060); i++) {
                 g_hash_table_insert(s->registers,

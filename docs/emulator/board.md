@@ -41,7 +41,7 @@ values, clock-tree gate clears, selected later gate enables, and GPIO output
 latch/direction values. It also
 applies the recovered masked changes to IOMUX GPR clock and pad fields while
 preserving other stored bits. Peripheral clock mux and divider writes use
-RT1060 reset values for fields whose prior ROM state has not been captured;
+RT1060 reset values for fields, including clock gates, whose prior ROM state has not been captured;
 the resulting complete values are assumptions, not hardware measurements.
 The USB2, video and Ethernet PLL controls reflect the bootloader's recovered
 bypass/power sequence. Ethernet LOCK is seeded based on the successful

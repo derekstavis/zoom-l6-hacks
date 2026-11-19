@@ -450,8 +450,10 @@ impl Runner {
                 Action::L6DinUsbForwarding => {
                     return Ok(Progress::Device(devices::Operation::L6DinUsbForwarding));
                 }
-                Action::HostMidiSync => {
-                    return Ok(Progress::Device(devices::Operation::HostMidiSync));
+                Action::HostMidiSync { request } => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiSync {
+                        request,
+                    }));
                 }
                 Action::L6MidiSync => {
                     return Ok(Progress::Device(devices::Operation::L6MidiSync));
@@ -542,6 +544,8 @@ impl Runner {
                     expected_parameter_value,
                     expected_dialog_active,
                     minimum_exit_ring_refreshes,
+                    expected_effect,
+                    require_output,
                 } => {
                     return Ok(Progress::Device(
                         devices::Operation::EffectReplacementState {
@@ -554,6 +558,8 @@ impl Runner {
                             expected_parameter_value,
                             expected_dialog_active,
                             minimum_exit_ring_refreshes,
+                            expected_effect,
+                            require_output,
                         },
                     ));
                 }
@@ -598,6 +604,16 @@ impl Runner {
                 }
                 Action::KnobDialog => {
                     return Ok(Progress::Device(devices::Operation::KnobDialog));
+                }
+                Action::KnobDialogPopup => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogPopup));
+                }
+                Action::ExpectMenu { menu, path, items } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectMenu {
+                        menu,
+                        path,
+                        items,
+                    }));
                 }
                 Action::FirmwareUpdate => {
                     return Ok(Progress::Device(devices::Operation::FirmwareUpdate));

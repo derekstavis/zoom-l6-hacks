@@ -1,8 +1,8 @@
-//! The case catalog: `tests/smoke/catalog.toml` plus generated cases, the run's
-//! frozen copy of the spec, and the case matrix that selection expands.
+//! The case catalog: `tests/smoke/catalog.toml` plus generated cases, and the
+//! case matrix that selection expands.
 use crate::patch_matrix;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use smoke_core::Scenario;
 use std::{
@@ -62,11 +62,14 @@ fn case_timeout() -> u64 {
 pub struct Catalog {
     pub cases: Vec<Case>,
     pub generated: Vec<patch_matrix::GeneratedCase>,
+    /// Every case's scenario, by case id. Generated scenarios are parsed from
+    /// their text as if they sat in the spec's `scenarios/` directory.
+    pub scenarios: BTreeMap<String, Scenario>,
 }
 
-/// Load the catalog under `spec` (normally `tests/smoke`) and append the
-/// generated cases. Generated scenarios exist only in text until
-/// [`freeze`] writes them into a spec copy.
+/// Load the catalog under `spec` (normally `tests/smoke`), append the
+/// generated cases, and parse and validate every scenario. Generated scenarios
+/// exist only as text until [`write_generated`] writes them into a run.
 pub fn load(spec: &Path) -> Result<Catalog, String> {
     let file: File =
         toml::from_str(&fs::read_to_string(spec.join("catalog.toml")).map_err(|e| e.to_string())?)
@@ -75,9 +78,12 @@ pub fn load(spec: &Path) -> Result<Catalog, String> {
         return Err("unsupported catalog schema".into());
     }
     let mut cases = file.case;
+    let mut scenarios = BTreeMap::new();
     for case in &cases {
         if let Some(path) = &case.scenario {
-            Scenario::load(&spec.join(path))?;
+            let scenario = Scenario::load(&spec.join(path))
+                .map_err(|error| format!("{}: {error}", case.id))?;
+            scenarios.insert(case.id.clone(), scenario);
         }
     }
     let generated = patch_matrix::generate()?;
@@ -105,17 +111,33 @@ pub fn load(spec: &Path) -> Result<Catalog, String> {
             wall_timeout_s: 1200,
         });
     }
-    Ok(Catalog { cases, generated })
+    for case in &generated {
+        let path = spec.join(format!("scenarios/{}.toml", case.id));
+        let scenario = Scenario::from_text(&case.scenario, &path)
+            .map_err(|error| format!("{}: {error}", case.id))?;
+        scenarios.insert(case.id.clone(), scenario);
+    }
+    Ok(Catalog {
+        cases,
+        generated,
+        scenarios,
+    })
 }
 
-/// Copy the spec to `target` and write the generated scenarios into it,
-/// validating each. Cases then run from this frozen copy.
-pub fn freeze(spec: &Path, catalog: &Catalog, target: &Path) -> Result<(), String> {
-    crate::copy_tree(spec, target)?;
-    for case in &catalog.generated {
-        let path = target.join(format!("scenarios/{}.toml", case.id));
-        fs::write(&path, &case.scenario).map_err(|e| e.to_string())?;
-        Scenario::load(&path).map_err(|error| format!("{}: {error}", case.id))?;
+/// Write the generated scenarios into `dir` (a run's `generated/`), point
+/// their cases at those files, and reload them so their sources are files the
+/// case processes can read. Hand-written scenarios run from the spec in place.
+pub fn write_generated(catalog: &mut Catalog, dir: &Path) -> Result<(), String> {
+    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    for generated in &catalog.generated {
+        let path = dir.join(format!("{}.toml", generated.id));
+        fs::write(&path, &generated.scenario).map_err(|e| e.to_string())?;
+        let scenario =
+            Scenario::load(&path).map_err(|error| format!("{}: {error}", generated.id))?;
+        catalog.scenarios.insert(generated.id.clone(), scenario);
+        if let Some(case) = catalog.cases.iter_mut().find(|c| c.id == generated.id) {
+            case.scenario = Some(path);
+        }
     }
     Ok(())
 }
@@ -139,42 +161,104 @@ pub fn backends<'a>(
     }
 }
 
-/// Every (case, model, backend) the catalog can run, with suite membership and,
-/// for generated cases, the scenario text digest. `frozen` must hold the
-/// generated scenarios (see [`freeze`]).
-pub fn matrix(catalog: &Catalog, frozen: &Path) -> Result<Vec<Value>, String> {
-    let generated: BTreeMap<&str, String> = catalog
+/// One (case, model, backend) the catalog can run. Fields serialize in this
+/// order whatever `serde_json` features a build enables.
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+pub struct Row {
+    pub case: String,
+    pub model: String,
+    pub backend: String,
+    pub suites: Vec<String>,
+    /// Digest of what the case runs for this model, independent of where its
+    /// files live: scenario and fragment contents, behavioral catalog fields,
+    /// and the contents of its state and card specs.
+    pub definition: String,
+}
+
+/// Digest of what `case` runs for `model`; see [`Row::definition`].
+/// `generated` is the text of a generated scenario, whose file does not exist.
+fn definition(
+    case: &Case,
+    scenario: Option<&Scenario>,
+    generated: Option<&str>,
+    model: &str,
+    spec: &Path,
+) -> Result<String, String> {
+    let digest = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
+    let content = |path: &Path| -> Result<String, String> {
+        Ok(digest(
+            &fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?,
+        ))
+    };
+    let spec_file = |directory: &str, name: &Option<String>| -> Result<Option<String>, String> {
+        name.as_ref()
+            .map(|name| content(&spec.join(directory).join(format!("{model}-{name}.toml"))))
+            .transpose()
+    };
+    let (scenario_files, state, card) = match scenario {
+        Some(scenario) => (
+            scenario
+                .sources
+                .iter()
+                .enumerate()
+                .map(|(index, path)| match (index, generated) {
+                    (0, Some(text)) => Ok(digest(text.as_bytes())),
+                    _ => content(path),
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            spec_file("states", &scenario.state)?,
+            spec_file("cards", &scenario.card)?,
+        ),
+        None => (Vec::new(), None, None),
+    };
+    Ok(crate::hashing::digest(&json!({
+        "scenario_files": scenario_files,
+        "state": state,
+        "card": card,
+        "package": case.package,
+        "arguments": case.arguments,
+        "environment": case.environment,
+        "needs_configuration": case.needs_configuration,
+        "gui": case.gui,
+        "volatile": case.volatile,
+        "no_sd": case.no_sd,
+        "blocked": case.blocked,
+        "wall_timeout_s": case.wall_timeout_s,
+        "expected_failure": case.expected_failure.iter().map(|e| json!([e.model, e.step, e.contains])).collect::<Vec<_>>(),
+    })))
+}
+
+/// Every (case, model, backend) the catalog under `spec` can run, sorted.
+pub fn matrix(catalog: &Catalog, spec: &Path) -> Result<Vec<Row>, String> {
+    let generated: BTreeMap<&str, &str> = catalog
         .generated
         .iter()
-        .map(|case| {
-            (
-                case.id.as_str(),
-                format!("{:x}", Sha256::digest(case.scenario.as_bytes())),
-            )
-        })
+        .map(|case| (case.id.as_str(), case.scenario.as_str()))
         .collect();
     let mut rows = Vec::new();
     for case in &catalog.cases {
-        let scenario = case
-            .scenario
-            .as_ref()
-            .map(|path| Scenario::load(&frozen.join(path)))
-            .transpose()?;
+        let scenario = catalog.scenarios.get(&case.id);
         for model in &case.models {
-            for backend in backends(case, scenario.as_ref(), &["headless", "gui"]) {
-                let mut row = json!({
-                    "case": case.id,
-                    "model": model,
-                    "backend": backend,
-                    "suites": case.suites,
+            let definition = definition(
+                case,
+                scenario,
+                generated.get(case.id.as_str()).copied(),
+                model,
+                spec,
+            )
+            .map_err(|error| format!("{}: {error}", case.id))?;
+            for backend in backends(case, scenario, &["headless", "gui"]) {
+                rows.push(Row {
+                    case: case.id.clone(),
+                    model: model.clone(),
+                    backend: backend.into(),
+                    suites: case.suites.clone(),
+                    definition: definition.clone(),
                 });
-                if let Some(digest) = generated.get(case.id.as_str()) {
-                    row["generated_scenario_sha256"] = json!(digest);
-                }
-                rows.push(row);
             }
         }
     }
+    rows.sort_by(|a, b| (&a.case, &a.model, &a.backend).cmp(&(&b.case, &b.model, &b.backend)));
     Ok(rows)
 }
 
@@ -191,11 +275,7 @@ mod tests {
         let root = l6max_host::paths::repository_root();
         let spec = root.join("tests/smoke");
         let catalog = load(&spec).unwrap();
-        let frozen = std::env::temp_dir().join(format!("l6test-matrix-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&frozen);
-        freeze(&spec, &catalog, &frozen).unwrap();
-        let rows = matrix(&catalog, &frozen).unwrap();
-        fs::remove_dir_all(&frozen).unwrap();
+        let rows = matrix(&catalog, &spec).unwrap();
         let actual = serde_json::to_string_pretty(&rows).unwrap() + "\n";
         let path = root.join("tools/l6test/snapshots/cases.json");
         if std::env::var_os("L6TEST_UPDATE_SNAPSHOT").is_some() {
@@ -205,8 +285,8 @@ mod tests {
         }
         let expected = fs::read_to_string(&path).unwrap_or_default();
         if actual != expected {
-            let expected: Vec<Value> = serde_json::from_str(&expected).unwrap_or_default();
-            let key = |row: &Value| row.to_string();
+            let expected: Vec<Row> = serde_json::from_str(&expected).unwrap_or_default();
+            let key = |row: &Row| serde_json::to_string(row).unwrap();
             let before: std::collections::BTreeSet<_> = expected.iter().map(key).collect();
             let after: std::collections::BTreeSet<_> = rows.iter().map(key).collect();
             let removed: Vec<_> = before.difference(&after).take(10).collect();

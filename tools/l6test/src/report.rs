@@ -26,6 +26,17 @@ pub enum Outcome {
     Reused,
 }
 
+impl fmt::Display for Phase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Phase::Preflight => "preflight",
+            Phase::Fixture => "fixture",
+            Phase::Execute => "execute",
+            Phase::Reuse => "reuse",
+        })
+    }
+}
+
 impl fmt::Display for Outcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
@@ -51,37 +62,47 @@ pub enum Phase {
     Reuse,
 }
 
-/// An error from one phase of a case.
+/// An error that ends a case: where it happened, and whether the case did not
+/// run (BLOCKED) or failed (FAIL). A BLOCKED case is never retried or reused.
 #[derive(Debug)]
 pub struct CaseError {
     pub phase: Phase,
+    pub outcome: Outcome,
     pub message: String,
 }
 
 impl CaseError {
-    pub fn preflight(message: impl Into<String>) -> Self {
+    /// The case did not run, or its result is not valid: a prerequisite or
+    /// guard was not met, the run was interrupted, or an executable changed.
+    pub fn blocked(phase: Phase, message: impl Into<String>) -> Self {
         Self {
-            phase: Phase::Preflight,
+            phase,
+            outcome: Outcome::Blocked,
             message: message.into(),
         }
     }
-    /// The outcome this error gives its case.
-    pub fn outcome(&self) -> Outcome {
-        match self.phase {
-            Phase::Preflight => Outcome::Blocked,
-            Phase::Fixture | Phase::Execute | Phase::Reuse => Outcome::Fail,
+    /// The case's fixture or execution failed.
+    pub fn failed(phase: Phase, message: impl Into<String>) -> Self {
+        Self {
+            phase,
+            outcome: Outcome::Fail,
+            message: message.into(),
         }
     }
 }
 
-/// Attach a phase to a fallible step: `step().phase(Phase::Fixture)?`.
+/// Classify a fallible step: `step().failed_in(Phase::Fixture)?`.
 pub trait InPhase<T> {
-    fn phase(self, phase: Phase) -> Result<T, CaseError>;
+    fn failed_in(self, phase: Phase) -> Result<T, CaseError>;
+    fn blocked_in(self, phase: Phase) -> Result<T, CaseError>;
 }
 
-impl<T> InPhase<T> for Result<T, String> {
-    fn phase(self, phase: Phase) -> Result<T, CaseError> {
-        self.map_err(|message| CaseError { phase, message })
+impl<T, E: ToString> InPhase<T> for Result<T, E> {
+    fn failed_in(self, phase: Phase) -> Result<T, CaseError> {
+        self.map_err(|e| CaseError::failed(phase, e.to_string()))
+    }
+    fn blocked_in(self, phase: Phase) -> Result<T, CaseError> {
+        self.map_err(|e| CaseError::blocked(phase, e.to_string()))
     }
 }
 
@@ -131,6 +152,10 @@ pub struct CaseResult {
     pub reuse_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reused: Option<Reused>,
+    /// With `--reuse`, why the same job in the earlier run was not reused:
+    /// the identity fields that differ, or why its result was unusable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_reused: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attempts: Vec<Attempt>,
 }
@@ -150,6 +175,7 @@ impl CaseResult {
             identity: None,
             reuse_key: None,
             reused: None,
+            not_reused: None,
             attempts: Vec::new(),
         }
     }
@@ -173,8 +199,10 @@ impl CaseResult {
 }
 
 /// Run `attempt` until it stops failing in execution, at most `1 + retries`
-/// times. A failure followed by a pass is FLAKY. Only execution failures are
-/// retried: a BLOCKED case did not run, and fixture builds are deterministic.
+/// times. Only execution failures are retried: a BLOCKED case did not run
+/// (or was interrupted), and fixture builds are deterministic. A failure
+/// followed by a pass is FLAKY; a failure followed by anything else is FAIL,
+/// so a later attempt never hides an earlier unexpected failure.
 pub fn with_retries(retries: usize, mut attempt: impl FnMut(usize) -> CaseResult) -> CaseResult {
     let mut attempts = Vec::new();
     let mut number = 1;
@@ -184,15 +212,23 @@ pub fn with_retries(retries: usize, mut attempt: impl FnMut(usize) -> CaseResult
         let retry = result.outcome == Outcome::Fail && result.phase == Phase::Execute;
         if !retry || number > retries {
             let mut result = result;
-            let first_failure = attempts.iter().find(|a| a.outcome == Outcome::Fail);
-            if result.outcome == Outcome::Pass
-                && let Some(failure) = first_failure
+            if let Some(failure) = attempts[..attempts.len() - 1]
+                .iter()
+                .find(|a| a.outcome == Outcome::Fail)
             {
-                result.outcome = Outcome::Flaky;
-                result.detail = format!(
-                    "passed on attempt {number} after failing: {}",
-                    failure.detail
-                );
+                if result.outcome == Outcome::Pass {
+                    result.outcome = Outcome::Flaky;
+                    result.detail = format!(
+                        "passed on attempt {number} after failing: {}",
+                        failure.detail
+                    );
+                } else if result.outcome != Outcome::Fail {
+                    result.detail = format!(
+                        "attempt {number} was {}: {}; an earlier attempt failed: {}",
+                        result.outcome, result.detail, failure.detail
+                    );
+                    result.outcome = Outcome::Fail;
+                }
             }
             if attempts.len() > 1 {
                 result.duration_s = attempts.iter().map(|a| a.duration_s).sum();
@@ -247,8 +283,14 @@ pub fn write_summary(
     outcome: Outcome,
     results: &[CaseResult],
     cache: &Value,
+    fixtures_only: bool,
 ) -> Result<(), String> {
     let mut text = String::new();
+    if fixtures_only {
+        text.push_str(
+            "Fixtures only: every fixture was built and identified, and no case ran.\n\n",
+        );
+    }
     let counts = counts(results)
         .into_iter()
         .map(|(outcome, count)| format!("{count} {outcome}"))
@@ -267,7 +309,7 @@ pub fn write_summary(
             None => result.outcome.to_string(),
         };
         text.push_str(&format!(
-            "| {} | {} | {} | {} | {:?} | {:.1} |\n",
+            "| {} | {} | {} | {} | {} | {:.1} |\n",
             result.case, result.model, result.backend, shown, result.phase, result.duration_s
         ));
     }
@@ -307,6 +349,31 @@ pub fn write_summary(
     file.write_all(text.as_bytes()).map_err(|e| e.to_string())
 }
 
+/// The results of a schema 1 or 2 report. A result that cannot be read is an
+/// error: silently skipping it could drop a failure from `--rerun`.
+pub fn read_results(path: &Path) -> Result<Vec<CaseResult>, String> {
+    let report: Value = serde_json::from_slice(
+        &std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?,
+    )
+    .map_err(|e| format!("{}: {e}", path.display()))?;
+    let results = report["results"]
+        .as_array()
+        .ok_or_else(|| format!("{} has no results", path.display()))?;
+    results
+        .iter()
+        .enumerate()
+        .map(|(index, result)| {
+            let mut result = result.clone();
+            // Schema 1 results have no phase.
+            if result.get("phase").is_none() {
+                result["phase"] = "execute".into();
+            }
+            serde_json::from_value(result)
+                .map_err(|e| format!("{} result {index}: {e}", path.display()))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -323,11 +390,16 @@ mod tests {
 
     #[test]
     fn errors_before_the_case_runs_are_blocked_and_later_ones_fail() {
-        assert_eq!(CaseError::preflight("no app").outcome(), Outcome::Blocked);
-        let build: Result<(), String> = Err("l6patch failed".into());
+        let app: Result<(), String> = Err("no app".into());
         assert_eq!(
-            build.phase(Phase::Fixture).unwrap_err().outcome(),
-            Outcome::Fail
+            app.blocked_in(Phase::Preflight).unwrap_err().outcome,
+            Outcome::Blocked
+        );
+        let build: Result<(), String> = Err("l6patch failed".into());
+        let error = build.failed_in(Phase::Fixture).unwrap_err();
+        assert_eq!(
+            (error.outcome, error.phase),
+            (Outcome::Fail, Phase::Fixture)
         );
     }
 
@@ -364,6 +436,18 @@ mod tests {
             });
             assert_eq!((single.outcome, runs), (outcome, 1));
             assert!(single.attempts.is_empty());
+        }
+    }
+
+    #[test]
+    fn a_later_attempt_never_hides_an_earlier_failure() {
+        use Outcome::*;
+        for (second, expected) in [(Xfail, Fail), (Blocked, Fail), (Xpass, Fail), (Pass, Flaky)] {
+            let outcomes = [Fail, second];
+            let phases = [Phase::Execute, Phase::Execute];
+            let result = with_retries(1, |n| result(outcomes[n - 1], phases[n - 1]));
+            assert_eq!(result.outcome, expected, "FAIL then {second}");
+            assert_eq!(result.attempts.len(), 2);
         }
     }
 

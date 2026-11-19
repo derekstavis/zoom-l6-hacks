@@ -18,9 +18,12 @@ defined in `.cargo/config.toml`; the longer form works the same.
 
 `check` validates the configuration and checks shared memory without launching
 firmware. `run` builds selected binaries once, including QEMU unless `--no-build` is
-given, freezes copies of those executables and the scenario files for the run, starts
-each case with fresh state and card, and supervises every process group. A supplied
-output directory must not exist. Paths in the local file are relative to that file.
+given, copies those executables into the run so their hashes identify what ran, starts
+each case with fresh state and card, and supervises every process group. Cases read
+their scenarios from `tests/smoke` in place; only generated scenarios are written,
+into the run's `generated/` directory. Run suites from a worktree that does not change
+during the run. A supplied output directory must not exist. Paths in the local file
+are relative to that file.
 
 Each scenario declares what it runs from, so the local file only supplies firmware:
 
@@ -190,8 +193,11 @@ The printed artifact directory contains:
 
 - `report.json` and, for completed suites, `summary.md`: matrix and outcome.
   See [Report](#report) below.
-- `manifest.json`: source revision, dirty diff/untracked hashes, board/patch
-  hashes, driver binary and pinned QEMU identity.
+- `manifest.json`: source revision, dirty diff/untracked hashes, scenario,
+  generated-scenario and board/patch hashes, driver binary and pinned QEMU
+  identity.
+- `generated/`: the generated scenarios this run wrote, such as the `patches`
+  suite's.
 - `cache/`: fixtures built once for the run and copied into each case. See
   [Fixture cache](#fixture-cache).
 - Per-case `inputs.json` and `invocation.json`: selected fixture content hashes,
@@ -242,13 +248,16 @@ Outcomes:
 | Outcome | Meaning |
 | --- | --- |
 | PASS | Ran and passed |
-| FAIL | Its fixture failed to build, or it ran and failed |
+| FAIL | Its fixture failed to build, a firmware guard on an image our tools built did not match, or it ran and failed |
 | XFAIL, XPASS | Failed as expected; passed despite an expected failure |
-| BLOCKED | Did not run: interrupted, missing configuration or `--app`, unsupported backend, the configured package is for another model, or a firmware guard did not match |
+| BLOCKED | Did not run, or its result is not valid: missing configuration or `--app`, unsupported backend, the configured package is for another model, a firmware guard on the configured stock image did not match, the run was interrupted, or QEMU or the executable changed during the case |
 | FLAKY | Failed, then passed on a retry. Never counted as a pass |
 | REUSED | Not run: an earlier run passed it with identical inputs |
 
-A broken patch build is a FAIL in the `fixture` phase, not BLOCKED.
+A broken patch build, or a patched image that no longer matches its guard,
+is a FAIL in the `fixture` phase, not BLOCKED. Before a case runs, the driver
+also checks that its fixture holds every file the scenario reads from the case
+directory (`smoke_core::fixture_layout`); a missing one is a fixture FAIL.
 
 ### Selecting and rerunning cases
 
@@ -263,35 +272,48 @@ A broken patch build is a FAIL in the `fixture` phase, not BLOCKED.
   Each attempt keeps its artifacts (`<case>.attempt-2/`, ...). A failure followed
   by a pass is FLAKY, listed separately in `summary.md`. `--strict` makes a
   FLAKY case fail the run. BLOCKED cases and fixture failures are not retried.
+  A failure followed by anything but a pass stays FAIL, so a later attempt
+  never hides an earlier failure.
+- A `--case` pattern that matches no case is an error.
 
 ### Reuse
 
 `--reuse RUN` skips a case when RUN passed (or expectedly failed) the same case
 with identical inputs, and reports it as REUSED with a link to the run that
-executed it. A case's `identity` hashes:
+executed it. A case that is not reused records why in `not_reused` (for
+example `inputs differ: card_sha256, case_files`). A case's `identity` hashes:
 
-- QEMU, and the code that runs the scenario: the sources of `smoke-core` and
-  the workspace crates it depends on, `Cargo.lock`, the Cargo configuration and
-  the compiler (with `--no-build`, the runner binary's hash instead). For the
-  GUI backend, the `l6max-gui` binary.
-- The firmware package and unpacked firmware the case boots, a patched or
-  update package, the SD patch bundle, the card image and the state files.
+- QEMU, and the code that runs the scenario. For the headless runner, when
+  the driver built itself from the working tree and is the executable running,
+  that is every repository file its Cargo dep-info lists (compiled sources,
+  embedded files and build-script outputs) except the driver's own sources,
+  plus the manifests, `Cargo.lock`, the Cargo configuration, the compiler,
+  profile and flags. Otherwise (for example with `--no-build`) it is the
+  runner binary's hash. For the GUI backend, the `l6max-gui` binary.
+- The firmware package and unpacked firmware the case boots, the card image,
+  the state files, and every other file the driver wrote into the case
+  directory: patched and update packages and their reports, the SD bundle and
+  loader builds and their reports, and the stock image the SD checks read.
   These are hashed as built bytes, so a change to the driver alone keeps keys.
 - The scenario file and its included fragments, the reference images under
-  `tests/smoke/images`, audio input, the invocation with run paths removed,
-  and the case's catalog entry.
+  `tests/smoke/images`, audio input, the invocation with run and debugger
+  socket paths removed, and the catalog fields that change how the case runs
+  or is judged (not its suites or expected-failure wording).
 
 A scenario that builds patches while it runs (`wasm-patch`) is never reused.
-FAIL, BLOCKED and FLAKY results are never reused. Reuse is off unless
-requested, and is not a substitute for the full verification at the stack tip.
+FAIL, BLOCKED and FLAKY results are never reused, nor are results whose
+artifacts no longer exist. Reuse is off unless requested, and is not a
+substitute for the full verification at the stack tip.
 
 ### Fixture cache
 
 Within a run, each distinct `l6patch` build, browser-patched package, unpacked
 package, state and card image is built once under `cache/` and copied into
-every case that uses it. On APFS the copies are clones and cost no data; on
-other filesystems card images are built per case. Keys name every input of a
-build. The cache lives only as long as its run. `summary.md` lists hits and
+every case that uses it; stock firmware is booted read-only from the shared
+unpack. When the run directory's volume clones files (APFS), copies cost no
+data; otherwise card images are built per case. Keys name every input of a
+build except repository sources, which a run assumes do not change while it
+runs. The cache lives only as long as its run. `summary.md` lists hits and
 builds per kind.
 
 `--fixtures-only` builds every selected case's fixture and records its
@@ -377,8 +399,10 @@ logic independently of QEMU.
 ### Case matrix
 
 `cargo l6test list --format json` prints every case, model and backend the
-catalog can run, with suite membership and a digest of each generated
-scenario. `tools/l6test/snapshots/cases.json` holds the reviewed copy, and
+catalog can run, sorted, with suite membership and a `definition` digest of
+what the case runs: its scenario and fragment contents, behavioral catalog
+fields, and state and card spec contents. The digest does not depend on where
+files live, so moving files keeps it. `tools/l6test/snapshots/cases.json` holds the reviewed copy, and
 `cargo test -p l6test` fails when the catalog no longer matches it. A change
 that adds, removes or moves cases, or changes a generated scenario, must update
 it deliberately:

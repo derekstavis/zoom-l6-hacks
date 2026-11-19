@@ -1290,10 +1290,21 @@ impl Scenario {
     }
     pub fn load(path: &Path) -> Result<Self, String> {
         let path = fs::canonicalize(path).map_err(|e| e.to_string())?;
+        let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        Self::parse_at(&text, path)
+    }
+    /// Parse `text` as if it were the scenario file at `path`, which need not
+    /// exist: includes resolve beside it, within its directory. `sources`
+    /// starts with `path`.
+    pub fn from_text(text: &str, path: &Path) -> Result<Self, String> {
+        let directory = path.parent().ok_or("scenario path has no directory")?;
+        let name = path.file_name().ok_or("scenario path has no file name")?;
+        let directory = fs::canonicalize(directory).map_err(|e| e.to_string())?;
+        Self::parse_at(text, directory.join(name))
+    }
+    fn parse_at(text: &str, path: PathBuf) -> Result<Self, String> {
         let root = path.parent().unwrap();
-        let mut value: Self =
-            toml::from_str(&fs::read_to_string(&path).map_err(|e| e.to_string())?)
-                .map_err(|e| e.to_string())?;
+        let mut value: Self = toml::from_str(text).map_err(|e| e.to_string())?;
         value.sources.push(path.clone());
         value.step = expand_steps(
             value.step,

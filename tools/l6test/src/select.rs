@@ -1,7 +1,7 @@
 //! Case selection beyond one suite: id globs, shards and reruns of a report.
-use crate::report::{CaseResult, Outcome};
+use crate::report::Outcome;
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{collections::BTreeSet, path::Path};
 
 /// Match `text` against a glob of `*` (any run) and `?` (any one character).
 pub fn glob(pattern: &str, text: &str) -> bool {
@@ -30,6 +30,16 @@ pub fn glob(pattern: &str, text: &str) -> bool {
 /// Whether a case id matches a `--case` value: comma-separated ids or globs.
 pub fn case_matches(selection: &str, id: &str) -> bool {
     selection.split(',').any(|pattern| glob(pattern.trim(), id))
+}
+
+/// Patterns of a `--case` value that match none of `ids`. A misspelled id
+/// next to valid ones would otherwise be silently skipped.
+pub fn unmatched<'a>(selection: &'a str, ids: &[&str]) -> Vec<&'a str> {
+    selection
+        .split(',')
+        .map(str::trim)
+        .filter(|pattern| !ids.iter().any(|id| glob(pattern, id)))
+        .collect()
 }
 
 /// `--shard I/N`: run the I-th of N stable parts (1-based).
@@ -90,7 +100,7 @@ impl Rerun {
         } else {
             report.to_owned()
         };
-        let results = read_results(&path)?;
+        let results = crate::report::read_results(&path)?;
         Ok(Self {
             jobs: results
                 .into_iter()
@@ -111,30 +121,10 @@ impl Rerun {
     }
 }
 
-/// The results of a schema 1 or 2 report.
-pub fn read_results(path: &Path) -> Result<Vec<CaseResult>, String> {
-    let report: serde_json::Value =
-        serde_json::from_slice(&fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?)
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-    let results = report["results"]
-        .as_array()
-        .ok_or_else(|| format!("{} has no results", path.display()))?;
-    Ok(results
-        .iter()
-        .filter_map(|result| {
-            let mut result = result.clone();
-            // Schema 1 results have no phase.
-            if result.get("phase").is_none() {
-                result["phase"] = "execute".into();
-            }
-            serde_json::from_value(result).ok()
-        })
-        .collect())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn globs_match_ids() {
@@ -147,6 +137,11 @@ mod tests {
         assert!(glob("*", ""));
         assert!(case_matches("boot,patches-*", "patches-l6"));
         assert!(!case_matches("boot,mute", "encoder"));
+        assert_eq!(
+            unmatched("boot,bot,patches-*", &["boot", "patches-l6"]),
+            ["bot"]
+        );
+        assert!(unmatched("boot", &["boot"]).is_empty());
     }
 
     #[test]

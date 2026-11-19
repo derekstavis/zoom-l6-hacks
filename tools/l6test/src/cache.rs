@@ -2,17 +2,21 @@
 //!
 //! Many cases build the same patched firmware, SD bundle, unpacked package or
 //! device state. Each distinct build runs once per run, under
-//! `<run>/cache/<kind>/<key>`, and cases copy the result into their own
-//! directory, so every case still owns and records its inputs. Keys name every
-//! input of a build. The cache never outlives its run: sources do not change
-//! during a run, so they are not part of a key.
+//! `<run>/cache/<kind>/<digest>` (its key beside it in `<digest>.key`), and
+//! cases copy the result into their own directory, so every case still owns
+//! and records its inputs. A key names every input of a build except the
+//! repository sources, which a run assumes do not change while it runs; the
+//! cache never outlives its run.
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 type Entry = Arc<OnceLock<Result<PathBuf, String>>>;
@@ -28,21 +32,28 @@ pub struct RunCache {
     /// When false every request builds afresh, for comparing cached and
     /// uncached fixtures.
     enabled: bool,
-    builds: std::sync::atomic::AtomicU64,
+    /// Whether copying a file into a case clones it (and keeps sparse card
+    /// images sparse) on this volume.
+    clones: bool,
+    builds: AtomicU64,
     entries: Mutex<HashMap<String, Entry>>,
     stats: Mutex<BTreeMap<&'static str, Stats>>,
     file_hashes: Mutex<HashMap<PathBuf, String>>,
+    values: Mutex<HashMap<String, String>>,
 }
 
 impl RunCache {
     pub fn new(root: PathBuf) -> Self {
+        let clones = clones_files(&root);
         Self {
             root,
             enabled: true,
-            builds: Default::default(),
+            clones,
+            builds: AtomicU64::new(0),
             entries: Mutex::default(),
             stats: Mutex::default(),
             file_hashes: Mutex::default(),
+            values: Mutex::default(),
         }
     }
 
@@ -54,11 +65,18 @@ impl RunCache {
         }
     }
 
+    /// Whether a copy into a case directory is a clone: then a large sparse
+    /// card image can be built once and copied for free.
+    pub fn clones(&self) -> bool {
+        self.clones
+    }
+
     /// The directory holding `kind`'s output for `key`, building it with
     /// `build` the first time. `build` receives a path that does not exist yet
-    /// and creates it. Concurrent callers with
-    /// the same key wait for one build. A failed build is remembered, so every
-    /// case that needs it reports the same error without rebuilding.
+    /// and creates it. Concurrent callers with the same key wait for one build.
+    /// A failed build is remembered, so every case that needs it reports the
+    /// same error without rebuilding; builds are deterministic, but a
+    /// transient error such as a full disk also fails every such case.
     pub fn directory(
         &self,
         kind: &'static str,
@@ -67,9 +85,7 @@ impl RunCache {
     ) -> Result<PathBuf, String> {
         let mut digest = format!("{:x}", Sha256::digest(format!("{kind}\0{key}").as_bytes()));
         if !self.enabled {
-            let n = self
-                .builds
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let n = self.builds.fetch_add(1, Ordering::Relaxed);
             digest = format!("{:x}", Sha256::digest(format!("{digest}\0{n}").as_bytes()));
         }
         let entry = self
@@ -82,18 +98,17 @@ impl RunCache {
         let mut built = false;
         let result = entry.get_or_init(|| {
             built = true;
-            let target = self.root.join(kind).join(&digest[..16]);
-            let staging = self
-                .root
-                .join(kind)
-                .join(format!("{}.building", &digest[..16]));
+            let directory = self.root.join(kind);
+            let name = &digest[..16];
+            let target = directory.join(name);
+            let staging = directory.join(format!("{name}.building"));
             let _ = fs::remove_dir_all(&staging);
-            fs::create_dir_all(self.root.join(kind)).map_err(|e| e.to_string())?;
+            fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+            fs::write(directory.join(format!("{name}.key")), key).map_err(|e| e.to_string())?;
             // Builders such as `l6patch` and `l6fw::unpack` create their
             // output directory, so `build` receives a path that does not exist.
             build(&staging)?;
             fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
-            fs::write(staging.join(".key"), key).map_err(|e| e.to_string())?;
             fs::rename(&staging, &target).map_err(|e| e.to_string())?;
             Ok(target)
         });
@@ -107,13 +122,30 @@ impl RunCache {
         result.clone()
     }
 
+    /// A small value computed once per run for `key`.
+    pub fn value(
+        &self,
+        key: &str,
+        compute: impl FnOnce() -> Result<String, String>,
+    ) -> Result<String, String> {
+        if let Some(value) = self.values.lock().unwrap().get(key) {
+            return Ok(value.clone());
+        }
+        let value = compute()?;
+        self.values
+            .lock()
+            .unwrap()
+            .insert(key.to_owned(), value.clone());
+        Ok(value)
+    }
+
     /// SHA-256 of a file that does not change during the run (a configured
     /// package or a cached output), computed once.
     pub fn file_hash(&self, path: &Path) -> Result<String, String> {
         if let Some(hash) = self.file_hashes.lock().unwrap().get(path) {
             return Ok(hash.clone());
         }
-        let hash = crate::hash(path)?;
+        let hash = crate::hashing::hash(path)?;
         self.file_hashes
             .lock()
             .unwrap()
@@ -136,26 +168,19 @@ impl RunCache {
     }
 }
 
-/// Copy a cached tree into a case directory. On APFS `fs::copy` clones files,
-/// so a copy costs no data; elsewhere it is an ordinary copy.
-pub fn copy_into(source: &Path, target: &Path) -> Result<(), String> {
+/// Copy a tree. On a volume that clones (APFS), `fs::copy` clones each file,
+/// so a copy costs no data.
+pub fn copy_tree(source: &Path, target: &Path) -> Result<(), String> {
     fs::create_dir_all(target).map_err(|e| e.to_string())?;
     for entry in fs::read_dir(source).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
-        let name = entry.file_name();
-        if name == ".key" {
-            continue;
-        }
         let path = entry.path();
-        let destination = target.join(&name);
+        let destination = target.join(entry.file_name());
         let kind = entry.file_type().map_err(|e| e.to_string())?;
         if kind.is_symlink() {
-            return Err(format!(
-                "cached output contains a symlink: {}",
-                path.display()
-            ));
+            return Err(format!("tree contains a symlink: {}", path.display()));
         } else if kind.is_dir() {
-            copy_into(&path, &destination)?;
+            copy_tree(&path, &destination)?;
         } else {
             fs::copy(&path, &destination).map_err(|e| format!("{}: {e}", destination.display()))?;
         }
@@ -163,14 +188,38 @@ pub fn copy_into(source: &Path, target: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether copying a large sparse file keeps it sparse and cheap: APFS clones
-/// files. Elsewhere, card images are built per case rather than copied.
-pub const CLONES_FILES: bool = cfg!(target_os = "macos");
+/// Whether files under `root` can be cloned, tried once with a small file.
+#[cfg(target_os = "macos")]
+fn clones_files(root: &Path) -> bool {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+    if fs::create_dir_all(root).is_err() {
+        return false;
+    }
+    let source = root.join(".clone-probe");
+    let target = root.join(".clone-probe.copy");
+    let _ = fs::remove_file(&target);
+    if fs::write(&source, b"probe").is_err() {
+        return false;
+    }
+    let path = |p: &Path| CString::new(p.as_os_str().as_bytes()).ok();
+    let cloned = match (path(&source), path(&target)) {
+        (Some(s), Some(t)) => unsafe { libc::clonefile(s.as_ptr(), t.as_ptr(), 0) == 0 },
+        _ => false,
+    };
+    let _ = fs::remove_file(&source);
+    let _ = fs::remove_file(&target);
+    cloned
+}
+
+#[cfg(not(target_os = "macos"))]
+fn clones_files(_root: &Path) -> bool {
+    false
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::AtomicUsize;
 
     fn temp(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -211,6 +260,30 @@ mod tests {
             .unwrap();
         assert_eq!(fs::read(other.join("file")).unwrap(), b"other");
         assert_eq!(cache.stats()["thing"], json!({"hits": 7, "builds": 2}));
+        // The key is recorded beside the entry, not inside it.
+        assert!(!other.join(".key").exists());
+        let name = other.file_name().unwrap().to_string_lossy().into_owned();
+        assert_eq!(
+            fs::read_to_string(other.with_file_name(format!("{name}.key"))).unwrap(),
+            "b"
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_disabled_cache_builds_every_request() {
+        let dir = temp("disabled");
+        let cache = RunCache::disabled(dir.clone());
+        let mut builds = 0;
+        for _ in 0..3 {
+            cache
+                .directory("thing", "a", |out| {
+                    builds += 1;
+                    fs::create_dir_all(out).map_err(|e| e.to_string())
+                })
+                .unwrap();
+        }
+        assert_eq!(builds, 3);
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -243,10 +316,18 @@ mod tests {
             })
             .unwrap();
         let case = dir.join("case");
-        copy_into(&cached, &case).unwrap();
-        assert!(!case.join(".key").exists());
+        copy_tree(&cached, &case).unwrap();
         fs::write(case.join("sub/flash"), b"changed").unwrap();
         assert_eq!(fs::read(cached.join("sub/flash")).unwrap(), b"original");
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn the_temporary_directory_clones_on_apfs() {
+        // macOS keeps its temporary directory on the APFS system volume.
+        let dir = temp("probe");
+        assert!(clones_files(&dir));
+        let _ = fs::remove_dir_all(dir);
     }
 }

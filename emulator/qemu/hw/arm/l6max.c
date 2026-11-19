@@ -4348,6 +4348,8 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
         GUINT_TO_POINTER((0x2f004c >> 2) + 1),
         GUINT_TO_POINTER(0x08070a01u));
     static const hwaddr offsets[] = {
+        0x0fc000, 0x0fc00c, 0x0fc020, 0x0fc024,
+        0x0fc02c, 0x0fc030, 0x0fc038, 0x0fc060,
         L6_CCM_CACRR_OFFSET, L6_CCM_CBCDR_OFFSET, L6_CCM_CBCMR_OFFSET,
         L6_CCM_CSCMR1_OFFSET, L6_CCM_CS1CDR_OFFSET,
         L6_CCM_ANALOG_PLL_ARM, L6_CCM_ANALOG_PLL_SYS,
@@ -4731,6 +4733,20 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
             g_hash_table_insert(s->registers,
                 GUINT_TO_POINTER((ccm_reset[i].offset >> 2) + 1),
                 GUINT_TO_POINTER(ccm_reset[i].value));
+        }
+        if (profile == &L6MAX_PROFILE) {
+            /* RT1060 RM reset values, used where ROM state is not captured. */
+            static const struct { hwaddr offset; uint32_t value; } ccm1060[] = {
+                { 0x0fc000, 0x0401107fu }, { 0x0fc00c, 0x00000100u },
+                { 0x0fc020, 0x13192f06u }, { 0x0fc024, 0x06490b00u },
+                { 0x0fc030, 0x33f71f92u }, { 0x0fc038, 0x00029150u },
+                { 0x0fc060, 0x000a0001u },
+            };
+            for (unsigned i = 0; i < ARRAY_SIZE(ccm1060); i++) {
+                g_hash_table_insert(s->registers,
+                    GUINT_TO_POINTER((ccm1060[i].offset >> 2) + 1),
+                    GUINT_TO_POINTER(ccm1060[i].value));
+            }
         }
         for (unsigned instance = 0; instance < 8; instance++) {
             hwaddr base = 0x184000 + instance * 0x4000;

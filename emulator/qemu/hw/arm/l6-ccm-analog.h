@@ -39,6 +39,10 @@
 static inline uint32_t l6max_boot_clock_value(uint32_t offset, uint32_t old)
 {
     switch (offset) {
+    case 0x0fc000: /* CCR */
+        return (old & 0xffffff00u) | 0x7fu;
+    case 0x0fc00c: /* CCSR */
+        return old & 0xfffffffeu;
     case L6_CCM_CACRR_OFFSET:
         return (old & ~7u) | 1u;
     case L6_CCM_CBCDR_OFFSET:
@@ -47,8 +51,20 @@ static inline uint32_t l6max_boot_clock_value(uint32_t offset, uint32_t old)
         return (((old & 0x1fff0fcfu) | 0x7c009320u) & 0xffffcfffu) | 0x000c0000u;
     case L6_CCM_CSCMR1_OFFSET:
         return ((old & 0xfc7f03c0u) | 0x6283a801u) & ~0x40u;
+    case 0x0fc020: /* CSCMR2 */
+        return (old & 0xfffffc03u) | 0x00180204u;
+    case 0x0fc024: /* CSCDR1 */
+        return (old & 0xfff8c780u) | 0x06010800u;
     case L6_CCM_CS1CDR_OFFSET:
         return (old & 0xfe00f000u) | 0xec102c1u;
+    case L6_CCM_CS2CDR_OFFSET:
+        return (old & 0xfffffe00u) | 0xc1u;
+    case 0x0fc030: /* CDCDR */
+        return (old & 0xf1ff8fffu) | 0x03f01f80u;
+    case 0x0fc038: /* CSCDR2 */
+        return old & 0xfe03ffffu;
+    case 0x0fc060: /* CCOSR */
+        return (old & 0xfe00fe00u) | 0x00120001u;
     case L6_CCM_ANALOG_PLL_SYS:
         return (old & ~0x1f001u) | 0x80002001u;
     case L6_CCM_ANALOG_PLL_ARM:

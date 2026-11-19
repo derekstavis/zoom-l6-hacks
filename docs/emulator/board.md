@@ -39,7 +39,10 @@ execute the physical SDRAM initialization. L6 keeps its existing map.
 For the same bootloader handoff, the L6max board seeds observed IOMUX register
 values, selected clock gates, and GPIO output latch/direction values. It also
 applies the recovered masked changes to IOMUX GPR clock and pad fields while
-preserving other stored bits. IOMUX register storage does not
+preserving other stored bits. Peripheral clock mux and divider writes use
+RT1060 reset values for fields whose prior ROM state has not been captured;
+the resulting complete values are assumptions, not hardware measurements.
+IOMUX register storage does not
 model pad electrical characteristics or reroute pins dynamically. SDRAM
 timing and refresh register values are seeded from the bootloader's nominal
 clock and parameters, but refresh and SDRAM commands are not modeled.

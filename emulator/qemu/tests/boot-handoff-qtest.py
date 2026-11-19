@@ -89,6 +89,18 @@ def check_flexram_boundaries(qemu, image):
         for address in (0x400fc070, 0x400fc078):
             command(f"writel {address:#x} 0")
         command("writel 0x400fc06c 0x00007000")
+        clocks = {
+            0x400fc000: (0xffffff00, 0x7f),
+            0x400fc00c: (0xfffffffe, 0),
+            0x400fc020: (0xfffffc03, 0x00180204),
+            0x400fc024: (0xfff8c780, 0x06010800),
+            0x400fc02c: (0xfffffe00, 0xc1),
+            0x400fc030: (0xf1ff8fff, 0x03f01f80),
+            0x400fc038: (0xfe03ffff, 0),
+            0x400fc060: (0xfe00fe00, 0x00120001),
+        }
+        for address in clocks:
+            command(f"writel {address:#x} 0xffffffff")
         # Exercise handoff cleanup from a dirty CPU, rather than merely
         # comparing QEMU's reset defaults on an untouched guest.
         for address, value in ((0xe000e100, 1), (0xe000e200, 1),
@@ -102,6 +114,8 @@ def check_flexram_boundaries(qemu, image):
         assert int(command("readl 0x400fc070").split()[1], 16) == 0x0c000030
         assert int(command("readl 0x400fc078").split()[1], 16) == 0xc
         assert int(command("readl 0x400fc06c").split()[1], 16) == 0xcc0c4000
+        for address, (keep, value) in clocks.items():
+            assert int(command(f"readl {address:#x}").split()[1], 16) == keep | value
         for address in (0xe000e100, 0xe000e200, 0xe000e010,
                         0xe000ed94, 0xe000ed24):
             assert int(command(f"readl {address:#x}").split()[1], 16) == 0
@@ -130,6 +144,10 @@ def main():
         0x400fc068: 0xc0000000, 0x400fc06c: 0xcc0c0000,
         0x400fc070: 0x0c000030, 0x400fc074: 0x30, 0x400fc078: 0xc,
         0x400fc080: 0xc00,
+        0x400fc000: 0x0401107f, 0x400fc00c: 0x100,
+        0x400fc020: 0x13192e06, 0x400fc024: 0x06490b00,
+        0x400fc02c: 0x007336c1, 0x400fc030: 0x33f71f92,
+        0x400fc038: 0x00029150, 0x400fc060: 0x00120001,
         0xe000e010: 0, 0xe000ed08: 0x80000000,
         0xe000ed14: 0x200, 0xe000ed24: 0, 0xe000ed94: 0,
     }

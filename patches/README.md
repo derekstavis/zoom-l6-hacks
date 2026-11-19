@@ -117,8 +117,8 @@ Read any displaced instruction bytes from that local input during compilation;
 commit the veneer logic and validation metadata instead of copied firmware bytes.
 
 The builder checks each selected patch against the model and installation
-support in `package.toml`. MIDI Control and MIDI Sync can be combined;
-compatible shared entry and call hooks run as an ordered chain.
+support in `package.toml`. Patches that hook the same function can be
+combined; compatible shared entry and call hooks run as an ordered chain.
 If `--patch` is omitted, firmware detection selects
 `knob-dialog` on L6max and `midi-sync` on L6. Explicit `--patch` values remain
 model-checked, and the builder rejects an unsupported selection. `--patch` may

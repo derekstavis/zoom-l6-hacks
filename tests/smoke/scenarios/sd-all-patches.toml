@@ -6,7 +6,7 @@ state = "setup-complete"
 card = "empty"
 gdb = true
 patches = ["din-mixer-control"]
-sd_patches = ["knob-dialog", "midi-control", "midi-sync"]
+sd_patches = ["knob-dialog", "midi-sync"]
 
 [[step]]
 action = "wait"

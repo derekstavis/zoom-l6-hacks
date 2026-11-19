@@ -28,7 +28,7 @@ use crate::{
     settings::{FieldValue, Settings, parse_value},
 };
 use l6fw::Model;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -47,17 +47,23 @@ const PANEL_FLASH_SIZE: usize = 0x10000;
 /// emulated L6max state; QEMU seeds `ff ff ff ff` before programming.
 const PROGRAMMED_PANEL_OPTIONS: [u8; 4] = [0xff, 0xff, 0xff, 0xfe];
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct StateSpec {
     pub version: u32,
     pub model: String,
+    /// Another spec of the same model, from the repository root, that this one
+    /// adds to: its settings values are kept unless this spec sets them, and
+    /// this spec's base, RTC and panel replace the other's when given.
+    /// [`StateSpec::load`] resolves it; a loaded spec has none.
+    #[serde(default, skip_serializing)]
+    pub extends: Option<String>,
     pub settings: Option<SettingsSpec>,
     pub rtc: Option<RtcSpec>,
     pub panel: Option<PanelSpec>,
 }
 
-#[derive(Debug, Default, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum Base {
     #[default]
@@ -65,22 +71,23 @@ pub enum Base {
     Installed,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SettingsSpec {
-    #[serde(default)]
-    pub base: Base,
+    /// The bank values apply to; [`Base::Defaults`] when no spec in an
+    /// `extends` chain names one.
+    pub base: Option<Base>,
     #[serde(default)]
     pub values: BTreeMap<String, toml::Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RtcSpec {
     pub datetime: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PanelSpec {
     pub programmed: bool,
@@ -104,10 +111,64 @@ impl StateSpec {
         Ok(spec)
     }
 
+    /// Load a spec, resolving `extends` from the repository holding `path`.
     pub fn load(path: &Path) -> Result<Self, String> {
+        Self::load_from(path, 0)
+    }
+
+    fn load_from(path: &Path, depth: usize) -> Result<Self, String> {
         let text =
             fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        Self::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
+        let mut spec = Self::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        let Some(extends) = spec.extends.take() else {
+            return Ok(spec);
+        };
+        if depth >= 8 {
+            return Err(format!(
+                "{}: extends nests deeper than eight",
+                path.display()
+            ));
+        }
+        let relative = Path::new(&extends);
+        if !relative
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+        {
+            return Err(format!(
+                "{}: extends {extends} must be a path from the repository root",
+                path.display()
+            ));
+        }
+        let root = fs::canonicalize(path)
+            .ok()
+            .and_then(|p| {
+                p.ancestors()
+                    .find(|d| d.join(".git").exists())
+                    .map(Path::to_path_buf)
+            })
+            .ok_or_else(|| format!("{}: not inside a repository", path.display()))?;
+        let mut base = Self::load_from(&root.join(relative), depth + 1)?;
+        if base.model != spec.model {
+            return Err(format!(
+                "{}: extends {extends}, a {} spec",
+                path.display(),
+                base.model
+            ));
+        }
+        if let Some(settings) = spec.settings {
+            let (inherited_base, mut values) = match base.settings.take() {
+                Some(inherited) => (inherited.base, inherited.values),
+                None => (None, BTreeMap::new()),
+            };
+            values.extend(settings.values);
+            base.settings = Some(SettingsSpec {
+                base: settings.base.or(inherited_base),
+                values,
+            });
+        }
+        base.rtc = spec.rtc.or(base.rtc);
+        base.panel = spec.panel.or(base.panel);
+        Ok(base)
     }
 
     pub fn model(&self) -> Result<Model, String> {
@@ -196,7 +257,7 @@ pub fn apply(
     });
     if let Some(settings_spec) = &spec.settings {
         let (catalog, matched) = device.catalog()?;
-        let mut settings = match settings_spec.base {
+        let mut settings = match settings_spec.base.unwrap_or_default() {
             Base::Defaults => Settings::defaults(&catalog),
             Base::Installed => device
                 .settings(&catalog)?
@@ -209,7 +270,7 @@ pub fn apply(
         report["settings"] = json!({
             "catalog": catalog.system_version,
             "catalog_match": matched.as_str(),
-            "base": format!("{:?}", settings_spec.base).to_lowercase(),
+            "base": format!("{:?}", settings_spec.base.unwrap_or_default()).to_lowercase(),
             "values": settings_spec.values.keys().collect::<Vec<_>>(),
             "device": catalog.bank.device.file(),
             "slot": format!("{:#x}", catalog.bank.slots[bank.slot]),
@@ -277,6 +338,46 @@ pub fn regions() -> [(&'static str, usize, usize); 6] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extends_adds_to_another_spec_of_the_same_model() {
+        let rel = format!("target/l6nor-extends-test-{}", std::process::id());
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let dir = root.join(&rel);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("base.toml"),
+            "version = 1\nmodel = \"l6max\"\n[settings]\nbase = \"installed\"\n[settings.values]\nsetup_required = 0\nlast_date_day = 2\n[rtc]\ndatetime = \"2026-02-02T01:01:00\"\n[panel]\nprogrammed = true\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("child.toml"),
+            format!("version = 1\nmodel = \"l6max\"\nextends = \"{rel}/base.toml\"\n[settings.values]\nlast_date_day = 3\nmixer_control_via_midi = 1\n"),
+        )
+        .unwrap();
+        let spec = StateSpec::load(&dir.join("child.toml")).unwrap();
+        let settings = spec.settings.unwrap();
+        assert_eq!(settings.base, Some(Base::Installed));
+        assert_eq!(settings.values["setup_required"].as_integer(), Some(0));
+        assert_eq!(settings.values["last_date_day"].as_integer(), Some(3));
+        assert_eq!(
+            settings.values["mixer_control_via_midi"].as_integer(),
+            Some(1)
+        );
+        assert_eq!(spec.rtc.unwrap().datetime, "2026-02-02T01:01:00");
+        assert!(spec.panel.unwrap().programmed);
+        fs::write(
+            dir.join("other.toml"),
+            format!("version = 1\nmodel = \"l6\"\nextends = \"{rel}/base.toml\"\n"),
+        )
+        .unwrap();
+        assert!(
+            StateSpec::load(&dir.join("other.toml"))
+                .unwrap_err()
+                .contains("a l6max spec")
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn specs_validate_values_and_models() {

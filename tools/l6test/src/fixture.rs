@@ -347,16 +347,15 @@ pub(crate) fn fixture_options(
         .state_spec
         .as_ref()
         .map(|path| -> Result<Value, String> {
-            // A state depends only on its spec and the firmware it seeds from.
-            let spec_sha256 = hash(path)?;
-            let key = json!({"spec": spec_sha256, "firmware": firmware_files}).to_string();
+            // A state depends only on its spec, with what it extends, and the
+            // firmware it seeds from.
+            let spec = l6nor::StateSpec::load(path)?;
+            let resolved =
+                crate::hashing::digest(&serde_json::to_value(&spec).map_err(|e| e.to_string())?);
+            let key = json!({"spec": resolved, "firmware": firmware_files}).to_string();
             let built = cache.directory("state", &key, |out| {
                 fs::create_dir_all(out.join("state")).map_err(|e| e.to_string())?;
-                let report = l6nor::state::apply(
-                    &l6nor::StateSpec::load(path)?,
-                    Some(&firmware),
-                    &out.join("state"),
-                )?;
+                let report = l6nor::state::apply(&spec, Some(&firmware), &out.join("state"))?;
                 fs::write(
                     out.join("applied.json"),
                     serde_json::to_vec_pretty(&json!(report)).unwrap(),
@@ -368,7 +367,7 @@ pub(crate) fn fixture_options(
                 &fs::read(built.join("applied.json")).map_err(|e| e.to_string())?,
             )
             .map_err(|e| e.to_string())?;
-            Ok(json!({"sha256": spec_sha256, "applied": report}))
+            Ok(json!({"sha256": hash(path)?, "resolved": resolved, "applied": report}))
         })
         .transpose()?;
     let audio_device = audio_device_spec(fixture, dir);
@@ -390,7 +389,7 @@ pub(crate) fn fixture_options(
     }
     let sd_hash = if let Some(spec) = &fixture.card_spec {
         let target = dir.join("card.img");
-        let mut card = sd_image::spec::CardSpec::load(spec)?;
+        let mut card = sd_image::spec::CardSpec::load_for(spec, &fixture.model)?;
         if let Some(bundle_dir) = &fixture.sd_bundle
             && fixture.sd_bundle_mode.as_deref() != Some("absent")
         {
@@ -520,21 +519,20 @@ pub(crate) fn fixture_options(
                 });
             }
         }
-        let base = spec.parent().unwrap_or(Path::new("."));
+        // `copy` paths in a card spec are from the repository root.
+        let base = l6max_host::paths::repository_root();
         if cache.clones() {
-            // A card depends on its spec and the bytes of every file it holds.
-            let mut contents = Vec::new();
+            // A card depends on its resolved spec, with the files the driver
+            // added, and the bytes of every file it copies.
+            let mut copies = Vec::new();
             for file in &card.file {
-                contents.push(json!([
-                    file.path,
-                    match &file.content {
-                        sd_image::spec::Content::Copy(path) => hash(&base.join(path))?,
-                        content => format!("{content:?}"),
-                    }
-                ]));
+                if let sd_image::spec::Content::Copy(path) = &file.content {
+                    copies.push(json!([file.path, hash(&base.join(path))?]));
+                }
             }
+            let resolved = serde_json::to_value(&card).map_err(|e| e.to_string())?;
             let key =
-                json!({"spec": hash(spec)?, "model": fixture.model, "files": contents}).to_string();
+                json!({"card": crate::hashing::digest(&resolved), "copies": copies}).to_string();
             let built = cache.directory("card", &key, |out| {
                 fs::create_dir_all(out).map_err(|e| e.to_string())?;
                 card.build(&out.join("card.img"), base)
@@ -746,7 +744,7 @@ mod tests {
         let unpacked = dir.join("verify-loader");
         l6fw::unpack(package, &unpacked).unwrap();
         let spec = fixture.card_spec.as_ref().unwrap();
-        let mut card = sd_image::spec::CardSpec::load(spec).unwrap();
+        let mut card = sd_image::spec::CardSpec::load_for(spec, &fixture.model).unwrap();
         let patch_path = format!("PATCHES/{}", filename.to_string_lossy());
         card.file.push(sd_image::spec::File {
             path: patch_path.clone(),
@@ -837,7 +835,7 @@ mod tests {
                 };
                 let fixture = case_fixture(&config, model, id, Some(scenario)).unwrap();
                 if let Some(spec_path) = &fixture.card_spec {
-                    let spec = sd_image::spec::CardSpec::load(spec_path).unwrap();
+                    let spec = sd_image::spec::CardSpec::load_for(spec_path, model).unwrap();
                     assert_eq!(&spec.model, model, "{}", spec_path.display());
                     cards += 1;
                 }

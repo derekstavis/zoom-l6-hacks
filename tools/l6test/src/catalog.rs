@@ -303,12 +303,19 @@ fn definition(case: &Case, scenario: Option<&Scenario>, model: &str) -> Result<S
             scenario
                 .state
                 .as_ref()
-                .map(|name| spec_value(&state_spec(model, name)))
+                .map(|name| {
+                    let path = state_spec(model, name);
+                    let spec = l6nor::StateSpec::load(&path)?;
+                    serde_json::to_value(spec).map_err(|e| e.to_string())
+                })
                 .transpose()?,
             scenario
                 .card
                 .as_ref()
-                .map(|name| spec_value(&card_spec(model, name)))
+                .map(|name| {
+                    let spec = sd_image::spec::CardSpec::load_for(&card_spec(model, name), model)?;
+                    serde_json::to_value(spec).map_err(|e| e.to_string())
+                })
                 .transpose()?,
         ),
         None => (None, None, None),
@@ -360,14 +367,6 @@ pub(crate) fn resolved_scenario(scenario: &Scenario, model: &str) -> Result<Valu
         }
     }
     Ok(value)
-}
-
-/// A state or card spec as data, so formatting and comments do not count.
-fn spec_value(path: &Path) -> Result<Value, String> {
-    let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let value: toml::Value =
-        toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    serde_json::to_value(value).map_err(|e| e.to_string())
 }
 
 /// Every (case, model, backend) the catalog can run, sorted.

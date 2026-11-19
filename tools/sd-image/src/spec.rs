@@ -261,9 +261,50 @@ impl Project {
 }
 
 impl CardSpec {
+    /// Load a spec that names its `model`.
     pub fn load(path: &Path) -> Result<Self, String> {
         let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let spec: Self = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        spec.validated(path)
+    }
+
+    /// Load a spec for `model`. A spec without `model` serves both models,
+    /// and its `[l6]` and `[l6max]` tables replace top-level fields for that
+    /// model, so the differences between models are explicit. A spec naming
+    /// its `model` serves only that model.
+    pub fn load_for(path: &Path, model: &str) -> Result<Self, String> {
+        let error = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
+        let text = fs::read_to_string(path).map_err(|e| error(&e))?;
+        let mut table: toml::Table = toml::from_str(&text).map_err(|e| error(&e))?;
+        let overrides = ["l6", "l6max"].map(|name| (name, table.remove(name)));
+        match table.get("model") {
+            Some(named) => {
+                if named.as_str() != Some(model) {
+                    return Err(error(&format!("card spec is for {named}, not {model}")));
+                }
+                if overrides.iter().any(|(_, table)| table.is_some()) {
+                    return Err(error(&"a spec naming its model has no per-model tables"));
+                }
+            }
+            None => {
+                for (name, fields) in overrides {
+                    let Some(fields) = fields else { continue };
+                    let toml::Value::Table(fields) = fields else {
+                        return Err(error(&format!("[{name}] must be a table")));
+                    };
+                    if name == model {
+                        table.extend(fields);
+                    }
+                }
+                table.insert("model".into(), model.into());
+            }
+        }
+        let spec: Self = table.try_into().map_err(|e: toml::de::Error| error(&e))?;
+        spec.validated(path)
+    }
+
+    fn validated(self, path: &Path) -> Result<Self, String> {
+        let spec = self;
         if spec.version != 1 {
             return Err(format!("{}: card spec needs version = 1", path.display()));
         }

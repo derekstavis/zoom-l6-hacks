@@ -4,9 +4,52 @@
 use crate::engine::Options;
 use sha2::{Digest, Sha256};
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs, io,
     path::{Path, PathBuf},
 };
+
+/// Keep explicit choices in configuration; omit dependencies only while their
+/// consumers are installed, since the composed payload already includes them.
+pub fn installation_patches(
+    selected: &[String],
+    sd_selected: &[String],
+    replacements: &BTreeMap<String, String>,
+) -> Result<(Vec<String>, Vec<String>), String> {
+    let entries = replacements
+        .iter()
+        .map(|(slot, effect)| (slot.clone(), effect.clone()))
+        .collect::<Vec<_>>();
+    let mut roots = selected
+        .iter()
+        .chain(sd_selected)
+        .cloned()
+        .collect::<Vec<_>>();
+    roots.extend(firmware_patch_core::effect_replacement_packages(
+        &entries,
+        firmware_patch_core::patch_catalog(),
+    )?);
+    let mut required = BTreeSet::new();
+    for root in roots {
+        for name in firmware_patch_core::resolve_patch_dependencies(std::slice::from_ref(&root))? {
+            if name != root {
+                required.insert(name);
+            }
+        }
+    }
+    Ok((
+        selected
+            .iter()
+            .filter(|name| !required.contains(*name))
+            .cloned()
+            .collect(),
+        sd_selected
+            .iter()
+            .filter(|name| !required.contains(*name))
+            .cloned()
+            .collect(),
+    ))
+}
 
 /// The SHA-256 of the patched MAIN image installed on a device. A device without
 /// this file runs whatever it has installed.
@@ -53,7 +96,6 @@ pub fn check(
     selected: &[String],
     sd_selected: &[String],
 ) -> Result<(), String> {
-    crate::sd_patches::check(model, sd_selected)?;
     let effect_replacements = options.selected_effect_replacements(model);
     crate::sd_patches::check_effect_replacements(model, &effect_replacements)?;
     if let Some(patch) = selected.iter().find(|patch| sd_selected.contains(patch)) {
@@ -61,6 +103,9 @@ pub fn check(
             "{patch} is selected both in the firmware and on the SD card"
         ));
     }
+    let (selected, sd_selected) =
+        installation_patches(selected, sd_selected, &effect_replacements)?;
+    crate::sd_patches::check(model, &sd_selected)?;
     if (!sd_selected.is_empty() || !effect_replacements.is_empty()) && options.no_sd {
         return Err("SD card patches need an SD card".into());
     }
@@ -102,9 +147,12 @@ pub fn prepare(
     model: l6fw::Model,
     card: Option<&Path>,
 ) -> Result<PathBuf, String> {
-    let selected = options.selected_patches(model);
-    let sd_selected = options.selected_sd_patches(model);
     let effect_replacements = options.selected_effect_replacements(model);
+    let (selected, sd_selected) = installation_patches(
+        &options.selected_patches(model),
+        &options.selected_sd_patches(model),
+        &effect_replacements,
+    )?;
     let state = options.state_dir.as_deref();
     match card {
         Some(card) if !sd_selected.is_empty() || !effect_replacements.is_empty() => {
@@ -175,5 +223,61 @@ pub fn forget_installed(state: &Path) -> Result<(), String> {
     match fs::remove_file(state.join(INSTALLED)) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error.to_string()),
         _ => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_dependency_survives_effect_assignment_and_removal() {
+        for on_sd in [false, true] {
+            let firmware = if on_sd {
+                vec![]
+            } else {
+                vec!["knob-dialog".to_owned()]
+            };
+            let sd = if on_sd {
+                vec!["knob-dialog".to_owned()]
+            } else {
+                vec![]
+            };
+            let effects = BTreeMap::from([("room".to_owned(), "velvet".to_owned())]);
+            assert_eq!(
+                installation_patches(&firmware, &sd, &effects).unwrap(),
+                (vec![], vec![])
+            );
+            assert_eq!(
+                installation_patches(&firmware, &sd, &BTreeMap::new()).unwrap(),
+                (firmware, sd)
+            );
+        }
+    }
+
+    #[test]
+    fn saved_selection_retains_explicit_dependency_while_effect_is_active() {
+        let path =
+            std::env::temp_dir().join(format!("l6-patch-preferences-{}.toml", std::process::id()));
+        std::fs::write(&path, "version = 1\n").unwrap();
+        let selected = vec!["knob-dialog".to_owned()];
+        let effects = BTreeMap::from([("room".to_owned(), "velvet".to_owned())]);
+        crate::config::save_patches(&path, l6fw::Model::L6max, &selected, &[], &effects).unwrap();
+        let config = crate::config::Config::load(&path).unwrap();
+        assert_eq!(config.patches(l6fw::Model::L6max), selected);
+        let active = installation_patches(
+            config.patches(l6fw::Model::L6max),
+            config.sd_patches(l6fw::Model::L6max),
+            config.effect_replacements(l6fw::Model::L6max),
+        )
+        .unwrap();
+        assert!(active.0.is_empty());
+        let restored = installation_patches(
+            config.patches(l6fw::Model::L6max),
+            config.sd_patches(l6fw::Model::L6max),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(restored.0, selected);
     }
 }

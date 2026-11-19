@@ -70,17 +70,6 @@ fn required_patches(
     required
 }
 
-fn installation_selection(mut selection: Selection) -> Selection {
-    let required = required_patches(&selection, &effect_ids(&selection));
-    selection
-        .firmware
-        .retain(|name| !required.contains_key(name));
-    selection
-        .sd_card
-        .retain(|name| !required.contains_key(name));
-    selection
-}
-
 fn slot_label(slot: &str) -> &str {
     match slot {
         "room" => "Room",
@@ -290,10 +279,8 @@ impl PatchesWindow {
     /// Close and restart with the selection. The main window shows the progress,
     /// and this window comes back if the selection cannot apply.
     pub fn apply(&mut self, selection: Selection, window: &mut Window, cx: &mut Context<Self>) {
-        let selection = installation_selection(
-            Selection::new(selection.firmware, selection.sd_card)
-                .with_effect_replacements(selection.effect_replacements),
-        );
+        let selection = Selection::new(selection.firmware, selection.sd_card)
+            .with_effect_replacements(selection.effect_replacements);
         if let Source::Panel(panel) = &self.source {
             panel.update(cx, |panel, cx| panel.apply_patches(selection, cx));
         }
@@ -941,7 +928,7 @@ mod tests {
     }
 
     #[test]
-    fn effects_require_their_dependency_on_sd_without_installing_it_twice() {
+    fn effects_require_their_dependency_on_sd_without_changing_the_selection() {
         let mut selection = Selection::new(names(&["knob-dialog"]), vec![]);
         let effects = ["velvet".to_owned(), "plateau".to_owned()]
             .into_iter()
@@ -951,13 +938,8 @@ mod tests {
             Some(&Delivery::SdCard)
         );
         selection.set_effect("room", Some("velvet"));
-        let installed = installation_selection(selection.clone());
-        assert_eq!(installed.delivery("knob-dialog"), None);
-        assert_eq!(installed.effect_replacements["room"], "velvet");
+        assert_eq!(selection.delivery("knob-dialog"), Some(Delivery::Firmware));
         selection.set_effect("room", None);
-        assert_eq!(
-            installation_selection(selection).delivery("knob-dialog"),
-            Some(Delivery::Firmware)
-        );
+        assert_eq!(selection.delivery("knob-dialog"), Some(Delivery::Firmware));
     }
 }

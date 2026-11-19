@@ -4350,7 +4350,7 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
     static const hwaddr offsets[] = {
         0x0fc000, 0x0fc00c, 0x0fc020, 0x0fc024,
         0x0fc02c, 0x0fc030, 0x0fc038, 0x0fc060,
-        0x0d8020, 0x0d80a0, 0x0d8160,
+        0x0d8020, 0x0d80a0, 0x0d80e0, 0x0d8160,
         L6_CCM_CACRR_OFFSET, L6_CCM_CBCDR_OFFSET, L6_CCM_CBCMR_OFFSET,
         L6_CCM_CSCMR1_OFFSET, L6_CCM_CS1CDR_OFFSET,
         L6_CCM_ANALOG_PLL_ARM, L6_CCM_ANALOG_PLL_SYS,

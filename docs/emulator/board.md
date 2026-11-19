@@ -42,8 +42,9 @@ applies the recovered masked changes to IOMUX GPR clock and pad fields while
 preserving other stored bits. Peripheral clock mux and divider writes use
 RT1060 reset values for fields whose prior ROM state has not been captured;
 the resulting complete values are assumptions, not hardware measurements.
-The USB2 and video PLL controls reflect the bootloader's bypass/power writes;
-the emulator does not simulate those PLLs' timing or outputs.
+The USB2, video and Ethernet PLL controls reflect the bootloader's recovered
+bypass/power sequence. Ethernet LOCK is seeded based on the successful
+bootloader wait; these PLLs' timing and outputs are not simulated.
 IOMUX register storage does not
 model pad electrical characteristics or reroute pins dynamically. SDRAM
 timing and refresh register values are seeded from the bootloader's nominal

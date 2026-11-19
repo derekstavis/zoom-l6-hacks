@@ -81,6 +81,8 @@ static inline uint32_t l6max_boot_clock_value(uint32_t offset, uint32_t old)
         return 0x00012000u;
     case 0x0d80a0: /* PLL_VIDEO: powered down, bypassed */
         return 0x00013000u;
+    case 0x0d80e0: /* PLL_ENET: locked, enabled, then bypass selected */
+        return 0x80312001u;
     case L6_CCM_ANALOG_PLL_AUDIO:
         return (old & 0xfffe0f80u) | 0x2020u;
     case L6_CCM_ANALOG_PLL_AUDIO_NUM:

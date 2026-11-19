@@ -110,6 +110,20 @@ datetime = "2026-02-02T01:01:00"
 programmed = true        # L6max only
 ```
 
+A spec can add to another spec of the same model with `extends`, a path from
+the repository root. Its settings values are kept unless the extending spec
+sets them, and the extending spec's `base`, `[rtc]` and `[panel]` replace the
+other's when given:
+
+```toml
+version = 1
+model = "l6max"
+extends = "tests/emulator/fixtures/states/l6max-setup-complete.toml"
+
+[settings.values]
+"mixer.current.efx_type" = 1
+```
+
 Missing `main-nor.bin` is seeded from the firmware package first. Settings are
 committed with the firmware's bank protocol, so the firmware loads them on its
 first boot. `setup_required = 0` together with a valid RTC calendar skips the

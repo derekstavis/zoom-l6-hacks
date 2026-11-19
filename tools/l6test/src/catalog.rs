@@ -105,9 +105,10 @@ pub fn state_spec(model: &str, name: &str) -> PathBuf {
     l6max_host::paths::repository_root().join(format!("{SPEC}/fixtures/states/{model}-{name}.toml"))
 }
 
-/// A card spec for `model`, by the name a scenario gives it.
-pub fn card_spec(model: &str, name: &str) -> PathBuf {
-    l6max_host::paths::repository_root().join(format!("{SPEC}/fixtures/cards/{model}-{name}.toml"))
+/// A card spec, by the name a scenario gives it. Card specs serve both models;
+/// load one with `CardSpec::load_for`.
+pub fn card_spec(name: &str) -> PathBuf {
+    l6max_host::paths::repository_root().join(format!("{SPEC}/fixtures/cards/{name}.toml"))
 }
 
 fn toml_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
@@ -313,7 +314,7 @@ fn definition(case: &Case, scenario: Option<&Scenario>, model: &str) -> Result<S
                 .card
                 .as_ref()
                 .map(|name| {
-                    let spec = sd_image::spec::CardSpec::load_for(&card_spec(model, name), model)?;
+                    let spec = sd_image::spec::CardSpec::load_for(&card_spec(name), model)?;
                     serde_json::to_value(spec).map_err(|e| e.to_string())
                 })
                 .transpose()?,

@@ -30,7 +30,7 @@ Each scenario declares what it runs from, so the local file only supplies firmwa
 | Scenario key | Purpose |
 | --- | --- |
 | `state` | Boot from [`tests/emulator/fixtures/states`](../../tests/emulator/fixtures/states)`/<model>-<state>.toml`, an [`l6nor` state spec](tools/l6nor.md#state-specs). Without it, the case starts from first boot. |
-| `card` | Build [`tests/emulator/fixtures/cards`](../../tests/emulator/fixtures/cards)`/<model>-<card>.toml` for each run. Without it, the case has no card. |
+| `card` | Build [`tests/emulator/fixtures/cards`](../../tests/emulator/fixtures/cards)`/<card>.toml` for the case's model each run. Without it, the case has no card. |
 | `patches` | Apply named guarded patches to the model's package, using the same implementation as the browser patcher. |
 | `installed_patches` | Have the engine install named patches on a device seeded with the stock firmware, as `--patch` does. |
 | `installed_sd_patches` | Have the engine install the Patch loader and write the named patches' hosted modules to the case's card, as `--sd-patch` does. |
@@ -72,8 +72,11 @@ Options choose what a run tests, without editing files:
 Card spec details:
 
 - A card spec is a TOML file declaring a card's contents, like the ones in
-  [`tests/emulator/fixtures/cards`](../../tests/emulator/fixtures/cards). It names `version = 1` and `model`,
-  with optional `directory` (a list of paths).
+  [`tests/emulator/fixtures/cards`](../../tests/emulator/fixtures/cards). It names `version = 1`,
+  with optional `directory` (a list of paths). A spec without `model` serves both
+  models; its `[l6]` and `[l6max]` tables replace top-level fields for one model,
+  so `[[l6.sound_pad]]` gives the L6 its own pads. A spec naming `model` serves only
+  that model.
   `system_file` defaults to `true`; `false` leaves the file out (see
   [card layout](../emulator/usb.md#card-layout)). `[[sound_pad]]` blocks take `pad` (1–4), `file` (a path on the card),
   optional `mode` (`one-shot`, `loop`, or `hold`; default `one-shot`), and optional

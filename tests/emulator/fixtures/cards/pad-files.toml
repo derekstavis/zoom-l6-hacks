@@ -1,6 +1,5 @@
 # A WAV in each pad folder, unassigned, for cases that browse or assign them.
 version = 1
-model = "l6max"
 
 [[file]]
 path = "SOUND_PAD/PAD1/TONE220.WAV"

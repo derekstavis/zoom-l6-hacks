@@ -53,11 +53,19 @@ continuation, and dynamic-dispatch metadata. Both the static builder and SD
 loader use these model-specific catalogs. Loader implementation remains in
 `patch-loader`; the hook catalog is shared API metadata.
 
-The shared module also provides the default `no_std` panic handler for each
-payload. It halts in a spin loop and does not call back into firmware, since a
-panic may occur while firmware locks or interrupts are in an unsafe state.
-This handles Rust panics only; Cortex-M faults use the firmware's exception
-vectors.
+Every payload, in firmware or on the SD card, is built with the immediate-abort
+panic strategy against a `core` the builder compiles once from the `rust-src`
+component. A panic is a single trap instruction, without message formatting,
+and `-Zlocation-detail=none` leaves panic locations without file, line or
+column. The trap, like any other Cortex-M fault, goes to the firmware's
+exception vectors. The shared module still provides the `no_std` panic handler
+that the language requires; it is never reached.
+
+A payload carries only the text it displays or writes. The builder rejects one
+that contains a panic message or a source file name. A `#[track_caller]` call
+that is not inlined, such as `copy_from_slice` with a length known only at run
+time, still passes a location record; copy element-wise or through a
+fixed-size array instead.
 
 `firmware_functions!` declares typed, unsafe calls. It adds the Thumb bit and
 converts the address to the declared C ABI signature in one place:

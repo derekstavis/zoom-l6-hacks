@@ -90,6 +90,108 @@ fn rustc_executable() -> Option<PathBuf> {
     rustc.is_file().then_some(rustc)
 }
 
+/// Target-library flags for the immediate-abort sysroot. Changing them
+/// changes the cache key in [`immediate_abort_sysroot`].
+const IMMEDIATE_ABORT_LIBRARY_FLAGS: &[&str] = &[
+    "--target=thumbv7em-none-eabihf",
+    "--edition=2024",
+    "-Copt-level=z",
+    "-Cdebuginfo=0",
+    "-Zunstable-options",
+    "-Cpanic=immediate-abort",
+    "-Zforce-unstable-if-unmarked",
+    "-Zlocation-detail=none",
+];
+
+/// Build `core` and `compiler_builtins` with the immediate-abort panic
+/// strategy into a sysroot, once per toolchain, and return its path.
+///
+/// Every payload uses it so that a panic compiles to a single trap
+/// instruction. The prebuilt `core` formats a panic message and passes source
+/// locations to the panic handler: about 1.4 KB of formatting code plus the
+/// message and file-name strings, and in a relocatable module one relocation
+/// per location, all of which the handler ignores. With
+/// `-Zlocation-detail=none`, a location that a `#[track_caller]` call still
+/// passes names no file, line or column. Both crates come from the `rust-src`
+/// component and have no crates.io dependencies, so the build needs no
+/// network access.
+fn immediate_abort_sysroot(rustc: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let toolchain = run(Command::new(rustc).args(["--print", "sysroot"]))?;
+    let library = Path::new(toolchain.trim()).join("lib/rustlib/src/rust/library");
+    if !library.join("core/src/lib.rs").is_file() {
+        return Err(format!(
+            "the rust-src component is missing from {}; it is listed in rust-toolchain.toml",
+            toolchain.trim()
+        )
+        .into());
+    }
+    let mut key = Sha256::new();
+    key.update(run(Command::new(rustc).arg("-vV"))?);
+    key.update(IMMEDIATE_ABORT_LIBRARY_FLAGS.join(" "));
+    let key = format!("{:x}", key.finalize());
+    let cache =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/l6-immediate-abort-sysroot");
+    let root = cache.join(&key[..16]);
+    let target_lib = |root: &Path| root.join("lib/rustlib/thumbv7em-none-eabihf/lib");
+    if target_lib(&root)
+        .join("libcompiler_builtins.rlib")
+        .is_file()
+    {
+        return Ok(root);
+    }
+
+    // Build in a private directory and rename it into place, so concurrent
+    // builders never see a partial sysroot.
+    let staging = cache.join(format!("{}.{}.tmp", &key[..16], std::process::id()));
+    let _ = fs::remove_dir_all(&staging);
+    let lib = target_lib(&staging);
+    fs::create_dir_all(&lib)?;
+    run(Command::new(rustc)
+        .args(IMMEDIATE_ABORT_LIBRARY_FLAGS)
+        .args(["--crate-name", "core", "--crate-type", "rlib"])
+        .arg(library.join("core/src/lib.rs"))
+        .arg("--out-dir")
+        .arg(&lib))?;
+    // These configuration values are what compiler-builtins' build script
+    // selects for thumbv7em-none-eabihf as a dependency of the standard
+    // library: memory intrinsics, unmangled symbol names and Thumb-2 code.
+    run(Command::new(rustc)
+        .args(IMMEDIATE_ABORT_LIBRARY_FLAGS)
+        .args(["--crate-name", "compiler_builtins", "--crate-type", "rlib"])
+        .args(["-Ccodegen-units=10000", "--sysroot"])
+        .arg(&staging)
+        .args([
+            "--cfg",
+            "feature=\"compiler-builtins\"",
+            "--cfg",
+            "feature=\"mem\"",
+            "--cfg",
+            "feature=\"unmangled-names\"",
+            "--cfg",
+            "feature=\"arch\"",
+            "--cfg",
+            "thumb",
+            "--cfg",
+            "intrinsics_enabled",
+            "--cfg",
+            "optimizations_enabled",
+        ])
+        .arg(library.join("compiler-builtins/compiler-builtins/src/lib.rs"))
+        .arg("--out-dir")
+        .arg(&lib))?;
+    if fs::rename(&staging, &root).is_err() {
+        // Another builder finished first; use its sysroot.
+        let _ = fs::remove_dir_all(&staging);
+        if !target_lib(&root)
+            .join("libcompiler_builtins.rlib")
+            .is_file()
+        {
+            return Err(format!("could not install the sysroot at {}", root.display()).into());
+        }
+    }
+    Ok(root)
+}
+
 fn toolchain_bin() -> Option<PathBuf> {
     let sysroot = run(Command::new("rustc").args(["--print", "sysroot"])).ok()?;
     fs::read_dir(PathBuf::from(sysroot.trim()).join("lib/rustlib"))
@@ -630,7 +732,7 @@ fn compile_inner_with_payload(
     let hook_macro = patch_hook_macro_library()?;
     fs::write(
         generated.join("continuations.rs"),
-        "pub fn address(_: &str) -> usize { 0 }\npub fn handler_address(_: &str, _: &str) -> usize { 0 }\n",
+        "pub fn address(_: &str) -> usize { 0 }\n",
     )?;
     let _ = compile_payload_pass(
         source,
@@ -645,6 +747,7 @@ fn compile_inner_with_payload(
         &blob,
         &hook_macro,
         payload,
+        true,
     )?;
 
     let first_symbols = run(
@@ -663,7 +766,7 @@ fn compile_inner_with_payload(
         validate_guards,
     )?;
     fs::write(generated.join("continuations.rs"), continuation_rs)?;
-    compile_payload_pass(
+    let (bytes, symbols) = compile_payload_pass(
         source,
         root,
         name,
@@ -676,7 +779,60 @@ fn compile_inner_with_payload(
         &blob,
         &hook_macro,
         payload,
-    )
+        false,
+    )?;
+    if let Some(text) = diagnostic_text(&bytes) {
+        return Err(format!(
+            "the {name} payload contains panic diagnostics, {text:?}; payloads carry \
+             only the text they display or write"
+        )
+        .into());
+    }
+    Ok((bytes, symbols))
+}
+
+/// Text that only panic diagnostics put in a payload: `core`'s messages and
+/// the file name of a panic location.
+const DIAGNOSTIC_TEXT: &[&str] = &[
+    "<redacted>",
+    "index out of bounds",
+    "out of range for slice",
+    "slice index starts at",
+    "copy_from_slice",
+    "unwrap()",
+    "panicked",
+    "attempt to ",
+    "called `",
+];
+
+/// The first panic diagnostic in a built payload: a [`DIAGNOSTIC_TEXT`] entry
+/// or a Rust source path. The hardware never reads either, so a payload with
+/// one carries them in flash and module memory for nothing.
+pub fn diagnostic_text(payload: &[u8]) -> Option<String> {
+    if let Some(text) = DIAGNOSTIC_TEXT.iter().find(|text| {
+        payload
+            .windows(text.len())
+            .any(|window| window == text.as_bytes())
+    }) {
+        return Some((*text).to_owned());
+    }
+    let path_byte = |byte: u8| byte.is_ascii_alphanumeric() || b"_./-".contains(&byte);
+    (0..payload.len().saturating_sub(2)).find_map(|end| {
+        let suffix_end = end + 3;
+        if &payload[end..suffix_end] != b".rs"
+            || payload
+                .get(suffix_end)
+                .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        {
+            return None;
+        }
+        let start = payload[..end]
+            .iter()
+            .rposition(|byte| !path_byte(*byte))
+            .map_or(0, |index| index + 1);
+        let path = &payload[start..suffix_end];
+        (path.contains(&b'/') && path.len() > 5).then(|| String::from_utf8_lossy(path).into_owned())
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -693,6 +849,7 @@ fn compile_payload_pass(
     blob: &Path,
     hook_macro: &Path,
     payload: &Path,
+    discovery: bool,
 ) -> Result<(Vec<u8>, String), Box<dyn std::error::Error>> {
     let firmware = fs::read(source.join("main_firmware.bin"))?;
     let dynamic_linker = root.join("linker/link-dynamic.ld");
@@ -710,7 +867,7 @@ fn compile_payload_pass(
     // Rustup selects toolchains from the current directory, and that directory
     // does not contain this workspace's rust-toolchain.toml.
     let rustc = rustc_executable().ok_or("could not locate the active rustc executable")?;
-    let mut command = Command::new(rustc);
+    let mut command = Command::new(&rustc);
     command
         .current_dir(source)
         .env("OUT_DIR", &generated)
@@ -728,10 +885,6 @@ fn compile_payload_pass(
             "-C",
             "opt-level=z",
             "-C",
-            "panic=abort",
-            "-C",
-            "relocation-model=static",
-            "-C",
         ])
         .arg(format!(
             "linker={}",
@@ -743,6 +896,40 @@ fn compile_payload_pass(
         .arg(format!("link-arg=-T{}", linker_script.display()))
         .arg("-o")
         .arg(&elf);
+    if discovery {
+        // The discovery pass only reports hook metadata. Hook handlers call
+        // their `original_<site>_<handler>` continuation stubs directly, and
+        // those stubs are generated from this pass's output, so they cannot
+        // resolve yet. The output of this pass is never installed.
+        command.args(["-C", "link-arg=--unresolved-symbols=ignore-all"]);
+    }
+    if emit_relocations {
+        // SD modules are linked at base zero and moved by the loader. With
+        // position-independent code, references within the module are
+        // PC-relative and need no load-time fixup. Every symbol a module uses
+        // is linked into it or is a fixed firmware address, so rustc may
+        // address external statics directly instead of through a GOT, which
+        // the loader does not support.
+        command.args([
+            "-C",
+            "relocation-model=pie",
+            "-Z",
+            "direct-access-external-data=yes",
+        ]);
+    } else {
+        command.args(["-C", "relocation-model=static"]);
+    }
+    // A panic traps instead of formatting a message the panic handler would
+    // ignore, and panic locations carry no file, line or column. See
+    // `immediate_abort_sysroot`.
+    command
+        .arg("--sysroot")
+        .arg(immediate_abort_sysroot(&rustc)?)
+        .args([
+            "-Zunstable-options",
+            "-Cpanic=immediate-abort",
+            "-Zlocation-detail=none",
+        ]);
     if emit_relocations {
         command
             .arg("--cfg")
@@ -834,9 +1021,10 @@ fn generate_continuations_from_metadata(
         }
     }
 
+    // Continuation stubs load their slot word with a PC-relative literal
+    // load (`ldr.w r12, slot`), so a relocated module needs no fixup for them.
     let mut assembly = String::from(".thumb\n");
     let mut address_arms = Vec::new();
-    let mut handler_address_arms = Vec::new();
     let mut externs = Vec::new();
     let mut wrappers = Vec::new();
     for name in needed {
@@ -869,7 +1057,7 @@ fn generate_continuations_from_metadata(
         if dynamic && site.dynamic_dispatch {
             let slot = format!("dynamic_next_{name}_slot");
             assembly.push_str(&format!(
-                ".section .text.continuation_{name}, \"ax\"\n.global {original}\n.thumb_func\n{original}:\n    ldr r12, ={slot}\n    ldr r12, [r12]\n    bx r12\n.align 2\n.global {slot}\n{slot}:\n    .word 0\n"
+                ".section .text.continuation_{name}, \"ax\"\n.global {original}\n.thumb_func\n{original}:\n    ldr.w r12, {slot}\n    bx r12\n.align 2\n.global {slot}\n{slot}:\n    .word 0\n"
             ));
         } else if generate_dynamic_sites {
             // The resident loader's dispatch fallback must stay a direct
@@ -904,7 +1092,7 @@ fn generate_continuations_from_metadata(
             let slot = format!("static_next_{name}_slot");
             let stock = format!("static_stock_{name}");
             assembly.push_str(&format!(
-                ".section .text.continuation_{name}, \"ax\"\n.global {original}\n.thumb_func\n{original}:\n    ldr r12, ={slot}\n    ldr r12, [r12]\n    bx r12\n.align 2\n.global {slot}\n{slot}:\n    .word {stock}\n.thumb_func\n{stock}:\n"
+                ".section .text.continuation_{name}, \"ax\"\n.global {original}\n.thumb_func\n{original}:\n    ldr.w r12, {slot}\n    bx r12\n.align 2\n.global {slot}\n{slot}:\n    .word {stock}\n.thumb_func\n{stock}:\n"
             ));
             let resume = site
                 .address
@@ -952,15 +1140,15 @@ fn generate_continuations_from_metadata(
             .ok_or_else(|| {
                 format!("hook site {site_name} is missing from define_function_hooks!")
             })?;
+        // The hook macro calls this stub by name, so it needs no lookup.
         let original = format!("original_{site_name}_{handler_name}");
         validate_asm_symbol(&original)?;
-        externs.push(format!("unsafe extern \"C\" {{ fn {original}(); }}"));
 
         if dynamic && site.dynamic_dispatch {
             let slot = format!("dynamic_next_{site_name}_{handler_name}_slot");
             validate_asm_symbol(&slot)?;
             assembly.push_str(&format!(
-                ".section .text.continuation_{site_name}_{handler_name}, \"ax\"\n.global {original}\n.thumb_func\n{original}:\n    ldr r12, ={slot}\n    ldr r12, [r12]\n    bx r12\n.align 2\n.global {slot}\n{slot}:\n    .word 0\n"
+                ".section .text.continuation_{site_name}_{handler_name}, \"ax\"\n.global {original}\n.thumb_func\n{original}:\n    ldr.w r12, {slot}\n    bx r12\n.align 2\n.global {slot}\n{slot}:\n    .word 0\n"
             ));
         } else {
             let slot = format!("static_next_{site_name}_{handler_name}_slot");
@@ -972,12 +1160,9 @@ fn generate_continuations_from_metadata(
             validate_asm_symbol(&slot)?;
             validate_asm_symbol(&target)?;
             assembly.push_str(&format!(
-                ".section .text.continuation_{site_name}_{handler_name}, \"ax\"\n.global {original}\n.thumb_func\n{original}:\n    ldr r12, ={slot}\n    ldr r12, [r12]\n    bx r12\n.align 2\n.global {slot}\n{slot}:\n    .word {target}\n"
+                ".section .text.continuation_{site_name}_{handler_name}, \"ax\"\n.global {original}\n.thumb_func\n{original}:\n    ldr.w r12, {slot}\n    bx r12\n.align 2\n.global {slot}\n{slot}:\n    .word {target}\n"
             ));
         }
-        handler_address_arms.push(format!(
-            "({site_name:?}, {handler_name:?}) => {original} as *const () as usize,"
-        ));
     }
 
     // The resident loader patches every catalog entry marked for dynamic
@@ -995,14 +1180,17 @@ fn generate_continuations_from_metadata(
             let dispatcher = format!("dispatch_{}", site.name);
             let original = format!("original_{}", site.name);
             validate_asm_symbol(&dispatcher)?;
-            let slot_offset = registry::HANDLER_TABLE_OFFSET
-                .checked_add(u32::try_from(
-                    dynamic_index
-                        .checked_mul(4)
-                        .ok_or("handler slot overflow")?,
-                )?)
-                .filter(|offset| *offset < registry::ARENA_NEXT_OFFSET)
-                .ok_or("handler table offset overflow")?;
+            // The handler is the first word of the site's registry record.
+            let index = u32::try_from(dynamic_index)?;
+            if index >= registry::MAX_SITES {
+                return Err(format!(
+                    "{} dynamic dispatch sites exceed the registry's {} sites",
+                    index + 1,
+                    registry::MAX_SITES
+                )
+                .into());
+            }
+            let slot_offset = registry::site_offset(index);
             assembly.push_str(&format!(
                 ".section .text.{dispatcher}, \"ax\"\n.global {dispatcher}\n.thumb_func\n{dispatcher}:\n    push {{r0, r1}}\n    ldr r0, ={pointer:#x}\n    ldr r0, [r0]\n    cbz r0, 1f\n    ldr r1, [r0]\n    ldr r12, ={magic:#x}\n    cmp r1, r12\n    bne 1f\n    ldr.w r12, [r0, #{slot_offset}]\n    cmp r12, #0\n    bne 2f\n1:  ldr r12, ={original}\n2:  pop {{r0, r1}}\n    bx r12\n.ltorg\n",
                 magic = registry::MAGIC,
@@ -1157,15 +1345,14 @@ fn generate_continuations_from_metadata(
 
     if !assembly.trim().eq(".thumb") {
         Ok(format!(
-            "use core::arch::global_asm;\nglobal_asm!(r####\"{assembly}\"####, options(raw));\n{}\npub fn address(name: &str) -> usize {{ match name {{ {} _ => 0 }} }}\npub fn handler_address(site: &str, handler: &str) -> usize {{ match (site, handler) {{ {} _ => 0 }} }}\n{}\n{}\n",
+            "use core::arch::global_asm;\nglobal_asm!(r####\"{assembly}\"####, options(raw));\n{}\npub fn address(name: &str) -> usize {{ match name {{ {} _ => 0 }} }}\n{}\n{}\n",
             externs.join("\n"),
             address_arms.join(" "),
-            handler_address_arms.join(" "),
             offset_wrappers.join("\n"),
             wrappers.join("\n"),
         ))
     } else {
-        Ok("pub fn address(_: &str) -> usize { 0 }\npub fn handler_address(_: &str, _: &str) -> usize { 0 }\n".to_owned())
+        Ok("pub fn address(_: &str) -> usize { 0 }\n".to_owned())
     }
 }
 
@@ -1489,17 +1676,36 @@ fn parse_relocations(
     let end = base
         .checked_add(u32::try_from(memory_len).map_err(|_| "module too large")?)
         .ok_or("payload address overflow")?;
-    let mut in_text = false;
+    let mut in_loaded = false;
     let mut records = Vec::new();
     let mut movw = Vec::<(u32, u32, String)>::new();
     let mut movt = Vec::<(u32, u32, String)>::new();
 
     for line in output.lines() {
-        if line.starts_with("Relocation section ") {
-            in_text = line.contains(".rel.text'") || line.contains(".rela.text'");
+        if let Some(rest) = line.strip_prefix("Relocation section '") {
+            let section = rest.split('\'').next().unwrap_or_default();
+            in_loaded = match section {
+                // Code, read-only data and writable data are all part of the
+                // loaded image, so their absolute references move with it.
+                ".rel.text" | ".rela.text" | ".rel.data" | ".rela.data" => true,
+                // Hook metadata is stripped from the image, and debug and
+                // attribute sections are never loaded.
+                ".rel.patch_hooks" | ".rela.patch_hooks" => false,
+                name if name.starts_with(".rel.debug_")
+                    || name.starts_with(".rela.debug_")
+                    || name.starts_with(".rel.ARM.")
+                    || name.starts_with(".rela.ARM.") =>
+                {
+                    false
+                }
+                // A relocation section this function does not know could
+                // hold pointers that the loader must fix. Refuse the module
+                // instead of producing one with broken pointers.
+                name => return Err(format!("unsupported relocation section {name}").into()),
+            };
             continue;
         }
-        if !in_text {
+        if !in_loaded {
             continue;
         }
         let columns = line.split_whitespace().collect::<Vec<_>>();
@@ -1789,4 +1995,31 @@ pub fn hook_windows(
         }
     }
     Ok(windows)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::diagnostic_text;
+
+    #[test]
+    fn diagnostic_text_finds_panic_messages_and_source_paths() {
+        assert_eq!(
+            diagnostic_text(b"\x01\x02PLATEAU PREDELAY\x00dump-rom"),
+            None
+        );
+        assert_eq!(
+            diagnostic_text(b"\x00\x00<redacted>\x00"),
+            Some("<redacted>".into())
+        );
+        assert_eq!(
+            diagnostic_text(b"x index out of bounds: the len is "),
+            Some("index out of bounds".into())
+        );
+        assert_eq!(
+            diagnostic_text(b"\xffpatches/knob-dialog/src/values.rs\x1c"),
+            Some("patches/knob-dialog/src/values.rs".into())
+        );
+        // An ".rs" without a path is not a source location.
+        assert_eq!(diagnostic_text(b"\x00a.rs\x00errs\x00"), None);
+    }
 }

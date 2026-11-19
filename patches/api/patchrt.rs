@@ -17,7 +17,8 @@ pub mod __continuations {
     include!(concat!(env!("OUT_DIR"), "/continuations.rs"));
 }
 
-/// Default terminal handler for patch payloads.
+/// Required terminal handler for patch payloads. Payloads are built with
+/// `panic=immediate-abort`, so a panic traps without reaching it.
 ///
 /// This is deliberately independent of firmware services: a panic can happen
 /// while a task lock, interrupt, or panel operation is already in progress.
@@ -313,18 +314,3 @@ macro_rules! call_original {
     }};
 }
 
-/// Call the continuation owned by one generated call-hook wrapper. This is
-/// used by the attribute macro so multiple handlers for one firmware function
-/// can each continue to the following handler in a composed SD module.
-#[doc(hidden)]
-#[macro_export]
-macro_rules! call_original_from_hook {
-    ($symbol:ident, $handler:ident $(, $argument:expr)* $(,)?) => {{
-        let address: usize = $crate::patch_api::__continuations::handler_address(
-            stringify!($symbol),
-            stringify!($handler),
-        );
-        let continuation: $symbol::Abi = unsafe { core::mem::transmute(address | 1usize) };
-        unsafe { continuation($($argument),*) }
-    }};
-}

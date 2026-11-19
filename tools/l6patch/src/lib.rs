@@ -413,7 +413,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     // The original knob-only build keeps its published marker; anything else is newer.
     let version = options.version.unwrap_or_else(|| {
         if options.experimental_patch_loader {
-            "0114"
+            "0115"
         } else if patches == ["knob-dialog"] {
             "0112"
         } else {
@@ -560,6 +560,14 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
                 "composed module has {} hooks; loader limit is {}",
                 handlers.len(),
                 patch_loader_core::dynamic::MAX_HOOKS_PER_MODULE
+            )
+            .into());
+        }
+        if relocations.len() > patch_loader_core::dynamic::MAX_RELOCATIONS_PER_MODULE {
+            return Err(format!(
+                "composed module has {} relocations; loader limit is {}",
+                relocations.len(),
+                patch_loader_core::dynamic::MAX_RELOCATIONS_PER_MODULE
             )
             .into());
         }

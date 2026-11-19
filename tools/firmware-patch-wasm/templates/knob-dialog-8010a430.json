@@ -1,26 +1,26 @@
 {
-  "base": "0x8010bd40",
+  "base": "0x8010a430",
   "hooks": [
     {
       "address": "0x80053b28",
       "continuation_handler": null,
       "continuation_site": "mixer_apply_channel_parameter",
-      "continuation_slot_offset": 160,
+      "continuation_slot_offset": 156,
       "length": 4,
       "symbol": "__l6_call_dispatch_mixer_apply_channel_parameter",
-      "target": "0x8010bdf4"
+      "target": "0x8010a4dc"
     }
   ],
   "model": "L6max",
   "name": "knob-dialog",
-  "payload_file": "knob-dialog-8010bd40.bin",
-  "payload_length": 6052,
+  "payload_file": "knob-dialog-8010a430.bin",
+  "payload_length": 3172,
   "window_byte_total": 4,
   "windows": [
     {
       "firmware_address": "0x80053b28",
       "length": 4,
-      "payload_offset": 164
+      "payload_offset": 160
     }
   ]
 }

@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 use wasm_bindgen::prelude::*;
 
 /// Update-version marker for packages without the Patch loader. Loader-enabled
-/// packages use marker 0114 so the device can distinguish that layout from
+/// packages use marker 0115 (registry layout 2) so the device can distinguish that layout from
 /// ordinary feature-only updates. Both are distinct from the native CLI's
 /// dev-build markers (0112/0113).
 const UPDATE_VERSION: &str = "0111";
@@ -429,7 +429,7 @@ pub fn apply_patches_with_loader(
         }));
         base = (payload_end + 15) & !15;
         loader_reserve = Some((unit.module_base, unit.reserve_end));
-        output_version = "0114";
+        output_version = "0115";
     }
     for &name in &ordered {
         let unit = find_unit(name, model, base)?;

@@ -128,6 +128,19 @@ def check_flexram_boundaries(qemu, image):
             assert int(command(f"readl {address:#x}").split()[1], 16) == 0
         assert int(command("readl 0xe000ed08").split()[1], 16) == 0x80000000
         assert not int(command("readl 0xe000ed14").split()[1], 16) & 0x30000
+        # The clock initializer disables a broad set of gates, then later
+        # setup enables the known GPIO, memory-controller and IOMUX gates.
+        gate_results = {
+            0x400fc068: 0xc0000fff, 0x400fc06c: 0xfc0ccc00,
+            0x400fc070: 0xfc3f303f, 0x400fc074: 0xffffff30,
+            0x400fc07c: 0xf0033ff3, 0x400fc080: 0xffff3fc3,
+            0x400fc084: 0xfffffc33,
+        }
+        for address in gate_results:
+            command(f"writel {address:#x} 0xffffffff")
+        qmp_execute("system_reset")
+        for address, expected in gate_results.items():
+            assert int(command(f"readl {address:#x}").split()[1], 16) == expected
         print(f"{image}: masked GPR, gate and CPU reset passed")
     finally:
         qmp.close()

@@ -4365,13 +4365,20 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
         g_hash_table_insert(s->registers, key,
             GUINT_TO_POINTER(l6max_boot_clock_value(offsets[i], old)));
     }
-    /* Clock-tree initialization disables the PIT clock after the ROM's
-     * timer setup. The MAIN boot path uses SysTick, not that PIT clock. */
-    gpointer ccgr1 = GUINT_TO_POINTER((0x0fc06c >> 2) + 1);
-    uint32_t ccgr1_value = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
-                                                               ccgr1));
-    g_hash_table_insert(s->registers, ccgr1,
-                        GUINT_TO_POINTER(ccgr1_value & ~0x00003000u));
+    /* The clock-tree routine clears these fields after pad setup. Later
+     * GPIO/SEMC/FlexSPI initialization restores the enabled fields below. */
+    static const struct { hwaddr offset; uint32_t keep; } gate_masks[] = {
+        { 0x0fc068, 0xc0000fffu }, { 0x0fc06c, 0xfc0ccc00u },
+        { 0x0fc070, 0xfc3f303fu }, { 0x0fc074, 0xffffff00u },
+        { 0x0fc07c, 0xf0033ff3u }, { 0x0fc080, 0xffff33c3u },
+        { 0x0fc084, 0xfffffc33u },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(gate_masks); i++) {
+        gpointer key = GUINT_TO_POINTER((gate_masks[i].offset >> 2) + 1);
+        uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
+        g_hash_table_insert(s->registers,
+                            key, GUINT_TO_POINTER(old & gate_masks[i].keep));
+    }
     /* Pad and GPIO setup, SEMC and FlexSPI1 enable these gate fields.
      * Other gate fields remain inherited. */
     static const struct { hwaddr offset; uint32_t mask; } enabled_gates[] = {

@@ -4247,6 +4247,19 @@ static void l6_main_gpio_setup(L6ChipState *s, MemoryRegion *system_memory)
 /* Apply the modeled L6max bootloader handoff after every machine reset. */
 static void l6max_seed_boot_handoff(L6ChipState *s)
 {
+    /* First-stage entry selects the software FlexRAM partition: one 32 KiB
+     * ITCM bank, four DTCM banks and eleven OCRAM banks. GPR16's other
+     * fields are inherited; its reset value supplies the initial VTOR. */
+    g_hash_table_insert(s->registers,
+        GUINT_TO_POINTER((0x0ac044 >> 2) + 1),
+        GUINT_TO_POINTER(0x5555ea95u));
+    gpointer flexram_select = GUINT_TO_POINTER((0x0ac040 >> 2) + 1);
+    gpointer stored_gpr16;
+    uint32_t gpr16 = g_hash_table_lookup_extended(s->registers, flexram_select,
+                                                 NULL, &stored_gpr16) ?
+                     GPOINTER_TO_UINT(stored_gpr16) : 0x00200003u;
+    g_hash_table_insert(s->registers, flexram_select,
+                        GUINT_TO_POINTER(gpr16 | 7u));
     /* Bootloader 1.00 IOMUX writes, including zeroes on reset. */
     static const struct { hwaddr offset; uint32_t value; } boot_iomux[] = {
         { 0x1f80c4, 0x5 }, { 0x1f80d4, 0x0 }, { 0x1f80d8, 0x0 },
@@ -5016,10 +5029,12 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
         memory_region_add_subregion(system_memory, 0, &s->flash_alias);
     } else {
         memory_region_add_subregion(system_memory, flash_base, &s->flash);
-        memory_region_init_ram(&s->itcm, NULL, itcm_name, 0x100000,
+        uint64_t itcm_size = profile == &L6MAX_PROFILE ? 0x8000 : 0x100000;
+        memory_region_init_ram(&s->itcm, NULL, itcm_name, itcm_size,
                                &error_fatal);
         memory_region_add_subregion(system_memory, 0, &s->itcm);
-        memcpy(memory_region_get_ram_ptr(&s->itcm), s->nor_flash + 0x50000, 0x100000);
+        memcpy(memory_region_get_ram_ptr(&s->itcm), s->nor_flash + 0x50000,
+               itcm_size);
         if (s->profile->high_ram_size) {
             /* L6 keeps writable heap state in the final 64 KiB of its MAIN
              * image window; expose that profile-specific bank over NOR. */
@@ -5033,9 +5048,10 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
     }
 
     l6_make_ram(system_memory, &s->sram, sram_name, 0x20000000,
-                panel ? 0x2000 : 0x200000);
+                panel ? 0x2000 : profile == &L6MAX_PROFILE ? 0x20000 : 0x200000);
     if (!panel) {
-        l6_make_ram(system_memory, &s->dtcm, dtcm_name, 0x20200000, 0x100000);
+        l6_make_ram(system_memory, &s->dtcm, dtcm_name, 0x20200000,
+                    profile == &L6MAX_PROFILE ? 0xd8000 : 0x100000);
         /* L6max bootloader 1.00 configures SDRAM windows spanning
          * 0x80000000..0x83ffffff. The first 2 MiB is already covered by the
          * direct MAIN image mapping; do not extend the remaining RAM by

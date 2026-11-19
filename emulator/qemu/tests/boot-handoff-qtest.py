@@ -5,6 +5,7 @@ Usage: boot-handoff-qtest.py QEMU L6MAX_MAIN PATCHED_L6MAX_MAIN L6_MAIN
 Each MAIN is an unpacked firmware component; no device state is modified.
 """
 import json
+import select
 import subprocess
 import sys
 
@@ -35,6 +36,37 @@ def check(qemu, image, expected):
     print(f"{image}: initial handoff and reset passed")
 
 
+def check_flexram_boundaries(qemu, image):
+    process = subprocess.Popen(
+        [qemu, "-M", "l6max-main", "-kernel", image, "-accel", "qtest",
+         "-qtest", "stdio", "-display", "none"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        text=True, bufsize=1,
+    )
+
+    def command(text):
+        process.stdin.write(text + "\n")
+        process.stdin.flush()
+        if not select.select([process.stdout], [], [], 10)[0]:
+            raise RuntimeError(f"no response to {text}")
+        reply = process.stdout.readline().strip()
+        if not reply.startswith("OK"):
+            raise RuntimeError(f"{text}: {reply}")
+        return reply
+
+    try:
+        for last, beyond in ((0x7ffc, 0x8000), (0x2001fffc, 0x20020000),
+                             (0x202d7ffc, 0x202d8000)):
+            command(f"writel {last:#x} 0x1234abcd")
+            command(f"writel {beyond:#x} 0x5678efab")
+            assert int(command(f"readl {last:#x}").split()[1], 16) == 0x1234abcd
+            assert int(command(f"readl {beyond:#x}").split()[1], 16) != 0x5678efab
+        print(f"{image}: FlexRAM mapping boundaries passed")
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
 def main():
     if len(sys.argv) != 5:
         raise SystemExit(__doc__)
@@ -46,13 +78,16 @@ def main():
         0x402f0014: 0x8200001b, 0x402f0040: 0xf31,
         0x402f0044: 0x00664b22, 0x402f0048: 0x0009090b,
         0x402f004c: 0x08070a01, 0x400a8000: 5,
+        0x400ac040: 0x00200007, 0x400ac044: 0x5555ea95,
         0x400fc068: 0xc0000000, 0x400fc06c: 0xcc0c0000,
         0x400fc070: 0x0c000000, 0x400fc074: 0x30,
         0x400fc080: 0xc00,
-        0xe000ed14: 0x200, 0xe000ed94: 0,
+        0xe000e010: 0, 0xe000ed08: 0x80000000,
+        0xe000ed14: 0x200, 0xe000ed24: 0, 0xe000ed94: 0,
     }
     check(qemu, stock, l6max)
     check(qemu, patched, l6max)
+    check_flexram_boundaries(qemu, stock)
     check(qemu, l6, {0x401f8204: 0, 0x402f0010: 0})
 
 

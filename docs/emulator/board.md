@@ -40,8 +40,15 @@ For the same bootloader handoff, the L6max board seeds observed IOMUX register
 values and GPIO output latch/direction values. IOMUX register storage does not
 model pad electrical characteristics or reroute pins dynamically. SDRAM
 timing and refresh register values are seeded from the bootloader's nominal
-clock and parameters, but refresh and SDRAM commands are not modeled. The
-exact FlexRAM bank configuration remains unverified.
+clock and parameters, but refresh and SDRAM commands are not modeled.
+
+The bootloader's entry code selects FlexRAM configuration `0x5555ea95`: one
+32 KiB bank for ITCM, four for DTCM and eleven for OCRAM. With the RT1060's
+separate 512 KiB OCRAM, the L6max direct boot exposes 32 KiB ITCM, 128 KiB
+DTCM and 864 KiB OCRAM. It seeds GPR16/GPR17 for that configuration, but
+does not dynamically repartition memory when the guest writes those registers.
+The ITCM contents are still seeded from MAIN for emulator compatibility;
+they are not a reconstruction of the bootloader's TCM contents.
 
 ## QEMU device-model reuse
 

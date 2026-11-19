@@ -8,26 +8,40 @@ Use [diagnostic tools](l6dbg.md) for observation without pass/fail assertions.
 ## Commands
 
 ```sh
-cargo run --offline --locked -p l6test -- list
-cargo run --offline --locked -p l6test -- check --config config.toml
-cargo run --offline --locked -p l6test -- run --config config.toml --suite quick
-cargo run --offline --locked -p l6test -- run --config config.toml --case boot --model l6
-cargo run --offline --locked -p l6test -- run --config config.toml --suite quick --backend both
+cargo l6test list
+cargo l6test check --config config.toml
+cargo l6test run --config config.toml --suite quick
+cargo l6test run --config config.toml --case boot --model l6
+cargo l6test run --config config.toml --suite quick --backend both
 ```
 
-- `list` prints catalog cases, model scope, suites, and cases needing explicit
-  local configuration.
+`cargo l6test` is an alias for `cargo run --offline --locked -p l6test --`.
+
+- `list` prints catalog cases, model scope, suites, and cases that need a
+  packaged application. `list --format json` prints every case, model and
+  backend; see [case matrix](../testing.md#case-matrix).
 - `check` validates `config.toml` without starting a guest.
-- `run` selects one `--case ID` or a `--suite NAME`, optionally filtered by
+- `run` selects a `--suite NAME`, or `--case` with comma-separated ids or
+  globs (`--case 'patches-l6max_*'`), optionally filtered by
   `--model l6|l6max|all` and `--backend headless|gui|both`.
+- `--rerun RUN` reruns an earlier run's FAIL, XPASS, BLOCKED and FLAKY results;
+  `--only OUTCOMES` names others. `--shard I/N` runs one of N stable parts.
+- `--retries N` retries execution failures; a failure that later passes is
+  FLAKY, and `--strict` makes FLAKY fail the run.
+- `--reuse RUN` reports cases that RUN passed with identical inputs as REUSED
+  instead of running them. See [reuse](../testing.md#reuse).
+- `--fixtures-only` builds each case's fixture and identity without booting;
+  `--no-cache` builds fixtures per case instead of once per run.
 - `--output NEW_DIRECTORY` chooses an artifact directory. It must not already
   exist. By default the driver creates a unique directory under `/tmp`.
 - `--no-build` uses existing emulator binaries instead of building them.
 - `--jobs N` runs up to N cases at once. The default is a quarter of the host's
   cores, between 1 and 4. Each case has its own process group, state, card,
-  sockets and artifact directory. GUI cases, scenarios that publish native
-  host MIDI ports and external executables run alone. Shareable cases run
-  first. `--jobs 1` restores strictly sequential execution.
+  MIDI namespace, sockets and artifact directory. GUI cases run alone.
+  Shareable cases run first. `--jobs 1` restores strictly sequential execution.
+
+The [results reference](../testing.md#results-and-evidence) describes
+`report.json`, outcomes and phases.
 
 Copy the [example file](../../../config.example.toml) to
 `config.toml` and set your stock L6 and L6max package paths. Firmware, device

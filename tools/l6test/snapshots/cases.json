@@ -1,0 +1,3073 @@
+[
+  {
+    "backend": "headless",
+    "case": "controls",
+    "model": "l6",
+    "suites": [
+      "quick"
+    ]
+  },
+  {
+    "backend": "gui",
+    "case": "controls",
+    "model": "l6",
+    "suites": [
+      "quick"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "controls",
+    "model": "l6max",
+    "suites": [
+      "quick"
+    ]
+  },
+  {
+    "backend": "gui",
+    "case": "controls",
+    "model": "l6max",
+    "suites": [
+      "quick"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "boot",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "gui",
+    "case": "boot",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "boot",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "gui",
+    "case": "boot",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "encoder",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "gui",
+    "case": "encoder",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "encoder",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "gui",
+    "case": "encoder",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "ring-pwm",
+    "model": "l6",
+    "suites": [
+      "regression",
+      "full",
+      "panel"
+    ]
+  },
+  {
+    "backend": "gui",
+    "case": "ring-pwm",
+    "model": "l6",
+    "suites": [
+      "regression",
+      "full",
+      "panel"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "ring-pwm",
+    "model": "l6max",
+    "suites": [
+      "regression",
+      "full",
+      "panel"
+    ]
+  },
+  {
+    "backend": "gui",
+    "case": "ring-pwm",
+    "model": "l6max",
+    "suites": [
+      "regression",
+      "full",
+      "panel"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "mute",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "gui",
+    "case": "mute",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "mute",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "gui",
+    "case": "mute",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "audio-path",
+    "model": "l6",
+    "suites": [
+      "devices",
+      "regression",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "audio-path",
+    "model": "l6max",
+    "suites": [
+      "devices",
+      "regression",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "buttons",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "gui",
+    "case": "buttons",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "buttons",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "gui",
+    "case": "buttons",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "factory-protocol",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "firmware-update",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "firmware-update",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "indicators",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "gui",
+    "case": "indicators",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "indicators",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "gui",
+    "case": "indicators",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "l6max-input-smoke",
+    "model": "l6max",
+    "suites": [
+      "regression",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "editor-pad-assignments",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "editor-pad-assignments",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6max-sound-pad-playback",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6max-volume-meter-sweep",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "l6max-ui-pad-assignments",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6-editor-pad-playback",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6-sound-pad-playback",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6-input-sweep",
+    "model": "l6",
+    "suites": [
+      "regression",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6-din-sweep",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6-din-usb-forwarding",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6max-din-mixer-control",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6max-din-mixer-control-patched",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "l6-patch-heap",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6max-patch-heap",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "knob-dialog",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6-event-dispatch",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6-panel-event-map",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6max-tap-handler",
+    "model": "l6max",
+    "suites": [
+      "quick",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6-main-gpio-events",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "l6-recorder-record-stop",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "l6-recorder-playback",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6max-recorder-playback",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6-usb-startup",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "host-midi",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "host-midi",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "host-midi-sync",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6-midi-sync",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6-direct-midi-sync",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6max-direct-midi-sync",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patched-update",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patched-update",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "persistence",
+    "model": "l6max",
+    "suites": [
+      "lifecycle",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "state-spec",
+    "model": "l6max",
+    "suites": [
+      "lifecycle",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "power",
+    "model": "l6",
+    "suites": [
+      "lifecycle",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "power",
+    "model": "l6max",
+    "suites": [
+      "lifecycle",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "card-record",
+    "model": "l6",
+    "suites": [
+      "devices",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "card-record",
+    "model": "l6max",
+    "suites": [
+      "devices",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "storage",
+    "model": "l6",
+    "suites": [
+      "devices",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "storage",
+    "model": "l6max",
+    "suites": [
+      "devices",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "usb",
+    "model": "l6",
+    "suites": [
+      "devices",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "usb",
+    "model": "l6max",
+    "suites": [
+      "devices",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "wasm-patch",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "wasm-patch",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "gui",
+    "case": "ui-input-l6-gui",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "ui-input-l6",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "gui",
+    "case": "ui-input-l6",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "gui",
+    "case": "gui-power",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "gui",
+    "case": "gui-power",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "gui",
+    "case": "gui-bundle",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "gui",
+    "case": "gui-menu",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "gestures",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "gui",
+    "case": "gestures",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "gestures",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "gui",
+    "case": "gestures",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "button-reports",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "gui",
+    "case": "button-reports",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "usb-storage",
+    "model": "l6max",
+    "suites": [
+      "devices",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "panel",
+    "model": "l6",
+    "suites": [
+      "regression",
+      "full",
+      "panel"
+    ]
+  },
+  {
+    "backend": "gui",
+    "case": "panel",
+    "model": "l6",
+    "suites": [
+      "regression",
+      "full",
+      "panel"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "panel",
+    "model": "l6max",
+    "suites": [
+      "regression",
+      "full",
+      "panel"
+    ]
+  },
+  {
+    "backend": "gui",
+    "case": "panel",
+    "model": "l6max",
+    "suites": [
+      "regression",
+      "full",
+      "panel"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "storage-empty",
+    "model": "l6",
+    "suites": [
+      "devices",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "storage-empty",
+    "model": "l6max",
+    "suites": [
+      "devices",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "control",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "gui",
+    "case": "control",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "switches",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "gui",
+    "case": "switches",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "l6max-channel-signal-pwm",
+    "model": "l6max",
+    "suites": [
+      "full",
+      "panel"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6-level-meter-pwm",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "l6-volume-meter-playback",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "l6-sound-pad-waveform",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "l6max-sound-pad-waveform",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "gui",
+    "case": "l6max-switches-during-playback",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "l6-sound-pad-coreaudio",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "l6max-sound-pad-coreaudio",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "l6max-audio-input",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6-audio-input",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6max-audio-input-record",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6-audio-input-record",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6max-audio-input-transport",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6max-installed-patch",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6-installed-patch",
+    "model": "l6",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "host-sd-midi-sync",
+    "model": "l6",
+    "suites": [
+      "sd-matrix",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "host-sd-midi-sync",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6max-eq-audio-update",
+    "model": "l6max",
+    "suites": [
+      "regression",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "l6-eq-audio-update",
+    "model": "l6",
+    "suites": [
+      "regression",
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-midi-sync",
+    "model": "l6",
+    "suites": [
+      "sd-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-midi-sync",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-l6max-midi-sync",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-midi-corrupt-sibling",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "sd-din-mixer-control",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-knob-dialog",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-knob-dialog-dynamic",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-midi-absent",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "sd-midi-absent",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "sd-midi-corrupt",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "sd-midi-corrupt",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "sd-midi-volatile",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "sd-midi-volatile",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "sd-warm-reset",
+    "model": "l6",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "sd-warm-reset",
+    "model": "l6max",
+    "suites": []
+  },
+  {
+    "backend": "headless",
+    "case": "sd-mixed-static",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-all-patches",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patch-loader-only",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-effect-replacement-map",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix",
+      "effect-replacement-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-effect-replacement-plateau",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix",
+      "effect-replacement-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-effect-editor-mode-restore",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix",
+      "effect-replacement-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-effect-velvet-ring-scale",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix",
+      "effect-replacement-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-effect-assignment-spring-plateau",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix",
+      "effect-replacement-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-effect-assignment-spring-velvet",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix",
+      "effect-replacement-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-effect-assignment-plateau-plateau",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix",
+      "effect-replacement-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-effect-assignment-velvet-velvet",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix",
+      "effect-replacement-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-effect-assignment-plateau-velvet",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix",
+      "effect-replacement-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-effect-assignment-velvet-plateau",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix",
+      "effect-replacement-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-knob-midi",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-static-all",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-hook-chain",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-knob-midi-sync-dynamic",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "sd-menu-loader",
+    "model": "l6max",
+    "suites": [
+      "sd-matrix"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "dump-rom",
+    "model": "l6max",
+    "suites": [
+      "full"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6_midi-sync.fw",
+    "generated_scenario_sha256": "004671b515af6639b872969ee38f3cf743520293a37c2a7aec616ec18125b811",
+    "model": "l6",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6_midi-sync.sd",
+    "generated_scenario_sha256": "fc27496c7ea98f7fd63c8933e2092070720e4559523b527d328e085a58e852f7",
+    "model": "l6",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6_installed_midi-sync",
+    "generated_scenario_sha256": "464f9a155d917de0dc3cffd8a33f985778d3ebceaa5356a58cf9cff789ce255c",
+    "model": "l6",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6_update_midi-sync",
+    "generated_scenario_sha256": "688457025e4ce8a066ed58e5ee373ff0e7f3806c280bd95d005eed0ae714345c",
+    "model": "l6",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6_hosted-sd_midi-sync",
+    "generated_scenario_sha256": "993e1a3dd45f4483007b52e382a3f6c6bdb0c28de65e00d33535a75d5bd2a147",
+    "model": "l6",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_din-mixer-control.fw",
+    "generated_scenario_sha256": "56c038e8d4a893dc07c1fc11d1de6e6f21463554e25da32be6385966a555433f",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_midi-sync.fw",
+    "generated_scenario_sha256": "3d8b4b53782740d204ec6deb70c7417442fdcc812a948b44d674402bc4a6894c",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_midi-sync.fw_din-mixer-control.fw",
+    "generated_scenario_sha256": "41db253f258ac9e2036377c8788bf7a74d595ff164997131a42a24f104f99549",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_midi-sync.sd",
+    "generated_scenario_sha256": "6f837891b86b687d5e3e795ff60b2cfe315d6e5d35be1daa4abab7865f3be05b",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_midi-sync.sd_din-mixer-control.fw",
+    "generated_scenario_sha256": "26e3db5023179211c61ef5cd46e7d28a728d369c00a5422ad8db85f8e222f448",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.fw",
+    "generated_scenario_sha256": "fc6708e934634f878065282476aa70d15647cb27f5093aee9a2ff9f75d2865be",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.fw_din-mixer-control.fw",
+    "generated_scenario_sha256": "7f1861cb03c47d5ec8a597179e02a27ec9c3b351a4d977fc599c9b080935f342",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.fw_midi-sync.fw",
+    "generated_scenario_sha256": "4e26b545311f7a71ebe0962f2be66fd4f90af52ffc3e59d66a6de00df2aeb1c1",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.fw_midi-sync.fw_din-mixer-control.fw",
+    "generated_scenario_sha256": "d8823e2552156458c96d963841a4a9ccc98fd12dfb33780c2aa5cf5ab2064691",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.fw_midi-sync.sd",
+    "generated_scenario_sha256": "96bc0efbed746112eb57435127196c7af142897d846b4496e676f219a0caa436",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.fw_midi-sync.sd_din-mixer-control.fw",
+    "generated_scenario_sha256": "e5aad86b854ab0d2634ea3a7e4566078b2c155095a81395b767babdb316e6ac6",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd",
+    "generated_scenario_sha256": "9aef9c96e319b48ce19c21866da5dbe6088e56862a9b317bda104b7c9e7268fd",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_spring.velvet",
+    "generated_scenario_sha256": "cc4efd3de907211cfd811f0c130022abf3fb2c8e464ce1bc08af765259997ebe",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_spring.plateau",
+    "generated_scenario_sha256": "ed559926f22817bd61964b9d760c34150adf0d078524a7fe54a2b13d867da64b",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_room.velvet",
+    "generated_scenario_sha256": "42e98e994fa6b8a80230840c281a0efa8b8ad61bff5806b6c2472d93f3d85e8d",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_room.velvet_spring.velvet",
+    "generated_scenario_sha256": "41edd7109dc9e87632f1519695036875f4de37c17f962c64029d1ecc9cb215d8",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_room.velvet_spring.plateau",
+    "generated_scenario_sha256": "e4c71e60036f143fe0b63d24b048691003c24ccf86aae884136eb8c455a2730b",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_room.plateau",
+    "generated_scenario_sha256": "1d74a090d5ab4f78320fed5dcff871fe233bc7948e81464fda3942fb4ddcf52f",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_room.plateau_spring.velvet",
+    "generated_scenario_sha256": "e3503be120bc3110f05c37a9f5963ee3a537dc056184dcb902ab1a714e427310",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_room.plateau_spring.plateau",
+    "generated_scenario_sha256": "e47e75bac823cf5a061546b92c1db8df04a62bc9271d0a4092ce744cd0030e61",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw",
+    "generated_scenario_sha256": "185f98259581ae553c6f271cca1f2a9aba009f79a4e5aadbf8db1404aadc8dfc",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_spring.velvet",
+    "generated_scenario_sha256": "dc842eebfa59e25a4d07e4d59254d7a53462c6b9ef63363d1654a26953bfa73c",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_spring.plateau",
+    "generated_scenario_sha256": "9dcd26bf19ab5efab28a4bab9d1a52ca5ed2fcb052afca04840ba112d1291449",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_room.velvet",
+    "generated_scenario_sha256": "fe994643cd76966f42e6a957a8ffacdc0c0666c5ea80edfd98ed7a534f8eaf9a",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_room.velvet_spring.velvet",
+    "generated_scenario_sha256": "95876565bfa7e88071c8d0ccc04ccd30d5e98a9257879a952ff0057d19ae2502",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_room.velvet_spring.plateau",
+    "generated_scenario_sha256": "4208b6809ac9dc284889936a9a58f8de44f71f059614caa72eb63effa7022952",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_room.plateau",
+    "generated_scenario_sha256": "a78751244cb21847eefc6d8f497ce964680f08e7126ce8f70f5e3b32c59f432e",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_room.plateau_spring.velvet",
+    "generated_scenario_sha256": "7a9b58eef006790c3a18a47f20666c834f07aca07df7c1fae572c71acd542782",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_room.plateau_spring.plateau",
+    "generated_scenario_sha256": "ee2aa5d30e48906b9cd46b1b4dd89aff3aa75347f5e01e3c406105926b47b519",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw",
+    "generated_scenario_sha256": "760dec0791cd98c7861e6bc1bce81402ade56b9c535dfe0c799dced7001d78f4",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_spring.velvet",
+    "generated_scenario_sha256": "ed0632044480eb5820b418c5201440a35bc61df63c652fd0929092d2b052f263",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_spring.plateau",
+    "generated_scenario_sha256": "3d50251858a99375228efb36537e774f461b7755805ae8625d569066841e8fed",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_room.velvet",
+    "generated_scenario_sha256": "b0756c4491d6cb6044bb8079058c12d3a921124f1d2c879e7c95f950107049ae",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_room.velvet_spring.velvet",
+    "generated_scenario_sha256": "a9a3ceec44706ccd46134691708f5ca0c65b43dfa6c7034e5e5a192c7e44cd9b",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_room.velvet_spring.plateau",
+    "generated_scenario_sha256": "ce72fc608cec9c8fe77f082fa76ca24de95c10528e0977c198ef6c8908d6d7e8",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_room.plateau",
+    "generated_scenario_sha256": "dd575ae329c54535ba261b80d535e10805080e55baa4890a5c91207d13ce9995",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_room.plateau_spring.velvet",
+    "generated_scenario_sha256": "97dac2a835df87ced10ad953ff4712180c61fb522c6ca42909234cec4c60c6cd",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_room.plateau_spring.plateau",
+    "generated_scenario_sha256": "4c6975f806d7808845e2718c8fc0bbd78b87a6af8bdecc0174ded491c043ec88",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw",
+    "generated_scenario_sha256": "e68735d2bbbb9b2d3b39b2ba24e57afd9712f58121207952e3a5fb7766fc0cb8",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_spring.velvet",
+    "generated_scenario_sha256": "4f98c518d5a5fed29d3573513ca763b9636b73f5610d4146b7e93c997fb0d0a5",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_spring.plateau",
+    "generated_scenario_sha256": "bfc0378260656eafbf01ba936dfe7febc1ebb62e0e5f53328b82e45075ac171d",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet",
+    "generated_scenario_sha256": "f3f488abd9adac2347368fd03f2a385a822533aaa81e19ca168bfa5f026f803a",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet_spring.velvet",
+    "generated_scenario_sha256": "7f8dbb1a9001a8e936558249f740d010547d29c7e5656e47fd143e921eb2d3d1",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet_spring.plateau",
+    "generated_scenario_sha256": "24397308a92cc04c62c2e247453835d539b761bf2282a766f4b75036383ede37",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau",
+    "generated_scenario_sha256": "2daac8ee805f6224ffc1fd407821d3f437404ce4017c1ee904bac1388d3ada34",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau_spring.velvet",
+    "generated_scenario_sha256": "f26a9fbdd47c117b23e9683c5d348dd9c5d002504682fe64449a9708102997bb",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau_spring.plateau",
+    "generated_scenario_sha256": "87261a101f700acd57acee592579d39ecd2df6d936f814d2ce26819c82937a15",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd",
+    "generated_scenario_sha256": "3918bca9cfb9150cb4a454605849155aacbc8102d5a7bbc2fca11f48968df5bb",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_spring.velvet",
+    "generated_scenario_sha256": "15623dbc4e1176a9998fcca00dd229ea2ab5d05632f96a34b799f26b642b165a",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_spring.plateau",
+    "generated_scenario_sha256": "9c9bc7336c60482dafa0ca1227cc52c179b59552c7718b8f8d5ed3669b620289",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_room.velvet",
+    "generated_scenario_sha256": "491f496ca31dbe8fadae0630b19f799285712d10f9151c13938f9ad4c0c52c42",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_room.velvet_spring.velvet",
+    "generated_scenario_sha256": "31dfe75681ae6c4880767c7545057a4460cea55ae1bea30662d025f957f461c6",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_room.velvet_spring.plateau",
+    "generated_scenario_sha256": "b09b3ec1d3373fb3d646a7249834f0500d80701e8e764901cdb1f1e21b564546",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_room.plateau",
+    "generated_scenario_sha256": "562725a9f4f77f1bf5656363caed4b931e6ff048a246f68821fe90e2ecc1e596",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_room.plateau_spring.velvet",
+    "generated_scenario_sha256": "2d2c64d6e8d97f302e7b04125ee7b80fa795380682e702e5e81bd014642d0103",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_room.plateau_spring.plateau",
+    "generated_scenario_sha256": "abb38ed17053ed5d5937aced962ddfcd9f6f1c8c01701bfeff0a2835500f3896",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw",
+    "generated_scenario_sha256": "9a5effd9cca799d26f322084f4f8f1fdc6f410fa27c8f2130146a93212b5d106",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_spring.velvet",
+    "generated_scenario_sha256": "3e76e98a27a2a1bc9a1879928e63426554828a5448fc5168b27b5140b731167e",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_spring.plateau",
+    "generated_scenario_sha256": "8a14b79b7af5a38295dd6f779227d21830367062d0bda693542801c3f74c646a",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet",
+    "generated_scenario_sha256": "e360c3106dc6ecbe2ea31818d377b6dbd44c31b9f619d35b29b50469fb24d71d",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet_spring.velvet",
+    "generated_scenario_sha256": "f420f712dd3db7b147e0ff5af86f0fd569e5e2ec326355f0fb3e57fb007634a4",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet_spring.plateau",
+    "generated_scenario_sha256": "700d4f773dfbd9aaaf67ee5f15d3f6a2ecd1aebf2af49479482316f1dd9b402f",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau",
+    "generated_scenario_sha256": "890e116a2e4b937b79f098e03bcee75aecd94afdaf2a3c40bce5e8e0add9895f",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau_spring.velvet",
+    "generated_scenario_sha256": "79c7b13e0b17aa8e16731ac170567e3d3f5f841e58f4310494ba9f7182622b5c",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau_spring.plateau",
+    "generated_scenario_sha256": "9552ea3e01efa682ed4bd8ba67862d279aa2657a3902be713411a4e835a0700d",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw",
+    "generated_scenario_sha256": "2fc262efcc09abdcb1d90408f3f1770ad6ed2776b1104530db373baf544291dc",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_din-mixer-control.fw",
+    "generated_scenario_sha256": "b7bb4c1a2d8ebc90ad3515364e710a0b587238038c098a1b0a26ac29029d4e7d",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_midi-sync.fw",
+    "generated_scenario_sha256": "37e03fcb61012e00d07c8b0e43b52c872edc195bba8fc5c99d81bd09f314c53d",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_midi-sync.fw_din-mixer-control.fw",
+    "generated_scenario_sha256": "74a8605643edc085668248657dd83250628bdf9c7636a6b92bee4dce2c97d6bb",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_midi-sync.sd",
+    "generated_scenario_sha256": "1f45ab76f6efd0e2bb8045a947d9b880f961154bf4b3166fbc2b3dd07571d4a4",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_midi-sync.sd_din-mixer-control.fw",
+    "generated_scenario_sha256": "a0e8858c9dfdf543d59aa8aaa05623e48d0f006411a6a1e3bf2e3759d9a2004e",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.fw",
+    "generated_scenario_sha256": "0c5eaf930b9ed47b9ae25380458d084a5ddd7bdc64b03df7b757c0ff709b74ac",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.fw_din-mixer-control.fw",
+    "generated_scenario_sha256": "8342e732acab3847ff31c4b13e262cc48abac361975baf8541e4344f4441ecc4",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.fw_midi-sync.fw",
+    "generated_scenario_sha256": "bcb64c43e802a184bc6ddb65d3ec58d80c4d497fb6d6dc2b95d26408f33237c1",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.fw_midi-sync.fw_din-mixer-control.fw",
+    "generated_scenario_sha256": "ca8dd0d49eed99d910ae7e9955584f3d38e8390555bc172cbe6b6428606054dd",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.fw_midi-sync.sd",
+    "generated_scenario_sha256": "4952c546d2d614046150a060173aecb881c3c6f77a8ab78ef87a67c89d268788",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.fw_midi-sync.sd_din-mixer-control.fw",
+    "generated_scenario_sha256": "1b39d2c443f3756f7dba3b2c0d1c9a95f8268fb65cfcdf70219e51f3ce5ab257",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd",
+    "generated_scenario_sha256": "90b8ccec58bf9da9c645c2065ef59d66a16392c4dafcb555b8e97597da674039",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_spring.velvet",
+    "generated_scenario_sha256": "a3c491c453c9354fe81530a19894d441438f15aaeff7dc46c3d2fe8380e3da2f",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_spring.plateau",
+    "generated_scenario_sha256": "50fd8f988774cd2ed3616b0bb6b19e602436b7fedc1d8a9a59a0991af7f35cc6",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_room.velvet",
+    "generated_scenario_sha256": "364db8b685b8961a028c212e1435bc004b00d81e674bef76a49e506eed093ca2",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_room.velvet_spring.velvet",
+    "generated_scenario_sha256": "d8e26f16f070c756a87506dc5393e2edc6c0b3b46b3e19832b3b6ee955fcb570",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_room.velvet_spring.plateau",
+    "generated_scenario_sha256": "008b61e539f94e46249b0a53a2889c3ebf4030d5dc4b4340b4bfba1976d70fdd",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_room.plateau",
+    "generated_scenario_sha256": "aaf1787bd7336656ff9af1976fa22a6a6ed5b058fa749a208839ce1dad4f2b0e",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_room.plateau_spring.velvet",
+    "generated_scenario_sha256": "c3a716a8770e33e2c28c90c9a48382bbbbf53d2004e4477ad2b6c878448990e8",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_room.plateau_spring.plateau",
+    "generated_scenario_sha256": "a93b965450166b831f9f7b80452a38cd9bdc1675b66fe79e33959a0e26fe832a",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw",
+    "generated_scenario_sha256": "49507d6fc71a06a6f2411c6a07c06bd4685b1da6286c98e015ecff763f80f530",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_spring.velvet",
+    "generated_scenario_sha256": "f5e02441a21e93f84188e9985f75e1341f785d20f12791c095934ac8d08c1ef2",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_spring.plateau",
+    "generated_scenario_sha256": "e94f37e4df1ea4992c11e835e20d208f5ed5eaf4ce8782f7029a3adf3e73cda7",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_room.velvet",
+    "generated_scenario_sha256": "bc4d23def793e2d57e6655a98ff8b75341ca4da899cbed81c13ce3d7bc9e4b3a",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_room.velvet_spring.velvet",
+    "generated_scenario_sha256": "7dfc2dc151ee8ede861c2b8fd11465c01b5d33553e0be3d3eb80b47fbc21ad5d",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_room.velvet_spring.plateau",
+    "generated_scenario_sha256": "d6a956f92cf979e49f517f78e11755fd5492d4f92b0fa46673e48cb54772abde",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_room.plateau",
+    "generated_scenario_sha256": "431e527b9e8e81a03e9c9ecd44cf7f3fbf63727285e72824ec57152130f076a6",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_room.plateau_spring.velvet",
+    "generated_scenario_sha256": "04526429917330afa9735a1ee6492ecf624f5812daae8c86ded29e1d4cb9ca5a",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_room.plateau_spring.plateau",
+    "generated_scenario_sha256": "9dc365ca39eaf75852355527e58cc71a27b3e54778f272332458ce12aea6dd49",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw",
+    "generated_scenario_sha256": "2193b1d24e8e47199fd2fce36b7fc2a6f9a7c7f6f59a4736865b2563f70f830f",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_spring.velvet",
+    "generated_scenario_sha256": "a8be80e4fc2c06491f4cd82a4b008c665f242788e80d2172b2e61fa7185d8f74",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_spring.plateau",
+    "generated_scenario_sha256": "eb69966349ab02fa7fa02ef734ccb3dc76491bb1fab7e6504eb1bdb29e4254ff",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_room.velvet",
+    "generated_scenario_sha256": "106182ed478178776bd81e39a67e0d8e71d69424c498fdb74a5075bcc40b2c6f",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_room.velvet_spring.velvet",
+    "generated_scenario_sha256": "3f050b2e1240bd89ecceec9eca32bd131c8e58be54f190cbf44e68a0b95dc301",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_room.velvet_spring.plateau",
+    "generated_scenario_sha256": "517f3eff48e5fc6543a15810beeded0c808e31cb6e0cdf8650040c5e4eef1ee9",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_room.plateau",
+    "generated_scenario_sha256": "d4454586739c7ee311da1677a1caec47567aa0031bdc82a9d330d03b8d526b1e",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_room.plateau_spring.velvet",
+    "generated_scenario_sha256": "acfc4246633414bdb13f2effd7fe77f1e55aba2237782f422667a28ba9fa0295",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_room.plateau_spring.plateau",
+    "generated_scenario_sha256": "caf142ebd65c7e35414fd74910aa73411549fda7d7c68f07d5744d54bd41660b",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw",
+    "generated_scenario_sha256": "e4b739c37befbe19745b7b3b3c4a84739a8d0d2fce52e91406cf59a388936a3e",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_spring.velvet",
+    "generated_scenario_sha256": "7d542080218418256789fcb238bda2e5f4c3a179047a469d3b84e4a84475dbbd",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_spring.plateau",
+    "generated_scenario_sha256": "798878ff78adcd2972ce1feae6bc49d31ca2d5a274a703bee24d9508bf19530b",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet",
+    "generated_scenario_sha256": "b0249f29b79f3fa1f08d31d81f31af24f478932461baf356f208f8102186c302",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet_spring.velvet",
+    "generated_scenario_sha256": "576613c66e82654b2075bf5def1371119d0bd18558cc77cd26ef2adfdc3128d1",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet_spring.plateau",
+    "generated_scenario_sha256": "90f51c44d167098c3f359749f014deb164232e26310baa73832afd75383540dd",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau",
+    "generated_scenario_sha256": "81d7565088054d1c9c64706bacd5672d6a2cf906a5a1373590e7715046a240ba",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau_spring.velvet",
+    "generated_scenario_sha256": "017132d4865e8a6af0b89399b689a3c869432534adc6d0d2f78e58bdf2c34760",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau_spring.plateau",
+    "generated_scenario_sha256": "c44e6dd905d34d568aca3aa54ea10451fb7708282694247da56552355dd02294",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd",
+    "generated_scenario_sha256": "8d4e5f67054ef4aeba8f69605f73fa9e39e7f52715ce346907f5ed3b5a0d88e3",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_spring.velvet",
+    "generated_scenario_sha256": "900941a5257ed7da24a5b645a0eb2794dc4f50e4307abac500b81cdf984e6dd0",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_spring.plateau",
+    "generated_scenario_sha256": "ae7c3e2c0841017957d8048ce4d0aae94fc9ebc1665c35479042d1955357feb6",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_room.velvet",
+    "generated_scenario_sha256": "965825ab7fac82ab77484110a4b9e62ec5456574f065a4dc27c84ad162280676",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_room.velvet_spring.velvet",
+    "generated_scenario_sha256": "4636f8b98668c2c66922a9dee3267f027390aee42dd649370f728eecf8e9d30a",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_room.velvet_spring.plateau",
+    "generated_scenario_sha256": "f089298da920565e8acda7a458a122acaa6d0203615655b60ab57badb2ad2b52",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_room.plateau",
+    "generated_scenario_sha256": "032fd107293ef7339ee3d6c2d1ff6138fd9f31bd51bc84ae3993b7a15f48000d",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_room.plateau_spring.velvet",
+    "generated_scenario_sha256": "211dec3f16b95e2245aac4b9ca875711305425262c625b495a9e7ce82722810a",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_room.plateau_spring.plateau",
+    "generated_scenario_sha256": "72c4b6981c893a8ef635c9b44bc012f0b6a7342156678fc46078cf213d85d464",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw",
+    "generated_scenario_sha256": "7494aa53f71b74f834db3483bbf5b9199dbbb3af971144a755a0b9bac612b2e9",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_spring.velvet",
+    "generated_scenario_sha256": "4817b384bd515909ba8000c20697016074cb9dd8a6113a7ad40f15d28b1c7ddf",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_spring.plateau",
+    "generated_scenario_sha256": "598b3cab45a547163bb921675cad0ce911e97a6793b3a5a84c1c5c094eac80ce",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet",
+    "generated_scenario_sha256": "76abc96b51e7911658fbb3cff574b99526910175d427584116844051448263ba",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet_spring.velvet",
+    "generated_scenario_sha256": "af0c1171fb39203baf24cd5b78608725c1412dcd322a4434a66c35dd53ecce39",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet_spring.plateau",
+    "generated_scenario_sha256": "ac0405375ed4c961367c5e21c6aab17aa2cdcec0690e0e52b15d2db76ab1d67b",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau",
+    "generated_scenario_sha256": "24e09aabdbcce83486cf0cff917a16fbdb2dc8e27283a9be9a130443d2bd0519",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau_spring.velvet",
+    "generated_scenario_sha256": "612e6872ca1d27fb56d8f3dbf99ece5e2d6ce71cd875c866f3db8361726665c2",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau_spring.plateau",
+    "generated_scenario_sha256": "954181e5c4f51f5f4fd2d798c3cbd24156d2c07f2271405b366507653bc4c5ee",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw",
+    "generated_scenario_sha256": "5b5f67b71857eef4926364af930f38c6bfd6f1b63714cdf2f60abc8e55564fd7",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_din-mixer-control.fw",
+    "generated_scenario_sha256": "1bcedb26b7966ea9a64072ee35c83d54e1a8cf32889d8f85158e79c9d1ec6837",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_midi-sync.fw",
+    "generated_scenario_sha256": "ff9d3605fd4a31a80f39eb274df9019b0ce35fc37d5206a4a9f57cfa1468191b",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_midi-sync.fw_din-mixer-control.fw",
+    "generated_scenario_sha256": "b183b1ec965b29074c5803a596fa06c9393d1ed17356fb1c830cc44036055002",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_midi-sync.sd",
+    "generated_scenario_sha256": "5fa0c8cf986f867f7bc12f662f0fe3a8aebea9f829091c985838ccef01530d39",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_midi-sync.sd_din-mixer-control.fw",
+    "generated_scenario_sha256": "d3b9fd8e318d8ae9734025d46fd6bd64b3c0a4ca098902dbaa680af56092a845",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.fw",
+    "generated_scenario_sha256": "859db5ba6ed225f2a31d6a3cc9f67fb39372058af9eb563e1a3d24043cabc72c",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.fw_din-mixer-control.fw",
+    "generated_scenario_sha256": "0ce9bd8c51f0efe6b390376d0012f4139837d1b993dbd1458f600800516f1e28",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.fw_midi-sync.fw",
+    "generated_scenario_sha256": "0737e4c36ece4bc1e1ebf4aa59e7c9a1281e9e952a10ef95d7e2d9581fa7f45e",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.fw_midi-sync.fw_din-mixer-control.fw",
+    "generated_scenario_sha256": "511039d47aa740357f2d535b3e0277c1d3c26e5ee4d49e6e38542391dffb7812",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.fw_midi-sync.sd",
+    "generated_scenario_sha256": "21a9d12014fb0fd1d32fd4fb1737d93607c7c580377c3b401574eef371174bde",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.fw_midi-sync.sd_din-mixer-control.fw",
+    "generated_scenario_sha256": "2c041d0594156419e1b4edf793650c8ade87d9b5efa94f7224b9da649a92778a",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd",
+    "generated_scenario_sha256": "8b0f6fc81019247a994b214d2ff479d7c4b45752845957b92af401c0b3473d8e",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_spring.velvet",
+    "generated_scenario_sha256": "73ea74321ff409f8f5eee40a5ac2efd1e1315a52802602a60a8e4c52c2d165a1",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_spring.plateau",
+    "generated_scenario_sha256": "0bcf6cdaed52a717256055af40dbf127d00eeec74d6060664cfc8723b9beb745",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_room.velvet",
+    "generated_scenario_sha256": "6f31247c4169de05e3a9e954712f35fc1b39013fc667d5b8e66932df59a259f0",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_room.velvet_spring.velvet",
+    "generated_scenario_sha256": "7deac18dd3a1d80155e9435a4a9c0a77b7f4dd7a2e8ca031efa3e38d561c9a37",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_room.velvet_spring.plateau",
+    "generated_scenario_sha256": "54b25ca986debf304d52202dae27759656d58e0e92372e4a136073cfbf9b7dd6",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_room.plateau",
+    "generated_scenario_sha256": "a61e3cc9116a798acd14bb12d3ee1622f1032a0b1373d40ceed32ac6ec520874",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_room.plateau_spring.velvet",
+    "generated_scenario_sha256": "bbc9887a9e711a810113f0cc337ce17107638364c429309620998a38a054234f",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_room.plateau_spring.plateau",
+    "generated_scenario_sha256": "de14c7b6c4399b8fcaba60f55867702ea90e8467b4925d6c49d425c9a285fbd5",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw",
+    "generated_scenario_sha256": "c49733279e9f3f357575903ea43c174acf93aefd7768c10322222cf3d0337ca6",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_spring.velvet",
+    "generated_scenario_sha256": "0a2e6c9a21606bf2813d50f9ddc08c9e113a2548eef0377dd84deb13cdf3f1a3",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_spring.plateau",
+    "generated_scenario_sha256": "bd00721757e39a6700866cca7a369e29de2cc6be2d7950570c294ddf6972f37c",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_room.velvet",
+    "generated_scenario_sha256": "08e581866a82579aaf218709ae33cbec2cb58c20bec32ad1996a61c427b0cc5f",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_room.velvet_spring.velvet",
+    "generated_scenario_sha256": "a834ec25854d0f5a3942dd00ba8412b49ea38d98c3cd0787dea2c0a25732006b",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_room.velvet_spring.plateau",
+    "generated_scenario_sha256": "741b911ace6f6d9fb2950fcab7858cf89ccef9bd0d0102d3c6853dfa405813a9",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_room.plateau",
+    "generated_scenario_sha256": "7352c95d5c867fda5b8f50d11f57e2d3f8352e91ef4984e753ad1cdcf57ebb79",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_room.plateau_spring.velvet",
+    "generated_scenario_sha256": "9bcd910cb4147ef38a3c93d74e6609531bc3557133e2a2e2b6898bdbd77f6b73",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_room.plateau_spring.plateau",
+    "generated_scenario_sha256": "348b455f4dce19e3a6a981ad1ebf451e6b7f3ea56f9d562ce67dfdee64f934dd",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw",
+    "generated_scenario_sha256": "9a840a7ef8ff5434d71404c224e641317a39da5407c82026ad9969a027f5cc3a",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_spring.velvet",
+    "generated_scenario_sha256": "82e46eeb289e66a062a8908233ad078f5c808f6229901ae46bb5c9770856a609",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_spring.plateau",
+    "generated_scenario_sha256": "83aa2c07eff37245419c3d7b909714dfd2a23af7142172dcffd2f78f0c228a2a",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_room.velvet",
+    "generated_scenario_sha256": "6d1c28653baef700db69df9fe191b247838cbe355d88a49b563c82882ec3abf4",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_room.velvet_spring.velvet",
+    "generated_scenario_sha256": "30611883084f4d080109dbf36f136560ec9d7256086df30cd3f20895456611bb",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_room.velvet_spring.plateau",
+    "generated_scenario_sha256": "332a76d55907364d98a30db16c71e4916f3aa36f8cc361b461dc279618c694a8",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_room.plateau",
+    "generated_scenario_sha256": "f59bebbfdc232ca70951df3244cc85d2185e78617f87e3d1cf83bd2c94893c65",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_room.plateau_spring.velvet",
+    "generated_scenario_sha256": "09a3c77837cdd333f2839bcaeae73ddb6e36100e9f58925bcba1ff031d1a6304",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_room.plateau_spring.plateau",
+    "generated_scenario_sha256": "2bb814a8d21e07a91e40e7b85229282cdea645012ce554714d78aad2571c0057",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw",
+    "generated_scenario_sha256": "49097c441edb63222207db7d97a8effbdc33400d7b92b589cc07421cea9c0a28",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_spring.velvet",
+    "generated_scenario_sha256": "aa4d544c6f178258490bd4ee30e0aad5203e0878fa2db8f9435d73f3baf2922b",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_spring.plateau",
+    "generated_scenario_sha256": "44d5396abdbaa6bf6e3941988f9b43c0f8ab91208dac1a58d8bd0a3b2fa369ab",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet",
+    "generated_scenario_sha256": "e833e1600acc800c8bb3539b65d491529b844ef534a764e2d5eddde36949360c",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet_spring.velvet",
+    "generated_scenario_sha256": "711288d46bf98b2d8ae48a24c09c79f7bf79bf705e85ac204607ac003ea01de3",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet_spring.plateau",
+    "generated_scenario_sha256": "0bc4297cbac7bfe3fb641e4b55d25c103c6c64f51a588a33477b2065e5d4ba59",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau",
+    "generated_scenario_sha256": "f57ef3785647a99a8938a717ff8db8eb98b1e907fb88b41f22bc3ac027df81c4",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau_spring.velvet",
+    "generated_scenario_sha256": "7b16449528e90d2d9b75fc44eacaba5b08e828af32686dd7dbfec24e63944a30",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau_spring.plateau",
+    "generated_scenario_sha256": "be70921311fafd590cba63e14fde8628d19c1584ad2b2164921c1abb4979e960",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd",
+    "generated_scenario_sha256": "22b47e8dede34728b04526c9cbec60d9f7db8b0b85e743c4eb722c4760c822db",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_spring.velvet",
+    "generated_scenario_sha256": "9af9eceacc957cf73abf63ff52affe80e18c599ceb66c285a289e09ec56307a0",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_spring.plateau",
+    "generated_scenario_sha256": "c1445a3933c2bebc8452c99452d40cb6885153797a7cc926938a134319f43a79",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_room.velvet",
+    "generated_scenario_sha256": "c21ea3baca7e639060f64506e4c85a40d8c30bbe3e118d9d829e7462d6d2a344",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_room.velvet_spring.velvet",
+    "generated_scenario_sha256": "84a9f201d47c574a4f187aaa5246f88cd1f72b76872b3a2665c7e4372afec2a9",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_room.velvet_spring.plateau",
+    "generated_scenario_sha256": "a6a4ec8c58433dee8f0be6f292ad1d9d09320afd0fa920cc9b5c327f95bdcb3a",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_room.plateau",
+    "generated_scenario_sha256": "0af1fa71e62adec1e6ab9675d220f34e197cfacd5a912bba16c847f5e0058b1f",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_room.plateau_spring.velvet",
+    "generated_scenario_sha256": "8b0c02fa6d8a7f0f9616adc917f7472618bcf5f1f15911119aa23bbd41bdcd11",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_room.plateau_spring.plateau",
+    "generated_scenario_sha256": "766acfba940bd4f630256681b5712373fd1b0c26a6bcf4385555f72bc8d5388c",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw",
+    "generated_scenario_sha256": "97adf9b1be6cee4175cf5e40eca1bd7219d3fdb2ae18384dadf0f0e693fa7b2e",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_spring.velvet",
+    "generated_scenario_sha256": "fb525194cbc2f91688070cf1bf9a9a299567fb6fc11741a1bedcfb3e5c71e0b3",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_spring.plateau",
+    "generated_scenario_sha256": "fd38fd96812108d27db52828483af9c1a8dbc924dd9c5ef36ec10ce9327d8b3d",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet",
+    "generated_scenario_sha256": "05e3e9bbaec75ce92fa1b7eeaff968227dafd3e3c21a277e2cb69ecc81603207",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet_spring.velvet",
+    "generated_scenario_sha256": "0c95576cba805e0487092f903275821773379583729231af178fb11b7aa6e1fb",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet_spring.plateau",
+    "generated_scenario_sha256": "a2679776a4dc56acd95c958e2b460a255718bbf753b888d4466f6e4fdf20ae73",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau",
+    "generated_scenario_sha256": "44dd1e6bbba607097e0b396647adebc8c3b04a283d1bca3570451add11a7f8e9",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau_spring.velvet",
+    "generated_scenario_sha256": "3282307bbae4d510b9532049c694df0815c95a4ceb2b884a10033dc4691548c2",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau_spring.plateau",
+    "generated_scenario_sha256": "f29eec08a05603a881d95fc223663b5699d2ab6e3474676ba82aac96232fecfa",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_installed_knob-dialog",
+    "generated_scenario_sha256": "5f0ef08038eac7772763ad54d88f649ba2af79fb891db6905a190edfdea56cfa",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_update_knob-dialog",
+    "generated_scenario_sha256": "ff5de93716cfb7edf896203ccdc438a13ebac37ff1e1f775ea3662f209ae93f1",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_hosted-sd_knob-dialog",
+    "generated_scenario_sha256": "5e4c09af46484e556ac0d36abc238546eaf7a91bc038a1f4a960726753080bbd",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_installed_midi-sync",
+    "generated_scenario_sha256": "ffe9cea957a6e8acc9a0d89ff0d8f6ee8d279746172abf9897797f82279b76c5",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_update_midi-sync",
+    "generated_scenario_sha256": "ebed9cce752a96de7680a5273b01d700bea983d18ee89cf34f417abb77899ca2",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_hosted-sd_midi-sync",
+    "generated_scenario_sha256": "955dfda7a30ab9cd8dbe86b10ff6be96a06a5a03d53d53dfd0b3ccb69ae9ee6f",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_installed_din-mixer-control",
+    "generated_scenario_sha256": "0689ce6a37ddfc70efee04670162d42279d4c9282707dddcb94e1f863efe0698",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  },
+  {
+    "backend": "headless",
+    "case": "patches-l6max_update_din-mixer-control",
+    "generated_scenario_sha256": "c6bc8fc72a9e17f79c37ff65c66be30142da36e7398f602d4e3001a118b3a529",
+    "model": "l6max",
+    "suites": [
+      "patches"
+    ]
+  }
+]

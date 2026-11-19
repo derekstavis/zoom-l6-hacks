@@ -11,16 +11,4 @@ pub use scenario::{
     Action, AudioInput, Gesture, STATE_SPEC_ENV, Scenario, Step, control_target, is_switch,
     model_name,
 };
-use serde::Serialize;
 pub use session::{Command, Session, run};
-use std::path::PathBuf;
-
-#[derive(Debug, Serialize)]
-pub struct CaseResult {
-    pub case: String,
-    pub model: String,
-    pub backend: String,
-    pub outcome: String,
-    pub detail: String,
-    pub artifacts: PathBuf,
-}

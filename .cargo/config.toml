@@ -1,2 +1,6 @@
 [build]
 rustflags = ["-Zthreads=8"]
+
+[alias]
+# The suite driver: `cargo l6test list`, `cargo l6test run --suite quick`.
+l6test = "run --offline --locked -p l6test --"

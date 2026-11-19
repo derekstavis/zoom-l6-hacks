@@ -1,18 +1,25 @@
 //! Reproducible suite driver. All guest runners are supervised child processes.
+mod cache;
+mod catalog;
 mod gui_capture;
 mod gui_probe;
 mod patch_matrix;
+mod report;
+mod reuse;
 mod screen_gif;
+mod select;
 
+use cache::RunCache;
+use catalog::{Case, ExpectedFailure};
 use l6max_host::engine::Options;
-use serde::Deserialize;
+use report::{CaseError, CaseResult, InPhase, Outcome, Phase};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use smoke_core::{CaseResult, Scenario, model_name};
+use smoke_core::{Scenario, model_name};
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
-    io::{Read, Seek, Write},
+    io::{Read, Seek},
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -70,50 +77,6 @@ fn audio_device_spec(fixture: &Fixture, logs: &Path) -> String {
 fn gdb_socket_path(logs: &Path) -> PathBuf {
     smoke_core::devices::gdb_socket_path(logs, "main")
 }
-#[derive(Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ExpectedFailure {
-    model: String,
-    step: usize,
-    contains: String,
-    reason: String,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Catalog {
-    version: u32,
-    case: Vec<Case>,
-}
-#[derive(Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Case {
-    /// Known failures at an exact step and error. A pass becomes XPASS.
-    #[serde(default)]
-    expected_failure: Vec<ExpectedFailure>,
-    id: String,
-    suites: Vec<String>,
-    models: Vec<String>,
-    scenario: Option<PathBuf>,
-    package: Option<String>,
-    #[serde(default)]
-    arguments: Vec<String>,
-    #[serde(default)]
-    environment: BTreeMap<String, String>,
-    #[serde(default)]
-    needs_configuration: bool,
-    #[serde(default)]
-    gui: bool,
-    #[serde(default)]
-    volatile: bool,
-    #[serde(default)]
-    no_sd: bool,
-    blocked: Option<String>,
-    #[serde(default = "case_timeout")]
-    wall_timeout_s: u64,
-}
-fn case_timeout() -> u64 {
-    900
-}
 struct Args {
     command: String,
     config: PathBuf,
@@ -126,6 +89,18 @@ struct Args {
     jobs: usize,
     qemu: Option<PathBuf>,
     app: Option<PathBuf>,
+    /// `list --format json`.
+    json: bool,
+    retries: usize,
+    strict: bool,
+    shard: Option<select::Shard>,
+    rerun: Option<PathBuf>,
+    only: Vec<Outcome>,
+    reuse: Option<PathBuf>,
+    /// Build every fixture and compute identities without booting.
+    fixtures_only: bool,
+    /// Build every fixture per case, without the run cache.
+    no_cache: bool,
 }
 /// Each guest runs one single-threaded TCG engine plus its scenario process.
 /// Leave headroom so concurrent guests keep up with real time.
@@ -147,6 +122,15 @@ fn parse_args() -> Result<Args, String> {
         jobs: default_jobs(),
         qemu: None,
         app: None,
+        json: false,
+        retries: 0,
+        strict: false,
+        shard: None,
+        rerun: None,
+        only: select::RERUN_DEFAULT.to_vec(),
+        reuse: None,
+        fixtures_only: false,
+        no_cache: false,
     };
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -173,6 +157,39 @@ fn parse_args() -> Result<Args, String> {
                     args.next().ok_or("--app needs a packaged application")?,
                 ))
             }
+            "--format" => match args.next().as_deref() {
+                Some("json") => result.json = true,
+                Some("text") => result.json = false,
+                _ => return Err("--format needs text or json".into()),
+            },
+            "--retries" => {
+                result.retries = args
+                    .next()
+                    .and_then(|value| value.parse().ok())
+                    .ok_or("--retries needs a number")?
+            }
+            "--strict" => result.strict = true,
+            "--fixtures-only" => result.fixtures_only = true,
+            "--no-cache" => result.no_cache = true,
+            "--shard" => {
+                result.shard = Some(select::Shard::parse(
+                    &args.next().ok_or("--shard needs I/N")?,
+                )?)
+            }
+            "--rerun" => {
+                result.rerun = Some(PathBuf::from(
+                    args.next()
+                        .ok_or("--rerun needs a report or run directory")?,
+                ))
+            }
+            "--only" => {
+                result.only = select::parse_outcomes(&args.next().ok_or("--only needs outcomes")?)?
+            }
+            "--reuse" => {
+                result.reuse = Some(PathBuf::from(
+                    args.next().ok_or("--reuse needs a run directory")?,
+                ))
+            }
             "--jobs" => {
                 result.jobs = args
                     .next()
@@ -187,6 +204,12 @@ fn parse_args() -> Result<Args, String> {
         || !["l6", "l6max", "all"].contains(&result.model.as_str())
     {
         return Err("invalid backend or model".into());
+    }
+    if result.fixtures_only && result.reuse.is_some() {
+        return Err("--fixtures-only builds inputs and never reuses results".into());
+    }
+    if result.rerun.is_some() && result.case.is_some() {
+        return Err("--rerun selects cases itself; do not combine it with --case".into());
     }
     Ok(result)
 }
@@ -444,9 +467,70 @@ fn load_config(
     })
 }
 
+/// A configured or built package, unpacked once per run. Builders only read
+/// the directory; cases that boot it get their own copy.
+fn unpacked(cache: &RunCache, package: &Path) -> Result<PathBuf, String> {
+    let sha = cache.file_hash(package)?;
+    cache.directory("unpacked", &sha, |out| l6fw::unpack(package, out))
+}
+
+/// One `l6patch` build per distinct request in a run, copied into `output`.
+fn l6patch_build(
+    cache: &RunCache,
+    package: &Path,
+    output: &Path,
+    request: l6patch::BuildRequest,
+) -> Result<(), String> {
+    let key = json!({
+        "package": cache.file_hash(package)?,
+        "mode": format!("{:?}", request.mode),
+        "patches": request.patches,
+        "effect_replacements": request.effect_replacements,
+        "version": request.version,
+        "experimental_qemu_module_arena": request.experimental_qemu_module_arena,
+    })
+    .to_string();
+    let built = cache.directory("l6patch", &key, |out| {
+        let source = unpacked(cache, package)?;
+        l6patch::build(l6patch::BuildRequest {
+            source,
+            output: out.to_path_buf(),
+            ..request
+        })
+        .map_err(|error| format!("l6patch failed: {error}"))
+    })?;
+    cache::copy_into(&built, output)
+}
+
+/// Patch a package with the browser patcher once per distinct request in a
+/// run. Returns the cached patched package and its report.
+fn wasm_patch(
+    cache: &RunCache,
+    package: &Path,
+    names: &[String],
+) -> Result<(PathBuf, Value), String> {
+    let key = json!({"package": cache.file_hash(package)?, "patches": names}).to_string();
+    let built = cache.directory("wasm-patch", &key, |out| {
+        fs::create_dir_all(out).map_err(|e| e.to_string())?;
+        let bytes = fs::read(package).map_err(|e| e.to_string())?;
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let (patched, report) = firmware_patch_wasm::apply_patches(&bytes, &names)?;
+        fs::write(out.join("patched.bin"), patched).map_err(|e| e.to_string())?;
+        fs::write(
+            out.join("report.json"),
+            serde_json::to_vec_pretty(&report).unwrap(),
+        )
+        .map_err(|e| e.to_string())
+    })?;
+    let report =
+        serde_json::from_slice(&fs::read(built.join("report.json")).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    Ok((built.join("patched.bin"), report))
+}
+
 /// Construct the experimental loader and card bundle from the configured
 /// stock package. Both outputs are per-case and recorded with the fixture.
-fn prepare_sd_patch(fixture: &mut Fixture, dir: &Path) -> Result<(), String> {
+fn prepare_sd_patch(fixture: &mut Fixture, dir: &Path, cache: &RunCache) -> Result<(), String> {
     let Some(patches) = fixture.sd_patches.clone() else {
         return Ok(());
     };
@@ -460,11 +544,12 @@ fn prepare_sd_patch(fixture: &mut Fixture, dir: &Path) -> Result<(), String> {
     }
     let package = fixture
         .firmware_package
-        .as_ref()
+        .clone()
         .ok_or("SD patches need firmware")?;
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let source = dir.join("sd-stock-firmware");
-    l6fw::unpack(package, &source)?;
+    // `smoke-core` reads the stock image from the case's `sd-stock-firmware`
+    // to locate the loader's edits, so each SD case keeps its own copy.
+    cache::copy_into(&unpacked(cache, &package)?, &dir.join("sd-stock-firmware"))?;
     let has_effect_replacements = !fixture.effect_replacements.is_empty();
     let build = |output: &Path,
                  mode: l6patch::BuildMode,
@@ -473,15 +558,20 @@ fn prepare_sd_patch(fixture: &mut Fixture, dir: &Path) -> Result<(), String> {
      -> Result<(), String> {
         let experimental_qemu_module_arena =
             mode == l6patch::BuildMode::PatchLoader && has_effect_replacements;
-        let result = l6patch::build(l6patch::BuildRequest {
-            source: source.clone(),
-            output: output.to_path_buf(),
-            patches: selected.to_vec(),
-            effect_replacements: effect_replacements.to_vec(),
-            version: None,
-            mode,
-            experimental_qemu_module_arena,
-        });
+        let result = l6patch_build(
+            cache,
+            &package,
+            output,
+            l6patch::BuildRequest {
+                source: PathBuf::new(),
+                output: PathBuf::new(),
+                patches: selected.to_vec(),
+                effect_replacements: effect_replacements.to_vec(),
+                version: None,
+                mode,
+                experimental_qemu_module_arena,
+            },
+        );
         let name = if mode == l6patch::BuildMode::PatchLoader {
             "patch-loader-build.log"
         } else {
@@ -494,9 +584,8 @@ fn prepare_sd_patch(fixture: &mut Fixture, dir: &Path) -> Result<(), String> {
             )
             .map_err(|e| e.to_string())?,
             Err(error) => {
-                let message = format!("l6patch failed: {error}");
-                fs::write(dir.join(name), &message).map_err(|e| e.to_string())?;
-                return Err(message);
+                fs::write(dir.join(name), &error).map_err(|e| e.to_string())?;
+                return Err(error);
             }
         }
         Ok(())
@@ -536,6 +625,7 @@ fn fixture_options(
     config: &Config,
     fixture: &Fixture,
     dir: &Path,
+    cache: &RunCache,
 ) -> Result<(Options, Value), String> {
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let mut selected_package = fixture.firmware_package.clone();
@@ -556,26 +646,26 @@ fn fixture_options(
             .iter()
             .all(|name| firmware_patch_core::supports_wasm_patch(name, firmware_model))
         {
-            let bytes = fs::read(package).map_err(|e| e.to_string())?;
-            let names: Vec<&str> = fixture.patches.iter().map(String::as_str).collect();
-            let (patched, report) = firmware_patch_wasm::apply_patches(&bytes, &names)?;
+            let (cached, report) = wasm_patch(cache, package, &fixture.patches)?;
             let patched_package = dir.join("patched-firmware.bin");
-            fs::write(&patched_package, patched).map_err(|e| e.to_string())?;
+            fs::copy(&cached, &patched_package).map_err(|e| e.to_string())?;
             (patched_package, report)
         } else {
-            let source = dir.join("stock-firmware");
-            l6fw::unpack(package, &source)?;
             let build = dir.join("firmware-build");
-            l6patch::build(l6patch::BuildRequest {
-                source,
-                output: build.clone(),
-                patches: fixture.patches.clone(),
-                effect_replacements: Vec::new(),
-                version: None,
-                mode: l6patch::BuildMode::Firmware,
-                experimental_qemu_module_arena: false,
-            })
-            .map_err(|error| format!("l6patch failed: {error}"))?;
+            l6patch_build(
+                cache,
+                package,
+                &build,
+                l6patch::BuildRequest {
+                    source: PathBuf::new(),
+                    output: PathBuf::new(),
+                    patches: fixture.patches.clone(),
+                    effect_replacements: Vec::new(),
+                    version: None,
+                    mode: l6patch::BuildMode::Firmware,
+                    experimental_qemu_module_arena: false,
+                },
+            )?;
             let report: Value = serde_json::from_slice(
                 &fs::read(build.join("patch.json")).map_err(|e| e.to_string())?,
             )
@@ -593,7 +683,7 @@ fn fixture_options(
         )
         .map_err(|e| e.to_string())?;
         let output = dir.join("firmware");
-        l6fw::unpack(&patched_package, &output)?;
+        cache::copy_into(&unpacked(cache, &patched_package)?, &output)?;
         fs::write(
             output.join("patch.json"),
             serde_json::to_vec_pretty(&report).unwrap(),
@@ -623,13 +713,33 @@ fn fixture_options(
     // A spec edits the disposable copy: seed missing NOR from the selected
     // firmware, commit settings with the firmware's bank protocol, and write
     // the panel RTC/flash it declares.
+    let firmware_files = files(&firmware)?;
     let state_spec = fixture
         .state_spec
         .as_ref()
         .map(|path| -> Result<Value, String> {
-            let report =
-                l6nor::state::apply(&l6nor::StateSpec::load(path)?, Some(&firmware), &state)?;
-            Ok(json!({"sha256": hash(path)?, "applied": report}))
+            // A state depends only on its spec and the firmware it seeds from.
+            let spec_sha256 = hash(path)?;
+            let key = json!({"spec": spec_sha256, "firmware": firmware_files}).to_string();
+            let built = cache.directory("state", &key, |out| {
+                fs::create_dir_all(out.join("state")).map_err(|e| e.to_string())?;
+                let report = l6nor::state::apply(
+                    &l6nor::StateSpec::load(path)?,
+                    Some(&firmware),
+                    &out.join("state"),
+                )?;
+                fs::write(
+                    out.join("applied.json"),
+                    serde_json::to_vec_pretty(&json!(report)).unwrap(),
+                )
+                .map_err(|e| e.to_string())
+            })?;
+            cache::copy_into(&built.join("state"), &state)?;
+            let report: Value = serde_json::from_slice(
+                &fs::read(built.join("applied.json")).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(json!({"sha256": spec_sha256, "applied": report}))
         })
         .transpose()?;
     let audio_device = audio_device_spec(fixture, dir);
@@ -781,8 +891,30 @@ fn fixture_options(
                 });
             }
         }
-        card.build(&target, spec.parent().unwrap_or(Path::new(".")))
-            .map_err(|e| e.to_string())?;
+        let base = spec.parent().unwrap_or(Path::new("."));
+        if cache::CLONES_FILES {
+            // A card depends on its spec and the bytes of every file it holds.
+            let mut contents = Vec::new();
+            for file in &card.file {
+                contents.push(json!([
+                    file.path,
+                    match &file.content {
+                        sd_image::spec::Content::Copy(path) => hash(&base.join(path))?,
+                        content => format!("{content:?}"),
+                    }
+                ]));
+            }
+            let key =
+                json!({"spec": hash(spec)?, "model": fixture.model, "files": contents}).to_string();
+            let built = cache.directory("card", &key, |out| {
+                fs::create_dir_all(out).map_err(|e| e.to_string())?;
+                card.build(&out.join("card.img"), base)
+                    .map_err(|e| e.to_string())
+            })?;
+            fs::copy(built.join("card.img"), &target).map_err(|e| e.to_string())?;
+        } else {
+            card.build(&target, base).map_err(|e| e.to_string())?;
+        }
         args.extend(["--sd-image".into(), target.clone().into_os_string()]);
         Some(hash_sparse(&target)?)
     } else {
@@ -808,7 +940,7 @@ fn fixture_options(
         args.extend(["--sd-patch".into(), patch.into()]);
     }
     let options = Options::parse_args(args)?;
-    let manifest = json!({"fixture":fixture.name,"model":fixture.model,"firmware":files(&firmware)?,"package_sha256":selected_package.as_ref().map(|p|hash(p)).transpose()?,"patches":fixture.patches,"sd_patches":fixture.sd_patches,"effect_replacements":fixture.effect_replacements,"installed_patches":fixture.installed_patches,"installed_sd_patches":fixture.installed_sd_patches,"sd_bundle_mode":fixture.sd_bundle_mode,"sd_patch_set_sha256":fixture.sd_bundle.as_ref().map(|p|hash_patch_directory(p)).transpose()?,"update_package_sha256":fixture.update_package.as_ref().map(|p|hash(p)).transpose()? ,"state_spec":state_spec,"sd_sha256":sd_hash,"audio_device":audio_device,"qemu_sha256":config.qemu_sha256});
+    let manifest = json!({"fixture":fixture.name,"model":fixture.model,"firmware":firmware_files,"package_sha256":selected_package.as_ref().map(|p|hash(p)).transpose()?,"patches":fixture.patches,"sd_patches":fixture.sd_patches,"effect_replacements":fixture.effect_replacements,"installed_patches":fixture.installed_patches,"installed_sd_patches":fixture.installed_sd_patches,"sd_bundle_mode":fixture.sd_bundle_mode,"sd_patch_set_sha256":fixture.sd_bundle.as_ref().map(|p|hash_patch_directory(p)).transpose()?,"update_package_sha256":fixture.update_package.as_ref().map(|p|hash(p)).transpose()? ,"state_spec":state_spec,"sd_sha256":sd_hash,"audio_device":audio_device,"qemu_sha256":config.qemu_sha256});
     Ok((options, manifest))
 }
 fn engine_args(options: &Options) -> Vec<String> {
@@ -939,76 +1071,111 @@ fn expand(value: &str, options: &Options) -> String {
     }
     text
 }
+/// What every case of a run shares.
+struct Context<'a> {
+    root: &'a Path,
+    /// The run's frozen copy of the spec.
+    spec: &'a Path,
+    output: &'a Path,
+    config: &'a Config,
+    cache: &'a RunCache,
+    /// Identity of the scenario runner per backend.
+    runners: &'a BTreeMap<&'static str, Value>,
+    /// Digest of the reference images assertions read.
+    references: &'a str,
+    earlier: Option<&'a reuse::Earlier>,
+    patch_artifact_dir: &'a Path,
+    /// Stop after building fixtures and computing identities.
+    fixtures_only: bool,
+}
+
+/// Run one attempt of a case in `dir`. Problems before the case runs are
+/// BLOCKED (preflight); problems building its fixture or running it FAIL.
 fn run_case(
-    root: &Path,
-    catalog_dir: &Path,
-    config: &Config,
+    ctx: &Context,
     fixture: &Fixture,
     case: &Case,
     backend: &str,
     dir: &Path,
     midi_namespace: &str,
-    patch_artifact_dir: &Path,
 ) -> CaseResult {
-    let mut result = CaseResult {
-        case: case.id.clone(),
-        model: fixture.model.clone(),
-        backend: backend.into(),
-        outcome: "BLOCKED".into(),
-        detail: String::new(),
-        artifacts: dir.into(),
-    };
-    let run = || -> Result<(bool, Value), String> {
+    let started = Instant::now();
+    let mut result = CaseResult::new(&case.id, &fixture.model, backend, dir);
+    let config = ctx.config;
+    let mut run = || -> Result<Option<(bool, Value)>, CaseError> {
         if cancelled() {
-            return Err("not run: suite interrupted".into());
+            return Err(CaseError::preflight("not run: suite interrupted"));
         }
         if let Some(reason) = &case.blocked {
-            return Err(reason.clone());
+            return Err(CaseError::preflight(reason.clone()));
         }
-        if let Some(path) = &case.scenario {
-            let scenario = Scenario::load(&catalog_dir.join(path))?;
-            if !scenario.backends.iter().any(|b| b == backend) {
-                return Err(format!("scenario does not support {backend} backend"));
-            }
+        let scenario = case
+            .scenario
+            .as_ref()
+            .map(|path| Scenario::load(&ctx.spec.join(path)))
+            .transpose()
+            .phase(Phase::Preflight)?;
+        if let Some(scenario) = &scenario
+            && !scenario.backends.iter().any(|b| b == backend)
+        {
+            return Err(CaseError::preflight(format!(
+                "scenario does not support {backend} backend"
+            )));
         }
         if case.needs_configuration && case.scenario.is_none() && config.app.is_none() {
-            return Err("requires a packaged application; pass --app PATH".into());
+            return Err(CaseError::preflight(
+                "requires a packaged application; pass --app PATH",
+            ));
         }
-        if hash(&config.qemu)? != config.qemu_sha256 {
-            return Err("QEMU changed since preflight".into());
+        if hash(&config.qemu).phase(Phase::Preflight)? != config.qemu_sha256 {
+            return Err(CaseError::preflight("QEMU changed since preflight"));
         }
-        let mut selected_fixture = fixture.clone();
-        prepare_sd_patch(&mut selected_fixture, dir)?;
-        if let Some(path) = &case.scenario {
-            let patches = Scenario::load(&catalog_dir.join(path))?
-                .update_patches
-                .remove(&fixture.model)
-                .unwrap_or_default();
-            if !patches.is_empty() {
-                let package = fixture
-                    .firmware_package
-                    .as_ref()
-                    .ok_or("update_patches require firmware_package")?;
-                let bytes = fs::read(package).map_err(|e| e.to_string())?;
-                let names: Vec<&str> = patches.iter().map(String::as_str).collect();
-                let (patched, report) = firmware_patch_wasm::apply_patches(&bytes, &names)?;
-                fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-                let update = dir.join("patched-update.bin");
-                fs::write(&update, patched).map_err(|e| e.to_string())?;
-                // The post-update checks locate the installed hooks from the
-                // report that sits beside the package.
-                fs::write(
-                    update.with_extension("json"),
-                    serde_json::to_vec_pretty(&report).unwrap(),
-                )
-                .map_err(|e| e.to_string())?;
-                selected_fixture.update_package = Some(update);
+        if let Some(package) = &fixture.firmware_package {
+            let model = package_model(ctx.cache, package).phase(Phase::Preflight)?;
+            if model != fixture.model {
+                return Err(CaseError::preflight(format!(
+                    "configured {} firmware is a {model} package",
+                    fixture.model
+                )));
             }
+        }
+        let fixture_started = Instant::now();
+        let mut selected_fixture = fixture.clone();
+        prepare_sd_patch(&mut selected_fixture, dir, ctx.cache).phase(Phase::Fixture)?;
+        let patches = scenario
+            .as_ref()
+            .and_then(|scenario| scenario.update_patches.get(&fixture.model).cloned())
+            .unwrap_or_default();
+        if !patches.is_empty() {
+            let package = fixture
+                .firmware_package
+                .as_ref()
+                .ok_or("update_patches require firmware_package")
+                .map_err(CaseError::preflight)?;
+            let (cached, report) =
+                wasm_patch(ctx.cache, package, &patches).phase(Phase::Fixture)?;
+            fs::create_dir_all(dir)
+                .map_err(|e| e.to_string())
+                .phase(Phase::Fixture)?;
+            let update = dir.join("patched-update.bin");
+            fs::copy(&cached, &update)
+                .map_err(|e| e.to_string())
+                .phase(Phase::Fixture)?;
+            // The post-update checks locate the installed hooks from the
+            // report that sits beside the package.
+            fs::write(
+                update.with_extension("json"),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .map_err(|e| e.to_string())
+            .phase(Phase::Fixture)?;
+            selected_fixture.update_package = Some(update);
         }
         if case.no_sd {
             selected_fixture.card_spec = None;
         }
-        let (mut options, mut manifest) = fixture_options(config, &selected_fixture, dir)?;
+        let (mut options, mut manifest) =
+            fixture_options(config, &selected_fixture, dir, ctx.cache).phase(Phase::Fixture)?;
         if case.volatile && selected_fixture.state_spec.is_none() {
             options.state_dir = None;
         }
@@ -1019,144 +1186,226 @@ fn run_case(
         // Setup-input steps are skipped when the spec already built their result.
         let spec_state = selected_fixture.state_spec.is_some();
         manifest["execution_spec_state"] = json!(spec_state);
-        if let Some(path) = &case.scenario {
-            let mut scenario = Scenario::load(&catalog_dir.join(path))?;
-            if spec_state {
-                scenario = scenario.without_setup_input();
-            }
-            smoke_core::devices::prepare(&scenario, &mut options)?;
-        }
-        manifest["execution_volatile"] = json!(case.volatile);
-        manifest["execution_no_sd"] = json!(case.no_sd);
-        manifest["execution_sd_sha256"] = options
-            .sd_image
-            .as_ref()
-            .map(|path| hash_sparse(path))
-            .transpose()?
-            .map_or(Value::Null, |value| json!(value));
-        manifest["execution_state_sha256"] = options
-            .state_dir
-            .as_ref()
-            .map(|path| files(path))
-            .transpose()?
-            .map_or(Value::Null, |value| json!(value));
-        fs::write(
-            dir.join("inputs.json"),
-            serde_json::to_vec_pretty(&manifest).unwrap(),
-        )
-        .map_err(|e| e.to_string())?;
-        let packaged = case.needs_configuration && case.scenario.is_none();
-        let binary = if let Some(app) = config.app.as_ref().filter(|_| packaged) {
-            app.executable.clone()
-        } else {
-            let name = if case.scenario.is_some() && backend == "headless" {
-                "l6test"
-            } else if case.scenario.is_some() {
-                "l6max-gui"
+        if let Some(scenario) = &scenario {
+            let scenario = if spec_state {
+                scenario.clone().without_setup_input()
             } else {
-                case.package.as_deref().ok_or("case has no executable")?
+                scenario.clone()
             };
-            dir.parent().unwrap().join("bin").join(name)
-        };
-        let binary_sha256 = hash(&binary)?;
-        let mut command = Command::new(&binary);
-        command.current_dir(root);
-        for (key, _) in env::vars_os() {
-            if key.to_string_lossy().starts_with("L6_")
-                || key.to_string_lossy().starts_with("L6MAX_")
-            {
-                command.env_remove(key);
-            }
+            // Firmware guards and other case requirements: unmet means not run.
+            smoke_core::devices::prepare(&scenario, &mut options).phase(Phase::Preflight)?;
         }
-        let log_format = env::var("L6_LOG_FORMAT").unwrap_or_else(|_| "json".into());
-        command.env("L6_LOG_FORMAT", log_format);
-        command
-            .env("SMOKE_CASE", &case.id)
-            .env("SMOKE_MODEL", &fixture.model)
-            .env("SMOKE_BACKEND", backend)
-            .env(
-                smoke_core::STATE_SPEC_ENV,
-                if spec_state { "1" } else { "0" },
+        let fixture_phase = (|| -> Result<_, String> {
+            manifest["execution_volatile"] = json!(case.volatile);
+            manifest["execution_no_sd"] = json!(case.no_sd);
+            manifest["execution_sd_sha256"] = options
+                .sd_image
+                .as_ref()
+                .map(|path| hash_sparse(path))
+                .transpose()?
+                .map_or(Value::Null, |value| json!(value));
+            manifest["execution_state_sha256"] = options
+                .state_dir
+                .as_ref()
+                .map(|path| files(path))
+                .transpose()?
+                .map_or(Value::Null, |value| json!(value));
+            fs::write(
+                dir.join("inputs.json"),
+                serde_json::to_vec_pretty(&manifest).unwrap(),
             )
-            .env("L6_MIDI_NAMESPACE", midi_namespace);
-        command.env("L6_PATCH_ARTIFACT_DIR", patch_artifact_dir);
-        command.env(
-            "RUST_LOG",
-            env::var("RUST_LOG").unwrap_or_else(|_| l6max_host::logging::DEFAULT_FILTER.into()),
-        );
-        let arguments: Vec<String> = case.arguments.iter().map(|a| expand(a, &options)).collect();
-        if arguments.iter().any(|a| a.contains('{')) {
-            return Err("unresolved legacy argument placeholder; supply the required package/path explicitly".into());
-        }
-        if let Some(path) = &case.scenario {
-            let scenario = catalog_dir.join(path);
-            if backend == "headless" {
-                command.arg("__scenario").arg(&scenario);
+            .map_err(|e| e.to_string())?;
+            let packaged = case.needs_configuration && case.scenario.is_none();
+            let binary = if let Some(app) = config.app.as_ref().filter(|_| packaged) {
+                app.executable.clone()
             } else {
-                command.arg("--smoke-scenario").arg(&scenario);
+                let name = if case.scenario.is_some() && backend == "headless" {
+                    "l6test"
+                } else if case.scenario.is_some() {
+                    "l6max-gui"
+                } else {
+                    case.package.as_deref().ok_or("case has no executable")?
+                };
+                ctx.output.join("bin").join(name)
+            };
+            let binary_sha256 = hash(&binary)?;
+            let mut command = Command::new(&binary);
+            command.current_dir(ctx.root);
+            for (key, _) in env::vars_os() {
+                if key.to_string_lossy().starts_with("L6_")
+                    || key.to_string_lossy().starts_with("L6MAX_")
+                {
+                    command.env_remove(key);
+                }
             }
-            command.args(engine_args(&options));
-        } else {
-            command.args(&arguments);
-            command.args(engine_args(&options));
-        }
-        if !selected_fixture.audio_input.is_empty() {
-            let directory = dir.join("audio-input");
-            for input in &selected_fixture.audio_input {
-                let bytes = input
-                    .content
-                    .bytes(catalog_dir)
-                    .map_err(|e| e.to_string())?;
-                l6max_host::audio_input::prepare_bytes(
-                    &directory,
-                    u32::from(input.channel),
-                    &bytes,
+            let log_format = env::var("L6_LOG_FORMAT").unwrap_or_else(|_| "json".into());
+            command.env("L6_LOG_FORMAT", log_format);
+            command
+                .env("SMOKE_CASE", &case.id)
+                .env("SMOKE_MODEL", &fixture.model)
+                .env("SMOKE_BACKEND", backend)
+                .env(
+                    smoke_core::STATE_SPEC_ENV,
+                    if spec_state { "1" } else { "0" },
                 )
-                .map_err(|e| e.to_string())?;
+                .env("L6_MIDI_NAMESPACE", midi_namespace);
+            command.env("L6_PATCH_ARTIFACT_DIR", ctx.patch_artifact_dir);
+            command.env(
+                "RUST_LOG",
+                env::var("RUST_LOG").unwrap_or_else(|_| l6max_host::logging::DEFAULT_FILTER.into()),
+            );
+            let arguments: Vec<String> =
+                case.arguments.iter().map(|a| expand(a, &options)).collect();
+            if arguments.iter().any(|a| a.contains('{')) {
+                return Err("unresolved legacy argument placeholder; supply the required package/path explicitly".into());
             }
-            command.env("L6_AUDIO_INPUT_DIR", directory);
+            if let Some(path) = &case.scenario {
+                let scenario = ctx.spec.join(path);
+                if backend == "headless" {
+                    command.arg("__scenario").arg(&scenario);
+                } else {
+                    command.arg("--smoke-scenario").arg(&scenario);
+                }
+                command.args(engine_args(&options));
+            } else {
+                command.args(&arguments);
+                command.args(engine_args(&options));
+            }
+            let mut audio_input = Vec::new();
+            if !selected_fixture.audio_input.is_empty() {
+                let directory = dir.join("audio-input");
+                for input in &selected_fixture.audio_input {
+                    let bytes = input.content.bytes(ctx.spec).map_err(|e| e.to_string())?;
+                    audio_input.push(json!([
+                        input.channel,
+                        format!("{:x}", Sha256::digest(&bytes))
+                    ]));
+                    l6max_host::audio_input::prepare_bytes(
+                        &directory,
+                        u32::from(input.channel),
+                        &bytes,
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+                command.env("L6_AUDIO_INPUT_DIR", directory);
+            }
+            for (key, value) in &case.environment {
+                let mut value = expand(value, &options);
+                if let Some(package) = config.firmware.get("l6") {
+                    value = value.replace("{l6_package}", &package.display().to_string());
+                }
+                if let Some(app) = &config.app {
+                    value = value.replace("{app_qemu_sha256}", &app.qemu_sha256);
+                }
+                if value.contains('{') {
+                    return Err(format!("unresolved placeholder in {key}: {value}"));
+                }
+                command.env(key, value);
+            }
+            let arguments: Vec<String> = command
+                .get_args()
+                .map(|s| s.to_string_lossy().into_owned())
+                .collect();
+            let environment: BTreeMap<String, String> = command
+                .get_envs()
+                .filter_map(|(k, v)| {
+                    v.map(|v| {
+                        (
+                            k.to_string_lossy().into_owned(),
+                            v.to_string_lossy().into_owned(),
+                        )
+                    })
+                })
+                .collect();
+            let identity = match (&scenario, ctx.runners.get(backend)) {
+                (Some(scenario), Some(runner)) if is_reusable(scenario) => Some(json!({
+                    "qemu_sha256": config.qemu_sha256,
+                    "runner": runner,
+                    "firmware_package_sha256": manifest["package_sha256"],
+                    "firmware": reuse::digest(&manifest["firmware"]),
+                    "update_package_sha256": manifest["update_package_sha256"],
+                    "sd_patch_set_sha256": manifest["sd_patch_set_sha256"],
+                    "card_sha256": manifest["execution_sd_sha256"],
+                    "state": reuse::digest(&manifest["execution_state_sha256"]),
+                    "scenario": reuse::scenario_digest(ctx.spec, &scenario.sources)?,
+                    "references": ctx.references,
+                    "audio_input": audio_input,
+                    "invocation": reuse::normalized_invocation(&arguments, &environment, ctx.output, dir),
+                    "case": reuse::digest(&json!(case)),
+                })),
+                _ => None,
+            };
+            Ok((
+                command,
+                binary,
+                binary_sha256,
+                arguments,
+                environment,
+                identity,
+            ))
+        })();
+        let (command, binary, binary_sha256, arguments, environment, identity) =
+            fixture_phase.phase(Phase::Fixture)?;
+        result.timings.fixture_s = fixture_started.elapsed().as_secs_f64();
+        if ctx.fixtures_only {
+            // Record the identity for comparison, but no reuse key: nothing ran.
+            result.identity = identity;
+            return Ok(None);
         }
-        for (key, value) in &case.environment {
-            let mut value = expand(value, &options);
-            if let Some(package) = config.firmware.get("l6") {
-                value = value.replace("{l6_package}", &package.display().to_string());
+        if let Some(identity) = identity {
+            let key = reuse::digest(&identity);
+            result.identity = Some(identity);
+            if let Some(earlier) = ctx.earlier.and_then(|earlier| earlier.find(&key)) {
+                result.reuse_key = Some(key);
+                fs::write(
+                    dir.join("reused.json"),
+                    serde_json::to_vec_pretty(earlier).unwrap(),
+                )
+                .map_err(|e| e.to_string())
+                .phase(Phase::Reuse)?;
+                return Ok(None);
             }
-            if let Some(app) = &config.app {
-                value = value.replace("{app_qemu_sha256}", &app.qemu_sha256);
-            }
-            if value.contains('{') {
-                return Err(format!("unresolved placeholder in {key}: {value}"));
-            }
-            command.env(key, value);
+            result.reuse_key = Some(key);
         }
-        let invocation = json!({"binary":binary,"binary_sha256":hash(&binary)?,"arguments":command.get_args().map(|s|s.to_string_lossy().into_owned()).collect::<Vec<_>>(),"environment":command.get_envs().filter_map(|(k,v)|v.map(|v|(k.to_string_lossy().into_owned(),v.to_string_lossy().into_owned()))).collect::<BTreeMap<_,_>>()});
+        let invocation = json!({"binary":binary,"binary_sha256":binary_sha256,"arguments":arguments,"environment":environment});
         fs::write(
             dir.join("invocation.json"),
             serde_json::to_vec_pretty(&invocation).unwrap(),
         )
-        .map_err(|e| e.to_string())?;
-        let success = supervise(command, dir, case.wall_timeout_s)?;
-        if hash(&binary)? != binary_sha256 {
-            return Err("legacy executable changed during the case; result is invalid".into());
+        .map_err(|e| e.to_string())
+        .phase(Phase::Execute)?;
+        let execute_started = Instant::now();
+        let success = supervise(command, dir, case.wall_timeout_s).phase(Phase::Execute);
+        result.timings.execute_s = execute_started.elapsed().as_secs_f64();
+        let success = success?;
+        if hash(&binary).phase(Phase::Execute)? != binary_sha256 {
+            return Err(CaseError {
+                phase: Phase::Execute,
+                message: "legacy executable changed during the case; result is invalid".into(),
+            });
         }
-        if hash(&config.qemu)? != config.qemu_sha256 {
-            return Err("QEMU changed during the case; result is invalid".into());
+        if hash(&config.qemu).phase(Phase::Execute)? != config.qemu_sha256 {
+            return Err(CaseError {
+                phase: Phase::Execute,
+                message: "QEMU changed during the case; result is invalid".into(),
+            });
         }
         let scenario = fs::read(dir.join("scenario.json"))
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or(Value::Null);
-        Ok((success, scenario))
+        Ok(Some((success, scenario)))
     };
-    match run() {
-        Ok((success, scenario)) => {
+    let outcome = run();
+    match outcome {
+        Ok(Some((success, scenario))) => {
+            result.phase = Phase::Execute;
             result.outcome =
                 if success && (case.scenario.is_none() || scenario["outcome"] == "PASS") {
-                    "PASS"
+                    Outcome::Pass
                 } else {
-                    "FAIL"
-                }
-                .into();
+                    Outcome::Fail
+                };
             result.detail = scenario["error"]
                 .as_str()
                 .unwrap_or(if success {
@@ -1167,13 +1416,26 @@ fn run_case(
                 .into();
             apply_expected(&mut result, &scenario, &case.expected_failure);
         }
+        Ok(None) if ctx.fixtures_only => {
+            result.outcome = Outcome::Pass;
+            result.phase = Phase::Fixture;
+            result.detail = "fixtures built; not run".into();
+        }
+        Ok(None) => {
+            let earlier = ctx
+                .earlier
+                .and_then(|earlier| earlier.find(result.reuse_key.as_deref()?))
+                .cloned()
+                .expect("a reused case has an earlier result");
+            reuse::reuse(&mut result, &earlier);
+        }
         Err(error) => {
-            result.detail = error;
-            if dir.join("invocation.json").exists() {
-                result.outcome = "FAIL".into();
-            }
+            result.outcome = error.outcome();
+            result.phase = error.phase;
+            result.detail = error.message;
         }
     }
+    result.duration_s = started.elapsed().as_secs_f64();
     let _ = fs::create_dir_all(dir);
     let _ = fs::write(
         dir.join("result.json"),
@@ -1182,18 +1444,49 @@ fn run_case(
     result
 }
 
+/// Whether a scenario's result follows from its recorded inputs. A scenario
+/// that builds patches while it runs depends on sources the identity does not
+/// hash, so it always runs.
+fn is_reusable(scenario: &Scenario) -> bool {
+    !scenario
+        .step
+        .iter()
+        .any(|step| matches!(step.action, smoke_core::Action::WasmPatch))
+}
+
+/// The model of a configured package, read once per run.
+fn package_model(cache: &RunCache, package: &Path) -> Result<String, String> {
+    let sha = cache.file_hash(package)?;
+    let directory = cache.directory("package-model", &sha, |out| {
+        fs::create_dir_all(out).map_err(|e| e.to_string())?;
+        let bytes = fs::read(package).map_err(|e| e.to_string())?;
+        let model = l6fw::model_from_package(&bytes).map_err(|e| e.to_string())?;
+        fs::write(out.join("model"), model_name(model)).map_err(|e| e.to_string())
+    })?;
+    fs::read_to_string(directory.join("model")).map_err(|e| e.to_string())
+}
+
+/// Apply a case's expected failures for this model. A failure matching any of
+/// them at its exact step and error is XFAIL; a pass despite them is XPASS.
 fn apply_expected(result: &mut CaseResult, scenario: &Value, expected: &[ExpectedFailure]) {
-    if let Some(expected) = expected.iter().find(|e| e.model == result.model) {
-        if result.outcome == "PASS" {
-            result.outcome = "XPASS".into();
-            result.detail = format!("unexpected pass: {}", expected.reason);
-        } else if result.outcome == "FAIL"
-            && scenario["failed_step"].as_u64() == Some(expected.step as u64)
-            && result.detail.contains(&expected.contains)
-        {
-            result.outcome = "XFAIL".into();
-            result.detail = format!("{}: {}", expected.reason, result.detail);
-        }
+    let for_model: Vec<_> = expected
+        .iter()
+        .filter(|e| e.model == result.model)
+        .collect();
+    let Some(first) = for_model.first() else {
+        return;
+    };
+    if result.outcome == Outcome::Pass {
+        result.outcome = Outcome::Xpass;
+        result.detail = format!("unexpected pass: {}", first.reason);
+    } else if result.outcome == Outcome::Fail
+        && let Some(expected) = for_model.iter().find(|e| {
+            scenario["failed_step"].as_u64() == Some(e.step as u64)
+                && result.detail.contains(&e.contains)
+        })
+    {
+        result.outcome = Outcome::Xfail;
+        result.detail = format!("{}: {}", expected.reason, result.detail);
     }
 }
 
@@ -1204,7 +1497,7 @@ impl Drop for RunJournal {
         let mut report = fs::read(&path)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-            .unwrap_or_else(|| json!({"schema":1}));
+            .unwrap_or_else(|| json!({"schema":report::SCHEMA}));
         if report.get("outcome").is_none() || report["outcome"] == "RUNNING" {
             report["outcome"] = json!("BLOCKED");
             report["error"] = json!(
@@ -1217,55 +1510,26 @@ impl Drop for RunJournal {
 fn execute() -> Result<i32, String> {
     let args = parse_args()?;
     let root = l6max_host::paths::repository_root();
-    let catalog_dir = root.join("tests/smoke");
-    let mut catalog: Catalog = toml::from_str(
-        &fs::read_to_string(catalog_dir.join("catalog.toml")).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
-    if catalog.version != 1 {
-        return Err("unsupported catalog schema".into());
-    }
-    for case in &catalog.case {
-        if let Some(path) = &case.scenario {
-            Scenario::load(&catalog_dir.join(path))?;
-        }
-    }
-    // The generated cases' scenarios are written into the run's copy of the
-    // catalog, and validated there before any case runs.
-    let generated = patch_matrix::generate()?;
-    for case in &generated {
-        if catalog.case.iter().any(|existing| existing.id == case.id) {
-            return Err(format!(
-                "generated case {} duplicates a catalog case",
-                case.id
-            ));
-        }
-        catalog.case.push(Case {
-            expected_failure: Vec::new(),
-            id: case.id.clone(),
-            suites: vec![patch_matrix::SUITE.into()],
-            models: vec![case.model.into()],
-            scenario: Some(PathBuf::from(format!("scenarios/{}.toml", case.id))),
-            package: None,
-            arguments: Vec::new(),
-            environment: BTreeMap::new(),
-            needs_configuration: true,
-            gui: false,
-            volatile: false,
-            no_sd: false,
-            blocked: None,
-            wall_timeout_s: 1200,
-        });
-    }
+    let source_spec = root.join("tests/smoke");
+    let catalog = catalog::load(&source_spec)?;
     if args.command == "list" {
-        for case in &catalog.case {
+        if args.json {
+            let frozen = env::temp_dir().join(format!("l6test-list-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&frozen);
+            let rows = catalog::freeze(&source_spec, &catalog, &frozen)
+                .and_then(|()| catalog::matrix(&catalog, &frozen));
+            let _ = fs::remove_dir_all(&frozen);
+            println!("{}", serde_json::to_string_pretty(&rows?).unwrap());
+            return Ok(0);
+        }
+        for case in &catalog.cases {
             println!(
                 "{:<24} {:<12} {}{}",
                 case.id,
                 case.models.join(","),
                 case.suites.join(","),
-                if case.needs_configuration {
-                    " [explicit configuration required]"
+                if case.needs_configuration && case.scenario.is_none() {
+                    " [packaged app required]"
                 } else {
                     ""
                 }
@@ -1275,9 +1539,29 @@ fn execute() -> Result<i32, String> {
     }
     if !["run", "check"].contains(&args.command.as_str()) {
         println!(
-            "Usage: cargo run -p l6test -- list | check | run [--config config.toml] [--suite NAME | --case ID] [--model l6|l6max|all] [--backend headless|gui|both] [--output NEW_DIR] [--no-build] [--jobs N] [--qemu BINARY] [--app PACKAGED_APP]\n       cargo run -p l6test -- probe gui --keys TARGET,... --volatile [engine options]\n       cargo run -p l6test -- capture screen --out FILE.gif [capture options] --volatile [engine options]"
+            "Usage: cargo l6test list [--format text|json]\n       cargo l6test check|run [--config config.toml] [--suite NAME | --case ID,GLOB,... | --rerun RUN [--only OUTCOMES]] [--model l6|l6max|all] [--backend headless|gui|both] [--shard I/N] [--retries N] [--strict] [--reuse RUN] [--output NEW_DIR] [--no-build] [--jobs N] [--qemu BINARY] [--app PACKAGED_APP]\n       cargo l6test probe gui --keys TARGET,... --volatile [engine options]\n       cargo l6test capture screen --out FILE.gif [capture options] --volatile [engine options]"
         );
         return Ok(0);
+    }
+    let rerun = args
+        .rerun
+        .as_ref()
+        .map(|report| select::Rerun::load(report, &args.only))
+        .transpose()?;
+    if rerun.as_ref().is_some_and(select::Rerun::is_empty) {
+        return Err("the report has no results with the selected outcomes".into());
+    }
+    let earlier = args
+        .reuse
+        .as_ref()
+        .map(|run| reuse::Earlier::load(run))
+        .transpose()?;
+    if let Some(earlier) = &earlier {
+        tracing::info!(
+            event = "reuse_loaded",
+            results = earlier.len(),
+            "earlier results available for reuse"
+        );
     }
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1296,13 +1580,18 @@ fn execute() -> Result<i32, String> {
     let output = fs::canonicalize(output).map_err(|e| e.to_string())?;
     tracing::info!(event="run_started", artifacts=%output.display(), suite=%args.suite, backend=%args.backend, model=%args.model,"smoke run started");
     let _journal = RunJournal(output.clone());
-    copy_tree(&catalog_dir, &output.join("spec"))?;
     let catalog_dir = output.join("spec");
-    for case in &generated {
-        let path = catalog_dir.join(format!("scenarios/{}.toml", case.id));
-        fs::write(&path, &case.scenario).map_err(|e| e.to_string())?;
-        Scenario::load(&path).map_err(|error| format!("{}: {error}", case.id))?;
-    }
+    catalog::freeze(&source_spec, &catalog, &catalog_dir)?;
+    let blocked_report = |error: &str| {
+        fs::write(
+            output.join("report.json"),
+            serde_json::to_vec_pretty(
+                &json!({"schema":report::SCHEMA,"outcome":"BLOCKED","error":error}),
+            )
+            .unwrap(),
+        )
+        .map_err(|e| e.to_string())
+    };
     let preflight = || -> Result<(Config, Value), String> {
         let config = load_config(
             &args.config,
@@ -1321,18 +1610,13 @@ fn execute() -> Result<i32, String> {
                 untracked.insert(name.to_owned(), hash(&path)?);
             }
         }
-        let manifest = json!({"schema":1,"tooling_commit":git(root,&["rev-parse","HEAD"]),"working_tree":git(root,&["status","--short"]),"tracked_diff_sha256":format!("{:x}",Sha256::digest(git(root,&["diff","--binary","HEAD"]).as_bytes())),"untracked":untracked,"qemu":config.qemu,"qemu_sha256":config.qemu_sha256,"qemu_provenance":"explicitly pinned external binary; build source not attested","scenario_files":files(&catalog_dir)?,"board_sources":files(&root.join("emulator/qemu/hw/arm"))?,"qemu_patches":files(&root.join("emulator/qemu/patches"))?,"logging":{"format":env::var("L6_LOG_FORMAT").unwrap_or_else(|_|"json".into()),"filter":env::var("RUST_LOG").unwrap_or_else(|_|l6max_host::logging::DEFAULT_FILTER.into())},"driver_sha256":hash(&env::current_exe().map_err(|e|e.to_string())?)?,"suite":args.suite,"case":args.case,"backend":args.backend,"model":args.model});
+        let manifest = json!({"schema":report::SCHEMA,"tooling_commit":git(root,&["rev-parse","HEAD"]),"working_tree":git(root,&["status","--short"]),"tracked_diff_sha256":format!("{:x}",Sha256::digest(git(root,&["diff","--binary","HEAD"]).as_bytes())),"untracked":untracked,"qemu":config.qemu,"qemu_sha256":config.qemu_sha256,"qemu_provenance":"explicitly pinned external binary; build source not attested","scenario_files":files(&catalog_dir)?,"board_sources":files(&root.join("emulator/qemu/hw/arm"))?,"qemu_patches":files(&root.join("emulator/qemu/patches"))?,"logging":{"format":env::var("L6_LOG_FORMAT").unwrap_or_else(|_|"json".into()),"filter":env::var("RUST_LOG").unwrap_or_else(|_|l6max_host::logging::DEFAULT_FILTER.into())},"driver_sha256":hash(&env::current_exe().map_err(|e|e.to_string())?)?,"suite":args.suite,"case":args.case,"backend":args.backend,"model":args.model,"shard":args.shard.map(|s|format!("{}/{}",s.index,s.count)),"rerun":args.rerun,"retries":args.retries,"reuse":args.reuse});
         Ok((config, manifest))
     };
     let (config, manifest) = match preflight() {
         Ok(v) => v,
         Err(error) => {
-            fs::write(
-                output.join("report.json"),
-                serde_json::to_vec_pretty(&json!({"schema":1,"outcome":"BLOCKED","error":error}))
-                    .unwrap(),
-            )
-            .map_err(|e| e.to_string())?;
+            blocked_report(&error)?;
             return Err(error);
         }
     };
@@ -1341,13 +1625,13 @@ fn execute() -> Result<i32, String> {
         serde_json::to_vec_pretty(&manifest).unwrap(),
     )
     .map_err(|e| e.to_string())?;
-    let cases: Vec<_> = catalog
-        .case
+    let cases: Vec<&Case> = catalog
+        .cases
         .iter()
-        .filter(|c| {
-            args.case
-                .as_ref()
-                .map_or_else(|| c.suites.contains(&args.suite), |id| &c.id == id)
+        .filter(|c| match (&rerun, &args.case) {
+            (Some(rerun), _) => rerun.has_case(&c.id),
+            (None, Some(selection)) => select::case_matches(selection, &c.id),
+            (None, None) => c.suites.contains(&args.suite),
         })
         .collect();
     if cases.is_empty() {
@@ -1356,8 +1640,10 @@ fn execute() -> Result<i32, String> {
     if args.command == "check" {
         fs::write(
             output.join("report.json"),
-            serde_json::to_vec_pretty(&json!({"schema":1,"outcome":"PASS","preflight_only":true}))
-                .unwrap(),
+            serde_json::to_vec_pretty(
+                &json!({"schema":report::SCHEMA,"outcome":"PASS","preflight_only":true}),
+            )
+            .unwrap(),
         )
         .map_err(|e| e.to_string())?;
         println!("Preflight passed. QEMU is pinned by binary hash for this run.");
@@ -1368,13 +1654,51 @@ fn execute() -> Result<i32, String> {
     } else {
         vec![&args.backend]
     };
-    let mut packages = BTreeSet::new();
-    let needs_l6patch = cases
-        .iter()
-        .filter_map(|case| case.scenario.as_ref())
-        .filter_map(|path| Scenario::load(&catalog_dir.join(path)).ok())
-        .any(|scenario| scenario.needs_patch_builder());
+    // Expand cases into jobs before building, so only the executables the
+    // selected jobs need are built.
+    let mut jobs = vec![];
     for case in &cases {
+        let scenario = case
+            .scenario
+            .as_ref()
+            .map(|p| Scenario::load(&catalog_dir.join(p)))
+            .transpose()?;
+        for model in case
+            .models
+            .iter()
+            .filter(|m| args.model == "all" || *m == &args.model)
+        {
+            for backend in catalog::backends(case, scenario.as_ref(), &backends) {
+                if args
+                    .shard
+                    .is_some_and(|s| !s.contains(&case.id, model, backend))
+                    || rerun
+                        .as_ref()
+                        .is_some_and(|r| !r.contains(&case.id, model, backend))
+                {
+                    continue;
+                }
+                // GUI windows are the remaining host-wide exclusive resource.
+                let exclusive = backend == "gui";
+                let midi_namespace = format!("p{:x}{:x}", std::process::id(), jobs.len());
+                jobs.push(Job {
+                    case,
+                    model: model.clone(),
+                    backend,
+                    exclusive,
+                    midi_namespace,
+                    dir: output.join(format!("{}-{model}-{backend}", case.id.replace('/', "-"))),
+                });
+            }
+        }
+    }
+    if jobs.is_empty() {
+        return Err("no model/case combinations selected".into());
+    }
+    let mut packages = BTreeSet::new();
+    let mut needs_l6patch = false;
+    for job in &jobs {
+        let case = job.case;
         if case.blocked.is_some()
             || case.needs_configuration && case.scenario.is_none() && config.app.is_none()
         {
@@ -1383,15 +1707,14 @@ fn execute() -> Result<i32, String> {
         if let Some(package) = &case.package {
             packages.insert(package.as_str());
         }
-        // A `gui` case runs on the GUI backend whatever backends were
-        // requested, so it always needs the GUI binary.
-        if case.scenario.as_ref().is_some_and(|p| {
-            Scenario::load(&catalog_dir.join(p))
-                .is_ok_and(|s| s.backends.iter().any(|b| b == "gui"))
-        }) && (case.gui || backends.contains(&"gui"))
-        {
+        if job.backend == "gui" && case.scenario.is_some() {
             packages.insert("l6max-gui");
         }
+        needs_l6patch |= case
+            .scenario
+            .as_ref()
+            .and_then(|path| Scenario::load(&catalog_dir.join(path)).ok())
+            .is_some_and(|scenario| scenario.needs_patch_builder());
     }
     if args.build && (!packages.is_empty() || needs_l6patch) {
         let mut command = Command::new("cargo");
@@ -1409,12 +1732,7 @@ fn execute() -> Result<i32, String> {
             let error = built
                 .err()
                 .unwrap_or_else(|| "build failed; inspect stdout.log/stderr.log".into());
-            fs::write(
-                output.join("report.json"),
-                serde_json::to_vec_pretty(&json!({"schema":1,"outcome":"BLOCKED","error":error}))
-                    .unwrap(),
-            )
-            .map_err(|e| e.to_string())?;
+            blocked_report(&error)?;
             return Err(error);
         }
     }
@@ -1448,95 +1766,87 @@ fn execute() -> Result<i32, String> {
         output.join("bin/l6test"),
     )
     .map_err(|e| e.to_string())?;
+    let gui_built = packages.contains("l6max-gui");
     for package in packages {
         fs::copy(built_dir.join(package), output.join("bin").join(package))
             .map_err(|e| e.to_string())?;
     }
-    let mut jobs = vec![];
-    for case in cases {
-        for model in case
-            .models
-            .iter()
-            .filter(|m| args.model == "all" || *m == &args.model)
-        {
-            let scenario = case
-                .scenario
-                .as_ref()
-                .map(|p| Scenario::load(&catalog_dir.join(p)))
-                .transpose()?;
-            let selected: Vec<&str> = match &scenario {
-                Some(_) if case.gui => vec!["gui"],
-                Some(scenario) => backends
-                    .iter()
-                    .copied()
-                    .filter(|b| scenario.backends.iter().any(|s| s == b))
-                    .collect(),
-                None => vec![if case.gui { "gui" } else { "headless" }],
-            };
-            for backend in selected {
-                // GUI windows are the remaining host-wide exclusive resource.
-                let exclusive = backend == "gui";
-                let midi_namespace = format!("p{:x}{:x}", std::process::id(), jobs.len());
-                jobs.push(Job {
-                    case,
-                    model: model.clone(),
-                    backend,
-                    exclusive,
-                    midi_namespace,
-                    dir: output.join(format!("{}-{model}-{backend}", case.id.replace('/', "-"))),
-                });
-            }
-        }
+    // Identities of the scenario runners, for reuse. The GUI binary is
+    // identified by its hash: it links far more than the scenario runner.
+    let mut runners = BTreeMap::new();
+    runners.insert(
+        "headless",
+        reuse::runner_identity(root, args.build, &output.join("bin/l6test"))?,
+    );
+    if gui_built {
+        runners.insert(
+            "gui",
+            json!({"binary_sha256": hash(&output.join("bin/l6max-gui"))?}),
+        );
     }
+    let references = reuse::tree_digest(&root.join("tests/smoke/images"))?;
+    let cache = if args.no_cache {
+        RunCache::disabled(output.join("cache"))
+    } else {
+        RunCache::new(output.join("cache"))
+    };
+    let ctx = Context {
+        root,
+        spec: &catalog_dir,
+        output: &output,
+        config: &config,
+        cache: &cache,
+        runners: &runners,
+        references: &references,
+        earlier: earlier.as_ref(),
+        patch_artifact_dir: &built_dir,
+        fixtures_only: args.fixtures_only,
+    };
     let run_job = |job: &Job| -> CaseResult {
         let case_span = tracing::info_span!("smoke_case",case=%job.case.id,model=%job.model,backend=job.backend,artifacts=%job.dir.display());
         let _entered = case_span.enter();
         tracing::info!(event = "case_started", "case started");
-        let scenario = job
+        let fixture = job
             .case
             .scenario
             .as_ref()
             .map(|path| Scenario::load(&catalog_dir.join(path)))
-            .transpose();
-        let fixture = scenario.and_then(|scenario| {
-            case_fixture(
-                &config,
-                &catalog_dir,
-                &job.model,
-                &job.case.id,
-                scenario.as_ref(),
-            )
-        });
+            .transpose()
+            .and_then(|scenario| {
+                case_fixture(
+                    &config,
+                    &catalog_dir,
+                    &job.model,
+                    &job.case.id,
+                    scenario.as_ref(),
+                )
+            });
         let result = match fixture {
-            Ok(fixture) => run_case(
-                root,
-                &catalog_dir,
-                &config,
-                &fixture,
-                job.case,
-                job.backend,
-                &job.dir,
-                &job.midi_namespace,
-                &built_dir,
-            ),
+            Ok(fixture) => report::with_retries(args.retries, |attempt| {
+                let (dir, namespace) = if attempt == 1 {
+                    (job.dir.clone(), job.midi_namespace.clone())
+                } else {
+                    (
+                        PathBuf::from(format!("{}.attempt-{attempt}", job.dir.display())),
+                        format!("{}a{attempt}", job.midi_namespace),
+                    )
+                };
+                run_case(&ctx, &fixture, job.case, job.backend, &dir, &namespace)
+            }),
             Err(detail) => CaseResult {
-                case: job.case.id.clone(),
-                model: job.model.clone(),
-                backend: job.backend.into(),
-                outcome: "BLOCKED".into(),
                 detail,
-                artifacts: job.dir.clone(),
+                ..CaseResult::new(&job.case.id, &job.model, job.backend, &job.dir)
             },
         };
-        match result.outcome.as_str() {
-            "PASS" => {
-                tracing::info!(event="case_finished",outcome=%result.outcome,detail=%result.detail,"case completed")
+        match result.outcome {
+            Outcome::Pass | Outcome::Reused => {
+                tracing::info!(event="case_finished",outcome=%result.outcome,detail=%result.detail,seconds=result.duration_s,"case completed")
             }
-            "BLOCKED" | "XFAIL" => {
-                tracing::warn!(event="case_finished",outcome=%result.outcome,detail=%result.detail,"case incomplete")
+            Outcome::Blocked | Outcome::Xfail | Outcome::Flaky => {
+                tracing::warn!(event="case_finished",outcome=%result.outcome,detail=%result.detail,seconds=result.duration_s,"case incomplete")
             }
             _ => {
-                tracing::error!(event="case_finished",outcome=%result.outcome,detail=%result.detail,"case failed")
+                tracing::error!(event="case_finished",outcome=%result.outcome,detail=%result.detail,seconds=result.duration_s,"case failed")
             }
         }
         result
@@ -1549,59 +1859,29 @@ fn execute() -> Result<i32, String> {
         |job| job.exclusive,
         run_job,
         |finished| {
+            let finished: Vec<CaseResult> = finished.iter().map(|r| (*r).clone()).collect();
             fs::write(
                 output.join("report.json"),
-                serde_json::to_vec_pretty(
-                    &json!({"schema":1,"outcome":"RUNNING","results":finished}),
-                )
-                .unwrap(),
+                serde_json::to_vec_pretty(&report::report("RUNNING", &finished, json!({})))
+                    .unwrap(),
             )
             .map_err(|e| e.to_string())
         },
     )?;
-    if results.is_empty() {
-        return Err("no model/case combinations selected".into());
-    }
-    let failed = results
-        .iter()
-        .any(|r| r.outcome == "FAIL" || r.outcome == "XPASS");
-    let blocked = results.iter().any(|r| r.outcome == "BLOCKED");
-    let outcome = if failed {
-        "FAIL"
-    } else if blocked {
-        "BLOCKED"
-    } else if results.iter().any(|r| r.outcome == "XFAIL") {
-        "XFAIL"
-    } else {
-        "PASS"
-    };
-    let report = json!({"schema":1,"outcome":outcome,"results":results});
+    let (outcome, code) = report::summarize(&results, args.strict);
+    let cache_stats = cache.stats();
+    let report = report::report(
+        &outcome.to_string(),
+        &results,
+        json!({"cache": cache_stats, "strict": args.strict, "fixtures_only": args.fixtures_only}),
+    );
     fs::write(
         output.join("report.json"),
         serde_json::to_vec_pretty(&report).unwrap(),
     )
     .map_err(|e| e.to_string())?;
-    let mut summary = fs::File::create(output.join("summary.md")).map_err(|e| e.to_string())?;
-    writeln!(
-        summary,
-        "Run: {outcome}\n\n| Case | Model | Backend | Result |\n| --- | --- | --- | --- |"
-    )
-    .map_err(|e| e.to_string())?;
-    for result in &results {
-        writeln!(
-            summary,
-            "| {} | {} | {} | {} |",
-            result.case, result.model, result.backend, result.outcome
-        )
-        .map_err(|e| e.to_string())?;
-    }
-    Ok(if failed {
-        1
-    } else if blocked {
-        2
-    } else {
-        0
-    })
+    report::write_summary(&output.join("summary.md"), outcome, &results, &cache_stats)?;
+    Ok(code)
 }
 struct Job<'a> {
     case: &'a Case,
@@ -1779,7 +2059,8 @@ mod tests {
             audio_input: vec![],
             gdb: false,
         };
-        prepare_sd_patch(&mut fixture, &dir).unwrap();
+        let cache = RunCache::new(dir.join("cache"));
+        prepare_sd_patch(&mut fixture, &dir, &cache).unwrap();
         let patch_dir = fixture.sd_bundle.as_ref().unwrap();
         let report: serde_json::Value = serde_json::from_slice(
             &fs::read(patch_dir.parent().unwrap().join("patch.json")).unwrap(),
@@ -2010,29 +2291,51 @@ mod tests {
     }
     #[test]
     fn expected_failures_match_the_exact_step_and_error_and_expose_unexpected_passes() {
-        let failures = [ExpectedFailure {
-            model: "l6".into(),
-            step: 10,
-            contains: "ExpectRing".into(),
-            reason: "Link to the tracked investigation".into(),
-        }];
-        for (step, detail, initial, expected) in [
-            (10, "ExpectRing timed out", "FAIL", "XFAIL"),
-            (9, "ExpectRing timed out", "FAIL", "FAIL"),
-            (10, "input disconnected", "FAIL", "FAIL"),
-            (10, "completed", "PASS", "XPASS"),
+        let failures = [
+            ExpectedFailure {
+                model: "l6".into(),
+                step: 10,
+                contains: "ExpectRing".into(),
+                reason: "Link to the tracked investigation".into(),
+            },
+            // A second known failure for the same model must also match.
+            ExpectedFailure {
+                model: "l6".into(),
+                step: 12,
+                contains: "ExpectLed".into(),
+                reason: "Second investigation".into(),
+            },
+            ExpectedFailure {
+                model: "l6max".into(),
+                step: 3,
+                contains: "anything".into(),
+                reason: "Other model".into(),
+            },
+        ];
+        use Outcome::*;
+        for (model, step, detail, initial, expected) in [
+            ("l6", 10, "ExpectRing timed out", Fail, Xfail),
+            ("l6", 12, "ExpectLed timed out", Fail, Xfail),
+            ("l6", 9, "ExpectRing timed out", Fail, Fail),
+            ("l6", 10, "input disconnected", Fail, Fail),
+            ("l6", 12, "ExpectRing timed out", Fail, Fail),
+            ("l6", 10, "completed", Pass, Xpass),
+            ("l6max", 10, "ExpectRing timed out", Fail, Fail),
         ] {
             let mut result = CaseResult {
-                case: "controls".into(),
-                model: "l6".into(),
-                backend: "headless".into(),
-                outcome: initial.into(),
+                outcome: initial,
                 detail: detail.into(),
-                artifacts: PathBuf::new(),
+                ..CaseResult::new("controls", model, "headless", Path::new(""))
             };
             apply_expected(&mut result, &json!({"failed_step":step}), &failures);
-            assert_eq!(result.outcome, expected);
+            assert_eq!(result.outcome, expected, "{model} step {step}: {detail}");
         }
+        let mut unlisted = CaseResult {
+            outcome: Pass,
+            ..CaseResult::new("controls", "l6", "headless", Path::new(""))
+        };
+        apply_expected(&mut unlisted, &json!({}), &[]);
+        assert_eq!(unlisted.outcome, Pass);
     }
 
     #[test]

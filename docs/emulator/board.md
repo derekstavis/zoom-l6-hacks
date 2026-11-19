@@ -52,6 +52,11 @@ does not dynamically repartition memory when the guest writes those registers.
 The ITCM contents are still seeded from MAIN for emulator compatibility;
 they are not a reconstruction of the bootloader's TCM contents.
 
+At direct MAIN entry the modeled MPU and cache-enable bits are clear. QEMU's
+Cortex-M7 model does not implement caches and does not retain writes to the
+CCR instruction/data cache-enable bits, so the matching cache-disabled value
+does not simulate cache maintenance or establish parity when caches are on.
+
 ## QEMU device-model reuse
 
 The confirmed RT1041 identity helps distinguish reusable QEMU devices from

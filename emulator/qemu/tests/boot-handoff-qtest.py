@@ -88,12 +88,24 @@ def check_flexram_boundaries(qemu, image):
             command(f"writel {address:#x} 0xffffffff")
         for address in (0x400fc070, 0x400fc078):
             command(f"writel {address:#x} 0")
+        # Exercise handoff cleanup from a dirty CPU, rather than merely
+        # comparing QEMU's reset defaults on an untouched guest.
+        for address, value in ((0xe000e100, 1), (0xe000e200, 1),
+                               (0xe000e010, 7), (0xe000ed94, 5),
+                               (0xe000ed24, 0x70000)):
+            command(f"writel {address:#x} {value:#x}")
+            assert int(command(f"readl {address:#x}").split()[1], 16) & value == value
         qmp_execute("system_reset")
         for address, expected in masks.items():
             assert int(command(f"readl {address:#x}").split()[1], 16) == expected
         assert int(command("readl 0x400fc070").split()[1], 16) == 0x0c000030
         assert int(command("readl 0x400fc078").split()[1], 16) == 0xc
-        print(f"{image}: masked GPR and gate reset passed")
+        for address in (0xe000e100, 0xe000e200, 0xe000e010,
+                        0xe000ed94, 0xe000ed24):
+            assert int(command(f"readl {address:#x}").split()[1], 16) == 0
+        assert int(command("readl 0xe000ed08").split()[1], 16) == 0x80000000
+        assert not int(command("readl 0xe000ed14").split()[1], 16) & 0x30000
+        print(f"{image}: masked GPR, gate and CPU reset passed")
     finally:
         qmp.close()
         qmp_host.close()

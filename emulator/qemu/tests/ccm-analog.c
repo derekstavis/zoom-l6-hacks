@@ -16,6 +16,29 @@ int main(void)
     assert(L6_CCM_ANALOG_PFD_480_RESET == 0x13111018u);
     assert(L6_CCM_ANALOG_PFD_528_RESET == 0x1018101bu);
 
+    /* The recovered L6max boot clock setup selects PLL4 for SAI1 and
+     * configures its 32 + 96/125 multiplier and /4, /2 SAI dividers. */
+    uint32_t mux = l6max_boot_clock_value(L6_CCM_CSCMR1_OFFSET,
+                                          L6_CCM_CSCMR1_RESET);
+    uint32_t div = l6max_boot_clock_value(L6_CCM_CS1CDR_OFFSET,
+                                          L6_CCM_CS1CDR_RESET);
+    assert(((mux >> 10) & 3) == 2);
+    assert(((div >> 6) & 7) == 3 && (div & 63) == 1);
+    assert(l6max_boot_clock_value(L6_CCM_ANALOG_PLL_AUDIO_NUM, 0) == 96);
+    assert(l6max_boot_clock_value(L6_CCM_ANALOG_PLL_AUDIO_DENOM, 0) == 125);
+    uint32_t pll = l6max_boot_clock_value(L6_CCM_ANALOG_PLL_AUDIO,
+                                         L6_CCM_ANALOG_PLL_AUDIO_RESET);
+    assert((pll & 0x7f) == 32 && (pll & 0x2000) && !(pll & 0x11000));
+    assert(((l6max_boot_clock_value(L6_CCM_ANALOG_PFD_528, 0) >> 16) & 63) == 29);
+    uint32_t arm = l6max_boot_clock_value(L6_CCM_ANALOG_PLL_ARM, 0);
+    uint32_t arm_div = l6max_boot_clock_value(L6_CCM_CACRR_OFFSET, 0);
+    uint32_t bus = l6max_boot_clock_value(L6_CCM_CBCDR_OFFSET, 0);
+    assert((arm & 0x7f) == 100 && (arm_div & 7) == 1);
+    assert((bus & 0xc0) == 0x40 && ((bus >> 16) & 7) == 1);
+    /* The post-divider is inherited, not established by the dump. */
+    assert((l6max_boot_clock_value(L6_CCM_ANALOG_PLL_AUDIO, 0x80000) &
+            0x180000) == 0x80000);
+
     /* Separate SET writes are cumulative; LOCK appears only after both the
      * documented POWER and ENABLE controls have been set. */
     control = l6_usb1_pll_apply(control, L6_USB1_PLL_POWER, L6_USB1_PLL_SET);

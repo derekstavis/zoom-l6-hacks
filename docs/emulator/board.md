@@ -21,6 +21,15 @@ identified; the two profiles share the emulated CPU topology without assuming
 identical physical silicon. For L6 peripheral semantics, use the RT1040
 reference manual. L6 external resource NOR uses LPSPI3 at `0x403a0000`.
 
+When starting the supported stock L6max 1.10 MAIN directly, the board seeds
+clock fields recovered from L6max bootloader 1.00: the 600 MHz ARM setup,
+system and audio PLL parameters, PFDs, and SAI1 and SEMC clock selectors and
+dividers. The seed is guarded by the installed MAIN image hash; L6, patched
+MAIN images and other revisions retain the existing reset values. The audio
+PLL post-divider is inherited from the existing seed because the bootloader
+does not set it. These register values do not emulate bootloader execution,
+clock settling, the full clock tree, or the real SD installer.
+
 ## QEMU device-model reuse
 
 The confirmed RT1041 identity helps distinguish reusable QEMU devices from

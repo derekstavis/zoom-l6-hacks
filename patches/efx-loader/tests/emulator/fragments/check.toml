@@ -1,0 +1,4 @@
+# Loaded effects leave the firmware enough heap.
+[[step]]
+action = "expect-heap"
+minimum_free = 131072

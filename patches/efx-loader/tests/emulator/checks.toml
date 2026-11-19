@@ -1,5 +1,6 @@
 # What the generated `patches` suite checks when effect slots are reassigned:
-# each stock slot, in EFX mode, runs its assigned effect with output, or its
-# stock effect.
+# the heap left with the effects loaded, then each stock slot, in EFX mode,
+# running its assigned effect with output, or its stock effect.
 version = 1
+check = "patches/efx-loader/tests/emulator/fragments/check.toml"
 checks_effect_slots = true

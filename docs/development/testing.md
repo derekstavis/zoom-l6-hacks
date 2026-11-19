@@ -470,7 +470,7 @@ shows every case.
   | --- | --- |
   | Any SD module | `expect-sd-patch` |
   | knob-dialog | `knob-dialog-popup` |
-  | Effect replacements | For each slot, `effect-replacement-state` with the assigned effect ID and nonzero output, or no replacement |
+  | Effect replacements | `expect-heap`, then for each slot `effect-replacement-state` with the assigned effect ID and nonzero output, or no replacement |
   | midi-sync | `direct-usb-midi-round-trip`, then `host-midi-sync` |
   | din-mixer-control | `l6max-din-mixer-control` |
   | menu-loader | `expect-menu` for System and System > Patches |

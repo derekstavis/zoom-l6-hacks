@@ -1,8 +1,6 @@
 version = 1
 name = "gestures"
 models = ["l6", "l6max"]
-state = "setup-complete"
-card = "empty"
 
 [case]
 suites = []

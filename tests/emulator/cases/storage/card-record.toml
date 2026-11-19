@@ -2,8 +2,6 @@ version = 1
 name = "card-record"
 models = ["l6", "l6max"]
 backends = ["headless"]
-state = "setup-complete"
-card = "empty"
 
 # A generated card must be one the firmware accepts for recording: it rejects
 # others only at this point, after booting and playing pads normally.

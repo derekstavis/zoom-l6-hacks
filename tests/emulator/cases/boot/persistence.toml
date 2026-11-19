@@ -1,8 +1,8 @@
 version = 1
 name = "persistence"
 models = ["l6max"]
+state = "none"
 backends = ["headless"]
-card = "empty"
 
 [case]
 suites = ["lifecycle", "full"]

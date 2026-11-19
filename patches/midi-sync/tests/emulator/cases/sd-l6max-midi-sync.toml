@@ -2,8 +2,6 @@ version = 1
 name = "sd-l6max-midi-sync"
 models = ["l6max"]
 backends = ["headless"]
-state = "setup-complete"
-card = "empty"
 sd_patches = ["midi-sync"]
 
 [case]

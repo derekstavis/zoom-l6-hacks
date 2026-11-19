@@ -2,8 +2,6 @@ version = 1
 name = "storage-empty"
 models = ["l6", "l6max"]
 backends = ["headless"]
-state = "setup-complete"
-card = "empty"
 trace_sd = true
 
 [case]

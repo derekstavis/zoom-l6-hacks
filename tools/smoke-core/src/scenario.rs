@@ -20,9 +20,12 @@ pub struct Scenario {
     pub version: u32,
     pub name: String,
     pub models: Vec<String>,
-    /// Boot from the state spec `tests/emulator/fixtures/states/<model>-<state>.toml`.
+    /// Boot from the state spec `tests/emulator/fixtures/states/<model>-<state>.toml`;
+    /// [`DEFAULT_STATE`] when the file names none, and no state (first boot)
+    /// for `"none"`.
     pub state: Option<String>,
-    /// Build the case's card from `tests/emulator/fixtures/cards/<model>-<card>.toml`.
+    /// Build the case's card from `tests/emulator/fixtures/cards/<card>.toml`;
+    /// [`DEFAULT_CARD`] when the file names none, and no card for `"none"`.
     pub card: Option<String>,
     /// How the test driver runs this scenario as a case; the scenario itself
     /// ignores it.
@@ -478,9 +481,25 @@ pub enum Action {
 
 impl Scenario {
     pub fn parse(text: &str) -> Result<Self, String> {
-        let value: Self = toml::from_str(text).map_err(|e| e.to_string())?;
+        let mut value: Self = toml::from_str(text).map_err(|e| e.to_string())?;
+        value.apply_defaults();
         value.validate()?;
         Ok(value)
+    }
+    /// A scenario boots from the completed-setup state with an empty card
+    /// unless it names others; `"none"` asks for no state (first boot) or no
+    /// card.
+    fn apply_defaults(&mut self) {
+        for (field, default) in [
+            (&mut self.state, DEFAULT_STATE),
+            (&mut self.card, DEFAULT_CARD),
+        ] {
+            match field.as_deref() {
+                None => *field = Some(default.into()),
+                Some(NONE) => *field = None,
+                Some(_) => {}
+            }
+        }
     }
     fn validate(&self) -> Result<(), String> {
         let value = self;
@@ -1299,6 +1318,7 @@ impl Scenario {
     }
     fn compose(text: &str, path: Option<PathBuf>) -> Result<Self, String> {
         let mut value: Self = toml::from_str(text).map_err(|e| e.to_string())?;
+        value.apply_defaults();
         value.sources.extend(path.clone());
         let scope = value.models.clone();
         value.step = expand_steps(
@@ -1356,6 +1376,12 @@ pub fn spec_path(path: &Path) -> Result<PathBuf, String> {
     }
     Ok(l6max_host::paths::repository_root().join(path))
 }
+/// The state a scenario boots from when it names none.
+pub const DEFAULT_STATE: &str = "setup-complete";
+/// The card a scenario gets when it names none.
+pub const DEFAULT_CARD: &str = "empty";
+/// The `state` or `card` value that asks for none.
+const NONE: &str = "none";
 /// Environment variable the driver sets to `1` for cases whose persistent
 /// state was built from a state spec.
 pub const STATE_SPEC_ENV: &str = "SMOKE_STATE_SPEC";

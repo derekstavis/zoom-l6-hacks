@@ -1,8 +1,6 @@
 version = 1
 name = "ring-pwm"
 models = ["l6", "l6max"]
-state = "setup-complete"
-card = "empty"
 
 [case]
 suites = ["regression", "full", "panel"]

@@ -41,8 +41,8 @@ tables. Unknown header fields fail parsing.
 | `version` | yes | Schema version; currently `1`. |
 | `name` | yes | Nonempty scenario name used in reports. |
 | `models` | yes | One or both of `"l6"` and `"l6max"`. |
-| `state` | no | Boot from `tests/emulator/fixtures/states/<model>-<state>.toml`; first boot without it. |
-| `card` | no | Card to build for each run, from `tests/emulator/fixtures/cards/<card>.toml`, resolved for the model; no card without it. |
+| `state` | no, default `setup-complete` | Boot from `tests/emulator/fixtures/states/<model>-<state>.toml`; `"none"` boots without a state (first boot). |
+| `card` | no, default `empty` | Card to build for each run, from `tests/emulator/fixtures/cards/<card>.toml`, resolved for the model; `"none"` attaches no card. |
 | `patches` | no | Firmware patches applied to the model's package. |
 | `installed_patches` | no | Patches the engine installs on a device seeded with the model's stock package, as `--patch` does. |
 | `installed_sd_patches` | no | Patches the engine delivers on the case's card, as `--sd-patch` does: it installs the Patch loader and writes the hosted modules to `PATCHES/`. Requires `card`; cannot combine with `sd_patches`. |

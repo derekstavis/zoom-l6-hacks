@@ -1,8 +1,8 @@
 version = 1
 name = "l6-din-usb-forwarding"
 models = ["l6"]
+state = "none"
 backends = ["headless"]
-card = "empty"
 
 [case]
 suites = ["full"]

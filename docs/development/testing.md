@@ -29,8 +29,8 @@ Each scenario declares what it runs from, so the local file only supplies firmwa
 
 | Scenario key | Purpose |
 | --- | --- |
-| `state` | Boot from [`tests/emulator/fixtures/states`](../../tests/emulator/fixtures/states)`/<model>-<state>.toml`, an [`l6nor` state spec](tools/l6nor.md#state-specs). Without it, the case starts from first boot. |
-| `card` | Build [`tests/emulator/fixtures/cards`](../../tests/emulator/fixtures/cards)`/<card>.toml` for the case's model each run. Without it, the case has no card. |
+| `state` | Boot from [`tests/emulator/fixtures/states`](../../tests/emulator/fixtures/states)`/<model>-<state>.toml`, an [`l6nor` state spec](tools/l6nor.md#state-specs). By default `setup-complete`; `"none"` starts from first boot. |
+| `card` | Build [`tests/emulator/fixtures/cards`](../../tests/emulator/fixtures/cards)`/<card>.toml` for the case's model each run; `empty` by default, and `"none"` attaches no card. |
 | `patches` | Apply named guarded patches to the model's package, using the same implementation as the browser patcher. |
 | `installed_patches` | Have the engine install named patches on a device seeded with the stock firmware, as `--patch` does. |
 | `installed_sd_patches` | Have the engine install the Patch loader and write the named patches' hosted modules to the case's card, as `--sd-patch` does. |

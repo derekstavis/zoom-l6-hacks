@@ -2,8 +2,6 @@ version = 1
 name = "sd-din-mixer-control"
 models = ["l6max"]
 backends = ["headless"]
-state = "setup-complete"
-card = "empty"
 patches = ["din-mixer-control"]
 sd_patches = []
 

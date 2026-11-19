@@ -1,8 +1,6 @@
 version = 1
 name = "l6-input-sweep"
 models = ["l6"]
-state = "setup-complete"
-card = "empty"
 backends = ["headless"]
 
 [case]

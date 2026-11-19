@@ -2,7 +2,6 @@ version = 1
 name = "dump-rom"
 models = ["l6max"]
 backends = ["headless"]
-state = "setup-complete"
 card = "stale-dump"
 # Static patches without an SD module still take the native builder path,
 # which the browser patcher's templates cannot (menu-loader is not offered there).

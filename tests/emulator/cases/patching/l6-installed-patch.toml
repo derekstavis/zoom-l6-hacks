@@ -1,8 +1,8 @@
 version = 1
 name = "l6-installed-patch"
 models = ["l6"]
+card = "none"
 backends = ["headless"]
-state = "setup-complete"
 installed_patches = ["midi-sync"]
 
 [case]

@@ -2,9 +2,7 @@ version = 1
 name = "l6max-patch-heap"
 models = ["l6max"]
 backends = ["headless"]
-state = "setup-complete"
 patches = ["knob-dialog", "midi-sync", "din-mixer-control"]
-card = "empty"
 
 # Every public L6max patch at once, through knob popups, a recorded take and
 # its playback. The heap's lowest point must leave 128 KiB free.

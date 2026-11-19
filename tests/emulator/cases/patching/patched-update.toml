@@ -1,6 +1,8 @@
 version = 1
 name = "patched-update"
 models = ["l6", "l6max"]
+state = "none"
+card = "none"
 backends = ["headless"]
 update_patches = { l6 = ["midi-sync"], l6max = ["knob-dialog"] }
 

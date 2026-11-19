@@ -2,8 +2,6 @@ version = 1
 name = "host-midi"
 models = ["l6", "l6max"]
 backends = ["headless"]
-state = "setup-complete"
-card = "empty"
 
 [case]
 suites = ["full"]

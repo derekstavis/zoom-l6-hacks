@@ -1,7 +1,6 @@
 version = 1
 name = "l6-editor-pad-playback"
 models = ["l6"]
-state = "setup-complete"
 card = "pad-files"
 backends = ["headless"]
 

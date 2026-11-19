@@ -2,8 +2,6 @@ version = 1
 name = "gui-power"
 models = ["l6", "l6max"]
 backends = ["gui"]
-state = "setup-complete"
-card = "empty"
 
 [case]
 suites = ["full"]

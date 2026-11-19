@@ -3,8 +3,6 @@ name = "sd-midi-sync"
 gdb = true
 models = ["l6", "l6max"]
 backends = ["headless"]
-state = "setup-complete"
-card = "empty"
 sd_patches = ["midi-sync"]
 
 [case]

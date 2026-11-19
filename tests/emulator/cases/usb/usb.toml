@@ -1,8 +1,8 @@
 version = 1
 name = "usb"
 models = ["l6", "l6max"]
+state = "none"
 backends = ["headless"]
-card = "empty"
 
 [case]
 suites = ["devices", "full"]

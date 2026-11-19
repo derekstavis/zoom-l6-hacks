@@ -1,7 +1,6 @@
 version = 1
 name = "l6max-sound-pad-playback"
 models = ["l6max"]
-state = "setup-complete"
 card = "assigned-pads"
 backends = ["headless"]
 

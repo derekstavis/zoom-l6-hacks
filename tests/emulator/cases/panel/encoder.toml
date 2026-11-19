@@ -1,8 +1,6 @@
 version = 1
 name = "encoder"
 models = ["l6", "l6max"]
-state = "setup-complete"
-card = "empty"
 
 [case]
 suites = []

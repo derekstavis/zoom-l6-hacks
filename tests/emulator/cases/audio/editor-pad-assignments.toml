@@ -1,7 +1,6 @@
 version = 1
 name = "editor-pad-assignments"
 models = ["l6", "l6max"]
-state = "setup-complete"
 card = "pad-files"
 backends = ["headless"]
 

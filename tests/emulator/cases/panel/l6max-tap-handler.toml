@@ -1,8 +1,6 @@
 version = 1
 name = "l6max-tap-handler"
 models = ["l6max"]
-state = "setup-complete"
-card = "empty"
 backends = ["headless"]
 
 [case]

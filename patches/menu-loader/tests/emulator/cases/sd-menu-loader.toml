@@ -2,8 +2,6 @@ version = 1
 name = "sd-menu-loader"
 models = ["l6max"]
 backends = ["headless"]
-state = "setup-complete"
-card = "empty"
 patches = ["menu-loader", "knob-dialog"]
 sd_patches = ["midi-sync"]
 

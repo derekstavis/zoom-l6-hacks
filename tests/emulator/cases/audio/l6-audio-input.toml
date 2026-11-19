@@ -2,7 +2,6 @@ version = 1
 name = "l6-audio-input"
 models = ["l6"]
 state = "volume-meter-ready"
-card = "empty"
 backends = ["headless"]
 
 [case]

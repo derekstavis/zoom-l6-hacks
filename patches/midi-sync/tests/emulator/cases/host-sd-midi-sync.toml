@@ -2,8 +2,6 @@ version = 1
 name = "host-sd-midi-sync"
 models = ["l6", "l6max"]
 backends = ["headless"]
-state = "setup-complete"
-card = "empty"
 # The engine installs the Patch loader in the stock firmware and writes the
 # hosted midi-sync module to the card, as `--sd-patch midi-sync` and the
 # emulator's SD card choice do.

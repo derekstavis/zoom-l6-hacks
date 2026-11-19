@@ -3,7 +3,6 @@ name = "sd-effect-assignment-plateau-plateau"
 models = ["l6max"]
 backends = ["headless"]
 state = "effects-room"
-card = "empty"
 sd_patches = []
 sd_bundle_mode = "composed-module"
 effect_replacements = { room = "plateau", spring = "plateau" }

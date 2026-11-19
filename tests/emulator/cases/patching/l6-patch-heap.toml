@@ -2,9 +2,7 @@ version = 1
 name = "l6-patch-heap"
 models = ["l6"]
 backends = ["headless"]
-state = "setup-complete"
 patches = ["midi-sync"]
-card = "empty"
 
 # The L6 patch through encoder turns, a recorded take and its playback. The
 # heap's lowest point must leave 128 KiB free.

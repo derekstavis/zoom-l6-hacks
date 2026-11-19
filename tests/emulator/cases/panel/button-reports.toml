@@ -1,8 +1,6 @@
 version = 1
 name = "button-reports"
 models = ["l6max"]
-state = "setup-complete"
-card = "empty"
 
 [case]
 suites = []

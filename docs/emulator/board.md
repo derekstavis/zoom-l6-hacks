@@ -36,6 +36,13 @@ base registers and bounds the remaining RAM mapping at that endpoint. The
 first 2 MiB remains the emulator's MAIN image mapping; the guest does not
 execute the physical SDRAM initialization. L6 keeps its existing map.
 
+For the same bootloader handoff, the L6max board seeds observed IOMUX register
+values and GPIO output latch/direction values. IOMUX register storage does not
+model pad electrical characteristics or reroute pins dynamically. SDRAM
+timing and refresh register values are seeded from the bootloader's nominal
+clock and parameters, but refresh and SDRAM commands are not modeled. The
+exact FlexRAM bank configuration remains unverified.
+
 ## QEMU device-model reuse
 
 The confirmed RT1041 identity helps distinguish reusable QEMU devices from

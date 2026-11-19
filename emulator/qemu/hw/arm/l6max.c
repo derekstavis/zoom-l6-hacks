@@ -37,6 +37,7 @@
 #include "qemu/option.h"
 #include "system/system.h"
 #include "system/runstate.h"
+#include "system/reset.h"
 #include "l6max-display.h"
 #include "l6max-indicators.h"
 #include "l6max-usb.h"
@@ -4243,6 +4244,120 @@ static void l6_main_gpio_setup(L6ChipState *s, MemoryRegion *system_memory)
     l6_main_gpio_refresh_inputs(s);
 }
 
+/* Apply the modeled L6max bootloader handoff after every machine reset. */
+static void l6max_seed_boot_handoff(L6ChipState *s)
+{
+    /* Bootloader 1.00 IOMUX writes, including zeroes on reset. */
+    static const struct { hwaddr offset; uint32_t value; } boot_iomux[] = {
+        { 0x1f80c4, 0x5 }, { 0x1f80d4, 0x0 }, { 0x1f80d8, 0x0 },
+        { 0x1f80dc, 0x0 }, { 0x1f8108, 0x5 }, { 0x1f810c, 0x5 },
+        { 0x1f812c, 0x5 }, { 0x1f81a0, 0x5 }, { 0x1f81ac, 0x5 },
+        { 0x1f8014, 0x0 }, { 0x1f8018, 0x0 }, { 0x1f801c, 0x0 },
+        { 0x1f8020, 0x0 }, { 0x1f8024, 0x0 }, { 0x1f8028, 0x0 },
+        { 0x1f802c, 0x0 }, { 0x1f8030, 0x0 }, { 0x1f8034, 0x0 },
+        { 0x1f8038, 0x0 }, { 0x1f803c, 0x0 }, { 0x1f8040, 0x0 },
+        { 0x1f8044, 0x0 }, { 0x1f8048, 0x0 }, { 0x1f804c, 0x0 },
+        { 0x1f8050, 0x0 }, { 0x1f8054, 0x0 }, { 0x1f8058, 0x0 },
+        { 0x1f805c, 0x0 }, { 0x1f8060, 0x0 }, { 0x1f8064, 0x0 },
+        { 0x1f8068, 0x0 }, { 0x1f806c, 0x0 }, { 0x1f8070, 0x0 },
+        { 0x1f8074, 0x0 }, { 0x1f8078, 0x0 }, { 0x1f807c, 0x0 },
+        { 0x1f8080, 0x0 }, { 0x1f8084, 0x0 }, { 0x1f8088, 0x0 },
+        { 0x1f808c, 0x0 }, { 0x1f8090, 0x0 }, { 0x1f8094, 0x0 },
+        { 0x1f8098, 0x0 }, { 0x1f809c, 0x0 }, { 0x1f80a0, 0x0 },
+        { 0x1f80a4, 0x0 }, { 0x1f80a8, 0x0 }, { 0x1f80ac, 0x0 },
+        { 0x1f80b0, 0x10 }, { 0x1f80b8, 0x0 }, { 0x1f81bc, 0x0 },
+        { 0x1f81c0, 0x0 }, { 0x1f81c4, 0x0 }, { 0x1f81c8, 0x0 },
+        { 0x1f81cc, 0x0 }, { 0x1f81d0, 0x0 }, { 0x1f81d4, 0x5 },
+        { 0x1f81e0, 0x5 }, { 0x1f81ec, 0x1 }, { 0x1f81f0, 0x1 },
+        { 0x1f84c8, 0x0 }, { 0x1f81f4, 0x1 }, { 0x1f84a8, 0x0 },
+        { 0x1f81f8, 0x1 }, { 0x1f84ac, 0x0 }, { 0x1f82b4, 0x3088 },
+        { 0x1f82c4, 0x70a0 }, { 0x1f82c8, 0x30a0 }, { 0x1f82cc, 0x30a0 },
+        { 0x1f82f8, 0xb0 }, { 0x1f82fc, 0x70b0 }, { 0x1f831c, 0x1088 },
+        { 0x1f8390, 0x70a0 }, { 0x1f839c, 0x70b0 }, { 0x1f8204, 0x10f0 },
+        { 0x1f8208, 0x10f0 }, { 0x1f820c, 0x10f0 }, { 0x1f8210, 0x10f0 },
+        { 0x1f8214, 0x10f0 }, { 0x1f8218, 0x10f0 }, { 0x1f821c, 0x10f0 },
+        { 0x1f8220, 0x10f0 }, { 0x1f8224, 0x10d8 }, { 0x1f8228, 0x10d8 },
+        { 0x1f822c, 0x10d8 }, { 0x1f8230, 0x10d8 }, { 0x1f8234, 0x10d8 },
+        { 0x1f8238, 0x10d8 }, { 0x1f823c, 0x10d8 }, { 0x1f8240, 0x10d8 },
+        { 0x1f8244, 0x10d8 }, { 0x1f8248, 0x10d8 }, { 0x1f824c, 0x10d8 },
+        { 0x1f8250, 0x10d8 }, { 0x1f8254, 0x10d8 }, { 0x1f8258, 0x10d8 },
+        { 0x1f825c, 0x10d8 }, { 0x1f8260, 0x10d8 }, { 0x1f8264, 0x10d8 },
+        { 0x1f8268, 0x10d8 }, { 0x1f826c, 0x10f0 }, { 0x1f8270, 0x30d8 },
+        { 0x1f8274, 0x10d8 }, { 0x1f8278, 0x10d8 }, { 0x1f827c, 0x10f0 },
+        { 0x1f8280, 0x10f0 }, { 0x1f8284, 0x10f0 }, { 0x1f8288, 0x10f0 },
+        { 0x1f828c, 0x10f0 }, { 0x1f8290, 0x10f0 }, { 0x1f8294, 0x10f0 },
+        { 0x1f8298, 0x10f0 }, { 0x1f829c, 0x10d8 }, { 0x1f82a0, 0x10f0 },
+        { 0x1f82a8, 0x10d8 }, { 0x1f83ac, 0x7090 }, { 0x1f83b0, 0x1090 },
+        { 0x1f83b4, 0xb090 }, { 0x1f83b8, 0x7090 }, { 0x1f83bc, 0x7090 },
+        { 0x1f83c0, 0x7090 }, { 0x1f83c4, 0x3088 }, { 0x1f83d0, 0x3088 },
+        { 0x1f83dc, 0x70b0 }, { 0x1f83e0, 0x1088 }, { 0x1f83e4, 0x1088 },
+        { 0x1f83e8, 0x1088 }, { 0x0a8000, 0x5 }, { 0x0a8018, 0x70b0 },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(boot_iomux); i++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER((boot_iomux[i].offset >> 2) + 1),
+            GUINT_TO_POINTER(boot_iomux[i].value));
+    }
+    /* Bootloader 1.00 configures two 32 MiB SEMC SDRAM windows.
+     * These base registers describe mapping, not detected capacity. */
+    g_hash_table_insert(s->registers,
+        GUINT_TO_POINTER((0x2f0010 >> 2) + 1),
+        GUINT_TO_POINTER(0x8000001bu));
+    g_hash_table_insert(s->registers,
+        GUINT_TO_POINTER((0x2f0014 >> 2) + 1),
+        GUINT_TO_POINTER(0x8200001bu));
+    /* SDRAMCR0: 16-bit port, burst length 8, nine column bits,
+     * CAS latency 3. Timing/refresh fields use the bootloader's nominal
+     * 163.862 MHz SEMC clock and 1.00 timing parameters. */
+    g_hash_table_insert(s->registers,
+        GUINT_TO_POINTER((0x2f0040 >> 2) + 1),
+        GUINT_TO_POINTER(0x00000f31u));
+    g_hash_table_insert(s->registers,
+        GUINT_TO_POINTER((0x2f0044 >> 2) + 1),
+        GUINT_TO_POINTER(0x00664b22u));
+    g_hash_table_insert(s->registers,
+        GUINT_TO_POINTER((0x2f0048 >> 2) + 1),
+        GUINT_TO_POINTER(0x0009090bu));
+    g_hash_table_insert(s->registers,
+        GUINT_TO_POINTER((0x2f004c >> 2) + 1),
+        GUINT_TO_POINTER(0x08070a01u));
+    static const hwaddr offsets[] = {
+        L6_CCM_CACRR_OFFSET, L6_CCM_CBCDR_OFFSET, L6_CCM_CBCMR_OFFSET,
+        L6_CCM_CSCMR1_OFFSET, L6_CCM_CS1CDR_OFFSET,
+        L6_CCM_ANALOG_PLL_ARM, L6_CCM_ANALOG_PLL_SYS,
+        L6_CCM_ANALOG_PLL_SYS_NUM, L6_CCM_ANALOG_PLL_SYS_DENOM,
+        L6_CCM_ANALOG_MISC2, L6_CCM_ANALOG_PLL_AUDIO,
+        L6_CCM_ANALOG_PLL_AUDIO_NUM, L6_CCM_ANALOG_PLL_AUDIO_DENOM,
+        L6_CCM_ANALOG_PFD_480, L6_CCM_ANALOG_PFD_528,
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(offsets); i++) {
+        gpointer key = GUINT_TO_POINTER((offsets[i] >> 2) + 1);
+        uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
+        g_hash_table_insert(s->registers, key,
+            GUINT_TO_POINTER(l6max_boot_clock_value(offsets[i], old)));
+    }
+    /* GPIO1/2/3/5, SEMC and FlexSPI1 gates are enabled by the bootloader's
+     * pin and memory initialization. Other gate fields remain inherited. */
+    static const struct { hwaddr offset; uint32_t mask; } enabled_gates[] = {
+        { 0x0fc068, 0xc0000000u }, { 0x0fc06c, 0xcc0c0000u },
+        { 0x0fc070, 0x0c000000u }, { 0x0fc074, 0x00000030u },
+        { 0x0fc080, 0x00000c00u },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(enabled_gates); i++) {
+        gpointer key = GUINT_TO_POINTER((enabled_gates[i].offset >> 2) + 1);
+        uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
+        g_hash_table_insert(s->registers,
+            key, GUINT_TO_POINTER(old | enabled_gates[i].mask));
+    }
+    /* GPIO1.2 and GPIO3.3 start high; GPIO1.28 and GPIO3.0 start low. */
+    l6_main_gpio_write(&s->main_gpio_adapters[0], 0, 1u << 2, 4);
+    l6_main_gpio_write(&s->main_gpio_adapters[0], 4,
+                       (1u << 2) | (1u << 28), 4);
+    l6_main_gpio_write(&s->main_gpio_adapters[2], 0, 1u << 3, 4);
+    l6_main_gpio_write(&s->main_gpio_adapters[2], 4,
+                       (1u << 0) | (1u << 3), 4);
+}
+
 static const MemoryRegionOps l6_mmio_ops = {
     .read = l6_mmio_read,
     .write = l6_mmio_write,
@@ -4888,36 +5003,7 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
     s->refclk = clock_new(OBJECT(machine), refclk_name);
     clock_set_hz(s->sysclk, panel ? 48000000 : 600000000);
     clock_set_hz(s->refclk, 1000000);
-    if (!panel) {
-        l6_prepare_nor(s, kernel_filename);
-        /* The default L6max board models the recovered bootloader 1.00
-         * handoff regardless of changes to the installed MAIN image. */
-        if (profile == &L6MAX_PROFILE) {
-            /* Bootloader 1.00 configures two 32 MiB SEMC SDRAM windows.
-             * These base registers describe mapping, not detected capacity. */
-            g_hash_table_insert(s->registers,
-                GUINT_TO_POINTER((0x2f0010 >> 2) + 1),
-                GUINT_TO_POINTER(0x8000001bu));
-            g_hash_table_insert(s->registers,
-                GUINT_TO_POINTER((0x2f0014 >> 2) + 1),
-                GUINT_TO_POINTER(0x8200001bu));
-            static const hwaddr offsets[] = {
-                L6_CCM_CACRR_OFFSET, L6_CCM_CBCDR_OFFSET, L6_CCM_CBCMR_OFFSET,
-                L6_CCM_CSCMR1_OFFSET, L6_CCM_CS1CDR_OFFSET,
-                L6_CCM_ANALOG_PLL_ARM, L6_CCM_ANALOG_PLL_SYS,
-                L6_CCM_ANALOG_PLL_SYS_NUM, L6_CCM_ANALOG_PLL_SYS_DENOM,
-                L6_CCM_ANALOG_MISC2, L6_CCM_ANALOG_PLL_AUDIO,
-                L6_CCM_ANALOG_PLL_AUDIO_NUM, L6_CCM_ANALOG_PLL_AUDIO_DENOM,
-                L6_CCM_ANALOG_PFD_480, L6_CCM_ANALOG_PFD_528,
-            };
-            for (unsigned i = 0; i < ARRAY_SIZE(offsets); i++) {
-                gpointer key = GUINT_TO_POINTER((offsets[i] >> 2) + 1);
-                uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
-                g_hash_table_insert(s->registers, key,
-                    GUINT_TO_POINTER(l6max_boot_clock_value(offsets[i], old)));
-            }
-        }
-    }
+    if (!panel) { l6_prepare_nor(s, kernel_filename); }
 
     memory_region_init_rom(&s->flash, NULL, flash_name,
                            flash_size, &error_fatal);
@@ -5173,12 +5259,22 @@ static void l6_panel_init(MachineState *machine)
                  profile);
 }
 
+static void l6_main_reset(MachineState *machine, ResetType type)
+{
+    L6ChipState *s = &L6_MACHINE(machine)->chip;
+    qemu_devices_reset(type);
+    if (type != RESET_TYPE_SNAPSHOT_LOAD && s->profile == &L6MAX_PROFILE) {
+        l6max_seed_boot_handoff(s);
+    }
+}
+
 static void l6_main_class_init(ObjectClass *oc, const void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
     static const char * const cpus[] = { ARM_CPU_TYPE_NAME("cortex-m7"), NULL };
     mc->desc = "ZOOM L6/L6max MAIN MCU bring-up board (model detected from firmware)";
     mc->init = l6_main_init;
+    mc->reset = l6_main_reset;
     mc->valid_cpu_types = cpus;
     mc->default_cpu_type = cpus[0];
     mc->default_ram_size = 0x200000;

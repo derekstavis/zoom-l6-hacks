@@ -836,3 +836,11 @@ models = ["l6max"]
 scenario = "scenarios/sd-menu-loader.toml"
 needs_configuration = true
 wall_timeout_s = 1500
+
+[[case]]
+id = "dump-rom"
+suites = ["full"]
+models = ["l6max"]
+scenario = "scenarios/dump-rom.toml"
+needs_configuration = true
+wall_timeout_s = 1800

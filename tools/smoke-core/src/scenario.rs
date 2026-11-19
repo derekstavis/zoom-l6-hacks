@@ -357,8 +357,14 @@ pub enum Action {
     },
     L6maxTapHandler,
     /// Wait until an entry appears on the card, written by the firmware.
+    /// Optionally check its size, or that its bytes equal a file in the
+    /// device state directory (for example `main-nor.bin`).
     ExpectCardEntry {
         path: String,
+        #[serde(default)]
+        size: Option<u64>,
+        #[serde(default)]
+        matches_state: Option<String>,
     },
     /// Control input playback: `play`, `pause`, `stop` or `seek` to `position_ms`.
     AudioInputTransport {

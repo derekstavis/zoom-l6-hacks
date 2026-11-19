@@ -174,7 +174,7 @@ Scenarios default to `backends = ["headless", "gui"]`. Typed device steps requir
 | `expect-audio-input` | `playing`, `min_ms`, `max_ms` | Check the reported input playback state |
 | `expect-output-tone` | `hz`, optional `left_db`, `right_db`, `tolerance_db` (default 1) | Measure a tone in the last second of `L6_AUDIO_RAW_CAPTURE`. A side with no level must be below -70 dB |
 | `expect-recorded-tone` | `file`, `hz`, optional `left_db`, `right_db`, `tolerance_db` (default 1) | Measure a tone in a file of the newest recorder project, after its first second. A side with no level must be below -70 dB |
-| `expect-card-entry` | `path` | Wait until the firmware has created `path` on the SD card, within `wall_timeout_s` |
+| `expect-card-entry` | `path`; optional `size`, `matches_state` | Wait until the firmware has created `path` on the SD card, within `wall_timeout_s`. With `size`, the file must have exactly that many bytes. With `matches_state`, its bytes must equal that file in the device state directory, for example `main-nor.bin` |
 | `l6max-tap-handler` | none | Hash-guarded L6max GDB check that Tap target 48 reaches the firmware's TAP press handler. |
 | `l6-din-event-dispatch` | `group`, `cc`, `value` | Hash-guarded L6 check of DIN CC-to-event dispatch |
 | `l6-usb-startup` | — | First step only; exact-hash L6 probe replays the startup USB-enable sequence, verifies three firmware entry points and controller writes |

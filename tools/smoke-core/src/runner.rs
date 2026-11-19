@@ -624,9 +624,15 @@ impl Runner {
                         event,
                     }));
                 }
-                Action::ExpectCardEntry { path } => {
+                Action::ExpectCardEntry {
+                    path,
+                    size,
+                    matches_state,
+                } => {
                     return Ok(Progress::Device(devices::Operation::ExpectCardEntry {
                         path: path.clone(),
+                        size,
+                        matches_state,
                     }));
                 }
                 Action::AudioInputTransport {

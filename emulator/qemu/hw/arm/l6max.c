@@ -4893,6 +4893,14 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
         /* The default L6max board models the recovered bootloader 1.00
          * handoff regardless of changes to the installed MAIN image. */
         if (profile == &L6MAX_PROFILE) {
+            /* Bootloader 1.00 configures two 32 MiB SEMC SDRAM windows.
+             * These base registers describe mapping, not detected capacity. */
+            g_hash_table_insert(s->registers,
+                GUINT_TO_POINTER((0x2f0010 >> 2) + 1),
+                GUINT_TO_POINTER(0x8000001bu));
+            g_hash_table_insert(s->registers,
+                GUINT_TO_POINTER((0x2f0014 >> 2) + 1),
+                GUINT_TO_POINTER(0x8200001bu));
             static const hwaddr offsets[] = {
                 L6_CCM_CACRR_OFFSET, L6_CCM_CBCDR_OFFSET, L6_CCM_CBCMR_OFFSET,
                 L6_CCM_CSCMR1_OFFSET, L6_CCM_CS1CDR_OFFSET,
@@ -4942,6 +4950,12 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
                 panel ? 0x2000 : 0x200000);
     if (!panel) {
         l6_make_ram(system_memory, &s->dtcm, dtcm_name, 0x20200000, 0x100000);
+        /* L6max bootloader 1.00 configures SDRAM windows spanning
+         * 0x80000000..0x83ffffff. The first 2 MiB is already covered by the
+         * direct MAIN image mapping; do not extend the remaining RAM by
+         * another 2 MiB past the configured SDRAM boundary. L6 is separate. */
+        uint64_t external_ram_size = profile == &L6MAX_PROFILE ?
+                                     0x3e00000 : 0x4000000;
         const char *shared_ram_fd = g_getenv("L6_EXTERNAL_RAM_FD");
         if (shared_ram_fd) {
             char *end;
@@ -4960,13 +4974,13 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
             }
             /* QEMU owns this inherited descriptor for the RAM region's life. */
             memory_region_init_ram_from_fd(
-                &s->external_ram, NULL, external_ram_name, 0x4000000,
+                &s->external_ram, NULL, external_ram_name, external_ram_size,
                 RAM_SHARED, fd, 0, &error_fatal);
             memory_region_add_subregion(system_memory, 0x80200000,
                                         &s->external_ram);
         } else {
             l6_make_ram(system_memory, &s->external_ram, external_ram_name,
-                        0x80200000, 0x4000000);
+                        0x80200000, external_ram_size);
         }
     }
 

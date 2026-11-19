@@ -30,6 +30,12 @@ PLL post-divider is inherited from the existing seed because the bootloader
 does not set it. These register values do not emulate bootloader execution,
 clock settling, the full clock tree, or the real SD installer.
 
+The L6max bootloader configures two 32 MiB SEMC SDRAM windows covering
+`0x80000000` through `0x83ffffff`. The direct-MAIN board seeds their SEMC
+base registers and bounds the remaining RAM mapping at that endpoint. The
+first 2 MiB remains the emulator's MAIN image mapping; the guest does not
+execute the physical SDRAM initialization. L6 keeps its existing map.
+
 ## QEMU device-model reuse
 
 The confirmed RT1041 identity helps distinguish reusable QEMU devices from

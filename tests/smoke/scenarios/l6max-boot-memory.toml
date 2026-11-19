@@ -1,0 +1,20 @@
+version = 1
+name = "l6max-boot-memory"
+models = ["l6max"]
+backends = ["headless"]
+state = "setup-complete"
+card = "empty"
+main_sha256 = "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461"
+
+[[step]]
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 120000
+wall_timeout_s = 600
+
+# The stock MAIN does not configure SEMC. The bootloader 1.00 handoff
+# provides these two 32 MiB windows, starting at 0x80000000 and 0x82000000.
+[[step]]
+action = "expect-memory"
+address = 0x402f0010
+bytes = [0x1b, 0, 0, 0x80, 0x1b, 0, 0, 0x82]

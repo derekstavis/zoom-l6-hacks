@@ -6293,7 +6293,16 @@ fn run_knob_dialog(
         let count = (usize::from(u16::from_le_bytes(capacity.try_into()?)) + 1) * 2;
         original_text.push((address, qmp.read_memory(0, address, count)?));
     }
-    let abandoned_page = qmp.read_memory(0, 0x841ff000, 4096)?;
+    let abandoned_page = match qmp.read_memory(0, 0x841ff000, 4096) {
+        Ok(bytes) => Some(bytes),
+        Err(error)
+            if error.kind() == std::io::ErrorKind::InvalidData
+                && error.to_string().contains("Cannot access memory") =>
+        {
+            None
+        }
+        Err(error) => return Err(error.into()),
+    };
     let heap = || -> Result<Vec<u32>, Box<dyn std::error::Error>> {
         Ok(qmp
             .read_memory(0, 0x8020ab1c, 16)?
@@ -7788,8 +7797,14 @@ fn run_knob_dialog(
     if before[0] == rings(inputs.panel.snapshot().indicators)[0] {
         return Err("channel 1 ring did not change".into());
     }
-    if qmp.read_memory(0, 0x841ff000, 4096)? != abandoned_page {
-        return Err("patch wrote abandoned RAM page".into());
+    match (abandoned_page, qmp.read_memory(0, 0x841ff000, 4096)) {
+        (Some(before), Ok(after)) if before == after => {}
+        (None, Err(error))
+            if error.kind() == std::io::ErrorKind::InvalidData
+                && error.to_string().contains("Cannot access memory") => {}
+        (Some(_), Ok(_)) => return Err("patch wrote abandoned RAM page".into()),
+        (None, Ok(_)) => return Err("abandoned RAM page became mapped".into()),
+        (_, Err(error)) => return Err(error.into()),
     }
     Ok(
         json!({"modes":10,"popup_updates":true,"guest_timed_expiry":true,"encoder_reports":actual,"heap_cleanup":true}),

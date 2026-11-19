@@ -186,7 +186,12 @@ impl QmpClient {
             .flat_map(str::split_whitespace)
             .map(|word| u8::from_str_radix(word.trim_start_matches("0x"), 16))
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+            .map_err(|error| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("invalid memory response at {address:#x}: {error}: {reply}"),
+                )
+            })?;
         if bytes.len() != size {
             return Err(io::Error::new(io::ErrorKind::InvalidData, reply));
         }

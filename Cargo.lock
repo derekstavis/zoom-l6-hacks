@@ -3669,6 +3669,7 @@ dependencies = [
 name = "l6test"
 version = "0.1.0"
 dependencies = [
+ "firmware-patch-core",
  "firmware-patch-wasm",
  "gif 0.14.2",
  "image",

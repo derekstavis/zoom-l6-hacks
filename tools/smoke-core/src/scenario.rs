@@ -195,7 +195,12 @@ pub enum Action {
         expect_din_ring_change: bool,
     },
     L6DinUsbForwarding,
-    HostMidiSync,
+    HostMidiSync {
+        /// Send the CC 127 state request. When false the step only collects
+        /// the reply to a request made another way, such as a menu item.
+        #[serde(default = "default_true")]
+        request: bool,
+    },
     L6MidiSync,
     L6MidiRingPinSweep {
         cc: u8,
@@ -265,6 +270,12 @@ pub enum Action {
         expected_dialog_active: Option<bool>,
         #[serde(default)]
         minimum_exit_ring_refreshes: Option<u32>,
+        /// The effect ID the effect loader runs for the selected slot.
+        #[serde(default)]
+        expected_effect: Option<String>,
+        /// The selected slot's replacement has produced nonzero output.
+        #[serde(default)]
+        require_output: bool,
     },
     ExpectHeap {
         minimum_free: u32,
@@ -275,6 +286,18 @@ pub enum Action {
     },
     AudioCallbacks,
     KnobDialog,
+    /// Turn the channel 1 level knob once on the recorder screen and check
+    /// that Knob Dialog shows the new value.
+    KnobDialogPopup,
+    /// Compare a menu's child titles with `items`. `menu` names a stock menu
+    /// (`main`, `project`, `sound-pad`, `mixer` or `system`); `path` then
+    /// descends through child titles.
+    ExpectMenu {
+        menu: String,
+        #[serde(default)]
+        path: Vec<String>,
+        items: Vec<String>,
+    },
     FirmwareUpdate,
     WasmPatch,
     WarmReset,
@@ -825,6 +848,19 @@ impl Scenario {
             {
                 return Err("knob-dialog requires L6max scope".into());
             }
+            if matches!(
+                step.action,
+                Action::KnobDialogPopup | Action::ExpectMenu { .. }
+            ) && (value.models.iter().any(|m| m != "l6max")
+                || step.models.iter().any(|m| m != "l6max"))
+            {
+                return Err("knob-dialog-popup and expect-menu require L6max scope".into());
+            }
+            if let Action::ExpectMenu { menu, .. } = &step.action
+                && !["main", "project", "sound-pad", "mixer", "system"].contains(&menu.as_str())
+            {
+                return Err(format!("expect-menu names an unknown menu {menu:?}"));
+            }
             if matches!(step.action, Action::FirmwareUpdate)
                 && (value.models.is_empty()
                     || value.step.len() != 1
@@ -995,7 +1031,9 @@ impl Scenario {
                 | Action::L6maxDinMixerControl { .. }
                 | Action::L6DinUsbForwarding
                 | Action::L6maxRecorderPlayback { .. }
-                | Action::HostMidiSync
+                | Action::HostMidiSync { .. }
+                | Action::KnobDialogPopup
+                | Action::ExpectMenu { .. }
                 | Action::L6MidiSync
                 | Action::L6MidiRingPinSweep { .. }
                 | Action::L6MidiMuteIndicators

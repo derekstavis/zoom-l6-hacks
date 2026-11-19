@@ -1,6 +1,7 @@
 //! Reproducible suite driver. All guest runners are supervised child processes.
 mod gui_capture;
 mod gui_probe;
+mod patch_matrix;
 mod screen_gif;
 
 use l6max_host::engine::Options;
@@ -543,11 +544,49 @@ fn fixture_options(
             .firmware_package
             .as_ref()
             .ok_or("patches require firmware_package")?;
-        let bytes = fs::read(package).map_err(|e| e.to_string())?;
-        let names: Vec<&str> = fixture.patches.iter().map(String::as_str).collect();
-        let (patched, report) = firmware_patch_wasm::apply_patches(&bytes, &names)?;
-        let patched_package = dir.join("patched-firmware.bin");
-        fs::write(&patched_package, patched).map_err(|e| e.to_string())?;
+        let firmware_model = if fixture.model == "l6" {
+            firmware_patch_core::FirmwareModel::L6
+        } else {
+            firmware_patch_core::FirmwareModel::L6max
+        };
+        // The browser patcher builds what it supports, as the website does.
+        // Other firmware patches are built with l6patch.
+        let (patched_package, report) = if fixture
+            .patches
+            .iter()
+            .all(|name| firmware_patch_core::supports_wasm_patch(name, firmware_model))
+        {
+            let bytes = fs::read(package).map_err(|e| e.to_string())?;
+            let names: Vec<&str> = fixture.patches.iter().map(String::as_str).collect();
+            let (patched, report) = firmware_patch_wasm::apply_patches(&bytes, &names)?;
+            let patched_package = dir.join("patched-firmware.bin");
+            fs::write(&patched_package, patched).map_err(|e| e.to_string())?;
+            (patched_package, report)
+        } else {
+            let source = dir.join("stock-firmware");
+            l6fw::unpack(package, &source)?;
+            let build = dir.join("firmware-build");
+            l6patch::build(l6patch::BuildRequest {
+                source,
+                output: build.clone(),
+                patches: fixture.patches.clone(),
+                effect_replacements: Vec::new(),
+                version: None,
+                mode: l6patch::BuildMode::Firmware,
+                experimental_qemu_module_arena: false,
+            })
+            .map_err(|error| format!("l6patch failed: {error}"))?;
+            let report: Value = serde_json::from_slice(
+                &fs::read(build.join("patch.json")).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            let name = if fixture.model == "l6" {
+                "L6.BIN"
+            } else {
+                "L6max.bin"
+            };
+            (build.join(name), report)
+        };
         fs::write(
             dir.join("patch-report.json"),
             serde_json::to_vec_pretty(&report).unwrap(),
@@ -1179,7 +1218,7 @@ fn execute() -> Result<i32, String> {
     let args = parse_args()?;
     let root = l6max_host::paths::repository_root();
     let catalog_dir = root.join("tests/smoke");
-    let catalog: Catalog = toml::from_str(
+    let mut catalog: Catalog = toml::from_str(
         &fs::read_to_string(catalog_dir.join("catalog.toml")).map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;
@@ -1190,6 +1229,33 @@ fn execute() -> Result<i32, String> {
         if let Some(path) = &case.scenario {
             Scenario::load(&catalog_dir.join(path))?;
         }
+    }
+    // The generated cases' scenarios are written into the run's copy of the
+    // catalog, and validated there before any case runs.
+    let generated = patch_matrix::generate()?;
+    for case in &generated {
+        if catalog.case.iter().any(|existing| existing.id == case.id) {
+            return Err(format!(
+                "generated case {} duplicates a catalog case",
+                case.id
+            ));
+        }
+        catalog.case.push(Case {
+            expected_failure: Vec::new(),
+            id: case.id.clone(),
+            suites: vec![patch_matrix::SUITE.into()],
+            models: vec![case.model.into()],
+            scenario: Some(PathBuf::from(format!("scenarios/{}.toml", case.id))),
+            package: None,
+            arguments: Vec::new(),
+            environment: BTreeMap::new(),
+            needs_configuration: true,
+            gui: false,
+            volatile: false,
+            no_sd: false,
+            blocked: None,
+            wall_timeout_s: 1200,
+        });
     }
     if args.command == "list" {
         for case in &catalog.case {
@@ -1232,6 +1298,11 @@ fn execute() -> Result<i32, String> {
     let _journal = RunJournal(output.clone());
     copy_tree(&catalog_dir, &output.join("spec"))?;
     let catalog_dir = output.join("spec");
+    for case in &generated {
+        let path = catalog_dir.join(format!("scenarios/{}.toml", case.id));
+        fs::write(&path, &case.scenario).map_err(|e| e.to_string())?;
+        Scenario::load(&path).map_err(|error| format!("{}: {error}", case.id))?;
+    }
     let preflight = || -> Result<(Config, Value), String> {
         let config = load_config(
             &args.config,

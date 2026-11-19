@@ -67,7 +67,9 @@ pub enum Operation {
         expect_din_ring_change: bool,
     },
     L6DinUsbForwarding,
-    HostMidiSync,
+    HostMidiSync {
+        request: bool,
+    },
     L6MidiSync,
     L6MidiRingPinSweep {
         cc: u8,
@@ -121,6 +123,8 @@ pub enum Operation {
         expected_parameter_value: Option<f32>,
         expected_dialog_active: Option<bool>,
         minimum_exit_ring_refreshes: Option<u32>,
+        expected_effect: Option<String>,
+        require_output: bool,
     },
     ExpectHeap {
         minimum_free: u32,
@@ -131,6 +135,12 @@ pub enum Operation {
     },
     AudioCallbacks,
     KnobDialog,
+    KnobDialogPopup,
+    ExpectMenu {
+        menu: String,
+        path: Vec<String>,
+        items: Vec<String>,
+    },
     FirmwareUpdate,
     WasmPatch,
     WarmReset,
@@ -391,7 +401,12 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
         .iter()
         .any(|s| matches!(s.action, crate::Action::L6maxDinMixerControl { .. }))
     {
-        options.usb_enabled = false;
+        // With a host MIDI round trip the DIN check shares its native USB
+        // bridge; otherwise it opens USB cable 1 directly.
+        options.usb_enabled = scenario
+            .step
+            .iter()
+            .any(|s| matches!(s.action, crate::Action::HostMidiRoundTrip));
         options.midi_enabled = true;
     }
     if scenario
@@ -1155,11 +1170,49 @@ fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), String> {
                     }
                     thread::sleep(Duration::from_millis(5));
                 }
-                State::default()
-                    .execute(&session, &verify, Operation::KnobDialog, 180_000, 300)
-                    .map_err(|error| {
-                        format!("installed L6max knob-dialog behavior failed: {error}")
-                    })?;
+                // Check the behavior of each patch the update installs. The
+                // installed-patch cases check the same browser-built image
+                // in full; din-mixer-control needs a DIN port and Mixer
+                // Control via MIDI, which this boot does not set up.
+                let report: Value = serde_json::from_slice(
+                    &fs::read(
+                        options
+                            .update_package
+                            .as_ref()
+                            .unwrap()
+                            .with_extension("json"),
+                    )
+                    .map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
+                let patches: Vec<String> = report["patches"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|patch| patch.as_str().map(str::to_owned))
+                    .collect();
+                let mut state = State::default();
+                let mut run = |operation: Operation, patch: &str| {
+                    state
+                        .execute(&session, &verify, operation, 180_000, 300)
+                        .map(|_| ())
+                        .map_err(|error| {
+                            format!("installed L6max {patch} behavior failed: {error}")
+                        })
+                };
+                if patches.iter().any(|patch| patch == "knob-dialog") {
+                    run(Operation::KnobDialog, "knob-dialog")?;
+                }
+                if let Some(patch) = patches.iter().find(|patch| *patch == "midi-sync") {
+                    run(
+                        Operation::DirectUsbMidiRoundTrip {
+                            cable: 1,
+                            expect_ring_change: true,
+                        },
+                        patch,
+                    )?;
+                    run(Operation::HostMidiSync { request: true }, patch)?;
+                }
             }
         } else {
             drop(guest);
@@ -3103,8 +3156,6 @@ impl State {
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
     ) -> Result<Value, Box<dyn std::error::Error>> {
-        use crate::host_midi::Client as _;
-
         if session.engine.model() != l6fw::Model::L6max {
             return Err("l6max-din-mixer-control requires L6max firmware".into());
         }
@@ -3121,13 +3172,26 @@ impl State {
             ),
         );
         let mut din = connect_native_midi(session, &din_name)?;
-        let usb = session
-            .engine
-            .usb
-            .clone()
-            .ok_or("USB host unavailable for mixer-control reference path")?;
-        let mut mixer =
-            crate::host_midi::DirectUsbClient::connect(usb, 1).map_err(std::io::Error::other)?;
+        // The USB reference path uses the host MIDI client when an earlier
+        // step opened one: a direct USB client would compete with the native
+        // bridge for the same endpoints.
+        let mut direct = None;
+        if self.host_midi.is_none() {
+            let usb = session
+                .engine
+                .usb
+                .clone()
+                .ok_or("USB host unavailable for mixer-control reference path")?;
+            direct = Some(
+                crate::host_midi::DirectUsbClient::connect(usb, 1)
+                    .map_err(std::io::Error::other)?,
+            );
+        }
+        let mixer: &mut dyn crate::host_midi::Client = match (&mut self.host_midi, &mut direct) {
+            (Some(client), _) => client.as_mut(),
+            (None, Some(client)) => client,
+            (None, None) => unreachable!("one USB client was opened above"),
+        };
         let ring = || l6max_host::indicators::rings(inputs.panel.snapshot().indicators)[0];
         let timeout = Duration::from_secs(wall_timeout_s.min(3));
 
@@ -3240,6 +3304,7 @@ impl State {
     fn run_host_midi_sync(
         &mut self,
         session: &Session,
+        request: bool,
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
     ) -> Result<Value, Box<dyn std::error::Error>> {
@@ -3285,18 +3350,21 @@ impl State {
         } else {
             (94, None)
         };
-        // Leftover encoder CCs would otherwise count as replies.
-        let mut quiet_since = Instant::now();
-        while quiet_since.elapsed() < Duration::from_millis(500) {
-            session.poll()?;
-            while client.poll().map_err(std::io::Error::other)?.is_some() {
-                quiet_since = Instant::now();
+        // Leftover encoder CCs would otherwise count as replies. A reply to a
+        // request made another way may already be queued, so keep it.
+        if request {
+            let mut quiet_since = Instant::now();
+            while quiet_since.elapsed() < Duration::from_millis(500) {
+                session.poll()?;
+                while client.poll().map_err(std::io::Error::other)?.is_some() {
+                    quiet_since = Instant::now();
+                }
+                thread::sleep(Duration::from_millis(5));
             }
-            thread::sleep(Duration::from_millis(5));
+            client
+                .send(&[0xb0, 127, 127])
+                .map_err(std::io::Error::other)?;
         }
-        client
-            .send(&[0xb0, 127, 127])
-            .map_err(std::io::Error::other)?;
         let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
         let mut replies = Vec::with_capacity(expected_count);
         loop {
@@ -3318,7 +3386,7 @@ impl State {
                 }
                 if replies.len() == expected_count {
                     return Ok(
-                        json!({"request":[0xb0,127,127],"expected_replies":expected_count,"reply_count":replies.len(),"replies":replies}),
+                        json!({"request":request.then_some([0xb0,127,127]),"expected_replies":expected_count,"reply_count":replies.len(),"replies":replies}),
                     );
                 }
             }
@@ -3713,6 +3781,8 @@ impl State {
                 expected_parameter_value,
                 expected_dialog_active,
                 minimum_exit_ring_refreshes,
+                expected_effect,
+                require_output,
             } => Ok(effect_replacement_state(
                 options,
                 session,
@@ -3725,6 +3795,8 @@ impl State {
                 expected_parameter_value,
                 expected_dialog_active,
                 minimum_exit_ring_refreshes,
+                expected_effect.as_deref(),
+                require_output,
             )
             .map_err(std::io::Error::other)?),
             Operation::ExpectSdPatch {
@@ -4931,8 +5003,8 @@ impl State {
             Operation::L6DinUsbForwarding => {
                 self.run_l6_din_usb_forwarding(session, wall_timeout_s)
             }
-            Operation::HostMidiSync => {
-                self.run_host_midi_sync(session, guest_timeout_ms, wall_timeout_s)
+            Operation::HostMidiSync { request } => {
+                self.run_host_midi_sync(session, request, guest_timeout_ms, wall_timeout_s)
             }
             Operation::L6MidiSync => Ok(self.run_l6_midi_sync(session, options)?),
             Operation::L6MidiRingPinSweep { cc } => {
@@ -5282,6 +5354,12 @@ impl State {
             Operation::KnobDialog => {
                 run_knob_dialog(session, options, guest_timeout_ms, wall_timeout_s)
             }
+            Operation::KnobDialogPopup => {
+                run_knob_dialog_popup(session, guest_timeout_ms, wall_timeout_s)
+            }
+            Operation::ExpectMenu { menu, path, items } => {
+                Ok(expect_menu(session, &menu, &path, &items).map_err(std::io::Error::other)?)
+            }
             Operation::FirmwareUpdate => {
                 Err("firmware-update scenario must run at the host lifecycle boundary".into())
             }
@@ -5547,6 +5625,8 @@ fn effect_replacement_state(
     expected_parameter_value: Option<f32>,
     expected_dialog_active: Option<bool>,
     minimum_exit_ring_refreshes: Option<u32>,
+    expected_effect: Option<&str>,
+    require_output: bool,
 ) -> Result<Value, String> {
     if session.engine.model() != l6fw::Model::L6max {
         return Err("effect replacement state checks require L6max".into());
@@ -5715,6 +5795,59 @@ fn effect_replacement_state(
             "effect replacement has applied {applied} parameter edits but Knob Dialog is not active ({dialog_active})"
         ));
     }
+    let read_u32 = |address: u32| -> Result<u32, String> {
+        Ok(u32::from_le_bytes(
+            qmp.read_memory(0, address, 4)
+                .map_err(|error| error.to_string())?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let active_effect = if expected_effect.is_some() {
+        let pointer = read_u32(module_base + offset("DUAL_EFFECT_ACTIVE_EFFECT")?)?;
+        let length = read_u32(module_base + offset("DUAL_EFFECT_ACTIVE_EFFECT_LEN")?)?;
+        if pointer == 0 || length == 0 {
+            String::new()
+        } else if length > 64 {
+            return Err(format!(
+                "effect replacement active effect ID claims {length} bytes"
+            ));
+        } else {
+            String::from_utf8_lossy(
+                &qmp.read_memory(0, pointer, length as usize)
+                    .map_err(|error| error.to_string())?,
+            )
+            .into_owned()
+        }
+    } else {
+        String::new()
+    };
+    if let Some(expected) = expected_effect
+        && active_effect != expected
+    {
+        return Err(format!(
+            "effect replacement runs {active_effect:?} in the selected slot, expected {expected:?}"
+        ));
+    }
+    let output_counter = match processor_type {
+        1 => Some("DUAL_EFFECT_ROOM_OUTPUT_NONZERO"),
+        2 => Some("DUAL_EFFECT_SPRING_OUTPUT_NONZERO"),
+        _ => None,
+    };
+    let output_blocks = match output_counter {
+        Some(name) if require_output => read_u32(module_base + offset(name)?)?,
+        _ => 0,
+    };
+    if require_output {
+        if output_counter.is_none() {
+            return Err("effect replacement output check needs a replaced slot selected".into());
+        }
+        if output_blocks == 0 {
+            return Err(format!(
+                "effect replacement {active_effect:?} has produced no nonzero output in slot {processor_type}"
+            ));
+        }
+    }
     if expected_parameter_value.is_some() && parameter.is_none() {
         return Err("effect replacement parameter value requires expected_parameter_id".into());
     }
@@ -5727,7 +5860,7 @@ fn effect_replacement_state(
         }
     }
     Ok(
-        json!({"effect_type":effect_type,"processor_type":processor_type,"panel_mode":panel_mode,"edit_mode":edit_mode,"parameter_edits_applied":applied,"parameter_id":expected_parameter_id,"parameter_value":parameter,"knob_dialog_active":dialog_active,"exit_ring_refreshes":exit_ring_refreshes}),
+        json!({"effect_type":effect_type,"processor_type":processor_type,"active_effect":active_effect,"nonzero_output_blocks":output_blocks,"panel_mode":panel_mode,"edit_mode":edit_mode,"parameter_edits_applied":applied,"parameter_id":expected_parameter_id,"parameter_value":parameter,"knob_dialog_active":dialog_active,"exit_ring_refreshes":exit_ring_refreshes}),
     )
 }
 
@@ -9578,4 +9711,184 @@ mod tests {
         reference.put_pixel(0, 63, image::Luma([255]));
         assert_eq!(display_difference_count(&display, &reference), 0);
     }
+}
+
+/// Turn the channel 1 level knob on the recorder screen and check that
+/// Knob Dialog opened its window with the knob's new value. This is the
+/// short check the patch matrix runs; `knob-dialog` covers the guards,
+/// contention and every screen.
+fn run_knob_dialog_popup(
+    session: &Session,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    const RECORDER_HOME: u32 = 0x8020_0408;
+    const CURRENT_WINDOW: u32 = 0x8020_2610;
+    const DIALOG_STATE: u32 = 0x8020_73c8;
+    const DIALOG_STATE_MAGIC: u16 = 0x4b4e;
+    const DISPLAY_CALLBACK_SLOT5: u32 = 0x8020_a59c + 20;
+    const TEXT_POINTERS: u32 = 0x8020_5118;
+    const DIALOG_TEXT_ID: u32 = 179;
+    const CHANNEL1_LEVEL: u32 = 0x8045_ff84 + 0x120;
+
+    if session.engine.model() != l6fw::Model::L6max {
+        return Err("knob-dialog-popup requires L6max firmware".into());
+    }
+    let inputs = session
+        .engine
+        .inputs
+        .as_ref()
+        .ok_or("knob-dialog-popup needs inputs")?;
+    let qmp = &session.engine.management[0];
+    let read_u32 = |address: u32| -> Result<u32, Box<dyn std::error::Error>> {
+        Ok(u32::from_le_bytes(
+            qmp.read_memory(0, address, 4)?.try_into().unwrap(),
+        ))
+    };
+    let window = read_u32(CURRENT_WINDOW)?;
+    if window != RECORDER_HOME {
+        return Err(format!(
+            "knob-dialog-popup needs the recorder screen, found window {window:#010x}"
+        )
+        .into());
+    }
+    let before = session.poll()?.display;
+    let mut turns = Vec::new();
+    // A knob already at an end of its range does not move, so turn back
+    // the other way when the first turn opens nothing.
+    for delta in [-2i32, 4] {
+        inputs.knob(0, delta)?;
+        turns.push(delta);
+        let start = inputs.panel.snapshot().guest_ms;
+        wait_guest(session, start, 500, guest_timeout_ms, wall_timeout_s)?;
+        let state = qmp.read_memory(0, DIALOG_STATE, 2)?;
+        if u16::from_le_bytes([state[0], state[1]]) == DIALOG_STATE_MAGIC
+            && read_u32(DISPLAY_CALLBACK_SLOT5)? & 1 == 1
+        {
+            break;
+        }
+    }
+    let state = qmp.read_memory(0, DIALOG_STATE, 2)?;
+    let slot5 = read_u32(DISPLAY_CALLBACK_SLOT5)?;
+    if u16::from_le_bytes([state[0], state[1]]) != DIALOG_STATE_MAGIC || slot5 & 1 == 0 {
+        return Err(format!(
+            "Knob Dialog did not open after turning channel 1 level {turns:?}: state={state:02x?}, slot5={slot5:#010x}"
+        )
+        .into());
+    }
+    let after = session.poll()?.display;
+    if after == before {
+        return Err("Knob Dialog opened but the display did not change".into());
+    }
+    let pointer = read_u32(read_u32(TEXT_POINTERS)? + DIALOG_TEXT_ID * 4)?;
+    let units = qmp
+        .read_memory(0, pointer, 48)?
+        .chunks_exact(2)
+        .map(|b| u16::from_le_bytes([b[0], b[1]]))
+        .take_while(|c| *c != 0)
+        .collect::<Vec<_>>();
+    let displayed = String::from_utf16(&units)?;
+    let raw = qmp.read_memory(0, CHANNEL1_LEVEL, 1)?[0];
+    let expected = format!("{}%", (u32::from(raw) * 100 + 63) / 127);
+    if displayed != expected {
+        return Err(format!(
+            "Knob Dialog shows {displayed:?} for channel 1 level {raw}, expected {expected:?}"
+        )
+        .into());
+    }
+    // Let the window close before later steps use the screen.
+    let start = inputs.panel.snapshot().guest_ms;
+    wait_guest(
+        session,
+        start,
+        3000,
+        guest_timeout_ms.max(3500),
+        wall_timeout_s,
+    )?;
+    Ok(json!({"turns":turns,"level_raw":raw,"displayed":displayed}))
+}
+
+/// Read a menu's children from guest memory and compare their titles.
+fn expect_menu(
+    session: &Session,
+    menu: &str,
+    path: &[String],
+    items: &[String],
+) -> Result<Value, String> {
+    // Menu node layout and stock nodes, from patches/api/l6max/menu.rs.
+    const NODE_TITLE: u32 = 0x0c;
+    const NODE_CHILDREN: u32 = 0x10;
+    const NODE_CHILD_COUNT: u32 = 0x14;
+    const TEXT_POINTERS: u32 = 0x8020_5118;
+    const MAX_CHILDREN: u16 = 64;
+
+    let root = match menu {
+        "main" => 0x8020_256c,
+        "project" => 0x8020_1750,
+        "sound-pad" => 0x8020_17c8,
+        "mixer" => 0x8020_1728,
+        "system" => 0x8020_17f0,
+        _ => return Err(format!("unknown menu {menu:?}")),
+    };
+    let qmp = &session.engine.management[0];
+    let read = |address: u32, length: usize| {
+        qmp.read_memory(0, address, length)
+            .map_err(|error| error.to_string())
+    };
+    let read_u32 = |address: u32| -> Result<u32, String> {
+        Ok(u32::from_le_bytes(read(address, 4)?.try_into().unwrap()))
+    };
+    let read_u16 = |address: u32| -> Result<u16, String> {
+        Ok(u16::from_le_bytes(read(address, 2)?.try_into().unwrap()))
+    };
+    let text = |id: u16| -> Result<String, String> {
+        let pointer = read_u32(read_u32(TEXT_POINTERS)? + u32::from(id) * 4)?;
+        if pointer == 0 {
+            return Ok(String::new());
+        }
+        let units = read(pointer, 96)?
+            .chunks_exact(2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+            .take_while(|c| *c != 0)
+            .collect::<Vec<_>>();
+        String::from_utf16(&units).map_err(|error| error.to_string())
+    };
+    let children = |node: u32| -> Result<Vec<(u32, String)>, String> {
+        let count = read_u16(node + NODE_CHILD_COUNT)?;
+        if count > MAX_CHILDREN {
+            return Err(format!("menu node {node:#010x} claims {count} children"));
+        }
+        let array = read_u32(node + NODE_CHILDREN)?;
+        (0..u32::from(count))
+            .map(|index| {
+                let child = read_u32(array + index * 4)?;
+                Ok((child, text(read_u16(child + NODE_TITLE)?)?))
+            })
+            .collect()
+    };
+    // Menu Loader adds its rows when the menu opens, so a press that did not
+    // open it would otherwise look like missing rows.
+    const RECORDER_HOME: u32 = 0x8020_0408;
+    const CURRENT_WINDOW: u32 = 0x8020_2610;
+    if read_u32(CURRENT_WINDOW)? == RECORDER_HOME {
+        return Err("expect-menu: the menu is not open; the recorder screen is showing".into());
+    }
+    let mut node = root;
+    for title in path {
+        node = children(node)?
+            .into_iter()
+            .find(|(_, child)| child == title)
+            .map(|(child, _)| child)
+            .ok_or_else(|| format!("menu {menu} has no child {title:?} on path {path:?}"))?;
+    }
+    let actual = children(node)?
+        .into_iter()
+        .map(|(_, title)| title)
+        .collect::<Vec<_>>();
+    if actual != items {
+        return Err(format!(
+            "menu {menu} {path:?} lists {actual:?}, expected {items:?}"
+        ));
+    }
+    Ok(json!({"menu":menu,"path":path,"items":actual}))
 }

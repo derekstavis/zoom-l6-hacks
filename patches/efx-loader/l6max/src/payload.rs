@@ -82,6 +82,12 @@ pub static DUAL_EFFECT_CALLBACK_GATE: AtomicU32 = AtomicU32::new(CALLBACK_CLOSED
 pub static DUAL_EFFECT_SELECTION_PENDING: AtomicU32 = AtomicU32::new(1);
 #[unsafe(no_mangle)]
 pub static DUAL_EFFECT_PROCESSOR_TYPE: AtomicU32 = AtomicU32::new(0);
+/// The effect ID running in the selected slot, as a pointer and byte length,
+/// for the emulator's checks. Zero when no replacement runs.
+#[unsafe(no_mangle)]
+pub static DUAL_EFFECT_ACTIVE_EFFECT: AtomicU32 = AtomicU32::new(0);
+#[unsafe(no_mangle)]
+pub static DUAL_EFFECT_ACTIVE_EFFECT_LEN: AtomicU32 = AtomicU32::new(0);
 #[unsafe(no_mangle)]
 pub static DUAL_EFFECT_OUTPUT_NONZERO: AtomicU32 = AtomicU32::new(0);
 #[unsafe(no_mangle)]
@@ -237,12 +243,17 @@ fn initialize_effect(slot: u32) -> bool {
 
 fn finish_effect_selection(slot: u32) {
     if initialize_effect(slot) {
+        let id = replacement_for(slot).unwrap_or("");
+        DUAL_EFFECT_ACTIVE_EFFECT.store(id.as_ptr() as u32, Ordering::Relaxed);
+        DUAL_EFFECT_ACTIVE_EFFECT_LEN.store(id.len() as u32, Ordering::Relaxed);
         DUAL_EFFECT_PARAMETER_EDIT_MODE.store(0, Ordering::Release);
         refresh_parameter_positions(slot);
         DUAL_EFFECT_PROCESSOR_TYPE.store(slot, Ordering::Release);
         DUAL_EFFECT_SELECTION_PENDING.store(0, Ordering::Release);
         DUAL_EFFECT_CALLBACK_GATE.store(0, Ordering::Release);
     } else {
+        DUAL_EFFECT_ACTIVE_EFFECT.store(0, Ordering::Relaxed);
+        DUAL_EFFECT_ACTIVE_EFFECT_LEN.store(0, Ordering::Relaxed);
         DUAL_EFFECT_PROCESSOR_TYPE.store(0, Ordering::Release);
         DUAL_EFFECT_ROUTED_CALLBACK.store(0, Ordering::Relaxed);
         DUAL_EFFECT_EDIT_EVENT.store(0, Ordering::Relaxed);
@@ -302,6 +313,8 @@ pub unsafe fn effect_replacements_workspace_clear() {
     unsafe { deactivate_editor_for_effect_change() };
     DUAL_EFFECT_SELECTION_PENDING.store(1, Ordering::Release);
     DUAL_EFFECT_PROCESSOR_TYPE.store(0, Ordering::Release);
+    DUAL_EFFECT_ACTIVE_EFFECT.store(0, Ordering::Relaxed);
+    DUAL_EFFECT_ACTIVE_EFFECT_LEN.store(0, Ordering::Relaxed);
     let continuation = hook_continue();
     finish_effect_selection(unsafe { mixer_get_efx_type(0) });
     continuation

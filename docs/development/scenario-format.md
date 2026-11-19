@@ -144,7 +144,7 @@ Scenarios default to `backends = ["headless", "gui"]`. Typed device steps requir
 | `host-midi-round-trip` | — | Verify host MIDI input/output delivery through the configured host MIDI backend |
 | `direct-usb-midi-round-trip` | optional `cable` (0–15), `expect_ring_change` (defaults to true) | Check the encoder report and channel-1 mixer CC on a selected USB MIDI cable; set `expect_ring_change = false` to verify other cables are ignored |
 | `l6-din-usb-forwarding` | — | Verify L6 DIN-to-USB forwarding behavior |
-| `host-midi-sync` | — | Exercise MIDI clock synchronization through the host MIDI path |
+| `host-midi-sync` | optional `request` (default `true`) | Send the CC 127 state request on the client of a preceding round trip and collect the model's full Control Change reply. With `request = false`, only collect a reply to a request made another way, such as the **Send MIDI State** menu item |
 | `l6-midi-sync` | — | Exercise the L6 MIDI synchronization path |
 | `l6-midi-ring-pin-sweep` | `cc` | Sweep L6 MIDI CC values and compare ring-pin output |
 | `l6-midi-mute-indicators` | — | Check L6 MIDI mute-indicator responses |
@@ -156,10 +156,13 @@ Scenarios default to `backends = ["headless", "gui"]`. Typed device steps requir
 | `wasm-patch` | — | Exercise a generated WebAssembly patch package through the firmware update path |
 | `l6-recorder-playback` | `target` | L6 only; GDB verifies event `0x20`, handler acceptance, and the mode-0 callback on MAIN target 4; after five guest seconds it requires a changed SAI1 TX signature and sample data in the channel-14 TCD source. Requires a mode-0 state, valid `MASTER.WAV`, GDB support, and `L6_AUDIO_SAMPLE_TRACE=1` |
 | `l6max-recorder-playback` | `target` | L6max only, MAIN target 4; GDB verifies Play event `0x2c`, event dispatch, callback slot 2, and the recorder action, then requires nonzero changed SAI1 TX windows and sample data in channel-14's TCD source. Requires a prepared playable recording, GDB support, and `L6_AUDIO_SAMPLE_TRACE=1` |
-| `l6max-din-mixer-control` | `expect_din_ring_change` | After editor SysEx setup, verify USB mixer control, stock/patched DIN response, and DIN mute-echo suppression |
+| `l6max-din-mixer-control` | `expect_din_ring_change` | With Mixer Control via MIDI on, set by editor SysEx or a state, verify USB mixer control, stock/patched DIN response, and DIN mute-echo suppression. The USB reference uses the client of a preceding round trip when there is one, else USB cable 1 directly |
 | `usb-storage` | — | Enumerate storage, compare sector zero to the copied card, round-trip its last sector, then create/read/compare/delete a 1,537-byte FAT file through the USB disk |
 | `audio-callbacks` | — | First step only; arm revision-guarded breakpoints before boot and require every model callback |
 | `knob-dialog` | — | Patched L6max only; compare all ten parameter scenes with reviewed display images, then verify heap lifetime, busy-aware expiry, display cleanup, widget restoration and exact encoder reports |
+| `knob-dialog-popup` | — | L6max with Knob Dialog, on the recorder screen; turn the channel 1 level knob and require the dialog's state, display callback and value text for the new level, then let the window close |
+| `expect-menu` | `menu`, optional `path`, `items` | L6max; read a menu's children from guest memory and require exactly the titles in `items`. `menu` is `main`, `project`, `sound-pad`, `mixer` or `system`; `path` descends through child titles. Menu Loader adds its rows when the menu is first entered |
+| `effect-replacement-state` | optional `expected_effect_type`, `expected_processor_type`, `expected_effect`, `require_output` and other module fields | L6max effect replacement bundle; compare the selected stock slot and the loader's state with the expectations. `expected_effect` is the effect ID running in the selected slot; `require_output` requires that slot's replacement to have produced nonzero output |
 | `firmware-update` | — | L6 and L6max disposable-state update lifecycle, corrupt-checksum rejection, NOR segment install, L6max panel programming, protected-region preservation and clean restart; an `update_patches` package additionally checks model-specific post-install behavior |
 | `power-press` | `hold_ms`, `powered` | Check expected power result, model cutoff timing and stopped clock |
 | `restart` | — | Retire the session before reopening its isolated persistent state; reset readiness, trace counters and action baselines |

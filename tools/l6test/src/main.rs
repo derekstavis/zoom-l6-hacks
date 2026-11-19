@@ -200,11 +200,10 @@ impl Drop for RunJournal {
 fn execute() -> Result<i32, String> {
     let args = parse_args()?;
     let root = l6max_host::paths::repository_root();
-    let source_spec = root.join("tests/smoke");
-    let mut catalog = catalog::load(&source_spec)?;
+    let mut catalog = catalog::load(root)?;
     if args.command == "list" {
         if args.json {
-            let rows = catalog::matrix(&catalog, &source_spec)?;
+            let rows = catalog::matrix(&catalog)?;
             println!("{}", serde_json::to_string_pretty(&rows).unwrap());
             return Ok(0);
         }
@@ -286,7 +285,7 @@ fn execute() -> Result<i32, String> {
                 untracked.insert(name.to_owned(), hash(&path)?);
             }
         }
-        let manifest = json!({"schema":report::SCHEMA,"tooling_commit":git(root,&["rev-parse","HEAD"]),"working_tree":git(root,&["status","--short"]),"tracked_diff_sha256":format!("{:x}",Sha256::digest(git(root,&["diff","--binary","HEAD"]).as_bytes())),"untracked":untracked,"qemu":config.qemu,"qemu_sha256":config.qemu_sha256,"qemu_provenance":"explicitly pinned external binary; build source not attested","scenario_files":files(&source_spec)?,"generated_scenarios":files(&generated_dir)?,"board_sources":files(&root.join("emulator/qemu/hw/arm"))?,"qemu_patches":files(&root.join("emulator/qemu/patches"))?,"logging":{"format":env::var("L6_LOG_FORMAT").unwrap_or_else(|_|"json".into()),"filter":env::var("RUST_LOG").unwrap_or_else(|_|l6max_host::logging::DEFAULT_FILTER.into())},"driver_sha256":hash(&env::current_exe().map_err(|e|e.to_string())?)?,"suite":args.suite,"case":args.case,"backend":args.backend,"model":args.model,"shard":args.shard.map(|s|format!("{}/{}",s.index,s.count)),"rerun":args.rerun,"retries":args.retries});
+        let manifest = json!({"schema":report::SCHEMA,"tooling_commit":git(root,&["rev-parse","HEAD"]),"working_tree":git(root,&["status","--short"]),"tracked_diff_sha256":format!("{:x}",Sha256::digest(git(root,&["diff","--binary","HEAD"]).as_bytes())),"untracked":untracked,"qemu":config.qemu,"qemu_sha256":config.qemu_sha256,"qemu_provenance":"explicitly pinned external binary; build source not attested","scenario_files":catalog::spec_dirs(root)?.iter().map(|dir|Ok((dir.strip_prefix(root).unwrap().display().to_string(),files(dir)?))).collect::<Result<BTreeMap<_,_>,String>>()?,"generated_scenarios":files(&generated_dir)?,"board_sources":files(&root.join("emulator/qemu/hw/arm"))?,"qemu_patches":files(&root.join("emulator/qemu/patches"))?,"logging":{"format":env::var("L6_LOG_FORMAT").unwrap_or_else(|_|"json".into()),"filter":env::var("RUST_LOG").unwrap_or_else(|_|l6max_host::logging::DEFAULT_FILTER.into())},"driver_sha256":hash(&env::current_exe().map_err(|e|e.to_string())?)?,"suite":args.suite,"case":args.case,"backend":args.backend,"model":args.model,"shard":args.shard.map(|s|format!("{}/{}",s.index,s.count)),"rerun":args.rerun,"retries":args.retries});
         Ok((config, manifest))
     };
     let (config, manifest) = match preflight() {
@@ -472,13 +471,7 @@ fn execute() -> Result<i32, String> {
             .map(|path| Scenario::load(&catalog::scenario_file(path)))
             .transpose()
             .and_then(|scenario| {
-                case_fixture(
-                    &config,
-                    &source_spec,
-                    &job.model,
-                    &job.case.id,
-                    scenario.as_ref(),
-                )
+                case_fixture(&config, &job.model, &job.case.id, scenario.as_ref())
             });
         let result = match fixture {
             Ok(fixture) => report::with_retries(args.retries, |attempt| {

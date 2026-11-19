@@ -108,10 +108,11 @@ the sampled indicator levels and masks, analog positions and LCD framebuffer.
 There are three related TOML inputs:
 
 1. `config.toml` supplies the firmware packages; `--qemu` and `--app` choose an external QEMU or packaged application. See
-   [local configuration and catalog](../testing.md#local-configuration-and-catalog-toml).
-2. `tests/smoke/catalog.toml` registers each case, model/suite membership,
-   scenario or GUI package, prerequisites, and timeout.
-3. Each `tests/smoke/scenarios/*.toml` file describes an ordered scenario.
+   [local configuration and case files](../testing.md#local-configuration-and-case-files).
+2. Each case file under `tests/emulator/cases/` or a patch's
+   `tests/emulator/cases/` is a scenario with a `[case]` table giving its suites,
+   environment and timeout; see [case files](../testing.md#case-files).
+3. The scenario part describes an ordered sequence of steps.
    The complete list of header, per-step, and
    action blocks is in the [scenario format reference](../scenario-format.md).
    Its `state` header declares the starting device directly; see
@@ -126,7 +127,7 @@ TOML file. Scenario includes are confined to their scenario directory.
 The `l6max-volume-meter-sweep` case uses the Pad 4 assignment already saved
 on the SD card, presses pad 4, and records indicator PWM levels through a short
 sweep and decay. It does not enumerate USB or assign the pad during the test.
-Its card, [`l6max-meter-levels.toml`](../../../tests/smoke/cards/l6max-meter-levels.toml),
+Its card, [`l6max-meter-levels.toml`](../../../tests/emulator/fixtures/cards/l6max-meter-levels.toml),
 holds a stereo WAV with successive left-only and right-only level stages, assigned to
 Pad 4. The scenario uses no host audio backend, and its state spec sets the first-run
 settings and panel clock needed for a ready guest. It allows the audio engine to start
@@ -156,7 +157,7 @@ not establish physical meter calibration.
 
 The `l6-volume-meter-playback` case uses a similar stereo isolation WAV at
 `SOUND_PAD/PAD1/TONE220.WAV`, from
-[`l6-meter-levels.toml`](../../../tests/smoke/cards/l6-meter-levels.toml). The scenario checks the active
+[`l6-meter-levels.toml`](../../../tests/emulator/fixtures/cards/l6-meter-levels.toml). The scenario checks the active
 assignment and one-shot mode, sets the four analog output controls to maximum,
 plays the pad, and requires independent left and right meter responses without
 USB setup. The report contains the per-sample

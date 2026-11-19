@@ -20,7 +20,7 @@ defined in `.cargo/config.toml`; the longer form works the same.
 firmware. `run` builds selected binaries once, including QEMU unless `--no-build` is
 given, copies those executables into the run so their hashes identify what ran, starts
 each case with fresh state and card, and supervises every process group. Cases read
-their scenarios from `tests/smoke` in place; only generated scenarios are written,
+their scenarios from the repository in place; only generated scenarios are written,
 into the run's `generated/` directory. Run suites from a worktree that does not change
 during the run. A supplied output directory must not exist. Paths in the local file
 are relative to that file.
@@ -29,8 +29,8 @@ Each scenario declares what it runs from, so the local file only supplies firmwa
 
 | Scenario key | Purpose |
 | --- | --- |
-| `state` | Boot from [`tests/smoke/states`](../../tests/smoke/states)`/<model>-<state>.toml`, an [`l6nor` state spec](tools/l6nor.md#state-specs). Without it, the case starts from first boot. |
-| `card` | Build [`tests/smoke/cards`](../../tests/smoke/cards)`/<model>-<card>.toml` for each run. Without it, the case has no card. |
+| `state` | Boot from [`tests/emulator/fixtures/states`](../../tests/emulator/fixtures/states)`/<model>-<state>.toml`, an [`l6nor` state spec](tools/l6nor.md#state-specs). Without it, the case starts from first boot. |
+| `card` | Build [`tests/emulator/fixtures/cards`](../../tests/emulator/fixtures/cards)`/<model>-<card>.toml` for each run. Without it, the case has no card. |
 | `patches` | Apply named guarded patches to the model's package, using the same implementation as the browser patcher. |
 | `installed_patches` | Have the engine install named patches on a device seeded with the stock firmware, as `--patch` does. |
 | `installed_sd_patches` | Have the engine install the Patch loader and write the named patches' hosted modules to the case's card, as `--sd-patch` does. |
@@ -54,7 +54,7 @@ the same explicit firmware, card, state and audio backend. Inputs are never
 modified. The factory-protocol scenario creates its own disposable jig card and state
 under the case artifact directory, and their hashes are recorded in `inputs.json`.
 
-## Local configuration and catalog TOML
+## Local configuration and case files
 
 `config.toml` is private machine configuration, shared with the emulator; the example is
 [`config.example.toml`](../../config.example.toml). The driver reads only its `[firmware]`
@@ -72,7 +72,7 @@ Options choose what a run tests, without editing files:
 Card spec details:
 
 - A card spec is a TOML file declaring a card's contents, like the ones in
-  [`tests/smoke/cards`](../../tests/smoke/cards). It names `version = 1` and `model`,
+  [`tests/emulator/fixtures/cards`](../../tests/emulator/fixtures/cards). It names `version = 1` and `model`,
   with optional `directory` (a list of paths).
   `system_file` defaults to `true`; `false` leaves the file out (see
   [card layout](../emulator/usb.md#card-layout)). `[[sound_pad]]` blocks take `pad` (1–4), `file` (a path on the card),
@@ -101,30 +101,68 @@ Card spec details:
   level = 30
   ```
 
-`tests/smoke/catalog.toml` is the checked-in registration of runnable cases.
-Its top-level `version` is `1`; every `[[case]]` has:
+### Where tests live
 
-| Field | Required | Purpose |
+| Path | Holds |
+| --- | --- |
+| `tests/emulator/cases/<area>/` | Device behavior cases, by area: `boot`, `panel`, `audio`, `midi`, `usb`, `storage`, `app`, and `patching` for cases that combine patches or exercise patch infrastructure. |
+| `patches/<name>/tests/emulator/cases/` | A patch's own cases; the Patch loader's cases live in `patches/patch-loader/`. |
+| `tests/emulator/fragments/`, `patches/<name>/tests/emulator/fragments/` | Step fragments shared by several cases, next to the cases that include them. |
+| `tests/emulator/references/`, `patches/<name>/tests/emulator/references/` | Reviewed 128×64 display images, next to the cases that compare against them. |
+| `tests/emulator/fixtures/states/`, `tests/emulator/fixtures/cards/` | State and card specs, shared by every case. |
+
+One tree holds both models: a case's scenario names its models, so per-model
+folders would split cases that run on both.
+
+### Case files
+
+Every TOML file under a `cases/` directory is a case, and its file name is the
+case id. A case file is a scenario (see [the format](scenario-format.md)) with
+a `[case]` table saying how the driver runs it:
+
+```toml
+version = 1
+name = "audio-path"
+models = ["l6", "l6max"]
+state = "setup-complete"
+card = "empty"
+
+[case]
+suites = ["devices", "regression", "full"]
+volatile = true
+no_sd = true
+environment = { L6_AUDIO_TRACE = "1" }
+
+[[step]]
+action = "audio-callbacks"
+```
+
+A file with only a `[case]` table either runs another case's scenario
+differently (`scenario`, such as `ui-input-l6-gui` running `ui-input-l6` on the
+GUI backend) or, naming no scenario, drives the packaged application. Both
+need `models`; a case with its own scenario takes them from the scenario.
+
+| `[case]` field | Default | Purpose |
 | --- | --- | --- |
-| `id` | yes | Stable case identifier. |
-| `suites` | yes | Suite names that include this case; an empty array means select it only with `--case`. |
-| `models` | yes | Supported model list (`l6`, `l6max`). |
-| `scenario` | one of `scenario`, `package`, or configured legacy executable | Path under `tests/smoke` to a scenario TOML file. |
-| `package` | optional | Named GUI package operation for built-in app/package cases. |
-| `arguments`, `environment` | optional | Arguments and environment for a package or legacy executable. |
-| `needs_configuration` | optional, default `false` | Without a scenario, run the case from the packaged application, and keep it BLOCKED without `--app`. |
-| `gui` | optional, default `false` | Mark a GUI-only catalog case. |
-| `volatile` | optional, default `false` | Discard persistent-state templates for this case and run without persistent state, unless the scenario declares a `state`, which is rebuilt for the case. |
-| `no_sd` | optional, default `false` | Do not attach the scenario's SD card. |
-| `expected_failure` | optional | Array of tables with `model`, `step`, `contains` and `reason`. Match a known failure only at the exact scenario step and when its error contains the specified text. A matching failure is XFAIL; an unexpected pass is XPASS. |
-| `blocked` | optional | Human-readable reason to report this case as BLOCKED. |
-| `wall_timeout_s` | optional, default `900` | Per-case host wall limit. |
+| `suites` | `[]` | Suite names that include this case; an empty array means select it only with `--case`. |
+| `scenario` | the file itself | Another case's scenario file, from the repository root, for a file without its own. |
+| `models` | the scenario's | Models of a case without its own scenario (`l6`, `l6max`). |
+| `environment` | none | Environment for the case process. `{logs}`, `{package}`, `{l6_package}` and `{app_qemu_sha256}` expand. |
+| `gui` | `false` | Run on the GUI backend only. |
+| `volatile` | `false` | Discard persistent-state templates for this case and run without persistent state, unless the scenario declares a `state`, which is rebuilt for the case. |
+| `no_sd` | `false` | Do not attach the scenario's SD card. |
+| `expected_failure` | none | Array of tables with `model`, `step`, `contains` and `reason`. Match a known failure only at the exact scenario step and when its error contains the specified text. A matching failure is XFAIL; an unexpected pass is XPASS. |
+| `blocked` | none | Human-readable reason to report this case as BLOCKED. |
+| `wall_timeout_s` | `900` | Per-case host wall limit. |
 
-The local configuration, catalog entries, and scenario headers reject unknown
+A case without a scenario runs the packaged application and is BLOCKED
+without `--app`. Case ids must be unique across every `cases/` directory.
+
+The local configuration, `[case]` tables, and scenario headers reject unknown
 fields. Scenario action blocks are tagged by the required `action` value and
 their action-specific fields are strict; use the documented common step fields
-and action schema. A case's `scenario` path, and every
-`include` and reference image path inside scenarios, is written from the repository root.
+and action schema. Every `scenario`, `include` and reference image path is written from the
+repository root.
 `l6test`'s focused [command reference](tools/l6test.md) summarizes selection
 flags and links to the full scenario schema.
 
@@ -294,8 +332,7 @@ does not change what cases boot.
 
 See [the version-1 format](scenario-format.md). New behavior belongs in a shared
 scenario or a typed operation in `smoke-core`, not another one-off binary.
-`tests/smoke/catalog.toml` registers cases, model scope, suites, legacy prerequisites
-and time limits. WASM patch parity runs as a typed host-side driver operation.
+Each case file's `[case]` table gives its suites, environment and time limit. WASM patch parity runs as a typed host-side driver operation.
 The focused panel cases compose reusable fragments rather
 than copying setup or asserting results separately.
 

@@ -1,0 +1,17 @@
+version = 1
+name = "audio-path"
+models = ["l6", "l6max"]
+backends = ["headless"]
+state = "setup-complete"
+card = "empty"
+
+[case]
+suites = ["devices", "regression", "full"]
+volatile = true
+no_sd = true
+environment = { L6_AUDIO_TRACE = "1" }
+
+[[step]]
+action = "audio-callbacks"
+guest_timeout_ms = 60000
+wall_timeout_s = 300

@@ -1,0 +1,23 @@
+version = 1
+name = "l6-input-sweep"
+models = ["l6"]
+state = "setup-complete"
+card = "empty"
+backends = ["headless"]
+
+[case]
+suites = ["regression", "full"]
+volatile = true
+no_sd = true
+wall_timeout_s = 1800
+
+[[step]]
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-input-sweep"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800

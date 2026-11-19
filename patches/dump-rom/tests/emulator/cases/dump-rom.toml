@@ -1,0 +1,165 @@
+version = 1
+name = "dump-rom"
+models = ["l6max"]
+backends = ["headless"]
+state = "setup-complete"
+card = "stale-dump"
+# Static patches without an SD module still take the native builder path,
+# which the browser patcher's templates cannot (menu-loader is not offered there).
+patches = ["dump-rom"]
+sd_patches = []
+
+[case]
+suites = ["full"]
+wall_timeout_s = 1800
+
+[[step]]
+action = "wait"
+until = "mixer-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "delay"
+guest_ms = 8000
+guest_timeout_ms = 20000
+wall_timeout_s = 300
+
+# Menu > System (main menu index 7).
+
+[[step]]
+action = "press"
+control = "recorder-function-1"
+
+[[step]]
+action = "delay"
+guest_ms = 1500
+
+[[step]]
+action = "press"
+control = "recorder-function-3"
+
+[[step]]
+action = "press"
+control = "recorder-function-3"
+
+[[step]]
+action = "press"
+control = "recorder-function-3"
+
+[[step]]
+action = "press"
+control = "recorder-function-3"
+
+[[step]]
+action = "press"
+control = "recorder-function-3"
+
+[[step]]
+action = "press"
+control = "recorder-function-3"
+
+[[step]]
+action = "press"
+control = "recorder-function-3"
+
+[[step]]
+action = "delay"
+guest_ms = 500
+
+[[step]]
+action = "press"
+control = "recorder-function-4"
+
+[[step]]
+action = "delay"
+guest_ms = 1000
+
+# System index 8 is Dump ROM, after the seven stock items and Patches.
+
+[[step]]
+action = "press"
+control = "recorder-function-3"
+
+[[step]]
+action = "press"
+control = "recorder-function-3"
+
+[[step]]
+action = "press"
+control = "recorder-function-3"
+
+[[step]]
+action = "press"
+control = "recorder-function-3"
+
+[[step]]
+action = "press"
+control = "recorder-function-3"
+
+[[step]]
+action = "press"
+control = "recorder-function-3"
+
+[[step]]
+action = "press"
+control = "recorder-function-3"
+
+[[step]]
+action = "press"
+control = "recorder-function-3"
+
+[[step]]
+action = "delay"
+guest_ms = 500
+
+[[step]]
+action = "checkpoint"
+name = "system-dump-rom"
+
+[[step]]
+action = "press"
+control = "recorder-function-4"
+
+# The manifest is written last.
+
+[[step]]
+action = "expect-card-entry"
+path = "L6MAX_DUMP.TXT"
+wall_timeout_s = 900
+
+[[step]]
+action = "expect-card-entry"
+path = "L6MAX_NOR.BIN"
+matches_state = "main-nor.bin"
+wall_timeout_s = 60
+
+[[step]]
+action = "expect-card-entry"
+path = "L6MAX_BOOTROM.BIN"
+size = 131072
+wall_timeout_s = 60
+
+[[step]]
+action = "expect-card-entry"
+path = "L6MAX_ITCM.BIN"
+size = 524288
+wall_timeout_s = 60
+
+[[step]]
+action = "expect-card-entry"
+path = "L6MAX_DTCM.BIN"
+size = 524288
+wall_timeout_s = 60
+
+[[step]]
+action = "expect-card-entry"
+path = "L6MAX_OCRAM.BIN"
+size = 1048576
+wall_timeout_s = 60
+
+[[step]]
+action = "expect-card-entry"
+path = "L6MAX_SDRAM.BIN"
+size = 67108864
+wall_timeout_s = 120

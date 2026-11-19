@@ -1,5 +1,11 @@
-//! The case catalog: `tests/smoke/catalog.toml` plus generated cases, and the
-//! case matrix that selection expands.
+//! The case catalog: every case file under `tests/emulator/cases` and each
+//! patch's `tests/emulator/cases`, plus generated cases, and the case matrix
+//! that selection expands.
+//!
+//! A case file is a scenario with a `[case]` table saying how the driver runs
+//! it. A file with only a `[case]` table either names another case's scenario
+//! (`scenario`, to run it differently) or, with neither, drives the packaged
+//! application. A case's id is its file name.
 use crate::patch_matrix;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -11,6 +17,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// The shared emulator test spec, from the repository root.
+pub const SPEC: &str = "tests/emulator";
+/// A patch's emulator tests, from its directory.
+pub const PATCH_SPEC: &str = "tests/emulator";
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExpectedFailure {
@@ -20,33 +31,47 @@ pub struct ExpectedFailure {
     pub reason: String,
 }
 
+/// A case file's `[case]` table.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct File {
-    version: u32,
-    case: Vec<Case>,
+struct Header {
+    /// Another case's scenario, for a file without one of its own.
+    scenario: Option<PathBuf>,
+    /// The models of a case without a scenario of its own; otherwise the
+    /// scenario's `models` decide.
+    models: Option<Vec<String>>,
+    #[serde(default)]
+    suites: Vec<String>,
+    #[serde(default)]
+    expected_failure: Vec<ExpectedFailure>,
+    #[serde(default)]
+    environment: BTreeMap<String, String>,
+    #[serde(default)]
+    gui: bool,
+    #[serde(default)]
+    volatile: bool,
+    #[serde(default)]
+    no_sd: bool,
+    blocked: Option<String>,
+    #[serde(default = "case_timeout")]
+    wall_timeout_s: u64,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Serialize)]
 pub struct Case {
     /// Known failures at an exact step and error. A pass becomes XPASS.
-    #[serde(default)]
     pub expected_failure: Vec<ExpectedFailure>,
     pub id: String,
     pub suites: Vec<String>,
     pub models: Vec<String>,
+    /// The scenario file, from the repository root (absolute for generated
+    /// cases). None for a case that drives the packaged application.
     pub scenario: Option<PathBuf>,
-    #[serde(default)]
     pub environment: BTreeMap<String, String>,
-    #[serde(default)]
     pub gui: bool,
-    #[serde(default)]
     pub volatile: bool,
-    #[serde(default)]
     pub no_sd: bool,
     pub blocked: Option<String>,
-    #[serde(default = "case_timeout")]
     pub wall_timeout_s: u64,
 }
 
@@ -57,44 +82,143 @@ fn case_timeout() -> u64 {
 pub struct Catalog {
     pub cases: Vec<Case>,
     pub generated: Vec<patch_matrix::GeneratedCase>,
-    /// Every case's scenario, by case id. Generated scenarios are parsed from
-    /// their text as if they sat in the spec's `scenarios/` directory.
+    /// Every case's scenario, by case id.
     pub scenarios: BTreeMap<String, Scenario>,
 }
 
-/// Load the catalog under `spec` (normally `tests/smoke`), append the
-/// generated cases, and parse and validate every scenario. Generated scenarios
-/// exist only as text until [`write_generated`] writes them into a run.
-pub fn load(spec: &Path) -> Result<Catalog, String> {
-    let file: File =
-        toml::from_str(&fs::read_to_string(spec.join("catalog.toml")).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
-    if file.version != 1 {
-        return Err("unsupported catalog schema".into());
+/// Every directory holding emulator test files: the shared spec, then each
+/// patch's tests in name order.
+pub fn spec_dirs(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut dirs = vec![root.join(SPEC)];
+    let mut patches = fs::read_dir(root.join("patches"))
+        .map_err(|e| e.to_string())?
+        .map(|entry| entry.map(|e| e.path().join(PATCH_SPEC)))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    patches.sort();
+    dirs.extend(patches.into_iter().filter(|dir| dir.is_dir()));
+    Ok(dirs)
+}
+
+/// A state spec for `model`, by the name a scenario gives it.
+pub fn state_spec(model: &str, name: &str) -> PathBuf {
+    l6max_host::paths::repository_root().join(format!("{SPEC}/fixtures/states/{model}-{name}.toml"))
+}
+
+/// A card spec for `model`, by the name a scenario gives it.
+pub fn card_spec(model: &str, name: &str) -> PathBuf {
+    l6max_host::paths::repository_root().join(format!("{SPEC}/fixtures/cards/{model}-{name}.toml"))
+}
+
+fn toml_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    for entry in fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))? {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if path.is_dir() {
+            toml_files(&path, out)?;
+        } else if path.extension().is_some_and(|e| e == "toml") {
+            out.push(path);
+        }
     }
-    let mut cases = file.case;
+    Ok(())
+}
+
+/// Read one case file, given from the repository root.
+fn load_case(root: &Path, file: &Path) -> Result<(Case, Option<Scenario>), String> {
+    let id = file
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .ok_or("case file has no name")?
+        .to_owned();
+    let mut table: toml::Table =
+        toml::from_str(&fs::read_to_string(root.join(file)).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    let header: Header = table
+        .remove("case")
+        .ok_or("a case file needs a [case] table")?
+        .try_into()
+        .map_err(|e: toml::de::Error| format!("[case]: {e}"))?;
+    let (scenario_path, models) = match (table.is_empty(), header.scenario, header.models) {
+        (false, None, None) => (Some(file.to_owned()), None),
+        (false, _, _) => {
+            return Err(
+                "a case with its own scenario takes its models from it and names no other scenario"
+                    .into(),
+            );
+        }
+        (true, scenario, Some(models)) => (scenario, Some(models)),
+        (true, _, None) => return Err("a case without its own scenario needs models".into()),
+    };
+    let scenario = scenario_path
+        .as_ref()
+        .map(|path| Scenario::load(&scenario_file(path)))
+        .transpose()?;
+    let models = match (models, &scenario) {
+        (Some(models), _) => models,
+        (None, Some(scenario)) => scenario.models.clone(),
+        (None, None) => unreachable!(),
+    };
+    let case = Case {
+        expected_failure: header.expected_failure,
+        id,
+        suites: header.suites,
+        models,
+        scenario: scenario_path,
+        environment: header.environment,
+        gui: header.gui,
+        volatile: header.volatile,
+        no_sd: header.no_sd,
+        blocked: header.blocked,
+        wall_timeout_s: header.wall_timeout_s,
+    };
+    Ok((case, scenario))
+}
+
+/// Load every case under `root` (the repository), append the generated
+/// cases, and parse and validate every scenario. Generated scenarios exist
+/// only as text until [`write_generated`] writes them into a run.
+pub fn load(root: &Path) -> Result<Catalog, String> {
+    let mut files = Vec::new();
+    for dir in spec_dirs(root)? {
+        let cases = dir.join("cases");
+        if cases.is_dir() {
+            let mut found = Vec::new();
+            toml_files(&cases, &mut found)?;
+            found.sort();
+            files.extend(found);
+        }
+    }
+    let mut cases: Vec<Case> = Vec::new();
+    let mut origins = BTreeMap::new();
     let mut scenarios = BTreeMap::new();
-    for case in &cases {
-        if let Some(path) = &case.scenario {
-            let scenario = Scenario::load(&scenario_file(path))
-                .map_err(|error| format!("{}: {error}", case.id))?;
+    for path in files {
+        let file = path.strip_prefix(root).unwrap().to_owned();
+        let (case, scenario) =
+            load_case(root, &file).map_err(|error| format!("{}: {error}", file.display()))?;
+        if let Some(other) = origins.insert(case.id.clone(), file.clone()) {
+            return Err(format!(
+                "case id {} is defined by both {} and {}",
+                case.id,
+                other.display(),
+                file.display()
+            ));
+        }
+        if let Some(scenario) = scenario {
             scenarios.insert(case.id.clone(), scenario);
         }
+        cases.push(case);
     }
     let generated = patch_matrix::generate()?;
     for case in &generated {
-        if cases.iter().any(|existing| existing.id == case.id) {
-            return Err(format!(
-                "generated case {} duplicates a catalog case",
-                case.id
-            ));
+        if origins.contains_key(&case.id) {
+            return Err(format!("generated case {} duplicates a case file", case.id));
         }
         cases.push(Case {
             expected_failure: Vec::new(),
             id: case.id.clone(),
             suites: vec![patch_matrix::SUITE.into()],
             models: vec![case.model.into()],
-            scenario: Some(PathBuf::from(format!("scenarios/{}.toml", case.id))),
+            // Replaced by the written file in `write_generated`.
+            scenario: Some(PathBuf::from(format!("generated/{}.toml", case.id))),
             environment: BTreeMap::new(),
             gui: false,
             volatile: false,
@@ -102,8 +226,6 @@ pub fn load(spec: &Path) -> Result<Catalog, String> {
             blocked: None,
             wall_timeout_s: 1200,
         });
-    }
-    for case in &generated {
         let scenario =
             Scenario::from_text(&case.scenario).map_err(|error| format!("{}: {error}", case.id))?;
         scenarios.insert(case.id.clone(), scenario);
@@ -174,24 +296,19 @@ pub struct Row {
 }
 
 /// Digest of what `case` runs for `model`; see [`Row::definition`].
-fn definition(
-    case: &Case,
-    scenario: Option<&Scenario>,
-    model: &str,
-    spec: &Path,
-) -> Result<String, String> {
+fn definition(case: &Case, scenario: Option<&Scenario>, model: &str) -> Result<String, String> {
     let (scenario, state, card) = match scenario {
         Some(scenario) => (
             Some(resolved_scenario(scenario, model)?),
             scenario
                 .state
                 .as_ref()
-                .map(|name| spec_value(&spec.join(format!("states/{model}-{name}.toml"))))
+                .map(|name| spec_value(&state_spec(model, name)))
                 .transpose()?,
             scenario
                 .card
                 .as_ref()
-                .map(|name| spec_value(&spec.join(format!("cards/{model}-{name}.toml"))))
+                .map(|name| spec_value(&card_spec(model, name)))
                 .transpose()?,
         ),
         None => (None, None, None),
@@ -253,13 +370,13 @@ fn spec_value(path: &Path) -> Result<Value, String> {
     serde_json::to_value(value).map_err(|e| e.to_string())
 }
 
-/// Every (case, model, backend) the catalog under `spec` can run, sorted.
-pub fn matrix(catalog: &Catalog, spec: &Path) -> Result<Vec<Row>, String> {
+/// Every (case, model, backend) the catalog can run, sorted.
+pub fn matrix(catalog: &Catalog) -> Result<Vec<Row>, String> {
     let mut rows = Vec::new();
     for case in &catalog.cases {
         let scenario = catalog.scenarios.get(&case.id);
         for model in &case.models {
-            let definition = definition(case, scenario, model, spec)
+            let definition = definition(case, scenario, model)
                 .map_err(|error| format!("{}: {error}", case.id))?;
             for backend in backends(case, scenario, &["headless", "gui"]) {
                 rows.push(Row {
@@ -287,9 +404,8 @@ mod tests {
     #[test]
     fn case_matrix_matches_the_reviewed_snapshot() {
         let root = l6max_host::paths::repository_root();
-        let spec = root.join("tests/smoke");
-        let catalog = load(&spec).unwrap();
-        let rows = matrix(&catalog, &spec).unwrap();
+        let catalog = load(&root).unwrap();
+        let rows = matrix(&catalog).unwrap();
         let actual = serde_json::to_string_pretty(&rows).unwrap() + "\n";
         let path = root.join("tools/l6test/snapshots/cases.json");
         if std::env::var_os("L6TEST_UPDATE_SNAPSHOT").is_some() {

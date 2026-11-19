@@ -39,8 +39,8 @@ analog audio behavior, and physical jack routing remain unverified.
 
 ## Test setup and execution
 
-The [scenario catalog](../../tests/smoke/catalog.toml) specifies each case's
-models, backends, and prerequisites. Each scenario declares its state, card, and patches, and the local
+Each [case file](testing.md#case-files) under `tests/emulator/cases/` or a
+patch's `tests/emulator/cases/` specifies its models, backends, and suites. Each scenario declares its state, card, and patches, and the local
 configuration supplies the firmware packages. A state spec creates disposable settings
 and panel state without running setup interactions, and a card spec builds the case's
 SD card with its pad assignments. Scenario steps marked `setup_input` are skipped when

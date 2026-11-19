@@ -1,0 +1,143 @@
+version = 1
+name = "sd-effect-replacement-map"
+models = ["l6max"]
+backends = ["headless"]
+state = "effects-room"
+card = "empty"
+sd_patches = []
+sd_bundle_mode = "composed-module"
+effect_replacements = { room = "velvet" }
+gdb = true
+
+[case]
+suites = ["sd-matrix", "effect-replacement-matrix"]
+wall_timeout_s = 600
+
+[[audio_input]]
+channel = 1
+loop-tone = { hz = 440.0, seconds = 1.0, amplitude = 0.1 }
+
+[[step]]
+action = "include"
+path = "patches/efx-loader/tests/emulator/fragments/effect-replacement-load.toml"
+
+[[step]]
+action = "effect-replacement-state"
+expected_effect_type = 1
+expected_processor_type = 1
+
+[[step]]
+action = "checkpoint"
+name = "velvet-stock-rings-before-editor"
+
+[[step]]
+action = "press"
+control = "tap-button"
+
+[[step]]
+action = "delay"
+guest_ms = 100
+
+[[step]]
+action = "effect-replacement-state"
+expected_effect_type = 1
+expected_processor_type = 1
+expected_edit_mode = true
+
+[[step]]
+action = "effect-parameter-edit"
+encoder = 2
+steps = 1
+
+[[step]]
+action = "delay"
+guest_ms = 300
+
+[[step]]
+action = "expect-display-image"
+image = "patches/efx-loader/tests/emulator/references/effect-velvet-parameter.png"
+
+[[step]]
+action = "effect-replacement-state"
+expected_effect_type = 1
+expected_processor_type = 1
+expected_edit_mode = true
+minimum_parameter_edits = 1
+expected_dialog_active = true
+
+[[step]]
+action = "effect-replacement-state"
+expected_effect_type = 1
+expected_processor_type = 1
+expected_edit_mode = true
+
+[[step]]
+action = "press"
+control = "efx-select"
+
+[[step]]
+action = "delay"
+guest_ms = 500
+
+[[step]]
+action = "effect-replacement-state"
+expected_effect_type = 2
+expected_processor_type = 0
+expected_edit_mode = false
+
+[[step]]
+action = "expect-button-led"
+control = "tap-button"
+lit = false
+
+[[step]]
+action = "expect-mode"
+mode = "efx"
+
+[[step]]
+action = "expect-ring"
+channel = 1
+same_as_checkpoint = "velvet-stock-rings-before-editor"
+settle_ms = 100
+
+[[step]]
+action = "expect-ring"
+channel = 2
+same_as_checkpoint = "velvet-stock-rings-before-editor"
+settle_ms = 100
+
+[[step]]
+action = "expect-ring"
+channel = 3
+same_as_checkpoint = "velvet-stock-rings-before-editor"
+settle_ms = 100
+
+[[step]]
+action = "expect-ring"
+channel = 4
+same_as_checkpoint = "velvet-stock-rings-before-editor"
+settle_ms = 100
+
+[[step]]
+action = "expect-ring"
+channel = 5
+same_as_checkpoint = "velvet-stock-rings-before-editor"
+settle_ms = 100
+
+[[step]]
+action = "expect-ring"
+channel = 6
+same_as_checkpoint = "velvet-stock-rings-before-editor"
+settle_ms = 100
+
+[[step]]
+action = "expect-ring"
+channel = 7
+same_as_checkpoint = "velvet-stock-rings-before-editor"
+settle_ms = 100
+
+[[step]]
+action = "expect-ring"
+channel = 8
+same_as_checkpoint = "velvet-stock-rings-before-editor"
+settle_ms = 100

@@ -1,0 +1,18 @@
+version = 1
+name = "button-reports"
+models = ["l6max"]
+state = "setup-complete"
+card = "empty"
+
+[case]
+suites = []
+wall_timeout_s = 1800
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/prepared-level.toml"
+
+[[step]]
+models = ["l6max"]
+action = "include"
+path = "tests/emulator/fragments/button-reports.toml"

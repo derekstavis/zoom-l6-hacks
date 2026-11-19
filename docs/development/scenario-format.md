@@ -29,7 +29,7 @@ guest_timeout_ms = 3000
 
 The example abbreviates prepared setup (SD navigation, mixer restoration and
 LEVEL selection); see the checked-in
-`tests/smoke/scenarios/mute.toml` for the prepared sequence.
+`tests/emulator/cases/panel/mute.toml` for the prepared sequence.
 
 ## Scenario header and common step fields
 
@@ -41,8 +41,8 @@ tables. Unknown header fields fail parsing.
 | `version` | yes | Schema version; currently `1`. |
 | `name` | yes | Nonempty scenario name used in reports. |
 | `models` | yes | One or both of `"l6"` and `"l6max"`. |
-| `state` | no | Boot from `tests/smoke/states/<model>-<state>.toml`; first boot without it. |
-| `card` | no | Card to build for each run, from `tests/smoke/cards/<model>-<card>.toml`; no card without it. |
+| `state` | no | Boot from `tests/emulator/fixtures/states/<model>-<state>.toml`; first boot without it. |
+| `card` | no | Card to build for each run, from `tests/emulator/fixtures/cards/<model>-<card>.toml`; no card without it. |
 | `patches` | no | Firmware patches applied to the model's package. |
 | `installed_patches` | no | Patches the engine installs on a device seeded with the model's stock package, as `--patch` does. |
 | `installed_sd_patches` | no | Patches the engine delivers on the case's card, as `--sd-patch` does: it installs the Patch loader and writes the hosted modules to `PATCHES/`. Requires `card`; cannot combine with `sd_patches`. |
@@ -69,9 +69,10 @@ Each action table adds its action-specific fields below. For composed scenarios,
 
 Every path a scenario or fragment names, an `include` or an `expect-display-image`
 reference, is written from the repository root, whichever file it appears in:
-`path = "tests/smoke/scenarios/fragments/prepared-home.toml"`. Absolute paths
+`path = "tests/emulator/fragments/prepared-home.toml"`. Absolute paths
 and `..` are rejected, so a generated scenario composes the same way from its
-text alone.
+text alone. A fragment's steps scoped only to models the scenario does not run
+are left out, so a single-model scenario can include a shared fragment.
 
 Mark only input whose result a state spec reproduces with `setup_input`. Input
 that is the behavior under test, or that sets runtime-only state (for example
@@ -125,7 +126,8 @@ motion is additionally covered by production gesture unit tests.
 
 For UI behavior, use `expect-display-image` to compare the rendered 128×64
 L6max pixels with a reviewed PNG, named from the repository root (normally
-under `tests/smoke/images/`). Comparison is exact after converting the reference to
+under `tests/emulator/references/`, or a patch's
+`tests/emulator/references/` for its own UI). Comparison is exact after converting the reference to
 black-and-white pixels. Review the screenshot before updating a reference;
 memory and firmware-state assertions may supplement image comparisons but do
 not establish that the UI rendered correctly.

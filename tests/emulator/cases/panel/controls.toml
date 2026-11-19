@@ -1,0 +1,16 @@
+version = 1
+name = "controls"
+models = ["l6", "l6max"]
+state = "setup-complete"
+card = "empty"
+
+[case]
+suites = ["quick"]
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/prepared-level.toml"
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/controls.toml"

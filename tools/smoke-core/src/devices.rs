@@ -13,7 +13,7 @@ use std::{
 
 /// Reviewed knob-dialog window images, from the repository root. The
 /// knob-dialog window check compares the display with these by scene name.
-pub const KNOB_DIALOG_REFERENCES: &str = "tests/smoke/images/knob-dialog";
+pub const KNOB_DIALOG_REFERENCES: &str = "patches/knob-dialog/tests/emulator/references";
 
 /// Return a short, per-case GDB socket path. Darwin's QEMU GDB stub rejects
 /// UNIX socket paths longer than 104 bytes, while artifact directories can be

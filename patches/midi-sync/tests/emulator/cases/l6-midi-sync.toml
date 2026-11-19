@@ -1,0 +1,25 @@
+version = 1
+name = "l6-midi-sync"
+models = ["l6"]
+backends = ["headless"]
+state = "setup-complete"
+patches = ["midi-sync"]
+main_sha256 = "2830ebe76f373c5af60c3184261c4b284ebcd05005b530e6033cedaf7e53816a"
+main_sha256_any = ["50ad7e749ffd1c4a05407ba6d49b9125744b05c2b51947e5b76956348f13b014", "4196b0949aba32daea479c45311a52645a1f0f04e77896a973d5d5927d54d46d", "64709d50644cc08c38dd18f3e23ae7962339b55d7ac27a2b688aab2bb7bee9ad", "e92d5bc150ced5d2a731a219b468723f7653d3b8770342071bd74a68d5980a57", "57b716759a62be814cc0df4c8b38df1a08985545584f4bfad2420d34895addee"]
+
+[case]
+suites = ["full"]
+volatile = true
+no_sd = true
+wall_timeout_s = 180
+
+[[step]]
+action = "delay"
+guest_ms = 5000
+guest_timeout_ms = 15000
+wall_timeout_s = 180
+
+[[step]]
+action = "l6-midi-sync"
+guest_timeout_ms = 15000
+wall_timeout_s = 180

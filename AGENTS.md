@@ -34,7 +34,8 @@ L6max has eight rings. Do not substitute one model's persistent state for the ot
 For UI behavior, compare rendered pixels with reviewed reference images using
 `expect-display-image`; memory and state assertions can supplement these checks,
 but do not prove that the UI rendered correctly. Store the 128×64 PNG references
-under `tests/smoke/images/` and update them only after reviewing the rendered UI.
+under `tests/emulator/references/` (or a patch's `tests/emulator/references/`)
+and update them only after reviewing the rendered UI.
 
 Use the reference manual for peripheral behavior. Preserve compatibility
 exceptions with explicit model scope and evidence. Scope firmware-specific

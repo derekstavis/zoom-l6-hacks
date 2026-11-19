@@ -1845,12 +1845,33 @@ mod tests {
     }
     #[test]
     fn every_checked_in_scenario_loads_after_composition() {
-        let root = l6max_host::paths::repository_root().join("tests/smoke/scenarios");
-        for path in fs::read_dir(root)
-            .unwrap()
-            .map(|e| e.unwrap().path())
-            .filter(|p| p.extension().is_some_and(|e| e == "toml"))
-        {
+        // Case files live under `tests/emulator/cases` and each patch's
+        // `tests/emulator/cases`; those with only a `[case]` table have no
+        // scenario of their own.
+        fn case_files(dir: &Path, out: &mut Vec<PathBuf>) {
+            for path in fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()) {
+                if path.is_dir() {
+                    case_files(&path, out);
+                } else if path.extension().is_some_and(|e| e == "toml") {
+                    out.push(path);
+                }
+            }
+        }
+        let root = l6max_host::paths::repository_root();
+        let mut paths = Vec::new();
+        case_files(&root.join("tests/emulator/cases"), &mut paths);
+        for patch in fs::read_dir(root.join("patches")).unwrap() {
+            let cases = patch.unwrap().path().join("tests/emulator/cases");
+            if cases.is_dir() {
+                case_files(&cases, &mut paths);
+            }
+        }
+        assert!(paths.len() > 100);
+        for path in paths {
+            let table: toml::Table = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            if table.keys().all(|key| key == "case") {
+                continue;
+            }
             let scenario =
                 Scenario::load(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
             assert!(

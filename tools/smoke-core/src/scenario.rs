@@ -20,10 +20,14 @@ pub struct Scenario {
     pub version: u32,
     pub name: String,
     pub models: Vec<String>,
-    /// Boot from `states/<model>-<state>.toml` beside the catalog.
+    /// Boot from the state spec `tests/emulator/fixtures/states/<model>-<state>.toml`.
     pub state: Option<String>,
-    /// Build the case's card from `cards/<model>-<card>.toml` beside the catalog.
+    /// Build the case's card from `tests/emulator/fixtures/cards/<model>-<card>.toml`.
     pub card: Option<String>,
+    /// How the test driver runs this scenario as a case; the scenario itself
+    /// ignores it.
+    #[serde(default, skip_serializing)]
+    pub case: Option<toml::Table>,
     /// Firmware patches applied to the configured package.
     #[serde(default)]
     pub patches: Vec<String>,
@@ -1296,8 +1300,10 @@ impl Scenario {
     fn compose(text: &str, path: Option<PathBuf>) -> Result<Self, String> {
         let mut value: Self = toml::from_str(text).map_err(|e| e.to_string())?;
         value.sources.extend(path.clone());
+        let scope = value.models.clone();
         value.step = expand_steps(
             value.step,
+            &scope,
             &mut path.into_iter().collect(),
             &mut value.sources,
         )?;
@@ -1358,8 +1364,11 @@ pub const STATE_SPEC_ENV: &str = "SMOKE_STATE_SPEC";
 struct Fragment {
     step: Vec<Step>,
 }
+/// Expand includes. A fragment is shared, so its steps scoped only to models
+/// the scenario does not run (`scope`) are left out.
 fn expand_steps(
     steps: Vec<Step>,
+    scope: &[String],
     stack: &mut Vec<PathBuf>,
     sources: &mut Vec<PathBuf>,
 ) -> Result<Vec<Step>, String> {
@@ -1382,7 +1391,7 @@ fn expand_steps(
             if !sources.contains(&path) {
                 sources.push(path.clone());
             }
-            let mut nested = expand_steps(fragment.step, stack, sources)?;
+            let mut nested = expand_steps(fragment.step, scope, stack, sources)?;
             stack.pop();
             for child in &mut nested {
                 child.setup_input |= step.setup_input;
@@ -1397,6 +1406,9 @@ fn expand_steps(
                     }
                 }
             }
+            nested.retain(|child| {
+                child.models.is_empty() || child.models.iter().any(|m| scope.contains(m))
+            });
             expanded.extend(nested);
         } else {
             expanded.push(step);

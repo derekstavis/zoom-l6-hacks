@@ -88,6 +88,7 @@ def check_flexram_boundaries(qemu, image):
             command(f"writel {address:#x} 0xffffffff")
         for address in (0x400fc070, 0x400fc078):
             command(f"writel {address:#x} 0")
+        command("writel 0x400fc06c 0x00007000")
         # Exercise handoff cleanup from a dirty CPU, rather than merely
         # comparing QEMU's reset defaults on an untouched guest.
         for address, value in ((0xe000e100, 1), (0xe000e200, 1),
@@ -100,6 +101,7 @@ def check_flexram_boundaries(qemu, image):
             assert int(command(f"readl {address:#x}").split()[1], 16) == expected
         assert int(command("readl 0x400fc070").split()[1], 16) == 0x0c000030
         assert int(command("readl 0x400fc078").split()[1], 16) == 0xc
+        assert int(command("readl 0x400fc06c").split()[1], 16) == 0xcc0c4000
         for address in (0xe000e100, 0xe000e200, 0xe000e010,
                         0xe000ed94, 0xe000ed24):
             assert int(command(f"readl {address:#x}").split()[1], 16) == 0

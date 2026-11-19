@@ -4362,6 +4362,13 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
         g_hash_table_insert(s->registers, key,
             GUINT_TO_POINTER(l6max_boot_clock_value(offsets[i], old)));
     }
+    /* Clock-tree initialization disables the PIT clock after the ROM's
+     * timer setup. The MAIN boot path uses SysTick, not that PIT clock. */
+    gpointer ccgr1 = GUINT_TO_POINTER((0x0fc06c >> 2) + 1);
+    uint32_t ccgr1_value = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+                                                               ccgr1));
+    g_hash_table_insert(s->registers, ccgr1,
+                        GUINT_TO_POINTER(ccgr1_value & ~0x00003000u));
     /* Pad and GPIO setup, SEMC and FlexSPI1 enable these gate fields.
      * Other gate fields remain inherited. */
     static const struct { hwaddr offset; uint32_t mask; } enabled_gates[] = {

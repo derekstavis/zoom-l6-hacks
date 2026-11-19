@@ -4260,6 +4260,19 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
                      GPOINTER_TO_UINT(stored_gpr16) : 0x00200003u;
     g_hash_table_insert(s->registers, flexram_select,
                         GUINT_TO_POINTER(gpr16 | 7u));
+    /* Pad setup and clock setup each clear selected IOMUX GPR fields.
+     * Preserve the inherited bits that the bootloader does not modify. */
+    static const struct { hwaddr offset; uint32_t keep; } gpr_masks[] = {
+        { 0x0ac004, 0xfff9f000u }, { 0x0ac008, 0xfb00ffffu },
+        { 0x0ac014, 0xcfffffffu }, { 0x0ac068, 0xefeffffbu },
+        { 0x0ac06c, 0xedffffffu }, { 0x0ac070, 0xfffffff6u },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(gpr_masks); i++) {
+        gpointer key = GUINT_TO_POINTER((gpr_masks[i].offset >> 2) + 1);
+        uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
+        g_hash_table_insert(s->registers,
+            key, GUINT_TO_POINTER(old & gpr_masks[i].keep));
+    }
     /* Bootloader 1.00 IOMUX writes, including zeroes on reset. */
     static const struct { hwaddr offset; uint32_t value; } boot_iomux[] = {
         { 0x1f80c4, 0x5 }, { 0x1f80d4, 0x0 }, { 0x1f80d8, 0x0 },
@@ -4349,11 +4362,12 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
         g_hash_table_insert(s->registers, key,
             GUINT_TO_POINTER(l6max_boot_clock_value(offsets[i], old)));
     }
-    /* GPIO1/2/3/5, SEMC and FlexSPI1 gates are enabled by the bootloader's
-     * pin and memory initialization. Other gate fields remain inherited. */
+    /* Pad and GPIO setup, SEMC and FlexSPI1 enable these gate fields.
+     * Other gate fields remain inherited. */
     static const struct { hwaddr offset; uint32_t mask; } enabled_gates[] = {
         { 0x0fc068, 0xc0000000u }, { 0x0fc06c, 0xcc0c0000u },
-        { 0x0fc070, 0x0c000000u }, { 0x0fc074, 0x00000030u },
+        { 0x0fc070, 0x0c000030u }, { 0x0fc074, 0x00000030u },
+        { 0x0fc078, 0x0000000cu },
         { 0x0fc080, 0x00000c00u },
     };
     for (unsigned i = 0; i < ARRAY_SIZE(enabled_gates); i++) {

@@ -6,6 +6,7 @@ Each MAIN is an unpacked firmware component; no device state is modified.
 """
 import json
 import select
+import socket
 import subprocess
 import sys
 
@@ -37,12 +38,18 @@ def check(qemu, image, expected):
 
 
 def check_flexram_boundaries(qemu, image):
+    qmp_host, qmp_guest = socket.socketpair()
+    qmp_host.settimeout(10)
     process = subprocess.Popen(
         [qemu, "-M", "l6max-main", "-kernel", image, "-accel", "qtest",
-         "-qtest", "stdio", "-display", "none"],
+         "-qtest", "stdio", "-display", "none",
+         "-chardev", f"socket,id=handoff-qmp,fd={qmp_guest.fileno()}",
+         "-mon", "chardev=handoff-qmp,mode=control"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        text=True, bufsize=1,
+        text=True, bufsize=1, pass_fds=(qmp_guest.fileno(),),
     )
+    qmp_guest.close()
+    qmp = qmp_host.makefile("rwb", buffering=0)
 
     def command(text):
         process.stdin.write(text + "\n")
@@ -55,6 +62,16 @@ def check_flexram_boundaries(qemu, image):
         return reply
 
     try:
+        assert "QMP" in json.loads(qmp.readline())
+        def qmp_execute(name):
+            qmp.write(json.dumps({"execute": name}).encode() + b"\n")
+            while True:
+                reply = json.loads(qmp.readline())
+                if "error" in reply:
+                    raise AssertionError(reply["error"])
+                if "return" in reply:
+                    return
+        qmp_execute("qmp_capabilities")
         for last, beyond in ((0x7ffc, 0x8000), (0x2001fffc, 0x20020000),
                              (0x202d7ffc, 0x202d8000)):
             command(f"writel {last:#x} 0x1234abcd")
@@ -62,7 +79,24 @@ def check_flexram_boundaries(qemu, image):
             assert int(command(f"readl {last:#x}").split()[1], 16) == 0x1234abcd
             assert int(command(f"readl {beyond:#x}").split()[1], 16) != 0x5678efab
         print(f"{image}: FlexRAM mapping boundaries passed")
+        masks = {
+            0x400ac004: 0xfff9f000, 0x400ac008: 0xfb00ffff,
+            0x400ac014: 0xcfffffff, 0x400ac068: 0xefeffffb,
+            0x400ac06c: 0xedffffff, 0x400ac070: 0xfffffff6,
+        }
+        for address in masks:
+            command(f"writel {address:#x} 0xffffffff")
+        for address in (0x400fc070, 0x400fc078):
+            command(f"writel {address:#x} 0")
+        qmp_execute("system_reset")
+        for address, expected in masks.items():
+            assert int(command(f"readl {address:#x}").split()[1], 16) == expected
+        assert int(command("readl 0x400fc070").split()[1], 16) == 0x0c000030
+        assert int(command("readl 0x400fc078").split()[1], 16) == 0xc
+        print(f"{image}: masked GPR and gate reset passed")
     finally:
+        qmp.close()
+        qmp_host.close()
         process.terminate()
         process.wait(timeout=5)
 
@@ -80,7 +114,7 @@ def main():
         0x402f004c: 0x08070a01, 0x400a8000: 5,
         0x400ac040: 0x00200007, 0x400ac044: 0x5555ea95,
         0x400fc068: 0xc0000000, 0x400fc06c: 0xcc0c0000,
-        0x400fc070: 0x0c000000, 0x400fc074: 0x30,
+        0x400fc070: 0x0c000030, 0x400fc074: 0x30, 0x400fc078: 0xc,
         0x400fc080: 0xc00,
         0xe000e010: 0, 0xe000ed08: 0x80000000,
         0xe000ed14: 0x200, 0xe000ed24: 0, 0xe000ed94: 0,

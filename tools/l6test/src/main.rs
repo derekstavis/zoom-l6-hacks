@@ -214,7 +214,7 @@ fn execute() -> Result<i32, String> {
                 case.id,
                 case.models.join(","),
                 case.suites.join(","),
-                if case.needs_configuration && case.scenario.is_none() {
+                if case.scenario.is_none() {
                     " [packaged app required]"
                 } else {
                     ""
@@ -382,13 +382,8 @@ fn execute() -> Result<i32, String> {
     let mut needs_l6patch = false;
     for job in &jobs {
         let case = job.case;
-        if case.blocked.is_some()
-            || case.needs_configuration && case.scenario.is_none() && config.app.is_none()
-        {
+        if case.blocked.is_some() || case.scenario.is_none() && config.app.is_none() {
             continue;
-        }
-        if let Some(package) = &case.package {
-            packages.insert(package.as_str());
         }
         if job.backend == "gui" && case.scenario.is_some() {
             packages.insert("l6max-gui");

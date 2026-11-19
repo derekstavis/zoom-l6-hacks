@@ -167,7 +167,7 @@ fn preflight(
     {
         return blocked(format!("scenario does not support {backend} backend"));
     }
-    if case.needs_configuration && case.scenario.is_none() && ctx.config.app.is_none() {
+    if case.scenario.is_none() && ctx.config.app.is_none() {
         return blocked("requires a packaged application; pass --app PATH".into());
     }
     if hash(&ctx.config.qemu).blocked_in(Phase::Preflight)? != ctx.config.qemu_sha256 {
@@ -302,18 +302,16 @@ fn plan_invocation(
 ) -> Result<Invocation, String> {
     let config = ctx.config;
     let options = &prepared.options;
-    let packaged = case.needs_configuration && case.scenario.is_none();
-    let binary = if let Some(app) = config.app.as_ref().filter(|_| packaged) {
-        app.executable.clone()
-    } else {
-        let name = if case.scenario.is_some() && backend == "headless" {
-            "l6test"
-        } else if case.scenario.is_some() {
-            "l6max-gui"
-        } else {
-            case.package.as_deref().ok_or("case has no executable")?
-        };
-        ctx.output.join("bin").join(name)
+    // A case without a scenario drives the packaged application itself.
+    let binary = match (&case.scenario, backend) {
+        (None, _) => config
+            .app
+            .as_ref()
+            .ok_or("requires a packaged application; pass --app PATH")?
+            .executable
+            .clone(),
+        (Some(_), "headless") => ctx.output.join("bin/l6test"),
+        (Some(_), _) => ctx.output.join("bin/l6max-gui"),
     };
     let binary_sha256 = hash(&binary)?;
     let mut command = Command::new(&binary);
@@ -339,13 +337,6 @@ fn plan_invocation(
         "RUST_LOG",
         env::var("RUST_LOG").unwrap_or_else(|_| l6max_host::logging::DEFAULT_FILTER.into()),
     );
-    let arguments: Vec<String> = case.arguments.iter().map(|a| expand(a, options)).collect();
-    if arguments.iter().any(|a| a.contains('{')) {
-        return Err(
-            "unresolved legacy argument placeholder; supply the required package/path explicitly"
-                .into(),
-        );
-    }
     if let Some(path) = &case.scenario {
         let scenario = crate::catalog::scenario_file(path);
         if backend == "headless" {
@@ -353,8 +344,6 @@ fn plan_invocation(
         } else {
             command.arg("--smoke-scenario").arg(&scenario);
         }
-    } else {
-        command.args(&arguments);
     }
     command.args(engine_args(options));
     let mut audio_input = Vec::new();

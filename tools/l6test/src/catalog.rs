@@ -37,13 +37,8 @@ pub struct Case {
     pub suites: Vec<String>,
     pub models: Vec<String>,
     pub scenario: Option<PathBuf>,
-    pub package: Option<String>,
-    #[serde(default)]
-    pub arguments: Vec<String>,
     #[serde(default)]
     pub environment: BTreeMap<String, String>,
-    #[serde(default)]
-    pub needs_configuration: bool,
     #[serde(default)]
     pub gui: bool,
     #[serde(default)]
@@ -100,10 +95,7 @@ pub fn load(spec: &Path) -> Result<Catalog, String> {
             suites: vec![patch_matrix::SUITE.into()],
             models: vec![case.model.into()],
             scenario: Some(PathBuf::from(format!("scenarios/{}.toml", case.id))),
-            package: None,
-            arguments: Vec::new(),
             environment: BTreeMap::new(),
-            needs_configuration: true,
             gui: false,
             volatile: false,
             no_sd: false,
@@ -208,10 +200,7 @@ fn definition(
         "scenario": scenario,
         "state": state,
         "card": card,
-        "package": case.package,
-        "arguments": case.arguments,
         "environment": case.environment,
-        "needs_configuration": case.needs_configuration,
         "gui": case.gui,
         "volatile": case.volatile,
         "no_sd": case.no_sd,

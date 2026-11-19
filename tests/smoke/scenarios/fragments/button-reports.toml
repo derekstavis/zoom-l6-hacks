@@ -288,4 +288,4 @@ control = "scene-d"
 
 [[step]]
 action = "include"
-path = "switches.toml"
+path = "tests/smoke/scenarios/fragments/switches.toml"

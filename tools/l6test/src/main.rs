@@ -344,7 +344,7 @@ fn execute() -> Result<i32, String> {
         let scenario = case
             .scenario
             .as_ref()
-            .map(|p| Scenario::load(&source_spec.join(p)))
+            .map(|p| Scenario::load(&catalog::scenario_file(p)))
             .transpose()?;
         for model in case
             .models
@@ -396,7 +396,7 @@ fn execute() -> Result<i32, String> {
         needs_l6patch |= case
             .scenario
             .as_ref()
-            .and_then(|path| Scenario::load(&source_spec.join(path)).ok())
+            .and_then(|path| Scenario::load(&catalog::scenario_file(path)).ok())
             .is_some_and(|scenario| scenario.needs_patch_builder());
     }
     if args.build {
@@ -460,7 +460,6 @@ fn execute() -> Result<i32, String> {
     };
     let ctx = Context {
         root,
-        spec: &source_spec,
         output: &output,
         config: &config,
         cache: &cache,
@@ -475,7 +474,7 @@ fn execute() -> Result<i32, String> {
             .case
             .scenario
             .as_ref()
-            .map(|path| Scenario::load(&source_spec.join(path)))
+            .map(|path| Scenario::load(&catalog::scenario_file(path)))
             .transpose()
             .and_then(|scenario| {
                 case_fixture(

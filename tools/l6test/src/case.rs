@@ -29,8 +29,6 @@ use std::{
 /// What every case of a run shares.
 pub(crate) struct Context<'a> {
     pub(crate) root: &'a Path,
-    /// The test spec, `tests/smoke`.
-    pub(crate) spec: &'a Path,
     pub(crate) output: &'a Path,
     pub(crate) config: &'a Config,
     pub(crate) cache: &'a RunCache,
@@ -161,7 +159,7 @@ fn preflight(
     let scenario = case
         .scenario
         .as_ref()
-        .map(|path| Scenario::load(&ctx.spec.join(path)))
+        .map(|path| Scenario::load(&crate::catalog::scenario_file(path)))
         .transpose()
         .failed_in(Phase::Preflight)?;
     if let Some(scenario) = &scenario
@@ -349,7 +347,7 @@ fn plan_invocation(
         );
     }
     if let Some(path) = &case.scenario {
-        let scenario = ctx.spec.join(path);
+        let scenario = crate::catalog::scenario_file(path);
         if backend == "headless" {
             command.arg("__scenario").arg(&scenario);
         } else {
@@ -363,7 +361,10 @@ fn plan_invocation(
     if !prepared.fixture.audio_input.is_empty() {
         let directory = dir.join("audio-input");
         for input in &prepared.fixture.audio_input {
-            let bytes = input.content.bytes(ctx.spec).map_err(|e| e.to_string())?;
+            let bytes = input
+                .content
+                .bytes(&l6max_host::paths::repository_root())
+                .map_err(|e| e.to_string())?;
             audio_input.push((input.channel, format!("{:x}", Sha256::digest(&bytes))));
             l6max_host::audio_input::prepare_bytes(&directory, u32::from(input.channel), &bytes)
                 .map_err(|e| e.to_string())?;

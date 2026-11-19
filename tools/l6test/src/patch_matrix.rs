@@ -695,10 +695,8 @@ mod tests {
 
     #[test]
     fn every_generated_scenario_loads() {
-        let scenarios = l6max_host::paths::repository_root().join("tests/smoke/scenarios");
         for case in generate().unwrap() {
-            let path = scenarios.join(format!("{}.toml", case.id));
-            smoke_core::Scenario::from_text(&case.scenario, &path)
+            smoke_core::Scenario::from_text(&case.scenario)
                 .unwrap_or_else(|error| panic!("{}: {error}\n{}", case.id, case.scenario));
         }
     }

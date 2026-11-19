@@ -11,6 +11,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Reviewed knob-dialog window images, from the repository root. The
+/// knob-dialog window check compares the display with these by scene name.
+pub const KNOB_DIALOG_REFERENCES: &str = "tests/smoke/images/knob-dialog";
+
 /// Return a short, per-case GDB socket path. Darwin's QEMU GDB stub rejects
 /// UNIX socket paths longer than 104 bytes, while artifact directories can be
 /// arbitrarily deep. Hashing the case path preserves isolation without tying
@@ -6369,7 +6373,7 @@ fn run_knob_dialog(
             .contains(&scene)
         {
             let path = l6max_host::paths::repository_root()
-                .join("tests/smoke/images/knob-dialog")
+                .join(KNOB_DIALOG_REFERENCES)
                 .join(format!("{scene}.png"));
             let expected = image::open(&path)?.to_luma8();
             let differences = if expected.dimensions() == (128, 64) {

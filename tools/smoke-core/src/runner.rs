@@ -316,9 +316,7 @@ impl Runner {
                     if self.model == Model::L6 {
                         return Err("L6 has no display".into());
                     }
-                    let path = l6max_host::paths::repository_root()
-                        .join("tests/smoke")
-                        .join(&image);
+                    let path = crate::scenario::spec_path(&image)?;
                     let expected = image::open(&path)
                         .map_err(|error| {
                             format!(
@@ -1878,46 +1876,58 @@ mod tests {
             }
         }
     }
+    /// A directory under the repository's ignored `target/`, as an absolute
+    /// path and as the root-relative path includes name it by.
+    fn include_test_dir(name: &str) -> (PathBuf, String) {
+        let rel = format!(
+            "target/smoke-core-include-tests/{name}-{}",
+            std::process::id()
+        );
+        let dir = l6max_host::paths::repository_root().join(&rel);
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        (dir, rel)
+    }
     #[test]
     fn includes_are_confined_cycle_checked_and_preserve_model_scope() {
-        let runner = test_runner("[[step]]\naction='delay'\nguest_ms=1\n");
-        let root = &runner.logs;
+        let (dir, rel) = include_test_dir("scope");
         fs::write(
-            root.join("fragment.toml"),
+            dir.join("fragment.toml"),
             "[[step]]\naction='delay'\nguest_ms=2\n",
         )
         .unwrap();
-        let prefix = "version=1\nname='include'\nmodels=['l6','l6max']\n[[step]]\nmodels=['l6max']\naction='include'\npath='fragment.toml'\n";
-        fs::write(root.join("test.toml"), prefix).unwrap();
-        let loaded = Scenario::load(&root.join("test.toml")).unwrap();
+        let prefix = format!(
+            "version=1\nname='include'\nmodels=['l6','l6max']\n[[step]]\nmodels=['l6max']\naction='include'\npath='{rel}/fragment.toml'\n"
+        );
+        fs::write(dir.join("test.toml"), &prefix).unwrap();
+        let loaded = Scenario::load(&dir.join("test.toml")).unwrap();
         assert_eq!(loaded.step[0].models, ["l6max"]);
+        // A generated scenario composes the same way from its text alone.
+        assert_eq!(Scenario::from_text(&prefix).unwrap().step.len(), 1);
         fs::write(
-            root.join("fragment.toml"),
-            "[[step]]\naction='include'\npath='fragment.toml'\n",
+            dir.join("fragment.toml"),
+            format!("[[step]]\naction='include'\npath='{rel}/fragment.toml'\n"),
         )
         .unwrap();
         assert!(
-            Scenario::load(&root.join("test.toml"))
+            Scenario::load(&dir.join("test.toml"))
                 .unwrap_err()
                 .contains("cycle")
         );
-        fs::write(
-            root.join("test.toml"),
-            prefix.replace("fragment.toml", "../outside.toml"),
-        )
-        .unwrap();
-        fs::write(
-            root.parent().unwrap().join("outside.toml"),
-            "[[step]]\naction='delay'\nguest_ms=1\n",
-        )
-        .unwrap();
-        assert!(
-            Scenario::load(&root.join("test.toml"))
-                .unwrap_err()
-                .contains("escapes")
-        );
-        fs::remove_file(root.parent().unwrap().join("outside.toml")).unwrap();
-        fs::remove_dir_all(&runner.logs).unwrap();
+        for path in [
+            format!("{rel}/../outside.toml"),
+            "fragment.toml/..".into(),
+            dir.join("fragment.toml").display().to_string(),
+        ] {
+            let text = prefix.replace(&format!("{rel}/fragment.toml"), &path);
+            assert!(
+                Scenario::from_text(&text)
+                    .unwrap_err()
+                    .contains("relative to the repository root"),
+                "{path}"
+            );
+        }
+        fs::remove_dir_all(&dir).unwrap();
     }
     #[test]
     fn l6max_tap_tempo_lamp_does_not_block_panel_settling() {
@@ -1943,19 +1953,16 @@ mod tests {
     }
     #[test]
     fn setup_input_propagates_through_includes_and_is_dropped_for_spec_state() {
-        let runner = test_runner("[[step]]\naction='delay'\nguest_ms=1\n");
-        let root = &runner.logs;
+        let (dir, rel) = include_test_dir("setup");
         fs::write(
-            root.join("fragment.toml"),
+            dir.join("fragment.toml"),
             "[[step]]\naction='delay'\nguest_ms=2\n[[step]]\naction='delay'\nguest_ms=3\n",
         )
         .unwrap();
-        fs::write(
-            root.join("test.toml"),
-            "version=1\nname='setup'\nmodels=['l6max']\n[[step]]\nsetup_input=true\naction='include'\npath='fragment.toml'\n[[step]]\naction='delay'\nguest_ms=4\n",
-        )
-        .unwrap();
-        let loaded = Scenario::load(&root.join("test.toml")).unwrap();
+        let text = format!(
+            "version=1\nname='setup'\nmodels=['l6max']\n[[step]]\nsetup_input=true\naction='include'\npath='{rel}/fragment.toml'\n[[step]]\naction='delay'\nguest_ms=4\n"
+        );
+        let loaded = Scenario::from_text(&text).unwrap();
         assert_eq!(
             loaded
                 .step
@@ -1967,7 +1974,7 @@ mod tests {
         let kept = loaded.without_setup_input();
         assert_eq!(kept.step.len(), 1);
         assert!(matches!(kept.step[0].action, Action::Delay { guest_ms: 4 }));
-        fs::remove_dir_all(&runner.logs).unwrap();
+        fs::remove_dir_all(&dir).unwrap();
     }
     #[test]
     fn unsupported_operations_and_switch_semantics_fail_before_boot() {

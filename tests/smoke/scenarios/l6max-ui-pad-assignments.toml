@@ -7,11 +7,11 @@ backends = ["headless"]
 
 [[step]]
 action = "include"
-path = "fragments/editor-pad-setup-l6max.toml"
+path = "tests/smoke/scenarios/fragments/editor-pad-setup-l6max.toml"
 
 [[step]]
 action = "include"
-path = "fragments/editor-pad-usb-ready.toml"
+path = "tests/smoke/scenarios/fragments/editor-pad-usb-ready.toml"
 
 # Select the first WAV through the on-device Sound Assign menu, then verify
 # the assignment through Editor SysEx state readback.

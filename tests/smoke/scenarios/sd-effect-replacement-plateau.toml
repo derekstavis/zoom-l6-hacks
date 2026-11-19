@@ -15,7 +15,7 @@ loop-tone = { hz = 440.0, seconds = 1.0, amplitude = 0.1 }
 
 [[step]]
 action = "include"
-path = "fragments/effect-replacement-load.toml"
+path = "tests/smoke/scenarios/fragments/effect-replacement-load.toml"
 
 [[step]]
 action = "effect-replacement-state"
@@ -47,7 +47,7 @@ guest_ms = 300
 
 [[step]]
 action = "expect-display-image"
-image = "images/effect-plateau-parameter.png"
+image = "tests/smoke/images/effect-plateau-parameter.png"
 
 [[step]]
 action = "effect-replacement-state"

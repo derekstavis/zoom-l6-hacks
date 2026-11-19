@@ -7,7 +7,7 @@ card = "empty"
 
 [[step]]
 action = "include"
-path = "fragments/prepared-home.toml"
+path = "tests/smoke/scenarios/fragments/prepared-home.toml"
 
 [[step]]
 action = "press"

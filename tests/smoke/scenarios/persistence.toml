@@ -12,47 +12,47 @@ wall_timeout_s = 600
 
 [[step]]
 action = "include"
-path = "fragments/recorder-next.toml"
+path = "tests/smoke/scenarios/fragments/recorder-next.toml"
 
 [[step]]
 action = "include"
-path = "fragments/edit-date-field.toml"
+path = "tests/smoke/scenarios/fragments/edit-date-field.toml"
 
 [[step]]
 action = "include"
-path = "fragments/recorder-next.toml"
+path = "tests/smoke/scenarios/fragments/recorder-next.toml"
 
 [[step]]
 action = "include"
-path = "fragments/edit-date-field.toml"
+path = "tests/smoke/scenarios/fragments/edit-date-field.toml"
 
 [[step]]
 action = "include"
-path = "fragments/recorder-next.toml"
+path = "tests/smoke/scenarios/fragments/recorder-next.toml"
 
 [[step]]
 action = "include"
-path = "fragments/edit-date-field.toml"
+path = "tests/smoke/scenarios/fragments/edit-date-field.toml"
 
 [[step]]
 action = "include"
-path = "fragments/recorder-next.toml"
+path = "tests/smoke/scenarios/fragments/recorder-next.toml"
 
 [[step]]
 action = "include"
-path = "fragments/edit-date-field.toml"
+path = "tests/smoke/scenarios/fragments/edit-date-field.toml"
 
 [[step]]
 action = "include"
-path = "fragments/recorder-next.toml"
+path = "tests/smoke/scenarios/fragments/recorder-next.toml"
 
 [[step]]
 action = "include"
-path = "fragments/edit-date-field.toml"
+path = "tests/smoke/scenarios/fragments/edit-date-field.toml"
 
 [[step]]
 action = "include"
-path = "fragments/recorder-next.toml"
+path = "tests/smoke/scenarios/fragments/recorder-next.toml"
 
 [[step]]
 action = "press"
@@ -101,31 +101,31 @@ guest_ms = 1500
 
 [[step]]
 action = "include"
-path = "fragments/recorder-next.toml"
+path = "tests/smoke/scenarios/fragments/recorder-next.toml"
 
 [[step]]
 action = "include"
-path = "fragments/recorder-next.toml"
+path = "tests/smoke/scenarios/fragments/recorder-next.toml"
 
 [[step]]
 action = "include"
-path = "fragments/recorder-next.toml"
+path = "tests/smoke/scenarios/fragments/recorder-next.toml"
 
 [[step]]
 action = "include"
-path = "fragments/recorder-next.toml"
+path = "tests/smoke/scenarios/fragments/recorder-next.toml"
 
 [[step]]
 action = "include"
-path = "fragments/recorder-next.toml"
+path = "tests/smoke/scenarios/fragments/recorder-next.toml"
 
 [[step]]
 action = "include"
-path = "fragments/recorder-next.toml"
+path = "tests/smoke/scenarios/fragments/recorder-next.toml"
 
 [[step]]
 action = "include"
-path = "fragments/recorder-next.toml"
+path = "tests/smoke/scenarios/fragments/recorder-next.toml"
 
 [[step]]
 action = "press"
@@ -137,23 +137,23 @@ guest_ms = 1050
 
 [[step]]
 action = "include"
-path = "fragments/recorder-next.toml"
+path = "tests/smoke/scenarios/fragments/recorder-next.toml"
 
 [[step]]
 action = "include"
-path = "fragments/recorder-next.toml"
+path = "tests/smoke/scenarios/fragments/recorder-next.toml"
 
 [[step]]
 action = "include"
-path = "fragments/recorder-next.toml"
+path = "tests/smoke/scenarios/fragments/recorder-next.toml"
 
 [[step]]
 action = "include"
-path = "fragments/recorder-next.toml"
+path = "tests/smoke/scenarios/fragments/recorder-next.toml"
 
 [[step]]
 action = "include"
-path = "fragments/recorder-next.toml"
+path = "tests/smoke/scenarios/fragments/recorder-next.toml"
 
 [[step]]
 action = "press"

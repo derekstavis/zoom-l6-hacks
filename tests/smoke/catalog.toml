@@ -4,37 +4,37 @@ version = 1
 id = "controls"
 suites = ["quick"]
 models = ["l6", "l6max"]
-scenario = "scenarios/controls.toml"
+scenario = "tests/smoke/scenarios/controls.toml"
 
 [[case]]
 id = "boot"
 suites = []
 models = ["l6", "l6max"]
-scenario = "scenarios/boot.toml"
+scenario = "tests/smoke/scenarios/boot.toml"
 
 [[case]]
 id = "encoder"
 suites = []
 models = ["l6", "l6max"]
-scenario = "scenarios/encoder.toml"
+scenario = "tests/smoke/scenarios/encoder.toml"
 
 [[case]]
 id = "ring-pwm"
 suites = ["regression", "full", "panel"]
 models = ["l6", "l6max"]
-scenario = "scenarios/ring-pwm.toml"
+scenario = "tests/smoke/scenarios/ring-pwm.toml"
 
 [[case]]
 id = "mute"
 suites = []
 models = ["l6", "l6max"]
-scenario = "scenarios/mute.toml"
+scenario = "tests/smoke/scenarios/mute.toml"
 
 [[case]]
 id = "audio-path"
 suites = ["devices", "regression", "full"]
 models = ["l6", "l6max"]
-scenario = "scenarios/audio-path.toml"
+scenario = "tests/smoke/scenarios/audio-path.toml"
 environment = { L6_AUDIO_TRACE = "1" }
 volatile = true
 no_sd = true
@@ -43,13 +43,13 @@ no_sd = true
 id = "buttons"
 suites = []
 models = ["l6", "l6max"]
-scenario = "scenarios/buttons.toml"
+scenario = "tests/smoke/scenarios/buttons.toml"
 
 [[case]]
 id = "factory-protocol"
 suites = ["full"]
 models = ["l6max"]
-scenario = "scenarios/factory-protocol.toml"
+scenario = "tests/smoke/scenarios/factory-protocol.toml"
 volatile = true
 no_sd = true
 
@@ -57,7 +57,7 @@ no_sd = true
 id = "firmware-update"
 suites = ["full"]
 models = ["l6", "l6max"]
-scenario = "scenarios/firmware-update.toml"
+scenario = "tests/smoke/scenarios/firmware-update.toml"
 needs_configuration = true
 volatile = true
 no_sd = true
@@ -67,13 +67,13 @@ wall_timeout_s = 1200
 id = "indicators"
 suites = []
 models = ["l6", "l6max"]
-scenario = "scenarios/indicators.toml"
+scenario = "tests/smoke/scenarios/indicators.toml"
 
 [[case]]
 id = "l6max-input-smoke"
 suites = ["regression", "full"]
 models = ["l6max"]
-scenario = "scenarios/l6max-input-smoke.toml"
+scenario = "tests/smoke/scenarios/l6max-input-smoke.toml"
 volatile = true
 no_sd = true
 wall_timeout_s = 1800
@@ -82,7 +82,7 @@ wall_timeout_s = 1800
 id = "editor-pad-assignments"
 suites = ["full"]
 models = ["l6", "l6max"]
-scenario = "scenarios/editor-pad-assignments.toml"
+scenario = "tests/smoke/scenarios/editor-pad-assignments.toml"
 needs_configuration = true
 wall_timeout_s = 1200
 
@@ -90,7 +90,7 @@ wall_timeout_s = 1200
 id = "l6max-sound-pad-playback"
 suites = ["full"]
 models = ["l6max"]
-scenario = "scenarios/l6max-sound-pad-playback.toml"
+scenario = "tests/smoke/scenarios/l6max-sound-pad-playback.toml"
 needs_configuration = true
 environment = { L6_AUDIO_SAMPLE_TRACE = "1" }
 wall_timeout_s = 1800
@@ -99,7 +99,7 @@ wall_timeout_s = 1800
 id = "l6max-volume-meter-sweep"
 suites = []
 models = ["l6max"]
-scenario = "scenarios/l6max-volume-meter-sweep.toml"
+scenario = "tests/smoke/scenarios/l6max-volume-meter-sweep.toml"
 needs_configuration = true
 environment = { L6_AUDIO_SAMPLE_TRACE = "1" }
 wall_timeout_s = 1800
@@ -108,7 +108,7 @@ wall_timeout_s = 1800
 id = "l6max-ui-pad-assignments"
 suites = ["full"]
 models = ["l6max"]
-scenario = "scenarios/l6max-ui-pad-assignments.toml"
+scenario = "tests/smoke/scenarios/l6max-ui-pad-assignments.toml"
 needs_configuration = true
 wall_timeout_s = 2400
 
@@ -116,7 +116,7 @@ wall_timeout_s = 2400
 id = "l6-editor-pad-playback"
 suites = ["full"]
 models = ["l6"]
-scenario = "scenarios/l6-editor-pad-playback.toml"
+scenario = "tests/smoke/scenarios/l6-editor-pad-playback.toml"
 needs_configuration = true
 environment = { L6_AUDIO_SAMPLE_TRACE = "1" }
 wall_timeout_s = 1800
@@ -125,7 +125,7 @@ wall_timeout_s = 1800
 id = "l6-sound-pad-playback"
 suites = ["full"]
 models = ["l6"]
-scenario = "scenarios/l6-sound-pad-playback.toml"
+scenario = "tests/smoke/scenarios/l6-sound-pad-playback.toml"
 needs_configuration = true
 environment = { L6_AUDIO_SAMPLE_TRACE = "1" }
 wall_timeout_s = 1800
@@ -134,7 +134,7 @@ wall_timeout_s = 1800
 id = "l6-input-sweep"
 suites = ["regression", "full"]
 models = ["l6"]
-scenario = "scenarios/l6-input-sweep.toml"
+scenario = "tests/smoke/scenarios/l6-input-sweep.toml"
 volatile = true
 no_sd = true
 wall_timeout_s = 1800
@@ -143,7 +143,7 @@ wall_timeout_s = 1800
 id = "l6-din-sweep"
 suites = ["full"]
 models = ["l6"]
-scenario = "scenarios/l6-din-sweep.toml"
+scenario = "tests/smoke/scenarios/l6-din-sweep.toml"
 no_sd = true
 needs_configuration = true
 wall_timeout_s = 900
@@ -152,7 +152,7 @@ wall_timeout_s = 900
 id = "l6-din-usb-forwarding"
 suites = ["full"]
 models = ["l6"]
-scenario = "scenarios/l6-din-usb-forwarding.toml"
+scenario = "tests/smoke/scenarios/l6-din-usb-forwarding.toml"
 volatile = true
 no_sd = true
 wall_timeout_s = 1800
@@ -161,7 +161,7 @@ wall_timeout_s = 1800
 id = "l6max-din-mixer-control"
 suites = ["full"]
 models = ["l6max"]
-scenario = "scenarios/l6max-din-mixer-control.toml"
+scenario = "tests/smoke/scenarios/l6max-din-mixer-control.toml"
 needs_configuration = true
 wall_timeout_s = 900
 
@@ -169,7 +169,7 @@ wall_timeout_s = 900
 id = "l6max-din-mixer-control-patched"
 suites = []
 models = ["l6max"]
-scenario = "scenarios/l6max-din-mixer-control-patched.toml"
+scenario = "tests/smoke/scenarios/l6max-din-mixer-control-patched.toml"
 needs_configuration = true
 wall_timeout_s = 900
 
@@ -177,7 +177,7 @@ wall_timeout_s = 900
 id = "l6-patch-heap"
 suites = ["full"]
 models = ["l6"]
-scenario = "scenarios/l6-patch-heap.toml"
+scenario = "tests/smoke/scenarios/l6-patch-heap.toml"
 needs_configuration = true
 wall_timeout_s = 900
 
@@ -185,7 +185,7 @@ wall_timeout_s = 900
 id = "l6max-patch-heap"
 suites = ["full"]
 models = ["l6max"]
-scenario = "scenarios/l6max-patch-heap.toml"
+scenario = "tests/smoke/scenarios/l6max-patch-heap.toml"
 needs_configuration = true
 wall_timeout_s = 900
 
@@ -193,7 +193,7 @@ wall_timeout_s = 900
 id = "knob-dialog"
 suites = ["full"]
 models = ["l6max"]
-scenario = "scenarios/knob-dialog.toml"
+scenario = "tests/smoke/scenarios/knob-dialog.toml"
 needs_configuration = true
 volatile = true
 no_sd = true
@@ -202,7 +202,7 @@ no_sd = true
 id = "l6-event-dispatch"
 suites = ["full"]
 models = ["l6"]
-scenario = "scenarios/l6-event-dispatch.toml"
+scenario = "tests/smoke/scenarios/l6-event-dispatch.toml"
 volatile = true
 no_sd = true
 wall_timeout_s = 1800
@@ -211,7 +211,7 @@ wall_timeout_s = 1800
 id = "l6-panel-event-map"
 suites = ["full"]
 models = ["l6"]
-scenario = "scenarios/l6-panel-event-map.toml"
+scenario = "tests/smoke/scenarios/l6-panel-event-map.toml"
 volatile = true
 no_sd = true
 wall_timeout_s = 1800
@@ -220,7 +220,7 @@ wall_timeout_s = 1800
 id = "l6max-tap-handler"
 suites = ["quick", "full"]
 models = ["l6max"]
-scenario = "scenarios/l6max-tap-handler.toml"
+scenario = "tests/smoke/scenarios/l6max-tap-handler.toml"
 needs_configuration = true
 no_sd = true
 wall_timeout_s = 900
@@ -229,7 +229,7 @@ wall_timeout_s = 900
 id = "l6-main-gpio-events"
 suites = []
 models = ["l6"]
-scenario = "scenarios/l6-main-gpio-events.toml"
+scenario = "tests/smoke/scenarios/l6-main-gpio-events.toml"
 needs_configuration = true
 no_sd = true
 wall_timeout_s = 900
@@ -238,7 +238,7 @@ wall_timeout_s = 900
 id = "l6-recorder-record-stop"
 suites = []
 models = ["l6"]
-scenario = "scenarios/l6-recorder-record-stop.toml"
+scenario = "tests/smoke/scenarios/l6-recorder-record-stop.toml"
 needs_configuration = true
 wall_timeout_s = 900
 
@@ -246,7 +246,7 @@ wall_timeout_s = 900
 id = "l6-recorder-playback"
 suites = ["full"]
 models = ["l6"]
-scenario = "scenarios/l6-recorder-playback.toml"
+scenario = "tests/smoke/scenarios/l6-recorder-playback.toml"
 needs_configuration = true
 environment = { L6_AUDIO_SAMPLE_TRACE = "1" }
 wall_timeout_s = 900
@@ -255,7 +255,7 @@ wall_timeout_s = 900
 id = "l6max-recorder-playback"
 suites = ["full"]
 models = ["l6max"]
-scenario = "scenarios/l6max-recorder-playback.toml"
+scenario = "tests/smoke/scenarios/l6max-recorder-playback.toml"
 needs_configuration = true
 environment = { L6_AUDIO_SAMPLE_TRACE = "1" }
 wall_timeout_s = 1800
@@ -264,7 +264,7 @@ wall_timeout_s = 1800
 id = "l6-usb-startup"
 suites = []
 models = ["l6"]
-scenario = "scenarios/l6-usb-startup.toml"
+scenario = "tests/smoke/scenarios/l6-usb-startup.toml"
 volatile = true
 no_sd = true
 wall_timeout_s = 600
@@ -273,7 +273,7 @@ wall_timeout_s = 600
 id = "host-midi"
 suites = ["full"]
 models = ["l6", "l6max"]
-scenario = "scenarios/host-midi.toml"
+scenario = "tests/smoke/scenarios/host-midi.toml"
 needs_configuration = true
 no_sd = true
 wall_timeout_s = 900
@@ -282,7 +282,7 @@ wall_timeout_s = 900
 id = "host-midi-sync"
 suites = ["full"]
 models = ["l6max"]
-scenario = "scenarios/host-midi-sync.toml"
+scenario = "tests/smoke/scenarios/host-midi-sync.toml"
 needs_configuration = true
 no_sd = true
 wall_timeout_s = 900
@@ -291,7 +291,7 @@ wall_timeout_s = 900
 id = "l6-midi-sync"
 suites = ["full"]
 models = ["l6"]
-scenario = "scenarios/l6-midi-sync.toml"
+scenario = "tests/smoke/scenarios/l6-midi-sync.toml"
 needs_configuration = true
 volatile = true
 no_sd = true
@@ -301,7 +301,7 @@ wall_timeout_s = 180
 id = "l6-direct-midi-sync"
 suites = ["full"]
 models = ["l6"]
-scenario = "scenarios/l6-direct-midi-sync.toml"
+scenario = "tests/smoke/scenarios/l6-direct-midi-sync.toml"
 needs_configuration = true
 volatile = true
 no_sd = true
@@ -311,7 +311,7 @@ wall_timeout_s = 900
 id = "l6max-direct-midi-sync"
 suites = ["full"]
 models = ["l6max"]
-scenario = "scenarios/l6max-direct-midi-sync.toml"
+scenario = "tests/smoke/scenarios/l6max-direct-midi-sync.toml"
 needs_configuration = true
 volatile = true
 no_sd = true
@@ -321,7 +321,7 @@ wall_timeout_s = 900
 id = "patched-update"
 suites = ["full"]
 models = ["l6", "l6max"]
-scenario = "scenarios/patched-update.toml"
+scenario = "tests/smoke/scenarios/patched-update.toml"
 needs_configuration = true
 volatile = true
 no_sd = true
@@ -330,7 +330,7 @@ no_sd = true
 id = "persistence"
 suites = ["lifecycle", "full"]
 models = ["l6max"]
-scenario = "scenarios/persistence.toml"
+scenario = "tests/smoke/scenarios/persistence.toml"
 no_sd = true
 wall_timeout_s = 1800
 
@@ -338,20 +338,20 @@ wall_timeout_s = 1800
 id = "state-spec"
 suites = ["lifecycle", "full"]
 models = ["l6max"]
-scenario = "scenarios/l6max-state-spec.toml"
+scenario = "tests/smoke/scenarios/l6max-state-spec.toml"
 no_sd = true
 
 [[case]]
 id = "power"
 suites = ["lifecycle", "full"]
 models = ["l6", "l6max"]
-scenario = "scenarios/power.toml"
+scenario = "tests/smoke/scenarios/power.toml"
 
 [[case]]
 id = "card-record"
 suites = ["devices", "full"]
 models = ["l6", "l6max"]
-scenario = "scenarios/card-record.toml"
+scenario = "tests/smoke/scenarios/card-record.toml"
 needs_configuration = true
 wall_timeout_s = 900
 
@@ -359,13 +359,13 @@ wall_timeout_s = 900
 id = "storage"
 suites = ["devices", "full"]
 models = ["l6", "l6max"]
-scenario = "scenarios/storage.toml"
+scenario = "tests/smoke/scenarios/storage.toml"
 
 [[case]]
 id = "usb"
 suites = ["devices", "full"]
 models = ["l6", "l6max"]
-scenario = "scenarios/usb.toml"
+scenario = "tests/smoke/scenarios/usb.toml"
 volatile = true
 no_sd = true
 
@@ -373,7 +373,7 @@ no_sd = true
 id = "wasm-patch"
 suites = ["full"]
 models = ["l6", "l6max"]
-scenario = "scenarios/wasm-patch.toml"
+scenario = "tests/smoke/scenarios/wasm-patch.toml"
 volatile = true
 no_sd = true
 wall_timeout_s = 900
@@ -382,20 +382,20 @@ wall_timeout_s = 900
 id = "ui-input-l6-gui"
 suites = ["full"]
 models = ["l6"]
-scenario = "scenarios/ui-input-l6.toml"
+scenario = "tests/smoke/scenarios/ui-input-l6.toml"
 gui = true
 
 [[case]]
 id = "ui-input-l6"
 suites = ["full"]
 models = ["l6"]
-scenario = "scenarios/ui-input-l6.toml"
+scenario = "tests/smoke/scenarios/ui-input-l6.toml"
 
 [[case]]
 id = "gui-power"
 suites = ["full"]
 models = ["l6", "l6max"]
-scenario = "scenarios/gui-power.toml"
+scenario = "tests/smoke/scenarios/gui-power.toml"
 volatile = true
 no_sd = true
 
@@ -419,53 +419,53 @@ environment = { L6_APP_DATA = "{logs}/app-data", L6_MENU_SMOKE_FIRMWARE = "{pack
 id = "gestures"
 suites = []
 models = ["l6", "l6max"]
-scenario = "scenarios/gestures.toml"
+scenario = "tests/smoke/scenarios/gestures.toml"
 
 [[case]]
 id = "button-reports"
 suites = []
 models = ["l6max"]
-scenario = "scenarios/button-reports.toml"
+scenario = "tests/smoke/scenarios/button-reports.toml"
 wall_timeout_s = 1800
 
 [[case]]
 id = "usb-storage"
 suites = ["devices", "full"]
 models = ["l6max"]
-scenario = "scenarios/usb-storage.toml"
+scenario = "tests/smoke/scenarios/usb-storage.toml"
 
 [[case]]
 id = "panel"
 suites = ["regression", "full", "panel"]
 models = ["l6", "l6max"]
-scenario = "scenarios/panel.toml"
+scenario = "tests/smoke/scenarios/panel.toml"
 wall_timeout_s = 2400
 
 [[case]]
 id = "storage-empty"
 suites = ["devices", "full"]
 models = ["l6", "l6max"]
-scenario = "scenarios/storage-empty.toml"
+scenario = "tests/smoke/scenarios/storage-empty.toml"
 no_sd = true
 
 [[case]]
 id = "control"
 suites = []
 models = ["l6max"]
-scenario = "scenarios/control.toml"
+scenario = "tests/smoke/scenarios/control.toml"
 wall_timeout_s = 1800
 
 [[case]]
 id = "switches"
 suites = []
 models = ["l6max"]
-scenario = "scenarios/switches.toml"
+scenario = "tests/smoke/scenarios/switches.toml"
 
 [[case]]
 id = "l6max-channel-signal-pwm"
 suites = ["full", "panel"]
 models = ["l6max"]
-scenario = "scenarios/l6max-channel-signal-pwm.toml"
+scenario = "tests/smoke/scenarios/l6max-channel-signal-pwm.toml"
 volatile = true
 no_sd = true
 wall_timeout_s = 900
@@ -474,7 +474,7 @@ wall_timeout_s = 900
 id = "l6-level-meter-pwm"
 suites = []
 models = ["l6"]
-scenario = "scenarios/l6-level-meter-pwm.toml"
+scenario = "tests/smoke/scenarios/l6-level-meter-pwm.toml"
 volatile = true
 no_sd = true
 wall_timeout_s = 1800
@@ -483,7 +483,7 @@ wall_timeout_s = 1800
 id = "l6-volume-meter-playback"
 suites = []
 models = ["l6"]
-scenario = "scenarios/l6-volume-meter-playback.toml"
+scenario = "tests/smoke/scenarios/l6-volume-meter-playback.toml"
 environment = { L6_AUDIO_SAMPLE_TRACE = "1" }
 wall_timeout_s = 900
 
@@ -491,7 +491,7 @@ wall_timeout_s = 900
 id = "l6-sound-pad-waveform"
 suites = []
 models = ["l6"]
-scenario = "scenarios/l6-sound-pad-waveform.toml"
+scenario = "tests/smoke/scenarios/l6-sound-pad-waveform.toml"
 needs_configuration = true
 environment = { L6_AUDIO_SAMPLE_TRACE = "1", L6_AUDIO_RAW_CAPTURE = "{logs}/sai-output.s32", L6_AUDIO_TDM_CAPTURE = "{logs}/sai-tdm.l6td" }
 wall_timeout_s = 900
@@ -500,7 +500,7 @@ wall_timeout_s = 900
 id = "l6max-sound-pad-waveform"
 suites = []
 models = ["l6max"]
-scenario = "scenarios/l6max-sound-pad-waveform.toml"
+scenario = "tests/smoke/scenarios/l6max-sound-pad-waveform.toml"
 needs_configuration = true
 environment = { L6_AUDIO_SAMPLE_TRACE = "1", L6_AUDIO_RAW_CAPTURE = "{logs}/sai-output.s32", L6_AUDIO_TDM_CAPTURE = "{logs}/sai-tdm.l6td" }
 wall_timeout_s = 1800
@@ -509,7 +509,7 @@ wall_timeout_s = 1800
 id = "l6max-switches-during-playback"
 suites = []
 models = ["l6max"]
-scenario = "scenarios/l6max-switches-during-playback.toml"
+scenario = "tests/smoke/scenarios/l6max-switches-during-playback.toml"
 needs_configuration = true
 environment = { L6_AUDIO_SAMPLE_TRACE = "1", L6_AUDIO_RAW_CAPTURE = "{logs}/sai-output.s32", L6_AUDIO_TDM_CAPTURE = "{logs}/sai-tdm.l6td" }
 wall_timeout_s = 1800
@@ -518,7 +518,7 @@ wall_timeout_s = 1800
 id = "l6-sound-pad-coreaudio"
 suites = []
 models = ["l6"]
-scenario = "scenarios/l6-sound-pad-coreaudio.toml"
+scenario = "tests/smoke/scenarios/l6-sound-pad-coreaudio.toml"
 needs_configuration = true
 environment = { L6_AUDIO_SAMPLE_TRACE = "1", L6_AUDIO_COREAUDIO_CAPTURE = "{logs}/coreaudio.f32" }
 wall_timeout_s = 1800
@@ -527,7 +527,7 @@ wall_timeout_s = 1800
 id = "l6max-sound-pad-coreaudio"
 suites = []
 models = ["l6max"]
-scenario = "scenarios/l6max-sound-pad-coreaudio.toml"
+scenario = "tests/smoke/scenarios/l6max-sound-pad-coreaudio.toml"
 needs_configuration = true
 environment = { L6_AUDIO_SAMPLE_TRACE = "1", L6_AUDIO_COREAUDIO_CAPTURE = "{logs}/coreaudio.f32" }
 wall_timeout_s = 1800
@@ -536,7 +536,7 @@ wall_timeout_s = 1800
 id = "l6max-audio-input"
 suites = ["full"]
 models = ["l6max"]
-scenario = "scenarios/l6max-audio-input.toml"
+scenario = "tests/smoke/scenarios/l6max-audio-input.toml"
 environment = { L6_AUDIO_RAW_CAPTURE = "{logs}/sai-output.s32" }
 wall_timeout_s = 600
 
@@ -544,7 +544,7 @@ wall_timeout_s = 600
 id = "l6-audio-input"
 suites = ["full"]
 models = ["l6"]
-scenario = "scenarios/l6-audio-input.toml"
+scenario = "tests/smoke/scenarios/l6-audio-input.toml"
 environment = { L6_AUDIO_RAW_CAPTURE = "{logs}/sai-output.s32" }
 wall_timeout_s = 600
 
@@ -552,21 +552,21 @@ wall_timeout_s = 600
 id = "l6max-audio-input-record"
 suites = ["full"]
 models = ["l6max"]
-scenario = "scenarios/l6max-audio-input-record.toml"
+scenario = "tests/smoke/scenarios/l6max-audio-input-record.toml"
 wall_timeout_s = 600
 
 [[case]]
 id = "l6-audio-input-record"
 suites = ["full"]
 models = ["l6"]
-scenario = "scenarios/l6-audio-input-record.toml"
+scenario = "tests/smoke/scenarios/l6-audio-input-record.toml"
 wall_timeout_s = 400
 
 [[case]]
 id = "l6max-audio-input-transport"
 suites = ["full"]
 models = ["l6max"]
-scenario = "scenarios/l6max-audio-input-transport.toml"
+scenario = "tests/smoke/scenarios/l6max-audio-input-transport.toml"
 environment = { L6_AUDIO_RAW_CAPTURE = "{logs}/sai-output.s32" }
 wall_timeout_s = 600
 
@@ -574,7 +574,7 @@ wall_timeout_s = 600
 id = "l6max-installed-patch"
 suites = ["full"]
 models = ["l6max"]
-scenario = "scenarios/l6max-installed-patch.toml"
+scenario = "tests/smoke/scenarios/l6max-installed-patch.toml"
 needs_configuration = true
 no_sd = true
 wall_timeout_s = 900
@@ -583,7 +583,7 @@ wall_timeout_s = 900
 id = "l6-installed-patch"
 suites = ["full"]
 models = ["l6"]
-scenario = "scenarios/l6-installed-patch.toml"
+scenario = "tests/smoke/scenarios/l6-installed-patch.toml"
 needs_configuration = true
 no_sd = true
 wall_timeout_s = 900
@@ -592,7 +592,7 @@ wall_timeout_s = 900
 id = "host-sd-midi-sync"
 suites = ["sd-matrix", "full"]
 models = ["l6", "l6max"]
-scenario = "scenarios/host-sd-midi-sync.toml"
+scenario = "tests/smoke/scenarios/host-sd-midi-sync.toml"
 needs_configuration = true
 wall_timeout_s = 1200
 
@@ -600,7 +600,7 @@ wall_timeout_s = 1200
 id = "l6max-eq-audio-update"
 suites = ["regression", "full"]
 models = ["l6max"]
-scenario = "scenarios/l6max-eq-audio-update.toml"
+scenario = "tests/smoke/scenarios/l6max-eq-audio-update.toml"
 volatile = true
 no_sd = true
 
@@ -608,7 +608,7 @@ no_sd = true
 id = "l6-eq-audio-update"
 suites = ["regression", "full"]
 models = ["l6"]
-scenario = "scenarios/l6-eq-audio-update.toml"
+scenario = "tests/smoke/scenarios/l6-eq-audio-update.toml"
 volatile = true
 no_sd = true
 
@@ -616,7 +616,7 @@ no_sd = true
 id = "sd-midi-sync"
 suites = ["sd-matrix"]
 models = ["l6", "l6max"]
-scenario = "scenarios/sd-midi-sync.toml"
+scenario = "tests/smoke/scenarios/sd-midi-sync.toml"
 needs_configuration = true
 wall_timeout_s = 1200
 environment = { L6_AUDIO_SAMPLE_TRACE = "1" }
@@ -625,7 +625,7 @@ environment = { L6_AUDIO_SAMPLE_TRACE = "1" }
 id = "sd-l6max-midi-sync"
 suites = ["sd-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-l6max-midi-sync.toml"
+scenario = "tests/smoke/scenarios/sd-l6max-midi-sync.toml"
 needs_configuration = true
 wall_timeout_s = 1200
 
@@ -633,7 +633,7 @@ wall_timeout_s = 1200
 id = "sd-midi-corrupt-sibling"
 suites = []
 models = ["l6max"]
-scenario = "scenarios/sd-midi-corrupt-sibling.toml"
+scenario = "tests/smoke/scenarios/sd-midi-corrupt-sibling.toml"
 needs_configuration = true
 wall_timeout_s = 1200
 
@@ -641,7 +641,7 @@ wall_timeout_s = 1200
 id = "sd-din-mixer-control"
 suites = ["sd-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-din-mixer-control.toml"
+scenario = "tests/smoke/scenarios/sd-din-mixer-control.toml"
 needs_configuration = true
 wall_timeout_s = 1200
 
@@ -649,7 +649,7 @@ wall_timeout_s = 1200
 id = "sd-knob-dialog"
 suites = ["sd-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-knob-dialog.toml"
+scenario = "tests/smoke/scenarios/sd-knob-dialog.toml"
 needs_configuration = true
 wall_timeout_s = 1200
 
@@ -657,7 +657,7 @@ wall_timeout_s = 1200
 id = "sd-knob-dialog-dynamic"
 suites = ["sd-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-knob-dialog-dynamic.toml"
+scenario = "tests/smoke/scenarios/sd-knob-dialog-dynamic.toml"
 needs_configuration = true
 wall_timeout_s = 1200
 
@@ -665,7 +665,7 @@ wall_timeout_s = 1200
 id = "sd-midi-absent"
 suites = []
 models = ["l6", "l6max"]
-scenario = "scenarios/sd-midi-absent.toml"
+scenario = "tests/smoke/scenarios/sd-midi-absent.toml"
 needs_configuration = true
 wall_timeout_s = 1200
 
@@ -673,7 +673,7 @@ wall_timeout_s = 1200
 id = "sd-midi-corrupt"
 suites = []
 models = ["l6", "l6max"]
-scenario = "scenarios/sd-midi-corrupt.toml"
+scenario = "tests/smoke/scenarios/sd-midi-corrupt.toml"
 needs_configuration = true
 wall_timeout_s = 1200
 
@@ -681,7 +681,7 @@ wall_timeout_s = 1200
 id = "sd-midi-volatile"
 suites = []
 models = ["l6", "l6max"]
-scenario = "scenarios/sd-midi-volatile.toml"
+scenario = "tests/smoke/scenarios/sd-midi-volatile.toml"
 needs_configuration = true
 wall_timeout_s = 1800
 
@@ -689,7 +689,7 @@ wall_timeout_s = 1800
 id = "sd-warm-reset"
 suites = []
 models = ["l6", "l6max"]
-scenario = "scenarios/sd-warm-reset.toml"
+scenario = "tests/smoke/scenarios/sd-warm-reset.toml"
 needs_configuration = true
 wall_timeout_s = 1200
 
@@ -697,7 +697,7 @@ wall_timeout_s = 1200
 id = "sd-mixed-static"
 suites = ["sd-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-mixed-static.toml"
+scenario = "tests/smoke/scenarios/sd-mixed-static.toml"
 needs_configuration = true
 wall_timeout_s = 1800
 
@@ -705,7 +705,7 @@ wall_timeout_s = 1800
 id = "sd-all-patches"
 suites = ["sd-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-all-patches.toml"
+scenario = "tests/smoke/scenarios/sd-all-patches.toml"
 needs_configuration = true
 wall_timeout_s = 2400
 
@@ -713,7 +713,7 @@ wall_timeout_s = 2400
 id = "patch-loader-only"
 suites = ["sd-matrix"]
 models = ["l6max"]
-scenario = "scenarios/patch-loader-only.toml"
+scenario = "tests/smoke/scenarios/patch-loader-only.toml"
 needs_configuration = true
 wall_timeout_s = 1200
 
@@ -721,7 +721,7 @@ wall_timeout_s = 1200
 id = "sd-effect-replacement-map"
 suites = ["sd-matrix", "effect-replacement-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-effect-replacement-map.toml"
+scenario = "tests/smoke/scenarios/sd-effect-replacement-map.toml"
 needs_configuration = true
 wall_timeout_s = 600
 
@@ -729,7 +729,7 @@ wall_timeout_s = 600
 id = "sd-effect-replacement-plateau"
 suites = ["sd-matrix", "effect-replacement-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-effect-replacement-plateau.toml"
+scenario = "tests/smoke/scenarios/sd-effect-replacement-plateau.toml"
 needs_configuration = true
 wall_timeout_s = 600
 
@@ -737,7 +737,7 @@ wall_timeout_s = 600
 id = "sd-effect-editor-mode-restore"
 suites = ["sd-matrix", "effect-replacement-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-effect-editor-mode-restore.toml"
+scenario = "tests/smoke/scenarios/sd-effect-editor-mode-restore.toml"
 needs_configuration = true
 wall_timeout_s = 600
 
@@ -745,7 +745,7 @@ wall_timeout_s = 600
 id = "sd-effect-velvet-ring-scale"
 suites = ["sd-matrix", "effect-replacement-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-effect-velvet-ring-scale.toml"
+scenario = "tests/smoke/scenarios/sd-effect-velvet-ring-scale.toml"
 needs_configuration = true
 wall_timeout_s = 600
 
@@ -753,7 +753,7 @@ wall_timeout_s = 600
 id = "sd-effect-assignment-spring-plateau"
 suites = ["sd-matrix", "effect-replacement-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-effect-assignment-spring-plateau.toml"
+scenario = "tests/smoke/scenarios/sd-effect-assignment-spring-plateau.toml"
 needs_configuration = true
 wall_timeout_s = 600
 
@@ -761,7 +761,7 @@ wall_timeout_s = 600
 id = "sd-effect-assignment-spring-velvet"
 suites = ["sd-matrix", "effect-replacement-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-effect-assignment-spring-velvet.toml"
+scenario = "tests/smoke/scenarios/sd-effect-assignment-spring-velvet.toml"
 needs_configuration = true
 wall_timeout_s = 600
 
@@ -769,7 +769,7 @@ wall_timeout_s = 600
 id = "sd-effect-assignment-plateau-plateau"
 suites = ["sd-matrix", "effect-replacement-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-effect-assignment-plateau-plateau.toml"
+scenario = "tests/smoke/scenarios/sd-effect-assignment-plateau-plateau.toml"
 needs_configuration = true
 wall_timeout_s = 600
 
@@ -777,7 +777,7 @@ wall_timeout_s = 600
 id = "sd-effect-assignment-velvet-velvet"
 suites = ["sd-matrix", "effect-replacement-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-effect-assignment-velvet-velvet.toml"
+scenario = "tests/smoke/scenarios/sd-effect-assignment-velvet-velvet.toml"
 needs_configuration = true
 wall_timeout_s = 600
 
@@ -785,7 +785,7 @@ wall_timeout_s = 600
 id = "sd-effect-assignment-plateau-velvet"
 suites = ["sd-matrix", "effect-replacement-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-effect-assignment-plateau-velvet.toml"
+scenario = "tests/smoke/scenarios/sd-effect-assignment-plateau-velvet.toml"
 needs_configuration = true
 wall_timeout_s = 600
 
@@ -793,7 +793,7 @@ wall_timeout_s = 600
 id = "sd-effect-assignment-velvet-plateau"
 suites = ["sd-matrix", "effect-replacement-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-effect-assignment-velvet-plateau.toml"
+scenario = "tests/smoke/scenarios/sd-effect-assignment-velvet-plateau.toml"
 needs_configuration = true
 wall_timeout_s = 600
 
@@ -801,7 +801,7 @@ wall_timeout_s = 600
 id = "sd-knob-midi"
 suites = ["sd-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-knob-midi.toml"
+scenario = "tests/smoke/scenarios/sd-knob-midi.toml"
 needs_configuration = true
 wall_timeout_s = 1800
 
@@ -809,7 +809,7 @@ wall_timeout_s = 1800
 id = "sd-static-all"
 suites = ["sd-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-static-all.toml"
+scenario = "tests/smoke/scenarios/sd-static-all.toml"
 needs_configuration = true
 wall_timeout_s = 1800
 
@@ -817,7 +817,7 @@ wall_timeout_s = 1800
 id = "sd-hook-chain"
 suites = ["sd-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-hook-chain.toml"
+scenario = "tests/smoke/scenarios/sd-hook-chain.toml"
 needs_configuration = true
 wall_timeout_s = 1200
 
@@ -825,7 +825,7 @@ wall_timeout_s = 1200
 id = "sd-knob-midi-sync-dynamic"
 suites = ["sd-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-knob-midi-sync-dynamic.toml"
+scenario = "tests/smoke/scenarios/sd-knob-midi-sync-dynamic.toml"
 needs_configuration = true
 wall_timeout_s = 1200
 
@@ -833,7 +833,7 @@ wall_timeout_s = 1200
 id = "sd-menu-loader"
 suites = ["sd-matrix"]
 models = ["l6max"]
-scenario = "scenarios/sd-menu-loader.toml"
+scenario = "tests/smoke/scenarios/sd-menu-loader.toml"
 needs_configuration = true
 wall_timeout_s = 1500
 
@@ -841,6 +841,6 @@ wall_timeout_s = 1500
 id = "dump-rom"
 suites = ["full"]
 models = ["l6max"]
-scenario = "scenarios/dump-rom.toml"
+scenario = "tests/smoke/scenarios/dump-rom.toml"
 needs_configuration = true
 wall_timeout_s = 1800

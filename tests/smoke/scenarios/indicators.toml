@@ -6,8 +6,8 @@ card = "empty"
 
 [[step]]
 action = "include"
-path = "fragments/prepared-level.toml"
+path = "tests/smoke/scenarios/fragments/prepared-level.toml"
 
 [[step]]
 action = "include"
-path = "fragments/indicators.toml"
+path = "tests/smoke/scenarios/fragments/indicators.toml"

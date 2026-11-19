@@ -81,7 +81,7 @@ Card spec details:
   Each `[[file]]` has a `path` from the card root, with parent directories created as
   needed, and one source: `tone` (`hz`, `seconds`, `amplitude`), `loop-tone` (`hz`, `seconds`, `amplitude`; no fade, so it loops cleanly when each loop holds whole cycles), `sweep` (`low_hz`,
   `high_hz`, `seconds`, `amplitude`), `levels` (`hz` and `steps`, each with `seconds`,
-  `left`, and `right`), `copy` (a host path relative to the spec), or `text`. Generated
+  `left`, and `right`), `copy` (a host path from the repository root), or `text`. Generated
   audio is 48 kHz stereo 32-bit float. On L6max, each `[[project]]` (`name`, `hz`,
   `seconds`, `amplitude`, and optional `level`, the mixer level of every channel,
   default 0, which plays silently) writes a recorder project under `RECORDER`, with its settings
@@ -123,8 +123,8 @@ Its top-level `version` is `1`; every `[[case]]` has:
 The local configuration, catalog entries, and scenario headers reject unknown
 fields. Scenario action blocks are tagged by the required `action` value and
 their action-specific fields are strict; use the documented common step fields
-and action schema. A case's `scenario` path is relative to `tests/smoke`; scenario
-`include` paths are relative to the containing scenario and cannot escape its directory.
+and action schema. A case's `scenario` path, and every
+`include` and reference image path inside scenarios, is written from the repository root.
 `l6test`'s focused [command reference](tools/l6test.md) summarizes selection
 flags and links to the full scenario schema.
 
@@ -368,9 +368,11 @@ logic independently of QEMU.
 
 `cargo l6test list --format json` prints every case, model and backend the
 catalog can run, sorted, with suite membership and a `definition` digest of
-what the case runs: its scenario and fragment contents, behavioral catalog
-fields, and state and card spec contents. The digest does not depend on where
-files live, so moving files keeps it. `tools/l6test/snapshots/cases.json` holds the reviewed copy, and
+what the case runs on that model: the scenario's steps for the model after
+includes, its reference images by content, its state and card specs as data,
+and the behavioral catalog fields. Moving files, rewriting includes or merging
+per-model scenarios into one keeps the digest; changing what runs changes it.
+`tools/l6test/snapshots/cases.json` holds the reviewed copy, and
 `cargo test -p l6test` fails when the catalog no longer matches it. A change
 that adds, removes or moves cases, or changes a generated scenario, must update
 it deliberately:

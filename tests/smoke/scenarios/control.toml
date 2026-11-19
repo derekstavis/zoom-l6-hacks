@@ -6,13 +6,13 @@ card = "empty"
 
 [[step]]
 action = "include"
-path = "fragments/prepared-level.toml"
+path = "tests/smoke/scenarios/fragments/prepared-level.toml"
 
 [[step]]
 action = "include"
-path = "fragments/buttons.toml"
+path = "tests/smoke/scenarios/fragments/buttons.toml"
 
 [[step]]
 models = ["l6max"]
 action = "include"
-path = "fragments/button-reports.toml"
+path = "tests/smoke/scenarios/fragments/button-reports.toml"

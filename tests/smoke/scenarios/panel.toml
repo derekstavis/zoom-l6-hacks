@@ -6,29 +6,29 @@ card = "empty"
 
 [[step]]
 action = "include"
-path = "fragments/prepared-level.toml"
+path = "tests/smoke/scenarios/fragments/prepared-level.toml"
 
 [[step]]
 action = "include"
-path = "fragments/controls.toml"
+path = "tests/smoke/scenarios/fragments/controls.toml"
 
 [[step]]
 action = "include"
-path = "fragments/indicators.toml"
+path = "tests/smoke/scenarios/fragments/indicators.toml"
 
 [[step]]
 action = "include"
-path = "fragments/buttons.toml"
+path = "tests/smoke/scenarios/fragments/buttons.toml"
 
 [[step]]
 models = ["l6max"]
 action = "include"
-path = "fragments/button-reports.toml"
+path = "tests/smoke/scenarios/fragments/button-reports.toml"
 
 [[step]]
 models = ["l6"]
 action = "include"
-path = "fragments/l6-gui-controls.toml"
+path = "tests/smoke/scenarios/fragments/l6-gui-controls.toml"
 
 # A brief press: the GUI's default POWER click holds long enough to power off.
 [[step]]
@@ -52,4 +52,4 @@ at_least = true
 
 [[step]]
 action = "include"
-path = "fragments/analog-controls.toml"
+path = "tests/smoke/scenarios/fragments/analog-controls.toml"

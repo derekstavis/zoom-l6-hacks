@@ -81,7 +81,7 @@ pub fn load(spec: &Path) -> Result<Catalog, String> {
     let mut scenarios = BTreeMap::new();
     for case in &cases {
         if let Some(path) = &case.scenario {
-            let scenario = Scenario::load(&spec.join(path))
+            let scenario = Scenario::load(&scenario_file(path))
                 .map_err(|error| format!("{}: {error}", case.id))?;
             scenarios.insert(case.id.clone(), scenario);
         }
@@ -112,9 +112,8 @@ pub fn load(spec: &Path) -> Result<Catalog, String> {
         });
     }
     for case in &generated {
-        let path = spec.join(format!("scenarios/{}.toml", case.id));
-        let scenario = Scenario::from_text(&case.scenario, &path)
-            .map_err(|error| format!("{}: {error}", case.id))?;
+        let scenario =
+            Scenario::from_text(&case.scenario).map_err(|error| format!("{}: {error}", case.id))?;
         scenarios.insert(case.id.clone(), scenario);
     }
     Ok(Catalog {
@@ -122,6 +121,12 @@ pub fn load(spec: &Path) -> Result<Catalog, String> {
         generated,
         scenarios,
     })
+}
+
+/// A case's scenario file. Catalog paths are relative to the repository
+/// root; generated cases point at absolute files in their run.
+pub fn scenario_file(path: &Path) -> PathBuf {
+    l6max_host::paths::repository_root().join(path)
 }
 
 /// Write the generated scenarios into `dir` (a run's `generated/`), point
@@ -185,7 +190,7 @@ fn definition(
 ) -> Result<String, String> {
     let (scenario, state, card) = match scenario {
         Some(scenario) => (
-            Some(resolved_scenario(scenario, model, spec)?),
+            Some(resolved_scenario(scenario, model)?),
             scenario
                 .state
                 .as_ref()
@@ -225,7 +230,7 @@ fn definition(
 /// how they are composed: its steps after includes, kept to those for `model`,
 /// without its name or model list, and with each reference image replaced by
 /// its content hash.
-fn resolved_scenario(scenario: &Scenario, model: &str, spec: &Path) -> Result<Value, String> {
+pub(crate) fn resolved_scenario(scenario: &Scenario, model: &str) -> Result<Value, String> {
     let mut value = serde_json::to_value(scenario).map_err(|e| e.to_string())?;
     let object = value.as_object_mut().unwrap();
     object.remove("name");
@@ -240,7 +245,7 @@ fn resolved_scenario(scenario: &Scenario, model: &str, spec: &Path) -> Result<Va
         let step = step.as_object_mut().unwrap();
         step.remove("models");
         if let Some(Value::String(image)) = step.get("image") {
-            let path = spec.join(image);
+            let path = smoke_core::spec_path(Path::new(image))?;
             let bytes = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             step.insert(
                 "image".into(),

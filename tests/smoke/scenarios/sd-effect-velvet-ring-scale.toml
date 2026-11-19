@@ -11,7 +11,7 @@ gdb = true
 
 [[step]]
 action = "include"
-path = "fragments/effect-replacement-load.toml"
+path = "tests/smoke/scenarios/fragments/effect-replacement-load.toml"
 
 [[step]]
 action = "effect-replacement-state"

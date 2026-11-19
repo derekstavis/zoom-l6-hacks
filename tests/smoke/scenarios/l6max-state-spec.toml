@@ -23,7 +23,7 @@ name = "home"
 
 [[step]]
 action = "expect-display-image"
-image = "images/l6max-storage-removed.png"
+image = "tests/smoke/images/l6max-storage-removed.png"
 
 # Live settings struct: setup_required loaded from the synthesized bank.
 [[step]]

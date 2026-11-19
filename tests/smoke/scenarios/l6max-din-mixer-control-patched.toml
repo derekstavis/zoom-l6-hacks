@@ -8,7 +8,7 @@ card = "empty"
 
 [[step]]
 action = "include"
-path = "fragments/l6max-din-mixer-setup.toml"
+path = "tests/smoke/scenarios/fragments/l6max-din-mixer-setup.toml"
 
 [[step]]
 action = "l6max-din-mixer-control"

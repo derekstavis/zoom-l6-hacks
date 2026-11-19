@@ -1,0 +1,45 @@
+# Every suite a case may name. A suite with `includes` also runs every case of
+# the suites it lists. Cases that name no suite run only when selected with
+# --case.
+version = 1
+
+[suite.quick]
+description = "The shared controls scenario on both models in one boot each, plus the L6max TAP handler."
+
+[suite.regression]
+description = "The composed panel scenario, audio callbacks and SAI/eDMA streams, and input sweeps."
+
+[suite.panel]
+description = "The full panel sequence through the selected adapters, one boot each."
+
+[suite.devices]
+description = "Audio callbacks and streams, SD presence and removal, USB MIDI and descriptors, and L6max USB storage."
+
+[suite.lifecycle]
+description = "Power and restart, and fresh L6max persistence."
+
+[suite.full]
+description = "Every registered device and patch case; pass --app for the packaged application cases."
+
+[suite.sd-matrix]
+description = "Patch loader and SD module cases: loading, corruption, warm reset, hook chains and effect replacement."
+
+[suite.effect-replacement-matrix]
+description = "Effect slot replacement cases from SD modules."
+
+[suite.patches]
+description = "Generated: every valid patch combination and effect assignment, and each patch through each delivery method."
+
+[suite.patches-pairwise]
+description = "Generated: a subset of patches in which every pair of placements and effect assignments appears, plus every delivery case."
+
+[suite.patches-single]
+description = "Generated: each placement and effect assignment once, with only its dependencies, plus every delivery case."
+
+[suite.pr]
+description = "Every PR tip: full, the SD matrix and the pairwise patches subset."
+includes = ["full", "sd-matrix", "patches-pairwise"]
+
+[suite.stack]
+description = "The top of a stack, or nightly: full, the SD matrix and every patch combination."
+includes = ["full", "sd-matrix", "patches"]

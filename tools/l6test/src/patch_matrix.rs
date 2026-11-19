@@ -26,8 +26,15 @@ use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
-/// Suite that runs the generated cases.
+/// Suite that runs every generated case: the full product of placements and
+/// effect assignments.
 pub const SUITE: &str = "patches";
+/// Suite with a covering subset in which every pair of factor values (one
+/// patch's placement, one slot's effect) appears in some case.
+pub const PAIRWISE_SUITE: &str = "patches-pairwise";
+/// Suite with each placement and each effect assignment once, with as few
+/// other patches as its dependencies allow.
+pub const SINGLE_SUITE: &str = "patches-single";
 /// Case and scenario-file prefix.
 pub const PREFIX: &str = "patches-";
 
@@ -140,6 +147,8 @@ pub struct GeneratedCase {
     pub id: String,
     pub model: &'static str,
     pub scenario: String,
+    /// The generated suites that run it; every case is in [`SUITE`].
+    pub suites: Vec<&'static str>,
 }
 
 fn model_names(model: FirmwareModel) -> (&'static str, &'static str) {
@@ -562,6 +571,7 @@ fn combination_case(
         id,
         model: name,
         scenario: text,
+        suites: vec![SUITE],
     })
 }
 
@@ -607,6 +617,7 @@ fn delivery_cases(model: FirmwareModel, all: &Checks) -> Result<Vec<GeneratedCas
                 id,
                 model: name,
                 scenario: text,
+                suites: vec![SUITE, PAIRWISE_SUITE, SINGLE_SUITE],
             });
             // Installed by a firmware update built with the browser patcher.
             let id = format!("{PREFIX}{name}_update_{patch}");
@@ -625,6 +636,7 @@ fn delivery_cases(model: FirmwareModel, all: &Checks) -> Result<Vec<GeneratedCas
                 id,
                 model: name,
                 scenario: text,
+                suites: vec![SUITE, PAIRWISE_SUITE, SINGLE_SUITE],
             });
         }
         if declares(&package.website_sd_models, model) {
@@ -667,10 +679,114 @@ fn delivery_cases(model: FirmwareModel, all: &Checks) -> Result<Vec<GeneratedCas
                 id,
                 model: name,
                 scenario: text,
+                suites: vec![SUITE, PAIRWISE_SUITE, SINGLE_SUITE],
             });
         }
     }
     Ok(cases)
+}
+
+/// A combination as one value per factor: each placeable patch's placement
+/// (`-`, `fw` or `sd`), then each stock slot's effect (`-` for stock).
+fn factor_values(model: FirmwareModel, combination: &Combination) -> Vec<String> {
+    let mut values = Vec::new();
+    for (package, _) in placeable(model) {
+        let name = &package.name;
+        values.push(if combination.firmware.contains(name) {
+            "fw".into()
+        } else if combination.sd.contains(name) {
+            "sd".into()
+        } else {
+            "-".into()
+        });
+    }
+    for slot in STOCK_EFFECT_SLOTS {
+        values.push(
+            combination
+                .effects
+                .iter()
+                .find(|(assigned, _)| *assigned == slot)
+                .map_or("-".into(), |(_, effect)| effect.clone()),
+        );
+    }
+    values
+}
+
+/// The factor-value tuples of `strength` factors (and every single value) a
+/// combination covers.
+fn tuples(values: &[String], strength: usize) -> Vec<Vec<(usize, &str)>> {
+    let mut out: Vec<Vec<(usize, &str)>> = values
+        .iter()
+        .enumerate()
+        .map(|(i, v)| vec![(i, v.as_str())])
+        .collect();
+    if strength >= 2 {
+        for i in 0..values.len() {
+            for j in i + 1..values.len() {
+                out.push(vec![(i, values[i].as_str()), (j, values[j].as_str())]);
+            }
+        }
+    }
+    out
+}
+
+/// Indices of a subset of `combinations` that covers every tuple some valid
+/// combination covers, chosen greedily (most new tuples first, earliest on a
+/// tie), so the subset is stable.
+fn covering(combinations: &[Vec<String>], strength: usize) -> BTreeSet<usize> {
+    let mut uncovered: BTreeSet<Vec<(usize, &str)>> = combinations
+        .iter()
+        .flat_map(|values| tuples(values, strength))
+        .collect();
+    let mut chosen = BTreeSet::new();
+    while !uncovered.is_empty() {
+        let (best, _) = combinations
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !chosen.contains(index))
+            .map(|(index, values)| {
+                let new = tuples(values, strength)
+                    .iter()
+                    .filter(|tuple| uncovered.contains(*tuple))
+                    .count();
+                (index, new)
+            })
+            .fold(
+                (0, 0),
+                |best, next| if next.1 > best.1 { next } else { best },
+            );
+        for tuple in tuples(&combinations[best], strength) {
+            uncovered.remove(&tuple);
+        }
+        chosen.insert(best);
+    }
+    chosen
+}
+
+/// For each factor value other than absent or stock, the earliest
+/// combination holding it with the fewest other such values.
+fn singles(combinations: &[Vec<String>]) -> BTreeSet<usize> {
+    let mut chosen = BTreeSet::new();
+    let set = |values: &Vec<String>| values.iter().filter(|v| *v != "-").count();
+    let factors = combinations.first().map_or(0, Vec::len);
+    for factor in 0..factors {
+        let mut seen: Vec<&str> = Vec::new();
+        for values in combinations {
+            let value = values[factor].as_str();
+            if value == "-" || seen.contains(&value) {
+                continue;
+            }
+            seen.push(value);
+            let best = combinations
+                .iter()
+                .enumerate()
+                .filter(|(_, other)| other[factor] == value)
+                .min_by_key(|(index, other)| (set(other), *index))
+                .map(|(index, _)| index);
+            chosen.extend(best);
+        }
+    }
+    chosen
 }
 
 /// Every generated case, for both models.
@@ -678,8 +794,22 @@ pub fn generate() -> Result<Vec<GeneratedCase>, String> {
     let all = Checks::load()?;
     let mut cases = Vec::new();
     for model in [FirmwareModel::L6, FirmwareModel::L6max] {
-        for combination in combinations(model)? {
-            cases.push(combination_case(model, &combination, &all)?);
+        let combinations = combinations(model)?;
+        let values: Vec<Vec<String>> = combinations
+            .iter()
+            .map(|combination| factor_values(model, combination))
+            .collect();
+        let pairwise = covering(&values, 2);
+        let single = singles(&values);
+        for (index, combination) in combinations.iter().enumerate() {
+            let mut case = combination_case(model, combination, &all)?;
+            if pairwise.contains(&index) {
+                case.suites.push(PAIRWISE_SUITE);
+            }
+            if single.contains(&index) {
+                case.suites.push(SINGLE_SUITE);
+            }
+            cases.push(case);
         }
         cases.extend(delivery_cases(model, &all)?);
     }
@@ -689,6 +819,44 @@ pub fn generate() -> Result<Vec<GeneratedCase>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pairwise_covers_every_pair_and_single_every_value() {
+        for model in [FirmwareModel::L6, FirmwareModel::L6max] {
+            let values: Vec<Vec<String>> = combinations(model)
+                .unwrap()
+                .iter()
+                .map(|c| factor_values(model, c))
+                .collect();
+            let pairs = |set: &mut dyn Iterator<Item = &Vec<String>>| {
+                let mut out = BTreeSet::new();
+                for v in set {
+                    for i in 0..v.len() {
+                        out.insert((i, v[i].clone(), i, v[i].clone()));
+                        for j in i + 1..v.len() {
+                            out.insert((i, v[i].clone(), j, v[j].clone()));
+                        }
+                    }
+                }
+                out
+            };
+            let pairwise = covering(&values, 2);
+            assert_eq!(
+                pairs(&mut pairwise.iter().map(|&i| &values[i])),
+                pairs(&mut values.iter())
+            );
+            let single = singles(&values);
+            for v in &values {
+                for (factor, value) in v.iter().enumerate().filter(|(_, v)| *v != "-") {
+                    assert!(single.iter().any(|&i| &values[i][factor] == value));
+                }
+            }
+            assert!(single.len() <= pairwise.len() && pairwise.len() <= values.len());
+            if model == FirmwareModel::L6max {
+                assert!(pairwise.len() * 5 < values.len());
+            }
+        }
+    }
 
     #[test]
     fn combinations_cover_every_placement_and_effect_assignment_once() {

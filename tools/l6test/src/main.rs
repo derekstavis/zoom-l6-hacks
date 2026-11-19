@@ -300,13 +300,14 @@ fn execute() -> Result<i32, String> {
         serde_json::to_vec_pretty(&manifest).unwrap(),
     )
     .map_err(|e| e.to_string())?;
+    let suite = catalog.suites.members(&args.suite)?;
     let cases: Vec<&Case> = catalog
         .cases
         .iter()
         .filter(|c| match (&rerun, &args.case) {
             (Some(rerun), _) => rerun.has_case(&c.id),
             (None, Some(selection)) => select::case_matches(selection, &c.id),
-            (None, None) => c.suites.contains(&args.suite),
+            (None, None) => c.suites.iter().any(|s| suite.contains(s)),
         })
         .collect();
     if let (None, Some(selection)) = (&rerun, &args.case) {

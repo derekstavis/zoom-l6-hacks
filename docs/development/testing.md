@@ -187,7 +187,18 @@ grant sandbox permissions; the calling environment must provide them.
 | `--suite devices` | Shared audio callbacks and SAI/eDMA stream checks, SD presence/removal, USB MIDI/descriptors and L6max USB storage |
 | `--suite lifecycle` | Shared power/restart and fresh L6max persistence |
 | `--suite full` | Registered scenarios and remaining specialized legacy cases; missing prerequisites produce BLOCKED |
+| `--suite sd-matrix` | Patch loader and SD module cases: loading, corruption, warm reset, hook chains and effect replacement |
 | `--suite patches` | Generated: every valid patch combination and effect assignment, and each patch through each delivery method, with a functional check per patch. See [Patch combinations](#patch-combinations) |
+| `--suite patches-pairwise` | Generated: a covering subset in which every pair of placements and effect assignments appears, plus every delivery case |
+| `--suite patches-single` | Generated: each placement and effect assignment once with only its dependencies, plus every delivery case |
+| `--suite pr` | Every PR tip: `full`, `sd-matrix` and `patches-pairwise` |
+| `--suite stack` | The top of a stack, or nightly: `full`, `sd-matrix` and `patches` |
+
+[`tests/emulator/suites.toml`](../../tests/emulator/suites.toml) declares every
+suite; a case naming an undeclared suite fails to load. A suite's `includes`
+lists other suites whose cases it also runs, so `pr` and `stack` are the
+validation tiers: run `pr` at each PR tip and `stack` once at the top of a
+stack, fixing failures in the PR they belong to.
 
 Cases run concurrently, up to `--jobs N` at once (by default a quarter of
 the host's cores, between 1 and 4). Scenario waits use guest time, so

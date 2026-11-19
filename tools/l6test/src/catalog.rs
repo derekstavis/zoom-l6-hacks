@@ -19,6 +19,68 @@ use std::{
 
 /// The shared emulator test spec, from the repository root.
 pub const SPEC: &str = "tests/emulator";
+/// The suites cases may name, from the repository root.
+pub const SUITES_FILE: &str = "tests/emulator/suites.toml";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SuitesFile {
+    version: u32,
+    suite: BTreeMap<String, SuiteEntry>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuiteEntry {
+    pub description: String,
+    /// Other suites whose cases this one runs too.
+    #[serde(default)]
+    pub includes: Vec<String>,
+}
+
+/// The declared suites.
+pub struct Suites {
+    pub declared: BTreeMap<String, SuiteEntry>,
+}
+
+impl Suites {
+    fn load(root: &Path) -> Result<Self, String> {
+        let path = root.join(SUITES_FILE);
+        let file: SuitesFile =
+            toml::from_str(&fs::read_to_string(&path).map_err(|e| format!("{SUITES_FILE}: {e}"))?)
+                .map_err(|e| format!("{SUITES_FILE}: {e}"))?;
+        if file.version != 1 {
+            return Err(format!("{SUITES_FILE}: unsupported version"));
+        }
+        let suites = Self {
+            declared: file.suite,
+        };
+        for name in suites.declared.keys() {
+            suites.members(name)?;
+        }
+        Ok(suites)
+    }
+
+    /// `name` and every suite it includes, directly or through others.
+    pub fn members(&self, name: &str) -> Result<Vec<String>, String> {
+        let mut members = Vec::new();
+        let mut pending = vec![(name.to_owned(), 0)];
+        while let Some((suite, depth)) = pending.pop() {
+            if depth > self.declared.len() {
+                return Err(format!("{SUITES_FILE}: suite {name} includes itself"));
+            }
+            let entry = self
+                .declared
+                .get(&suite)
+                .ok_or_else(|| format!("unknown suite {suite}; see {SUITES_FILE}"))?;
+            if !members.contains(&suite) {
+                members.push(suite.clone());
+            }
+            pending.extend(entry.includes.iter().map(|s| (s.clone(), depth + 1)));
+        }
+        Ok(members)
+    }
+}
 /// A patch's emulator tests, from its directory.
 pub const PATCH_SPEC: &str = "tests/emulator";
 
@@ -81,6 +143,7 @@ fn case_timeout() -> u64 {
 
 pub struct Catalog {
     pub cases: Vec<Case>,
+    pub suites: Suites,
     pub generated: Vec<patch_matrix::GeneratedCase>,
     /// Every case's scenario, by case id.
     pub scenarios: BTreeMap<String, Scenario>,
@@ -216,7 +279,7 @@ pub fn load(root: &Path) -> Result<Catalog, String> {
         cases.push(Case {
             expected_failure: Vec::new(),
             id: case.id.clone(),
-            suites: vec![patch_matrix::SUITE.into()],
+            suites: case.suites.iter().map(|suite| (*suite).into()).collect(),
             models: vec![case.model.into()],
             // Replaced by the written file in `write_generated`.
             scenario: Some(PathBuf::from(format!("generated/{}.toml", case.id))),
@@ -231,8 +294,20 @@ pub fn load(root: &Path) -> Result<Catalog, String> {
             Scenario::from_text(&case.scenario).map_err(|error| format!("{}: {error}", case.id))?;
         scenarios.insert(case.id.clone(), scenario);
     }
+    let suites = Suites::load(root)?;
+    for case in &cases {
+        for suite in &case.suites {
+            if !suites.declared.contains_key(suite) {
+                return Err(format!(
+                    "case {} names suite {suite}, which {SUITES_FILE} does not declare",
+                    case.id
+                ));
+            }
+        }
+    }
     Ok(Catalog {
         cases,
+        suites,
         generated,
         scenarios,
     })

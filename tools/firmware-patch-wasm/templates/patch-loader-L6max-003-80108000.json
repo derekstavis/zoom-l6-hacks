@@ -154,7 +154,7 @@
   ],
   "static_patches": [
     "knob-dialog",
-    "midi-control"
+    "midi-sync"
   ],
   "windows": [
     {

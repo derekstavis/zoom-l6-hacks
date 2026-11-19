@@ -153,8 +153,8 @@
     }
   ],
   "static_patches": [
-    "midi-control",
-    "midi-sync"
+    "midi-sync",
+    "din-mixer-control"
   ],
   "windows": [
     {

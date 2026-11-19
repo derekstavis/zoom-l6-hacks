@@ -3312,11 +3312,6 @@ impl State {
                         replies.push(message);
                     }
                 } else {
-                    // MIDI Control adds recorder state as CC 115 to the
-                    // existing 94-parameter sync response.
-                    if message[1] == 115 {
-                        continue;
-                    }
                     replies.push(message);
                 }
                 if replies.len() == expected_count {

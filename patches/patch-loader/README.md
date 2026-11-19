@@ -29,8 +29,7 @@ Each file can register up to sixteen hooks across cataloged functions. Multiple
 files can hook the same function; their handlers are linked in numeric
 filename-prefix order. The dynamic knob-dialog emulator case loads two ordered
 modules for the same callee and exercises the recorder guard, dialog rendering,
-timeout, cleanup, and task context. The MIDI Control + MIDI Sync scenario loads
-both patches and verifies their shared entry as a two-handler chain.
+timeout, cleanup, and task context.
 
 **The listed emulator cases pass; physical hardware has not been tested.** QEMU
 does not establish physical SDRAM permissions, cache behavior, stack headroom,
@@ -107,7 +106,6 @@ for `l6patch` as well as the normal emulator prerequisites:
 ```sh
 cargo run --offline --locked -p l6test -- run --case sd-midi-sync --backend headless
 cargo run --offline --locked -p l6test -- run --case sd-l6max-midi-sync --backend headless
-cargo run --offline --locked -p l6test -- run --case sd-midi-control-sync --model l6max --backend headless
 cargo run --offline --locked -p l6test -- run --case sd-din-mixer-control --model l6max --backend headless
 cargo run --offline --locked -p l6test -- run --case sd-knob-dialog --model l6max --backend headless
 cargo run --offline --locked -p l6test -- run --case sd-knob-dialog-dynamic --model l6max --backend headless

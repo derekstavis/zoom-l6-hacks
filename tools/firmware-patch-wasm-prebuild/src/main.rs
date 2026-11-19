@@ -613,7 +613,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let patch_root = patches_dir.join(name);
         let patch_root = if patch_root.join("l6max/src/payload.rs").is_file() {
             patch_root.join("l6max")
-        } else if name == "midi-sync" || name == "midi-control" {
+        } else if name == "midi-sync" {
             patch_root.join("l6max")
         } else {
             patch_root

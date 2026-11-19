@@ -2,7 +2,7 @@
 //! case matrix that selection expands.
 use crate::patch_matrix;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use smoke_core::Scenario;
 use std::{
@@ -170,49 +170,37 @@ pub struct Row {
     pub backend: String,
     pub suites: Vec<String>,
     /// Digest of what the case runs for this model, independent of where its
-    /// files live: scenario and fragment contents, behavioral catalog fields,
-    /// and the contents of its state and card specs.
+    /// files live and how they are composed: the scenario's steps for this
+    /// model after includes, its reference images, its state and card specs
+    /// as data, and the behavioral catalog fields.
     pub definition: String,
 }
 
 /// Digest of what `case` runs for `model`; see [`Row::definition`].
-/// `generated` is the text of a generated scenario, whose file does not exist.
 fn definition(
     case: &Case,
     scenario: Option<&Scenario>,
-    generated: Option<&str>,
     model: &str,
     spec: &Path,
 ) -> Result<String, String> {
-    let digest = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
-    let content = |path: &Path| -> Result<String, String> {
-        Ok(digest(
-            &fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?,
-        ))
-    };
-    let spec_file = |directory: &str, name: &Option<String>| -> Result<Option<String>, String> {
-        name.as_ref()
-            .map(|name| content(&spec.join(directory).join(format!("{model}-{name}.toml"))))
-            .transpose()
-    };
-    let (scenario_files, state, card) = match scenario {
+    let (scenario, state, card) = match scenario {
         Some(scenario) => (
+            Some(resolved_scenario(scenario, model, spec)?),
             scenario
-                .sources
-                .iter()
-                .enumerate()
-                .map(|(index, path)| match (index, generated) {
-                    (0, Some(text)) => Ok(digest(text.as_bytes())),
-                    _ => content(path),
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-            spec_file("states", &scenario.state)?,
-            spec_file("cards", &scenario.card)?,
+                .state
+                .as_ref()
+                .map(|name| spec_value(&spec.join(format!("states/{model}-{name}.toml"))))
+                .transpose()?,
+            scenario
+                .card
+                .as_ref()
+                .map(|name| spec_value(&spec.join(format!("cards/{model}-{name}.toml"))))
+                .transpose()?,
         ),
-        None => (Vec::new(), None, None),
+        None => (None, None, None),
     };
     Ok(crate::hashing::digest(&json!({
-        "scenario_files": scenario_files,
+        "scenario": scenario,
         "state": state,
         "card": card,
         "package": case.package,
@@ -224,29 +212,61 @@ fn definition(
         "no_sd": case.no_sd,
         "blocked": case.blocked,
         "wall_timeout_s": case.wall_timeout_s,
-        "expected_failure": case.expected_failure.iter().map(|e| json!([e.model, e.step, e.contains])).collect::<Vec<_>>(),
+        "expected_failure": case
+            .expected_failure
+            .iter()
+            .filter(|e| e.model == model)
+            .map(|e| json!([e.step, e.contains]))
+            .collect::<Vec<_>>(),
     })))
+}
+
+/// What a scenario runs on `model`, independent of where its files live and
+/// how they are composed: its steps after includes, kept to those for `model`,
+/// without its name or model list, and with each reference image replaced by
+/// its content hash.
+fn resolved_scenario(scenario: &Scenario, model: &str, spec: &Path) -> Result<Value, String> {
+    let mut value = serde_json::to_value(scenario).map_err(|e| e.to_string())?;
+    let object = value.as_object_mut().unwrap();
+    object.remove("name");
+    object.remove("models");
+    let steps = object["step"].as_array_mut().unwrap();
+    steps.retain(|step| {
+        step["models"]
+            .as_array()
+            .is_none_or(|models| models.is_empty() || models.iter().any(|m| m == model))
+    });
+    for step in steps.iter_mut() {
+        let step = step.as_object_mut().unwrap();
+        step.remove("models");
+        if let Some(Value::String(image)) = step.get("image") {
+            let path = spec.join(image);
+            let bytes = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            step.insert(
+                "image".into(),
+                format!("sha256:{:x}", Sha256::digest(bytes)).into(),
+            );
+        }
+    }
+    Ok(value)
+}
+
+/// A state or card spec as data, so formatting and comments do not count.
+fn spec_value(path: &Path) -> Result<Value, String> {
+    let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let value: toml::Value =
+        toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    serde_json::to_value(value).map_err(|e| e.to_string())
 }
 
 /// Every (case, model, backend) the catalog under `spec` can run, sorted.
 pub fn matrix(catalog: &Catalog, spec: &Path) -> Result<Vec<Row>, String> {
-    let generated: BTreeMap<&str, &str> = catalog
-        .generated
-        .iter()
-        .map(|case| (case.id.as_str(), case.scenario.as_str()))
-        .collect();
     let mut rows = Vec::new();
     for case in &catalog.cases {
         let scenario = catalog.scenarios.get(&case.id);
         for model in &case.models {
-            let definition = definition(
-                case,
-                scenario,
-                generated.get(case.id.as_str()).copied(),
-                model,
-                spec,
-            )
-            .map_err(|error| format!("{}: {error}", case.id))?;
+            let definition = definition(case, scenario, model, spec)
+                .map_err(|error| format!("{}: {error}", case.id))?;
             for backend in backends(case, scenario, &["headless", "gui"]) {
                 rows.push(Row {
                     case: case.id.clone(),

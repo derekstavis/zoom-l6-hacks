@@ -1,13 +1,13 @@
 //! Declare a card's contents in TOML and build it.
 use crate::pad_settings::SoundPad;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     f64::consts::TAU,
     fs, io,
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CardSpec {
     pub version: u32,
@@ -29,7 +29,7 @@ fn enabled() -> bool {
     true
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct File {
     /// Path from the card root. Parent directories are created as needed.
@@ -39,7 +39,7 @@ pub struct File {
 }
 
 /// One hold of a `levels` tone. Silence when both levels are zero.
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Level {
     pub seconds: f64,
@@ -49,7 +49,7 @@ pub struct Level {
 
 /// A recorder project on L6max, as the firmware writes one: a settings file, eight
 /// tracks and a master, all holding the same tone.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Project {
     /// Folder under `RECORDER`, by the firmware's convention `YYMMDD_HHMMSS`.
@@ -63,7 +63,7 @@ pub struct Project {
     pub level: u8,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Content {
     /// A stereo tone in both channels.

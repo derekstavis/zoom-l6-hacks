@@ -2,7 +2,7 @@
 use crate::trace;
 use l6fw::Model;
 pub use l6max_host::controls::{control_target, mode_index};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -14,7 +14,7 @@ pub fn model_name(model: Model) -> &'static str {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Scenario {
     pub version: u32,
@@ -67,7 +67,7 @@ pub struct Scenario {
     #[serde(skip)]
     pub sources: Vec<PathBuf>,
 }
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AudioInput {
     /// One-based input channel. See the audio model for each model's channels.
@@ -75,7 +75,7 @@ pub struct AudioInput {
     #[serde(flatten)]
     pub content: sd_image::spec::Content,
 }
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Step {
     #[serde(default)]
     pub models: Vec<String>,
@@ -118,7 +118,7 @@ fn guest_timeout() -> u32 {
 fn wall_timeout() -> u64 {
     180
 }
-#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Gesture {
     #[default]
@@ -126,14 +126,14 @@ pub enum Gesture {
     DragVertical,
     DragHorizontal,
 }
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum PadAssignmentSource {
     #[default]
     Editor,
     SavedState,
 }
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct UsbSysexRequest {
     pub bytes: Vec<u8>,
@@ -145,7 +145,7 @@ pub struct UsbSysexRequest {
     pub min_reply_bytes: Option<usize>,
     pub reply_timeout_ms: Option<u32>,
 }
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "action", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Action {
     Include {
@@ -1349,7 +1349,7 @@ impl Scenario {
 /// Environment variable the driver sets to `1` for cases whose persistent
 /// state was built from a state spec.
 pub const STATE_SPEC_ENV: &str = "SMOKE_STATE_SPEC";
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Fragment {
     step: Vec<Step>,

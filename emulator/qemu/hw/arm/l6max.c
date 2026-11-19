@@ -5082,8 +5082,10 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
         memory_region_init_ram(&s->itcm, NULL, itcm_name, itcm_size,
                                &error_fatal);
         memory_region_add_subregion(system_memory, 0, &s->itcm);
-        memcpy(memory_region_get_ram_ptr(&s->itcm), s->nor_flash + 0x50000,
-               itcm_size);
+        if (profile != &L6MAX_PROFILE) {
+            memcpy(memory_region_get_ram_ptr(&s->itcm), s->nor_flash + 0x50000,
+                   itcm_size);
+        }
         if (s->profile->high_ram_size) {
             /* L6 keeps writable heap state in the final 64 KiB of its MAIN
              * image window; expose that profile-specific bank over NOR. */

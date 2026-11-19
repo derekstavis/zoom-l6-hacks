@@ -56,8 +56,9 @@ The bootloader's entry code selects FlexRAM configuration `0x5555ea95`: one
 separate 512 KiB OCRAM, the L6max direct boot exposes 32 KiB ITCM, 128 KiB
 DTCM and 864 KiB OCRAM. It seeds GPR16/GPR17 for that configuration, but
 does not dynamically repartition memory when the guest writes those registers.
-The ITCM contents are still seeded from MAIN for emulator compatibility;
-they are not a reconstruction of the bootloader's TCM contents.
+The L6max ITCM starts as zero-filled emulator RAM; its physical contents at
+handoff were not captured. Stock MAIN relocates its own ITCM code during
+startup, and the tested entry bytes agree with the later physical dump.
 
 At direct MAIN entry the modeled MPU and cache-enable bits are clear. QEMU's
 Cortex-M7 model does not implement caches and does not retain writes to the

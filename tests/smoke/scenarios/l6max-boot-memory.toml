@@ -12,6 +12,13 @@ until = "boot-ready"
 guest_timeout_ms = 120000
 wall_timeout_s = 600
 
+# MAIN 1.10 relocates its ITCM code during startup; these bytes match both
+# its stock image at offset 0xee688 and the later physical ITCM capture.
+[[step]]
+action = "expect-memory"
+address = 0x00000000
+bytes = [0x2d, 0xe9, 0xf0, 0x4f, 0x81, 0xb0, 0x2d, 0xed, 0x06, 0x8b, 0x86, 0xb0, 0x4b, 0xf6, 0xa4, 0x15]
+
 # The stock MAIN does not configure SEMC. The bootloader 1.00 handoff
 # provides these two 32 MiB windows, starting at 0x80000000 and 0x82000000.
 [[step]]

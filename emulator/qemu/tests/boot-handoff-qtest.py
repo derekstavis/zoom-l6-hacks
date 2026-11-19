@@ -154,6 +154,7 @@ def main():
         raise SystemExit(__doc__)
     qemu, stock, patched, l6 = sys.argv[1:]
     l6max = {
+        0x00000000: 0,
         0x401b8000: 4, 0x401b8004: 0x10000004,
         0x401c0000: 8, 0x401c0004: 9,
         0x401f8204: 0x10f0, 0x402f0010: 0x8000001b,

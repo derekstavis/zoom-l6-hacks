@@ -9,7 +9,9 @@ cargo run --offline --locked -p l6patch -- INPUT_UNPACKED_DIR OUTPUT_DIR \
   --patch knob-dialog --patch midi-sync --update-version 0113
 ```
 
-Supported names are `knob-dialog`, `midi-sync`, and `din-mixer-control`.
+Supported names include `knob-dialog`, `midi-sync`, `din-mixer-control` and
+`menu-loader`; `patch_catalog()` lists every package and its installation
+methods.
 Without `--patch`, the defaults are `knob-dialog` for L6max and `midi-sync` for
 L6. Repeat `--patch` to combine compatible patches. L6 currently supports only
 `midi-sync`. The output directory must not exist. A requested update version

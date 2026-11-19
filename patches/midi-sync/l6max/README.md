@@ -16,6 +16,11 @@ values across its six strips and nine mapped groups. The L6 uses a separate
 hook and payload; see the [L6 implementation notes](../l6/README.md). The builder
 detects the model from the MAIN image and selects the matching profile.
 
+On L6max with [menu-loader](../../menu-loader/README.md) installed, the same
+state can be sent from the device: **System > Send MIDI State** sends the 94
+values without a request. The item is declared with `menu_items!` and needs
+no extra hook; without menu-loader it does not appear.
+
 ## How it works
 
 The stock firmware already sends a Control Change for each live change; it

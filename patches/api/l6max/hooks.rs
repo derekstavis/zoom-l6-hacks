@@ -115,5 +115,11 @@ define_function_hooks! {
         guard_sha256: "a30a13e40c913a9c20c780f50b9e3c685038c53dca0f06a916ca7dad691d1a70",
         continuation: Linear,
         dynamic_dispatch: false,
-    }
+    };
+    menu_window_enter {
+        displaced_len: 6,
+        guard_sha256: "3f981f5fbcae31261277517379fddb40dff81ff1aaee572bbf1e09e33317ffbe",
+        continuation: Linear,
+        dynamic_dispatch: false,
+    };
 }

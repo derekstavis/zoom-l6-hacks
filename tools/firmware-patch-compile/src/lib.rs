@@ -608,6 +608,10 @@ pub fn compile_sd_relocatable_composed(
     let composed_root = output.join(format!("{}_composed.rs", name.replace('-', "_")));
     fs::write(&composed_root, source_text)?;
     let link_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../patches/api/composed");
+    let identity = roots
+        .iter()
+        .map(|(patch_name, _)| patch_identity(patch_name))
+        .collect::<Vec<_>>();
     let (image, symbols) = compile_inner_with_payload(
         source,
         &link_root,
@@ -620,6 +624,7 @@ pub fn compile_sd_relocatable_composed(
         true,
         &["sd_composed"],
         &composed_root,
+        &identity,
     )?;
     let elf = output.join(format!("{name}.payload.elf"));
     let memory_len = symbols
@@ -707,7 +712,102 @@ fn compile_inner(
         validate_guards,
         extra_cfgs,
         &root.join("src/payload.rs"),
+        &[patch_identity(
+            &package_name_for_root(root).unwrap_or_else(|| name.to_owned()),
+        )],
     )
+}
+
+/// The package a payload root belongs to: the directory name of the nearest
+/// ancestor holding a `package.toml`. Callers name their output files freely
+/// (for example `l6-midi-sync`), so the output name is not the patch name.
+fn package_name_for_root(root: &Path) -> Option<String> {
+    root.ancestors()
+        .find(|dir| dir.join("package.toml").is_file())
+        .and_then(|dir| dir.file_name())
+        .and_then(|name| name.to_str())
+        .map(str::to_owned)
+}
+
+/// The catalog name and version recorded in a payload's identity record.
+fn patch_identity(name: &str) -> (String, String) {
+    let version = firmware_patch_core::patch_catalog()
+        .iter()
+        .find(|package| package.name == name)
+        .map(|package| package.version.clone())
+        .unwrap_or_default();
+    (name.to_owned(), version)
+}
+
+/// Bytes in one `patchrt::MenuItem`.
+pub const MENU_ITEM_LEN: u32 = 36;
+/// Prefix of the symbol `menu_items!` exports for each patch module.
+pub const MENU_ITEMS_SYMBOL_PREFIX: &str = "__l6_menu_items_";
+/// Symbol of the identity record in every payload.
+pub const PATCH_INFO_SYMBOL: &str = "__l6_patch_info";
+pub use firmware_patch_core::PATCH_INFO_NEXT_OFFSET;
+
+fn rust_string(text: &str) -> String {
+    format!("{text:?}")
+}
+
+/// Generate `patch_identity.rs` for `patchrt::__identity`: the payload's patch
+/// records and one menu group per `menu_items!` symbol found by `nm`.
+fn identity_source(
+    identity: &[(String, String)],
+    symbols: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mut groups = Vec::new();
+    for line in symbols.lines() {
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        if fields.len() != 4 || !fields[3].starts_with(MENU_ITEMS_SYMBOL_PREFIX) {
+            continue;
+        }
+        let size = u32::from_str_radix(fields[1], 16)?;
+        if size == 0 || size % MENU_ITEM_LEN != 0 {
+            return Err(format!("{} has size {size}, not a menu item array", fields[3]).into());
+        }
+        groups.push((fields[3].to_owned(), size / MENU_ITEM_LEN));
+    }
+    groups.sort();
+    groups.dedup();
+    let mut text = String::new();
+    text.push_str(&format!(
+        "static __L6_PATCH_RECORDS: [PatchRecord; {}] = [\n",
+        identity.len()
+    ));
+    for (name, version) in identity {
+        text.push_str(&format!(
+            "    PatchRecord {{ name: super::fixed_text({}), version: super::fixed_text({}) }},\n",
+            rust_string(name),
+            rust_string(version)
+        ));
+    }
+    text.push_str("];\n");
+    for (index, (symbol, _)) in groups.iter().enumerate() {
+        text.push_str(&format!(
+            "unsafe extern \"C\" {{\n    #[link_name = {}]\n    static __L6_MENU_GROUP_{index}: MenuItem;\n}}\n",
+            rust_string(symbol)
+        ));
+    }
+    text.push_str(&format!(
+        "static __L6_MENU_GROUPS: [MenuGroup; {}] = [\n",
+        groups.len()
+    ));
+    for (index, (_, count)) in groups.iter().enumerate() {
+        text.push_str(&format!(
+            "    MenuGroup {{ items: &raw const __L6_MENU_GROUP_{index}, count: {count} }},\n"
+        ));
+    }
+    text.push_str("];\n");
+    text.push_str(&format!(
+        "#[used]\n#[allow(non_upper_case_globals)]\n#[unsafe(no_mangle)]\n#[unsafe(link_section = \".rodata.l6_patch_info\")]\n\
+pub static {PATCH_INFO_SYMBOL}: PatchInfo = PatchInfo {{\n    magic: super::PATCH_INFO_MAGIC,\n    layout: super::PATCH_INFO_LAYOUT,\n    patch_count: {},\n    patches: __L6_PATCH_RECORDS.as_ptr(),\n    menu_group_count: {},\n    menu_groups: {},\n    next: 0,\n}};\n",
+        identity.len(),
+        groups.len(),
+        if groups.is_empty() { "core::ptr::null()" } else { "__L6_MENU_GROUPS.as_ptr()" },
+    ));
+    Ok(text)
 }
 
 fn compile_inner_with_payload(
@@ -722,6 +822,7 @@ fn compile_inner_with_payload(
     validate_guards: bool,
     extra_cfgs: &[&str],
     payload: &Path,
+    identity: &[(String, String)],
 ) -> Result<(Vec<u8>, String), Box<dyn std::error::Error>> {
     let generated = output.join(format!("{name}.generated"));
     fs::create_dir_all(&generated)?;
@@ -733,6 +834,10 @@ fn compile_inner_with_payload(
     fs::write(
         generated.join("continuations.rs"),
         "pub fn address(_: &str) -> usize { 0 }\n",
+    )?;
+    fs::write(
+        generated.join("patch_identity.rs"),
+        identity_source(identity, "")?,
     )?;
     let _ = compile_payload_pass(
         source,
@@ -766,6 +871,10 @@ fn compile_inner_with_payload(
         validate_guards,
     )?;
     fs::write(generated.join("continuations.rs"), continuation_rs)?;
+    fs::write(
+        generated.join("patch_identity.rs"),
+        identity_source(identity, &first_symbols)?,
+    )?;
     let (bytes, symbols) = compile_payload_pass(
         source,
         root,
@@ -894,6 +1003,14 @@ fn compile_payload_pass(
         .arg(format!("link-arg=--defsym=PAYLOAD_BASE={base:#x}"))
         .arg("-C")
         .arg(format!("link-arg=-T{}", linker_script.display()))
+        // Keep the identity record and every menu item array through
+        // section garbage collection; nothing in the payload references them.
+        .arg("-C")
+        .arg(format!("link-arg=--undefined={PATCH_INFO_SYMBOL}"))
+        .arg("-C")
+        .arg(format!(
+            "link-arg=--undefined-glob={MENU_ITEMS_SYMBOL_PREFIX}*"
+        ))
         .arg("-o")
         .arg(&elf);
     if discovery {
@@ -1999,7 +2116,52 @@ pub fn hook_windows(
 
 #[cfg(test)]
 mod tests {
-    use super::diagnostic_text;
+    use super::*;
+
+    const NM: &str = "\
+00001200 00000024 T __l6_menu_items_composed::midi_sync
+00001224 00000048 T __l6_menu_items_composed::knob_dialog
+00001300 00000018 T __l6_patch_info
+00001400 00000010 T unrelated_symbol
+";
+
+    #[test]
+    fn identity_lists_patches_and_menu_groups() {
+        let identity = [
+            ("knob-dialog".to_owned(), "1.0.0".to_owned()),
+            ("midi-sync".to_owned(), "1.0.0".to_owned()),
+        ];
+        let source = identity_source(&identity, NM).unwrap();
+        assert!(source.contains("[PatchRecord; 2]"));
+        assert!(source.contains("super::fixed_text(\"midi-sync\")"));
+        assert!(source.contains("#[link_name = \"__l6_menu_items_composed::knob_dialog\"]"));
+        // 0x48 bytes are two 36-byte items; groups are sorted by symbol.
+        assert!(source.contains("items: &raw const __L6_MENU_GROUP_0, count: 2"));
+        assert!(source.contains("items: &raw const __L6_MENU_GROUP_1, count: 1"));
+        assert!(source.contains("menu_group_count: 2"));
+        assert!(source.contains("menu_groups: __L6_MENU_GROUPS.as_ptr()"));
+    }
+
+    #[test]
+    fn identity_without_menu_items_has_no_groups() {
+        let source =
+            identity_source(&[("menu-loader".to_owned(), "1.0.0".to_owned())], "").unwrap();
+        assert!(source.contains("menu_group_count: 0"));
+        assert!(source.contains("menu_groups: core::ptr::null()"));
+        assert!(source.contains(&format!("pub static {PATCH_INFO_SYMBOL}: PatchInfo")));
+    }
+
+    #[test]
+    fn identity_rejects_a_partial_menu_item_array() {
+        let nm = "00001200 00000020 T __l6_menu_items_patch\n";
+        assert!(identity_source(&[], nm).is_err());
+    }
+
+    #[test]
+    fn identity_versions_come_from_the_catalog() {
+        assert_eq!(patch_identity("menu-loader").1, "1.0.0");
+        assert_eq!(patch_identity("not-a-patch").1, "");
+    }
 
     #[test]
     fn diagnostic_text_finds_panic_messages_and_source_paths() {
@@ -2021,5 +2183,18 @@ mod tests {
         );
         // An ".rs" without a path is not a source location.
         assert_eq!(diagnostic_text(b"\x00a.rs\x00errs\x00"), None);
+    }
+
+    #[test]
+    fn identity_names_come_from_the_package_directory() {
+        let patches = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../patches");
+        assert_eq!(
+            package_name_for_root(&patches.join("midi-sync/l6")).as_deref(),
+            Some("midi-sync")
+        );
+        assert_eq!(
+            package_name_for_root(&patches.join("knob-dialog")).as_deref(),
+            Some("knob-dialog")
+        );
     }
 }

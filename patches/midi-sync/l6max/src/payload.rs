@@ -83,6 +83,18 @@ unsafe fn broadcast_state() {
     }
 }
 
+// With menu-loader installed, System > Send MIDI State sends the same full
+// state as a sync request. Menu actions run on the UI task, which is also
+// where the stock mixer sends its Control Change notifications.
+menu_items! {
+    SYSTEM => "Send MIDI State" => action(send_state_from_menu);
+}
+
+unsafe extern "C" fn send_state_from_menu() -> u32 {
+    unsafe { broadcast_state() };
+    0
+}
+
 #[function_entry_hook(midi_in)]
 pub unsafe fn midi_in_hook(message: *const u8) {
     if unsafe { sync_request::is_sync_message(message, midi_channel() as u8) } {

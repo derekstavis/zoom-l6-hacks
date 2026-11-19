@@ -10,3 +10,4 @@ include!("mixer.rs");
 include!("rec.rs");
 include!("panel.rs");
 include!("gui.rs");
+include!("menu.rs");

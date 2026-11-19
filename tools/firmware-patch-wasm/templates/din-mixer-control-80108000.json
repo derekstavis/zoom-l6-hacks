@@ -13,8 +13,9 @@
   ],
   "model": "L6max",
   "name": "din-mixer-control",
+  "patch_info_offset": 132,
   "payload_file": "din-mixer-control-80108000.bin",
-  "payload_length": 84,
+  "payload_length": 156,
   "window_byte_total": 4,
   "windows": [
     {

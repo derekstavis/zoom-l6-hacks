@@ -1,5 +1,5 @@
 {
-  "generator_source_sha256": "2f287b15640a955afbe0748c383cd1f8e35124d010293dbba4ac89d9777a2a4a",
+  "generator_source_sha256": "a3821c78cebdb7d0803c39ed3afa4114486b9cc52fb8e68446ae24a75eaca88f",
   "source_firmware_sha256": "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461",
   "l6_source_firmware_sha256": "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799",
   "modules": [
@@ -9,7 +9,7 @@
       "file": "L6max/knob-dialog-1.0.0.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "610804f3ff290656e8b419066f1be66405ada73e055494be43cb64d8f62367b9"
+      "sha256": "f49e05f514f176b5491b528c4bbf158ffe67f15c0c8d17ff1521e6544ac29f8d"
     },
     {
       "id": "midi-sync",
@@ -17,7 +17,7 @@
       "file": "L6/midi-sync-1.0.0.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "891951bcd95b24871f46e9f5805376edeff7ff260766c253ef2fab3a4edbec58"
+      "sha256": "a3813cc6ba596f9043c304b7ad75aa4ed2ce232549cf39721ab975f8ef35d7da"
     },
     {
       "id": "midi-sync",
@@ -25,7 +25,7 @@
       "file": "L6max/midi-sync-1.0.0.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "a3d6efcb6dd85e9e0307eb487d869623f223ff9c830352b16350c5abc52908f4"
+      "sha256": "8b05dac6e7cb6cbee516aaa0576ee0d89a42b44fa2397289275fae082c81f412"
     }
   ],
   "effect_replacements": [
@@ -35,7 +35,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-plateau-1.0.0-room-stock-spring-plateau.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "2ddff7f294972b1122435847a328b2a48a66507b393e0952b4fac5052bc3804d"
+      "sha256": "92c561b377626bdeb9d7742b9085a6f1882ef6dc93e6a4591676b327c3d86e52"
     },
     {
       "room": "stock",
@@ -43,7 +43,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-room-stock-spring-velvet.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "08e8f36a928204722ab05ebd762877e1811470bbe35bca8076e9408cf44c3630"
+      "sha256": "a92ea1dbbf06eabb40b56d19ce73c8f99ce79f4452ebdcd9ececb19c0c35cc98"
     },
     {
       "room": "plateau",
@@ -51,7 +51,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-plateau-1.0.0-room-plateau-spring-stock.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "91ec74f1626bffbba8b54b9053efb960aeff1919b9929761b46aaaf126516131"
+      "sha256": "4323dd7f692ea7708dbe1b40adc0e5c25d8fdd2b8c14094dcabd79fefd09f904"
     },
     {
       "room": "plateau",
@@ -59,7 +59,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-plateau-1.0.0-room-plateau-spring-plateau.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "7c0ed4e9c6a6f422024e55b61aeef54b4cf9d2351c3698139061d36f1c904c5f"
+      "sha256": "3472c34c9bb66463af2e5599b1c6e28ec0f5e458b7aa09f322e777e71382a5e8"
     },
     {
       "room": "plateau",
@@ -67,7 +67,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-efx-plateau-1.0.0-room-plateau-spring-velvet.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "27377c0eab1a35e4489a51997f4128e4327540e084e1058a29c519a3cc9962c6"
+      "sha256": "a6af3cfe6d5d353ace96972f7514df934fd1298566e62f79777c37c09093a232"
     },
     {
       "room": "velvet",
@@ -75,7 +75,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-room-velvet-spring-stock.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "ee1ed2cc33f31015ed0cab9199404ea8b832d43143847b829c7ae10ccc44b248"
+      "sha256": "582345d367d42bf1f38c88c1ff0a8cfb923059227cf49105991d616b36e0611b"
     },
     {
       "room": "velvet",
@@ -83,7 +83,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-efx-plateau-1.0.0-room-velvet-spring-plateau.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "c8dcf93ce8b1e1b158cdf4edfd42b11a46eaa7495e82af15899ef3148b8ab867"
+      "sha256": "58c7470119ee00af4042fbecbc08be68cd43869be66e1c29b6e16cb3284c6508"
     },
     {
       "room": "velvet",
@@ -91,7 +91,7 @@
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-room-velvet-spring-velvet.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "0e47e5f3e152ac7f684cc98234e64d72e05d9a8736fc0971e110b3a75f8cf409"
+      "sha256": "0d379787670fb9f70c93134538d09433012431eb35d0b7732d2b3d29047499a8"
     }
   ]
 }

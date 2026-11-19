@@ -828,3 +828,11 @@ models = ["l6max"]
 scenario = "scenarios/sd-knob-midi-sync-dynamic.toml"
 needs_configuration = true
 wall_timeout_s = 1200
+
+[[case]]
+id = "sd-menu-loader"
+suites = ["sd-matrix"]
+models = ["l6max"]
+scenario = "scenarios/sd-menu-loader.toml"
+needs_configuration = true
+wall_timeout_s = 1500

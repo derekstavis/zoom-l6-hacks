@@ -1,0 +1,226 @@
+# menu-loader: System > Patches and a menu item declared by an SD module.
+# Run it on firmware built with the Patch loader and menu-loader, and a blank
+# card whose PATCHES/ directory holds a midi-sync module:
+#
+#   cargo run --offline --locked -p l6patch -- STOCK_DIR FW_DIR \
+#     --experimental-patch-loader --patch menu-loader --patch knob-dialog
+#   cargo run --offline --locked -p l6patch -- STOCK_DIR SD_DIR \
+#     --experimental-patch-bundle --patch midi-sync
+#   cargo run --offline --locked -p l6fs -- card create CARD.img --model l6max \
+#     --file PATCHES/10-MIDI.BIN=SD_DIR/PATCHES/midi-sync-1.0.0.bin
+#
+# The Patches list shows patch-loader, menu-loader and knob-dialog from
+# firmware and midi-sync from the card. Selecting System > Send MIDI State
+# then sends midi-sync's full mixer state (94 Control Change messages) on USB
+# MIDI. USB connects only after navigation: connecting shows a notification,
+# and the firmware consumes the next key press to dismiss it.
+version = 1
+model = "l6max"
+wall_timeout_s = 900
+
+
+# First boot: confirm Date/Time and Battery Type, then cancel the SD prompt.
+
+[[step]]
+action = "wait"
+guest_ms = 15000
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "wait"
+guest_ms = 2000
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "wait"
+guest_ms = 5000
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "wait"
+guest_ms = 2000
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "wait"
+guest_ms = 5000
+
+# Menu > System (main menu index 7).
+
+[[step]]
+action = "press"
+control = "recorder.menu"
+
+[[step]]
+action = "wait"
+guest_ms = 1500
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "wait"
+guest_ms = 500
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "wait"
+guest_ms = 1000
+
+# System index 7 is Patches.
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "wait"
+guest_ms = 500
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "wait"
+guest_ms = 1000
+
+[[step]]
+action = "snapshot"
+name = "patches"
+
+# Up wraps to the last row, the SD module (its title scrolls).
+
+[[step]]
+action = "press"
+control = "recorder.up"
+
+[[step]]
+action = "wait"
+guest_ms = 500
+
+[[step]]
+action = "snapshot"
+name = "patches-last"
+
+# Back to System; Down selects Send MIDI State after Patches.
+
+[[step]]
+action = "press"
+control = "recorder.menu"
+
+[[step]]
+action = "wait"
+guest_ms = 1000
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "wait"
+guest_ms = 500
+
+[[step]]
+action = "snapshot"
+name = "system-send"
+
+# Connect USB and let its notification time out.
+
+[[step]]
+action = "usb-descriptors"
+name = "usb"
+
+[[step]]
+action = "wait"
+guest_ms = 1000
+
+[[step]]
+action = "snapshot"
+name = "after-usb"
+
+[[step]]
+action = "wait"
+guest_ms = 6000
+
+[[step]]
+action = "snapshot"
+name = "before-send"
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "usb-midi"
+name = "after-send"
+send = [254]
+listen_ms = 3000
+
+[[step]]
+action = "snapshot"
+name = "after-send-screen"

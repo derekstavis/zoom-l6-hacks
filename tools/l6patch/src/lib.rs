@@ -625,6 +625,8 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     };
     let initial_payload = end;
     let mut applied = Vec::new();
+    // Identity records of every static payload, in placement order.
+    let mut static_identities = Vec::new();
     if options.experimental_patch_loader {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../patches/patch-loader")
@@ -646,6 +648,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
                 compile_with_continuations(&source, &root, &[], &output, "patch-loader", end)?
             }
         };
+        static_identities.push(symbol(&symbols, firmware_patch_compile::PATCH_INFO_SYMBOL)?);
         let catalog = function_hook_sites(&output.join("patch-loader.payload.elf"))?;
         let registrations = hook_registrations(&symbols)?;
         let hooks = resolve_compiled_hooks(
@@ -846,6 +849,14 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    if !options.experimental_sd_bundle {
+        for patch in &compiled_patches {
+            static_identities.push(symbol(
+                &patch.symbols,
+                firmware_patch_compile::PATCH_INFO_SYMBOL,
+            )?);
+        }
+    }
     let mut installed_hook_sites = std::collections::BTreeSet::new();
     for patch in compiled_patches {
         let name = patch.name;
@@ -915,6 +926,9 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             .collect::<Vec<_>>();
         applied.push(serde_json::json!({"name":name,"payload_address":format!("{base:#x}"),"payload_length":applied_patch.payload_len,"hooks":applied_hooks,"call_site_hooks":call_site_hooks}));
     }
+    // Link the static identity records into a ring so menu-loader can list
+    // every installed payload starting from its own record.
+    firmware_patch_core::link_identity_ring(&mut firmware, firmware_base, &static_identities)?;
     if options.experimental_patch_loader {
         let reserved_end = (module_end - firmware_base) as usize;
         let consumed = reserved_end - original_length;

@@ -13,8 +13,9 @@
   ],
   "model": "L6",
   "name": "midi-sync",
+  "patch_info_offset": 300,
   "payload_file": "midi-sync-l6-800b6af0.bin",
-  "payload_length": 252,
+  "payload_length": 324,
   "window_byte_total": 4,
   "windows": [
     {

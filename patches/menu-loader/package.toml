@@ -1,0 +1,22 @@
+[package]
+name = "menu-loader"
+version = "1.0.0"
+kind = "patch"
+category = "display"
+order = 5
+title = "Menu loader"
+author = "derekstavis"
+summary = "Add patch menus and a System > Patches list."
+description = "Adds System > Patches, which lists the patches installed in firmware and loaded from the SD card, and lets other patches add their own menu items."
+models = ["L6max"]
+firmware_models = ["L6max"]
+sd_card_models = []
+wasm_models = []
+website = false
+website_order = 5
+website_sd_models = []
+emulator_gui = false
+emulator_order = 5
+emulator_sd_models = []
+readme = "README.md"
+requires = []

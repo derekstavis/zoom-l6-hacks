@@ -492,6 +492,9 @@ fn build_loader_template(
         "reserve_end": format!("{reserve_end:#x}"),
         "module_base": format!("{module_base:#x}"),
         "payload_length": template.len(),
+        "patch_info_offset": symbol(&symbols, firmware_patch_compile::PATCH_INFO_SYMBOL)?
+            .checked_sub(loader_base)
+            .ok_or("identity record precedes the loader")?,
         "windows": windows.iter().map(|window| serde_json::json!({"payload_offset":window.payload_offset,"firmware_address":format!("{:#x}",window.firmware_address),"length":window.length})).collect::<Vec<_>>(),
         "sites": sites,
     });
@@ -549,6 +552,8 @@ struct Unit {
     template: Vec<u8>,
     windows: Vec<Window>,
     hooks: Vec<(u32, u32, usize)>, // (address, target, length)
+    /// Offset of the payload's identity record from `base`.
+    patch_info_offset: u32,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -697,6 +702,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .iter()
                     .map(|row| Ok((row.address, symbol(&symbols, &row.symbol)?, row.length)))
                     .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+                let patch_info_offset =
+                    symbol(&symbols, firmware_patch_compile::PATCH_INFO_SYMBOL)?
+                        .checked_sub(base)
+                        .ok_or("identity record precedes the payload")?;
                 units.insert(
                     (name, base),
                     Unit {
@@ -705,6 +714,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         template,
                         windows,
                         hooks,
+                        patch_info_offset,
                     },
                 );
             }
@@ -768,6 +778,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .iter()
                     .map(|row| Ok((row.address, symbol(&symbols, &row.symbol)?, row.length)))
                     .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+                let patch_info_offset =
+                    symbol(&symbols, firmware_patch_compile::PATCH_INFO_SYMBOL)?
+                        .checked_sub(base)
+                        .ok_or("identity record precedes the payload")?;
                 units.insert(
                     (name, base),
                     Unit {
@@ -776,6 +790,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         template,
                         windows,
                         hooks,
+                        patch_info_offset,
                     },
                 );
             }
@@ -879,6 +894,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "payload_length": unit.template.len(),
             "windows": windows_json,
             "hooks": hooks_json,
+            "patch_info_offset": unit.patch_info_offset,
             "window_byte_total": unit.windows.iter().map(|w| w.length).sum::<usize>(),
         });
         fs::write(
@@ -981,6 +997,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "payload_length": l6_template.len(),
             "windows": l6_windows_json,
             "hooks": l6_hooks_json,
+            "patch_info_offset": symbol(&l6_symbols, firmware_patch_compile::PATCH_INFO_SYMBOL)?
+                .checked_sub(l6_base)
+                .ok_or("identity record precedes the payload")?,
             "window_byte_total": l6_windows.iter().map(|w| w.length).sum::<usize>(),
         });
         let l6_metadata_file = format!("{l6_stem}.json");
@@ -1063,6 +1082,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let loader_l6_metadata = serde_json::json!({
             "name": "midi-sync", "model": "L6", "base": format!("{l6_static_base:#x}"),
             "payload_file": format!("{loader_l6_stem}.bin"), "payload_length": loader_l6_template.len(),
+            "patch_info_offset": symbol(&loader_l6_symbols, firmware_patch_compile::PATCH_INFO_SYMBOL)?
+                .checked_sub(l6_static_base)
+                .ok_or("identity record precedes the payload")?,
             "windows": loader_l6_windows.iter().map(|window| serde_json::json!({
                 "payload_offset":window.payload_offset,
                 "firmware_address":format!("{:#x}",window.firmware_address),

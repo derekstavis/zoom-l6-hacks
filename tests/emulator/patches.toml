@@ -1,0 +1,6 @@
+# The generated `patches` suite. Each case boots once, waits for the mixer,
+# then runs the check of every patch it installs, in this order. menu-loader's
+# check walks the System menu and runs each patch's menu action, so it comes
+# last. Every patch a case can place needs a tests/emulator/checks.toml.
+version = 1
+check_order = ["knob-dialog", "efx-loader", "midi-sync", "din-mixer-control", "dump-rom", "menu-loader"]

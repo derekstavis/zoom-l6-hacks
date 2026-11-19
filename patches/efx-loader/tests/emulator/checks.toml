@@ -1,0 +1,5 @@
+# What the generated `patches` suite checks when effect slots are reassigned:
+# each stock slot, in EFX mode, runs its assigned effect with output, or its
+# stock effect.
+version = 1
+checks_effect_slots = true

@@ -1,0 +1,15 @@
+# What the generated `patches` suite checks when menu-loader is installed: it
+# opens the System menu, expects the stock items followed by Patches and each
+# installed patch's items, expects a Patches row for every installed patch,
+# and runs each patch's menu action in menu order.
+version = 1
+walks_menus = true
+stock_system_items = [
+  "Date/Time",
+  "Battery Type",
+  "Auto Power Off",
+  "Display Brightness",
+  "Power Saving",
+  "Firmware",
+  "Reset All Settings",
+]

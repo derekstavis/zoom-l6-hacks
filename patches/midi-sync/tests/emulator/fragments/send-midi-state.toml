@@ -1,0 +1,6 @@
+# The State message the System menu item sends, without a host request.
+[[step]]
+action = "host-midi-sync"
+request = false
+guest_timeout_ms = 30000
+wall_timeout_s = 120

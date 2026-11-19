@@ -1,0 +1,49 @@
+# The files the dump writes, with their sizes. The manifest comes first: the
+# dump writes it last, so once it exists every other file is complete.
+[[step]]
+action = "expect-card-entry"
+path = "L6MAX_DUMP.TXT"
+guest_timeout_ms = 900000
+wall_timeout_s = 900
+
+[[step]]
+action = "expect-card-entry"
+path = "L6MAX_NOR.BIN"
+guest_timeout_ms = 900000
+wall_timeout_s = 900
+matches_state = "main-nor.bin"
+
+[[step]]
+action = "expect-card-entry"
+path = "L6MAX_BOOTROM.BIN"
+guest_timeout_ms = 900000
+wall_timeout_s = 900
+size = 131072
+
+[[step]]
+action = "expect-card-entry"
+path = "L6MAX_ITCM.BIN"
+guest_timeout_ms = 900000
+wall_timeout_s = 900
+size = 524288
+
+[[step]]
+action = "expect-card-entry"
+path = "L6MAX_DTCM.BIN"
+guest_timeout_ms = 900000
+wall_timeout_s = 900
+size = 524288
+
+[[step]]
+action = "expect-card-entry"
+path = "L6MAX_OCRAM.BIN"
+guest_timeout_ms = 900000
+wall_timeout_s = 900
+size = 1048576
+
+[[step]]
+action = "expect-card-entry"
+path = "L6MAX_SDRAM.BIN"
+guest_timeout_ms = 900000
+wall_timeout_s = 900
+size = 67108864

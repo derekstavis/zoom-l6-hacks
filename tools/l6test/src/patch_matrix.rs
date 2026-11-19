@@ -22,6 +22,7 @@ use firmware_patch_core::{
     EFFECT_REPLACEMENT_ROUTER_PACKAGE, FirmwareModel, PatchCategory, PatchPackage,
     STOCK_EFFECT_SLOTS, patch_catalog, patch_package, resolve_patch_dependencies,
 };
+use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
@@ -30,59 +31,103 @@ pub const SUITE: &str = "patches";
 /// Case and scenario-file prefix.
 pub const PREFIX: &str = "patches-";
 
-/// The stock System menu, before patches add to it.
-const STOCK_SYSTEM_MENU: [&str; 7] = [
-    "Date/Time",
-    "Battery Type",
-    "Auto Power Off",
-    "Display Brightness",
-    "Power Saving",
-    "Firmware",
-    "Reset All Settings",
-];
+/// The suite's check order, from the repository root.
+const SUITE_FILE: &str = "tests/emulator/patches.toml";
+/// A patch's checks, from its directory.
+const CHECKS_FILE: &str = "tests/emulator/checks.toml";
 
-/// What the matrix checks for a patch, and the System menu items it adds.
-struct Check {
-    patch: &'static str,
-    system_items: &'static [&'static str],
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SuiteFile {
+    version: u32,
+    check_order: Vec<String>,
 }
 
-/// Every placeable patch needs an entry; generation fails for one without.
-const CHECKS: [Check; 5] = [
-    Check {
-        patch: "menu-loader",
-        system_items: &[],
-    },
-    Check {
-        patch: "dump-rom",
-        system_items: &["Dump ROM"],
-    },
-    Check {
-        patch: "knob-dialog",
-        system_items: &[],
-    },
-    Check {
-        patch: "midi-sync",
-        system_items: &["Send MIDI State"],
-    },
-    Check {
-        patch: "din-mixer-control",
-        system_items: &[],
-    },
-];
+/// What the suite checks when a patch is installed: a patch's
+/// `tests/emulator/checks.toml`. Paths are from the repository root.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PatchChecks {
+    version: u32,
+    /// A fragment of steps that check the patch once the mixer is ready.
+    check: Option<String>,
+    /// Items the patch adds to the System menu, in order.
+    #[serde(default)]
+    system_items: Vec<String>,
+    /// Steps that run one of the patch's System menu items and check the result.
+    #[serde(default)]
+    menu_action: Vec<MenuAction>,
+    /// The check walks the System menu (menu-loader): it expects
+    /// `stock_system_items`, then Patches and every installed patch's items,
+    /// and runs every installed patch's menu actions.
+    #[serde(default)]
+    walks_menus: bool,
+    #[serde(default)]
+    stock_system_items: Vec<String>,
+    /// The check runs whenever effect slots are reassigned (efx-loader) and
+    /// checks each slot's effect.
+    #[serde(default)]
+    checks_effect_slots: bool,
+}
 
-/// Files the dump writes, with their sizes.
-/// The manifest comes first: the dump writes it last, so once it exists every
-/// other file is complete.
-const DUMP_FILES: [(&str, u64); 7] = [
-    ("L6MAX_DUMP.TXT", 0),
-    ("L6MAX_NOR.BIN", 0x20_0000),
-    ("L6MAX_BOOTROM.BIN", 0x2_0000),
-    ("L6MAX_ITCM.BIN", 0x8_0000),
-    ("L6MAX_DTCM.BIN", 0x8_0000),
-    ("L6MAX_OCRAM.BIN", 0x10_0000),
-    ("L6MAX_SDRAM.BIN", 0x400_0000),
-];
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MenuAction {
+    item: String,
+    steps: String,
+}
+
+/// Every patch's checks, in the order cases run them.
+struct Checks {
+    order: Vec<(String, PatchChecks)>,
+}
+
+impl Checks {
+    fn load() -> Result<Self, String> {
+        let root = l6max_host::paths::repository_root();
+        let read = |path: &std::path::Path| {
+            std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))
+        };
+        let suite: SuiteFile = toml::from_str(&read(&root.join(SUITE_FILE))?)
+            .map_err(|e| format!("{SUITE_FILE}: {e}"))?;
+        if suite.version != 1 {
+            return Err(format!("{SUITE_FILE}: unsupported version"));
+        }
+        let mut order = Vec::new();
+        for name in &suite.check_order {
+            let path = root.join("patches").join(name).join(CHECKS_FILE);
+            let checks: PatchChecks =
+                toml::from_str(&read(&path)?).map_err(|e| format!("{}: {e}", path.display()))?;
+            if checks.version != 1 {
+                return Err(format!("{}: unsupported version", path.display()));
+            }
+            order.push((name.clone(), checks));
+        }
+        for package in patch_catalog() {
+            let listed = suite.check_order.contains(&package.name);
+            if root
+                .join("patches")
+                .join(&package.name)
+                .join(CHECKS_FILE)
+                .is_file()
+                != listed
+            {
+                return Err(format!(
+                    "{SUITE_FILE}: check_order must list exactly the patches with a {CHECKS_FILE}; {} differs",
+                    package.name
+                ));
+            }
+        }
+        Ok(Self { order })
+    }
+
+    fn get(&self, patch: &str) -> Option<&PatchChecks> {
+        self.order
+            .iter()
+            .find(|(name, _)| name == patch)
+            .map(|(_, checks)| checks)
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Placement {
@@ -295,7 +340,11 @@ fn delay(text: &mut String, guest_ms: u32) {
 }
 
 /// Patches rows and System items menu-loader shows for a combination.
-fn menu_rows(combination: &Combination) -> Result<(Vec<String>, Vec<String>), String> {
+fn menu_rows(
+    combination: &Combination,
+    checks: &Checks,
+    stock_system_items: &[String],
+) -> Result<(Vec<String>, Vec<String>), String> {
     let mut rows = Vec::new();
     // A case with SD modules runs the Patch loader, installed in firmware
     // before every other patch.
@@ -303,7 +352,7 @@ fn menu_rows(combination: &Combination) -> Result<(Vec<String>, Vec<String>), St
         let loader = patch_package("patch-loader").ok_or("unknown patch patch-loader")?;
         rows.push(format!("{} {}", loader.name, loader.version));
     }
-    let mut items: Vec<String> = STOCK_SYSTEM_MENU.iter().map(|s| (*s).to_owned()).collect();
+    let mut items = stock_system_items.to_vec();
     items.push("Patches".into());
     let mut sd_members = combination.sd.clone();
     sd_members.extend(effect_packages(&combination.effects));
@@ -314,134 +363,130 @@ fn menu_rows(combination: &Combination) -> Result<(Vec<String>, Vec<String>), St
             rows.push(format!("{} {}{suffix}", package.name, package.version));
         }
         for name in in_package_order(&names.iter().cloned().collect()) {
-            if let Some(check) = CHECKS.iter().find(|check| check.patch == name) {
-                items.extend(check.system_items.iter().map(|item| (*item).to_owned()));
+            if let Some(patch) = checks.get(&name) {
+                items.extend(patch.system_items.iter().cloned());
             }
         }
     }
     Ok((rows, items))
 }
 
-/// The steps that check every installed patch on L6max.
-fn l6max_checks(text: &mut String, combination: &Combination) -> Result<(), String> {
-    let installs = |patch: &str| combination.installs(patch);
-    let midi = installs("midi-sync");
+fn include(text: &mut String, path: &str) {
+    step(text, &format!("action = \"include\"\npath = {path:?}"));
+}
+
+/// The steps that check every patch a combination installs, in check order.
+fn checks(text: &mut String, combination: &Combination, all: &Checks) -> Result<(), String> {
     if !combination.sd.is_empty() {
         step(text, "action = \"expect-sd-patch\"\nloaded = true");
     }
-    if installs("knob-dialog") {
-        step(
-            text,
-            "action = \"knob-dialog-popup\"\nguest_timeout_ms = 15000\nwall_timeout_s = 120",
-        );
-    }
-    if !combination.effects.is_empty() {
-        step(text, "action = \"select-mode\"\nmode = \"efx\"");
-        for (index, slot) in STOCK_EFFECT_SLOTS.iter().enumerate() {
-            if index > 0 {
-                press(text, "efx-select", 1);
-            }
-            delay(text, 1000);
-            let effect = combination
-                .effects
-                .iter()
-                .find(|(assigned, _)| assigned == slot)
-                .map(|(_, effect)| effect);
-            let mut body = format!(
-                "action = \"effect-replacement-state\"\nexpected_effect_type = {}\nexpected_processor_type = {}",
-                index + 1,
-                if effect.is_some() { index + 1 } else { 0 }
-            );
-            if let Some(effect) = effect {
-                let _ = write!(
-                    body,
-                    "\nexpected_effect = {effect:?}\nrequire_output = true"
-                );
-            }
-            step(text, &body);
+    for (name, patch) in &all.order {
+        let active = if patch.checks_effect_slots {
+            !combination.effects.is_empty()
+        } else {
+            combination.installs(name)
+        };
+        if !active {
+            continue;
         }
-        step(text, "action = \"select-mode\"\nmode = \"level\"");
+        if let Some(path) = &patch.check {
+            include(text, path);
+        }
+        if patch.checks_effect_slots {
+            effect_slot_checks(text, combination);
+        }
+        if patch.walks_menus {
+            menu_checks(text, combination, all, &patch.stock_system_items)?;
+        }
     }
-    if midi {
-        step(
-            text,
-            "action = \"direct-usb-midi-round-trip\"\nguest_timeout_ms = 60000\nwall_timeout_s = 180",
+    Ok(())
+}
+
+/// Each stock effect slot, in EFX mode, runs its assigned effect with output,
+/// or its stock effect.
+fn effect_slot_checks(text: &mut String, combination: &Combination) {
+    step(text, "action = \"select-mode\"\nmode = \"efx\"");
+    for (index, slot) in STOCK_EFFECT_SLOTS.iter().enumerate() {
+        if index > 0 {
+            press(text, "efx-select", 1);
+        }
+        delay(text, 1000);
+        let effect = combination
+            .effects
+            .iter()
+            .find(|(assigned, _)| assigned == slot)
+            .map(|(_, effect)| effect);
+        let mut body = format!(
+            "action = \"effect-replacement-state\"\nexpected_effect_type = {}\nexpected_processor_type = {}",
+            index + 1,
+            if effect.is_some() { index + 1 } else { 0 }
         );
-        step(
-            text,
-            "action = \"host-midi-sync\"\nguest_timeout_ms = 30000\nwall_timeout_s = 120",
-        );
+        if let Some(effect) = effect {
+            let _ = write!(
+                body,
+                "\nexpected_effect = {effect:?}\nrequire_output = true"
+            );
+        }
+        step(text, &body);
     }
-    if installs("din-mixer-control") {
-        step(
-            text,
-            "action = \"l6max-din-mixer-control\"\nexpect_din_ring_change = true\nguest_timeout_ms = 10000\nwall_timeout_s = 120",
-        );
+    step(text, "action = \"select-mode\"\nmode = \"level\"");
+}
+
+/// Open the System menu, expect its items and Patches rows, and run every
+/// installed patch's menu action in menu order.
+fn menu_checks(
+    text: &mut String,
+    combination: &Combination,
+    all: &Checks,
+    stock_system_items: &[String],
+) -> Result<(), String> {
+    let (rows, items) = menu_rows(combination, all, stock_system_items)?;
+    // Let earlier input finish: a Knob Dialog window opened by an
+    // encoder turn, or a just-tapped button, would absorb the press.
+    delay(text, 3000);
+    // Menu, then System at main-menu index 7.
+    press(text, "recorder-function-1", 1);
+    delay(text, 1500);
+    step(
+        text,
+        &format!(
+            "action = \"expect-menu\"\nmenu = \"system\"\nitems = {}",
+            quoted_list(&items)
+        ),
+    );
+    step(
+        text,
+        &format!(
+            "action = \"expect-menu\"\nmenu = \"system\"\npath = [\"Patches\"]\nitems = {}",
+            quoted_list(&rows)
+        ),
+    );
+    press(text, "recorder-function-3", 7);
+    delay(text, 500);
+    press(text, "recorder-function-4", 1);
+    delay(text, 1000);
+    // Run each item's action in menu order, moving down from the top.
+    let mut actions: Vec<(usize, &str)> = Vec::new();
+    for (name, patch) in &all.order {
+        if !combination.installs(name) {
+            continue;
+        }
+        for action in &patch.menu_action {
+            let index = items
+                .iter()
+                .position(|item| *item == action.item)
+                .ok_or(format!("System menu has no {}", action.item))?;
+            actions.push((index, &action.steps));
+        }
     }
-    if installs("menu-loader") {
-        let (rows, items) = menu_rows(combination)?;
-        // Let earlier input finish: a Knob Dialog window opened by an
-        // encoder turn, or a just-tapped button, would absorb the press.
-        delay(text, 3000);
-        // Menu, then System at main-menu index 7.
-        press(text, "recorder-function-1", 1);
-        delay(text, 1500);
-        step(
-            text,
-            &format!(
-                "action = \"expect-menu\"\nmenu = \"system\"\nitems = {}",
-                quoted_list(&items)
-            ),
-        );
-        step(
-            text,
-            &format!(
-                "action = \"expect-menu\"\nmenu = \"system\"\npath = [\"Patches\"]\nitems = {}",
-                quoted_list(&rows)
-            ),
-        );
-        press(text, "recorder-function-3", 7);
+    actions.sort();
+    let mut cursor = 0;
+    for (index, steps) in actions {
+        press(text, "recorder-function-3", index - cursor);
         delay(text, 500);
         press(text, "recorder-function-4", 1);
-        delay(text, 1000);
-        // Run each item's action in menu order, moving down from the top.
-        let mut actions: Vec<(usize, &str)> = Vec::new();
-        for (patch, title) in [("midi-sync", "Send MIDI State"), ("dump-rom", "Dump ROM")] {
-            if installs(patch) && (patch != "midi-sync" || midi) {
-                let index = items
-                    .iter()
-                    .position(|item| item == title)
-                    .ok_or(format!("System menu has no {title}"))?;
-                actions.push((index, title));
-            }
-        }
-        actions.sort();
-        let mut cursor = 0;
-        for (index, title) in actions {
-            press(text, "recorder-function-3", index - cursor);
-            delay(text, 500);
-            press(text, "recorder-function-4", 1);
-            cursor = index;
-            match title {
-                "Send MIDI State" => step(
-                    text,
-                    "action = \"host-midi-sync\"\nrequest = false\nguest_timeout_ms = 30000\nwall_timeout_s = 120",
-                ),
-                _ => {
-                    for (file, size) in DUMP_FILES {
-                        let mut body = format!(
-                            "action = \"expect-card-entry\"\npath = {file:?}\nguest_timeout_ms = 900000\nwall_timeout_s = 900"
-                        );
-                        if file == "L6MAX_NOR.BIN" {
-                            body.push_str("\nmatches_state = \"main-nor.bin\"");
-                        } else if size > 0 {
-                            let _ = write!(body, "\nsize = {size}");
-                        }
-                        step(text, &body);
-                    }
-                }
-            }
-        }
+        cursor = index;
+        include(text, steps);
     }
     Ok(())
 }
@@ -461,12 +506,15 @@ fn header(text: &mut String, id: &str, model: &str, state: &str, card: bool) {
 fn combination_case(
     model: FirmwareModel,
     combination: &Combination,
+    all: &Checks,
 ) -> Result<GeneratedCase, String> {
     let (_, name) = model_names(model);
     let id = combination.id(name);
     for patch in combination.firmware.iter().chain(&combination.sd) {
-        if !CHECKS.iter().any(|check| check.patch == patch) {
-            return Err(format!("patch {patch} has no check in the patch matrix"));
+        if all.get(patch).is_none() {
+            return Err(format!(
+                "patch {patch} has no patches/{patch}/{CHECKS_FILE} for the `{SUITE}` suite"
+            ));
         }
     }
     let mut text = String::new();
@@ -509,10 +557,7 @@ fn combination_case(
         &mut text,
         "action = \"delay\"\nguest_ms = 8000\nguest_timeout_ms = 20000\nwall_timeout_s = 300",
     );
-    match model {
-        FirmwareModel::L6max => l6max_checks(&mut text, combination)?,
-        FirmwareModel::L6 => l6_checks(&mut text, combination),
-    }
+    checks(&mut text, combination, all)?;
     Ok(GeneratedCase {
         id,
         model: name,
@@ -520,25 +565,9 @@ fn combination_case(
     })
 }
 
-fn l6_checks(text: &mut String, combination: &Combination) {
-    if !combination.sd.is_empty() {
-        step(text, "action = \"expect-sd-patch\"\nloaded = true");
-    }
-    if combination.installs("midi-sync") {
-        step(
-            text,
-            "action = \"direct-usb-midi-round-trip\"\nguest_timeout_ms = 60000\nwall_timeout_s = 180",
-        );
-        step(
-            text,
-            "action = \"host-midi-sync\"\nguest_timeout_ms = 30000\nwall_timeout_s = 120",
-        );
-    }
-}
-
 /// One case per patch and delivery method the browser patcher and the
 /// website offer.
-fn delivery_cases(model: FirmwareModel) -> Result<Vec<GeneratedCase>, String> {
+fn delivery_cases(model: FirmwareModel, all: &Checks) -> Result<Vec<GeneratedCase>, String> {
     let (_, name) = model_names(model);
     let mut cases = Vec::new();
     for package in patch_catalog().iter().filter(|p| p.kind == "patch") {
@@ -573,10 +602,7 @@ fn delivery_cases(model: FirmwareModel) -> Result<Vec<GeneratedCase>, String> {
                 &mut text,
                 "action = \"delay\"\nguest_ms = 8000\nguest_timeout_ms = 20000\nwall_timeout_s = 300",
             );
-            match model {
-                FirmwareModel::L6max => l6max_checks(&mut text, &combination)?,
-                FirmwareModel::L6 => l6_checks(&mut text, &combination),
-            }
+            checks(&mut text, &combination, all)?;
             cases.push(GeneratedCase {
                 id,
                 model: name,
@@ -636,10 +662,7 @@ fn delivery_cases(model: FirmwareModel) -> Result<Vec<GeneratedCase>, String> {
                 firmware: vec![package.name.clone()],
                 ..hosted
             };
-            match model {
-                FirmwareModel::L6max => l6max_checks(&mut text, &installed)?,
-                FirmwareModel::L6 => l6_checks(&mut text, &installed),
-            }
+            checks(&mut text, &installed, all)?;
             cases.push(GeneratedCase {
                 id,
                 model: name,
@@ -652,12 +675,13 @@ fn delivery_cases(model: FirmwareModel) -> Result<Vec<GeneratedCase>, String> {
 
 /// Every generated case, for both models.
 pub fn generate() -> Result<Vec<GeneratedCase>, String> {
+    let all = Checks::load()?;
     let mut cases = Vec::new();
     for model in [FirmwareModel::L6, FirmwareModel::L6max] {
         for combination in combinations(model)? {
-            cases.push(combination_case(model, &combination)?);
+            cases.push(combination_case(model, &combination, &all)?);
         }
-        cases.extend(delivery_cases(model)?);
+        cases.extend(delivery_cases(model, &all)?);
     }
     Ok(cases)
 }

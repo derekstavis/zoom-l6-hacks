@@ -1,0 +1,3 @@
+# What the generated `patches` suite checks when knob-dialog is installed.
+version = 1
+check = "patches/knob-dialog/tests/emulator/fragments/check.toml"

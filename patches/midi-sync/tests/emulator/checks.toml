@@ -1,0 +1,8 @@
+# What the generated `patches` suite checks when midi-sync is installed.
+version = 1
+check = "patches/midi-sync/tests/emulator/fragments/check.toml"
+system_items = ["Send MIDI State"]
+
+[[menu_action]]
+item = "Send MIDI State"
+steps = "patches/midi-sync/tests/emulator/fragments/send-midi-state.toml"

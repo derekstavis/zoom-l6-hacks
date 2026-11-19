@@ -548,15 +548,6 @@
     "definition": "14f5936af7b5a8d469c78f0c9aa2f3837e0904e3d6cac58bf52a72ea940ef6ca"
   },
   {
-    "case": "l6-sound-pad-playback",
-    "model": "l6",
-    "backend": "headless",
-    "suites": [
-      "full"
-    ],
-    "definition": "c16804e1c9052a01cee217f94acf9eb45e912321a55616bf43397b474065a4aa"
-  },
-  {
     "case": "l6-sound-pad-waveform",
     "model": "l6",
     "backend": "headless",
@@ -692,15 +683,6 @@
     "backend": "headless",
     "suites": [],
     "definition": "4e698e7b1f9f8437fb948ca60fdcf72bfe0e6f0708e02837b8b8d0d375e9dd9a"
-  },
-  {
-    "case": "l6max-sound-pad-playback",
-    "model": "l6max",
-    "backend": "headless",
-    "suites": [
-      "full"
-    ],
-    "definition": "8a1ad14170c038ebf7a6a92f6c32dab01fc97961a478dd2e51191754a74ac841"
   },
   {
     "case": "l6max-sound-pad-waveform",
@@ -3084,6 +3066,24 @@
     "backend": "headless",
     "suites": [],
     "definition": "60ec087a76d814db7deb3f1b529d604926ad13f553f4faad03bbafa9e5c2a699"
+  },
+  {
+    "case": "sound-pad-playback",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "c16804e1c9052a01cee217f94acf9eb45e912321a55616bf43397b474065a4aa"
+  },
+  {
+    "case": "sound-pad-playback",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "8a1ad14170c038ebf7a6a92f6c32dab01fc97961a478dd2e51191754a74ac841"
   },
   {
     "case": "state-spec",

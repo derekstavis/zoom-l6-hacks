@@ -1,6 +1,6 @@
 version = 1
-name = "l6-sound-pad-playback"
-models = ["l6"]
+name = "sound-pad-playback"
+models = ["l6", "l6max"]
 card = "assigned-pads"
 backends = ["headless"]
 

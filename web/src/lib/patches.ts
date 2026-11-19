@@ -7,6 +7,8 @@ export interface PatchInfo {
   models: readonly ('L6' | 'L6max')[]
   title: string
   author: string
+  version: string
+  dependencies: { name: string; version: string }[]
   description: string
   readmeUrl: string
   demoImage?: string
@@ -27,6 +29,8 @@ export interface EffectReplacementInfo {
   id: string
   title: string
   author: string
+  version: string
+  dependencies: { name: string; version: string }[]
   description: string
   models: readonly ('L6' | 'L6max')[]
   packageId: string
@@ -40,6 +44,22 @@ const readmeUrl = (patch: Package) =>
   `https://github.com/derekstavis/zoom-l6max/blob/main/patches/${patch.name}/${patch.readme}`
 const models = (values: string[]) => values as ('L6' | 'L6max')[]
 
+/** Dependencies included in the same firmware image or SD module as their consumers. */
+export function patchDependencies(roots: Iterable<string>): Set<string> {
+  const packages = new Map(catalog.packages.map((pkg) => [pkg.name, pkg]))
+  const dependencies = new Set<string>()
+  const visit = (name: string) => {
+    for (const dependency of packages.get(name)?.requires ?? []) {
+      if (!dependencies.has(dependency.name)) {
+        dependencies.add(dependency.name)
+        visit(dependency.name)
+      }
+    }
+  }
+  for (const root of roots) visit(root)
+  return dependencies
+}
+
 const visiblePackages = catalog.packages
   .filter((patch) => patch.website)
   .toSorted((left, right) => left.website_order - right.website_order)
@@ -49,6 +69,8 @@ export const PATCHES: PatchInfo[] = visiblePackages.map((patch) => ({
   models: models(patch.models),
   title: patch.title,
   author: patch.author,
+  version: patch.version,
+  dependencies: patch.requires,
   description: patch.description,
   readmeUrl: readmeUrl(patch),
   ...(patch.demo_image ? { demoImage: patch.demo_image } : {}),
@@ -73,6 +95,8 @@ export const EFFECT_REPLACEMENTS: EffectReplacementInfo[] = catalog.packages
       id: effect.id,
       title: effect.title,
       author: patch.author,
+      version: patch.version,
+      dependencies: patch.requires,
       description: patch.description,
       models: models(patch.models),
       packageId: patch.name,
@@ -94,7 +118,7 @@ export function effectReplacementFileName(replacements: Record<string, string>) 
   const include = (name: string) => {
     if (closure.has(name)) return
     closure.add(name)
-    packages.get(name)?.requires.forEach(include)
+    packages.get(name)?.requires.forEach((dependency) => include(dependency.name))
   }
   include('efx-loader')
   effectPackages.forEach(include)
@@ -102,7 +126,7 @@ export function effectReplacementFileName(replacements: Record<string, string>) 
   const ordered: string[] = []
   while (remaining.size > 0) {
     const next = [...remaining]
-      .filter((name) => packages.get(name)?.requires.every((dependency) => !remaining.has(dependency)))
+      .filter((name) => packages.get(name)?.requires.every((dependency) => !remaining.has(dependency.name)))
       .sort((a, b) => (packages.get(a)?.order ?? 0) - (packages.get(b)?.order ?? 0) || a.localeCompare(b))[0]
     if (!next) break
     remaining.delete(next)

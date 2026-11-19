@@ -13,6 +13,7 @@ import {
   LOADABLE_PATCHES,
   PATCHES,
   effectReplacementFileName,
+  patchDependencies,
 } from '@/lib/patches'
 
 type Status =
@@ -163,11 +164,16 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const fileRequest = useRef(0)
   const hasEffectReplacements = Object.values(effectReplacements).some(Boolean)
+  const enabledEffectPackages = EFFECT_REPLACEMENTS.filter((effect) => enabledEffects.has(effect.id)).map((effect) => effect.packageId)
+  const assignedEffectPackages = EFFECT_REPLACEMENTS.filter((effect) => Object.values(effectReplacements).includes(effect.id)).map((effect) => effect.packageId)
+  const requiredSd = patchDependencies([...enabledEffectPackages, ...[...selected].filter((id) => loadFromSd.has(id))])
+  const requiredFirmware = patchDependencies([...selected].filter((id) => !loadFromSd.has(id)))
+  const bundled = patchDependencies([...assignedEffectPackages, ...selected])
   const installPatchLoader = hasEffectReplacements || [...selected].some((id) => loadFromSd.has(id))
   const sdPatchesToDownload = model
     ? LOADABLE_PATCHES.filter(
         (patch) =>
-          patch.models.includes(model) && selected.has(patch.id) && loadFromSd.has(patch.id),
+          patch.models.includes(model) && selected.has(patch.id) && loadFromSd.has(patch.id) && !bundled.has(patch.id),
       )
     : []
 
@@ -253,7 +259,7 @@ export default function App() {
     setArchiveStatus({ kind: 'idle' })
     try {
       const bytes = new Uint8Array(await file.arrayBuffer())
-      const firmwarePatches = [...selected].filter((id) => !loadFromSd.has(id))
+      const firmwarePatches = [...selected].filter((id) => !loadFromSd.has(id) && !bundled.has(id))
       const outcome = await applyPatches(bytes, firmwarePatches, installPatchLoader)
       setStatus({ kind: 'done', outcome, fileName: file.name })
     } catch (error) {
@@ -398,10 +404,11 @@ export default function App() {
         )}
         {PATCHES.map((patch) => {
             const supported = model === null || patch.models.includes(model)
-            const patchEnabled = selected.has(patch.id)
+            const required = requiredSd.has(patch.id) || requiredFirmware.has(patch.id)
+            const patchEnabled = selected.has(patch.id) || required
             const loadablePatch = LOADABLE_PATCHES.find((candidate) => candidate.id === patch.id)
             const canLoadFromSd = supported && patchEnabled && loadablePatch !== undefined
-            const selectedForSd = canLoadFromSd && loadFromSd.has(patch.id)
+            const selectedForSd = requiredSd.has(patch.id) || (!required && canLoadFromSd && loadFromSd.has(patch.id))
             return (
               <Card key={patch.id} className="gap-0">
                 <CardHeader className={supported ? '' : 'opacity-45'}>
@@ -410,13 +417,17 @@ export default function App() {
                       <Label htmlFor={patch.id} className="text-sm font-medium">
                         {patch.title}
                       </Label>
-                      <AuthorByline author={patch.author} />
+                      <div className="text-muted-foreground text-xs">
+                        v{patch.version} · <AuthorByline author={patch.author} />
+                      </div>
+                      {required && <span className="text-muted-foreground text-xs">Included with a selected patch or effect</span>}
+                      {patch.dependencies.length > 0 && <span className="text-muted-foreground text-xs">Requires: {patch.dependencies.map((dependency) => `${dependency.name} v${dependency.version}`).join(", ")}</span>}
                     </div>
                     <Switch
                       id={patch.id}
                       aria-label={`Enable ${patch.title}`}
                       checked={patchEnabled}
-                      disabled={!supported}
+                      disabled={!supported || required}
                       onCheckedChange={(checked) => togglePatch(patch.id, checked)}
                     />
                   </div>
@@ -461,7 +472,7 @@ export default function App() {
                         <InstallationMethodControl
                           title={patch.title}
                           selected={selectedForSd ? 'sd-card' : 'firmware'}
-                          disabled={!canLoadFromSd}
+                          disabled={!canLoadFromSd || required}
                           onChange={(method) => choosePatchDelivery(patch.id, method === 'sd-card')}
                         />
                       </div>
@@ -491,7 +502,10 @@ export default function App() {
                     <Label htmlFor={`effect-enabled-${effect.id}`} className="text-sm font-medium">
                       {effect.title}
                     </Label>
-                    <AuthorByline author={effect.author} />
+                    <div className="text-muted-foreground text-xs">
+                      v{effect.version} · <AuthorByline author={effect.author} />
+                    </div>
+                    {effect.dependencies.length > 0 && <span className="text-muted-foreground text-xs">Requires: {effect.dependencies.map((dependency) => `${dependency.name} v${dependency.version}`).join(", ")}</span>}
                   </div>
                   <Switch
                     id={`effect-enabled-${effect.id}`}

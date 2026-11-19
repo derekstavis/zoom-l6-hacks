@@ -171,7 +171,9 @@ pub unsafe fn edit_parameter(state: *mut u8, encoder: usize, delta: i32) -> Opti
         7 => {
             let value = if applied.freeze { b"FROZEN".as_slice() } else { b"OFF".as_slice() };
             let mut text = [0; 16];
-            text[..value.len()].copy_from_slice(value);
+            for (slot, byte) in text.iter_mut().zip(value) {
+                *slot = *byte;
+            }
             (b"PLATEAU FREEZE".as_slice(), text, value.len())
         }
         _ => unreachable!(),
@@ -220,7 +222,9 @@ fn format_unit(value: f32, unit: &[u8]) -> ([u8; 16], usize) {
     out[len] = b'0' + (scaled % 10) as u8;
     len += 1;
     let copy_len = unit.len().min(out.len() - len);
-    out[len..len + copy_len].copy_from_slice(&unit[..copy_len]);
+    for (slot, byte) in out[len..].iter_mut().zip(unit) {
+        *slot = *byte;
+    }
     len += copy_len;
     (out, len)
 }

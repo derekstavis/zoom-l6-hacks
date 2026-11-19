@@ -472,15 +472,20 @@ pub mod bundle {
             match relocation {
                 Relocation::Abs32 { offset } => {
                     let end = offset.checked_add(4).ok_or(Error::Relocation)?;
-                    let bytes = image.get_mut(offset..end).ok_or(Error::Relocation)?;
-                    let target = u32::from_le_bytes(bytes.try_into().unwrap());
+                    // A fixed-size view: `copy_from_slice` would take a
+                    // caller location that stays in the loader.
+                    let bytes: &mut [u8; 4] = image
+                        .get_mut(offset..end)
+                        .and_then(|bytes| bytes.try_into().ok())
+                        .ok_or(Error::Relocation)?;
+                    let target = u32::from_le_bytes(*bytes);
                     if !(linked_base..=linked_end).contains(&(target & !1)) {
                         return Err(Error::Relocation);
                     }
                     let relocated = (i64::from(target) + delta)
                         .try_into()
                         .map_err(|_| Error::Relocation)?;
-                    bytes.copy_from_slice(&u32::to_le_bytes(relocated));
+                    *bytes = u32::to_le_bytes(relocated);
                 }
                 Relocation::ThumbMov32 {
                     low_offset,
@@ -535,16 +540,22 @@ pub mod bundle {
         immediate: u16,
     ) -> Result<(), Error> {
         let end = offset.checked_add(4).ok_or(Error::Relocation)?;
-        let instruction = image.get_mut(offset..end).ok_or(Error::Relocation)?;
-        let first = u16::from_le_bytes(instruction[..2].try_into().unwrap());
-        let second = u16::from_le_bytes(instruction[2..].try_into().unwrap());
+        // A fixed-size view: `copy_from_slice` would take a caller location
+        // that stays in the loader.
+        let instruction: &mut [u8; 4] = image
+            .get_mut(offset..end)
+            .and_then(|bytes| bytes.try_into().ok())
+            .ok_or(Error::Relocation)?;
+        let first = u16::from_le_bytes([instruction[0], instruction[1]]);
+        let second = u16::from_le_bytes([instruction[2], instruction[3]]);
         if first & 0xfbf0 != opcode || ((second >> 8) & 0xf) as u8 != register {
             return Err(Error::Relocation);
         }
         let first = (first & !0x040f) | ((immediate >> 12) & 0xf) | ((immediate >> 1) & 0x0400);
         let second = (second & !0x70ff) | ((immediate << 4) & 0x7000) | (immediate & 0x00ff);
-        instruction[..2].copy_from_slice(&first.to_le_bytes());
-        instruction[2..].copy_from_slice(&second.to_le_bytes());
+        let [first_low, first_high] = first.to_le_bytes();
+        let [second_low, second_high] = second.to_le_bytes();
+        *instruction = [first_low, first_high, second_low, second_high];
         Ok(())
     }
 

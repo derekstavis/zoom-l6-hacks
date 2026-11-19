@@ -100,17 +100,21 @@ const IMMEDIATE_ABORT_LIBRARY_FLAGS: &[&str] = &[
     "-Zunstable-options",
     "-Cpanic=immediate-abort",
     "-Zforce-unstable-if-unmarked",
+    "-Zlocation-detail=none",
 ];
 
 /// Build `core` and `compiler_builtins` with the immediate-abort panic
 /// strategy into a sysroot, once per toolchain, and return its path.
 ///
-/// SD modules use it so that a panic compiles to a single trap instruction.
-/// The prebuilt `core` formats a panic message and passes source locations to
-/// the panic handler; in a relocatable module, that costs about 1.4 KB of
-/// formatting code and one relocation per location, and the handler ignores
-/// both. Both crates come from the `rust-src` component and have no crates.io
-/// dependencies, so the build needs no network access.
+/// Every payload uses it so that a panic compiles to a single trap
+/// instruction. The prebuilt `core` formats a panic message and passes source
+/// locations to the panic handler: about 1.4 KB of formatting code plus the
+/// message and file-name strings, and in a relocatable module one relocation
+/// per location, all of which the handler ignores. With
+/// `-Zlocation-detail=none`, a location that a `#[track_caller]` call still
+/// passes names no file, line or column. Both crates come from the `rust-src`
+/// component and have no crates.io dependencies, so the build needs no
+/// network access.
 fn immediate_abort_sysroot(rustc: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let toolchain = run(Command::new(rustc).args(["--print", "sysroot"]))?;
     let library = Path::new(toolchain.trim()).join("lib/rustlib/src/rust/library");
@@ -762,7 +766,7 @@ fn compile_inner_with_payload(
         validate_guards,
     )?;
     fs::write(generated.join("continuations.rs"), continuation_rs)?;
-    compile_payload_pass(
+    let (bytes, symbols) = compile_payload_pass(
         source,
         root,
         name,
@@ -776,7 +780,59 @@ fn compile_inner_with_payload(
         &hook_macro,
         payload,
         false,
-    )
+    )?;
+    if let Some(text) = diagnostic_text(&bytes) {
+        return Err(format!(
+            "the {name} payload contains panic diagnostics, {text:?}; payloads carry \
+             only the text they display or write"
+        )
+        .into());
+    }
+    Ok((bytes, symbols))
+}
+
+/// Text that only panic diagnostics put in a payload: `core`'s messages and
+/// the file name of a panic location.
+const DIAGNOSTIC_TEXT: &[&str] = &[
+    "<redacted>",
+    "index out of bounds",
+    "out of range for slice",
+    "slice index starts at",
+    "copy_from_slice",
+    "unwrap()",
+    "panicked",
+    "attempt to ",
+    "called `",
+];
+
+/// The first panic diagnostic in a built payload: a [`DIAGNOSTIC_TEXT`] entry
+/// or a Rust source path. The hardware never reads either, so a payload with
+/// one carries them in flash and module memory for nothing.
+pub fn diagnostic_text(payload: &[u8]) -> Option<String> {
+    if let Some(text) = DIAGNOSTIC_TEXT.iter().find(|text| {
+        payload
+            .windows(text.len())
+            .any(|window| window == text.as_bytes())
+    }) {
+        return Some((*text).to_owned());
+    }
+    let path_byte = |byte: u8| byte.is_ascii_alphanumeric() || b"_./-".contains(&byte);
+    (0..payload.len().saturating_sub(2)).find_map(|end| {
+        let suffix_end = end + 3;
+        if &payload[end..suffix_end] != b".rs"
+            || payload
+                .get(suffix_end)
+                .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        {
+            return None;
+        }
+        let start = payload[..end]
+            .iter()
+            .rposition(|byte| !path_byte(*byte))
+            .map_or(0, |index| index + 1);
+        let path = &payload[start..suffix_end];
+        (path.contains(&b'/') && path.len() > 5).then(|| String::from_utf8_lossy(path).into_owned())
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -860,15 +916,20 @@ fn compile_payload_pass(
             "-Z",
             "direct-access-external-data=yes",
         ]);
-        // A panic in an SD module traps instead of formatting a message the
-        // panic handler would ignore. See `immediate_abort_sysroot`.
-        command
-            .arg("--sysroot")
-            .arg(immediate_abort_sysroot(&rustc)?)
-            .args(["-Zunstable-options", "-Cpanic=immediate-abort"]);
     } else {
-        command.args(["-C", "relocation-model=static", "-C", "panic=abort"]);
+        command.args(["-C", "relocation-model=static"]);
     }
+    // A panic traps instead of formatting a message the panic handler would
+    // ignore, and panic locations carry no file, line or column. See
+    // `immediate_abort_sysroot`.
+    command
+        .arg("--sysroot")
+        .arg(immediate_abort_sysroot(&rustc)?)
+        .args([
+            "-Zunstable-options",
+            "-Cpanic=immediate-abort",
+            "-Zlocation-detail=none",
+        ]);
     if emit_relocations {
         command
             .arg("--cfg")
@@ -1934,4 +1995,31 @@ pub fn hook_windows(
         }
     }
     Ok(windows)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::diagnostic_text;
+
+    #[test]
+    fn diagnostic_text_finds_panic_messages_and_source_paths() {
+        assert_eq!(
+            diagnostic_text(b"\x01\x02PLATEAU PREDELAY\x00dump-rom"),
+            None
+        );
+        assert_eq!(
+            diagnostic_text(b"\x00\x00<redacted>\x00"),
+            Some("<redacted>".into())
+        );
+        assert_eq!(
+            diagnostic_text(b"x index out of bounds: the len is "),
+            Some("index out of bounds".into())
+        );
+        assert_eq!(
+            diagnostic_text(b"\xffpatches/knob-dialog/src/values.rs\x1c"),
+            Some("patches/knob-dialog/src/values.rs".into())
+        );
+        // An ".rs" without a path is not a source location.
+        assert_eq!(diagnostic_text(b"\x00a.rs\x00errs\x00"), None);
+    }
 }

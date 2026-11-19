@@ -165,7 +165,9 @@ pub unsafe fn edit_parameter(state: *mut u8, encoder: usize, delta: i32) -> Opti
         5 => {
             let value = if applied.dynamic { b"DYNAMIC".as_slice() } else { b"STATIC".as_slice() };
             let mut text = [0; 16];
-            text[..value.len()].copy_from_slice(value);
+            for (slot, byte) in text.iter_mut().zip(value) {
+                *slot = *byte;
+            }
             (b"VND MODE".as_slice(), text, value.len())
         }
         6 => { let (v, n) = format_unit(applied.transition_ms, b" ms"); (b"VND TRANSITION".as_slice(), v, n) },
@@ -212,7 +214,9 @@ fn format_unit(value: f32, unit: &[u8]) -> ([u8; 16], usize) {
     out[len] = b'0' + (scaled % 10) as u8;
     len += 1;
     let copy_len = unit.len().min(out.len() - len);
-    out[len..len + copy_len].copy_from_slice(&unit[..copy_len]);
+    for (slot, byte) in out[len..].iter_mut().zip(unit) {
+        *slot = *byte;
+    }
     len += copy_len;
     (out, len)
 }

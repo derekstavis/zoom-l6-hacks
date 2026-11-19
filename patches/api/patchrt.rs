@@ -17,7 +17,8 @@ pub mod __continuations {
     include!(concat!(env!("OUT_DIR"), "/continuations.rs"));
 }
 
-/// Default terminal handler for patch payloads.
+/// Required terminal handler for patch payloads. Payloads are built with
+/// `panic=immediate-abort`, so a panic traps without reaching it.
 ///
 /// This is deliberately independent of firmware services: a panic can happen
 /// while a task lock, interrupt, or panel operation is already in progress.

@@ -340,7 +340,11 @@ fn make_patch_path(
     if len >= output.len() {
         return None;
     }
-    output[..prefix_len].copy_from_slice(&PATCH_DIRECTORY);
+    // Element-wise copies: `copy_from_slice` takes a caller location that
+    // would stay in the payload.
+    for (slot, unit) in output.iter_mut().zip(PATCH_DIRECTORY) {
+        *slot = unit;
+    }
     for (index, byte) in filename.iter().enumerate() {
         output[prefix_len + index] = u16::from(*byte);
     }
@@ -612,7 +616,9 @@ unsafe fn load_patch_files() -> bool {
                 loaded_any |= loaded;
             }
         }
-        last_name[..selected_len].copy_from_slice(&selected[..selected_len]);
+        for (slot, byte) in last_name.iter_mut().zip(&selected[..selected_len]) {
+            *slot = *byte;
+        }
         last_len = selected_len;
     }
     loaded_any

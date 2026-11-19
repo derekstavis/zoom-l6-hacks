@@ -74,7 +74,13 @@ static inline uint32_t l6max_boot_clock_value(uint32_t offset, uint32_t old)
     case L6_CCM_ANALOG_PLL_SYS_DENOM:
         return 1;
     case L6_CCM_ANALOG_MISC2:
-        return old & ~0x00808000u;
+        return old & ~0xc0808000u;
+    case 0x0d8160: /* MISC1 */
+        return old & ~0x1fu;
+    case 0x0d8020: /* PLL_USB2: disabled, bypassed */
+        return 0x00012000u;
+    case 0x0d80a0: /* PLL_VIDEO: powered down, bypassed */
+        return 0x00013000u;
     case L6_CCM_ANALOG_PLL_AUDIO:
         return (old & 0xfffe0f80u) | 0x2020u;
     case L6_CCM_ANALOG_PLL_AUDIO_NUM:

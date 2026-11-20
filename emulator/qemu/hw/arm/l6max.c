@@ -2416,9 +2416,10 @@ static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
         }
     }
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
-        (offset & ~(hwaddr)0xf) == 0x0d82c0) {
+        ((offset & ~(hwaddr)0xf) == 0x0d82c0 ||
+         (offset & ~(hwaddr)0xf) == 0x0d8270)) {
         return GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
-            GUINT_TO_POINTER((0x0d82c0 >> 2) + 1)));
+            GUINT_TO_POINTER(((offset & ~(hwaddr)0xf) >> 2) + 1)));
     }
     hwaddr pfd_base = offset & ~(hwaddr)0xf;
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
@@ -3599,20 +3600,24 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
         word |= 0x80000000u;
     }
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
-        (offset & ~(hwaddr)0xf) == 0x0d82c0) {
-        gpointer key2 = GUINT_TO_POINTER((0x0d82c0 >> 2) + 1);
+        ((offset & ~(hwaddr)0xf) == 0x0d82c0 ||
+         (offset & ~(hwaddr)0xf) == 0x0d8270)) {
+        hwaddr base = offset & ~(hwaddr)0xf;
+        uint32_t writable_mask = base == 0x0d8270 ? 0x0006eff1u : 0x00030fffu;
+        uint32_t status_mask = base == 0x0d8270 ? 0x00010000u : 0x80000000u;
+        gpointer key2 = GUINT_TO_POINTER((base >> 2) + 1);
         uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key2));
-        uint32_t writable = old & 0x00030fffu;
-        uint32_t operand = value & 0x00030fffu;
+        uint32_t writable = old & writable_mask;
+        uint32_t operand = value & writable_mask;
         switch (offset & 0xf) {
         case 0: writable = operand; break;
         case 4: writable |= operand; break;
         case 8: writable &= ~operand; break;
         case 12: writable ^= operand; break;
         }
-        word = (old & 0x80000000u) | writable;
+        word = (old & status_mask) | writable;
         g_hash_table_insert(s->registers, key2, GUINT_TO_POINTER(word));
-        if (offset != 0x0d82c0) {
+        if (offset != base) {
             store_word = false;
         }
     }

@@ -246,6 +246,15 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0x400d82c8 0x10000")
         assert int(command("readl 0x400d82c0").split()[1], 16) == 0x2e2
         command("writel 0x400d82c4 0x10000")
+        # LOWPWR_CTRL aliases update writable fields while preserving the
+        # read-only, initially ready crystal status and ignoring reserved bits.
+        command("writel 0x400d8274 0x00010010")
+        assert int(command("readl 0x400d8278").split()[1], 16) == 0x14011
+        command("writel 0x400d8278 0x00010010")
+        assert int(command("readl 0x400d827c").split()[1], 16) == 0x14001
+        command("writel 0x400d827c 0x10")
+        assert int(command("readl 0x400d8270").split()[1], 16) == 0x14011
+        command("writel 0x400d8278 0x10")
         # SEMC SWRST clears itself without clearing configuration. STS0 is
         # read-only and idle because this model executes no timed commands.
         command("writel 0x402f0010 0x8000001b")
@@ -609,7 +618,7 @@ def check_flexram_boundaries(qemu, image):
         qmp_execute("system_reset")
         assert int(command("readl 0x400d8040").split()[1], 16) == 0
         assert int(command("readl 0x400d82c0").split()[1], 16) == 0x00010fff
-        assert int(command("readl 0x400d8270").split()[1], 16) == 0x12355669
+        assert int(command("readl 0x400d8270").split()[1], 16) == 0x00054661
         assert int(command("readl 0x40080000").split()[1], 16) == 0x92345678
         assert int(command("readl 0x4008000c").split()[1], 16) == 0x12345673
         assert int(command("readl 0x400ac00c").split()[1], 16) == 0xa5a5a5b5

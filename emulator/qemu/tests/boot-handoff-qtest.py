@@ -533,9 +533,13 @@ def check_flexram_boundaries(qemu, image):
         assert 4798 <= systick_ticks() <= 4802
         command("writel 0x400d8000 0x2064")
         assert 5998 <= systick_ticks() <= 6002
+        # CALIB uses the modeled reference rate, but its physical value has
+        # not been captured. A stopped input must not underflow the reload.
+        assert int(command("readl 0xe000e01c").split()[1], 16) == 999
         # All modeled internal roots stop when their selected 24 MHz source
         # stops; selecting an enabled RC source restores both SysTick paths.
         command("writel 0x400d8154 0x40000000")  # power down selected XTAL
+        assert int(command("readl 0xe000e01c").split()[1], 16) == 0x40000000
         assert not int(command("readl 0x400d8270").split()[1], 16) & 0x10000
         command("writel 0x400d8154 0x10000")
         assert not int(command("readl 0x400d8150").split()[1], 16) & 0x8000
@@ -545,6 +549,7 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0xe000e010 1")
         assert systick_ticks(100000) == 0
         command("writel 0x400d8274 0x10")  # select enabled 24 MHz RC
+        assert int(command("readl 0xe000e01c").split()[1], 16) == 999
         for address in (0x400d8000, 0x400d8010, 0x400d8030, 0x400d8070):
             assert int(command(f"readl {address:#x}").split()[1], 16) & 0x80000000
         assert 9 <= systick_ticks(100000) <= 11

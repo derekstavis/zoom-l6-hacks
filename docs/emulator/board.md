@@ -79,8 +79,11 @@ peripheral mux and AHB divider, including PLL1, PLL2, PLL2
 PFDs and the alternate oscillator or PLL3 path; SysTick follows that clock.
 The IPG divider also supplies SAI1 when its bus-clock input is selected.
 SysTick pauses if its selected clock stops and uses the RT1060's separate
-100 kHz external reference when selected. The bootloader also enables the
-independent RC-derived 1 MHz output and selects its free-running source;
+100 kHz external reference when selected. QEMU derives SysTick's calibration
+register from that modeled reference; when it is stopped, the model reports
+unknown calibration rather than an underflowed reload. The physical calibration
+register was not captured and need not track the live clock. The bootloader
+also enables the independent RC-derived 1 MHz output and selects its free-running source;
 its configuration and register aliases are modeled, but oscillator tuning
 and physical frequency are not. External CLK1, invalid PLL dividers and reserved mux
 selections retain the last known CPU clock. PLL2 spread-spectrum modulation is

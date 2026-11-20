@@ -14,25 +14,39 @@ Bindings are grouped by model and subsystem:
 api/
   patchrt.rs
   l6/
+    dsp.rs
     fs.rs
     hooks.rs
     midi.rs
     mixer.rs
+    panel.rs
+    rec.rs
     rtos.rs
     sys.rs
+    usb.rs
   l6max/
-    fs.rs
     cfg.rs
     dsp.rs
+    fs.rs
     gui.rs
-    menu.rs
     hooks.rs
+    menu.rs
     midi.rs
     mixer.rs
+    nor.rs
+    panel.rs
     rec.rs
     rtos.rs
     sys.rs
 ```
+
+Host tools compile the same declarations through
+[`tools/firmware-api`](../../tools/firmware-api), which turns each function,
+variable and symbol into a `u32` address constant of the same name. Tests and
+diagnostics name firmware addresses through it rather than repeating literals,
+so a firmware address is declared once per revision. Entries without a known
+signature use `firmware_symbols!`; keep ARM-only code such as `global_asm!`
+behind `#[cfg(target_arch = "arm")]` so the host build still compiles.
 
 Each model's `mod.rs` includes its subsystem declarations into one module, so
 existing function and variable names remain available to payloads. Add a

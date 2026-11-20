@@ -72,3 +72,15 @@ pub const GUI_RECORDER_WINDOW: u32 = 0x8020_0408;
 
 /// Callback entry passed to the firmware's display callback table.
 pub const GUI_NOTIFICATION_TICK: usize = 0x8000_64c0;
+
+firmware_symbols! {
+    /// Schedules a window callback slot (r0) for the current window.
+    pub gui_callback_schedule at 0x8008_bd90;
+}
+
+/// Window descriptor of the firmware-update dialog.
+pub const GUI_UPDATE_DIALOG_WINDOW: u32 = 0x8020_03b4;
+/// Window descriptor of the update progress screen; bit 0x100 of its first word marks preparation done.
+pub const GUI_UPDATE_PROGRESS_WINDOW: u32 = 0x8020_029c;
+/// Read-only descriptor bitmap-table entry 36 points to.
+pub const GUI_BITMAP_36_DESCRIPTOR: u32 = 0x800c_b964;

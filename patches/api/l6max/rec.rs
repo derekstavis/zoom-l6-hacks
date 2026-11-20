@@ -15,3 +15,10 @@ firmware_variables! {
     /// Recorder state byte read by the stock Rec/Play callbacks.
     pub rec_mode: u8, at 0x8020_a9ec;
 }
+
+firmware_symbols! {
+    /// Recorder action the Play callback reaches.
+    pub rec_play_action at 0x8004_6d68;
+    /// Reads recorder stream data.
+    pub rec_stream_read at 0x8004_a130;
+}

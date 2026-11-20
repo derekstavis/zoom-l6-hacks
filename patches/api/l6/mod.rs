@@ -5,3 +5,7 @@ include!("sys.rs");
 include!("rtos.rs");
 include!("midi.rs");
 include!("mixer.rs");
+include!("usb.rs");
+include!("panel.rs");
+include!("rec.rs");
+include!("dsp.rs");

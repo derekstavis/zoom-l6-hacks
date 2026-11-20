@@ -13,6 +13,7 @@ firmware_functions! {
 // frame plus 8-byte local area. Recreate that frame, resolve the configured
 // output channel, then tail-enter the stock sender path so its routing and
 // epilogue remain in use.
+#[cfg(target_arch = "arm")]
 core::arch::global_asm!(
     ".syntax unified\n\
      .thumb\n\
@@ -34,6 +35,7 @@ core::arch::global_asm!(
     options(raw)
 );
 
+#[cfg(target_arch = "arm")]
 unsafe extern "C" {
     fn __l6_patchrt_midi_send_cc_raw(controller: u32, value: u32);
 }
@@ -44,6 +46,7 @@ unsafe extern "C" {
 /// # Safety
 /// Only valid on L6max MAIN 1.10 and from a task context allowed to use the
 /// stock MIDI output path.
+#[cfg(target_arch = "arm")]
 pub unsafe fn midi_send_cc_raw(controller: u32, value: u32) {
     unsafe { __l6_patchrt_midi_send_cc_raw(controller, value) }
 }

@@ -48,8 +48,10 @@ Record or refresh them with `--update-references`, review every image it lists
 in the diff, then rerun without the flag before committing.
 
 Use the reference manual for peripheral behavior. Preserve compatibility
-exceptions with explicit model scope and evidence. Scope firmware-specific
-addresses and compatibility behavior to the corresponding revision.
+exceptions with explicit model scope and evidence. Scope compatibility
+behavior to the corresponding firmware revision. Declare each firmware address
+once, per model and revision, in `patches/api/`; host tools and tests use it
+through `firmware-api` (`l6::name`, `l6max::name`) instead of literals.
 
 A source commit or QEMU version string does not identify a QEMU executable.
 The driver pins external QEMU binaries and explicitly marks their source as

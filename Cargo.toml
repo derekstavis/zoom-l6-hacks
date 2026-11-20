@@ -17,6 +17,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter", "json"] }
 l6max-host = { path = "emulator/host" }
 l6fw = { path = "tools/l6fw" }
+firmware-api = { path = "tools/firmware-api" }
 firmware-patch-core = { path = "tools/firmware-patch-core" }
 firmware-patch-compile = { path = "tools/firmware-patch-compile" }
 firmware-patch-wasm = { path = "tools/firmware-patch-wasm" }

@@ -28,3 +28,10 @@ firmware_functions! {
     pub unsafe fn mixer_apply_channel_parameter(channel: u32, mode: u32, absolute: u32, delta: i32, value: u32) at 0x8005_3b28;
     pub unsafe fn mixer_channel_index(channel: u32) -> u32, at 0x8005_64b0;
 }
+
+firmware_variables! {
+    pub mixer_first_channel_pan: u8, at 0x8045_ff8c;
+    /// One byte per channel, 0-127.
+    pub mixer_channel_levels: u8, at 0x8046_00a4;
+    pub mixer_efx_type: u8, at 0x8046_00b2;
+}

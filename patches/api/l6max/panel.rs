@@ -23,3 +23,19 @@ firmware_functions! {
     /// passed on the caller's stack per AAPCS.
     pub unsafe fn panel_ui_event_queue_send(source: u32, kind: u32, event: u32, reserved: u32, reserved2: u32) -> u32, at 0x8002_8088;
 }
+
+firmware_symbols! {
+    /// End of `panel_handle_main_button_event`.
+    pub panel_handle_main_button_event_end at 0x8003_728c;
+    /// Submits the Play event to its queue.
+    pub play_event_submit at 0x8004_5458;
+    /// Where `play_event_submit` returns its queue-send result.
+    pub play_event_send_return at 0x8002_80a0;
+}
+
+firmware_variables! {
+    pub panel_key_state: u8, at 0x8088_3554;
+}
+
+/// Key-reader table mapping panel targets to keys.
+pub const PANEL_KEY_TABLE: u32 = 0x800c_48c4;

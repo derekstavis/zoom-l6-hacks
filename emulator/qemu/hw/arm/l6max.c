@@ -37,6 +37,7 @@
 #include "qemu/option.h"
 #include "system/system.h"
 #include "system/runstate.h"
+#include "system/reset.h"
 #include "l6max-display.h"
 #include "l6max-indicators.h"
 #include "l6max-usb.h"
@@ -4890,8 +4891,14 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
     clock_set_hz(s->refclk, 1000000);
     if (!panel) { l6_prepare_nor(s, kernel_filename); }
 
-    memory_region_init_rom(&s->flash, NULL, flash_name,
-                           flash_size, &error_fatal);
+    if (!panel && profile == &L6MAX_PROFILE) {
+        /* The first-stage bootloader copies MAIN from NOR to SDRAM. */
+        memory_region_init_ram(&s->flash, NULL, flash_name,
+                               flash_size, &error_fatal);
+    } else {
+        memory_region_init_rom(&s->flash, NULL, flash_name,
+                               flash_size, &error_fatal);
+    }
     if (panel) {
         memory_region_init_alias(&s->panel_flash_window, NULL,
                                  "panel.flash-window", &s->flash, 0, flash_map_size);
@@ -5040,7 +5047,7 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
         rom_add_blob_fixed_as("l6-panel-installed", s->persistent_panel,
                               flash_map_size, flash_base, CPU(s->armv7m.cpu)->as);
     }
-    if (!panel) {
+    if (!panel && profile != &L6MAX_PROFILE) {
         rom_add_blob_fixed_as("l6-main-installed", s->nor_flash + 0x50000,
                              0x1a2ff8, flash_base, CPU(s->armv7m.cpu)->as);
     }
@@ -5138,12 +5145,38 @@ static void l6_panel_init(MachineState *machine)
                  profile);
 }
 
+static void l6_main_reset(MachineState *machine, ResetType type)
+{
+    L6ChipState *s = &L6_MACHINE(machine)->chip;
+
+    if (type != RESET_TYPE_SNAPSHOT_LOAD && s->profile == &L6MAX_PROFILE) {
+        /* Bootloader 1.00 reads the installed length from the boot-data
+         * footer. Older emulator state lacks it; use the package trailer,
+         * then a bounded compatibility fallback. */
+        uint32_t length = ldl_le_p(s->nor_flash + 0x1f7ff8);
+        if (length < 8 || length > 0x1a2ff8) {
+            length = ldl_le_p(s->nor_flash + 0x1f2ff8);
+        }
+        if (length < 8 || length > 0x1a2ff8) {
+            length = 0x1a2ff8;
+        }
+        /* Reset reads the vector table after this bounded copy. */
+        if (address_space_write(&address_space_memory, 0x80000000,
+                                MEMTXATTRS_UNSPECIFIED,
+                                s->nor_flash + 0x50000, length) != MEMTX_OK) {
+            error_setg(&error_fatal, "cannot copy L6max MAIN into SDRAM");
+        }
+    }
+    qemu_devices_reset(type);
+}
+
 static void l6_main_class_init(ObjectClass *oc, const void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
     static const char * const cpus[] = { ARM_CPU_TYPE_NAME("cortex-m7"), NULL };
     mc->desc = "ZOOM L6/L6max MAIN MCU bring-up board (model detected from firmware)";
     mc->init = l6_main_init;
+    mc->reset = l6_main_reset;
     mc->valid_cpu_types = cpus;
     mc->default_cpu_type = cpus[0];
     mc->default_ram_size = 0x200000;

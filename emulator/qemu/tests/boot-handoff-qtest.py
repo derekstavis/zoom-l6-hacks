@@ -1294,12 +1294,20 @@ def check_usb_clock(qemu, image):
         command("clock_step 2000000")
         assert command("readl 0x402e0144") & 0x80
         assert request(2, 3, 0, bytes(8)) == 0
+        # USB is a system-bus DMA master; CPU-private PPB must not be
+        # accessible, whereas the DTCM system-bus alias is accessible.
+        command("writel 0x402e0158 0xe000e000")
+        assert request(2, 4, 0, bytes(8)) == -14
+        command("writel 0x402e0158 0x20000000")
+        assert request(2, 5, 0, bytes.fromhex("0102030405060708")) == 0
+        assert command("readl 0x20000028") == 0x04030201
+        assert command("readl 0x2000002c") == 0x08070605
         command("writel 0x402e0144 0xffffffff")
         command("writel 0x400fc080 0x00fc3fc0")
         command("clock_step 2000000")
         assert not command("readl 0x402e0144") & 0x80
-        assert request(2, 4, 0, bytes(8)) == -19
-        print(f"{image}: USB controller clock gate transitions passed")
+        assert request(2, 6, 0, bytes(8)) == -19
+        print(f"{image}: USB controller clock and DMA address-space checks passed")
     finally:
         host.close()
         process.terminate()

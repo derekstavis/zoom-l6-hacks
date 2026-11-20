@@ -95,9 +95,10 @@ retains its prior descriptor contents without asserting physical retention.
 The boot images' direct-address scans found no DMA setup, but indirect accesses
 remain possible. L6max eDMA IRQs 0–15 each combine two channel completion
 signals, as specified for RT1060; the test exercises both members of one pair
-and independent acknowledgements. L6max eDMA and its display transfer helper
-use the system address space rather than the CPU's private peripheral space;
-qtests check an SCB source is rejected and DTCM can feed SAI. Source and
+and independent acknowledgements. L6max eDMA, its display transfer helper and USB DMA use the system address
+space rather than the CPU's private peripheral space. Qtests check that eDMA
+rejects an SCB source, USB rejects a private-peripheral destination, and both
+can access DTCM. Source and
 destination bus faults set the modeled eDMA ERR and ES registers and can
 assert the shared error IRQ 16 when enabled. Error clearing is modeled, but
 bus pipeline timing, halt-on-error and other eDMA error causes remain incomplete.

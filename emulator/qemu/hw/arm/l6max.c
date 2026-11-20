@@ -6306,7 +6306,9 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
                              0x1a2ff8, flash_base, CPU(s->armv7m.cpu)->as);
     }
     if (!panel) {
-        s->usb.as = CPU(s->armv7m.cpu)->as;
+        /* USB DMA is a system bus master, not a CPU-private PPB access. */
+        s->usb.as = profile == &L6MAX_PROFILE ? &address_space_memory :
+                                               CPU(s->armv7m.cpu)->as;
         if (profile == &L6MAX_PROFILE) {
             s->usb.clock_enabled = l6max_usb_clock_enabled;
             s->usb.clock_opaque = s;

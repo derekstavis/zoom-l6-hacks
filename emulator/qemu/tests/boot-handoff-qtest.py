@@ -1502,14 +1502,17 @@ def check_usb_clock(qemu, image):
         command("clock_step 2000000")
         assert command("readl 0x402e0144") & 0x80
         assert request(2, 3, 0, bytes(8)) == 0
-        # PHY UTMI gate and PLL USB output independently stop progress.
+        # PHY UTMI gate, PLL outputs and an unavailable PLL reference stop progress.
         for off, on, bit in ((0x400d9034, 0x400d9038, 0x40000000),
                              (0x400d8018, 0x400d8014, 0x40),
-                             (0x400d8018, 0x400d8014, 0x1000)):
+                             (0x400d8018, 0x400d8014, 0x1000),
+                             (0x400d8014, 0x400d8018, 0x4000)):
             command("writel 0x402e0144 0xffffffff")
             command(f"writel {off:#x} {bit:#x}")
             command("clock_step 2000000")
             assert not command("readl 0x402e0144") & 0x80
+            if bit == 0x4000:
+                assert request(2, 300, 0, bytes(8)) == -19
             command(f"writel {on:#x} {bit:#x}")
             command("clock_step 2000000")
             assert command("readl 0x402e0144") & 0x80

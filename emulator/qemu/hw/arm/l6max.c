@@ -1791,6 +1791,7 @@ static bool l6max_usb_clock_enabled(void *opaque)
            l6max_ipg_clock_running(s, &clocks) &&
            (pll & (L6_USB1_PLL_POWER | L6_USB1_PLL_EN_USB_CLKS)) ==
                (L6_USB1_PLL_POWER | L6_USB1_PLL_EN_USB_CLKS) &&
+           !(pll & L6_USB1_PLL_BYPASS_SRC) &&
            clocks.oscillator_hz != 0 &&
            !(phy & 0xc0000000u);
 }

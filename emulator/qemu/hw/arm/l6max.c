@@ -3924,6 +3924,10 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
 {
     L6ChipState *s = opaque;
     if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (offset & ~(hwaddr)3) == 0x0d8260) {
+        return; /* USB_ANALOG_DIGPROG is read-only on RT1060. */
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
         offset >= 0x184000 && offset < 0x1a4000 &&
         (offset & 0x3fff) < 8) {
         /* RT1060 LPUART VERID and PARAM are read-only. */
@@ -5080,6 +5084,10 @@ static void l6_main_gpio_setup(L6ChipState *s, MemoryRegion *system_memory)
 /* Apply the modeled L6max bootloader handoff after every machine reset. */
 static void l6max_seed_boot_handoff(L6ChipState *s)
 {
+    /* Silicon identification from the captured L6max, not the RM's
+     * generic revision-zero reset value. */
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0d8260 >> 2) + 1),
+                        GUINT_TO_POINTER(0x006c0001u));
     /* RT1060 RM 49.6.1.1: functional reset values. ROM/bootloader UART
      * writes at handoff have not been completely traced. */
     static const uint32_t uart_reset[] = {

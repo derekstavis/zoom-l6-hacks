@@ -23,7 +23,9 @@ For L6 peripheral semantics, use the RT1040 reference manual; for L6max, use
 the RT1060 manual. L6 external resource NOR uses LPSPI3 at `0x403a0000`.
 L6max's CPUID matches the captured Cortex-M7 r1p1 value `0x411fc271`;
 this identifies the guest-visible revision and does not model differences
-between Cortex-M7 revisions.
+between Cortex-M7 revisions. Its read-only USB_ANALOG_DIGPROG register also
+reports the captured `0x006c0001` silicon identifier. That value does not
+establish the package marking or individual RT106x model.
 
 When starting L6max MAIN directly, the board seeds
 clock fields recovered from L6max bootloader 1.00: the 600 MHz ARM setup,

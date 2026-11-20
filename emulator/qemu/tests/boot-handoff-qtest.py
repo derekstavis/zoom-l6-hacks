@@ -455,6 +455,10 @@ def check_flexram_boundaries(qemu, image):
                 if "return" in reply:
                     return reply["return"]
         qmp_execute("qmp_capabilities")
+        assert int(command("readl 0x400d8260").split()[1], 16) == 0x006c0001
+        command("writel 0x400d8260 0xffffffff")
+        command("writeb 0x400d8261 0xff")
+        assert int(command("readl 0x400d8260").split()[1], 16) == 0x006c0001
         # eDMA is a system bus master, not the CPU: its reads cannot access
         # private SCB registers even though privileged CPU reads can.
         command("writel 0x40384014 0x10000")
@@ -569,6 +573,7 @@ def check_flexram_boundaries(qemu, image):
         assert int(command("readl 0x400e8024").split()[1], 16) & 8
         assert int(command("readl 0x20000004").split()[1], 16) == 0
         qmp_execute("system_reset")
+        assert int(command("readl 0x400d8260").split()[1], 16) == 0x006c0001
         print(f"{image}: paired DMA interrupt assertion and acknowledgement passed")
         # Bootloader installed and locked the NOR command table. Verify the
         # command works before any guest table write, then the key protocol.

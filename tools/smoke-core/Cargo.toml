@@ -6,10 +6,11 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+schemars.workspace = true
 sd-image.workspace = true
 tracing.workspace = true
 l6max-host.workspace = true
-l6fw.workspace = true
+l6fw = { workspace = true, features = ["schemars"] }
 firmware-api.workspace = true
 l6patch = { path = "../l6patch" }
 firmware-patch-core.workspace = true

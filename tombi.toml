@@ -1,0 +1,12 @@
+# Editor completion and validation for emulator test files; see
+# docs/development/scenario-format.md. `cargo l6test schema` regenerates the
+# schemas from the types that parse these files.
+toml-version = "v1.0.0"
+
+[[schemas]]
+path = "tests/emulator/schemas/case.schema.json"
+include = ["tests/emulator/cases/**/*.toml", "patches/*/tests/emulator/cases/**/*.toml"]
+
+[[schemas]]
+path = "tests/emulator/schemas/fragment.schema.json"
+include = ["tests/emulator/fragments/**/*.toml", "patches/*/tests/emulator/fragments/**/*.toml"]

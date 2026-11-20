@@ -3,8 +3,9 @@
 A scenario is a strict TOML sequence, executed by one `smoke-core::Runner` on
 both adapters. Unknown actions, misspelled fields, unsupported controls,
 model/channel mismatches, unsupported versions and zero timeouts are errors
-before boot. Channels are one-based. Electrical IDs and firmware addresses
-belong in Rust model mappings, not scenario files.
+before boot. Channels are one-based. Electrical IDs belong in Rust model
+mappings, and a scenario names a firmware address only by its `patches/api`
+symbol.
 
 ```toml
 version = 1
@@ -211,12 +212,26 @@ A fragment contains only `[[step]]` entries. Parent include model scope is
 intersected with child scopes. Use fragments for shared setup or control groups;
 there are no arbitrary shell commands, expressions or loop constructs.
 
+## Editor support
+
+`tests/emulator/schemas/` holds JSON Schemas for case and fragment files,
+generated from the Rust types that parse them, and `tombi.toml` applies them.
+An editor with the [Tombi](https://tombi-toml.github.io/tombi/) extension
+completes and checks actions, fields, `expect-memory` symbols and suite names;
+`uvx tombi lint <files>` checks from the command line. Loading a scenario stays
+the authority: per-model symbol scope, step order and file references are
+checked only there.
+
+Run `cargo l6test schema` after changing a scenario, step or `[case]` type, or
+declaring a symbol or suite; `cargo test -p l6test` fails while the committed
+schemas are stale.
+
 ## Extending the driver
 
 Add a scenario and catalog entry for sequences using existing operations. Add
 complex USB, MIDI, storage or debugger assertions as typed Rust operations with
 focused tests. Avoid arbitrary shell commands, embedded expressions, loops or
-firmware-memory addressing in TOML.
+raw firmware addresses in TOML.
 
 A catalog case has either a scenario path or a supervised GUI executable. A case with
 `needs_configuration` and no scenario runs the packaged GUI from `--app`, which keeps

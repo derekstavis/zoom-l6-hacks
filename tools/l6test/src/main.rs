@@ -11,6 +11,7 @@ mod identity;
 mod patch_matrix;
 mod report;
 mod schedule;
+mod schema;
 mod screen_gif;
 mod select;
 mod supervise;
@@ -206,6 +207,10 @@ impl Drop for RunJournal {
 fn execute() -> Result<i32, String> {
     let args = parse_args()?;
     let root = l6max_host::paths::repository_root();
+    if args.command == "schema" {
+        schema::write(root)?;
+        return Ok(0);
+    }
     let mut catalog = catalog::load(root)?;
     if args.command == "list" {
         if args.json {
@@ -234,7 +239,7 @@ fn execute() -> Result<i32, String> {
     }
     if !["run", "check"].contains(&args.command.as_str()) {
         println!(
-            "Usage: cargo l6test list [--format text|json]\n       cargo l6test check|run [--config config.toml] [--suite NAME | --case ID,GLOB,... | --rerun RUN [--only OUTCOMES]] [--model l6|l6max|all] [--backend headless|gui|both] [--shard I/N] [--retries N] [--strict] [--fixtures-only] [--no-cache] [--update-references] [--output NEW_DIR] [--no-build] [--jobs N] [--qemu BINARY] [--app PACKAGED_APP]\n       cargo l6test probe gui --keys TARGET,... --volatile [engine options]\n       cargo l6test capture screen --out FILE.gif [capture options] --volatile [engine options]"
+            "Usage: cargo l6test list [--format text|json]\n       cargo l6test schema\n       cargo l6test check|run [--config config.toml] [--suite NAME | --case ID,GLOB,... | --rerun RUN [--only OUTCOMES]] [--model l6|l6max|all] [--backend headless|gui|both] [--shard I/N] [--retries N] [--strict] [--fixtures-only] [--no-cache] [--update-references] [--output NEW_DIR] [--no-build] [--jobs N] [--qemu BINARY] [--app PACKAGED_APP]\n       cargo l6test probe gui --keys TARGET,... --volatile [engine options]\n       cargo l6test capture screen --out FILE.gif [capture options] --volatile [engine options]"
         );
         return Ok(0);
     }

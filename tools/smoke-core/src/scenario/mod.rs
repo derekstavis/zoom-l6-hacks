@@ -10,7 +10,19 @@ use std::{
 
 mod validate;
 /// How a case drives the emulator.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Deserialize,
+    schemars::JsonSchema,
+    Serialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Backend {
     /// The scenario runner drives a headless engine.
@@ -34,7 +46,7 @@ impl std::fmt::Display for Backend {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, schemars::JsonSchema, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Scenario {
     pub version: u32,
@@ -50,6 +62,7 @@ pub struct Scenario {
     /// How the test driver runs this scenario as a case; the scenario itself
     /// ignores it.
     #[serde(default, skip_serializing)]
+    #[schemars(skip)]
     pub case: Option<toml::Table>,
     /// Firmware patches applied to the configured package.
     #[serde(default)]
@@ -91,7 +104,7 @@ pub struct Scenario {
     #[serde(skip)]
     pub sources: Vec<PathBuf>,
 }
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, schemars::JsonSchema, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AudioInput {
     /// One-based input channel. See the audio model for each model's channels.
@@ -99,7 +112,7 @@ pub struct AudioInput {
     #[serde(flatten)]
     pub content: sd_image::spec::Content,
 }
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, schemars::JsonSchema, Serialize)]
 pub struct Step {
     #[serde(default)]
     pub models: Vec<Model>,
@@ -149,7 +162,7 @@ fn guest_timeout() -> u32 {
 fn wall_timeout() -> u64 {
     180
 }
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, schemars::JsonSchema, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Gesture {
     #[default]
@@ -157,14 +170,16 @@ pub enum Gesture {
     DragVertical,
     DragHorizontal,
 }
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(
+    Clone, Copy, Debug, Default, Deserialize, schemars::JsonSchema, Serialize, PartialEq, Eq,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum PadAssignmentSource {
     #[default]
     Editor,
     SavedState,
 }
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, schemars::JsonSchema, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct UsbSysexRequest {
     pub bytes: Vec<u8>,
@@ -176,7 +191,7 @@ pub struct UsbSysexRequest {
     pub min_reply_bytes: Option<usize>,
     pub reply_timeout_ms: Option<u32>,
 }
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, schemars::JsonSchema, Serialize)]
 #[serde(tag = "action", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Action {
     Include {
@@ -274,6 +289,7 @@ pub enum Action {
     },
     ExpectMemory {
         /// A name declared in `patches/api` for the model the step runs on.
+        #[schemars(schema_with = "crate::firmware::symbol_schema")]
         symbol: String,
         bytes: Vec<u8>,
     },
@@ -607,10 +623,11 @@ const NONE: &str = "none";
 /// Environment variable the driver sets to `1` for cases whose persistent
 /// state was built from a state spec.
 pub const STATE_SPEC_ENV: &str = "SMOKE_STATE_SPEC";
-#[derive(Deserialize, Serialize)]
+/// A file of steps that scenarios include.
+#[derive(Deserialize, schemars::JsonSchema, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Fragment {
-    step: Vec<Step>,
+pub struct Fragment {
+    pub step: Vec<Step>,
 }
 /// Expand includes. A fragment is shared, so its steps scoped only to models
 /// the scenario does not run (`scope`) are left out.

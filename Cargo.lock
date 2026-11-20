@@ -3591,6 +3591,7 @@ dependencies = [
 name = "l6fw"
 version = "0.1.0"
 dependencies = [
+ "schemars",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -3690,6 +3691,7 @@ dependencies = [
  "libc",
  "patch-loader-core",
  "qemu-build",
+ "schemars",
  "sd-image",
  "serde",
  "serde_json",
@@ -6206,6 +6208,7 @@ version = "0.1.0"
 dependencies = [
  "fstool",
  "l6fw",
+ "schemars",
  "serde",
  "toml 0.8.23",
 ]
@@ -6544,6 +6547,7 @@ dependencies = [
  "l6patch",
  "libc",
  "patch-loader-core",
+ "schemars",
  "sd-image",
  "serde",
  "serde_json",

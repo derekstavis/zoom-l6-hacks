@@ -176,26 +176,15 @@ grant sandbox permissions; the calling environment must provide them.
 
 ## Suites and isolation
 
-| Selection | Coverage |
-| --- | --- |
-| `--suite quick` | The shared `controls` scenario on both models (boot, then channel-1 scroll, channel-2 drag and reversal, and mute feedback in one boot per model/backend), plus the L6max TAP handler |
-| `--case boot` | Shared sweep/readiness gate only |
-| `--case encoder` | Isolated channel-1 encoder output and exact firmware report count |
-| `--case mute` | Isolated channel-1 mute feedback |
-| `--suite regression` | Composed shared panel scenario, shared audio callbacks and SAI/eDMA stream checks, plus legacy full input |
-| `--suite panel` | Full panel sequence through the selected adapters, one boot each |
-| `--suite devices` | Shared audio callbacks and SAI/eDMA stream checks, SD presence/removal, USB MIDI/descriptors and L6max USB storage |
-| `--suite lifecycle` | Shared power/restart and fresh L6max persistence |
-| `--suite full` | Registered scenarios and remaining specialized legacy cases; missing prerequisites produce BLOCKED |
-| `--suite sd-matrix` | Patch loader and SD module cases: loading, corruption, warm reset, hook chains and effect replacement |
-| `--suite patches` | Generated: every valid patch combination and effect assignment, and each patch through each delivery method, with a functional check per patch. See [Patch combinations](#patch-combinations) |
-| `--suite patches-pairwise` | Generated: a covering subset in which every pair of placements and effect assignments appears, plus every delivery case |
-| `--suite patches-single` | Generated: each placement and effect assignment once with only its dependencies, plus every delivery case |
-| `--suite stack` | The top of a stack, or nightly: `full`, `sd-matrix` and `patches` |
-
 [`tests/emulator/suites.toml`](../../tests/emulator/suites.toml) declares every
-suite; a case naming an undeclared suite fails to load. A suite's `includes`
-lists other suites whose cases it also runs.
+suite with a description of what it covers; this page does not repeat them. A
+case naming an undeclared suite fails to load. A suite's `includes` lists other
+suites whose cases it also runs; `stack` runs `full`, `sd-matrix` and `patches`
+for the top of a stack. `l6test list` shows each case's suites. The generated
+`patches` suites are described under [Patch combinations](#patch-combinations).
+
+Select single cases with `--case`, for example `--case boot` for the shared
+sweep/readiness gate only, `--case encoder` or `--case mute`.
 
 Validation is tiered. While iterating, and for each PR in a stack, run the
 smallest set of cases that covers the change (`--case` with ids or globs,

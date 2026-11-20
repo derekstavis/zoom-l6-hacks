@@ -22,7 +22,7 @@ description = "Power and restart, and fresh L6max persistence."
 description = "Every registered device and patch case; pass --app for the packaged application cases."
 
 [suite.sd-matrix]
-description = "Patch loader and SD module cases: loading, corruption, warm reset, hook chains and effect replacement."
+description = "Patch loader and SD module cases: loading, hook chains, MIDI sync, Knob Dialog, menus and effect replacement."
 
 [suite.effect-replacement-matrix]
 description = "Effect slot replacement cases from SD modules."

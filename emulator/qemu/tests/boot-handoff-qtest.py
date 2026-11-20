@@ -1361,6 +1361,14 @@ def check_usb_clock(qemu, image):
         assert command("readl 0x402e0144") & 0x80
         command("writel 0x400d8158 0x40000000")
         command("writel 0x400d8278 0x10")  # restore crystal source
+        # The USB PLL can remain powered while its IPG bus root stops.
+        command("writel 0x402e0144 0xffffffff")
+        command("writel 0x400d8004 0x1000")  # power down selected ARM PLL
+        command("clock_step 2000000")
+        assert not command("readl 0x402e0144") & 0x80
+        command("writel 0x400d8008 0x1000")
+        command("clock_step 2000000")
+        assert command("readl 0x402e0144") & 0x80
         command("writel 0x400d9034 0x80000000")
         assert command("readl 0x400d9030") == 0xc0200000
         command("writel 0x400d9038 0xc0000000")

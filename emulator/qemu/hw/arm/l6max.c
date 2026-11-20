@@ -1771,6 +1771,14 @@ static uint32_t l6max_clock_register(L6ChipState *s, hwaddr offset)
 
 static L6MaxBusClocks l6max_bus_clocks(L6ChipState *s);
 
+/* Unsupported roots retain the last modeled CPU clock, as elsewhere in
+ * this board; valid IPG roots can stop even when the oscillator still runs. */
+static bool l6max_ipg_clock_running(L6ChipState *s, const L6MaxBusClocks *clocks)
+{
+    uint32_t ipg_hz = l6max_ipg_clock_hz(clocks);
+    return ipg_hz == UINT32_MAX ? clock_get_hz(s->sysclk) != 0 : ipg_hz != 0;
+}
+
 /* CCGR6 CG0 gates the USB controller's IPG and AHB clocks. L6's clock
  * tree is separate and remains on the existing compatibility path. */
 static bool l6max_usb_clock_enabled(void *opaque)
@@ -1778,10 +1786,12 @@ static bool l6max_usb_clock_enabled(void *opaque)
     L6ChipState *s = opaque;
     uint32_t pll = l6max_clock_register(s, 0x0d8010);
     uint32_t phy = l6max_clock_register(s, 0x0d9030);
+    L6MaxBusClocks clocks = l6max_bus_clocks(s);
     return (l6max_clock_register(s, 0x0fc080) & 3u) != 0 &&
+           l6max_ipg_clock_running(s, &clocks) &&
            (pll & (L6_USB1_PLL_POWER | L6_USB1_PLL_EN_USB_CLKS)) ==
                (L6_USB1_PLL_POWER | L6_USB1_PLL_EN_USB_CLKS) &&
-           l6max_bus_clocks(s).oscillator_hz != 0 &&
+           clocks.oscillator_hz != 0 &&
            !(phy & 0xc0000000u);
 }
 
@@ -3759,10 +3769,8 @@ static bool l6_display_dma_transfer(L6ChipState *s)
 static void l6max_refresh_edma_clock(L6ChipState *s)
 {
     L6MaxBusClocks clocks = l6max_bus_clocks(s);
-    uint32_t ipg_hz = l6max_ipg_clock_hz(&clocks);
     bool was_running = s->edma_clock_running;
-    bool root_running = ipg_hz == UINT32_MAX ? clock_get_hz(s->sysclk) != 0 :
-                                             ipg_hz != 0;
+    bool root_running = l6max_ipg_clock_running(s, &clocks);
     s->edma_clock_running = root_running &&
         (l6max_clock_register(s, 0x0fc07c) & 0xc0u) != 0;
     if (!was_running && s->edma_clock_running) {

@@ -78,8 +78,8 @@ applies the recovered ROM startup gate masks before first-stage setup. On the
 reviewed normal boot path, ROM re-enables TRNG but leaves the USB controller
 gate clear; the first stage enables the USB PLL independently. On L6max the
 USB model suppresses frame interrupts and transfer requests while the controller
-clock gate, PLL USB output, selected oscillator, or PHY UTMI clock is off, or
-PHY reset is asserted.
+clock gate, IPG root, PLL USB output, selected oscillator, or PHY UTMI clock
+is off, or PHY reset is asserted.
 The PHY control register implements the observed SET/CLR/TOG sequence and reset;
 its handoff value is assumed to be the reference-manual reset value because ROM
 and physical handoff state have not been fully traced. Cable events and register

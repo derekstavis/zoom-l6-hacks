@@ -26,6 +26,10 @@ this identifies the guest-visible revision and does not model differences
 between Cortex-M7 revisions. Its read-only USB_ANALOG_DIGPROG register also
 reports the captured `0x006c0001` silicon identifier. That value does not
 establish the package marking or individual RT106x model.
+The L6max SRC boot-mode registers are read-only and use the later physical
+capture's SBMR1 `0` and SBMR2 `0x02000009`. The model keeps those inputs
+fixed across reset; it does not simulate strap or fuse changes, and the
+capture does not independently prove their values during the earlier ROM boot.
 
 When starting L6max MAIN directly, the board seeds
 clock fields recovered from L6max bootloader 1.00: the 600 MHz ARM setup,

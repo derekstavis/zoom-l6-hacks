@@ -3928,6 +3928,11 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
         return; /* USB_ANALOG_DIGPROG is read-only on RT1060. */
     }
     if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        ((offset & ~(hwaddr)3) == 0x0f8004 ||
+         (offset & ~(hwaddr)3) == 0x0f801c)) {
+        return; /* SRC boot-mode inputs are read-only. */
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
         offset >= 0x184000 && offset < 0x1a4000 &&
         (offset & 0x3fff) < 8) {
         /* RT1060 LPUART VERID and PARAM are read-only. */
@@ -5088,6 +5093,11 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
      * generic revision-zero reset value. */
     g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0d8260 >> 2) + 1),
                         GUINT_TO_POINTER(0x006c0001u));
+    /* Later physical capture of the latched boot inputs. Reset does not
+     * simulate changes to straps or fuses, and reserved bit 3 was observed. */
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0f8004 >> 2) + 1), NULL);
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0f801c >> 2) + 1),
+                        GUINT_TO_POINTER(0x02000009u));
     /* RT1060 RM 49.6.1.1: functional reset values. ROM/bootloader UART
      * writes at handoff have not been completely traced. */
     static const uint32_t uart_reset[] = {

@@ -82,7 +82,11 @@ read-only crystal-ready status. DCDC ready is read-only and approximated as imme
 The crystal detector's MISC0 control and aliases are stored, with the
 bootloader's final detector-disable write applied; detector and bandgap status
 transitions are not modeled.
-Analog oscillator and voltage transitions are not simulated, and
+The selected crystal or RC source stops the modeled internal clocks when it
+is disabled; the enabled RC source is approximated as 24 MHz. Analog oscillator
+and voltage transitions are not simulated. Internal-source PLL lock drops when
+the source is disabled and returns immediately when enabled; actual lock timing
+is unknown. The
 the surrounding inherited register bits were not captured physically.
 The USB2, video and Ethernet PLL controls reflect the bootloader's recovered
 bypass/power sequence. Their clock outputs and physical lock timing are not

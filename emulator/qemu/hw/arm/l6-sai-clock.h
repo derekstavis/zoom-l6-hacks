@@ -78,6 +78,9 @@ static inline uint32_t l6max_sai1_master_hz(const L6MaxSaiClocks *c,
     if (route > 2) {
         return 0; /* The external MCLK input pins are not connected. */
     }
+    if (!c->bus.oscillator_hz) {
+        return 0; /* All currently modeled internal sources use osc_clk. */
+    }
     unsigned mux = (c->cscmr1 >> (10 + 2 * route)) & 3;
     uint32_t source;
     switch (mux) {

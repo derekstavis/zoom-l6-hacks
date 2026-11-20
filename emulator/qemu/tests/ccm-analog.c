@@ -52,6 +52,7 @@ int main(void)
     assert(l6max_arm_root_hz(0x00014064u, 1) == UINT32_MAX); /* bypass CLK1 */
     assert(l6max_arm_root_hz(0x00002001u, 1) == UINT32_MAX);
     L6MaxBusClocks bus_clocks = {
+        .oscillator_hz = 24000000u,
         .arm_pll = 0x2064, .cacrr = 1, .sys_pll = 0x2001,
         .sys_num = 0, .sys_denom = 1, .pfd_528 = 0x101d1018,
         .usb1_pll = 0x3040, .ccsr = 0x100,

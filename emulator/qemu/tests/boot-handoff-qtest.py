@@ -319,6 +319,26 @@ def check_flexram_boundaries(qemu, image):
         assert 4798 <= systick_ticks() <= 4802
         command("writel 0x400d8000 0x2064")
         assert 5998 <= systick_ticks() <= 6002
+        # All modeled internal roots stop when their selected 24 MHz source
+        # stops; selecting an enabled RC source restores both SysTick paths.
+        command("writel 0x400d8154 0x40000000")  # power down selected XTAL
+        assert systick_ticks() == 0
+        for address in (0x400d8000, 0x400d8010, 0x400d8030, 0x400d8070):
+            assert not int(command(f"readl {address:#x}").split()[1], 16) & 0x80000000
+        command("writel 0xe000e010 1")
+        assert systick_ticks(100000) == 0
+        command("writel 0x400d8274 0x10")  # select enabled 24 MHz RC
+        for address in (0x400d8000, 0x400d8010, 0x400d8030, 0x400d8070):
+            assert int(command(f"readl {address:#x}").split()[1], 16) & 0x80000000
+        assert 9 <= systick_ticks(100000) <= 11
+        command("writel 0xe000e010 5")
+        assert 5998 <= systick_ticks() <= 6002
+        command("writel 0x400d8278 1")  # disable selected RC
+        assert systick_ticks() == 0
+        command("writel 0x400d8274 1")
+        assert 5998 <= systick_ticks() <= 6002
+        command("writel 0x400d8158 0x40000000")
+        command("writel 0x400d8278 0x10")  # restore XTAL source
         # The ARM core uses the AHB root, not the PLL1 divider directly.
         boot_cbcdr = int(command("readl 0x400fc014").split()[1], 16)
         boot_cbcmr = int(command("readl 0x400fc018").split()[1], 16)

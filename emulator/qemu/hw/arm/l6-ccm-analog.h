@@ -223,6 +223,7 @@ static inline uint32_t l6max_arm_root_hz(uint32_t pll, uint32_t cacrr)
 typedef struct L6MaxBusClocks {
     uint32_t arm_pll, cacrr, sys_pll, sys_num, sys_denom, pfd_528;
     uint32_t usb1_pll, ccsr, cbcdr, cbcmr;
+    uint32_t oscillator_hz;
 } L6MaxBusClocks;
 
 static inline uint32_t l6max_sys_pll_vco_hz(const L6MaxBusClocks *c)
@@ -309,7 +310,10 @@ static inline uint32_t l6max_ahb_clock_hz(const L6MaxBusClocks *c)
         default: source = l6max_arm_root_hz(c->arm_pll, c->cacrr); break;
         }
     }
-    return source == UINT32_MAX ? source : source / (((c->cbcdr >> 10) & 7u) + 1);
+    if (source == UINT32_MAX) {
+        return source;
+    }
+    return c->oscillator_hz ? source / (((c->cbcdr >> 10) & 7u) + 1) : 0;
 }
 
 static inline uint32_t l6max_ipg_clock_hz(const L6MaxBusClocks *c)

@@ -1763,7 +1763,12 @@ static uint32_t l6max_clock_register(L6ChipState *s, hwaddr offset)
 
 static L6MaxBusClocks l6max_bus_clocks(L6ChipState *s)
 {
+    uint32_t lowpwr = l6max_clock_register(s, 0x0d8270);
+    uint32_t misc0 = l6max_clock_register(s, 0x0d8150);
+    bool oscillator_on = (lowpwr & 0x10u) ? (lowpwr & 1u) != 0 :
+                                            (misc0 & 0x40000000u) == 0;
     return (L6MaxBusClocks) {
+        .oscillator_hz = oscillator_on ? 24000000u : 0,
         .arm_pll = l6max_clock_register(s, L6_CCM_ANALOG_PLL_ARM),
         .cacrr = l6max_clock_register(s, L6_CCM_CACRR_OFFSET),
         .sys_pll = l6max_clock_register(s, L6_CCM_ANALOG_PLL_SYS),
@@ -2443,14 +2448,20 @@ static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
                           analog_pll_base == 0x0d80e0)) {
         uint32_t control = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
             GUINT_TO_POINTER((analog_pll_base >> 2) + 1)));
+        uint32_t status;
         if (analog_pll_base == L6_CCM_ANALOG_PLL_ARM ||
             analog_pll_base == L6_CCM_ANALOG_PLL_SYS) {
             uint32_t mask = analog_pll_base == L6_CCM_ANALOG_PLL_ARM ?
                             L6_ARM_PLL_WRITABLE : L6_SYS_PLL_WRITABLE;
-            return l6_core_pll_status(control, mask);
+            status = l6_core_pll_status(control, mask);
+        } else {
+            status = analog_pll_base == 0x0d80e0 ? l6_enet_pll_status(control) :
+                                                   l6_audio_pll_status(control);
         }
-        return analog_pll_base == 0x0d80e0 ? l6_enet_pll_status(control) :
-                                            l6_audio_pll_status(control);
+        if (!(control & 0xc000u) && !l6max_bus_clocks(s).oscillator_hz) {
+            status &= ~0x80000000u;
+        }
+        return status;
     }
     hwaddr usb_pll_base = offset & ~(hwaddr)0xf;
     if (!s->panel && size == 4 && !(offset & 3) &&
@@ -2458,7 +2469,12 @@ static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
          (s->profile == &L6MAX_PROFILE && usb_pll_base == 0x0d8020))) {
         uint32_t control = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
             GUINT_TO_POINTER((usb_pll_base >> 2) + 1)));
-        return l6_usb1_pll_status(control);
+        uint32_t status = l6_usb1_pll_status(control);
+        if (s->profile == &L6MAX_PROFILE && !(control & 0xc000u) &&
+            !l6max_bus_clocks(s).oscillator_hz) {
+            status &= ~0x80000000u;
+        }
+        return status;
     }
     if (s->profile->resource_flash && offset == 0x3a005c && size == 4) {
         /* The L6 firmware polls FSR.RXCOUNT (bits 16..20) before draining
@@ -3564,6 +3580,7 @@ static void l6max_update_cpu_clock(L6ChipState *s)
 {
     L6MaxBusClocks clocks = l6max_bus_clocks(s);
     uint32_t hz = l6max_ahb_clock_hz(&clocks);
+    clock_update_hz(s->refclk, clocks.oscillator_hz ? 100000 : 0);
     if (hz != UINT32_MAX) {
         clock_update_hz(s->sysclk, hz);
     }
@@ -4045,7 +4062,8 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
          (size == 4 && !(offset & 3) &&
           (clock_alias == L6_CCM_ANALOG_PLL_ARM ||
            clock_alias == L6_CCM_ANALOG_PLL_SYS ||
-           clock_alias == L6_CCM_ANALOG_PFD_528 || clock_alias == 0x0d8010)))) {
+           clock_alias == L6_CCM_ANALOG_PFD_528 || clock_alias == 0x0d8010 ||
+           clock_alias == 0x0d8150 || clock_alias == 0x0d8270)))) {
         l6max_update_cpu_clock(s);
     }
     if (s->panel) {

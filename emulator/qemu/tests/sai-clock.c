@@ -11,9 +11,13 @@ int main(void)
         .ccgr5 = 3u << 18, .audio_pll = 0x2020,
         .audio_num = 96, .audio_denom = 125,
         .usb1_pll = 0x3040, .pfd_480 = 17u << 16,
+        .bus.oscillator_hz = 24000000u,
     };
     const uint32_t master1 = 1u << 26;
     assert(l6max_sai1_master_hz(&c, master1) == 24576000u);
+    c.bus.oscillator_hz = 0;
+    assert(l6max_sai1_master_hz(&c, master1) == 0);
+    c.bus.oscillator_hz = 24000000u;
     assert(l6_sai_sample_rate(l6max_sai1_master_hz(&c, master1),
                               0, 7u << 16, 31u << 16) == 48000u);
     c.cs1cdr = (3u << 6) | 3u;
@@ -36,6 +40,7 @@ int main(void)
     assert(l6max_sai1_master_hz(&c, master1) == 0);
     c.ccgr5 = 3u << 18;
     c.bus = (L6MaxBusClocks) {
+        .oscillator_hz = 24000000u,
         .arm_pll = 0x2064, .cacrr = 1, .cbcdr = 0x00098340,
         .cbcmr = 3u << 18,
     };

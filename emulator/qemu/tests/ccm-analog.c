@@ -29,6 +29,7 @@ int main(void)
     uint32_t pll = l6max_boot_clock_value(L6_CCM_ANALOG_PLL_AUDIO,
                                          L6_CCM_ANALOG_PLL_AUDIO_RESET);
     assert((pll & 0x7f) == 32 && (pll & 0x2000) && !(pll & 0x11000));
+    assert(pll & 0x80000000u); /* successful boot waited for PLL lock */
     assert(((l6max_boot_clock_value(L6_CCM_ANALOG_PFD_528, 0) >> 16) & 63) == 29);
     uint32_t arm = l6max_boot_clock_value(L6_CCM_ANALOG_PLL_ARM, 0);
     uint32_t arm_div = l6max_boot_clock_value(L6_CCM_CACRR_OFFSET, 0);

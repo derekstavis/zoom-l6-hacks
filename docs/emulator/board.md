@@ -51,6 +51,12 @@ The copy uses the installed footer length when valid; older emulator-created
 NOR without that length falls back to the package trailer, then a bounded
 fixed size. L6 keeps its existing map.
 
+The boot task also initializes FlexSPI1 with its default controller record and
+enables it while configuring the NOR device. The modeled handoff stores the
+reconstructed MCR0, MCR1 and modified MCR2/AHBCR fields; preserved bits start
+from reset assumptions. NOR transactions remain firmware-focused and are not
+timed from the FlexSPI clock.
+
 For the same bootloader handoff, the L6max board seeds observed IOMUX register
 values, clock-tree gate clears, selected later gate enables, and GPIO output
 latch/direction values. It also

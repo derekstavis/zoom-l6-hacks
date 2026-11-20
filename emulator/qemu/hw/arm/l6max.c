@@ -4823,6 +4823,22 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
             GUINT_TO_POINTER((semc_ip[i].offset >> 2) + 1),
             GUINT_TO_POINTER(semc_ip[i].value));
     }
+    /* The boot task applies the default FlexSPI1 controller configuration,
+     * then its flash-device helper clears MCR0.MDIS before reading NOR. */
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x2a8000 >> 2) + 1),
+                        GUINT_TO_POINTER(0xffff1000u));
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x2a8004 >> 2) + 1),
+                        GUINT_TO_POINTER(0xffffffffu));
+    gpointer flexspi_mcr2 = GUINT_TO_POINTER((0x2a8008 >> 2) + 1);
+    uint32_t mcr2 = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+                                                         flexspi_mcr2));
+    g_hash_table_insert(s->registers, flexspi_mcr2,
+                        GUINT_TO_POINTER((mcr2 & 0x00f777ffu) | 0x20000000u));
+    gpointer flexspi_ahbcr = GUINT_TO_POINTER((0x2a800c >> 2) + 1);
+    uint32_t ahbcr = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+                                                          flexspi_ahbcr));
+    g_hash_table_insert(s->registers, flexspi_ahbcr,
+                        GUINT_TO_POINTER(ahbcr & ~0x78u));
     static const hwaddr offsets[] = {
         0x0fc000, 0x0fc00c, 0x0fc020, 0x0fc024,
         0x0fc02c, 0x0fc030, 0x0fc038, 0x0fc060,

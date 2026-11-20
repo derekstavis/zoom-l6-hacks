@@ -257,8 +257,10 @@ floating-point access and sets FPCCR automatic and lazy preservation. The
 transfer stops SysTick without clearing that reload; its stopped counter value
 was not captured.
 The L6max handoff seeds those settings on startup and reset; the priority bits
-use QEMU's four-bit NVIC configuration. This is reconstructed from the normal
-boot path, not a physical handoff register capture.
+use QEMU's four-bit NVIC configuration. A guest SVC test checks aligned stack
+entry and return, plus a lazy floating-point exception frame and preserved FP
+register after enabling FP state. This is emulator behavior based on the
+reconstructed normal boot path, not a physical handoff register capture.
 
 At direct MAIN entry the modeled MPU and cache-enable bits are clear. QEMU's
 Cortex-M reset clears all 16 MPU region descriptors; the reviewed ROM cleanup

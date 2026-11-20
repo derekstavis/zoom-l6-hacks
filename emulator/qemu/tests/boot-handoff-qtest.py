@@ -180,16 +180,6 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
             for _ in range(3):
                 assert packet("s").startswith("T05")
             assert registers()[:3] == [0, 0, 0]
-            # Before MAIN executes, the inherited CPACR must permit an FP
-            # register round trip without taking a UsageFault.
-            for request in ("M801f0000,8:00ee100a10ee101a",  # vmov s0,r0; vmov r1,s0
-                            "P0=78563412", "Pf=00001f80"):
-                assert packet(request) == "OK", request
-            assert packet("s").startswith("T05")
-            assert packet("s").startswith("T05")
-            assert registers()[1] == 0x12345678
-            assert packet("Pf=14040080") == "OK"
-            print(f"{image}: guest floating-point access at handoff passed")
             # Exercise CCR through actual privileged guest instructions, not
             # only qtest/debugger register accesses. Cache data is not modeled.
             for request in ("M801f0000,4:01600268",  # str r1,[r0]; ldr r2,[r0]
@@ -203,6 +193,58 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
             assert packet("s").startswith("T05")
             assert packet("s").startswith("T05")
             assert registers()[2] == 0x40200
+            # Enter and return from SVC with a 4-byte-aligned MSP after a
+            # guest attempts to clear STKALIGN. The exception frame must be
+            # aligned and record the original alignment in stacked xPSR.
+            svc_vector = packet("m8000002c,4")
+            for request in ("M801f0000,2:00df",  # svc #0
+                            "M801f0100,2:7047",  # bx lr
+                            "M8000002c,4:01011f80", "Pd=04002120",
+                            "Pf=00001f80"):
+                assert packet(request) == "OK", request
+            assert packet("s").startswith("T05")
+            regs = registers()
+            assert regs[15] == 0x801f0100, hex(regs[15])
+            assert regs[13] == 0x2020ffe0, hex(regs[13])
+            stacked_psr = int.from_bytes(bytes.fromhex(packet("m2020fffc,4")), "little")
+            assert stacked_psr & 0x01000200 == 0x01000200, hex(stacked_psr)
+            assert packet("s").startswith("T05")
+            regs = registers()
+            assert regs[13] == 0x20210004 and regs[15] == 0x801f0002, regs
+            assert packet("M8000002c,4:" + svc_vector) == "OK"
+            print(f"{image}: guest exception stack alignment and return passed")
+            # Before MAIN executes, the inherited CPACR must permit an FP
+            # register round trip without taking a UsageFault.
+            for request in ("M801f0000,8:00ee100a10ee101a",  # vmov s0,r0; vmov r1,s0
+                            "P0=78563412", "Pf=00001f80"):
+                assert packet(request) == "OK", request
+            assert packet("s").startswith("T05")
+            assert packet("s").startswith("T05")
+            assert registers()[1] == 0x12345678
+            assert packet("Pf=14040080") == "OK"
+            print(f"{image}: guest floating-point access at handoff passed")
+            # With FP active and the inherited ASPEN/LSPEN bits set, exception
+            # entry reserves the extended frame lazily and exception return
+            # preserves the guest's FP register contents.
+            for request in ("M801f0000,6:00df10ee101a",  # svc; vmov r1,s0
+                            "M8000002c,4:01011f80", "Pd=04002120",
+                            "P1=00000000", "Pf=00001f80"):
+                assert packet(request) == "OK", request
+            assert packet("s").startswith("T05")
+            regs = registers()
+            assert regs[15] == 0x801f0100 and regs[13] == 0x2020ff98, regs
+            assert not regs[14] & 0x10, hex(regs[14])  # extended FP frame
+            fpccr = int.from_bytes(bytes.fromhex(packet("me000ef34,4")), "little")
+            fpcar = int.from_bytes(bytes.fromhex(packet("me000ef38,4")), "little")
+            assert fpccr & 0xc0000001 == 0xc0000001, hex(fpccr)
+            assert fpcar == 0x2020ffb8, hex(fpcar)
+            assert packet("s").startswith("T05")
+            assert registers()[13] == 0x20210004
+            assert packet("s").startswith("T05")
+            assert registers()[1] == 0x12345678
+            assert not int.from_bytes(bytes.fromhex(packet("me000ef34,4")), "little") & 1
+            assert packet("M8000002c,4:" + svc_vector) == "OK"
+            print(f"{image}: guest lazy FP exception frame and return passed")
             for request in ("P0=14ed00e0", "P1=15040080", "P2=00000001",
                             "Pf=14040080"):
                 assert packet(request) == "OK", request

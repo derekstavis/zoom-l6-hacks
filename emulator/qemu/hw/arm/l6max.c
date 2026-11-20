@@ -4162,15 +4162,17 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
     if (sai) {
         l6_sai_write(sai, sai_offset, value, size);
         hwaddr sai_base = offset - sai_offset;
-        if (sai_offset == L6_SAI_TCSR) {
-            uint32_t control = l6_sai_read(sai, sai_offset, 4);
+        hwaddr sai_reg = s->profile == &L6MAX_PROFILE ?
+                         sai_offset & ~(hwaddr)3 : sai_offset;
+        if (sai_reg == L6_SAI_TCSR) {
+            uint32_t control = l6_sai_read(sai, sai_reg, 4);
             if ((control & (L6_SAI_TE | L6_SAI_FRDE | L6_SAI_FRF)) ==
                 (L6_SAI_TE | L6_SAI_FRDE | L6_SAI_FRF)) {
                 uint8_t source = sai_base == 0x384000 ? 20 : 84;
                 l6_edma_service_request(s, source);
             }
-        } else if (sai_offset == L6_SAI_RCSR) {
-            uint32_t control = l6_sai_read(sai, sai_offset, 4);
+        } else if (sai_reg == L6_SAI_RCSR) {
+            uint32_t control = l6_sai_read(sai, sai_reg, 4);
             if ((control & (L6_SAI_RE | L6_SAI_FRDE | L6_SAI_FRF)) ==
                 (L6_SAI_RE | L6_SAI_FRDE | L6_SAI_FRF)) {
                 uint8_t source = sai_base == 0x384000 ? 19 : 83;

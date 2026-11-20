@@ -530,6 +530,19 @@ def check_flexram_boundaries(qemu, image):
         command("writeb 0x400e801f 19")
         command("writel 0xe000e280 8")
         assert not int(command("readl 0xe000e200").split()[1], 16) & 8
+        # Arm a SAI-paced transfer with TE clear, then enable TE through
+        # the high byte. The already-active FIFO request must be serviced.
+        command("writel 0x40384008 0x02000001")
+        base = 0x400e9060
+        for offset, value in ((0, 0x20000000), (4, 0x02020000),
+                              (8, 4), (12, 0), (16, 0x40384020),
+                              (20, 0x00010000), (24, 0), (28, 0x0001000a)):
+            command(f"writel {base + offset:#x} {value:#x}")
+        command("writel 0x400ec00c 0x80000014")
+        command("writel 0x400e800c 8")
+        assert not int(command("readl 0x400e8024").split()[1], 16) & 8
+        command("writeb 0x4038400b 0x80")
+        assert int(command("readl 0x400e8024").split()[1], 16) & 8
         qmp_execute("system_reset")
         print(f"{image}: paired DMA interrupt assertion and acknowledgement passed")
         # Bootloader installed and locked the NOR command table. Verify the

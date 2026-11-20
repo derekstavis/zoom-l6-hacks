@@ -263,8 +263,11 @@ boot path, not a physical handoff register capture.
 At direct MAIN entry the modeled MPU and cache-enable bits are clear. QEMU's
 Cortex-M reset clears all 16 MPU region descriptors; the reviewed ROM cleanup
 conditionally clears regions 0–6 before transfer, but the complete physical
-descriptor state was not captured. The Cortex-M7 model retains the CCR
-instruction/data cache-enable bits when the configured core reports separate
+descriptor state was not captured. The Cortex-M7 CCR reports branch prediction
+and eight-byte exception-stack alignment as enabled, with those bits unaffected
+by writes, following the Arm Cortex-M7 guide. The resulting direct-entry CCR
+is `0x00040200`; physical CCR was not captured. The Cortex-M7 model retains the
+CCR instruction/data cache-enable bits when the configured core reports separate
 L1 caches, including the cleared handoff and reset state. A guest instruction
 test checks that privileged loads read back enable and disable writes. QEMU does
 not model cache contents or maintenance, so enabled bits do not provide cache

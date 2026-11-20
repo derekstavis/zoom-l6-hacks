@@ -197,12 +197,12 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
                 assert packet(request) == "OK", request
             assert packet("s").startswith("T05")
             assert packet("s").startswith("T05")
-            assert registers()[2] == 0x30200
-            for request in ("P1=00020000", "Pf=00001f80"):
+            assert registers()[2] == 0x70200
+            for request in ("P1=00000000", "Pf=00001f80"):
                 assert packet(request) == "OK", request
             assert packet("s").startswith("T05")
             assert packet("s").startswith("T05")
-            assert registers()[2] == 0x200
+            assert registers()[2] == 0x40200
             for request in ("P0=14ed00e0", "P1=15040080", "P2=00000001",
                             "Pf=14040080"):
                 assert packet(request) == "OK", request
@@ -300,7 +300,9 @@ def check_no_cache_selector(qemu, image):
                                   ("writel 0xe000ed84 1", None),
                                   ("readl 0xe000ed84", 0),
                                   ("writel 0xe000ed14 0x30200", None),
-                                  ("readl 0xe000ed14", 0x200)):
+                                  ("readl 0xe000ed14", 0x40200),
+                                  ("writel 0xe000ed14 0", None),
+                                  ("readl 0xe000ed14", 0x40200)):
             process.stdin.write(command + "\n")
             process.stdin.flush()
             if not select.select([process.stdout], [], [], 10)[0]:
@@ -471,10 +473,12 @@ def check_flexram_boundaries(qemu, image):
         # back, even though QEMU does not emulate cache contents.
         for bits in (0x10000, 0x20000, 0x30000, 0):
             command(f"writel 0xe000ed14 {0x200 | bits:#x}")
-            assert int(command("readl 0xe000ed14").split()[1], 16) == 0x200 | bits
+            assert int(command("readl 0xe000ed14").split()[1], 16) == 0x40200 | bits
+        command("writel 0xe000ed14 0")
+        assert int(command("readl 0xe000ed14").split()[1], 16) == 0x40200
         command("writel 0xe000ed14 0x30200")
         qmp_execute("system_reset")
-        assert int(command("readl 0xe000ed14").split()[1], 16) == 0x200
+        assert int(command("readl 0xe000ed14").split()[1], 16) == 0x40200
         print(f"{image}: cache identification, enable state and reset passed")
         # Aligned byte and halfword PIT accesses share the same timer state.
         command("writel 0x40084120 0x12345678")
@@ -1515,7 +1519,7 @@ def main():
         0x400d80a0: 0x13000, 0x400d80b0: 0x05f5e100,
         0x400d80c0: 0x10a24447, 0x400d80e0: 0x80312001,
         0xe000e010: 0, 0xe000e014: 599999, 0xe000ed00: 0x411fc271, 0xe000ed08: 0x80000000,
-        0xe000ed14: 0x200, 0xe000ed20: 0xf0f00000,
+        0xe000ed14: 0x40200, 0xe000ed20: 0xf0f00000,
         0xe000ed24: 0, 0xe000ed78: 0x09000003, 0xe000ed7c: 0x8303c003,
         0xe000ed80: 0xf01fe019, 0xe000ed84: 0,
         0xe000ed88: 0x00f00000, 0xe000ed94: 0,

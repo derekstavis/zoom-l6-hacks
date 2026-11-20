@@ -1,0 +1,12 @@
+--- a/hw/intc/armv7m_nvic.c
++++ b/hw/intc/armv7m_nvic.c
+@@ -1136,0 +1137,4 @@
++        /* Cortex-M7 reports branch prediction as permanently enabled. */
++        if ((cpu->midr & 0xff0ffff0u) == 0x410fc270u) {
++            val |= R_V7M_CCR_BP_MASK;
++        }
+@@ -1715,0 +1720,4 @@
++        /* Cortex-M7 always aligns exception stacks to eight bytes. */
++        if ((cpu->midr & 0xff0ffff0u) == 0x410fc270u) {
++            value |= R_V7M_CCR_STKALIGN_MASK;
++        }

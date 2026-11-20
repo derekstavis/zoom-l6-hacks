@@ -77,9 +77,11 @@ STABLE bits. The model toggles a phase bit immediately when a valid divider
 change takes effect, assuming gated changes take effect on ungating. Physical
 transition timing and the inherited ROM phase are not verified; the initial
 phase uses the reference manual reset values.
-ROM initializes PIT channel registers without restoring their reset values;
-the physical handoff values are not captured, and those timer registers are
-not modeled by the direct-boot board.
+ROM configures a chained PIT lifetime timer, and its normal image-transfer path
+disables PIT without restoring its channel registers. The board seeds the
+reconstructed MCR, channel 0/1 load and control fields; intervening indirect
+writes and physical handoff values are not captured. PIT counting, status,
+interrupts and the effect of its clock gate are not modeled.
 IOMUX register storage does not
 model pad electrical characteristics or reroute pins dynamically. SDRAM
 timing and refresh register values are seeded from the bootloader's nominal

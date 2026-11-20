@@ -540,11 +540,18 @@ def check_flexram_boundaries(qemu, image):
             command("writel 0xe000eda0 0x03000019")
             assert int(command("readl 0xe000eda0").split()[1], 16) == 0x03000019
         command("writel 0x400ac044 0xffffffff")
+        for address in (0x40084000, 0x40084100, 0x40084108,
+                        0x40084110, 0x40084118):
+            command(f"writel {address:#x} 0x12345678")
         command("writel 0x400b0014 0x38")
         command("writel 0x400b0018 0x38")
         command("readl 0x20000000")
         assert int(command("readl 0x400b0010").split()[1], 16) == 0x10
         qmp_execute("system_reset")
+        for address, value in ((0x40084000, 2), (0x40084100, 0xffffffff),
+                               (0x40084108, 1), (0x40084110, 0xffffffff),
+                               (0x40084118, 5)):
+            assert int(command(f"readl {address:#x}").split()[1], 16) == value
         for address in (0x400b0000, 0x400b0010, 0x400b0014, 0x400b0018):
             assert int(command(f"readl {address:#x}").split()[1], 16) == 0
         assert int(command("readl 0x400ac044").split()[1], 16) == 0x5555ea95
@@ -636,6 +643,8 @@ def main():
         0x402f004c: 0x08070a01, 0x400a8000: 5,
         0x400ac038: 0x00860000, 0x400ac040: 0x00200007,
         0x400ac044: 0x5555ea95,
+        0x40084000: 2, 0x40084100: 0xffffffff, 0x40084108: 1,
+        0x40084110: 0xffffffff, 0x40084118: 5,
         0x400fc068: 0xc0000fff, 0x400fc06c: 0xfc0ccc00,
         0x400fc070: 0xfc3f303f, 0x400fc074: 0xffffff30,
         0x400fc078: 0xffffffff, 0x400fc07c: 0xf0033ff3,
@@ -665,6 +674,7 @@ def main():
     check_main_stack_entry(qemu, patched)
     check_flexram_boundaries(qemu, stock)
     check(qemu, l6, {0x400ac038: 0, 0x401f8204: 0, 0x402f0010: 0,
+                     0x40084000: 0, 0x40084100: 0,
                      0xe000ed00: 0x411fc272})
 
 

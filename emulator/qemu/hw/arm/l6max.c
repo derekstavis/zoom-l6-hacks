@@ -4530,6 +4530,18 @@ static void l6_main_gpio_setup(L6ChipState *s, MemoryRegion *system_memory)
 /* Apply the modeled L6max bootloader handoff after every machine reset. */
 static void l6max_seed_boot_handoff(L6ChipState *s)
 {
+    /* ROM timer setup and its normal image-transfer cleanup leave PIT
+     * disabled with channels 0/1 configured as a chained lifetime timer.
+     * Counter values and any indirect intervening writes were not captured. */
+    static const struct { hwaddr offset; uint32_t value; } pit_handoff[] = {
+        { 0x084000, 2 }, { 0x084100, 0xffffffffu }, { 0x084108, 1 },
+        { 0x084110, 0xffffffffu }, { 0x084118, 5 },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(pit_handoff); i++) {
+        g_hash_table_insert(s->registers,
+                            GUINT_TO_POINTER((pit_handoff[i].offset >> 2) + 1),
+                            GUINT_TO_POINTER(pit_handoff[i].value));
+    }
     /* boot_configure_usb1_pll uses DIV_SELECT=0 and oscillator bypass
      * source, powers/enables the PLL, waits for LOCK, then clears bypass.
      * LOCK is synthesized by l6_usb1_pll_status on reads. */

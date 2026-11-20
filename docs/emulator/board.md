@@ -73,9 +73,11 @@ applies the recovered masked changes to IOMUX GPR clock and pad fields while
 preserving other stored bits. Peripheral clock mux and divider writes use
 RT1060 reset values for fields, including clock gates, whose prior ROM state has
 not been captured. On direct boot and cold reset, modeled CCM and PLL registers
-start from those reset values before the recovered boot writes. For CCGR4, the
-model also applies the ROM startup clear of bits 31–16 before first-stage setup;
-later indirect writes and physical handoff readback remain unverified. The RT1060
+start from those reset values before the recovered boot writes. The model also
+applies the recovered ROM startup gate masks before first-stage setup, while
+retaining reset assumptions for USB and TRNG gates that can be changed by
+later ROM paths. Other indirect writes and physical handoff readback remain
+unverified. The RT1060
 reset controller resets CCM, PLLs and functional modules on cold reset while
 retaining IOMUXC; the model retains the latter's stored bits. The model resets
 SEMC configuration and selected FlexSPI controls before replaying their boot

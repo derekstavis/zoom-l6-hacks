@@ -1166,9 +1166,9 @@ def check_flexram_boundaries(qemu, image):
         for address, expected in masks.items():
             assert int(command(f"readl {address:#x}").split()[1], 16) == expected
         # CCM and SEMC are reset by SRC cold reset; IOMUXC is retained.
-        assert int(command("readl 0x400fc070").split()[1], 16) == 0xfc3f303f
+        assert int(command("readl 0x400fc070").split()[1], 16) == 0x0c3f3033
         assert int(command("readl 0x400fc078").split()[1], 16) == 0x0000ffff
-        assert int(command("readl 0x400fc06c").split()[1], 16) == 0xfc0ccc00
+        assert int(command("readl 0x400fc06c").split()[1], 16) == 0xfc0cc000
         clock_handoff = {
             0x400fc000: 0x0401107f, 0x400fc00c: 0x100,
             0x400fc020: 0x13192e06, 0x400fc024: 0x06490b00,
@@ -1202,9 +1202,9 @@ def check_flexram_boundaries(qemu, image):
         # The clock initializer disables a broad set of gates, then later
         # setup enables the known GPIO, memory-controller and IOMUX gates.
         gate_results = {
-            0x400fc068: 0xc0000fff, 0x400fc06c: 0xfc0ccc00,
-            0x400fc070: 0xfc3f303f, 0x400fc074: 0xffffff30,
-            0x400fc07c: 0xf0033ff3, 0x400fc080: 0xffff3fc3,
+            0x400fc068: 0xc0000fff, 0x400fc06c: 0xfc0cc000,
+            0x400fc070: 0x0c3f3033, 0x400fc074: 0xf00ff330,
+            0x400fc07c: 0xf0033c33, 0x400fc080: 0x00fc3fc3,
             0x400fc084: 0xfffffc33,
         }
         # A valid installed footer limits the next copy; bytes beyond it
@@ -1280,10 +1280,10 @@ def main():
         0x400ac044: 0x5555ea95,
         0x40084000: 2, 0x40084100: 0xffffffff, 0x40084108: 1,
         0x40084110: 0xffffffff, 0x40084118: 5,
-        0x400fc068: 0xc0000fff, 0x400fc06c: 0xfc0ccc00,
-        0x400fc070: 0xfc3f303f, 0x400fc074: 0xffffff30,
-        0x400fc078: 0x0000ffff, 0x400fc07c: 0xf0033ff3,
-        0x400fc080: 0xffff3fc3, 0x400fc084: 0xfffffc33,
+        0x400fc068: 0xc0000fff, 0x400fc06c: 0xfc0cc000,
+        0x400fc070: 0x0c3f3033, 0x400fc074: 0xf00ff330,
+        0x400fc078: 0x0000ffff, 0x400fc07c: 0xf0033c33,
+        0x400fc080: 0x00fc3fc3, 0x400fc084: 0xfffffc33,
         0x400fc000: 0x0401107f, 0x400fc00c: 0x100,
         0x400fc010: 1, 0x400fc014: 0x00098340, 0x400fc018: 0x7dae8324,
         0x400fc020: 0x13192e06, 0x400fc024: 0x06490b00,

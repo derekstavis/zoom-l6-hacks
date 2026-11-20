@@ -97,8 +97,6 @@ impl Gdb {
             "target stayed in exception context; cannot inject a call",
         ))
     }
-    /// Resume the selected target until a breakpoint/exception, allowing a
-    /// longer wait for firmware boot or a deliberately injected call.
     /// Let the target run without waiting for it to stop; collect the stop
     /// reply with [`Gdb::poll_stop`].
     pub fn resume(&mut self) -> io::Result<()> {
@@ -109,10 +107,18 @@ impl Gdb {
     pub fn poll_stop(&mut self, wait: Duration) -> io::Result<Option<String>> {
         self.0.set_read_timeout(Some(wait))?;
         let mut byte = [0];
-        let read = self.0.read(&mut byte);
+        // QEMU acknowledges the resume request with `+` before the target
+        // stops; only a `$` starts the stop reply. QEMU has no no-ack mode.
+        let read = loop {
+            match self.0.read(&mut byte) {
+                Ok(1) if byte[0] == b'+' => continue,
+                other => break other,
+            }
+        };
         self.0.set_read_timeout(Some(Duration::from_secs(5)))?;
         match read {
             Ok(0) => Err(io::ErrorKind::UnexpectedEof.into()),
+            Ok(_) if byte[0] == b'-' => Err(io::Error::other("GDB rejected the resume request")),
             Ok(_) => self.receive_packet_from(byte[0]).map(Some),
             Err(error)
                 if matches!(
@@ -125,6 +131,8 @@ impl Gdb {
             Err(error) => Err(error),
         }
     }
+    /// Resume the selected target until a breakpoint/exception, allowing a
+    /// longer wait for firmware boot or a deliberately injected call.
     pub fn continue_until_stop(&mut self, timeout: Duration) -> io::Result<String> {
         self.0.set_read_timeout(Some(timeout))?;
         let result = self.request("c");
@@ -280,5 +288,36 @@ impl Gdb {
             }
         }
         Ok(stop)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn poll_stop_waits_past_the_resume_acknowledgement() {
+        let (client, mut stub) = UnixStream::pair().unwrap();
+        let mut gdb = Gdb(client);
+        gdb.resume().unwrap();
+        let mut request = [0; 5];
+        stub.read_exact(&mut request).unwrap();
+        assert_eq!(&request, b"$c#63");
+        // The acknowledgement alone is not a stop: the target is still running.
+        stub.write_all(b"+").unwrap();
+        let started = std::time::Instant::now();
+        assert_eq!(gdb.poll_stop(Duration::from_millis(20)).unwrap(), None);
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(gdb.poll_stop(Duration::from_millis(20)).unwrap(), None);
+        stub.write_all(b"$S05#b8").unwrap();
+        assert_eq!(
+            gdb.poll_stop(Duration::from_millis(200))
+                .unwrap()
+                .as_deref(),
+            Some("S05")
+        );
+        let mut ack = [0];
+        stub.read_exact(&mut ack).unwrap();
+        assert_eq!(&ack, b"+");
     }
 }

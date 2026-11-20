@@ -193,9 +193,11 @@ once at the top of a stack (about two hours), and fix what it finds in the PR
 that owns the cause.
 
 Cases run concurrently, up to `--jobs N` at once (by default a quarter of
-the host's cores, between 1 and 4). Scenario waits use guest time, so
-concurrency lengthens wall time. Keep N well below the core count; an
-oversubscribed host can exceed wall limits. GUI cases run alone. Native MIDI
+the host's cores, between 1 and 4). Scenario waits and the headless boot
+waits count guest time and fail only when the guest stops advancing, so
+concurrency lengthens wall time. Many device operations that run the guest
+under GDB still have fixed wall-clock limits; keep N well below the core count,
+since an oversubscribed host can exceed them. GUI cases run alone. Native MIDI
 endpoints are namespaced per guest; patch builds call the `l6patch` library API
 and write into each case's artifact directory. Debugger sockets and other
 scenario-generated files are isolated by case. Shared firmware-cache

@@ -173,9 +173,9 @@ Both control registers support SET/CLR/TOG and read-only LOCK.
 USB1 is initialized powered, enabled and out of bypass with the 480 MHz
 selection; its LOCK status follows the existing immediate-lock model. L6max
 USB2 has the same modeled control and SET/CLR/TOG behavior, with immediate
-LOCK while powered and enabled; it starts powered down and bypassed.
+LOCK while powered with a modeled reference; it starts powered down and bypassed.
 For L6max, PLL_AUDIO SET/CLR/TOG aliases update the control register and
-LOCK follows enable/power state immediately; physical lock timing is not
+LOCK follows power and reference state immediately; physical lock timing is not
 modeled.
 The PFD SET/CLR/TOG aliases share control state and protect read-only
 STABLE bits. The model toggles a phase bit immediately when a valid divider

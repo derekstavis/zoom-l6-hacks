@@ -16,10 +16,321 @@ persistent flash image remains 64 KiB for state compatibility; only its first
 and the [panel manual audit](panel-manual-audit.md) for register-level findings
 and remaining work.
 
-The L6 MAIN processor is an i.MX RT1041. The L6max processor has not been
-identified; the two profiles share the emulated CPU topology without assuming
-identical physical silicon. For L6 peripheral semantics, use the RT1040
-reference manual. L6 external resource NOR uses LPSPI3 at `0x403a0000`.
+The L6 MAIN processor is an i.MX RT1041. The L6max dump identifies the
+i.MX RT106x family, but does not distinguish RT1061 from RT1062. The profiles
+share an emulated CPU topology without assuming identical physical silicon.
+For L6 peripheral semantics, use the RT1040 reference manual; for L6max, use
+the RT1060 manual. L6 external resource NOR uses LPSPI3 at `0x403a0000`.
+L6max's CPUID matches the captured Cortex-M7 r1p1 value `0x411fc271`;
+this identifies the guest-visible revision and does not model differences
+between Cortex-M7 revisions. Its read-only USB_ANALOG_DIGPROG register also
+reports the captured `0x006c0001` silicon identifier. That value does not
+establish the package marking or individual RT106x model.
+The L6max SRC boot-mode registers are read-only and use the later physical
+capture's SBMR1 `0` and SBMR2 `0x02000009`. The model keeps those inputs
+fixed across reset; it does not simulate strap or fuse changes, and the
+capture does not independently prove their values during the earlier ROM boot.
+
+When starting L6max MAIN directly, the board seeds
+clock fields recovered from L6max bootloader 1.00: the 600 MHz ARM setup,
+system and audio PLL parameters, PFDs, and SAI1 and SEMC clock selectors and
+dividers. The same default applies to stock and patched MAIN images; L6 retains
+its existing reset values. Other bootloader revisions remain unverified. The audio
+PLL post-divider is inherited from the existing seed because the bootloader
+does not set it. These register values do not emulate bootloader execution,
+clock settling, the full clock tree, or the real SD installer.
+
+The L6max bootloader configures two 32 MiB SEMC SDRAM windows covering
+`0x80000000` through `0x83ffffff`. The direct-MAIN board seeds their SEMC
+base registers and bounds the remaining RAM mapping at that endpoint. The
+controller handoff also stores the reconstructed module control, queue
+arbitration, selected IO mux fields, and cleared unused base registers. The
+last SDRAM initialization command's address, size and mode data are also
+stored; the commands themselves and their timing are not simulated. The SEMC
+IO mux starts from its documented cold-reset value before the recovered writes;
+intervening ROM writes and physical handoff state were not captured. The
+SEMC software-reset bit clears immediately without resetting configuration,
+and status reports idle because timed SEMC transactions are not modeled. The
+first 2 MiB is writable RAM seeded from current NOR at reset, before the CPU
+reads its vector. The guest does not execute physical SDRAM initialization.
+The copy uses the installed footer length when valid; older emulator-created
+NOR without that length falls back to the package trailer, then a bounded
+fixed size. L6 keeps its existing map.
+
+The boot task also initializes FlexSPI1 with its default controller record and
+enables it while configuring the NOR device. The modeled handoff stores the
+reconstructed MCR0, MCR1, modified MCR2/AHBCR, AHB buffer, FIFO watermark
+and flash-device control fields, including the cleared unused flash windows.
+The boot image’s NOR configuration record sets port A1 to 2 MiB and specifies
+its chip-select timing. Fields the bootloader preserves start from reset
+assumptions, and the resulting values have not been read back at physical
+handoff. The boot task also installs six NOR command sequences and locks the
+FlexSPI lookup table; the L6max model restores those 24 words and implements
+the keyed lock/unlock protocol. Cold reset clears modeled interrupt, FIFO and
+in-flight controller transaction state; it does not reset the external NOR's
+contents or write-enable latch. The manual describes the LUT as memory with
+unknown reset contents, so the remaining LUT contents are not assumed to be
+zero. Module-disable access restrictions and transaction timing are not modeled.
+
+For the same bootloader handoff, the L6max board seeds observed IOMUX register
+values, clock-tree gate clears, selected later gate enables, and GPIO output
+latch/direction values. It also
+applies the recovered masked changes to IOMUX GPR clock and pad fields while
+preserving other stored bits. Peripheral clock mux and divider writes use
+RT1060 reset values for fields, including clock gates, whose prior ROM state has
+not been captured. On direct boot and cold reset, modeled CCM and PLL registers
+start from those reset values before the recovered boot writes. The model also
+applies the recovered ROM startup gate masks before first-stage setup. On the
+reviewed normal boot path, ROM re-enables TRNG but leaves the USB controller
+gate clear; the first stage enables the USB PLL independently. On L6max the
+USB model suppresses frame interrupts and transfer requests while the controller
+clock gate, IPG root, PLL USB output, selected reference, or PHY UTMI clock
+is off, or PHY reset is asserted.
+The PHY control register implements the observed SET/CLR/TOG sequence and reset;
+its handoff value is assumed to be the reference-manual reset value because ROM
+and physical handoff state have not been fully traced. Cable events and register
+access remain approximations; oscillator settling, low-power wakeup, other PHY
+behavior and bus access while gated are not modeled. USDHC1 starts with its
+reconstructed CCGR6 gate off; its card clock also depends on IPG and the selected
+PLL2 PFD. Physical handoff readback and indirect writes remain unverified.
+The RT1060 reset controller resets CCM, PLLs and functional modules on cold reset while
+retaining IOMUXC; the model retains the latter's stored bits. The model resets
+SEMC configuration and selected FlexSPI controls before replaying their boot
+configuration, restores L6max LPUART registers to RT1060 reset values, and
+resets the modeled L6max SAI1 registers and FIFO. ROM and bootloader UART
+writes have not been completely traced, so the UART handoff values are reset
+assumptions rather than physical measurements. The UART adapter enforces the
+RT1060 read-only semantics of the VERID and PARAM registers. L6max panel and
+MIDI UART receive paths discard incoming wire bytes while their instance gate,
+IPG clock or selected baud-clock source is stopped. UART transmit gating,
+serial timing and register access while gated remain approximations. Aligned
+byte and halfword reads of the modeled UART status share the word-read state.
+Low-lane byte and halfword DATA accesses use the same modeled 8-bit stream as
+word accesses; wider character and FIFO behavior remains incomplete.
+The
+reference manual specifies SAI reset on system reset; no SAI1 setup was found
+in direct-address scans of the recovered ROM and first-stage boot image, though
+indirect accesses remain possible. The model also resets L6max DMAMUX
+channels, eDMA request enables, interrupt state and documented priority fields.
+The shared CCGR5 eDMA/DMAMUX gate starts off on the reconstructed boot path;
+modeled SAI and display DMA requests wait while it or the IPG clock root is
+stopped and are rechecked when the clock resumes. Unknown root selections retain
+the last modeled CPU clock state. Register access while gated and bus timing are
+not modeled. The
+RT1060 manual marks transfer-descriptor reset contents unknown; QEMU retains
+its prior descriptor contents without asserting physical retention.
+The boot images' direct-address scans found no DMA setup, but indirect accesses
+remain possible. L6max eDMA IRQs 0–15 each combine two channel completion
+signals, as specified for RT1060; the test exercises both members of one pair
+and independent acknowledgements. L6max eDMA, its display transfer helper and USB DMA use the system address
+space rather than the CPU's private peripheral space. Qtests check that eDMA
+rejects an SCB source, USB rejects a private-peripheral destination, eDMA can
+read MPU-protected DTCM, and USB can write ITCM and DTCM. Separate guest tests
+check that the CPU faults on that protected DTCM. The [Arm Cortex-M7 reference
+manual, section 5.7](https://documentation-service.arm.com/static/5e906dc68259fe2368e2abbe)
+specifies that the system-side TCM interface bypasses the CPU MPU and its TCM
+enable bits; QEMU does not yet model the latter or bus arbitration. Source and
+destination bus faults set the modeled eDMA ERR and ES registers and can
+assert the shared error IRQ 16 when enabled. Error clearing is modeled, but
+bus pipeline timing, halt-on-error and other eDMA error causes remain incomplete.
+Other DMA masters have not been audited for this separation. Other functional-module reset behavior remains
+incomplete. Intervening ROM writes are
+not fully traced, so the resulting complete values are assumptions, not hardware
+measurements.
+The ARM and system PLL control aliases share their respective register state;
+LOCK is approximated as immediate while powered. The L6max system, audio and
+video PLL fractional registers implement the
+30-bit numerator and denominator readback masks; signed numerators feed the
+modeled clock calculations. The L6max QEMU CPU clock input follows the RT1060
+peripheral mux and AHB divider, including PLL1, PLL2, PLL2
+PFDs and the alternate oscillator or PLL3 path; SysTick follows that clock.
+The RT1060 manual describes PLL bypass as passing the reference to associated
+PFD outputs and output disable as gating those outputs. The modeled PLL2 and
+PLL3 PFD paths follow that description; physical switching has not been measured.
+The SAI block scheduler restarts its phase when the modeled sample rate
+changes, so it does not retain a deadline from the prior clock. This is a
+block-level approximation, not a model of individual clock edges. Aligned
+byte, halfword and word writes to the modeled SAI clock-control registers
+trigger the same rescheduling check. Partial writes to SAI transmit and
+receive control also recheck pending DMA requests.
+The IPG divider also supplies SAI1 when its bus-clock input is selected.
+SAI1 MCLK3 can use the internal SPDIF root, including its PLL source mux
+and dividers; the other SPDIF clock sources are not modeled. SysTick pauses if its
+selected clock stops and uses the RT1060's separate 100 kHz external reference
+when selected. QEMU derives SysTick's calibration
+register from that modeled reference; when it is stopped, the model reports
+unknown calibration rather than an underflowed reload. The physical calibration
+register was not captured and need not track the live clock. The bootloader
+also enables the independent RC-derived 1 MHz output and selects its free-running source;
+its configuration and register aliases are modeled, but oscillator tuning
+and physical frequency are not. External CLK1, invalid PLL dividers and reserved mux
+selections retain the last known CPU clock. PLL2 spread-spectrum modulation is
+not modeled; its control register is cleared at handoff by the recovered boot
+configuration. TCG instruction execution is not cycle-accurate and does not stop
+with this clock; other system-bus consumers are not dynamically retimed.
+The handoff also stores the bootloader's RC-enable/crystal-select bits, the
+crystal-ready status that its successful path waits for, and DCDC target
+field. LOWPWR_CTRL SET/CLR/TOG aliases share writable state. Crystal-ready
+status follows modeled power and detector enable immediately; physical settling
+is unmeasured. DCDC ready is read-only and approximated as immediately settled.
+The crystal detector's MISC0 control and aliases are stored, with the
+bootloader's final detector-disable write applied; bandgap status transitions
+are not modeled.
+The selected crystal or RC source stops the modeled internal clocks when it
+is disabled; the enabled RC source is approximated as 24 MHz. Analog oscillator
+and voltage transitions are not simulated. Internal-source PLL lock drops when
+the source is disabled and returns immediately when enabled; actual lock timing
+is unknown. Selecting an external or reserved PLL reference reports unlocked
+because the model does not supply those sources. The surrounding inherited
+register bits were not captured physically.
+The USB2, video and Ethernet PLL controls reflect the bootloader's recovered
+bypass/power sequence. Their clock outputs and physical lock timing are not
+simulated. Ethernet LOCK is approximated as immediate while powered, independent
+of the Ethernet output enables; audio, video and L6max USB PLL LOCK use the
+same immediate powered-state approximation, independent of their output enables.
+Both control registers support SET/CLR/TOG and read-only LOCK.
+USB1 is initialized powered, enabled and out of bypass with the 480 MHz
+selection; its LOCK status follows the existing immediate-lock model. L6max
+USB2 has the same modeled control and SET/CLR/TOG behavior, with immediate
+LOCK while powered with a modeled reference; it starts powered down and bypassed.
+For L6max, PLL_AUDIO SET/CLR/TOG aliases update the control register and
+LOCK follows power and reference state immediately; physical lock timing is not
+modeled.
+The PFD SET/CLR/TOG aliases share control state and protect read-only
+STABLE bits. The model toggles a phase bit immediately when a valid divider
+change takes effect, assuming gated changes take effect on ungating. Physical
+transition timing and the inherited ROM phase are not verified; the initial
+phase uses the reference manual reset values.
+ROM configures a chained PIT lifetime timer, and its normal image-transfer path
+disables PIT without restoring its channel registers. The board seeds the
+reconstructed MCR, channel 0/1 load and control fields. The stopped counter
+values were not captured and start at `0xffffffff` as an approximation.
+The L6max PIT uses modeled PERCLK selection and division, its CCM gate and
+MCR disable, four chained downcounters, status and shared interrupt 122. Its
+clock transitions use virtual time; aligned byte, halfword and word accesses
+share the modeled register state. Hardware phase and transition latency, debug
+freeze, DMA triggers, register-access gating and misaligned register accesses
+are not modeled. Intervening boot writes and physical handoff values have not
+been captured.
+ROM image-transfer cleanup also selects the SNVS master-key route and sets
+the GPR3 key selector. The board stores those two bit changes, assuming reset
+defaults for initially unknown surrounding fields; key routing, register locks
+and physical inherited values are not modeled.
+IOMUX register storage does not
+model pad electrical characteristics or reroute pins dynamically. SDRAM
+timing and refresh register values are seeded from the bootloader's nominal
+clock and parameters, but refresh and SDRAM commands are not modeled.
+
+First-stage entry also writes `0x00860000` to IOMUX GPR14, clearing its
+documented comparator fields. The emulator stores the written value; the
+upper bits are reserved in the current RT1060 manual, and their physical
+readback has not been measured. The [older RT1060 manual, revision 1](https://www.pjrc.com/teensy/IMXRT1060RM_rev1.pdf)
+names bits 19–16 and 23–20 as ITCM and DTCM size configuration: the values
+written by this bootloader encode 32 KiB and 128 KiB, matching its FlexRAM
+allocation. [NXP later stated](https://community.nxp.com/t5/i-MX-RT-Crossover-MCUs/i-MXRT-106X-CM7-CFGITCMSZ-and-CM7-CFGDTCMSZ/td-p/1585334)
+the removed size fields are not dynamically changeable. This write therefore
+establishes software intent, not the core TCM size register values.
+
+The bootloader's entry code selects FlexRAM configuration `0x5555ea95`: one
+32 KiB bank for ITCM, four for DTCM and eleven for OCRAM. With the RT1060's
+separate 512 KiB OCRAM, the L6max direct boot exposes 32 KiB ITCM, 128 KiB
+DTCM and 864 KiB OCRAM. GPR16/GPR17 writes dynamically repartition sixteen
+32 KiB banks, retaining each bank's contents. The model places banks assigned
+to an interface in ascending bank order; the ordering for noncontiguous banks
+has not been verified on this device. When GPR16 selects fuses, the model uses
+the RT1060 blank-fuse partition because the device's fuse setting is unknown.
+The fixed 512 KiB OCRAM remains separate from the FlexRAM OCRAM window.
+Assigning no banks to either TCM leaves that interface unallocated; restoring
+the partition retains bank contents. GPR16 bits 0–1 are retained as written,
+but their effect is not modeled because the current RT1060 manual marks them
+reserved and older NXP examples differ.
+The controller models enabled out-of-range status, write-one-to-clear status,
+and shared interrupt 38 for each interface. Its control and interrupt registers
+share state across aligned byte, halfword and word accesses; misaligned access
+behavior is not modeled. Unallocated ITCM and DTCM accesses
+raise a guest bus error; unallocated FlexRAM OCRAM reads return zero and writes
+are discarded. A later physical dump recorded faults in the ITCM and DTCM gaps,
+but no faults and all-zero data in the last 160 KiB of the OCRAM window. Its
+bank configuration was not captured, so the relationship to the boot partition
+is inferred; OCRAM writes and controller status were not measured. Controller
+registers are seeded to reset defaults because their physical handoff values
+were not captured. FlexRAM `TCM_CTRL` stores the force-clock and read/write
+wait-mode bits described in RT1060 RM §31.4.1.2; it is distinct from the
+core's ITCMCR and DTCMCR. Its wait modes and forced clock do not change
+emulated timing or clock behavior. ECC and timing are not modeled. See
+[NXP AN12077](https://www.nxp.com/docs/en/application-note/AN12077.pdf) for
+runtime partitioning and data retention.
+The L6max ITCM starts as zero-filled emulator RAM; its physical contents at
+handoff were not captured. Stock MAIN relocates its own ITCM code during
+startup, and the tested entry bytes agree with the later physical dump.
+
+Bootloader 1.00 calls the MAIN reset vector with `r0 = 0xe000ed14` and `r1`
+containing the reset-vector word. On the reconstructed path where D-cache is
+already disabled, the transfer also leaves `r2` as CCR shifted left by 15,
+and its `BLX` at `0x2020e450` sets LR to `0x2020e453`. The copy loop also
+leaves its final source offset in `r3`, its remaining-length global's address
+in `r4`, and its 8 KiB chunk limit in `r5`. The emulator seeds these values
+and the copy loop's two OCRAM globals from its selected image length. It uses
+its modeled CCR for `r2` and does not load bootloader instructions at LR.
+The inferred initial task context also leaves `r6`–`r11` at `0xa5a5a5a5`;
+the emulator seeds those registers based on the boot task's stack fill and
+context restore. Physical handoff registers were not captured.
+The bootloader calls with its current task stack; it does not load the MAIN
+vector's initial MSP at that call. The emulator seeds an inferred MSP of
+`0x202275f0`, based on bootloader 1.00's allocation and call frame. It also
+seeds PSP to that value: the reviewed task path copies PSP to MSP before
+branching and leaves PSP unchanged. A later OCRAM dump corroborates the
+allocation prefix, but neither register was captured at handoff. The model seeds three transfer-frame locals from the selected
+MAIN copy size; other boot task stack contents remain unknown. Stock MAIN 1.10
+installs its own vector MSP at `0x8000041e`, before
+accessing the inherited stack; this was checked by stepping both stock and a
+patched image with an unmapped initial MSP. Other reset handlers may depend on
+the inherited stack or its contents.
+
+The boot scheduler sets the SysTick reload to `599999` for its 600 MHz,
+1 ms tick, sets PendSV and SysTick priorities to `0xf0`, enables CP10/CP11
+floating-point access and sets FPCCR automatic and lazy preservation. The
+transfer stops SysTick without clearing that reload; its stopped counter value
+was not captured.
+The L6max handoff seeds those settings on startup and reset; the priority bits
+use QEMU's four-bit NVIC configuration. A guest SVC test checks aligned stack
+entry and return, plus a lazy floating-point exception frame and preserved FP
+register after enabling FP state. This is emulator behavior based on the
+reconstructed normal boot path, not a physical handoff register capture.
+
+At direct MAIN entry the modeled MPU and cache-enable bits are clear. QEMU's
+Cortex-M reset clears all 16 MPU region descriptors; the reviewed ROM cleanup
+conditionally clears regions 0–6 before transfer, but the complete physical
+descriptor state was not captured. The Cortex-M7 CCR reports branch prediction
+and eight-byte exception-stack alignment as enabled, with those bits unaffected
+by writes, following the Arm Cortex-M7 guide. The resulting direct-entry CCR
+is `0x00040200`; physical CCR was not captured. The Cortex-M7 model retains the
+CCR instruction/data cache-enable bits when the configured core reports separate
+L1 caches, including the cleared handoff and reset state. A guest instruction
+test checks that privileged loads read back enable and disable writes. QEMU does
+not model cache contents or maintenance, so enabled bits do not provide cache
+behavior or DMA coherence.
+The RT1060 manual specifies separate 32 KiB instruction and data caches.
+L6max now exposes the corresponding Cortex-M7 CLIDR, CTR and CCSIDR geometry
+and a selectable CSSELR, inferred from the RT1060 manual and
+[Arm Cortex-M7 guide, section 4.5](https://documentation-service.arm.com/static/61efd6602dd99944d051417b?token=)
+rather than captured from the device. The identification and control registers
+do not model cache contents, maintenance operations, timing, or DMA coherence
+effects. QEMU also does
+not implement the M7 ITCMCR and DTCMCR control registers: they read zero and
+ignore writes while the modeled TCM memory remains accessible. The ARM core
+registers instead select TCM versus AXI routing, and FlexRAM bank mapping alone
+does not establish that routing or the physical handoff state.
+The handoff test also configures an MPU no-access region and executes a guest
+load to check the resulting memory-management fault. After stock L6max MAIN 1.10
+starts, the boot-memory case checks MPU_CTRL `5`, selected region 10, its RBAR
+and RASR, and both cache-enable bits against the recovered MAIN initialization.
+A separate guest test applies MAIN's region attributes to test RAM and verifies
+unprivileged reads/writes, privileged background access, and an unprivileged
+background fault. Another synthetic region permits data reads but denies
+instruction fetch; a guest test checks the resulting execute-never fault.
+Those checks do not measure hardware region contents, simulate
+cache data, or verify every MPU attribute.
 
 ## QEMU device-model reuse
 
@@ -109,7 +420,7 @@ below hold the detailed traces and validation evidence.
 | Power cutoff fallback | L6 only. QEMU cuts virtual power after a 500 ms press because the stock L6 shutdown GPIO edge/path is unconfirmed. The interval is synthetic. | Replace it when the L6 firmware power-switch input, shutdown callback and expected board power signal are established. See [power behavior](power.md). |
 | Codec and analog input | L6max codec addresses `0x4c`/`0x4d` accept observed writes through register-bank slaves; physical codec identity is not confirmed. ADC samples are host controlled, with conversion timing and analog sources approximated. SAI RX input comes only from assigned files. | Expand or replace these models when component identity, register transactions, timing and physical signal routing are established. See [audio model](audio.md) and [manual audit](manual-audit.md). |
 | Partial peripheral behavior | RT eDMA/SAI/LPI2C/LPSPI/LPUART/ADC and FlexSPI use firmware-focused implementations because the pinned QEMU tree has no compatible RT1041 drop-in blocks. Observed paths are modeled, while unobserved commands, timing, flags and features remain incomplete; UART and LPI2C timing are approximate. | Implement additional semantics when firmware traces exercise them or manual-based checks require them. Do not treat a passing firmware smoke as full peripheral conformance; use the [manual audit](manual-audit.md) to track coverage. |
-| Clock and oscillator assumptions | The SAI frame cadence uses the firmware's nominal 24.576 MHz source value; bootloader-inherited clock roots are unverified. Several PLL/oscillator transitions settle immediately on virtual time. | Replace assumptions with established bootloader clock state and documented transition timing. See [clock findings](manual-audit.md#findings). |
+| Clock and oscillator assumptions | L6 uses a nominal SAI clock; L6max SAI1 derives its internal MCLK1/MCLK2 clock from modeled PLL and CCM registers. Physical inherited dividers and clock frequencies remain unverified, and several PLL transitions settle immediately. | Establish inherited clock state and transition timing; model missing external and bus-clock inputs. See [clock findings](manual-audit.md#findings). |
 
 These rows describe current implementation limits, not permission to bypass
 hardware semantics silently. Any future exception should name its model scope,

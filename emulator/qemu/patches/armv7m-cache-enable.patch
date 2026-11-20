@@ -1,0 +1,15 @@
+--- a/hw/intc/armv7m_nvic.c
++++ b/hw/intc/armv7m_nvic.c
+@@ -1701,6 +1701,12 @@
+             R_V7M_CCR_UNALIGN_TRP_MASK |
+             R_V7M_CCR_USERSETMPEND_MASK |
+             R_V7M_CCR_NONBASETHRDENA_MASK;
++        /* Cortex-M7 with separate L1 caches: retain the guest-visible
++         * enables even though QEMU does not emulate cache contents. */
++        if ((cpu->midr & 0xff0ffff0u) == 0x410fc270u &&
++            (GET_IDREG(&cpu->isar, CLIDR) & 7u) == 3u) {
++            mask |= R_V7M_CCR_DC_MASK | R_V7M_CCR_IC_MASK;
++        }
+         if (arm_feature(&cpu->env, ARM_FEATURE_V8_1M) && attrs.secure) {
+             /* TRD is always RAZ/WI from NS */
+             mask |= R_V7M_CCR_TRD_MASK;

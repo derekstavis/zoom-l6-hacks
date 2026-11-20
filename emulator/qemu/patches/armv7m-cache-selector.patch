@@ -1,0 +1,27 @@
+--- a/target/arm/cpu.h
++++ b/target/arm/cpu.h
+@@ -2421,7 +2421,7 @@
+     /* If all the CLIDR.Ctypem bits are 0 there are no caches, and
+      * CSSELR is RAZ/WI.
+      */
+-    return (GET_IDREG(&cpu->isar, CLIDR) & R_V7M_CLIDR_CTYPE_ALL_MASK) != 0;
++    return (GET_IDREG(&cpu->isar, CLIDR) & R_V7M_CLIDR_CTYPE_ALL_MASK) == 0;
+ }
+ 
+ static inline bool arm_sctlr_b(const CPUARMState *env)
+--- a/hw/intc/armv7m_nvic.c
++++ b/hw/intc/armv7m_nvic.c
+@@ -1853,7 +1853,12 @@
+         break;
+     case 0xd84: /* CSSELR */
+         if (!arm_v7m_csselr_razwi(cpu)) {
+-            cpu->env.v7m.csselr[attrs.secure] = value & R_V7M_CSSELR_INDEX_MASK;
++            /* Cortex-M7 implements only level 1, so Level is read-only zero. */
++            uint32_t mask = R_V7M_CSSELR_INDEX_MASK;
++            if ((cpu->midr & 0xff0ffff0u) == 0x410fc270u) {
++                mask = 1;
++            }
++            cpu->env.v7m.csselr[attrs.secure] = value & mask;
+         }
+         break;
+     case 0xd88: /* CPACR */

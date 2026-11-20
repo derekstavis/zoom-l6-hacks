@@ -22,6 +22,7 @@ const BOARD_SOURCES: &[&str] = &[
     "l6max-indicators.h",
     "l6max-usb.h",
     "l6-sai.h",
+    "l6-sai-clock.h",
     "l6-edma.h",
     "l6-ccm-analog.h",
 ];
@@ -47,12 +48,40 @@ fn apply_patch(
     let patched = fs::read_to_string(source.join(marker_file))
         .map_err(|error| format!("could not read QEMU {marker_file}: {error}"))?;
     if markers.iter().all(|marker| patched.contains(marker)) {
-        return Ok(());
+        // A marker in one file is not proof that every hunk was applied.
+        // Check the complete patch in reverse before reusing a staged tree.
+        let reverse = Command::new("patch")
+            .current_dir(source)
+            .args([
+                "--dry-run",
+                "--reverse",
+                "--force",
+                "--quiet",
+                "--fuzz=0",
+                "-p1",
+            ])
+            .arg("--input")
+            .arg(&patch)
+            .output()
+            .map_err(|error| format!("could not verify {name}: {error}"))?;
+        if reverse.status.success() {
+            return Ok(());
+        }
+        return Err(format!(
+            "{name} is only partially applied or its context changed"
+        ));
     }
 
     let check = Command::new("patch")
         .current_dir(source)
-        .args(["--dry-run", "--forward", "--batch", "--quiet", "-p1"])
+        .args([
+            "--dry-run",
+            "--forward",
+            "--batch",
+            "--quiet",
+            "--fuzz=0",
+            "-p1",
+        ])
         .arg("--input")
         .arg(&patch)
         .status()
@@ -63,7 +92,7 @@ fn apply_patch(
 
     let status = Command::new("patch")
         .current_dir(source)
-        .args(["--forward", "--batch", "-p1"])
+        .args(["--forward", "--batch", "--fuzz=0", "-p1"])
         .arg("--input")
         .arg(&patch)
         .status()
@@ -76,6 +105,30 @@ fn apply_patch(
 }
 
 fn apply_patches(source: &Path, repository: &Path) -> Result<(), String> {
+    apply_patch(
+        source,
+        repository,
+        "armv7m-cache-selector.patch",
+        "hw/intc/armv7m_nvic.c",
+        &["Cortex-M7 implements only level 1"],
+    )?;
+    apply_patch(
+        source,
+        repository,
+        "armv7m-cache-enable.patch",
+        "hw/intc/armv7m_nvic.c",
+        &["retain the guest-visible"],
+    )?;
+    apply_patch(
+        source,
+        repository,
+        "armv7m-m7-ccr.patch",
+        "hw/intc/armv7m_nvic.c",
+        &[
+            "Cortex-M7 reports branch prediction",
+            "Cortex-M7 always aligns",
+        ],
+    )?;
     apply_patch(
         source,
         repository,
@@ -94,6 +147,20 @@ fn apply_patches(source: &Path, repository: &Path) -> Result<(), String> {
         "short-poll-timeout.patch",
         "util/qemu-timer.c",
         &["starves timers"],
+    )?;
+    apply_patch(
+        source,
+        repository,
+        "systick-clock-update.patch",
+        "hw/timer/armv7m_systick.c",
+        &["systick_update_selected_clock"],
+    )?;
+    apply_patch(
+        source,
+        repository,
+        "systick-stopped-calibration.patch",
+        "hw/timer/armv7m_systick.c",
+        &["not underflow zero ticks"],
     )?;
     apply_patch(
         source,
@@ -537,7 +604,7 @@ pub fn build(request: &Request) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{BOARD_SOURCES, install_board_sources};
+    use super::{BOARD_SOURCES, apply_patch, install_board_sources};
     use std::{fs, time::SystemTime};
 
     #[test]
@@ -567,6 +634,64 @@ mod tests {
         for name in BOARD_SOURCES {
             assert!(source_dir.join(name).is_file(), "missing staged {name}");
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn rejects_a_partially_applied_multi_file_patch() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "qemu-build-patch-audit-{}-{unique}",
+            std::process::id()
+        ));
+        let repository = root.join("repository");
+        let source = root.join("source");
+        let patches = repository.join("emulator/qemu/patches");
+        fs::create_dir_all(&patches).unwrap();
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("first"), "before\nold\nafter\n").unwrap();
+        fs::write(source.join("second"), "before\nold\nafter\n").unwrap();
+        fs::write(
+            patches.join("both.patch"),
+            "--- a/first\n+++ b/first\n@@ -1,3 +1,3 @@\n before\n-old\n+changed\n after\n\
+             --- a/second\n+++ b/second\n@@ -1,3 +1,3 @@\n before\n-old\n+unique marker\n after\n",
+        )
+        .unwrap();
+        apply_patch(
+            &source,
+            &repository,
+            "both.patch",
+            "second",
+            &["unique marker"],
+        )
+        .unwrap();
+        // An intact patch can be safely reused.
+        apply_patch(
+            &source,
+            &repository,
+            "both.patch",
+            "second",
+            &["unique marker"],
+        )
+        .unwrap();
+        // The marker remains present, but the first hunk was lost.
+        fs::write(source.join("first"), "before\nold\nafter\n").unwrap();
+        assert!(
+            apply_patch(
+                &source,
+                &repository,
+                "both.patch",
+                "second",
+                &["unique marker"]
+            )
+            .is_err()
+        );
+        assert_eq!(
+            fs::read_to_string(source.join("first")).unwrap(),
+            "before\nold\nafter\n"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

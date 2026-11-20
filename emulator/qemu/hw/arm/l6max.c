@@ -26,6 +26,7 @@
 #include "hw/i2c/i2c.h"
 #include "system/address-spaces.h"
 #include "system/blockdev.h"
+#include "qemu/error-report.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
 #include "qemu/timer.h"
@@ -37,6 +38,7 @@
 #include "qemu/option.h"
 #include "system/system.h"
 #include "system/runstate.h"
+#include "system/reset.h"
 #include "l6max-display.h"
 #include "l6max-indicators.h"
 #include "l6max-usb.h"
@@ -44,6 +46,7 @@
 #include "l6-panel-gpio.h"
 #include "l6-panel-timer.h"
 #include "l6-sai.h"
+#include "l6-sai-clock.h"
 #include "l6-edma.h"
 #include "l6-ccm-analog.h"
 #include <fcntl.h>
@@ -333,6 +336,11 @@ typedef struct L6MainGPIOAdapter {
     unsigned bank;
 } L6MainGPIOAdapter;
 
+typedef struct L6FlexRamHole {
+    struct L6ChipState *chip;
+    uint32_t error_bit;
+} L6FlexRamHole;
+
 typedef struct L6ChipState {
     ARMv7MState armv7m;
     MemoryRegion flash;
@@ -342,6 +350,17 @@ typedef struct L6ChipState {
     MemoryRegion main_high_ram;
     MemoryRegion sram;
     MemoryRegion dtcm;
+    MemoryRegion flexram;
+    MemoryRegion flexram_bank[16];
+    bool flexram_mapped[16];
+    MemoryRegion flexram_holes[3];
+    L6FlexRamHole flexram_hole_context[3];
+    uint32_t flexram_tcm_ctrl, flexram_status, flexram_status_en, flexram_sig_en;
+    QEMUTimer *pit_timer;
+    uint32_t pit_mcr, pit_load[4], pit_count[4], pit_ctrl[4], pit_flag[4];
+    uint32_t pit_latched_low, pit_rate;
+    int64_t pit_last_ns;
+    uint64_t pit_fraction;
     MemoryRegion external_ram;
     MemoryRegion peripheral;
     MemoryRegion sd_adapter;
@@ -357,6 +376,7 @@ typedef struct L6ChipState {
     Clock *sysclk;
     Clock *refclk;
     GHashTable *registers;
+    uint32_t pfd_applied[2];
     size_t flash_payload_size;
     uint8_t *nor_flash;
     uint8_t *resource_flash;
@@ -372,6 +392,7 @@ typedef struct L6ChipState {
     unsigned flexspi_rx_size;
     unsigned flexspi_rx_cursor;
     bool nor_write_enable;
+    bool flexspi_lut_locked, flexspi_lut_key_valid;
     bool nor_program;
     unsigned nor_program_address;
     unsigned nor_program_size;
@@ -386,6 +407,7 @@ typedef struct L6ChipState {
     unsigned lpspi_rx_count;
     unsigned edma_log_count;
     uint32_t edma_erq;
+    bool edma_clock_running;
     bool audio_trace;
     unsigned audio_trace_sai_log_count;
     unsigned audio_trace_edma_log_count;
@@ -1449,6 +1471,8 @@ static void l6_panel_tim2_tick(void *opaque)
     }
 }
 
+static bool l6max_uart_receive_clock_running(L6ChipState *s, bool panel_uart);
+
 static int l6_main_uart_can_receive(void *opaque)
 {
     L6ChipState *s = opaque;
@@ -1492,9 +1516,11 @@ static void l6_main_uart_receive(void *opaque, const uint8_t *buf, int size)
     /* i.MX RT LPUART CTRL.RE gates reception. Consume but discard bytes that
      * arrive while disabled; holding one until RE is enabled would invent a
      * receive FIFO and can stall the UART link behind a stale byte. */
-    if (!(ctrl & (1u << 18))) {
+    if (!(ctrl & (1u << 18)) ||
+        (s->profile == &L6MAX_PROFILE &&
+         !l6max_uart_receive_clock_running(s, true))) {
         qemu_log_mask(LOG_UNIMP,
-                      "l6 main LPUART%u (panel link) RX discarded (RE=0) %02x\n",
+                      "l6 main LPUART%u (panel link) RX discarded (disabled receiver or clock) %02x\n",
                       l6_panel_uart_number(s), buf[0]);
         return;
     }
@@ -1543,9 +1569,11 @@ static void l6_main_midi_read_host(void *opaque)
                   !!(ctrl & (1u << 18)), !!(ctrl & (1u << 21)));
     /* The DIN socket is the wire-facing endpoint, so disabled receivers lose
      * these bytes just like the panel UART path above. */
-    if (!(ctrl & (1u << 18))) {
+    if (!(ctrl & (1u << 18)) ||
+        (s->profile == &L6MAX_PROFILE &&
+         !l6max_uart_receive_clock_running(s, false))) {
         qemu_log_mask(LOG_UNIMP,
-                      "l6 main LPUART%u (MIDI jacks) RX discarded (RE=0) %d bytes\n",
+                      "l6 main LPUART%u (MIDI jacks) RX discarded (disabled receiver or clock) %d bytes\n",
                       s->profile->midi_uart_number, (int)n);
         return;
     }
@@ -1741,6 +1769,103 @@ static void l6_rom_uart_tick(void *opaque)
  * overrides. Normal profiles use the clocked SAI/eDMA paths instead. */
 static unsigned l6_sai_audio_clock_advance(L6ChipState *s, unsigned frames);
 
+static uint32_t l6max_clock_register(L6ChipState *s, hwaddr offset)
+{
+    return GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+                                               GUINT_TO_POINTER((offset >> 2) + 1)));
+}
+
+static L6MaxBusClocks l6max_bus_clocks(L6ChipState *s);
+
+/* Unsupported roots retain the last modeled CPU clock, as elsewhere in
+ * this board; valid IPG roots can stop even when the oscillator still runs. */
+static bool l6max_ipg_clock_running(L6ChipState *s, const L6MaxBusClocks *clocks)
+{
+    uint32_t ipg_hz = l6max_ipg_clock_hz(clocks);
+    return ipg_hz == UINT32_MAX ? clock_get_hz(s->sysclk) != 0 : ipg_hz != 0;
+}
+
+/* CCGR6 CG0 gates the USB controller's IPG and AHB clocks. L6's clock
+ * tree is separate and remains on the existing compatibility path. */
+static bool l6max_usb_clock_enabled(void *opaque)
+{
+    L6ChipState *s = opaque;
+    uint32_t pll = l6max_clock_register(s, 0x0d8010);
+    uint32_t phy = l6max_clock_register(s, 0x0d9030);
+    L6MaxBusClocks clocks = l6max_bus_clocks(s);
+    return (l6max_clock_register(s, 0x0fc080) & 3u) != 0 &&
+           l6max_ipg_clock_running(s, &clocks) &&
+           (pll & (L6_USB1_PLL_POWER | L6_USB1_PLL_EN_USB_CLKS)) ==
+               (L6_USB1_PLL_POWER | L6_USB1_PLL_EN_USB_CLKS) &&
+           !(pll & L6_USB1_PLL_BYPASS_SRC) &&
+           clocks.oscillator_hz != 0 &&
+           !(phy & 0xc0000000u);
+}
+
+static L6MaxBusClocks l6max_bus_clocks(L6ChipState *s)
+{
+    uint32_t lowpwr = l6max_clock_register(s, 0x0d8270);
+    uint32_t misc0 = l6max_clock_register(s, 0x0d8150);
+    bool oscillator_on = (lowpwr & 0x10u) ? (lowpwr & 1u) != 0 :
+                                            (misc0 & 0x40000000u) == 0;
+    return (L6MaxBusClocks) {
+        .oscillator_hz = oscillator_on ? 24000000u : 0,
+        .arm_pll = l6max_clock_register(s, L6_CCM_ANALOG_PLL_ARM),
+        .cacrr = l6max_clock_register(s, L6_CCM_CACRR_OFFSET),
+        .sys_pll = l6max_clock_register(s, L6_CCM_ANALOG_PLL_SYS),
+        .sys_num = l6max_clock_register(s, L6_CCM_ANALOG_PLL_SYS_NUM),
+        .sys_denom = l6max_clock_register(s, L6_CCM_ANALOG_PLL_SYS_DENOM),
+        .pfd_528 = l6max_clock_register(s, L6_CCM_ANALOG_PFD_528),
+        .usb1_pll = l6max_clock_register(s, 0x0d8010),
+        .ccsr = l6max_clock_register(s, 0x0fc00c),
+        .cbcdr = l6max_clock_register(s, L6_CCM_CBCDR_OFFSET),
+        .cbcmr = l6max_clock_register(s, L6_CCM_CBCMR_OFFSET),
+    };
+}
+
+/* The panel and MIDI receivers use LPUART1 and LPUART3 respectively. The
+ * serial root is OSC or PLL3/6, and both the baud and IPG clocks share the
+ * instance gate (RT1060 RM table 14-4). The socket represents the wire, so
+ * bytes arriving while a modeled source is stopped cannot be sampled. */
+static bool l6max_uart_receive_clock_running(L6ChipState *s, bool panel_uart)
+{
+    L6MaxBusClocks clocks = l6max_bus_clocks(s);
+    uint32_t gate = l6max_clock_register(s, panel_uart ? 0x0fc07c : 0x0fc068);
+    unsigned shift = panel_uart ? 24 : 12;
+    if (!(gate & (1u << shift)) || !clocks.oscillator_hz ||
+        !l6max_ipg_clock_running(s, &clocks)) {
+        return false;
+    }
+    if (l6max_clock_register(s, 0x0fc024) & 0x40u) {
+        return true;
+    }
+    uint32_t pll = l6max_usb1_main_hz(clocks.usb1_pll);
+    return pll != 0 && pll != UINT32_MAX;
+}
+
+static uint32_t l6max_sai1_source_hz(L6ChipState *s, uint32_t tcr2)
+{
+    const L6MaxSaiClocks clocks = {
+        .gpr1 = l6max_clock_register(s, 0x0ac004),
+        .cscmr1 = l6max_clock_register(s, L6_CCM_CSCMR1_OFFSET),
+        .cs1cdr = l6max_clock_register(s, L6_CCM_CS1CDR_OFFSET),
+        .cs2cdr = l6max_clock_register(s, L6_CCM_CS2CDR_OFFSET),
+        .cdcdr = l6max_clock_register(s, 0x0fc030),
+        .ccgr5 = l6max_clock_register(s, 0x0fc07c),
+        .audio_pll = l6max_clock_register(s, L6_CCM_ANALOG_PLL_AUDIO),
+        .audio_num = l6max_clock_register(s, L6_CCM_ANALOG_PLL_AUDIO_NUM),
+        .audio_denom = l6max_clock_register(s, L6_CCM_ANALOG_PLL_AUDIO_DENOM),
+        .video_pll = l6max_clock_register(s, 0x0d80a0),
+        .video_num = l6max_clock_register(s, 0x0d80b0),
+        .video_denom = l6max_clock_register(s, 0x0d80c0),
+        .misc2 = l6max_clock_register(s, L6_CCM_ANALOG_MISC2),
+        .usb1_pll = l6max_clock_register(s, 0x0d8010),
+        .pfd_480 = l6max_clock_register(s, L6_CCM_ANALOG_PFD_480),
+        .bus = l6max_bus_clocks(s),
+    };
+    return l6max_sai1_master_hz(&clocks, tcr2);
+}
+
 static unsigned l6_sai_master_sample_rate(L6ChipState *s)
 {
     if (!s->profile->audio_source_clock_hz) {
@@ -1752,13 +1877,31 @@ static unsigned l6_sai_master_sample_rate(L6ChipState *s)
         uint32_t tx = sai->regs[L6_SAI_TCSR / 4];
         uint32_t rx = sai->regs[L6_SAI_RCSR / 4];
         if ((tcr2 & L6_SAI_BCD) && ((tx & L6_SAI_TE) || (rx & L6_SAI_RE))) {
-            return l6_sai_sample_rate(s->profile->audio_source_clock_hz,
-                                      tcr2,
+            uint32_t source_hz = s->profile == &L6MAX_PROFILE ?
+                                 l6max_sai1_source_hz(s, tcr2) :
+                                 s->profile->audio_source_clock_hz;
+            return l6_sai_sample_rate(source_hz, tcr2,
                                       sai->regs[L6_SAI_TCR4 / 4],
                                       sai->regs[L6_SAI_TCR5 / 4]);
         }
     }
     return 0;
+}
+
+/* Clock changes restart the block phase rather than retaining a deadline
+ * computed at a different rate. */
+static void l6max_sai_clock_recheck(L6ChipState *s)
+{
+    unsigned rate = l6_sai_master_sample_rate(s);
+    if (!s->main_audio_service_timer || rate == s->audio_service_rate_hz) {
+        return;
+    }
+    uint64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    s->audio_service_rate_hz = rate;
+    s->audio_service_period_remainder = 0;
+    s->audio_service_deadline_ns = now +
+        (rate ? MAX(1ULL, 64000000000ULL / rate) : 1000000ULL);
+    timer_mod(s->main_audio_service_timer, s->audio_service_deadline_ns);
 }
 
 static void l6_audio_output_flush(L6ChipState *s, size_t available)
@@ -2131,9 +2274,27 @@ static void l6_rom_write_byte(L6ChipState *s, uint8_t byte)
  * slot completes with a command timeout. PROT_CTRL WECINT/WECINS/WECRM only
  * enable wakeup events, so they are kept out of SDHCI's interrupt decision.
  */
+/* RT1060 USDHC1 uses IPG plus the selected PLL2 PFD through CCGR6 CG1.
+ * Unknown PLL/PFD settings retain the prior compatibility behavior. */
+static bool l6_sd_clock_running(L6ChipState *s)
+{
+    if (s->profile != &L6MAX_PROFILE) {
+        return true;
+    }
+    L6MaxBusClocks clocks = l6max_bus_clocks(s);
+    uint32_t mux = l6max_clock_register(s, L6_CCM_CSCMR1_OFFSET);
+    uint32_t source = l6max_pll2_pfd_hz(&clocks, (mux & 0x10000u) ? 0 : 2);
+    return (l6max_clock_register(s, 0x0fc080) & 0xcu) != 0 &&
+           l6max_ipg_clock_running(s, &clocks) && clocks.oscillator_hz &&
+           source != 0;
+}
+
 static uint64_t l6_sd_read(void *opaque, hwaddr offset, unsigned size)
 {
     L6ChipState *s = opaque;
+    if (offset == 0x24 && size == 4 && !l6_sd_clock_running(s)) {
+        return s->sd_ops->read(s->sdhc, offset, size) & ~(1u << 3);
+    }
     if (offset == 0x2c && size == 4) {
         return s->sd_sysctl;
     }
@@ -2172,6 +2333,11 @@ static void l6_sd_write(void *opaque, hwaddr offset, uint64_t value, unsigned si
         return;
     }
     if (offset == 0x0c) {
+        /* Bus behavior while gated is not captured; discard the command
+         * instead of issuing a transfer without a controller clock. */
+        if (!l6_sd_clock_running(s)) {
+            return;
+        }
         s->sdhc->clkcon |= 7u;
     }
     s->sd_ops->write(s->sdhc, offset, value, size);
@@ -2293,13 +2459,296 @@ static L6Sai *l6_sai_at(L6ChipState *s, hwaddr offset, hwaddr *reg_offset)
     return NULL;
 }
 
+/* RT1060 FlexRAM reports accesses beyond each allocated bank range. */
+static void l6max_flexram_irq_update(L6ChipState *s)
+{
+    qemu_set_irq(qdev_get_gpio_in(DEVICE(&s->armv7m), 38),
+                 (s->flexram_status & s->flexram_sig_en) != 0);
+}
+
+static void l6max_flexram_access_error(L6FlexRamHole *hole)
+{
+    L6ChipState *s = hole->chip;
+    if (s->flexram_status_en & hole->error_bit) {
+        s->flexram_status |= hole->error_bit;
+        l6max_flexram_irq_update(s);
+    }
+}
+
+static MemTxResult l6max_flexram_hole_read(void *opaque, hwaddr offset,
+                                            uint64_t *value, unsigned size,
+                                            MemTxAttrs attrs)
+{
+    *value = 0;
+    l6max_flexram_access_error(opaque);
+    /* The later physical dump read zeros beyond the configured OCRAM range
+     * without recording bus faults. TCM holes instead produced bus faults. */
+    return ((L6FlexRamHole *)opaque)->error_bit == (1u << 5) ?
+           MEMTX_OK : MEMTX_ERROR;
+}
+
+static MemTxResult l6max_flexram_hole_write(void *opaque, hwaddr offset,
+                                             uint64_t value, unsigned size,
+                                             MemTxAttrs attrs)
+{
+    l6max_flexram_access_error(opaque);
+    /* OCRAM writes were not probed on hardware; discard them for now. */
+    return ((L6FlexRamHole *)opaque)->error_bit == (1u << 5) ?
+           MEMTX_OK : MEMTX_ERROR;
+}
+
+static const MemoryRegionOps l6max_flexram_hole_ops = {
+    .read_with_attrs = l6max_flexram_hole_read,
+    .write_with_attrs = l6max_flexram_hole_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid.min_access_size = 1,
+    .valid.max_access_size = 8,
+};
+
+/* RT1060 PIT: the bus clock may be gated independently of MCR.MDIS.
+ * Arithmetic runs at virtual time and retains subcycle phase across reads. */
+static void l6max_pit_irq(L6ChipState *s)
+{
+    bool active = false;
+    for (unsigned i = 0; i < 4; i++) {
+        active |= s->pit_flag[i] && (s->pit_ctrl[i] & 2u);
+    }
+    qemu_set_irq(qdev_get_gpio_in(DEVICE(&s->armv7m), 122), active);
+}
+
+static void l6max_pit_sync(L6ChipState *s)
+{
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    uint64_t ns = now > s->pit_last_ns ? now - s->pit_last_ns : 0;
+    s->pit_last_ns = now;
+    if (!s->pit_rate || (s->pit_mcr & 2u)) {
+        return;
+    }
+    __uint128_t elapsed = (__uint128_t)ns * s->pit_rate + s->pit_fraction;
+    uint64_t clocks = elapsed / 1000000000u;
+    s->pit_fraction = elapsed % 1000000000u;
+    uint64_t previous_expirations = 0;
+    for (unsigned i = 0; i < 4; i++) {
+        uint64_t ticks = (i && (s->pit_ctrl[i] & 4u)) ? previous_expirations : clocks;
+        previous_expirations = 0;
+        if (!(s->pit_ctrl[i] & 1u) || !ticks) {
+            continue;
+        }
+        uint64_t first = (uint64_t)s->pit_count[i] + 1;
+        if (ticks < first) {
+            s->pit_count[i] -= ticks;
+        } else {
+            uint64_t remaining = ticks - first;
+            uint64_t period = (uint64_t)s->pit_load[i] + 1;
+            previous_expirations = 1 + remaining / period;
+            s->pit_count[i] = s->pit_load[i] - remaining % period;
+            s->pit_flag[i] = 1;
+        }
+    }
+    l6max_pit_irq(s);
+}
+
+static void l6max_pit_schedule(L6ChipState *s)
+{
+    timer_del(s->pit_timer);
+    if (!s->pit_rate || (s->pit_mcr & 2u)) {
+        return;
+    }
+    __uint128_t first = 0, period = 0, next = ~(__uint128_t)0;
+    for (unsigned i = 0; i < 4; i++) {
+        if (!(s->pit_ctrl[i] & 1u)) {
+            first = period = 0;
+            continue;
+        }
+        if (i && (s->pit_ctrl[i] & 4u)) {
+            if (!period) {
+                first = 0;
+                continue;
+            }
+            first = MIN((__uint128_t)UINT64_MAX,
+                        first + (__uint128_t)s->pit_count[i] * period);
+            period = MIN((__uint128_t)UINT64_MAX,
+                         period * ((uint64_t)s->pit_load[i] + 1));
+        } else {
+            first = (uint64_t)s->pit_count[i] + 1;
+            period = (uint64_t)s->pit_load[i] + 1;
+        }
+        if (!s->pit_flag[i] && first < next) {
+            next = first;
+        }
+    }
+    if (next == ~(__uint128_t)0) {
+        return;
+    }
+    __uint128_t numerator = next * 1000000000u - s->pit_fraction;
+    __uint128_t ns = (numerator + s->pit_rate - 1) / s->pit_rate;
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    if (ns <= INT64_MAX - now) {
+        timer_mod(s->pit_timer, now + (int64_t)ns);
+    }
+}
+
+static void l6max_pit_tick(void *opaque)
+{
+    L6ChipState *s = opaque;
+    l6max_pit_sync(s);
+    l6max_pit_schedule(s);
+}
+
+static bool l6max_pit_read(L6ChipState *s, hwaddr offset, uint32_t *value)
+{
+    if (offset < 0x084000 || offset > 0x08413c) {
+        return false;
+    }
+    l6max_pit_sync(s);
+    switch (offset) {
+    case 0x084000: *value = s->pit_mcr; break;
+    case 0x0840e0: s->pit_latched_low = s->pit_count[0];
+                   *value = s->pit_count[1]; break;
+    case 0x0840e4: *value = s->pit_latched_low; break;
+    default:
+        if (offset < 0x084100 || (offset & 3u)) { return false; }
+        unsigned channel = (offset - 0x084100) >> 4;
+        switch (offset & 0xfu) {
+        case 0: *value = s->pit_load[channel]; break;
+        case 4: *value = s->pit_count[channel]; break;
+        case 8: *value = s->pit_ctrl[channel]; break;
+        case 12: *value = s->pit_flag[channel]; break;
+        default: return false;
+        }
+    }
+    l6max_pit_schedule(s);
+    return true;
+}
+
+static bool l6max_pit_write(L6ChipState *s, hwaddr offset, uint32_t value,
+                            uint32_t mask)
+{
+    if (offset != 0x084000 && (offset < 0x084100 || offset > 0x08413c || (offset & 3u))) {
+        return false;
+    }
+    l6max_pit_sync(s);
+    if (offset == 0x084000) {
+        s->pit_mcr = ((s->pit_mcr & ~mask) | (value & mask)) & 3u;
+    } else {
+        unsigned channel = (offset - 0x084100) >> 4;
+        switch (offset & 0xfu) {
+        case 0: s->pit_load[channel] = (s->pit_load[channel] & ~mask) | (value & mask); break;
+        case 4: break; /* CVAL is read-only. */
+        case 8:
+            value = (s->pit_ctrl[channel] & ~mask) | (value & mask);
+            if (!(s->pit_ctrl[channel] & 1u) && (value & 1u)) {
+                s->pit_count[channel] = s->pit_load[channel];
+            }
+            s->pit_ctrl[channel] = value & (channel ? 7u : 3u);
+            break;
+        case 12: s->pit_flag[channel] &= ~(value & mask & 1u); break;
+        }
+    }
+    l6max_pit_irq(s);
+    l6max_pit_schedule(s);
+    return true;
+}
+
 static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
 {
     L6ChipState *s = opaque;
-    if (!s->panel && offset == 0x0d8010 && size == 4) {
+    uint32_t pit_value;
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (offset & 3) + size <= 4 &&
+        l6max_pit_read(s, offset & ~(hwaddr)3, &pit_value)) {
+        return pit_value >> ((offset & 3) * 8);
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (offset & ~(hwaddr)3) == 0x2f00c0) {
+        /* SEMC is idle because no timed controller operations are modeled. */
+        return (1u >> ((offset & 3) * 8));
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (offset & 3) + size <= 4) {
+        uint32_t value;
+        switch (offset & ~(hwaddr)3) {
+        case 0x0b0000: value = s->flexram_tcm_ctrl; break;
+        case 0x0b0010: value = s->flexram_status; break;
+        case 0x0b0014: value = s->flexram_status_en; break;
+        case 0x0b0018: value = s->flexram_sig_en; break;
+        default: goto not_flexram_read;
+        }
+        return value >> ((offset & 3) * 8);
+    }
+not_flexram_read:
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
+        (offset & ~(hwaddr)0xf) == 0x0d9030) {
+        return l6max_clock_register(s, 0x0d9030);
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
+        ((offset & ~(hwaddr)0xf) == 0x0d8150 ||
+         (offset & ~(hwaddr)0xf) == 0x0d82c0 ||
+         (offset & ~(hwaddr)0xf) == 0x0d8270)) {
+        hwaddr base = offset & ~(hwaddr)0xf;
         uint32_t control = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
-            GUINT_TO_POINTER((0x0d8010 >> 2) + 1)));
-        return l6_usb1_pll_status(control);
+            GUINT_TO_POINTER((base >> 2) + 1)));
+        uint32_t misc0 = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+            GUINT_TO_POINTER((0x0d8150 >> 2) + 1)));
+        bool crystal_on = !(misc0 & 0x40000000u);
+        if (base == 0x0d8270) {
+            control = (control & ~0x10000u) | (crystal_on ? 0x10000u : 0);
+        } else if (base == 0x0d8150) {
+            control = (control & ~0x8000u) |
+                      (crystal_on && (misc0 & 0x10000u) ? 0x8000u : 0);
+        }
+        return control;
+    }
+    hwaddr pfd_base = offset & ~(hwaddr)0xf;
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
+        !(offset & 3) && (pfd_base == L6_CCM_ANALOG_PFD_480 ||
+                          pfd_base == L6_CCM_ANALOG_PFD_528)) {
+        return GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+            GUINT_TO_POINTER((pfd_base >> 2) + 1)));
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
+        !(offset & 3) && (offset & ~(hwaddr)0xf) == L6_CCM_ANALOG_MISC2) {
+        return GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+            GUINT_TO_POINTER((L6_CCM_ANALOG_MISC2 >> 2) + 1)));
+    }
+    hwaddr analog_pll_base = offset & ~(hwaddr)0xf;
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
+        !(offset & 3) && (analog_pll_base == L6_CCM_ANALOG_PLL_ARM ||
+                          analog_pll_base == L6_CCM_ANALOG_PLL_SYS ||
+                          analog_pll_base == 0x0d8070 ||
+                          analog_pll_base == 0x0d80a0 ||
+                          analog_pll_base == 0x0d80e0)) {
+        uint32_t control = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+            GUINT_TO_POINTER((analog_pll_base >> 2) + 1)));
+        uint32_t status;
+        if (analog_pll_base == L6_CCM_ANALOG_PLL_ARM ||
+            analog_pll_base == L6_CCM_ANALOG_PLL_SYS) {
+            uint32_t mask = analog_pll_base == L6_CCM_ANALOG_PLL_ARM ?
+                            L6_ARM_PLL_WRITABLE : L6_SYS_PLL_WRITABLE;
+            status = l6_core_pll_status(control, mask);
+        } else {
+            status = analog_pll_base == 0x0d80e0 ? l6_enet_pll_status(control) :
+                                                   l6_audio_pll_status(control);
+        }
+        /* No external PLL reference is connected in this board model. */
+        if ((control & 0xc000u) || !l6max_bus_clocks(s).oscillator_hz) {
+            status &= ~0x80000000u;
+        }
+        return status;
+    }
+    hwaddr usb_pll_base = offset & ~(hwaddr)0xf;
+    if (!s->panel && size == 4 && !(offset & 3) &&
+        ((usb_pll_base == 0x0d8010 && offset == usb_pll_base) ||
+         (s->profile == &L6MAX_PROFILE && usb_pll_base == 0x0d8020))) {
+        uint32_t control = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+            GUINT_TO_POINTER((usb_pll_base >> 2) + 1)));
+        uint32_t status = s->profile == &L6MAX_PROFILE ?
+                          l6max_usb_pll_status(control) : l6_usb1_pll_status(control);
+        if (s->profile == &L6MAX_PROFILE &&
+            ((control & 0xc000u) || !l6max_bus_clocks(s).oscillator_hz)) {
+            status &= ~0x80000000u;
+        }
+        return status;
     }
     if (s->profile->resource_flash && offset == 0x3a005c && size == 4) {
         /* The L6 firmware polls FSR.RXCOUNT (bits 16..20) before draining
@@ -2531,18 +2980,25 @@ static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
             GUINT_TO_POINTER((offset >> 2) + 1)));
         return (bdcr & 1) ? bdcr | 2 : bdcr & ~2u;
     }
-    if (!s->panel && offset == l6_panel_uart_base(s) + 0x14 && size == 4) {
-        return (1u << 23) | (1u << 22) |
-               ((s->main_rom_mode ? s->rom_reply_read < s->rom_reply_visible :
-                  s->main_rx_pending) ? (1u << 21) : 0);
+    if (!s->panel && (offset & ~(hwaddr)3) == l6_panel_uart_base(s) + 0x14 &&
+        (size == 4 || s->profile == &L6MAX_PROFILE)) {
+        uint32_t status = (1u << 23) | (1u << 22) |
+                          ((s->main_rom_mode ? s->rom_reply_read < s->rom_reply_visible :
+                            s->main_rx_pending) ? (1u << 21) : 0);
+        return size == 4 ? status :
+               (status >> ((offset & 3) * 8)) & ((1u << (size * 8)) - 1);
     }
-    if (!s->panel && offset == l6_midi_uart_base(s) + 0x14 && size == 4) {
+    if (!s->panel && (offset & ~(hwaddr)3) == l6_midi_uart_base(s) + 0x14 &&
+        (size == 4 || s->profile == &L6MAX_PROFILE)) {
         /* The selected MIDI UART: RDRF follows a byte
          * queued from the inherited socket. */
-        return (1u << 23) | (1u << 22) |
-               (s->main_midi_rx_pending ? (1u << 21) : 0);
+        uint32_t status = (1u << 23) | (1u << 22) |
+                          (s->main_midi_rx_pending ? (1u << 21) : 0);
+        return size == 4 ? status :
+               (status >> ((offset & 3) * 8)) & ((1u << (size * 8)) - 1);
     }
-    if (!s->panel && offset == l6_midi_uart_base(s) + 0x1c && size == 4) {
+    if (!s->panel && offset == l6_midi_uart_base(s) + 0x1c &&
+        (size == 4 || (s->profile == &L6MAX_PROFILE && (size == 1 || size == 2)))) {
         uint8_t byte = s->main_midi_rx_byte;
         qemu_log_mask(LOG_UNIMP,
                       "l6 main LPUART%u (MIDI jacks) DATA read %02x\n",
@@ -2581,7 +3037,8 @@ static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
                       (unsigned long)offset, value);
         return value;
     }
-    if (!s->panel && offset == l6_panel_uart_base(s) + 0x1c && size == 4) {
+    if (!s->panel && offset == l6_panel_uart_base(s) + 0x1c &&
+        (size == 4 || (s->profile == &L6MAX_PROFILE && (size == 1 || size == 2)))) {
         if (s->main_rom_mode) {
             if (s->rom_reply_read < s->rom_reply_visible) {
                 uint8_t byte = s->rom_reply[s->rom_reply_read++];
@@ -2614,6 +3071,10 @@ static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
         }
         return value;
     }
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 1 &&
+        (offset == 0x0e8018 || offset == 0x0e8019 || offset == 0x0e801e)) {
+        return 0; /* CEEI, SEEI and CERR are write-only. */
+    }
     if (!s->panel && offset == 0x0e800c && size == 4) {
         return s->edma_erq;
     }
@@ -2634,29 +3095,64 @@ static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
     return value;
 }
 
-/* eDMA assigns one NVIC input per channel. The L6 firmware's IRQ table maps
- * channels 12–15 to IRQs 12–15, and L6max's OLED channel 3 uses IRQ 3. */
+/* RT1060 pairs DMA channels n and n+16 onto IRQ n. Keep the older L6
+ * profile's mapping until its interrupt routing is audited separately. */
+static void l6_edma_update_irq_level(L6ChipState *s, unsigned channel,
+                                     uint32_t pending)
+{
+    unsigned irq = channel;
+    uint32_t mask = 1u << channel;
+    if (s->profile == &L6MAX_PROFILE) {
+        irq &= 15u;
+        mask = (1u << irq) | (1u << (irq + 16));
+    }
+    qemu_set_irq(qdev_get_gpio_in(DEVICE(&s->armv7m), irq),
+                 (pending & mask) != 0);
+}
+
 static void l6_edma_raise_interrupt(L6ChipState *s, unsigned channel)
 {
     gpointer key = GUINT_TO_POINTER((0x0e8024 >> 2) + 1);
     uint32_t pending = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
 
-    g_hash_table_insert(s->registers, key,
-                        GUINT_TO_POINTER(pending | (1u << channel)));
+    pending |= 1u << channel;
+    g_hash_table_insert(s->registers, key, GUINT_TO_POINTER(pending));
     if (s->audio_trace && channel >= 12 && channel <= 15) {
         s->audio_trace_irq_count[channel - 12]++;
     }
-    /* RT eDMA INT bits directly drive the interrupt controller. Hold each
-     * channel high until firmware clears its pending bit through CINT/INT. */
-    qemu_set_irq(qdev_get_gpio_in(DEVICE(&s->armv7m), channel), 1);
+    l6_edma_update_irq_level(s, channel, pending);
     s->audio_edma_irq_raised = true;
 }
 
-static void l6_edma_update_irq_level(L6ChipState *s, unsigned channel,
-                                     uint32_t pending)
+/* L6max eDMA is a system bus master; the CPU container also exposes PPB
+ * and must not be used for DMA. Keep L6's existing routing until audited. */
+static AddressSpace *l6_edma_address_space(L6ChipState *s)
 {
-    qemu_set_irq(qdev_get_gpio_in(DEVICE(&s->armv7m), channel),
-                 (pending >> channel) & 1);
+    return s->profile == &L6MAX_PROFILE ? &address_space_memory :
+                                         CPU(s->armv7m.cpu)->as;
+}
+
+/* RT1060 eDMA error IRQ 16 is the OR of enabled channel errors. */
+static void l6max_edma_update_error_irq(L6ChipState *s)
+{
+    uint32_t errors = l6max_clock_register(s, 0x0e802c);
+    uint32_t enabled = l6max_clock_register(s, 0x0e8014);
+    qemu_set_irq(qdev_get_gpio_in(DEVICE(&s->armv7m), 16),
+                 (errors & enabled) != 0);
+}
+
+static void l6max_edma_record_bus_error(L6ChipState *s, unsigned channel,
+                                         bool source)
+{
+    gpointer err_key = GUINT_TO_POINTER((0x0e802c >> 2) + 1);
+    gpointer es_key = GUINT_TO_POINTER((0x0e8004 >> 2) + 1);
+    uint32_t errors = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, err_key));
+    g_hash_table_insert(s->registers, err_key,
+                        GUINT_TO_POINTER(errors | (1u << channel)));
+    g_hash_table_insert(s->registers, es_key,
+                        GUINT_TO_POINTER(0x80000000u | (channel << 8) |
+                                         (source ? 2u : 1u)));
+    l6max_edma_update_error_irq(s);
 }
 
 static bool l6_edma_as_read(void *opaque, uint32_t address, void *buffer,
@@ -2704,7 +3200,7 @@ static bool l6_edma_transfer_read(void *opaque, uint32_t address,
         stl_le_p(buffer, l6_sai_read(sai, reg_offset, 4));
         return true;
     }
-    return l6_edma_as_read(CPU(s->armv7m.cpu)->as, address, buffer, size);
+    return l6_edma_as_read(l6_edma_address_space(s), address, buffer, size);
 }
 
 static bool l6_edma_transfer_write(void *opaque, uint32_t address,
@@ -2717,7 +3213,7 @@ static bool l6_edma_transfer_write(void *opaque, uint32_t address,
         l6_sai_write(sai, reg_offset, ldl_le_p(buffer), 4);
         return true;
     }
-    return l6_edma_as_write(CPU(s->armv7m.cpu)->as, address, buffer, size);
+    return l6_edma_as_write(l6_edma_address_space(s), address, buffer, size);
 }
 
 static uint32_t l6_edma_register(L6ChipState *s, hwaddr offset)
@@ -2770,15 +3266,22 @@ static void l6_edma_tcd_store(L6ChipState *s, unsigned channel,
     }
 }
 
+/* RT1060 CCGR5 CG3 clocks both eDMA and DMAMUX. Keep L6's existing
+ * behavior until its clock tree is independently audited. */
+static bool l6_edma_clock_enabled(L6ChipState *s)
+{
+    return s->profile != &L6MAX_PROFILE || s->edma_clock_running;
+}
+
 /* A DMAMUX request services exactly one RT1041 32-bit-TCD minor loop. The
  * peripheral request is the pacing edge; this routine never drains an entire
  * cyclic audio ring just because ERQ was set. */
 static bool l6_edma_service_request(L6ChipState *s, uint8_t request)
 {
-    AddressSpace *as = CPU(s->armv7m.cpu)->as;
+    AddressSpace *as = l6_edma_address_space(s);
     bool serviced = false;
 
-    if (!l6_sai_edma_request_active(s, request)) {
+    if (!l6_edma_clock_enabled(s) || !l6_sai_edma_request_active(s, request)) {
         return false;
     }
 
@@ -2855,10 +3358,20 @@ static bool l6_edma_service_request(L6ChipState *s, uint8_t request)
             }
             L6EdmaMinorResult result = l6_edma_transfer_minor(
                 &tcd, l6_edma_transfer_read, l6_edma_transfer_write, s);
-            if (result == L6_EDMA_MINOR_ERROR) {
+            if (result < 0) {
+                if (s->profile == &L6MAX_PROFILE &&
+                    (result == L6_EDMA_MINOR_SOURCE_BUS_ERROR ||
+                     result == L6_EDMA_MINOR_DEST_BUS_ERROR)) {
+                    /* Preserve progress up to the failing transfer. Exact
+                     * hardware bus pipelining is not simulated. */
+                    l6_edma_tcd_encode(raw, &tcd);
+                    l6_edma_tcd_store(s, channel, raw);
+                    l6max_edma_record_bus_error(s, channel,
+                        result == L6_EDMA_MINOR_SOURCE_BUS_ERROR);
+                }
                 qemu_log_mask(LOG_UNIMP,
-                              "l6 eDMA unsupported request source=%u channel=%u TCD=%08x/%08x nbytes=%u citer=%04x attr=%04x\n",
-                              request, channel, tcd.saddr, tcd.daddr,
+                              "l6 eDMA transfer error=%d request source=%u channel=%u TCD=%08x/%08x nbytes=%u citer=%04x attr=%04x\n",
+                              result, request, channel, tcd.saddr, tcd.daddr,
                               tcd.nbytes, tcd.citer, tcd.attr);
                 return false;
             }
@@ -3206,7 +3719,7 @@ static void l6_edma_service_active_sai(L6ChipState *s)
 
 static bool l6_display_dma_transfer(L6ChipState *s)
 {
-    AddressSpace *as = CPU(s->armv7m.cpu)->as;
+    AddressSpace *as = l6_edma_address_space(s);
     uint8_t tx[32], rx[32], wire[4096];
     unsigned wire_size = 0;
     uint32_t tcr = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
@@ -3327,6 +3840,24 @@ static bool l6_display_dma_transfer(L6ChipState *s)
     return true;
 }
 
+/* Recheck level requests only when the DMA clock starts, not on every
+ * divider write: a still-asserted FIFO request must not gain extra transfers. */
+static void l6max_refresh_edma_clock(L6ChipState *s)
+{
+    L6MaxBusClocks clocks = l6max_bus_clocks(s);
+    bool was_running = s->edma_clock_running;
+    bool root_running = l6max_ipg_clock_running(s, &clocks);
+    s->edma_clock_running = root_running &&
+        (l6max_clock_register(s, 0x0fc07c) & 0xc0u) != 0;
+    if (!was_running && s->edma_clock_running) {
+        l6_edma_service_active_sai(s);
+        uint32_t der = l6max_clock_register(s, 0x3a001c);
+        if ((der & 3) == 3 && (s->edma_erq & 0xc) == 0xc) {
+            l6_display_dma_transfer(s);
+        }
+    }
+}
+
 static void l6_lpspi_flash_tx_byte(L6ChipState *s, uint8_t byte)
 {
     if (!s->lpspi_flash_header_bytes ||
@@ -3372,10 +3903,153 @@ static unsigned l6_lpspi_frame_bytes(uint32_t tcr)
 
 static void l6_rtc_store(L6ChipState *s);
 
+/* RT1060 FlexRAM banks retain their contents when their interfaces change.
+ * The fuse partition is unknown on the device; use the blank-fuse default.
+ * Within each interface, assigned banks are exposed in bank-number order. */
+static void l6max_flexram_map(L6ChipState *s, uint32_t gpr16, uint32_t gpr17)
+{
+    uint32_t config = (gpr16 & 4u) ? gpr17 : 0x55affa55u;
+    hwaddr next[] = { 0, 0x20280000u, 0x20000000u, 0 };
+    MemoryRegion *root = get_system_memory();
+
+    memory_region_transaction_begin();
+    for (unsigned bank = 0; bank < 16; bank++) {
+        if (s->flexram_mapped[bank]) {
+            memory_region_del_subregion(root, &s->flexram_bank[bank]);
+            s->flexram_mapped[bank] = false;
+        }
+    }
+    for (unsigned bank = 0; bank < 16; bank++) {
+        unsigned type = (config >> (2 * bank)) & 3u;
+        if (type) {
+            memory_region_add_subregion(root, next[type], &s->flexram_bank[bank]);
+            s->flexram_mapped[bank] = true;
+            next[type] += 0x8000;
+        }
+    }
+    memory_region_transaction_commit();
+}
+
+/* The RT1060 core uses AHB_CLK_ROOT. TCG instruction execution itself
+ * remains non-cycle-accurate; SysTick consumes the propagated clock. */
+static void l6max_update_cpu_clock(L6ChipState *s)
+{
+    L6MaxBusClocks clocks = l6max_bus_clocks(s);
+    uint32_t hz = l6max_ahb_clock_hz(&clocks);
+    l6max_pit_sync(s);
+    uint32_t cscmr1 = l6max_clock_register(s, L6_CCM_CSCMR1_OFFSET);
+    uint32_t perclk = (cscmr1 & 0x40u) ? clocks.oscillator_hz :
+                                           l6max_ipg_clock_hz(&clocks);
+    if (!(l6max_clock_register(s, 0x0fc06c) & 0x1000u)) {
+        s->pit_rate = 0;
+    } else if (perclk != UINT32_MAX) {
+        s->pit_rate = perclk / ((cscmr1 & 0x3fu) + 1);
+    }
+    l6max_pit_schedule(s);
+    clock_update_hz(s->refclk, clocks.oscillator_hz ? 100000 : 0);
+    if (hz != UINT32_MAX) {
+        clock_update_hz(s->sysclk, hz);
+    }
+    l6max_refresh_edma_clock(s);
+}
+
 static void l6_mmio_write(void *opaque, hwaddr offset,
                           uint64_t value, unsigned size)
 {
     L6ChipState *s = opaque;
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (offset & ~(hwaddr)3) == 0x0d8260) {
+        return; /* USB_ANALOG_DIGPROG is read-only on RT1060. */
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        ((offset & ~(hwaddr)3) == 0x0f8004 ||
+         (offset & ~(hwaddr)3) == 0x0f801c)) {
+        return; /* SRC boot-mode inputs are read-only. */
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        offset >= 0x184000 && offset < 0x1a4000 &&
+        (offset & 0x3fff) < 8) {
+        /* RT1060 LPUART VERID and PARAM are read-only. */
+        return;
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
+        (offset & ~(hwaddr)0xf) == 0x0d9030) {
+        gpointer key = GUINT_TO_POINTER((0x0d9030 >> 2) + 1);
+        uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
+        uint32_t next;
+        switch (offset & 0xf) {
+        case 4: next = old | value; break;
+        case 8: next = old & ~value; break;
+        case 12: next = old ^ value; break;
+        default: next = value; break;
+        }
+        /* SFTRST resets the PHY configuration on assertion; later CLR
+         * writes may ungate the clock before releasing reset. */
+        if (!(old & 0x80000000u) && (next & 0x80000000u)) {
+            next = 0xc0200000u;
+            g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0d9000 >> 2) + 1),
+                                GUINT_TO_POINTER(0x001e1c00u));
+            g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0d9010 >> 2) + 1),
+                                GUINT_TO_POINTER(0x10060607u));
+            g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0d9020 >> 2) + 1), NULL);
+        }
+        g_hash_table_insert(s->registers, key, GUINT_TO_POINTER(next));
+        return;
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        offset >= 0x2a8000 && offset < 0x2ac000) {
+        /* LUTKEY must immediately precede a valid lock/unlock request.
+         * Other controller writes consume the key, including ignored writes. */
+        if (offset == 0x2a8018 && size == 4) {
+            s->flexspi_lut_key_valid = value == 0x5af05af0u;
+        } else {
+            bool key_valid = s->flexspi_lut_key_valid;
+            s->flexspi_lut_key_valid = false;
+            if ((offset & ~(hwaddr)3) == 0x2a801c) {
+                if (size != 4 || !key_valid || (value != 1 && value != 2)) {
+                    return;
+                }
+                s->flexspi_lut_locked = value == 1;
+            } else if (offset >= 0x2a8200 && offset < 0x2a8300 &&
+                       s->flexspi_lut_locked) {
+                return;
+            }
+        }
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (offset & 3) + size <= 4) {
+        unsigned shift = (offset & 3) * 8;
+        uint32_t mask = size == 4 ? UINT32_MAX :
+                        ((1u << (size * 8)) - 1u) << shift;
+        if (l6max_pit_write(s, offset & ~(hwaddr)3,
+                            (uint32_t)value << shift, mask)) {
+            return;
+        }
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (offset & 3) + size <= 4) {
+        unsigned shift = (offset & 3) * 8;
+        uint32_t mask = size == 4 ? UINT32_MAX :
+                        ((1u << (size * 8)) - 1u) << shift;
+        uint32_t written = ((uint32_t)value << shift) & mask;
+        switch (offset & ~(hwaddr)3) {
+        case 0x0b0000:
+            s->flexram_tcm_ctrl = ((s->flexram_tcm_ctrl & ~mask) | written) & 7u;
+            return;
+        case 0x0b0010:
+            s->flexram_status &= ~(written & mask & 0x38u);
+            l6max_flexram_irq_update(s);
+            return;
+        case 0x0b0014:
+            s->flexram_status_en = ((s->flexram_status_en & ~mask) | written) & 0x38u;
+            l6max_flexram_irq_update(s);
+            return;
+        case 0x0b0018:
+            s->flexram_sig_en = ((s->flexram_sig_en & ~mask) | written) & 0x38u;
+            l6max_flexram_irq_update(s);
+            return;
+        }
+    }
     bool store_word = true;
     if (s->audio_trace && !s->panel &&
         (l6_audio_trace_register(offset) ||
@@ -3389,14 +4063,133 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
     unsigned shift = (offset & 3) * 8;
     uint32_t mask = size == 4 ? UINT32_MAX : ((1u << (size * 8)) - 1) << shift;
     word = (word & ~mask) | (((uint32_t)value << shift) & mask);
-    if (!s->panel && size == 4 && offset >= 0x0d8010 &&
-        offset <= 0x0d801c && !(offset & 3)) {
-        gpointer control_key = GUINT_TO_POINTER((0x0d8010 >> 2) + 1);
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (offset & ~(hwaddr)3) == 0x080000) {
+        /* The bootloader waits for DCDC output OK. Model settling as
+         * immediate and make the status bit read-only. */
+        word |= 0x80000000u;
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
+        ((offset & ~(hwaddr)0xf) == 0x0d8150 ||
+         (offset & ~(hwaddr)0xf) == 0x0d82c0 ||
+         (offset & ~(hwaddr)0xf) == 0x0d8270)) {
+        hwaddr base = offset & ~(hwaddr)0xf;
+        uint32_t writable_mask = base == 0x0d8150 ? 0xde017c79u :
+                                 base == 0x0d8270 ? 0x0006eff1u : 0x00030fffu;
+        uint32_t status_mask = base == 0x0d8150 ? 0x20008080u :
+                               base == 0x0d8270 ? 0x00010000u : 0x80000000u;
+        gpointer key2 = GUINT_TO_POINTER((base >> 2) + 1);
+        uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key2));
+        uint32_t writable = old & writable_mask;
+        uint32_t operand = value & writable_mask;
+        switch (offset & 0xf) {
+        case 0: writable = operand; break;
+        case 4: writable |= operand; break;
+        case 8: writable &= ~operand; break;
+        case 12: writable ^= operand; break;
+        }
+        word = (old & status_mask) | writable;
+        g_hash_table_insert(s->registers, key2, GUINT_TO_POINTER(word));
+        if (offset != base) {
+            store_word = false;
+        }
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (offset & ~(hwaddr)3) == 0x2f0000) {
+        /* SWRST resets internal logic, not configuration, and self-clears. */
+        word &= ~1u;
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (offset & ~(hwaddr)3) == 0x2f00c0) {
+        store_word = false; /* STS0 is read-only. */
+    }
+    /* The RT1060 fractional PLL NUM and DENOM fields are 30 bits; their
+     * two high bits read as zero, including after byte or halfword writes. */
+    hwaddr aligned = offset & ~(hwaddr)3;
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (aligned == 0x0d8050 || aligned == 0x0d8060 ||
+         aligned == 0x0d8080 || aligned == 0x0d8090 ||
+         aligned == 0x0d80b0 || aligned == 0x0d80c0)) {
+        word &= 0x3fffffffu;
+    }
+    hwaddr pfd_base = offset & ~(hwaddr)0xf;
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
+        !(offset & 3) && (pfd_base == L6_CCM_ANALOG_PFD_480 ||
+                          pfd_base == L6_CCM_ANALOG_PFD_528)) {
+        gpointer control_key = GUINT_TO_POINTER((pfd_base >> 2) + 1);
+        uint32_t control = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+                                                               control_key));
+        L6Usb1PllAlias alias = offset == pfd_base + 4 ? L6_USB1_PLL_SET :
+                               offset == pfd_base + 8 ? L6_USB1_PLL_CLEAR :
+                               offset == pfd_base + 12 ? L6_USB1_PLL_TOGGLE :
+                               L6_USB1_PLL_DIRECT;
+        control = l6_pfd_apply(control, value, alias,
+                               &s->pfd_applied[pfd_base == L6_CCM_ANALOG_PFD_528]);
+        g_hash_table_insert(s->registers, control_key, GUINT_TO_POINTER(control));
+        if (alias == L6_USB1_PLL_DIRECT) {
+            word = control;
+        } else {
+            store_word = false;
+        }
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
+        !(offset & 3) && (offset & ~(hwaddr)0xf) == L6_CCM_ANALOG_MISC2) {
+        gpointer control_key = GUINT_TO_POINTER((L6_CCM_ANALOG_MISC2 >> 2) + 1);
+        uint32_t control = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+                                                               control_key));
+        L6Usb1PllAlias alias = offset == L6_CCM_ANALOG_MISC2 + 4 ? L6_USB1_PLL_SET :
+                               offset == L6_CCM_ANALOG_MISC2 + 8 ? L6_USB1_PLL_CLEAR :
+                               offset == L6_CCM_ANALOG_MISC2 + 12 ? L6_USB1_PLL_TOGGLE :
+                               L6_USB1_PLL_DIRECT;
+        control = l6_misc2_apply(control, value, alias);
+        g_hash_table_insert(s->registers, control_key, GUINT_TO_POINTER(control));
+        if (alias == L6_USB1_PLL_DIRECT) {
+            word = control;
+        } else {
+            store_word = false;
+        }
+    }
+    hwaddr analog_pll_base = offset & ~(hwaddr)0xf;
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
+        !(offset & 3) && (analog_pll_base == L6_CCM_ANALOG_PLL_ARM ||
+                          analog_pll_base == L6_CCM_ANALOG_PLL_SYS ||
+                          analog_pll_base == 0x0d8070 ||
+                          analog_pll_base == 0x0d80a0 ||
+                          analog_pll_base == 0x0d80e0)) {
+        gpointer control_key = GUINT_TO_POINTER((analog_pll_base >> 2) + 1);
+        uint32_t control = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+                                                               control_key));
+        L6Usb1PllAlias alias = offset == analog_pll_base + 4 ? L6_USB1_PLL_SET :
+                               offset == analog_pll_base + 8 ? L6_USB1_PLL_CLEAR :
+                               offset == analog_pll_base + 12 ? L6_USB1_PLL_TOGGLE :
+                               L6_USB1_PLL_DIRECT;
+        if (analog_pll_base == L6_CCM_ANALOG_PLL_ARM ||
+            analog_pll_base == L6_CCM_ANALOG_PLL_SYS) {
+            uint32_t mask = analog_pll_base == L6_CCM_ANALOG_PLL_ARM ?
+                            L6_ARM_PLL_WRITABLE : L6_SYS_PLL_WRITABLE;
+            control = l6_core_pll_apply(control, value, alias, mask);
+        } else {
+            control = analog_pll_base == 0x0d80e0 ?
+                      l6_enet_pll_apply(control, value, alias) :
+                      l6_audio_pll_apply(control, value, alias);
+        }
+        g_hash_table_insert(s->registers, control_key, GUINT_TO_POINTER(control));
+        if (alias == L6_USB1_PLL_DIRECT) {
+            word = control;
+        } else {
+            store_word = false;
+        }
+    }
+    hwaddr usb_pll_base = offset & ~(hwaddr)0xf;
+    if (!s->panel && size == 4 && !(offset & 3) &&
+        (usb_pll_base == 0x0d8010 ||
+         (s->profile == &L6MAX_PROFILE && usb_pll_base == 0x0d8020))) {
+        gpointer control_key = GUINT_TO_POINTER((usb_pll_base >> 2) + 1);
         uint32_t control = GPOINTER_TO_UINT(g_hash_table_lookup(
             s->registers, control_key));
-        L6Usb1PllAlias alias = offset == 0x0d8014 ? L6_USB1_PLL_SET :
-                               offset == 0x0d8018 ? L6_USB1_PLL_CLEAR :
-                               offset == 0x0d801c ? L6_USB1_PLL_TOGGLE :
+        L6Usb1PllAlias alias = offset == usb_pll_base + 4 ? L6_USB1_PLL_SET :
+                               offset == usb_pll_base + 8 ? L6_USB1_PLL_CLEAR :
+                               offset == usb_pll_base + 12 ? L6_USB1_PLL_TOGGLE :
                                L6_USB1_PLL_DIRECT;
         control = l6_usb1_pll_apply(control, value, alias);
         g_hash_table_insert(s->registers, control_key,
@@ -3412,15 +4205,17 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
     if (sai) {
         l6_sai_write(sai, sai_offset, value, size);
         hwaddr sai_base = offset - sai_offset;
-        if (sai_offset == L6_SAI_TCSR) {
-            uint32_t control = l6_sai_read(sai, sai_offset, 4);
+        hwaddr sai_reg = s->profile == &L6MAX_PROFILE ?
+                         sai_offset & ~(hwaddr)3 : sai_offset;
+        if (sai_reg == L6_SAI_TCSR) {
+            uint32_t control = l6_sai_read(sai, sai_reg, 4);
             if ((control & (L6_SAI_TE | L6_SAI_FRDE | L6_SAI_FRF)) ==
                 (L6_SAI_TE | L6_SAI_FRDE | L6_SAI_FRF)) {
                 uint8_t source = sai_base == 0x384000 ? 20 : 84;
                 l6_edma_service_request(s, source);
             }
-        } else if (sai_offset == L6_SAI_RCSR) {
-            uint32_t control = l6_sai_read(sai, sai_offset, 4);
+        } else if (sai_reg == L6_SAI_RCSR) {
+            uint32_t control = l6_sai_read(sai, sai_reg, 4);
             if ((control & (L6_SAI_RE | L6_SAI_FRDE | L6_SAI_FRF)) ==
                 (L6_SAI_RE | L6_SAI_FRDE | L6_SAI_FRF)) {
                 uint8_t source = sai_base == 0x384000 ? 19 : 83;
@@ -3646,6 +4441,51 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
          * against QEMU's I2C bus and the L6max-compatible codec slaves. */
         l6_lpi2c_mtdr_write(s, value);
     }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        offset == 0x0e8004 && size == 4) {
+        return; /* ES is read-only. */
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        offset == 0x0e802c && size == 4) {
+        /* ERR is write-one-to-clear; ES.VLD reflects all channel errors. */
+        gpointer err_key = GUINT_TO_POINTER((0x0e802c >> 2) + 1);
+        gpointer es_key = GUINT_TO_POINTER((0x0e8004 >> 2) + 1);
+        uint32_t errors = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, err_key));
+        errors &= ~(uint32_t)value;
+        g_hash_table_insert(s->registers, err_key, GUINT_TO_POINTER(errors));
+        if (!errors) {
+            uint32_t es = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, es_key));
+            g_hash_table_insert(s->registers, es_key, GUINT_TO_POINTER(es & 0x7fffffffu));
+        }
+        l6max_edma_update_error_irq(s);
+        return;
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 1 &&
+        (offset == 0x0e8018 || offset == 0x0e8019 || offset == 0x0e801e)) {
+        /* CEEI, SEEI and CERR: NOP, all-channels or indexed command. */
+        if (!(value & 0x80)) {
+            hwaddr target = offset == 0x0e801e ? 0x0e802c : 0x0e8014;
+            gpointer key = GUINT_TO_POINTER((target >> 2) + 1);
+            uint32_t current = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
+            uint32_t mask = (value & 0x40) ? UINT32_MAX : 1u << (value & 0x1f);
+            current = offset == 0x0e8019 ? current | mask : current & ~mask;
+            g_hash_table_insert(s->registers, key, GUINT_TO_POINTER(current));
+            if (offset == 0x0e801e && !current) {
+                gpointer es_key = GUINT_TO_POINTER((0x0e8004 >> 2) + 1);
+                uint32_t es = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, es_key));
+                g_hash_table_insert(s->registers, es_key, GUINT_TO_POINTER(es & 0x7fffffffu));
+            }
+            l6max_edma_update_error_irq(s);
+        }
+        return;
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        offset == 0x0e8014 && size == 4) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER((offset >> 2) + 1), GUINT_TO_POINTER((uint32_t)value));
+        l6max_edma_update_error_irq(s);
+        return;
+    }
     if (offset == 0x0e8024 && size == 4) {
         /* eDMA INT is write-one-to-clear. */
         uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
@@ -3702,6 +4542,43 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
     }
     if (!sai && store_word) {
         g_hash_table_insert(s->registers, key, GUINT_TO_POINTER(word));
+        if (!s->panel && s->profile == &L6MAX_PROFILE &&
+            ((offset & ~3u) == 0x0ac040 || (offset & ~3u) == 0x0ac044)) {
+            uint32_t gpr16 = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+                GUINT_TO_POINTER((0x0ac040 >> 2) + 1)));
+            uint32_t gpr17 = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+                GUINT_TO_POINTER((0x0ac044 >> 2) + 1)));
+            l6max_flexram_map(s, gpr16, gpr17);
+        }
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (offset & ~(hwaddr)3) == 0x0fc07c) {
+        l6max_refresh_edma_clock(s);
+    }
+    hwaddr clock_word = offset & ~(hwaddr)3;
+    hwaddr clock_alias = offset & ~(hwaddr)0xf;
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (clock_word == 0x0fc00c || clock_word == L6_CCM_CACRR_OFFSET ||
+         clock_word == L6_CCM_CBCDR_OFFSET || clock_word == L6_CCM_CBCMR_OFFSET ||
+         clock_word == L6_CCM_CSCMR1_OFFSET || clock_word == 0x0fc06c ||
+         clock_word == L6_CCM_ANALOG_PLL_SYS_NUM ||
+         clock_word == L6_CCM_ANALOG_PLL_SYS_DENOM ||
+         (size == 4 && !(offset & 3) &&
+          (clock_alias == L6_CCM_ANALOG_PLL_ARM ||
+           clock_alias == L6_CCM_ANALOG_PLL_SYS ||
+           clock_alias == L6_CCM_ANALOG_PFD_528 || clock_alias == 0x0d8010 ||
+           clock_alias == 0x0d8150 || clock_alias == 0x0d8270)))) {
+        l6max_update_cpu_clock(s);
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        ((sai && ((sai_offset & ~3u) == L6_SAI_TCSR ||
+                  (sai_offset & ~3u) == L6_SAI_RCSR ||
+                  (sai_offset & ~3u) == L6_SAI_TCR2 ||
+                  (sai_offset & ~3u) == L6_SAI_TCR4 ||
+                  (sai_offset & ~3u) == L6_SAI_TCR5)) || clock_word == 0x0ac004 ||
+         (clock_word >= 0x0fc000 && clock_word <= 0x0fc084) ||
+         (clock_word >= 0x0d8000 && clock_word <= 0x0d82cc))) {
+        l6max_sai_clock_recheck(s);
     }
     if (s->panel) {
         static const hwaddr timer_bases[] = { 0, 0x400, 0x2000 };
@@ -3798,7 +4675,8 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
                          !!(word & (1u << 21)));
         }
     }
-    if (!s->panel && offset == l6_panel_uart_base(s) + 0x1c && size == 4) {
+    if (!s->panel && offset == l6_panel_uart_base(s) + 0x1c &&
+        (size == 4 || (s->profile == &L6MAX_PROFILE && (size == 1 || size == 2)))) {
         uint8_t byte = value;
         s->main_tx_count++;
         vaddr pc = current_cpu && CPU_GET_CLASS(current_cpu)->get_pc ?
@@ -3859,7 +4737,8 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
                       "l6 main LPUART (other) DATA write +%05lx = %02x\n",
                       (unsigned long)offset, (uint8_t)value);
     }
-    if (!s->panel && offset == l6_midi_uart_base(s) + 0x1c && size == 4) {
+    if (!s->panel && offset == l6_midi_uart_base(s) + 0x1c &&
+        (size == 4 || (s->profile == &L6MAX_PROFILE && (size == 1 || size == 2)))) {
         /* The selected MIDI UART's TX: forward bytes to the MIDI OUT jack
          * inherited socket like L6_USB_FD, one byte at a time. */
         uint8_t byte = value;
@@ -3901,8 +4780,8 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
     if (offset >= 0x0ec000 && offset < 0x0ec080) {
         l6_edma_service_active_sai(s);
     }
-    if (!s->panel && s->profile->oled && offset == 0x3a001c &&
-        size == 4 && (word & 3) == 3 &&
+    if (!s->panel && s->profile->oled && l6_edma_clock_enabled(s) &&
+        offset == 0x3a001c && size == 4 && (word & 3) == 3 &&
         (s->edma_erq & 0xc) == 0xc) {
         if (!l6_display_dma_transfer(s)) {
             qemu_log_mask(LOG_UNIMP,
@@ -4243,6 +5122,532 @@ static void l6_main_gpio_setup(L6ChipState *s, MemoryRegion *system_memory)
     l6_main_gpio_refresh_inputs(s);
 }
 
+/* Apply the modeled L6max bootloader handoff after every machine reset. */
+static void l6max_seed_boot_handoff(L6ChipState *s)
+{
+    /* Silicon identification from the captured L6max, not the RM's
+     * generic revision-zero reset value. */
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0d8260 >> 2) + 1),
+                        GUINT_TO_POINTER(0x006c0001u));
+    /* Later physical capture of the latched boot inputs. Reset does not
+     * simulate changes to straps or fuses, and reserved bit 3 was observed. */
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0f8004 >> 2) + 1), NULL);
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0f801c >> 2) + 1),
+                        GUINT_TO_POINTER(0x02000009u));
+    /* RT1060 RM 49.6.1.1: functional reset values. ROM/bootloader UART
+     * writes at handoff have not been completely traced. */
+    static const uint32_t uart_reset[] = {
+        0x04010003u, 0x00000202u, 0, 0, 0x0f000004u, 0x00c00000u,
+        0, 0x00001000u, 0, 0, 0x00c00011u, 0,
+    };
+    for (unsigned instance = 0; instance < 8; instance++) {
+        for (unsigned reg = 0; reg < ARRAY_SIZE(uart_reset); reg++) {
+            hwaddr offset = 0x184000 + instance * 0x4000 + reg * 4;
+            g_hash_table_insert(s->registers,
+                GUINT_TO_POINTER((offset >> 2) + 1),
+                GUINT_TO_POINTER(uart_reset[reg]));
+        }
+    }
+    s->main_rx_pending = false;
+    s->main_midi_rx_pending = false;
+    g_byte_array_set_size(s->main_midi_rx, 0);
+    /* The adapter owns these USDHC fields outside the reset QEMU device. */
+    s->sd_sysctl = L6_USDHC_SYS_CTRL_RESET;
+    s->sd_vend_spec2 = L6_USDHC_VEND_SPEC2_RESET;
+    s->sd_wakeup = 0;
+    /* PHY state was not captured at MAIN entry; use the manual reset value. */
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0d9000 >> 2) + 1),
+                        GUINT_TO_POINTER(0x001e1c00u));
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0d9010 >> 2) + 1),
+                        GUINT_TO_POINTER(0x10060607u));
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0d9020 >> 2) + 1), NULL);
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0d9030 >> 2) + 1),
+                        GUINT_TO_POINTER(0xc0200000u));
+    /* SRC cold reset resets CCM and functional modules, but not IOMUXC.
+     * Use RM reset values as the fallback for ROM-inherited CCM fields on
+     * every boot; the actual ROM's intervening writes remain unmeasured. */
+    static const struct { hwaddr offset; uint32_t value; } ccm_reset[] = {
+        { 0x0fc000, 0x0401107fu }, { 0x0fc00c, 0x00000100u },
+        { 0x0fc010, 0x00000001u }, { 0x0fc014, 0x000a8300u },
+        { 0x0fc018, 0x2dae8324u }, { 0x0fc01c, L6_CCM_CSCMR1_RESET },
+        { 0x0fc020, 0x13192f06u }, { 0x0fc024, 0x06490b00u },
+        { 0x0fc028, L6_CCM_CS1CDR_RESET },
+        { 0x0fc02c, L6_CCM_CS2CDR_RESET },
+        { 0x0fc030, 0x33f71f92u }, { 0x0fc038, 0x00029150u },
+        { 0x0fc060, 0x000a0001u },
+        { 0x0fc068, 0xffffffffu }, { 0x0fc06c, 0xffffffffu },
+        { 0x0fc070, 0xfc3fffffu }, { 0x0fc074, 0xffffffcfu },
+        { 0x0fc078, 0xffffffffu }, { 0x0fc07c, 0xffffffffu },
+        { 0x0fc080, 0xffffffffu }, { 0x0fc084, 0xffffffffu },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(ccm_reset); i++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER((ccm_reset[i].offset >> 2) + 1),
+            GUINT_TO_POINTER(ccm_reset[i].value));
+    }
+    /* ROM startup masks CCGR0..6 before the first-stage writes. On the
+     * reviewed normal boot path, TRNG initialization re-enables CCGR6 CG6;
+     * the USB gate is enabled by the downloader path, not that normal path.
+     * Other indirect writes and physical handoff values remain unverified. */
+    static const uint32_t rom_gate_keep[] = {
+        0xc0c00fffu, 0xfcfcc000u, 0x0ffff033u, 0xf00ff330u,
+        0x0000ffffu, 0xf0033c33u, 0x00fc03c0u,
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(rom_gate_keep); i++) {
+        gpointer key = GUINT_TO_POINTER(((0x0fc068 + i * 4) >> 2) + 1);
+        uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
+        g_hash_table_insert(s->registers, key, GUINT_TO_POINTER(old & rom_gate_keep[i]));
+    }
+    gpointer rom_ccgr6 = GUINT_TO_POINTER((0x0fc080 >> 2) + 1);
+    uint32_t rom_ccgr6_value = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, rom_ccgr6));
+    g_hash_table_insert(s->registers, rom_ccgr6,
+                        GUINT_TO_POINTER(rom_ccgr6_value | 0x00003000u));
+    /* PLL and PFD controls are reset by SRC as system modules. These are
+     * reference-manual reset fallbacks, not a complete ROM clock trace. */
+    static const struct { hwaddr offset; uint32_t value; } analog_reset[] = {
+        { 0x0d8000, 0x00013063u }, { 0x0d8010, 0x00012000u },
+        { 0x0d8020, 0x00012000u }, { 0x0d8030, 0x00013001u },
+        { 0x0d8040, 0 }, { 0x0d8050, 0 }, { 0x0d8060, 0x12u },
+        { 0x0d8070, 0x00011006u }, { 0x0d8080, 0x05f5e100u },
+        { 0x0d8090, 0x2964619cu }, { 0x0d80a0, 0x0001100cu },
+        { 0x0d80b0, 0x05f5e100u }, { 0x0d80c0, 0x10a24447u },
+        { 0x0d80e0, 0x00011001u }, { 0x0d80f0, 0x1311100cu },
+        { 0x0d8100, 0x1018101bu }, { 0x0d8160, 0 },
+        { 0x0d8170, 0x00272727u },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(analog_reset); i++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER((analog_reset[i].offset >> 2) + 1),
+            GUINT_TO_POINTER(analog_reset[i].value));
+    }
+    s->pfd_applied[0] = 0x1311100cu;
+    s->pfd_applied[1] = 0x1018101bu;
+    /* Reset controller fields which the recovered boot code modifies only
+     * partially. The ROM may have written them before the first stage. */
+    static const struct { hwaddr offset; uint32_t value; } memory_reset[] = {
+        { 0x2f0004, 0 }, /* SEMC IOCR */
+        { 0x2f0034, 0x100u }, { 0x2f0038, 0 }, { 0x2f003c, 0 },
+        { 0x2f0050, 0 }, { 0x2f0054, 0 }, { 0x2f0058, 0x10410u },
+        { 0x2f005c, 0 }, { 0x2f0060, 0 }, { 0x2f0064, 0 },
+        { 0x2f0068, 0 }, { 0x2f006c, 0 }, { 0x2f0070, 0 },
+        { 0x2f0074, 0 }, { 0x2f0078, 0 }, { 0x2f007c, 0 },
+        { 0x2f0080, 0 }, { 0x2f0084, 0 }, { 0x2f009c, 0 },
+        { 0x2f00b0, 0 },
+        { 0x2a8008, 0x200081f7u }, { 0x2a800c, 0x18u },
+        { 0x2a8010, 0 }, { 0x2a8014, 0 },
+        { 0x2a8020, 0x80000020u }, { 0x2a8024, 0x80010020u },
+        { 0x2a8028, 0x80020020u }, { 0x2a802c, 0x80030020u },
+        { 0x2a8074, 0x63u }, { 0x2a8078, 0x63u }, { 0x2a807c, 0x63u },
+        { 0x2a8080, 0 }, { 0x2a8084, 0 }, { 0x2a8088, 0 },
+        { 0x2a808c, 0 }, { 0x2a8094, 0 },
+        { 0x2a80a0, 0 }, { 0x2a80a4, 0 }, { 0x2a80b0, 0 },
+        { 0x2a80b8, 0 }, { 0x2a80bc, 0 }, { 0x2a80c4, 0x100u },
+        { 0x2a8180, 0 }, { 0x2a8184, 0 },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(memory_reset); i++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER((memory_reset[i].offset >> 2) + 1),
+            GUINT_TO_POINTER(memory_reset[i].value));
+    }
+    /* DMAMUX channels, eDMA requests and interrupts reset disabled. TCD
+     * fields have unknown reset values in the RT1060 manual: retain their
+     * emulated contents rather than claiming that they reset to zero. */
+    uint32_t old_dma_irqs = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+        GUINT_TO_POINTER((0x0e8024 >> 2) + 1)));
+    for (unsigned channel = 0; channel < 32; channel++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER(((0x0ec000 + 4 * channel) >> 2) + 1), NULL);
+        if (old_dma_irqs & (1u << channel)) {
+            l6_edma_update_irq_level(s, channel, 0);
+        }
+    }
+    s->edma_erq = 0;
+    s->audio_edma_irq_raised = false;
+    static const hwaddr edma_zero[] = {
+        0x0e8004, 0x0e800c, 0x0e8014, 0x0e8018, 0x0e801c,
+        0x0e8024, 0x0e802c, 0x0e8034, 0x0e8044,
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(edma_zero); i++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER((edma_zero[i] >> 2) + 1), NULL);
+    }
+    l6max_edma_update_error_irq(s);
+    gpointer edma_cr_key = GUINT_TO_POINTER((0x0e8000 >> 2) + 1);
+    uint32_t edma_cr = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+                                                           edma_cr_key));
+    g_hash_table_insert(s->registers, edma_cr_key,
+                        GUINT_TO_POINTER((edma_cr & 0x7f000000u) | 0x400u));
+    for (unsigned group = 0; group < 8; group++) {
+        uint32_t base = group * 4;
+        uint32_t priority = (base << 24) | ((base + 1) << 16) |
+                            ((base + 2) << 8) | (base + 3);
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER(((0x0e8100 + 4 * group) >> 2) + 1),
+            GUINT_TO_POINTER(priority));
+    }
+    /* SAI1 is reset by system reset. No SAI setup was found in the reviewed
+     * boot path; indirect ROM or bootloader writes remain unverified. */
+    for (unsigned i = 0; i < s->profile->sai_count; i++) {
+        l6_sai_init(&s->sai[i], s->profile->sai_bases[i] == 0x384000);
+    }
+    s->audio_service_rate_hz = 0;
+    s->audio_service_period_remainder = 0;
+    /* A controller reset aborts pending FIFO work; the external NOR's
+     * write-enable latch and contents are independent of the controller. */
+    s->flexspi_rx_size = s->flexspi_rx_cursor = 0;
+    s->nor_program = false;
+    s->nor_program_address = s->nor_program_size = s->nor_program_cursor = 0;
+    l6_flexspi_rx_window(s);
+    /* Clock setup enables RC OSC, selects the crystal for the 24 MHz root,
+     * and sets the DCDC target to 0x13. The successful path waits for the
+     * crystal-ready status. Unwritten bits use RM reset fallback. */
+    static const struct { hwaddr offset; uint32_t reset, set, clear; } early_clock[] = {
+        { 0x0d8270, 0x4001u, 0x10001u, 0x10u },
+        { 0x0d8150, 0x04000000u, 0, 0x10000u },
+        { 0x080000, 0x14030111u, 0x80000000u, 0 },
+        { 0x08000c, 0x10eu, 0x13u, 0x0cu },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(early_clock); i++) {
+        gpointer key = GUINT_TO_POINTER((early_clock[i].offset >> 2) + 1);
+        gpointer stored;
+        uint32_t old = g_hash_table_lookup_extended(s->registers, key, NULL,
+                                                     &stored) ?
+                       GPOINTER_TO_UINT(stored) : early_clock[i].reset;
+        g_hash_table_insert(s->registers, key,
+                            GUINT_TO_POINTER((old & ~early_clock[i].clear) |
+                                             early_clock[i].set));
+    }
+    /* Boot enables the independent RC-derived 1 MHz output and selects its
+     * free-running source. Other fields are inherited, with RM reset fallback. */
+    gpointer osc_key = GUINT_TO_POINTER((0x0d82c0 >> 2) + 1);
+    gpointer osc_stored;
+    uint32_t osc = g_hash_table_lookup_extended(s->registers, osc_key, NULL,
+                                               &osc_stored) ?
+                   GPOINTER_TO_UINT(osc_stored) : 0x000102e2u;
+    g_hash_table_insert(s->registers, osc_key,
+                        GUINT_TO_POINTER((osc & ~0x20000u) | 0x10000u));
+    /* ROM cleanup disables the timer after configuring channels 0/1 as a
+     * chained lifetime counter. Their actual stopped counts were not captured. */
+    s->pit_mcr = 2;
+    memset(s->pit_load, 0, sizeof(s->pit_load));
+    memset(s->pit_count, 0, sizeof(s->pit_count));
+    memset(s->pit_ctrl, 0, sizeof(s->pit_ctrl));
+    memset(s->pit_flag, 0, sizeof(s->pit_flag));
+    s->pit_load[0] = s->pit_count[0] = UINT32_MAX;
+    s->pit_load[1] = s->pit_count[1] = UINT32_MAX;
+    s->pit_ctrl[0] = 1;
+    s->pit_ctrl[1] = 5;
+    s->pit_latched_low = s->pit_fraction = s->pit_rate = 0;
+    s->pit_last_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    timer_del(s->pit_timer);
+    l6max_pit_irq(s);
+    /* ROM image-transfer cleanup sets GPR3.DCP_KEY_SEL and clears
+     * GPR10.DCPKEY_OCOTP_OR_KEYMUX. Untouched initial fields use the
+     * manual's reset values; physical inherited and lock state is unknown. */
+    static const struct { hwaddr offset; uint32_t reset, set, clear; } rom_gpr[] = {
+        { 0x0ac00c, 0x0000f0f0u, 0x10u, 0 },
+        { 0x0ac028, 0x00000007u, 0, 0x10u },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(rom_gpr); i++) {
+        gpointer key = GUINT_TO_POINTER((rom_gpr[i].offset >> 2) + 1);
+        gpointer stored;
+        uint32_t old = g_hash_table_lookup_extended(s->registers, key, NULL,
+                                                     &stored) ?
+                       GPOINTER_TO_UINT(stored) : rom_gpr[i].reset;
+        g_hash_table_insert(s->registers, key,
+                            GUINT_TO_POINTER((old | rom_gpr[i].set) &
+                                             ~rom_gpr[i].clear));
+    }
+    /* boot_configure_usb1_pll uses DIV_SELECT=0 and oscillator bypass
+     * source, powers/enables the PLL, waits for LOCK, then clears bypass.
+     * LOCK is synthesized by l6max_usb_pll_status on reads. */
+    g_hash_table_insert(s->registers,
+        GUINT_TO_POINTER((0x0d8010 >> 2) + 1),
+        GUINT_TO_POINTER(0x00003040u));
+    /* Entry writes GPR14=0x00860000. Its upper bits are reserved in the
+     * RT1060 manual; generic GPR storage retains the written value, but
+     * reserved-bit readback on the physical MCU has not been established. */
+    g_hash_table_insert(s->registers,
+        GUINT_TO_POINTER((0x0ac038 >> 2) + 1),
+        GUINT_TO_POINTER(0x00860000u));
+    /* First-stage entry selects the software FlexRAM partition: one 32 KiB
+     * ITCM bank, four DTCM banks and eleven OCRAM banks. GPR16's other
+     * fields are inherited; its reset value supplies the initial VTOR. */
+    g_hash_table_insert(s->registers,
+        GUINT_TO_POINTER((0x0ac044 >> 2) + 1),
+        GUINT_TO_POINTER(0x5555ea95u));
+    gpointer flexram_select = GUINT_TO_POINTER((0x0ac040 >> 2) + 1);
+    gpointer stored_gpr16;
+    uint32_t gpr16 = g_hash_table_lookup_extended(s->registers, flexram_select,
+                                                 NULL, &stored_gpr16) ?
+                     GPOINTER_TO_UINT(stored_gpr16) : 0x00200003u;
+    g_hash_table_insert(s->registers, flexram_select,
+                        GUINT_TO_POINTER(gpr16 | 7u));
+    l6max_flexram_map(s, gpr16 | 7u, 0x5555ea95u);
+    /* No FlexRAM control state was captured from ROM: assume reset defaults. */
+    s->flexram_tcm_ctrl = s->flexram_status = 0;
+    s->flexram_status_en = s->flexram_sig_en = 0;
+    l6max_flexram_irq_update(s);
+    /* Pad setup and clock setup each clear selected IOMUX GPR fields.
+     * Preserve the inherited bits that the bootloader does not modify. */
+    static const struct { hwaddr offset; uint32_t keep; } gpr_masks[] = {
+        { 0x0ac004, 0xfff9f000u }, { 0x0ac008, 0xfb00ffffu },
+        { 0x0ac014, 0xcfffffffu }, { 0x0ac068, 0xefeffffbu },
+        { 0x0ac06c, 0xedffffffu }, { 0x0ac070, 0xfffffff6u },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(gpr_masks); i++) {
+        gpointer key = GUINT_TO_POINTER((gpr_masks[i].offset >> 2) + 1);
+        uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
+        g_hash_table_insert(s->registers,
+            key, GUINT_TO_POINTER(old & gpr_masks[i].keep));
+    }
+    /* Bootloader 1.00 IOMUX writes, including zeroes on reset. */
+    static const struct { hwaddr offset; uint32_t value; } boot_iomux[] = {
+        { 0x1f80c4, 0x5 }, { 0x1f80d4, 0x0 }, { 0x1f80d8, 0x0 },
+        { 0x1f80dc, 0x0 }, { 0x1f8108, 0x5 }, { 0x1f810c, 0x5 },
+        { 0x1f812c, 0x5 }, { 0x1f81a0, 0x5 }, { 0x1f81ac, 0x5 },
+        { 0x1f8014, 0x0 }, { 0x1f8018, 0x0 }, { 0x1f801c, 0x0 },
+        { 0x1f8020, 0x0 }, { 0x1f8024, 0x0 }, { 0x1f8028, 0x0 },
+        { 0x1f802c, 0x0 }, { 0x1f8030, 0x0 }, { 0x1f8034, 0x0 },
+        { 0x1f8038, 0x0 }, { 0x1f803c, 0x0 }, { 0x1f8040, 0x0 },
+        { 0x1f8044, 0x0 }, { 0x1f8048, 0x0 }, { 0x1f804c, 0x0 },
+        { 0x1f8050, 0x0 }, { 0x1f8054, 0x0 }, { 0x1f8058, 0x0 },
+        { 0x1f805c, 0x0 }, { 0x1f8060, 0x0 }, { 0x1f8064, 0x0 },
+        { 0x1f8068, 0x0 }, { 0x1f806c, 0x0 }, { 0x1f8070, 0x0 },
+        { 0x1f8074, 0x0 }, { 0x1f8078, 0x0 }, { 0x1f807c, 0x0 },
+        { 0x1f8080, 0x0 }, { 0x1f8084, 0x0 }, { 0x1f8088, 0x0 },
+        { 0x1f808c, 0x0 }, { 0x1f8090, 0x0 }, { 0x1f8094, 0x0 },
+        { 0x1f8098, 0x0 }, { 0x1f809c, 0x0 }, { 0x1f80a0, 0x0 },
+        { 0x1f80a4, 0x0 }, { 0x1f80a8, 0x0 }, { 0x1f80ac, 0x0 },
+        { 0x1f80b0, 0x10 }, { 0x1f80b8, 0x0 }, { 0x1f81bc, 0x0 },
+        { 0x1f81c0, 0x0 }, { 0x1f81c4, 0x0 }, { 0x1f81c8, 0x0 },
+        { 0x1f81cc, 0x0 }, { 0x1f81d0, 0x0 }, { 0x1f81d4, 0x5 },
+        { 0x1f81e0, 0x5 }, { 0x1f81ec, 0x1 }, { 0x1f81f0, 0x1 },
+        { 0x1f84c8, 0x0 }, { 0x1f81f4, 0x1 }, { 0x1f84a8, 0x0 },
+        { 0x1f81f8, 0x1 }, { 0x1f84ac, 0x0 }, { 0x1f82b4, 0x3088 },
+        { 0x1f82c4, 0x70a0 }, { 0x1f82c8, 0x30a0 }, { 0x1f82cc, 0x30a0 },
+        { 0x1f82f8, 0xb0 }, { 0x1f82fc, 0x70b0 }, { 0x1f831c, 0x1088 },
+        { 0x1f8390, 0x70a0 }, { 0x1f839c, 0x70b0 }, { 0x1f8204, 0x10f0 },
+        { 0x1f8208, 0x10f0 }, { 0x1f820c, 0x10f0 }, { 0x1f8210, 0x10f0 },
+        { 0x1f8214, 0x10f0 }, { 0x1f8218, 0x10f0 }, { 0x1f821c, 0x10f0 },
+        { 0x1f8220, 0x10f0 }, { 0x1f8224, 0x10d8 }, { 0x1f8228, 0x10d8 },
+        { 0x1f822c, 0x10d8 }, { 0x1f8230, 0x10d8 }, { 0x1f8234, 0x10d8 },
+        { 0x1f8238, 0x10d8 }, { 0x1f823c, 0x10d8 }, { 0x1f8240, 0x10d8 },
+        { 0x1f8244, 0x10d8 }, { 0x1f8248, 0x10d8 }, { 0x1f824c, 0x10d8 },
+        { 0x1f8250, 0x10d8 }, { 0x1f8254, 0x10d8 }, { 0x1f8258, 0x10d8 },
+        { 0x1f825c, 0x10d8 }, { 0x1f8260, 0x10d8 }, { 0x1f8264, 0x10d8 },
+        { 0x1f8268, 0x10d8 }, { 0x1f826c, 0x10f0 }, { 0x1f8270, 0x30d8 },
+        { 0x1f8274, 0x10d8 }, { 0x1f8278, 0x10d8 }, { 0x1f827c, 0x10f0 },
+        { 0x1f8280, 0x10f0 }, { 0x1f8284, 0x10f0 }, { 0x1f8288, 0x10f0 },
+        { 0x1f828c, 0x10f0 }, { 0x1f8290, 0x10f0 }, { 0x1f8294, 0x10f0 },
+        { 0x1f8298, 0x10f0 }, { 0x1f829c, 0x10d8 }, { 0x1f82a0, 0x10f0 },
+        { 0x1f82a8, 0x10d8 }, { 0x1f83ac, 0x7090 }, { 0x1f83b0, 0x1090 },
+        { 0x1f83b4, 0xb090 }, { 0x1f83b8, 0x7090 }, { 0x1f83bc, 0x7090 },
+        { 0x1f83c0, 0x7090 }, { 0x1f83c4, 0x3088 }, { 0x1f83d0, 0x3088 },
+        { 0x1f83dc, 0x70b0 }, { 0x1f83e0, 0x1088 }, { 0x1f83e4, 0x1088 },
+        { 0x1f83e8, 0x1088 }, { 0x0a8000, 0x5 }, { 0x0a8018, 0x70b0 },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(boot_iomux); i++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER((boot_iomux[i].offset >> 2) + 1),
+            GUINT_TO_POINTER(boot_iomux[i].value));
+    }
+    /* The SEMC helper clears BR0..BR8, resets its internal logic, sets
+     * loopback DQS and command/bus timeouts, then enables both queues. */
+    for (unsigned i = 0; i < 9; i++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER(((0x2f0010 + 4 * i) >> 2) + 1), NULL);
+    }
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x2f0000 >> 2) + 1),
+                        GUINT_TO_POINTER(0x1fff0004u));
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x2f0008 >> 2) + 1),
+                        GUINT_TO_POINTER(0x81u));
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x2f000c >> 2) + 1),
+                        GUINT_TO_POINTER(0x81u));
+    /* SDRAM setup modifies selected IOCR mux bits, preserving other fields. */
+    gpointer semc_iocr = GUINT_TO_POINTER((0x2f0004 >> 2) + 1);
+    uint32_t iocr = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, semc_iocr));
+    g_hash_table_insert(s->registers, semc_iocr,
+                        GUINT_TO_POINTER((iocr & ~0x1fu) | 8u));
+    /* Bootloader 1.00 configures two 32 MiB SEMC SDRAM windows.
+     * These base registers describe mapping, not detected capacity. */
+    g_hash_table_insert(s->registers,
+        GUINT_TO_POINTER((0x2f0010 >> 2) + 1),
+        GUINT_TO_POINTER(0x8000001bu));
+    g_hash_table_insert(s->registers,
+        GUINT_TO_POINTER((0x2f0014 >> 2) + 1),
+        GUINT_TO_POINTER(0x8200001bu));
+    /* SDRAMCR0: 16-bit port, burst length 8, nine column bits,
+     * CAS latency 3. Timing/refresh fields use the bootloader's nominal
+     * 163.862 MHz SEMC clock and 1.00 timing parameters. */
+    g_hash_table_insert(s->registers,
+        GUINT_TO_POINTER((0x2f0040 >> 2) + 1),
+        GUINT_TO_POINTER(0x00000f31u));
+    g_hash_table_insert(s->registers,
+        GUINT_TO_POINTER((0x2f0044 >> 2) + 1),
+        GUINT_TO_POINTER(0x00664b22u));
+    g_hash_table_insert(s->registers,
+        GUINT_TO_POINTER((0x2f0048 >> 2) + 1),
+        GUINT_TO_POINTER(0x0009090bu));
+    g_hash_table_insert(s->registers,
+        GUINT_TO_POINTER((0x2f004c >> 2) + 1),
+        GUINT_TO_POINTER(0x08070a01u));
+    /* The successful final SDRAM mode-register command targets CS1. Its
+     * address, transfer size and mode word remain in the IP registers;
+     * actual command execution and timing are not simulated. */
+    static const struct { hwaddr offset; uint32_t value; } semc_ip[] = {
+        { 0x2f0090, 0x82000000u }, { 0x2f0094, 2u },
+        { 0x2f0098, 0u }, { 0x2f00a0, 0x33u },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(semc_ip); i++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER((semc_ip[i].offset >> 2) + 1),
+            GUINT_TO_POINTER(semc_ip[i].value));
+    }
+    /* The boot task applies the default FlexSPI1 controller configuration,
+     * then its flash-device helper clears MCR0.MDIS before reading NOR. */
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x2a8000 >> 2) + 1),
+                        GUINT_TO_POINTER(0xffff1000u));
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x2a8004 >> 2) + 1),
+                        GUINT_TO_POINTER(0xffffffffu));
+    gpointer flexspi_mcr2 = GUINT_TO_POINTER((0x2a8008 >> 2) + 1);
+    uint32_t mcr2 = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+                                                         flexspi_mcr2));
+    g_hash_table_insert(s->registers, flexspi_mcr2,
+                        GUINT_TO_POINTER((mcr2 & 0x00f777ffu) | 0x20000000u));
+    gpointer flexspi_ahbcr = GUINT_TO_POINTER((0x2a800c >> 2) + 1);
+    uint32_t ahbcr = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+                                                          flexspi_ahbcr));
+    g_hash_table_insert(s->registers, flexspi_ahbcr,
+                        GUINT_TO_POINTER(ahbcr & ~0x78u));
+    /* Default controller configuration sets AHB receive buffers 0/1 to
+     * master ID 15 with size zero, and buffers 2/3 to 256 bytes each.
+     * The SDK helper preserves the surrounding inherited register bits. */
+    static const uint32_t ahb_buffers[] = {
+        0x800f0000u, 0x800f0000u, 0x80000020u, 0x80000020u,
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(ahb_buffers); i++) {
+        gpointer key = GUINT_TO_POINTER(((0x2a8020 + i * 4) >> 2) + 1);
+        uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
+        g_hash_table_insert(s->registers, key,
+            GUINT_TO_POINTER((old & 0x7cf0ff00u) | ahb_buffers[i]));
+    }
+    /* Initialization clears all flash-size windows; the NOR helper later
+     * configures only A1. Other ports therefore stay disabled. */
+    for (unsigned i = 1; i < 4; i++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER(((0x2a8060 + i * 4) >> 2) + 1), NULL);
+    }
+    /* The default RX/TX FIFO watermarks are eight bytes. */
+    for (unsigned i = 0; i < 2; i++) {
+        gpointer key = GUINT_TO_POINTER(((0x2a80b8 + i * 4) >> 2) + 1);
+        uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
+        g_hash_table_insert(s->registers, key,
+                            GUINT_TO_POINTER(old & ~0x3cu));
+    }
+    /* The NOR helper installs six four-word command sequences (fast read,
+     * write enable, sector/block erase, page program and status read), then
+     * locks the LUT. Later software reset leaves configuration intact. */
+    static const uint32_t boot_lut[24] = {
+        0x0818040bu, 0x24043008u, 0, 0,
+        0x00000406u, 0, 0, 0,
+        0x08180420u, 0, 0, 0,
+        0x081804d8u, 0, 0, 0,
+        0x08180402u, 0x00002004u, 0, 0,
+        0x24040405u, 0, 0, 0,
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(boot_lut); i++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER(((0x2a8200 + i * 4) >> 2) + 1),
+            GUINT_TO_POINTER(boot_lut[i]));
+    }
+    s->flexspi_lut_locked = true;
+    s->flexspi_lut_key_valid = false;
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x2a8018 >> 2) + 1),
+                        GUINT_TO_POINTER(0x5af05af0u));
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x2a801c >> 2) + 1),
+                        GUINT_TO_POINTER(1u));
+    /* The 1.00 NOR-device record, copied from its initialized data,
+     * configures port A1 for 2 MiB and chip-select timing. The helper
+     * preserves selected CR2/CR4 fields; their inherited values are unknown. */
+    static const struct { hwaddr offset; uint32_t value; } flash_device[] = {
+        { 0x2a8060, 0x800u }, { 0x2a8070, 0x30063u },
+        { 0x2a80c0, 0x100u },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(flash_device); i++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER((flash_device[i].offset >> 2) + 1),
+            GUINT_TO_POINTER(flash_device[i].value));
+    }
+    gpointer flash_cr2 = GUINT_TO_POINTER((0x2a8080 >> 2) + 1);
+    uint32_t cr2 = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, flash_cr2));
+    g_hash_table_insert(s->registers, flash_cr2,
+                        GUINT_TO_POINTER(cr2 & 0x80001010u));
+    gpointer flash_cr4 = GUINT_TO_POINTER((0x2a8094 >> 2) + 1);
+    uint32_t cr4 = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, flash_cr4));
+    g_hash_table_insert(s->registers, flash_cr4,
+                        GUINT_TO_POINTER((cr4 & ~5u) | 1u));
+    static const hwaddr offsets[] = {
+        0x0fc000, 0x0fc00c, 0x0fc020, 0x0fc024,
+        0x0fc02c, 0x0fc030, 0x0fc038, 0x0fc060,
+        0x0d8020, 0x0d80a0, 0x0d80e0, 0x0d8160,
+        L6_CCM_CACRR_OFFSET, L6_CCM_CBCDR_OFFSET, L6_CCM_CBCMR_OFFSET,
+        L6_CCM_CSCMR1_OFFSET, L6_CCM_CS1CDR_OFFSET,
+        L6_CCM_ANALOG_PLL_ARM, L6_CCM_ANALOG_PLL_SYS,
+        0x0d8040, L6_CCM_ANALOG_PLL_SYS_NUM, L6_CCM_ANALOG_PLL_SYS_DENOM,
+        L6_CCM_ANALOG_MISC2, L6_CCM_ANALOG_PLL_AUDIO,
+        L6_CCM_ANALOG_PLL_AUDIO_NUM, L6_CCM_ANALOG_PLL_AUDIO_DENOM,
+        L6_CCM_ANALOG_PFD_480, L6_CCM_ANALOG_PFD_528,
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(offsets); i++) {
+        gpointer key = GUINT_TO_POINTER((offsets[i] >> 2) + 1);
+        uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
+        uint32_t value = l6max_boot_clock_value(offsets[i], old);
+        if (offsets[i] == L6_CCM_ANALOG_PFD_480 ||
+            offsets[i] == L6_CCM_ANALOG_PFD_528) {
+            value = l6_pfd_apply(old, value, L6_USB1_PLL_DIRECT,
+                &s->pfd_applied[offsets[i] == L6_CCM_ANALOG_PFD_528]);
+        }
+        g_hash_table_insert(s->registers, key, GUINT_TO_POINTER(value));
+    }
+    /* The clock-tree routine clears these fields after pad setup. Later
+     * GPIO/SEMC/FlexSPI initialization restores the enabled fields below. */
+    static const struct { hwaddr offset; uint32_t keep; } gate_masks[] = {
+        { 0x0fc068, 0xc0000fffu }, { 0x0fc06c, 0xfc0ccc00u },
+        { 0x0fc070, 0xfc3f303fu }, { 0x0fc074, 0xffffff00u },
+        { 0x0fc07c, 0xf0033ff3u }, { 0x0fc080, 0xffff33c3u },
+        { 0x0fc084, 0xfffffc33u },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(gate_masks); i++) {
+        gpointer key = GUINT_TO_POINTER((gate_masks[i].offset >> 2) + 1);
+        uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
+        g_hash_table_insert(s->registers,
+                            key, GUINT_TO_POINTER(old & gate_masks[i].keep));
+    }
+    /* Pad and GPIO setup, SEMC and FlexSPI1 enable these gate fields.
+     * Other gate fields remain inherited. */
+    static const struct { hwaddr offset; uint32_t mask; } enabled_gates[] = {
+        { 0x0fc068, 0xc0000000u }, { 0x0fc06c, 0xcc0c0000u },
+        { 0x0fc070, 0x0c000030u }, { 0x0fc074, 0x00000030u },
+        { 0x0fc078, 0x0000000cu },
+        { 0x0fc080, 0x00000c00u },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(enabled_gates); i++) {
+        gpointer key = GUINT_TO_POINTER((enabled_gates[i].offset >> 2) + 1);
+        uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
+        g_hash_table_insert(s->registers,
+            key, GUINT_TO_POINTER(old | enabled_gates[i].mask));
+    }
+    l6max_update_cpu_clock(s);
+    /* GPIO1.2 and GPIO3.3 start high; GPIO1.28 and GPIO3.0 start low. */
+    l6_main_gpio_write(&s->main_gpio_adapters[0], 0, 1u << 2, 4);
+    l6_main_gpio_write(&s->main_gpio_adapters[0], 4,
+                       (1u << 2) | (1u << 28), 4);
+    l6_main_gpio_write(&s->main_gpio_adapters[2], 0, 1u << 3, 4);
+    l6_main_gpio_write(&s->main_gpio_adapters[2], 4,
+                       (1u << 0) | (1u << 3), 4);
+}
+
 static const MemoryRegionOps l6_mmio_ops = {
     .read = l6_mmio_read,
     .write = l6_mmio_write,
@@ -4498,6 +5903,8 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
     g_autofree char *external_ram_name = g_strdup_printf("%s.external_ram", prefix);
     g_autofree char *unmodeled_mmio_name = g_strdup_printf("%s.unmodeled_mmio", prefix);
     s->registers = g_hash_table_new(g_direct_hash, g_direct_equal);
+    s->pfd_applied[0] = L6_CCM_ANALOG_PFD_480_RESET;
+    s->pfd_applied[1] = L6_CCM_ANALOG_PFD_528_RESET;
     s->panel = panel;
     s->profile = profile;
     if (!panel) {
@@ -4582,6 +5989,28 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
             g_hash_table_insert(s->registers,
                 GUINT_TO_POINTER((ccm_reset[i].offset >> 2) + 1),
                 GUINT_TO_POINTER(ccm_reset[i].value));
+        }
+        if (profile == &L6MAX_PROFILE) {
+            /* RT1060 RM reset values, used where ROM state is not captured. */
+            static const struct { hwaddr offset; uint32_t value; } ccm1060[] = {
+                { 0x0fc000, 0x0401107fu }, { 0x0fc00c, 0x00000100u },
+                { 0x0fc010, 0x00000001u }, { 0x0fc014, 0x000a8300u },
+                { 0x0fc018, 0x2dae8324u }, { 0x0d8000, 0x00013063u },
+                { 0x0d80b0, 0x05f5e100u }, { 0x0d80c0, 0x10a24447u },
+                { 0x0d8170, 0x00272727u },
+                { 0x0fc020, 0x13192f06u }, { 0x0fc024, 0x06490b00u },
+                { 0x0fc030, 0x33f71f92u }, { 0x0fc038, 0x00029150u },
+                { 0x0fc060, 0x000a0001u },
+                { 0x0fc068, 0xffffffffu }, { 0x0fc06c, 0xffffffffu },
+                { 0x0fc070, 0xfc3fffffu }, { 0x0fc074, 0xffffffcfu },
+                { 0x0fc078, 0xffffffffu }, { 0x0fc07c, 0xffffffffu },
+                { 0x0fc080, 0xffffffffu }, { 0x0fc084, 0xffffffffu },
+            };
+            for (unsigned i = 0; i < ARRAY_SIZE(ccm1060); i++) {
+                g_hash_table_insert(s->registers,
+                    GUINT_TO_POINTER((ccm1060[i].offset >> 2) + 1),
+                    GUINT_TO_POINTER(ccm1060[i].value));
+            }
         }
         for (unsigned instance = 0; instance < 8; instance++) {
             hwaddr base = 0x184000 + instance * 0x4000;
@@ -4857,6 +6286,9 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
         s->panel_tim2 = timer_new_ns(QEMU_CLOCK_VIRTUAL,
                                      l6_panel_tim2_tick, s);
     } else {
+        if (s->profile == &L6MAX_PROFILE) {
+            s->pit_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, l6max_pit_tick, s);
+        }
         s->rom_uart_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
                                          l6_rom_uart_tick, s);
         s->main_audio_service_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
@@ -4887,11 +6319,18 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
     s->sysclk = clock_new(OBJECT(machine), sysclk_name);
     s->refclk = clock_new(OBJECT(machine), refclk_name);
     clock_set_hz(s->sysclk, panel ? 48000000 : 600000000);
-    clock_set_hz(s->refclk, 1000000);
+    /* RT1060 divides the external SysTick 24 MHz reference to 100 kHz. */
+    clock_set_hz(s->refclk, !panel && profile == &L6MAX_PROFILE ? 100000 : 1000000);
     if (!panel) { l6_prepare_nor(s, kernel_filename); }
 
-    memory_region_init_rom(&s->flash, NULL, flash_name,
-                           flash_size, &error_fatal);
+    if (!panel && profile == &L6MAX_PROFILE) {
+        /* The first-stage loader copies MAIN into SDRAM before branching. */
+        memory_region_init_ram(&s->flash, NULL, flash_name,
+                               flash_size, &error_fatal);
+    } else {
+        memory_region_init_rom(&s->flash, NULL, flash_name,
+                               flash_size, &error_fatal);
+    }
     if (panel) {
         memory_region_init_alias(&s->panel_flash_window, NULL,
                                  "panel.flash-window", &s->flash, 0, flash_map_size);
@@ -4901,10 +6340,33 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
         memory_region_add_subregion(system_memory, 0, &s->flash_alias);
     } else {
         memory_region_add_subregion(system_memory, flash_base, &s->flash);
-        memory_region_init_ram(&s->itcm, NULL, itcm_name, 0x100000,
-                               &error_fatal);
-        memory_region_add_subregion(system_memory, 0, &s->itcm);
-        memcpy(memory_region_get_ram_ptr(&s->itcm), s->nor_flash + 0x50000, 0x100000);
+        if (profile == &L6MAX_PROFILE) {
+            memory_region_init_ram(&s->flexram, NULL, "main.flexram", 0x80000,
+                                   &error_fatal);
+            static const hwaddr holes[] = { 0x00000000, 0x20000000, 0x20280000 };
+            static const uint32_t error_bits[] = { 1u << 3, 1u << 4, 1u << 5 };
+            for (unsigned i = 0; i < ARRAY_SIZE(holes); i++) {
+                g_autofree char *name = g_strdup_printf("main.flexram-hole%u", i);
+                s->flexram_hole_context[i].chip = s;
+                s->flexram_hole_context[i].error_bit = error_bits[i];
+                memory_region_init_io(&s->flexram_holes[i], NULL,
+                                      &l6max_flexram_hole_ops,
+                                      &s->flexram_hole_context[i], name, 0x80000);
+                memory_region_add_subregion_overlap(system_memory, holes[i],
+                                                    &s->flexram_holes[i], -1);
+            }
+            for (unsigned bank = 0; bank < 16; bank++) {
+                g_autofree char *name = g_strdup_printf("main.flexram-bank%u", bank);
+                memory_region_init_alias(&s->flexram_bank[bank], NULL, name,
+                                         &s->flexram, bank * 0x8000, 0x8000);
+            }
+        } else {
+            memory_region_init_ram(&s->itcm, NULL, itcm_name, 0x100000,
+                                   &error_fatal);
+            memory_region_add_subregion(system_memory, 0, &s->itcm);
+            memcpy(memory_region_get_ram_ptr(&s->itcm), s->nor_flash + 0x50000,
+                   0x100000);
+        }
         if (s->profile->high_ram_size) {
             /* L6 keeps writable heap state in the final 64 KiB of its MAIN
              * image window; expose that profile-specific bank over NOR. */
@@ -4917,10 +6379,19 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
         }
     }
 
-    l6_make_ram(system_memory, &s->sram, sram_name, 0x20000000,
-                panel ? 0x2000 : 0x200000);
+    if (panel || profile != &L6MAX_PROFILE) {
+        l6_make_ram(system_memory, &s->sram, sram_name, 0x20000000,
+                    panel ? 0x2000 : 0x200000);
+    }
     if (!panel) {
-        l6_make_ram(system_memory, &s->dtcm, dtcm_name, 0x20200000, 0x100000);
+        l6_make_ram(system_memory, &s->dtcm, dtcm_name, 0x20200000,
+                    profile == &L6MAX_PROFILE ? 0x80000 : 0x100000);
+        /* L6max bootloader 1.00 configures SDRAM windows spanning
+         * 0x80000000..0x83ffffff. The first 2 MiB is already covered by the
+         * direct MAIN image mapping; do not extend the remaining RAM by
+         * another 2 MiB past the configured SDRAM boundary. L6 is separate. */
+        uint64_t external_ram_size = profile == &L6MAX_PROFILE ?
+                                     0x3e00000 : 0x4000000;
         const char *shared_ram_fd = g_getenv("L6_EXTERNAL_RAM_FD");
         if (shared_ram_fd) {
             char *end;
@@ -4939,13 +6410,13 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
             }
             /* QEMU owns this inherited descriptor for the RAM region's life. */
             memory_region_init_ram_from_fd(
-                &s->external_ram, NULL, external_ram_name, 0x4000000,
+                &s->external_ram, NULL, external_ram_name, external_ram_size,
                 RAM_SHARED, fd, 0, &error_fatal);
             memory_region_add_subregion(system_memory, 0x80200000,
                                         &s->external_ram);
         } else {
             l6_make_ram(system_memory, &s->external_ram, external_ram_name,
-                        0x80200000, 0x4000000);
+                        0x80200000, external_ram_size);
         }
     }
 
@@ -4975,6 +6446,16 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
     object_property_set_link(OBJECT(&s->armv7m), "memory",
                              OBJECT(system_memory), &error_abort);
     sysbus_realize(SYS_BUS_DEVICE(&s->armv7m), &error_fatal);
+    if (!panel && profile == &L6MAX_PROFILE) {
+        /* Physical dump CPUID: Cortex-M7 r1p1. This changes identification,
+         * not QEMU's generic Cortex-M7 revision-specific behavior. */
+        s->armv7m.cpu->midr = 0x411fc271;
+        /* Inferred RT106x cache identification, not cache emulation. */
+        SET_IDREG(&s->armv7m.cpu->isar, CLIDR, 0x09000003);
+        s->armv7m.cpu->ctr = 0x8303c003;
+        s->armv7m.cpu->ccsidr[0] = 0xf01fe019;
+        s->armv7m.cpu->ccsidr[1] = 0xf03fe009;
+    }
     if (!panel && profile->audio_codec_bus) {
         s->audio_i2c_bus = i2c_init_bus(cpu, "lpi2c1");
         i2c_slave_create_simple(s->audio_i2c_bus, TYPE_L6MAX_AUDIO_ADC, 0x4c);
@@ -5040,12 +6521,18 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
         rom_add_blob_fixed_as("l6-panel-installed", s->persistent_panel,
                               flash_map_size, flash_base, CPU(s->armv7m.cpu)->as);
     }
-    if (!panel) {
+    if (!panel && profile != &L6MAX_PROFILE) {
         rom_add_blob_fixed_as("l6-main-installed", s->nor_flash + 0x50000,
                              0x1a2ff8, flash_base, CPU(s->armv7m.cpu)->as);
     }
     if (!panel) {
-        s->usb.as = CPU(s->armv7m.cpu)->as;
+        /* USB DMA is a system bus master, not a CPU-private PPB access. */
+        s->usb.as = profile == &L6MAX_PROFILE ? &address_space_memory :
+                                               CPU(s->armv7m.cpu)->as;
+        if (profile == &L6MAX_PROFILE) {
+            s->usb.clock_enabled = l6max_usb_clock_enabled;
+            s->usb.clock_opaque = s;
+        }
         s->usb.irq = qdev_get_gpio_in(DEVICE(&s->armv7m), 113);
         s->usb.fd = -1;
         s->usb.tx = g_byte_array_new();
@@ -5138,12 +6625,118 @@ static void l6_panel_init(MachineState *machine)
                  profile);
 }
 
+static void l6_main_reset(MachineState *machine, ResetType type)
+{
+    L6ChipState *s = &L6_MACHINE(machine)->chip;
+    uint32_t main_size = 0;
+    if (type != RESET_TYPE_SNAPSHOT_LOAD && s->profile == &L6MAX_PROFILE) {
+        /* The physical bootloader takes the MAIN copy size from the installed
+         * footer. Older emulator-created NOR images lack that field, so use
+         * their package trailer as a fallback. */
+        main_size = ldl_le_p(s->nor_flash + 0x1f7ff8);
+        if (main_size < 8 || main_size > 0x1a2ff8) {
+            main_size = ldl_le_p(s->nor_flash + 0x1f2ff8);
+        }
+        if (main_size < 8 || main_size > 0x1a2ff8) {
+            main_size = 0x1a2ff8;
+        }
+        /* CPU reset reads the vector after this copy. */
+        address_space_write(&address_space_memory, 0x80000000,
+                            MEMTXATTRS_UNSPECIFIED, s->nor_flash + 0x50000,
+                            main_size);
+    }
+    qemu_devices_reset(type);
+    if (type != RESET_TYPE_SNAPSHOT_LOAD && s->profile == &L6MAX_PROFILE) {
+        l6max_seed_boot_handoff(s);
+        /* FreeRTOS sets a 600 MHz / 1000 SysTick reload and lowest
+         * PendSV/SysTick priorities, then enables floating-point access.
+         * The transfer stops SysTick without clearing the reload register. */
+        static const struct { hwaddr address; uint32_t keep, set; } core_setup[] = {
+            { 0xe000e014u, 0, 599999u },
+            { 0xe000ed20u, UINT32_MAX, 0xf0f00000u },
+            { 0xe000ed88u, UINT32_MAX, 0x00f00000u },
+            { 0xe000ef34u, UINT32_MAX, 0xc0000000u },
+        };
+        AddressSpace *as = CPU(s->armv7m.cpu)->as;
+        for (unsigned i = 0; i < ARRAY_SIZE(core_setup); i++) {
+            uint8_t bytes[4];
+            if (address_space_read(as, core_setup[i].address,
+                                   MEMTXATTRS_UNSPECIFIED, bytes, 4) != MEMTX_OK) {
+                error_report("failed to read L6max core handoff register");
+                abort();
+            }
+            stl_le_p(bytes, (ldl_le_p(bytes) & core_setup[i].keep) |
+                            core_setup[i].set);
+            if (address_space_write(as, core_setup[i].address,
+                                    MEMTXATTRS_UNSPECIFIED, bytes, 4) != MEMTX_OK) {
+                error_report("failed to write L6max core handoff register");
+                abort();
+            }
+        }
+        /* The 1.00 transfer routine loads CCR's address into r0 and the
+         * image reset-vector word into r1 before BLX, on both cache paths. */
+        s->armv7m.cpu->env.regs[0] = 0xe000ed14u;
+        s->armv7m.cpu->env.regs[1] = ldl_le_p(s->nor_flash + 0x50004);
+        /* The cache-disabled path leaves CCR shifted left by 15 in r2. */
+        s->armv7m.cpu->env.regs[2] =
+            s->armv7m.cpu->env.v7m.ccr[M_REG_NS] << 15;
+        /* The final MAIN copy iteration leaves its source offset in r3,
+         * its remaining-length global in r4, and the 8 KiB limit in r5. */
+        uint32_t final_chunk = ((main_size - 1) % 0x2000u) + 1;
+        s->armv7m.cpu->env.regs[3] = 0x50000u + main_size - final_chunk;
+        s->armv7m.cpu->env.regs[4] = 0x2021e080u;
+        s->armv7m.cpu->env.regs[5] = 0x2000u;
+        /* The boot task stack is filled with 0xa5 before the saved
+         * context is created. SVC restores r6-r11 from untouched slots;
+         * the reviewed Main and transfer paths preserve them. */
+        for (unsigned reg = 6; reg <= 11; reg++) {
+            s->armv7m.cpu->env.regs[reg] = 0xa5a5a5a5u;
+        }
+        /* With D-cache already disabled, the transfer uses BLX at
+         * 0x2020e450; LR is the Thumb return address in the boot image. */
+        s->armv7m.cpu->env.regs[14] = 0x2020e453u;
+        /* Boot 1.00 allocates the Main task stack from its OCRAM heap,
+         * then copies PSP to MSP with a 0x28-byte transfer frame live.
+         * The allocator prefix survives in the later physical OCRAM dump;
+         * no register was captured at the branch, so this is inferred. */
+        s->armv7m.cpu->env.regs[13] = 0x202275f0u;
+        /* Thread mode now uses MSP; PSP retains the value copied to MSP. */
+        s->armv7m.cpu->env.v7m.other_sp = 0x202275f0u;
+        /* These locals are written by the MAIN copy loop. Other boot stack
+         * contents are unknown and deliberately left as existing RAM. */
+        uint8_t frame_locals[12];
+        stl_le_p(frame_locals, 0x50000u + main_size);
+        stl_le_p(frame_locals + 4, 0x80000000u);
+        stl_le_p(frame_locals + 8, final_chunk);
+        if (address_space_write(as, 0x202275f0u, MEMTXATTRS_UNSPECIFIED,
+                                frame_locals, sizeof(frame_locals)) != MEMTX_OK) {
+            error_report("failed to write L6max boot transfer frame");
+            abort();
+        }
+        /* The same loop leaves zero remaining and the next SDRAM address. */
+        uint8_t copy_global[4];
+        stl_le_p(copy_global, 0);
+        if (address_space_write(as, 0x2021e080u, MEMTXATTRS_UNSPECIFIED,
+                                copy_global, sizeof(copy_global)) != MEMTX_OK) {
+            error_report("failed to write L6max boot copy count");
+            abort();
+        }
+        stl_le_p(copy_global, 0x80000000u + main_size);
+        if (address_space_write(as, 0x2021e0a0u, MEMTXATTRS_UNSPECIFIED,
+                                copy_global, sizeof(copy_global)) != MEMTX_OK) {
+            error_report("failed to write L6max boot copy destination");
+            abort();
+        }
+    }
+}
+
 static void l6_main_class_init(ObjectClass *oc, const void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
     static const char * const cpus[] = { ARM_CPU_TYPE_NAME("cortex-m7"), NULL };
     mc->desc = "ZOOM L6/L6max MAIN MCU bring-up board (model detected from firmware)";
     mc->init = l6_main_init;
+    mc->reset = l6_main_reset;
     mc->valid_cpu_types = cpus;
     mc->default_cpu_type = cpus[0];
     mc->default_ram_size = 0x200000;

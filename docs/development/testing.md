@@ -289,6 +289,21 @@ It does not establish behavior on physical hardware. The smaller C tests in
 `emulator/qemu/tests/panel-gpio.c` and `panel-timer.c` cover shared register
 logic independently of QEMU.
 
+The boot handoff register check uses local unpacked stock L6max, patched L6max,
+and stock L6 MAIN images. It inspects the paused machine before MAIN runs and
+after a reset; supply the matching images yourself:
+
+```sh
+python3 emulator/qemu/tests/boot-handoff-qtest.py \
+  emulator/qemu/build-source/build/qemu-system-arm \
+  /path/to/l6max/main_firmware.bin /path/to/patched-l6max/main_firmware.bin \
+  /path/to/l6/main_firmware.bin
+```
+
+The `l6max-boot-memory` driver case additionally checks selected handoff
+registers after stock MAIN boots. These checks do not establish physical
+clock timings, pad behavior, or a complete bootloader implementation.
+
 ## Input, display, and LEDs
 
 Use the shared `panel`, `l6-input-sweep`, and `l6max-input-smoke` scenarios.
@@ -395,7 +410,10 @@ both results and identify it as flaky.
 
 ## Power, storage, and USB
 
-Use the `lifecycle` or `devices` suite and the relevant individual cases.
+Use the `lifecycle` or `devices` suite and the relevant individual cases. The
+focused `sd-warm-reset` case checks SD patch loading, a reset with the card
+removed, and on L6max a second reset after reinsertion. It is not registered
+in a suite; select it explicitly.
 
 ## Editor
 

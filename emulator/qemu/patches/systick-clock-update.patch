@@ -1,0 +1,70 @@
+--- a/hw/timer/armv7m_systick.c
++++ b/hw/timer/armv7m_systick.c
+@@ -43,6 +43,21 @@
+     }
+ }
+ 
++/* Recompute the selected period and pause/resume on a stopped input. */
++static void systick_update_selected_clock(SysTickState *s)
++{
++    Clock *selected = (s->control & SYSTICK_CLKSOURCE) ? s->cpuclk : s->refclk;
++    bool running = (s->control & SYSTICK_ENABLE) && clock_get(selected);
++
++    if (!running) {
++        ptimer_stop(s->ptimer);
++    }
++    systick_set_period_from_clock(s);
++    if (running) {
++        ptimer_run(s->ptimer, 0);
++    }
++}
++
+ static void systick_timer_tick(void *opaque)
+ {
+     SysTickState *s = (SysTickState *)opaque;
+@@ -149,17 +164,9 @@
+         s->control &= 0xfffffff8;
+         s->control |= value & 7;
+ 
+-        if ((oldval ^ value) & SYSTICK_CLKSOURCE) {
+-            systick_set_period_from_clock(s);
++        if ((oldval ^ value) & (SYSTICK_CLKSOURCE | SYSTICK_ENABLE)) {
++            systick_update_selected_clock(s);
+         }
+-
+-        if ((oldval ^ value) & SYSTICK_ENABLE) {
+-            if (value & SYSTICK_ENABLE) {
+-                ptimer_run(s->ptimer, 0);
+-            } else {
+-                ptimer_stop(s->ptimer);
+-            }
+-        }
+         ptimer_transaction_commit(s->ptimer);
+         break;
+     }
+@@ -220,10 +227,11 @@
+ 
+     if (!(s->control & SYSTICK_CLKSOURCE)) {
+         /* currently using refclk, we can ignore cpuclk changes */
++        return;
+     }
+ 
+     ptimer_transaction_begin(s->ptimer);
+-    ptimer_set_period_from_clock(s->ptimer, s->cpuclk, 1);
++    systick_update_selected_clock(s);
+     ptimer_transaction_commit(s->ptimer);
+ }
+ 
+@@ -233,10 +241,11 @@
+ 
+     if (s->control & SYSTICK_CLKSOURCE) {
+         /* currently using cpuclk, we can ignore refclk changes */
++        return;
+     }
+ 
+     ptimer_transaction_begin(s->ptimer);
+-    ptimer_set_period_from_clock(s->ptimer, s->refclk, 1);
++    systick_update_selected_clock(s);
+     ptimer_transaction_commit(s->ptimer);
+ }
+ 

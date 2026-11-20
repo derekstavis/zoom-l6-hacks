@@ -45,9 +45,16 @@ RT USDHC derives its clock and power from the SoC. Firmware waits for
 PRES_STATE.SDSTB before programming SYS_CTRL, whose low three bits are reserved
 on this controller. QEMU's SDHCI clock model instead requires an internal
 clock enable bit. The board adapter retains the firmware-visible divider and
-timeout fields, supplies stable SoC clock and 3.3 V power, and translates
-reset requests. RSTA/RSTC/RSTD and INITA self-clear. Card removal does not
-gate that clock, so a command issued to an empty slot ends with a command
+timeout fields, supplies QEMU's clock and 3.3 V power, and translates reset
+requests. RSTA/RSTC/RSTD and INITA self-clear. On L6max, the adapter
+also checks CCGR6 CG1, the IPG root and the selected PLL2 PFD before reporting
+SDSTB or issuing a command. It discards command writes while stopped; physical
+register-access behavior and clock settling have not been measured. Transfers
+already in progress are not paused, and unsupported PFD configurations retain
+the earlier clock approximation. L6max direct boot and system reset restore
+the adapter's SYS_CTRL, VEND_SPEC2 and wakeup fields to documented reset values;
+intervening ROM writes and physical handoff readback remain unverified. Card
+removal does not gate that clock, so a command issued to an empty slot ends with a command
 timeout error. PROT_CTRL WECINT/WECINS/WECRM enable wakeup events only; the
 adapter keeps them readable but out of the interrupt decision, so card
 insertion and removal interrupt only through INT_SIGNAL_EN. Card commands, DMA

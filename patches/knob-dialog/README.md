@@ -219,8 +219,10 @@ original resources are restored, and counts 52 UART encoder reports. It checks
 the expired title band against the recorder's pre-popup pixels, catching stale
 glyphs even when the notification queue reports inactive. It also checks
 one firmware-heap allocation, reuse during refresh, and recovery of the
-original free-byte count in the legacy notification implementation. The former `0x841ff000` page stays
-unchanged, and the original startup pointer is checked. It also
+original free-byte count in the legacy notification implementation. The former
+`0x841ff000` page stays unchanged when mapped and is checked as inaccessible
+with the recovered L6max SDRAM bounds. The original startup pointer is also
+checked. The scenario
 changes the mode while a notification is visible and exercises channel 2.
 The scene-prototype smoke case overlaps a three-line stock notification with
 the dialog, verifies bitmap-table slot 0 starts null and holds the inline state

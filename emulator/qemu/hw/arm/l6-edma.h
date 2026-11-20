@@ -34,6 +34,8 @@ typedef bool (*L6EdmaWrite)(void *opaque, uint32_t address,
                             const void *buffer, size_t size);
 
 typedef enum L6EdmaMinorResult {
+    L6_EDMA_MINOR_DEST_BUS_ERROR = -3,
+    L6_EDMA_MINOR_SOURCE_BUS_ERROR = -2,
     L6_EDMA_MINOR_ERROR = -1,
     L6_EDMA_MINOR_MORE = 0,
     L6_EDMA_MINOR_HALF = 1,
@@ -126,9 +128,11 @@ l6_edma_transfer_minor(L6EdmaTcd *tcd, L6EdmaRead read_fn,
     }
 
     for (uint32_t done = 0; done < tcd->nbytes; done += source_size) {
-        if (!read_fn(opaque, tcd->saddr, bytes, source_size) ||
-            !write_fn(opaque, tcd->daddr, bytes, source_size)) {
-            return L6_EDMA_MINOR_ERROR;
+        if (!read_fn(opaque, tcd->saddr, bytes, source_size)) {
+            return L6_EDMA_MINOR_SOURCE_BUS_ERROR;
+        }
+        if (!write_fn(opaque, tcd->daddr, bytes, source_size)) {
+            return L6_EDMA_MINOR_DEST_BUS_ERROR;
         }
         tcd->saddr += tcd->soff;
         tcd->daddr += tcd->doff;

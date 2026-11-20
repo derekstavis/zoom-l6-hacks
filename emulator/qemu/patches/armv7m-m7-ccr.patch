@@ -1,0 +1,18 @@
+--- a/hw/intc/armv7m_nvic.c
++++ b/hw/intc/armv7m_nvic.c
+@@ -1136,2 +1136,6 @@
+         val = cpu->env.v7m.ccr[attrs.secure];
++        /* Cortex-M7 reports branch prediction as permanently enabled. */
++        if ((cpu->midr & 0xff0ffff0u) == 0x410fc270u) {
++            val |= R_V7M_CCR_BP_MASK;
++        }
+         val |= cpu->env.v7m.ccr[M_REG_NS] & R_V7M_CCR_BFHFNMIGN_MASK;
+@@ -1714,3 +1718,7 @@
+         value &= mask;
+-
++
++        /* Cortex-M7 always aligns exception stacks to eight bytes. */
++        if ((cpu->midr & 0xff0ffff0u) == 0x410fc270u) {
++            value |= R_V7M_CCR_STKALIGN_MASK;
++        }
+         if (arm_feature(&cpu->env, ARM_FEATURE_V8)) {

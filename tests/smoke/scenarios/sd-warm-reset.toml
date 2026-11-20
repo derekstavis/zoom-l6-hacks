@@ -44,6 +44,49 @@ until = "mixer-ready"
 guest_timeout_ms = 60000
 wall_timeout_s = 300
 
+# Allow the no-card boot to complete before checking that no patch loaded.
+[[step]]
+models = ["l6max"]
+action = "delay"
+guest_ms = 8000
+guest_timeout_ms = 20000
+wall_timeout_s = 300
+
 [[step]]
 action = "expect-sd-patch"
 loaded = false
+
+# Reinsert the same card, then reset again. The next boot must initialize
+# USDHC from its reset state and load the SD-hosted patch again.
+[[step]]
+models = ["l6max"]
+action = "sd-card"
+inserted = true
+
+[[step]]
+models = ["l6max"]
+action = "delay"
+guest_ms = 3000
+
+[[step]]
+models = ["l6max"]
+action = "warm-reset"
+
+[[step]]
+models = ["l6max"]
+action = "wait"
+until = "mixer-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+models = ["l6max"]
+action = "delay"
+guest_ms = 8000
+guest_timeout_ms = 20000
+wall_timeout_s = 300
+
+[[step]]
+models = ["l6max"]
+action = "expect-sd-patch"
+loaded = true

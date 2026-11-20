@@ -101,8 +101,27 @@ int main(void)
 
     decoded.citer = 1;
     decoded.nbytes = 6;
+    decoded.attr = 0x0202;
     assert(l6_edma_transfer_minor(&decoded, test_read, test_write, &memory) ==
            L6_EDMA_MINOR_ERROR);
+
+    /* Distinguish bus faults from invalid descriptors, retaining progress
+     * already made by this simplified transfer model. */
+    decoded = (L6EdmaTcd) {
+        .saddr = 252, .soff = 4, .attr = 0x0202, .nbytes = 8,
+        .daddr = 0x1000, .citer = 1, .biter = 1,
+    };
+    memory.sink_size = 0;
+    assert(l6_edma_transfer_minor(&decoded, test_read, test_write, &memory) ==
+           L6_EDMA_MINOR_SOURCE_BUS_ERROR);
+    assert(decoded.saddr == 256 && decoded.citer == 1 && memory.sink_size == 4);
+    decoded = (L6EdmaTcd) {
+        .saddr = 0, .soff = 4, .attr = 0x0202, .nbytes = 8,
+        .daddr = 252, .doff = 4, .citer = 1, .biter = 1,
+    };
+    assert(l6_edma_transfer_minor(&decoded, test_read, test_write, &memory) ==
+           L6_EDMA_MINOR_DEST_BUS_ERROR);
+    assert(decoded.daddr == 256 && decoded.citer == 1);
 
     puts("RT eDMA TCD/minor-loop checks passed");
     return 0;

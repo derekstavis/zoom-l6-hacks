@@ -1,0 +1,15 @@
+--- a/hw/timer/armv7m_systick.c
++++ b/hw/timer/armv7m_systick.c
+@@ -115,6 +115,12 @@
+          */
+         if (!clock_has_source(s->refclk)) {
+             val = SYSCALIB_NOREF;
++            break;
++        }
++        /* A connected but stopped reference has no calculable reload. Do
++         * not underflow zero ticks into a spurious 0x00ffffff calibration. */
++        if (!clock_is_enabled(s->refclk)) {
++            val = SYSCALIB_SKEW;
+             break;
+         }
+         val = clock_ns_to_ticks(s->refclk, 10 * SCALE_MS) - 1;

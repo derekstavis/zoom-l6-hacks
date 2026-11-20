@@ -13,6 +13,12 @@ models = ["l6", "l6max"]
 scenario = "scenarios/boot.toml"
 
 [[case]]
+id = "l6max-boot-memory"
+suites = ["full"]
+models = ["l6max"]
+scenario = "scenarios/l6max-boot-memory.toml"
+
+[[case]]
 id = "encoder"
 suites = []
 models = ["l6", "l6max"]

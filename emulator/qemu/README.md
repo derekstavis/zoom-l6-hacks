@@ -12,7 +12,12 @@ Initialize the pinned upstream source with
 leaving the upstream submodule clean.
 
 QEMU overlays under patches/ are applied to the staged source during builds.
-The CoreAudio underrun fix, sub-millisecond poll timeouts, a hardfloat
+Application requires exact patch context; when an overlay's markers are already
+present, the builder verifies every hunk in reverse before reusing it. A partial
+or modified overlay fails the build rather than silently reusing that source.
+The cache selector correction, CoreAudio underrun fix, SysTick clock-source and
+stopped-calibration updates, sub-millisecond
+poll timeouts, a hardfloat
 shortcut for single-precision multiplies by zero, whole-block SD multi-block
 transfers, and SD multi-block writes collected into one drive write while the
 drive's write cache is on are maintained there, keeping the pinned upstream

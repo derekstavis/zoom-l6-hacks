@@ -1,0 +1,50 @@
+version = 1
+name = "l6max-boot-memory"
+models = ["l6max"]
+backends = ["headless"]
+state = "setup-complete"
+card = "empty"
+main_sha256 = "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461"
+
+[[step]]
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 120000
+wall_timeout_s = 600
+
+# MAIN 1.10 relocates its ITCM code during startup; these bytes match both
+# its stock image at offset 0xee688 and the later physical ITCM capture.
+[[step]]
+action = "expect-memory"
+address = 0x00000000
+bytes = [0x2d, 0xe9, 0xf0, 0x4f, 0x81, 0xb0, 0x2d, 0xed, 0x06, 0x8b, 0x86, 0xb0, 0x4b, 0xf6, 0xa4, 0x15]
+
+# The stock MAIN does not configure SEMC. The bootloader 1.00 handoff
+# provides these two 32 MiB windows, starting at 0x80000000 and 0x82000000.
+[[step]]
+action = "expect-memory"
+address = 0x402f0010
+bytes = [0x1b, 0, 0, 0x80, 0x1b, 0, 0, 0x82]
+
+[[step]]
+action = "expect-memory"
+address = 0x402f0040
+bytes = [0x31, 0x0f, 0, 0, 0x22, 0x4b, 0x66, 0, 0x0b, 0x09, 0x09, 0, 0x01, 0x0a, 0x07, 0x08]
+
+# SDRAM pad configuration inherited from the L6max bootloader.
+[[step]]
+action = "expect-memory"
+address = 0x401f8204
+bytes = [0xf0, 0x10, 0, 0]
+
+# MAIN 1.10 configures MPU region 10 and enables the MPU and both caches.
+# These are register observations only; QEMU does not simulate cache data.
+[[step]]
+action = "expect-memory"
+address = 0xe000ed14
+bytes = [0x00, 0x02, 0x07, 0x00]
+
+[[step]]
+action = "expect-memory"
+address = 0xe000ed90
+bytes = [0x00, 0x10, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x42, 0x27, 0x00, 0x10, 0x03]

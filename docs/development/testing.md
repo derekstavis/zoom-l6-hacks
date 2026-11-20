@@ -191,14 +191,17 @@ grant sandbox permissions; the calling environment must provide them.
 | `--suite patches` | Generated: every valid patch combination and effect assignment, and each patch through each delivery method, with a functional check per patch. See [Patch combinations](#patch-combinations) |
 | `--suite patches-pairwise` | Generated: a covering subset in which every pair of placements and effect assignments appears, plus every delivery case |
 | `--suite patches-single` | Generated: each placement and effect assignment once with only its dependencies, plus every delivery case |
-| `--suite pr` | Every PR tip: `full`, `sd-matrix` and `patches-pairwise` |
 | `--suite stack` | The top of a stack, or nightly: `full`, `sd-matrix` and `patches` |
 
 [`tests/emulator/suites.toml`](../../tests/emulator/suites.toml) declares every
 suite; a case naming an undeclared suite fails to load. A suite's `includes`
-lists other suites whose cases it also runs, so `pr` and `stack` are the
-validation tiers: run `pr` at each PR tip and `stack` once at the top of a
-stack, fixing failures in the PR they belong to.
+lists other suites whose cases it also runs.
+
+Validation is tiered. While iterating, and for each PR in a stack, run the
+smallest set of cases that covers the change (`--case` with ids or globs,
+`--rerun`, or a focused suite such as `patches-pairwise`). Run `--suite stack`
+once at the top of a stack (about two hours), and fix what it finds in the PR
+that owns the cause.
 
 Cases run concurrently, up to `--jobs N` at once (by default a quarter of
 the host's cores, between 1 and 4). Scenario waits use guest time, so

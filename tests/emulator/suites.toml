@@ -36,10 +36,6 @@ description = "Generated: a subset of patches in which every pair of placements 
 [suite.patches-single]
 description = "Generated: each placement and effect assignment once, with only its dependencies, plus every delivery case."
 
-[suite.pr]
-description = "Every PR tip: full, the SD matrix and the pairwise patches subset."
-includes = ["full", "sd-matrix", "patches-pairwise"]
-
 [suite.stack]
 description = "The top of a stack, or nightly: full, the SD matrix and every patch combination."
 includes = ["full", "sd-matrix", "patches"]

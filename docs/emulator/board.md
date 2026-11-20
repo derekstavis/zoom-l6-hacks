@@ -78,12 +78,13 @@ applies the recovered ROM startup gate masks before first-stage setup. On the
 reviewed normal boot path, ROM re-enables TRNG but leaves the USB controller
 gate clear; the first stage enables the USB PLL independently. On L6max the
 USB model suppresses frame interrupts and transfer requests while the controller
-clock gate, PLL USB output, or PHY UTMI clock is off, or PHY reset is asserted.
+clock gate, PLL USB output, selected oscillator, or PHY UTMI clock is off, or
+PHY reset is asserted.
 The PHY control register implements the observed SET/CLR/TOG sequence and reset;
 its handoff value is assumed to be the reference-manual reset value because ROM
 and physical handoff state have not been fully traced. Cable events and register
-access remain approximations; oscillator dependencies, low-power wakeup, other
-PHY behavior and bus access while gated are not modeled. Other indirect writes
+access remain approximations; oscillator settling, low-power wakeup, other PHY
+behavior and bus access while gated are not modeled. Other indirect writes
 and physical handoff readback remain unverified. The RT1060
 reset controller resets CCM, PLLs and functional modules on cold reset while
 retaining IOMUXC; the model retains the latter's stored bits. The model resets
@@ -258,9 +259,10 @@ Cortex-M reset clears all 16 MPU region descriptors; the reviewed ROM cleanup
 conditionally clears regions 0–6 before transfer, but the complete physical
 descriptor state was not captured. The Cortex-M7 model retains the CCR
 instruction/data cache-enable bits when the configured core reports separate
-L1 caches, including the cleared handoff and reset state. QEMU does not model
-cache contents or maintenance, so enabled bits do not provide cache behavior
-or DMA coherence.
+L1 caches, including the cleared handoff and reset state. A guest instruction
+test checks that privileged loads read back enable and disable writes. QEMU does
+not model cache contents or maintenance, so enabled bits do not provide cache
+behavior or DMA coherence.
 The RT1060 manual specifies separate 32 KiB instruction and data caches.
 L6max now exposes the corresponding Cortex-M7 CLIDR, CTR and CCSIDR geometry
 and a selectable CSSELR, inferred from the RT1060 manual and

@@ -190,6 +190,23 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
             assert registers()[1] == 0x12345678
             assert packet("Pf=14040080") == "OK"
             print(f"{image}: guest floating-point access at handoff passed")
+            # Exercise CCR through actual privileged guest instructions, not
+            # only qtest/debugger register accesses. Cache data is not modeled.
+            for request in ("M801f0000,4:01600268",  # str r1,[r0]; ldr r2,[r0]
+                            "P0=14ed00e0", "P1=00020300", "Pf=00001f80"):
+                assert packet(request) == "OK", request
+            assert packet("s").startswith("T05")
+            assert packet("s").startswith("T05")
+            assert registers()[2] == 0x30200
+            for request in ("P1=00020000", "Pf=00001f80"):
+                assert packet(request) == "OK", request
+            assert packet("s").startswith("T05")
+            assert packet("s").startswith("T05")
+            assert registers()[2] == 0x200
+            for request in ("P0=14ed00e0", "P1=15040080", "P2=00000001",
+                            "Pf=14040080"):
+                assert packet(request) == "OK", request
+            print(f"{image}: guest cache control enable and disable passed")
         with open(image, "rb") as firmware:
             main_msp = int.from_bytes(firmware.read(4), "little")
         inherited_msp = 0xdeadbee8  # Deliberately unmapped and aligned.
@@ -1320,6 +1337,16 @@ def check_usb_clock(qemu, image):
             command(f"writel {on:#x} {bit:#x}")
             command("clock_step 2000000")
             assert command("readl 0x402e0144") & 0x80
+        # USB PLL needs the selected oscillator even if its output is enabled.
+        command("writel 0x402e0144 0xffffffff")
+        command("writel 0x400d8154 0x40000000")  # stop selected crystal
+        command("clock_step 2000000")
+        assert not command("readl 0x402e0144") & 0x80
+        command("writel 0x400d8274 0x10")  # select enabled RC source
+        command("clock_step 2000000")
+        assert command("readl 0x402e0144") & 0x80
+        command("writel 0x400d8158 0x40000000")
+        command("writel 0x400d8278 0x10")  # restore crystal source
         command("writel 0x400d9034 0x80000000")
         assert command("readl 0x400d9030") == 0xc0200000
         command("writel 0x400d9038 0xc0000000")

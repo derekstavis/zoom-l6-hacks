@@ -1768,6 +1768,8 @@ static uint32_t l6max_clock_register(L6ChipState *s, hwaddr offset)
                                                GUINT_TO_POINTER((offset >> 2) + 1)));
 }
 
+static L6MaxBusClocks l6max_bus_clocks(L6ChipState *s);
+
 /* CCGR6 CG0 gates the USB controller's IPG and AHB clocks. L6's clock
  * tree is separate and remains on the existing compatibility path. */
 static bool l6max_usb_clock_enabled(void *opaque)
@@ -1778,6 +1780,7 @@ static bool l6max_usb_clock_enabled(void *opaque)
     return (l6max_clock_register(s, 0x0fc080) & 3u) != 0 &&
            (pll & (L6_USB1_PLL_POWER | L6_USB1_PLL_EN_USB_CLKS)) ==
                (L6_USB1_PLL_POWER | L6_USB1_PLL_EN_USB_CLKS) &&
+           l6max_bus_clocks(s).oscillator_hz != 0 &&
            !(phy & 0xc0000000u);
 }
 

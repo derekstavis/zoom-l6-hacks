@@ -116,6 +116,8 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
             raw = bytes.fromhex(packet("m202275f0,c"))
             assert tuple(int.from_bytes(raw[i:i + 4], "little")
                          for i in (0, 4, 8)) == frame
+            assert int.from_bytes(bytes.fromhex(packet("m2021e080,4")), "little") == 0
+            assert int.from_bytes(bytes.fromhex(packet("m2021e0a0,4")), "little") == 0x80000000 + copy_size
         packet("?")
         assert_frame()
         regs = registers()
@@ -123,6 +125,7 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
         assert regs[0] == 0xe000ed14, hex(regs[0])
         assert regs[1] == 0x80000415, hex(regs[1])
         assert regs[2] == 0x01000000, hex(regs[2])  # modeled CCR << 15
+        assert regs[3:6] == [frame[0] - frame[2], 0x2021e080, 0x2000], regs[3:6]
         assert regs[13] == 0x202275f0, hex(regs[13])  # inferred boot stack
         assert regs[14] == 0x2020e453, hex(regs[14])
         assert "QMP" in json.loads(qmp.readline())
@@ -136,9 +139,13 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
                 assert packet("P0=00000000") == "OK"
                 assert packet("P1=00000000") == "OK"
                 assert packet("P2=00000000") == "OK"
+                assert packet("P3=00000000") == "OK"
+                assert packet("P5=00000000") == "OK"
                 assert packet("Pd=00000000") == "OK"
                 assert packet("Pe=00000000") == "OK"
                 assert packet("M202275f0,c:000000000000000000000000") == "OK"
+                assert packet("M2021e080,4:ffffffff") == "OK"
+                assert packet("M2021e0a0,4:ffffffff") == "OK"
             qmp.write(json.dumps({"execute": name}).encode() + b"\n")
             while True:
                 reply = json.loads(qmp.readline())
@@ -149,6 +156,7 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
         regs = registers()
         assert_frame()
         assert regs[:3] == [0xe000ed14, 0x80000415, 0x01000000], regs[:3]
+        assert regs[3:6] == [frame[0] - frame[2], 0x2021e080, 0x2000], regs[3:6]
         assert regs[13] == 0x202275f0, hex(regs[13])
         assert regs[14] == 0x2020e453, hex(regs[14])
         if mpu_test:
@@ -1215,8 +1223,13 @@ def check_flexram_boundaries(qemu, image):
         assert int(command("readl 0x80000100").split()[1], 16) == 0xdeadbeef
         for address, expected in ((0x202275f0, 0x50100),
                                   (0x202275f4, 0x80000000),
-                                  (0x202275f8, 0x100)):
+                                  (0x202275f8, 0x100),
+                                  (0x2021e080, 0),
+                                  (0x2021e0a0, 0x80000100)):
             assert int(command(f"readl {address:#x}").split()[1], 16) == expected
+        regs = qmp_execute("human-monitor-command", {"command-line": "info registers"})
+        for expected in ("R03=00050000", "R04=2021e080", "R05=00002000"):
+            assert expected in regs, regs
         for address, expected in gate_results.items():
             assert int(command(f"readl {address:#x}").split()[1], 16) == expected
         print(f"{image}: masked GPR, gate and CPU reset passed")

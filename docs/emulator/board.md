@@ -213,9 +213,11 @@ startup, and the tested entry bytes agree with the later physical dump.
 Bootloader 1.00 calls the MAIN reset vector with `r0 = 0xe000ed14` and `r1`
 containing the reset-vector word. On the reconstructed path where D-cache is
 already disabled, the transfer also leaves `r2` as CCR shifted left by 15,
-and its `BLX` at `0x2020e450` sets LR to `0x2020e453`. The emulator uses
-its modeled CCR for `r2` and reproduces these register values on startup and
-reset; it does not load the bootloader instructions at that return address.
+and its `BLX` at `0x2020e450` sets LR to `0x2020e453`. The copy loop also
+leaves its final source offset in `r3`, its remaining-length global's address
+in `r4`, and its 8 KiB chunk limit in `r5`. The emulator seeds these values
+and the copy loop's two OCRAM globals from its selected image length. It uses
+its modeled CCR for `r2` and does not load bootloader instructions at LR.
 The bootloader calls with its current task stack; it does not load the MAIN
 vector's initial MSP at that call. The emulator seeds an inferred MSP of
 `0x202275f0`, based on bootloader 1.00's allocation and call frame. It also

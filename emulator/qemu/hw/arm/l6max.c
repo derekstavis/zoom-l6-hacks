@@ -6429,6 +6429,12 @@ static void l6_main_reset(MachineState *machine, ResetType type)
         /* The cache-disabled path leaves CCR shifted left by 15 in r2. */
         s->armv7m.cpu->env.regs[2] =
             s->armv7m.cpu->env.v7m.ccr[M_REG_NS] << 15;
+        /* The final MAIN copy iteration leaves its source offset in r3,
+         * its remaining-length global in r4, and the 8 KiB limit in r5. */
+        uint32_t final_chunk = ((main_size - 1) % 0x2000u) + 1;
+        s->armv7m.cpu->env.regs[3] = 0x50000u + main_size - final_chunk;
+        s->armv7m.cpu->env.regs[4] = 0x2021e080u;
+        s->armv7m.cpu->env.regs[5] = 0x2000u;
         /* With D-cache already disabled, the transfer uses BLX at
          * 0x2020e450; LR is the Thumb return address in the boot image. */
         s->armv7m.cpu->env.regs[14] = 0x2020e453u;
@@ -6444,10 +6450,24 @@ static void l6_main_reset(MachineState *machine, ResetType type)
         uint8_t frame_locals[12];
         stl_le_p(frame_locals, 0x50000u + main_size);
         stl_le_p(frame_locals + 4, 0x80000000u);
-        stl_le_p(frame_locals + 8, ((main_size - 1) % 0x2000u) + 1);
+        stl_le_p(frame_locals + 8, final_chunk);
         if (address_space_write(as, 0x202275f0u, MEMTXATTRS_UNSPECIFIED,
                                 frame_locals, sizeof(frame_locals)) != MEMTX_OK) {
             error_report("failed to write L6max boot transfer frame");
+            abort();
+        }
+        /* The same loop leaves zero remaining and the next SDRAM address. */
+        uint8_t copy_global[4];
+        stl_le_p(copy_global, 0);
+        if (address_space_write(as, 0x2021e080u, MEMTXATTRS_UNSPECIFIED,
+                                copy_global, sizeof(copy_global)) != MEMTX_OK) {
+            error_report("failed to write L6max boot copy count");
+            abort();
+        }
+        stl_le_p(copy_global, 0x80000000u + main_size);
+        if (address_space_write(as, 0x2021e0a0u, MEMTXATTRS_UNSPECIFIED,
+                                copy_global, sizeof(copy_global)) != MEMTX_OK) {
+            error_report("failed to write L6max boot copy destination");
             abort();
         }
     }

@@ -855,9 +855,9 @@ impl State {
                     || inputs.snapshot().applied > applied,
                     "TAP press acknowledgement",
                 )?;
-                let stopped = gdb.continue_until_stop(Duration::from_secs(15));
+                let stopped =
+                    continue_within_guest(session, gdb, 5_000, Duration::from_secs(wall_timeout_s));
                 if let Err(error) = stopped {
-                    let _ = gdb.interrupt();
                     let _ = gdb.breakpoint(l6max_tap_press_handler, false);
                     let _ = qmp.resume();
                     return Err(format!("TAP press did not reach its handler: {error}").into());

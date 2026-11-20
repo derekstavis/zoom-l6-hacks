@@ -220,6 +220,12 @@ settle_ms = 100
 action = "select-mode"
 mode = "eq-high"
 
+# The firmware redraws the rings after the mode LED changes; let them
+# settle so the checkpoint holds this mode's rings.
+[[step]]
+action = "delay"
+guest_ms = 500
+
 [[step]]
 action = "checkpoint"
 name = "eq-high-before-editor"
@@ -294,6 +300,12 @@ settle_ms = 100
 action = "select-mode"
 mode = "freq"
 
+# The firmware redraws the rings after the mode LED changes; let them
+# settle so the checkpoint holds this mode's rings.
+[[step]]
+action = "delay"
+guest_ms = 500
+
 [[step]]
 action = "checkpoint"
 name = "freq-before-editor"
@@ -363,6 +375,12 @@ settle_ms = 100
 [[step]]
 action = "select-mode"
 mode = "mid"
+
+# The firmware redraws the rings after the mode LED changes; let them
+# settle so the checkpoint holds this mode's rings.
+[[step]]
+action = "delay"
+guest_ms = 500
 
 [[step]]
 action = "checkpoint"
@@ -434,6 +452,12 @@ settle_ms = 100
 action = "select-mode"
 mode = "low"
 
+# The firmware redraws the rings after the mode LED changes; let them
+# settle so the checkpoint holds this mode's rings.
+[[step]]
+action = "delay"
+guest_ms = 500
+
 [[step]]
 action = "checkpoint"
 name = "low-before-editor"
@@ -503,6 +527,12 @@ settle_ms = 100
 [[step]]
 action = "select-mode"
 mode = "aux1"
+
+# The firmware redraws the rings after the mode LED changes; let them
+# settle so the checkpoint holds this mode's rings.
+[[step]]
+action = "delay"
+guest_ms = 500
 
 [[step]]
 action = "checkpoint"
@@ -574,6 +604,12 @@ settle_ms = 100
 action = "select-mode"
 mode = "aux2"
 
+# The firmware redraws the rings after the mode LED changes; let them
+# settle so the checkpoint holds this mode's rings.
+[[step]]
+action = "delay"
+guest_ms = 500
+
 [[step]]
 action = "checkpoint"
 name = "aux2-before-editor"
@@ -644,6 +680,12 @@ settle_ms = 100
 action = "select-mode"
 mode = "sub-mix"
 
+# The firmware redraws the rings after the mode LED changes; let them
+# settle so the checkpoint holds this mode's rings.
+[[step]]
+action = "delay"
+guest_ms = 500
+
 [[step]]
 action = "checkpoint"
 name = "sub-mix-before-editor"
@@ -713,6 +755,12 @@ settle_ms = 100
 [[step]]
 action = "select-mode"
 mode = "pan"
+
+# The firmware redraws the rings after the mode LED changes; let them
+# settle so the checkpoint holds this mode's rings.
+[[step]]
+action = "delay"
+guest_ms = 500
 
 [[step]]
 action = "checkpoint"

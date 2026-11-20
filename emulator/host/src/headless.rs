@@ -44,9 +44,28 @@ impl Headless {
             .snapshot()
             .guest_ms
     }
+    /// The panel and MAIN guest clocks. The panel clock stops while MAIN
+    /// holds the panel CPU, as during an L6 update or first boot.
+    fn clocks(&self) -> (u32, u32) {
+        let inputs = self.engine.inputs.as_ref().unwrap();
+        (
+            inputs.panel.snapshot().guest_ms,
+            inputs.main.snapshot().guest_ms,
+        )
+    }
     pub fn until(&self, ms: u32) -> io::Result<()> {
-        let deadline = Instant::now() + Duration::from_secs(120);
+        // A loaded host runs the guest slower than real time, so the wall
+        // bound is on progress: fail when neither guest clock advances. The
+        // caller's own deadline bounds the whole run.
+        const STALL: Duration = Duration::from_secs(60);
+        let mut progress = self.clocks();
+        let mut deadline = Instant::now() + STALL;
         while self.guest_ms() < ms {
+            let now = self.clocks();
+            if now != progress {
+                progress = now;
+                deadline = Instant::now() + STALL;
+            }
             if self
                 .engine
                 .inputs
@@ -62,7 +81,10 @@ impl Headless {
             if Instant::now() > deadline {
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
-                    "guest boot deadline",
+                    format!(
+                        "guest clocks stalled at panel {} ms, MAIN {} ms, before panel {ms} ms",
+                        progress.0, progress.1
+                    ),
                 ));
             }
             thread::sleep(Duration::from_millis(5));

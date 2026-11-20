@@ -469,6 +469,43 @@ fn wait_l6_input(
     }
 }
 
+/// Let the guest run under `gdb` until it stops, and return the stop reply.
+/// It may run for `guest_budget_ms` of its own time; a loaded host stretches
+/// wall time, so the guest budget decides, and `wall_cap` only ends a guest
+/// that no longer advances.
+fn continue_within_guest(
+    session: &Session,
+    gdb: &mut l6max_diagnostics::gdb::Gdb,
+    guest_budget_ms: u32,
+    wall_cap: Duration,
+) -> Result<String, String> {
+    let main = &session
+        .engine
+        .inputs
+        .as_ref()
+        .ok_or("input hub unavailable")?
+        .main;
+    let start = main.snapshot().guest_ms;
+    let deadline = Instant::now() + wall_cap;
+    gdb.resume().map_err(|error| error.to_string())?;
+    loop {
+        if let Some(reply) = gdb
+            .poll_stop(Duration::from_millis(200))
+            .map_err(|error| error.to_string())?
+        {
+            return Ok(reply);
+        }
+        session.poll()?;
+        let ran = main.snapshot().guest_ms.wrapping_sub(start);
+        if ran > guest_budget_ms || Instant::now() >= deadline {
+            let _ = gdb.interrupt();
+            return Err(format!(
+                "the guest ran {ran} ms without stopping (budget {guest_budget_ms} ms)"
+            ));
+        }
+    }
+}
+
 fn guest_now(session: &Session) -> u32 {
     session
         .engine

@@ -158,6 +158,46 @@ def check_flexram_boundaries(qemu, image):
             assert int(command(f"readl {last:#x}").split()[1], 16) == 0x1234abcd
             assert int(command(f"readl {beyond:#x}").split()[1], 16) != 0x5678efab
         print(f"{image}: FlexRAM mapping boundaries passed")
+        # Observe the actual SysTick countdown in qtest virtual time. The
+        # recovered 600 MHz ARM root halves when CACRR changes to divide by 4.
+        command("writel 0xe000e010 0")
+        command("writel 0xe000e014 100000")
+        command("writel 0xe000e018 0")
+        command("writel 0xe000e010 5")
+        command("clock_step 1000")
+        def systick_ticks():
+            before = int(command("readl 0xe000e018").split()[1], 16)
+            command("clock_step 10000")
+            after = int(command("readl 0xe000e018").split()[1], 16)
+            return before - after
+        assert 5998 <= systick_ticks() <= 6002
+        command("writel 0x400fc010 3")
+        assert 2998 <= systick_ticks() <= 3002
+        command("writel 0x400d8008 0x2000")
+        assert systick_ticks() == 0
+        command("writel 0xe000e010 1")
+        assert 9 <= systick_ticks() <= 11
+        command("writel 0xe000e010 5")
+        assert systick_ticks() == 0
+        command("writel 0x400d8004 0x2000")
+        assert 2998 <= systick_ticks() <= 3002
+        command("writel 0x400d8004 0x10000")
+        assert 59 <= systick_ticks() <= 61  # 24 MHz bypass / 4
+        command("writel 0x400d8008 0x10000")
+        assert 2998 <= systick_ticks() <= 3002
+        # Selecting the 1 MHz reference must survive a CPU clock update.
+        command("writel 0xe000e010 1")
+        assert 9 <= systick_ticks() <= 11
+        command("writel 0x400fc010 1")
+        assert 9 <= systick_ticks() <= 11
+        command("writel 0xe000e010 5")
+        assert 5998 <= systick_ticks() <= 6002
+        command("writel 0x400d8000 0x2050")  # PLL1=960 MHz, root /2
+        assert 4798 <= systick_ticks() <= 4802
+        command("writel 0x400d8000 0x2064")
+        assert 5998 <= systick_ticks() <= 6002
+        command("writel 0xe000e010 0")
+        print(f"{image}: ARM clock, SysTick source and stopped clock passed")
         # Reassign bank 0 from OCRAM to ITCM. Bank 7 moves to the next
         # ITCM address, while both physical banks retain their contents.
         command("writel 0x20280000 0x13579bdf")
@@ -334,6 +374,12 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0x400ac044 0xffffffff")
         qmp_execute("system_reset")
         assert int(command("readl 0x400ac044").split()[1], 16) == 0x5555ea95
+        command("writel 0xe000e014 100000")
+        command("writel 0xe000e018 0")
+        command("writel 0xe000e010 5")
+        command("clock_step 1000")
+        assert 5998 <= systick_ticks() <= 6002
+        command("writel 0xe000e010 0")
         assert int(command("readl 0x20280000").split()[1], 16) == 0x13579bdf
         assert int(command("readl 0x00000000").split()[1], 16) == 0x2468ace0
         assert int(command("readl 0x80000000").split()[1], 16) == main_vector & 0x20200000

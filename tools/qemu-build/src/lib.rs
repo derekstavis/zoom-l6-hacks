@@ -98,6 +98,13 @@ fn apply_patches(source: &Path, repository: &Path) -> Result<(), String> {
     apply_patch(
         source,
         repository,
+        "systick-clock-update.patch",
+        "hw/timer/armv7m_systick.c",
+        &["systick_update_selected_clock"],
+    )?;
+    apply_patch(
+        source,
+        repository,
         "icount-deadline-notify.patch",
         "accel/tcg/tcg-accel-ops-icount.c",
         &["icount_timers_stay_on_vcpu"],

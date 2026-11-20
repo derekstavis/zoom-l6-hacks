@@ -3432,6 +3432,20 @@ static void l6max_flexram_map(L6ChipState *s, uint32_t gpr16, uint32_t gpr17)
     memory_region_transaction_commit();
 }
 
+/* Propagate the modeled ARM root to clock consumers such as SysTick.
+ * TCG instruction execution itself is not cycle-accurate. */
+static void l6max_update_cpu_clock(L6ChipState *s)
+{
+    uint32_t pll = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+        GUINT_TO_POINTER((L6_CCM_ANALOG_PLL_ARM >> 2) + 1)));
+    uint32_t cacrr = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+        GUINT_TO_POINTER((L6_CCM_CACRR_OFFSET >> 2) + 1)));
+    uint32_t hz = l6max_arm_root_hz(pll, cacrr);
+    if (hz != UINT32_MAX) {
+        clock_update_hz(s->sysclk, hz);
+    }
+}
+
 static void l6_mmio_write(void *opaque, hwaddr offset,
                           uint64_t value, unsigned size)
 {
@@ -3823,6 +3837,12 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
                 GUINT_TO_POINTER((0x0ac044 >> 2) + 1)));
             l6max_flexram_map(s, gpr16, gpr17);
         }
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (((offset & ~3u) == L6_CCM_CACRR_OFFSET) ||
+         (size == 4 && !(offset & 3) &&
+          (offset & ~(hwaddr)0xf) == L6_CCM_ANALOG_PLL_ARM))) {
+        l6max_update_cpu_clock(s);
     }
     if (s->panel) {
         static const hwaddr timer_bases[] = { 0, 0x400, 0x2000 };
@@ -4503,6 +4523,7 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
         }
         g_hash_table_insert(s->registers, key, GUINT_TO_POINTER(value));
     }
+    l6max_update_cpu_clock(s);
     /* The clock-tree routine clears these fields after pad setup. Later
      * GPIO/SEMC/FlexSPI initialization restores the enabled fields below. */
     static const struct { hwaddr offset; uint32_t keep; } gate_masks[] = {

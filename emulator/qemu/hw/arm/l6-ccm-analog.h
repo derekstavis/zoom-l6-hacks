@@ -172,6 +172,29 @@ static inline uint32_t l6_audio_pll_status(uint32_t control)
 }
 
 /* ARM and system PLL output ENABLE is separate from POWERDOWN. */
+/* RT1060 ARM root from PLL1 and CACRR. UINT32_MAX means an unmodeled
+ * external reference or an out-of-range divider; zero means no PLL output. */
+static inline uint32_t l6max_arm_root_hz(uint32_t pll, uint32_t cacrr)
+{
+    const uint32_t oscillator_hz = 24000000u;
+    if (pll & 0xc000u) {
+        return UINT32_MAX; /* External CLK1 is not wired by this board. */
+    }
+    uint64_t source;
+    if (pll & 0x10000u) {
+        source = oscillator_hz;
+    } else if ((pll & 0x3000u) != 0x2000u) {
+        source = 0;
+    } else {
+        unsigned divider = pll & 0x7fu;
+        if (divider < 54 || divider > 108) {
+            return UINT32_MAX;
+        }
+        source = (uint64_t)oscillator_hz * divider / 2;
+    }
+    return source / ((cacrr & 7u) + 1);
+}
+
 #define L6_ARM_PLL_WRITABLE 0x0001f07fu
 #define L6_SYS_PLL_WRITABLE 0x0001f001u
 static inline uint32_t l6_core_pll_apply(uint32_t control, uint32_t value,

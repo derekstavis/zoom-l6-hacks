@@ -34,6 +34,12 @@ int main(void)
     uint32_t arm = l6max_boot_clock_value(L6_CCM_ANALOG_PLL_ARM, 0);
     uint32_t arm_div = l6max_boot_clock_value(L6_CCM_CACRR_OFFSET, 0);
     uint32_t bus = l6max_boot_clock_value(L6_CCM_CBCDR_OFFSET, 0);
+    assert(l6max_arm_root_hz(arm, arm_div) == 600000000u);
+    assert(l6max_arm_root_hz(arm, 3) == 300000000u);
+    assert(l6max_arm_root_hz(0x00012064u, 1) == 12000000u);
+    assert(l6max_arm_root_hz(0x00001064u, 1) == 0);
+    assert(l6max_arm_root_hz(0x00006064u, 1) == UINT32_MAX);
+    assert(l6max_arm_root_hz(0x00002001u, 1) == UINT32_MAX);
     assert((arm & 0x7f) == 100 && (arm_div & 7) == 1);
     assert((bus & 0xc0) == 0x40 && ((bus >> 16) & 7) == 1);
     /* The post-divider is inherited, not established by the dump. */

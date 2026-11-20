@@ -12,7 +12,8 @@ Initialize the pinned upstream source with
 leaving the upstream submodule clean.
 
 QEMU overlays under patches/ are applied to the staged source during builds.
-The CoreAudio underrun fix, sub-millisecond poll timeouts, a hardfloat
+The CoreAudio underrun fix, SysTick clock-source updates, sub-millisecond
+poll timeouts, a hardfloat
 shortcut for single-precision multiplies by zero, whole-block SD multi-block
 transfers, and SD multi-block writes collected into one drive write while the
 drive's write cache is on are maintained there, keeping the pinned upstream

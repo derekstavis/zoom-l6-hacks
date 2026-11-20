@@ -46,6 +46,9 @@ applies the recovered masked changes to IOMUX GPR clock and pad fields while
 preserving other stored bits. Peripheral clock mux and divider writes use
 RT1060 reset values for fields, including clock gates, whose prior ROM state has not been captured;
 the resulting complete values are assumptions, not hardware measurements.
+The ARM and system PLL control aliases share their respective register state;
+LOCK is approximated as immediate while powered. Changing their registers does
+not dynamically retime the simulated CPU or system buses.
 The USB2, video and Ethernet PLL controls reflect the bootloader's recovered
 bypass/power sequence. Their clock outputs and physical lock timing are not
 simulated. Ethernet LOCK is approximated as immediate while powered, independent

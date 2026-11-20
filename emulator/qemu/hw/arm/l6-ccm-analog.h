@@ -171,6 +171,31 @@ static inline uint32_t l6_audio_pll_status(uint32_t control)
     return control;
 }
 
+/* ARM and system PLL output ENABLE is separate from POWERDOWN. */
+#define L6_ARM_PLL_WRITABLE 0x0001f07fu
+#define L6_SYS_PLL_WRITABLE 0x0001f001u
+static inline uint32_t l6_core_pll_apply(uint32_t control, uint32_t value,
+                                         L6Usb1PllAlias alias, uint32_t mask)
+{
+    control &= mask;
+    value &= mask;
+    switch (alias) {
+    case L6_USB1_PLL_DIRECT: return value;
+    case L6_USB1_PLL_SET: return control | value;
+    case L6_USB1_PLL_CLEAR: return control & ~value;
+    case L6_USB1_PLL_TOGGLE: return control ^ value;
+    }
+    return control;
+}
+
+/* Like ENET, assume instantaneous lock while powered; the manual does not
+ * specify the actual time required for this transition. */
+static inline uint32_t l6_core_pll_status(uint32_t control, uint32_t mask)
+{
+    control &= mask;
+    return (control & 0x1000u) ? control : control | 0x80000000u;
+}
+
 /* RT1060 Ethernet PLL: output enables do not power the PLL itself. */
 #define L6_ENET_PLL_WRITABLE 0x0031f00fu
 static inline uint32_t l6_enet_pll_apply(uint32_t control, uint32_t value,

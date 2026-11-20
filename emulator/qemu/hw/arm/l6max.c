@@ -2310,11 +2310,19 @@ static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
     }
     hwaddr analog_pll_base = offset & ~(hwaddr)0xf;
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
-        !(offset & 3) && (analog_pll_base == 0x0d8070 ||
+        !(offset & 3) && (analog_pll_base == L6_CCM_ANALOG_PLL_ARM ||
+                          analog_pll_base == L6_CCM_ANALOG_PLL_SYS ||
+                          analog_pll_base == 0x0d8070 ||
                           analog_pll_base == 0x0d80a0 ||
                           analog_pll_base == 0x0d80e0)) {
         uint32_t control = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
             GUINT_TO_POINTER((analog_pll_base >> 2) + 1)));
+        if (analog_pll_base == L6_CCM_ANALOG_PLL_ARM ||
+            analog_pll_base == L6_CCM_ANALOG_PLL_SYS) {
+            uint32_t mask = analog_pll_base == L6_CCM_ANALOG_PLL_ARM ?
+                            L6_ARM_PLL_WRITABLE : L6_SYS_PLL_WRITABLE;
+            return l6_core_pll_status(control, mask);
+        }
         return analog_pll_base == 0x0d80e0 ? l6_enet_pll_status(control) :
                                             l6_audio_pll_status(control);
     }
@@ -3463,7 +3471,9 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
     }
     hwaddr analog_pll_base = offset & ~(hwaddr)0xf;
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
-        !(offset & 3) && (analog_pll_base == 0x0d8070 ||
+        !(offset & 3) && (analog_pll_base == L6_CCM_ANALOG_PLL_ARM ||
+                          analog_pll_base == L6_CCM_ANALOG_PLL_SYS ||
+                          analog_pll_base == 0x0d8070 ||
                           analog_pll_base == 0x0d80a0 ||
                           analog_pll_base == 0x0d80e0)) {
         gpointer control_key = GUINT_TO_POINTER((analog_pll_base >> 2) + 1);
@@ -3473,9 +3483,16 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
                                offset == analog_pll_base + 8 ? L6_USB1_PLL_CLEAR :
                                offset == analog_pll_base + 12 ? L6_USB1_PLL_TOGGLE :
                                L6_USB1_PLL_DIRECT;
-        control = analog_pll_base == 0x0d80e0 ?
-                  l6_enet_pll_apply(control, value, alias) :
-                  l6_audio_pll_apply(control, value, alias);
+        if (analog_pll_base == L6_CCM_ANALOG_PLL_ARM ||
+            analog_pll_base == L6_CCM_ANALOG_PLL_SYS) {
+            uint32_t mask = analog_pll_base == L6_CCM_ANALOG_PLL_ARM ?
+                            L6_ARM_PLL_WRITABLE : L6_SYS_PLL_WRITABLE;
+            control = l6_core_pll_apply(control, value, alias, mask);
+        } else {
+            control = analog_pll_base == 0x0d80e0 ?
+                      l6_enet_pll_apply(control, value, alias) :
+                      l6_audio_pll_apply(control, value, alias);
+        }
         g_hash_table_insert(s->registers, control_key, GUINT_TO_POINTER(control));
         if (alias == L6_USB1_PLL_DIRECT) {
             word = control;

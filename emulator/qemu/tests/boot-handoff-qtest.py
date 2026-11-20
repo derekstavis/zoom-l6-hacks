@@ -278,6 +278,24 @@ def check_flexram_boundaries(qemu, image):
         assert int(command("readl 0x400d802c").split()[1], 16) == 0x12000
         command("writel 0x400d8020 0x80000000")
         assert int(command("readl 0x400d8020").split()[1], 16) == 0
+        # ARM and system PLL LOCK is read-only and independent of the
+        # output enable; powerdown clears it in this immediate-lock model.
+        for base, divider in ((0x400d8000, 0x64), (0x400d8030, 1)):
+            assert int(command(f"readl {base:#x}").split()[1], 16) == (
+                0x80002000 | divider
+            )
+            command(f"writel {base + 8:#x} 0x2000")
+            assert int(command(f"readl {base + 4:#x}").split()[1], 16) == (
+                0x80000000 | divider
+            )
+            command(f"writel {base + 4:#x} 0x80001000")
+            assert int(command(f"readl {base:#x}").split()[1], 16) == 0x1000 | divider
+            command(f"writel {base + 12:#x} 0x1000")
+            assert int(command(f"readl {base:#x}").split()[1], 16) == (
+                0x80000000 | divider
+            )
+            command(f"writel {base:#x} {0x80001000 | divider:#x}")
+            assert int(command(f"readl {base:#x}").split()[1], 16) == 0x1000 | divider
         # Video control aliases share state; status follows the same
         # immediate power/enable approximation as the audio PLL.
         assert int(command("readl 0x400d80a0").split()[1], 16) == 0x13000
@@ -330,7 +348,9 @@ def check_flexram_boundaries(qemu, image):
         assert int(command("readl 0x400fc06c").split()[1], 16) == 0xcc0c4000
         for address, (keep, value) in clocks.items():
             assert int(command(f"readl {address:#x}").split()[1], 16) == keep | value
-        for address, value in ((0x400d8010, 0x80003040),
+        for address, value in ((0x400d8000, 0x80002064),
+                               (0x400d8030, 0x80002001),
+                               (0x400d8010, 0x80003040),
                                (0x400d8020, 0x12000), (0x400d80a0, 0x13000),
                                (0x400d80e0, 0x80312001),
                                (0x400d8070, 0x80082020),
@@ -405,6 +425,7 @@ def main():
         0x400fc020: 0x13192e06, 0x400fc024: 0x06490b00,
         0x400fc02c: 0x007336c1, 0x400fc030: 0x33f71f92,
         0x400fc038: 0x00029150, 0x400fc060: 0x00120001,
+        0x400d8000: 0x80002064, 0x400d8030: 0x80002001,
         0x400d8010: 0x80003040, 0x400d8020: 0x12000, 0x400d8070: 0x80002020,
         # Simulation values assume the manual reset phase before the boot
         # divider writes; the device's inherited ROM phase is not captured.

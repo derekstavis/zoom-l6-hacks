@@ -53,7 +53,10 @@ def check_uart_receive_clock(qemu, image):
             if time.monotonic() >= deadline:
                 raise AssertionError("MIDI UART receive timed out")
             time.sleep(0.01)
+        assert command(f"readb {base + 0x16:#x}") & 0xe0 == 0xe0
+        assert command(f"readw {base + 0x16:#x}") & 0xe0 == 0xe0
         assert command(f"readl {base + 0x1c:#x}") == expected
+        assert command(f"readb {base + 0x16:#x}") & 0xe0 == 0xc0
 
     def wait_discarded():
         # Synchronize with the wire callback rather than assuming a virtual

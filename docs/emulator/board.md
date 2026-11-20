@@ -103,7 +103,9 @@ assumptions rather than physical measurements. The UART adapter enforces the
 RT1060 read-only semantics of the VERID and PARAM registers. L6max panel and
 MIDI UART receive paths discard incoming wire bytes while their instance gate,
 IPG clock or selected baud-clock source is stopped. UART transmit gating,
-serial timing and register access while gated remain approximations. The
+serial timing and register access while gated remain approximations. Aligned
+byte and halfword reads of the modeled UART status share the word-read state.
+The
 reference manual specifies SAI reset on system reset; no SAI1 setup was found
 in direct-address scans of the recovered ROM and first-stage boot image, though
 indirect accesses remain possible. The model also resets L6max DMAMUX

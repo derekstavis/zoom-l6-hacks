@@ -2980,16 +2980,22 @@ not_flexram_read:
             GUINT_TO_POINTER((offset >> 2) + 1)));
         return (bdcr & 1) ? bdcr | 2 : bdcr & ~2u;
     }
-    if (!s->panel && offset == l6_panel_uart_base(s) + 0x14 && size == 4) {
-        return (1u << 23) | (1u << 22) |
-               ((s->main_rom_mode ? s->rom_reply_read < s->rom_reply_visible :
-                  s->main_rx_pending) ? (1u << 21) : 0);
+    if (!s->panel && (offset & ~(hwaddr)3) == l6_panel_uart_base(s) + 0x14 &&
+        (size == 4 || s->profile == &L6MAX_PROFILE)) {
+        uint32_t status = (1u << 23) | (1u << 22) |
+                          ((s->main_rom_mode ? s->rom_reply_read < s->rom_reply_visible :
+                            s->main_rx_pending) ? (1u << 21) : 0);
+        return size == 4 ? status :
+               (status >> ((offset & 3) * 8)) & ((1u << (size * 8)) - 1);
     }
-    if (!s->panel && offset == l6_midi_uart_base(s) + 0x14 && size == 4) {
+    if (!s->panel && (offset & ~(hwaddr)3) == l6_midi_uart_base(s) + 0x14 &&
+        (size == 4 || s->profile == &L6MAX_PROFILE)) {
         /* The selected MIDI UART: RDRF follows a byte
          * queued from the inherited socket. */
-        return (1u << 23) | (1u << 22) |
-               (s->main_midi_rx_pending ? (1u << 21) : 0);
+        uint32_t status = (1u << 23) | (1u << 22) |
+                          (s->main_midi_rx_pending ? (1u << 21) : 0);
+        return size == 4 ? status :
+               (status >> ((offset & 3) * 8)) & ((1u << (size * 8)) - 1);
     }
     if (!s->panel && offset == l6_midi_uart_base(s) + 0x1c && size == 4) {
         uint8_t byte = s->main_midi_rx_byte;

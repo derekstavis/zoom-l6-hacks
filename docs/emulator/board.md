@@ -206,11 +206,12 @@ startup, and the tested entry bytes agree with the later physical dump.
 
 Bootloader 1.00 calls the MAIN reset vector with `r0 = 0xe000ed14` and `r1`
 containing the reset-vector word. On the reconstructed path where D-cache is
-already disabled, its `BLX` at `0x2020e450` also sets LR to `0x2020e453`.
-The emulator reproduces these register values on startup and reset; it does
-not load the bootloader instructions at that return address. The bootloader
-calls with its current task stack; it
-does not load the MAIN vector's initial MSP at that call. The emulator's CPU
+already disabled, the transfer also leaves `r2` as CCR shifted left by 15,
+and its `BLX` at `0x2020e450` sets LR to `0x2020e453`. The emulator uses
+its modeled CCR for `r2` and reproduces these register values on startup and
+reset; it does not load the bootloader instructions at that return address.
+The bootloader calls with its current task stack; it does not load the MAIN
+vector's initial MSP at that call. The emulator's CPU
 reset instead starts with the MAIN vector MSP. Stock MAIN 1.10 installs that
 same MSP itself at `0x8000041e`, before accessing the inherited stack; this
 was checked by stepping both stock and a patched image with an unmapped initial

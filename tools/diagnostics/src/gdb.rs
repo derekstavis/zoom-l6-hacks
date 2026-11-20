@@ -27,11 +27,14 @@ impl Gdb {
     }
     fn receive_packet(&mut self) -> io::Result<String> {
         let mut byte = [0];
-        loop {
+        self.0.read_exact(&mut byte)?;
+        self.receive_packet_from(byte[0])
+    }
+    /// Parse a packet whose first byte, `first`, was already read.
+    fn receive_packet_from(&mut self, first: u8) -> io::Result<String> {
+        let mut byte = [first];
+        while byte[0] != b'$' {
             self.0.read_exact(&mut byte)?;
-            if byte[0] == b'$' {
-                break;
-            }
         }
         let mut encoded = Vec::new();
         loop {
@@ -96,6 +99,32 @@ impl Gdb {
     }
     /// Resume the selected target until a breakpoint/exception, allowing a
     /// longer wait for firmware boot or a deliberately injected call.
+    /// Let the target run without waiting for it to stop; collect the stop
+    /// reply with [`Gdb::poll_stop`].
+    pub fn resume(&mut self) -> io::Result<()> {
+        self.0.write_all(b"$c#63")
+    }
+    /// The stop reply of a target [`Gdb::resume`] let run, or `None` when it
+    /// is still running after `wait`. A timeout leaves the stream intact.
+    pub fn poll_stop(&mut self, wait: Duration) -> io::Result<Option<String>> {
+        self.0.set_read_timeout(Some(wait))?;
+        let mut byte = [0];
+        let read = self.0.read(&mut byte);
+        self.0.set_read_timeout(Some(Duration::from_secs(5)))?;
+        match read {
+            Ok(0) => Err(io::ErrorKind::UnexpectedEof.into()),
+            Ok(_) => self.receive_packet_from(byte[0]).map(Some),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
     pub fn continue_until_stop(&mut self, timeout: Duration) -> io::Result<String> {
         self.0.set_read_timeout(Some(timeout))?;
         let result = self.request("c");

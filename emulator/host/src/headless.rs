@@ -45,8 +45,18 @@ impl Headless {
             .guest_ms
     }
     pub fn until(&self, ms: u32) -> io::Result<()> {
-        let deadline = Instant::now() + Duration::from_secs(120);
+        // A loaded host runs the guest slower than real time, so the wall
+        // bound is on progress: fail when the guest clock stops advancing.
+        // The caller's own deadline bounds the whole run.
+        const STALL: Duration = Duration::from_secs(60);
+        let mut progress = self.guest_ms();
+        let mut deadline = Instant::now() + STALL;
         while self.guest_ms() < ms {
+            let now = self.guest_ms();
+            if now != progress {
+                progress = now;
+                deadline = Instant::now() + STALL;
+            }
             if self
                 .engine
                 .inputs
@@ -62,7 +72,7 @@ impl Headless {
             if Instant::now() > deadline {
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
-                    "guest boot deadline",
+                    format!("guest clock stalled at {progress} ms before {ms} ms"),
                 ));
             }
             thread::sleep(Duration::from_millis(5));

@@ -4769,6 +4769,9 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
             /* RT1060 RM reset values, used where ROM state is not captured. */
             static const struct { hwaddr offset; uint32_t value; } ccm1060[] = {
                 { 0x0fc000, 0x0401107fu }, { 0x0fc00c, 0x00000100u },
+                { 0x0fc010, 0x00000001u }, { 0x0fc014, 0x000a8300u },
+                { 0x0fc018, 0x2dae8324u }, { 0x0d8000, 0x00013063u },
+                { 0x0d8170, 0x00272727u },
                 { 0x0fc020, 0x13192f06u }, { 0x0fc024, 0x06490b00u },
                 { 0x0fc030, 0x33f71f92u }, { 0x0fc038, 0x00029150u },
                 { 0x0fc060, 0x000a0001u },

@@ -57,8 +57,10 @@ reconstructed MCR0, MCR1, modified MCR2/AHBCR and flash-device control fields.
 The boot image’s NOR configuration record sets port A1 to 2 MiB and specifies
 its chip-select timing. Fields the bootloader preserves start from reset
 assumptions, and the resulting values have not been read back at physical
-handoff. NOR transactions remain firmware-focused and are not timed from the
-FlexSPI clock.
+handoff. The boot task also installs six NOR command sequences and locks the
+FlexSPI lookup table; the L6max model restores those 24 words and implements
+the keyed lock/unlock protocol. The remaining LUT contents are not captured;
+module-disable access restrictions and transaction timing are not modeled.
 
 For the same bootloader handoff, the L6max board seeds observed IOMUX register
 values, clock-tree gate clears, selected later gate enables, and GPIO output

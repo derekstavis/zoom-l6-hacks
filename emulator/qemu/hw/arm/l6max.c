@@ -392,6 +392,7 @@ typedef struct L6ChipState {
     unsigned flexspi_rx_size;
     unsigned flexspi_rx_cursor;
     bool nor_write_enable;
+    bool flexspi_lut_locked, flexspi_lut_key_valid;
     bool nor_program;
     unsigned nor_program_address;
     unsigned nor_program_size;
@@ -3765,6 +3766,26 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
                           uint64_t value, unsigned size)
 {
     L6ChipState *s = opaque;
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        offset >= 0x2a8000 && offset < 0x2ac000) {
+        /* LUTKEY must immediately precede a valid lock/unlock request.
+         * Other controller writes consume the key, including ignored writes. */
+        if (offset == 0x2a8018 && size == 4) {
+            s->flexspi_lut_key_valid = value == 0x5af05af0u;
+        } else {
+            bool key_valid = s->flexspi_lut_key_valid;
+            s->flexspi_lut_key_valid = false;
+            if ((offset & ~(hwaddr)3) == 0x2a801c) {
+                if (size != 4 || !key_valid || (value != 1 && value != 2)) {
+                    return;
+                }
+                s->flexspi_lut_locked = value == 1;
+            } else if (offset >= 0x2a8200 && offset < 0x2a8300 &&
+                       s->flexspi_lut_locked) {
+                return;
+            }
+        }
+    }
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
         l6max_pit_write(s, offset, value)) {
         return;
@@ -5011,6 +5032,28 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
                                                           flexspi_ahbcr));
     g_hash_table_insert(s->registers, flexspi_ahbcr,
                         GUINT_TO_POINTER(ahbcr & ~0x78u));
+    /* The NOR helper installs six four-word command sequences (fast read,
+     * write enable, sector/block erase, page program and status read), then
+     * locks the LUT. Later software reset leaves configuration intact. */
+    static const uint32_t boot_lut[24] = {
+        0x0818040bu, 0x24043008u, 0, 0,
+        0x00000406u, 0, 0, 0,
+        0x08180420u, 0, 0, 0,
+        0x081804d8u, 0, 0, 0,
+        0x08180402u, 0x00002004u, 0, 0,
+        0x24040405u, 0, 0, 0,
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(boot_lut); i++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER(((0x2a8200 + i * 4) >> 2) + 1),
+            GUINT_TO_POINTER(boot_lut[i]));
+    }
+    s->flexspi_lut_locked = true;
+    s->flexspi_lut_key_valid = false;
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x2a8018 >> 2) + 1),
+                        GUINT_TO_POINTER(0x5af05af0u));
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x2a801c >> 2) + 1),
+                        GUINT_TO_POINTER(1u));
     /* The 1.00 NOR-device record, copied from its initialized data,
      * configures port A1 for 2 MiB and chip-select timing. The helper
      * preserves selected CR2/CR4 fields; their inherited values are unknown. */

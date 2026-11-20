@@ -255,6 +255,42 @@ def check_flexram_boundaries(qemu, image):
                 if "return" in reply:
                     return reply["return"]
         qmp_execute("qmp_capabilities")
+        # Bootloader installed and locked the NOR command table. Verify the
+        # command works before any guest table write, then the key protocol.
+        assert int(command("readl 0x402a801c").split()[1], 16) == 1
+        assert int(command("readl 0x402a8200").split()[1], 16) == 0x0818040b
+        mcr0 = int(command("readl 0x402a8000").split()[1], 16)
+        command(f"writel 0x402a8000 {mcr0 | 1:#x}")
+        assert int(command("readl 0x402a801c").split()[1], 16) == 1
+        assert int(command("readl 0x402a8200").split()[1], 16) == 0x0818040b
+        command("writel 0x402a80a0 0x50000")
+        command("writel 0x402a80a4 4")
+        command("writel 0x402a80b0 1")
+        assert int(command("readl 0x402a8100").split()[1], 16) == int(
+            command("readl 0x80000000").split()[1], 16)
+        command("writel 0x402a8200 0x12345678")
+        command("writeb 0x402a8201 0xaa")
+        assert int(command("readl 0x402a8200").split()[1], 16) == 0x0818040b
+        command("writel 0x402a8018 0")  # wrong key
+        command("writel 0x402a801c 2")
+        assert int(command("readl 0x402a801c").split()[1], 16) == 1
+        command("writel 0x402a8018 0x5af05af0")
+        command("writeb 0x402a8080 0")  # intervening controller write
+        command("writel 0x402a801c 2")
+        assert int(command("readl 0x402a801c").split()[1], 16) == 1
+        command("writel 0x402a8018 0x5af05af0")
+        command("writel 0x402a801c 2")
+        assert int(command("readl 0x402a801c").split()[1], 16) == 2
+        command("writel 0x402a8200 0x12345678")
+        assert int(command("readl 0x402a8200").split()[1], 16) == 0x12345678
+        command("writel 0x402a8018 0x5af05af0")
+        command("writel 0x402a801c 1")
+        command("writel 0x402a8200 0x87654321")
+        assert int(command("readl 0x402a8200").split()[1], 16) == 0x12345678
+        qmp_execute("system_reset")
+        assert int(command("readl 0x402a8200").split()[1], 16) == 0x0818040b
+        assert int(command("readl 0x402a801c").split()[1], 16) == 1
+        print(f"{image}: FlexSPI boot LUT and lock protocol passed")
         # The reconstructed handoff gate stops the ROM lifetime counter
         # even if firmware clears MCR.MDIS before enabling its CCGR field.
         assert int(command("readl 0x40084104").split()[1], 16) == 0xffffffff
@@ -622,6 +658,8 @@ def check_flexram_boundaries(qemu, image):
         # current SDRAM image alone until the next bootloaderless reset.
         main_word = int(command("readl 0x80000100").split()[1], 16)
         assert main_word != 0
+        command("writel 0x402a8018 0x5af05af0")
+        command("writel 0x402a801c 2")           # unlock LUT
         command("writel 0x402a8200 0x06")       # write enable
         command("writel 0x402a80a4 0")
         command("writel 0x402a80b0 1")
@@ -890,6 +928,8 @@ def check_flexram_boundaries(qemu, image):
         }
         # A valid installed footer limits the next copy; bytes beyond it
         # retain SDRAM contents even when NOR holds different bytes.
+        command("writel 0x402a8018 0x5af05af0")
+        command("writel 0x402a801c 2")
         command("writel 0x402a8200 0x06")
         command("writel 0x402a80a4 0")
         command("writel 0x402a80b0 1")
@@ -932,7 +972,11 @@ def main():
         0x402f0098: 0, 0x402f00a0: 0x33,
         0x402f00c0: 1,
         0x402a8000: 0xffff1000, 0x402a8004: 0xffffffff,
-        0x402a8008: 0x200001f7, 0x402a800c: 0,
+        0x402a8008: 0x200001f7, 0x402a800c: 0, 0x402a801c: 1,
+        0x402a8200: 0x0818040b, 0x402a8204: 0x24043008,
+        0x402a8210: 0x406, 0x402a8220: 0x08180420,
+        0x402a8230: 0x081804d8, 0x402a8240: 0x08180402,
+        0x402a8244: 0x2004, 0x402a8250: 0x24040405,
         0x402a8060: 0x800, 0x402a8070: 0x30063, 0x402a8080: 0,
         0x402a8094: 1, 0x402a80c0: 0x100,
         0x400ac00c: 0x0000f0f0, 0x400ac028: 7,
@@ -966,6 +1010,12 @@ def main():
         0xe000ed24: 0, 0xe000ed88: 0x00f00000, 0xe000ed94: 0,
         0xe000ef34: 0xc0000000,
     }
+    lut_words = [0x0818040b, 0x24043008, 0, 0,
+                 0x406, 0, 0, 0, 0x08180420, 0, 0, 0,
+                 0x081804d8, 0, 0, 0, 0x08180402, 0x2004, 0, 0,
+                 0x24040405, 0, 0, 0]
+    l6max.update({0x402a8200 + 4 * i: value
+                  for i, value in enumerate(lut_words)})
     check(qemu, stock, l6max)
     check(qemu, patched, l6max)
     check_main_stack_entry(qemu, stock, mpu_test=True)
@@ -976,6 +1026,7 @@ def main():
     check_flexram_boundaries(qemu, stock)
     check(qemu, l6, {0x400ac038: 0, 0x401f8204: 0, 0x402f0010: 0,
                      0x40084000: 0, 0x40084100: 0,
+                     0x402a801c: 2, 0x402a8200: 0,
                      0xe000e014: 0, 0xe000ed00: 0x411fc272, 0xe000ed20: 0,
                      0xe000ed88: 0})
 

@@ -220,6 +220,79 @@ def check_flexram_boundaries(qemu, image):
                 if "return" in reply:
                     return reply["return"]
         qmp_execute("qmp_capabilities")
+        # The reconstructed handoff gate stops the ROM lifetime counter
+        # even if firmware clears MCR.MDIS before enabling its CCGR field.
+        assert int(command("readl 0x40084104").split()[1], 16) == 0xffffffff
+        command("writel 0x40084000 0")
+        command("clock_step 5000")
+        assert int(command("readl 0x40084104").split()[1], 16) == 0xffffffff
+        # PIT clock is PERCLK, gated independently from MCR. Use 24 MHz and
+        # a 24-cycle period so each expiration is one microsecond.
+        command("writel 0x40084108 0")
+        command("writel 0x40084118 0")
+        command("writel 0x40084100 23")
+        command("writel 0x40084110 1")
+        command("writel 0x4008410c 1")
+        command("writel 0x4008411c 1")
+        cscmr = int(command("readl 0x400fc01c").split()[1], 16)
+        gate = int(command("readl 0x400fc06c").split()[1], 16)
+        command(f"writel 0x400fc01c {(cscmr & ~0x7f) | 0x40:#x}")
+        command(f"writel 0x400fc06c {(gate & ~0x3000) | 0x3000:#x}")
+        command("writel 0x40084000 0")
+        command("writel 0x40084118 7")  # channel 1, chained + interrupt
+        command("writel 0x40084108 1")
+        command("writel 0xe000e10c 0x04000000")
+        command("clock_step 500")
+        assert int(command("readl 0x40084104").split()[1], 16) == 11
+        assert int(command("readl 0x400840e0").split()[1], 16) == 1
+        command("clock_step 500")
+        assert int(command("readl 0x400840e4").split()[1], 16) == 11
+        assert int(command("readl 0x4008410c").split()[1], 16) == 1
+        assert int(command("readl 0x40084114").split()[1], 16) == 0
+        assert int(command("readl 0x4008411c").split()[1], 16) == 0
+        command("clock_step 1000")
+        assert int(command("readl 0x4008411c").split()[1], 16) == 1
+        assert int(command("readl 0xe000e20c").split()[1], 16) & 0x04000000
+        command("writel 0x4008411c 1")
+        command("writel 0xe000e28c 0x04000000")
+        assert not int(command("readl 0xe000e20c").split()[1], 16) & 0x04000000
+        command(f"writel 0x400fc06c {gate & ~0x3000:#x}")
+        frozen = int(command("readl 0x40084104").split()[1], 16)
+        command("clock_step 5000")
+        assert int(command("readl 0x40084104").split()[1], 16) == frozen
+        command(f"writel 0x400fc06c {(gate & ~0x3000) | 0x3000:#x}")
+        command("clock_step 500")
+        assert int(command("readl 0x40084104").split()[1], 16) == 11
+        command("writel 0x40084000 2")
+        command("clock_step 5000")
+        assert int(command("readl 0x40084104").split()[1], 16) == 11
+        # Handoff IPG is 150 MHz; PERCLK /3 gives 50 MHz. A new LDVAL
+        # takes effect only on the next reload, not at the write.
+        command("writel 0x40084108 0")
+        command("writel 0x40084118 0")
+        command("writel 0x40084100 149")
+        command(f"writel 0x400fc01c {(cscmr & ~0x7f) | 2:#x}")
+        command("writel 0x4008410c 1")
+        command("writel 0x40084000 0")
+        command("writel 0x40084108 1")
+        command("clock_step 1000")
+        assert int(command("readl 0x40084104").split()[1], 16) == 99
+        command("writel 0x40084100 49")
+        command(f"writel 0x400fc01c {(cscmr & ~0x7f) | 5:#x}")
+        command("clock_step 2000")
+        assert int(command("readl 0x40084104").split()[1], 16) == 49
+        command(f"writel 0x400fc01c {(cscmr & ~0x7f) | 2:#x}")
+        command("clock_step 1000")
+        assert int(command("readl 0x4008410c").split()[1], 16) == 1
+        assert int(command("readl 0x40084104").split()[1], 16) == 49
+        command("clock_step 1000")
+        assert int(command("readl 0x40084104").split()[1], 16) == 49
+        cbcdr = int(command("readl 0x400fc014").split()[1], 16)
+        command(f"writel 0x400fc014 {(cbcdr & ~0x300) | 0x100:#x}")
+        command("clock_step 250")  # IPG /2, PERCLK /3: 100 MHz
+        assert int(command("readl 0x40084104").split()[1], 16) == 24
+        print(f"{image}: PIT clock sources, gate, chaining, reload and IRQ passed")
+        qmp_execute("system_reset")
         for last, beyond in ((0x7ffc, 0x8000), (0x2001fffc, 0x20020000),
                              (0x202d7ffc, 0x202d8000)):
             command(f"writel {last:#x} 0x1234abcd")

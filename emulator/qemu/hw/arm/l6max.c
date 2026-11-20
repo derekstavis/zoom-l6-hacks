@@ -355,6 +355,11 @@ typedef struct L6ChipState {
     MemoryRegion flexram_holes[3];
     L6FlexRamHole flexram_hole_context[3];
     uint32_t flexram_tcm_ctrl, flexram_status, flexram_status_en, flexram_sig_en;
+    QEMUTimer *pit_timer;
+    uint32_t pit_mcr, pit_load[4], pit_count[4], pit_ctrl[4], pit_flag[4];
+    uint32_t pit_latched_low, pit_rate;
+    int64_t pit_last_ns;
+    uint64_t pit_fraction;
     MemoryRegion external_ram;
     MemoryRegion peripheral;
     MemoryRegion sd_adapter;
@@ -2404,9 +2409,157 @@ static const MemoryRegionOps l6max_flexram_hole_ops = {
     .valid.max_access_size = 8,
 };
 
+/* RT1060 PIT: the bus clock may be gated independently of MCR.MDIS.
+ * Arithmetic runs at virtual time and retains subcycle phase across reads. */
+static void l6max_pit_irq(L6ChipState *s)
+{
+    bool active = false;
+    for (unsigned i = 0; i < 4; i++) {
+        active |= s->pit_flag[i] && (s->pit_ctrl[i] & 2u);
+    }
+    qemu_set_irq(qdev_get_gpio_in(DEVICE(&s->armv7m), 122), active);
+}
+
+static void l6max_pit_sync(L6ChipState *s)
+{
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    uint64_t ns = now > s->pit_last_ns ? now - s->pit_last_ns : 0;
+    s->pit_last_ns = now;
+    if (!s->pit_rate || (s->pit_mcr & 2u)) {
+        return;
+    }
+    __uint128_t elapsed = (__uint128_t)ns * s->pit_rate + s->pit_fraction;
+    uint64_t clocks = elapsed / 1000000000u;
+    s->pit_fraction = elapsed % 1000000000u;
+    uint64_t previous_expirations = 0;
+    for (unsigned i = 0; i < 4; i++) {
+        uint64_t ticks = (i && (s->pit_ctrl[i] & 4u)) ? previous_expirations : clocks;
+        previous_expirations = 0;
+        if (!(s->pit_ctrl[i] & 1u) || !ticks) {
+            continue;
+        }
+        uint64_t first = (uint64_t)s->pit_count[i] + 1;
+        if (ticks < first) {
+            s->pit_count[i] -= ticks;
+        } else {
+            uint64_t remaining = ticks - first;
+            uint64_t period = (uint64_t)s->pit_load[i] + 1;
+            previous_expirations = 1 + remaining / period;
+            s->pit_count[i] = s->pit_load[i] - remaining % period;
+            s->pit_flag[i] = 1;
+        }
+    }
+    l6max_pit_irq(s);
+}
+
+static void l6max_pit_schedule(L6ChipState *s)
+{
+    timer_del(s->pit_timer);
+    if (!s->pit_rate || (s->pit_mcr & 2u)) {
+        return;
+    }
+    __uint128_t first = 0, period = 0, next = ~(__uint128_t)0;
+    for (unsigned i = 0; i < 4; i++) {
+        if (!(s->pit_ctrl[i] & 1u)) {
+            first = period = 0;
+            continue;
+        }
+        if (i && (s->pit_ctrl[i] & 4u)) {
+            if (!period) {
+                first = 0;
+                continue;
+            }
+            first = MIN((__uint128_t)UINT64_MAX,
+                        first + (__uint128_t)s->pit_count[i] * period);
+            period = MIN((__uint128_t)UINT64_MAX,
+                         period * ((uint64_t)s->pit_load[i] + 1));
+        } else {
+            first = (uint64_t)s->pit_count[i] + 1;
+            period = (uint64_t)s->pit_load[i] + 1;
+        }
+        if (!s->pit_flag[i] && first < next) {
+            next = first;
+        }
+    }
+    if (next == ~(__uint128_t)0) {
+        return;
+    }
+    __uint128_t numerator = next * 1000000000u - s->pit_fraction;
+    __uint128_t ns = (numerator + s->pit_rate - 1) / s->pit_rate;
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    if (ns <= INT64_MAX - now) {
+        timer_mod(s->pit_timer, now + (int64_t)ns);
+    }
+}
+
+static void l6max_pit_tick(void *opaque)
+{
+    L6ChipState *s = opaque;
+    l6max_pit_sync(s);
+    l6max_pit_schedule(s);
+}
+
+static bool l6max_pit_read(L6ChipState *s, hwaddr offset, uint32_t *value)
+{
+    if (offset < 0x084000 || offset > 0x08413c) {
+        return false;
+    }
+    l6max_pit_sync(s);
+    switch (offset) {
+    case 0x084000: *value = s->pit_mcr; break;
+    case 0x0840e0: s->pit_latched_low = s->pit_count[0];
+                   *value = s->pit_count[1]; break;
+    case 0x0840e4: *value = s->pit_latched_low; break;
+    default:
+        if (offset < 0x084100 || (offset & 3u)) { return false; }
+        unsigned channel = (offset - 0x084100) >> 4;
+        switch (offset & 0xfu) {
+        case 0: *value = s->pit_load[channel]; break;
+        case 4: *value = s->pit_count[channel]; break;
+        case 8: *value = s->pit_ctrl[channel]; break;
+        case 12: *value = s->pit_flag[channel]; break;
+        default: return false;
+        }
+    }
+    l6max_pit_schedule(s);
+    return true;
+}
+
+static bool l6max_pit_write(L6ChipState *s, hwaddr offset, uint32_t value)
+{
+    if (offset != 0x084000 && (offset < 0x084100 || offset > 0x08413c || (offset & 3u))) {
+        return false;
+    }
+    l6max_pit_sync(s);
+    if (offset == 0x084000) {
+        s->pit_mcr = value & 3u;
+    } else {
+        unsigned channel = (offset - 0x084100) >> 4;
+        switch (offset & 0xfu) {
+        case 0: s->pit_load[channel] = value; break;
+        case 4: break; /* CVAL is read-only. */
+        case 8:
+            if (!(s->pit_ctrl[channel] & 1u) && (value & 1u)) {
+                s->pit_count[channel] = s->pit_load[channel];
+            }
+            s->pit_ctrl[channel] = value & (channel ? 7u : 3u);
+            break;
+        case 12: s->pit_flag[channel] &= ~(value & 1u); break;
+        }
+    }
+    l6max_pit_irq(s);
+    l6max_pit_schedule(s);
+    return true;
+}
+
 static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
 {
     L6ChipState *s = opaque;
+    uint32_t pit_value;
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
+        l6max_pit_read(s, offset, &pit_value)) {
+        return pit_value;
+    }
     if (!s->panel && s->profile == &L6MAX_PROFILE &&
         (offset & ~(hwaddr)3) == 0x2f00c0) {
         /* SEMC is idle because no timed controller operations are modeled. */
@@ -3591,6 +3744,16 @@ static void l6max_update_cpu_clock(L6ChipState *s)
 {
     L6MaxBusClocks clocks = l6max_bus_clocks(s);
     uint32_t hz = l6max_ahb_clock_hz(&clocks);
+    l6max_pit_sync(s);
+    uint32_t cscmr1 = l6max_clock_register(s, L6_CCM_CSCMR1_OFFSET);
+    uint32_t perclk = (cscmr1 & 0x40u) ? clocks.oscillator_hz :
+                                           l6max_ipg_clock_hz(&clocks);
+    if (!(l6max_clock_register(s, 0x0fc06c) & 0x1000u)) {
+        s->pit_rate = 0;
+    } else if (perclk != UINT32_MAX) {
+        s->pit_rate = perclk / ((cscmr1 & 0x3fu) + 1);
+    }
+    l6max_pit_schedule(s);
     clock_update_hz(s->refclk, clocks.oscillator_hz ? 100000 : 0);
     if (hz != UINT32_MAX) {
         clock_update_hz(s->sysclk, hz);
@@ -3601,6 +3764,10 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
                           uint64_t value, unsigned size)
 {
     L6ChipState *s = opaque;
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
+        l6max_pit_write(s, offset, value)) {
+        return;
+    }
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4) {
         switch (offset) {
         case 0x0b0000: s->flexram_tcm_ctrl = value & 7u; return;
@@ -4068,6 +4235,7 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
     if (!s->panel && s->profile == &L6MAX_PROFILE &&
         (clock_word == 0x0fc00c || clock_word == L6_CCM_CACRR_OFFSET ||
          clock_word == L6_CCM_CBCDR_OFFSET || clock_word == L6_CCM_CBCMR_OFFSET ||
+         clock_word == L6_CCM_CSCMR1_OFFSET || clock_word == 0x0fc06c ||
          clock_word == L6_CCM_ANALOG_PLL_SYS_NUM ||
          clock_word == L6_CCM_ANALOG_PLL_SYS_DENOM ||
          (size == 4 && !(offset & 3) &&
@@ -4648,18 +4816,21 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
                    GPOINTER_TO_UINT(osc_stored) : 0x000102e2u;
     g_hash_table_insert(s->registers, osc_key,
                         GUINT_TO_POINTER((osc & ~0x20000u) | 0x10000u));
-    /* ROM timer setup and its normal image-transfer cleanup leave PIT
-     * disabled with channels 0/1 configured as a chained lifetime timer.
-     * Counter values and any indirect intervening writes were not captured. */
-    static const struct { hwaddr offset; uint32_t value; } pit_handoff[] = {
-        { 0x084000, 2 }, { 0x084100, 0xffffffffu }, { 0x084108, 1 },
-        { 0x084110, 0xffffffffu }, { 0x084118, 5 },
-    };
-    for (unsigned i = 0; i < ARRAY_SIZE(pit_handoff); i++) {
-        g_hash_table_insert(s->registers,
-                            GUINT_TO_POINTER((pit_handoff[i].offset >> 2) + 1),
-                            GUINT_TO_POINTER(pit_handoff[i].value));
-    }
+    /* ROM cleanup disables the timer after configuring channels 0/1 as a
+     * chained lifetime counter. Their actual stopped counts were not captured. */
+    s->pit_mcr = 2;
+    memset(s->pit_load, 0, sizeof(s->pit_load));
+    memset(s->pit_count, 0, sizeof(s->pit_count));
+    memset(s->pit_ctrl, 0, sizeof(s->pit_ctrl));
+    memset(s->pit_flag, 0, sizeof(s->pit_flag));
+    s->pit_load[0] = s->pit_count[0] = UINT32_MAX;
+    s->pit_load[1] = s->pit_count[1] = UINT32_MAX;
+    s->pit_ctrl[0] = 1;
+    s->pit_ctrl[1] = 5;
+    s->pit_latched_low = s->pit_fraction = s->pit_rate = 0;
+    s->pit_last_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    timer_del(s->pit_timer);
+    l6max_pit_irq(s);
     /* ROM image-transfer cleanup sets GPR3.DCP_KEY_SEL and clears
      * GPR10.DCPKEY_OCOTP_OR_KEYMUX. Untouched initial fields use the
      * manual's reset values; physical inherited and lock state is unknown. */
@@ -4882,7 +5053,6 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
         }
         g_hash_table_insert(s->registers, key, GUINT_TO_POINTER(value));
     }
-    l6max_update_cpu_clock(s);
     /* The clock-tree routine clears these fields after pad setup. Later
      * GPIO/SEMC/FlexSPI initialization restores the enabled fields below. */
     static const struct { hwaddr offset; uint32_t keep; } gate_masks[] = {
@@ -4911,6 +5081,7 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
         g_hash_table_insert(s->registers,
             key, GUINT_TO_POINTER(old | enabled_gates[i].mask));
     }
+    l6max_update_cpu_clock(s);
     /* GPIO1.2 and GPIO3.3 start high; GPIO1.28 and GPIO3.0 start low. */
     l6_main_gpio_write(&s->main_gpio_adapters[0], 0, 1u << 2, 4);
     l6_main_gpio_write(&s->main_gpio_adapters[0], 4,
@@ -5558,6 +5729,9 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
         s->panel_tim2 = timer_new_ns(QEMU_CLOCK_VIRTUAL,
                                      l6_panel_tim2_tick, s);
     } else {
+        if (s->profile == &L6MAX_PROFILE) {
+            s->pit_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, l6max_pit_tick, s);
+        }
         s->rom_uart_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
                                          l6_rom_uart_tick, s);
         s->main_audio_service_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,

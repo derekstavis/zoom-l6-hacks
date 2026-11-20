@@ -2415,6 +2415,11 @@ static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
         case 0x0b0018: return s->flexram_sig_en;
         }
     }
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
+        (offset & ~(hwaddr)0xf) == 0x0d82c0) {
+        return GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+            GUINT_TO_POINTER((0x0d82c0 >> 2) + 1)));
+    }
     hwaddr pfd_base = offset & ~(hwaddr)0xf;
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
         !(offset & 3) && (pfd_base == L6_CCM_ANALOG_PFD_480 ||
@@ -3587,6 +3592,24 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
     unsigned shift = (offset & 3) * 8;
     uint32_t mask = size == 4 ? UINT32_MAX : ((1u << (size * 8)) - 1) << shift;
     word = (word & ~mask) | (((uint32_t)value << shift) & mask);
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
+        (offset & ~(hwaddr)0xf) == 0x0d82c0) {
+        gpointer key2 = GUINT_TO_POINTER((0x0d82c0 >> 2) + 1);
+        uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key2));
+        uint32_t writable = old & 0x00030fffu;
+        uint32_t operand = value & 0x00030fffu;
+        switch (offset & 0xf) {
+        case 0: writable = operand; break;
+        case 4: writable |= operand; break;
+        case 8: writable &= ~operand; break;
+        case 12: writable ^= operand; break;
+        }
+        word = (old & 0x80000000u) | writable;
+        g_hash_table_insert(s->registers, key2, GUINT_TO_POINTER(word));
+        if (offset != 0x0d82c0) {
+            store_word = false;
+        }
+    }
     if (!s->panel && s->profile == &L6MAX_PROFILE &&
         (offset & ~(hwaddr)3) == 0x2f0000) {
         /* SWRST resets internal logic, not configuration, and self-clears. */
@@ -4553,6 +4576,15 @@ static void l6_main_gpio_setup(L6ChipState *s, MemoryRegion *system_memory)
 /* Apply the modeled L6max bootloader handoff after every machine reset. */
 static void l6max_seed_boot_handoff(L6ChipState *s)
 {
+    /* Boot enables the independent RC-derived 1 MHz output and selects its
+     * free-running source. Other fields are inherited, with RM reset fallback. */
+    gpointer osc_key = GUINT_TO_POINTER((0x0d82c0 >> 2) + 1);
+    gpointer osc_stored;
+    uint32_t osc = g_hash_table_lookup_extended(s->registers, osc_key, NULL,
+                                               &osc_stored) ?
+                   GPOINTER_TO_UINT(osc_stored) : 0x000102e2u;
+    g_hash_table_insert(s->registers, osc_key,
+                        GUINT_TO_POINTER((osc & ~0x20000u) | 0x10000u));
     /* ROM timer setup and its normal image-transfer cleanup leave PIT
      * disabled with channels 0/1 configured as a chained lifetime timer.
      * Counter values and any indirect intervening writes were not captured. */
@@ -5457,7 +5489,8 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
     s->sysclk = clock_new(OBJECT(machine), sysclk_name);
     s->refclk = clock_new(OBJECT(machine), refclk_name);
     clock_set_hz(s->sysclk, panel ? 48000000 : 600000000);
-    clock_set_hz(s->refclk, 1000000);
+    /* RT1060 divides the external SysTick 24 MHz reference to 100 kHz. */
+    clock_set_hz(s->refclk, !panel && profile == &L6MAX_PROFILE ? 100000 : 1000000);
     if (!panel) { l6_prepare_nor(s, kernel_filename); }
 
     if (!panel && profile == &L6MAX_PROFILE) {

@@ -66,8 +66,11 @@ modeled clock calculations. The L6max QEMU CPU clock input follows the RT1060
 peripheral mux and AHB divider, including PLL1, PLL2, PLL2
 PFDs and the alternate oscillator or PLL3 path; SysTick follows that clock.
 The IPG divider also supplies SAI1 when its bus-clock input is selected.
-SysTick pauses if its selected clock stops and retains its separate reference
-clock when selected. External CLK1, invalid PLL dividers and reserved mux
+SysTick pauses if its selected clock stops and uses the RT1060's separate
+100 kHz external reference when selected. The bootloader also enables the
+independent RC-derived 1 MHz output and selects its free-running source;
+its configuration and register aliases are modeled, but oscillator tuning
+and physical frequency are not. External CLK1, invalid PLL dividers and reserved mux
 selections retain the last known CPU clock. PLL2 spread-spectrum modulation is
 not modeled; its control register is cleared at handoff by the recovered boot
 configuration. TCG instruction execution is not cycle-accurate and does not stop

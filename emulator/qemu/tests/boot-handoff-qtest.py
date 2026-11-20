@@ -45,7 +45,7 @@ def check(qemu, image, expected):
     print(f"{image}: initial handoff and reset passed")
 
 
-def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08):
+def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test=False):
     # Bootloader 1.00 calls the reset handler with its current task stack.
     # MAIN 1.10's first six instructions install its own vector-table MSP
     # without accessing that inherited stack. Run those instructions with a
@@ -107,6 +107,27 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08):
             assert regs[13] == (main_msp if instruction == 5 else inherited_msp)
         assert regs[15] == 0x80000422, hex(regs[15])
         print(f"{image}: MAIN reset handler replaces inherited MSP passed")
+        if mpu_test:
+            # A protected data region must affect guest accesses after MAIN
+            # enables the MPU. Privileged background access keeps code executable.
+            for request in (
+                "M801f0000,2:0868",      # ldr r0, [r1]
+                "M801f0100,2:fee7",      # b . (HardFault handler)
+                "M8000000c,4:01011f80",  # HardFault vector = 0x801f0101
+                "Me000ed98,4:00000000",  # region 0
+                "Me000ed9c,4:00201f80",  # base = 0x801f2000
+                "Me000eda0,4:09000000",  # 32 bytes, no access, enabled
+                "Me000ed94,4:05000000",  # MPU enabled, privileged default map
+                "P1=00201f80",
+                "Pf=00001f80",
+            ):
+                assert packet(request) == "OK", request
+            assert packet("s").startswith("T05")
+            assert registers()[15] == 0x801f0100
+            assert int.from_bytes(bytes.fromhex(packet("me000ed28,4")), "little") & 0x82 == 0x82
+            assert int.from_bytes(bytes.fromhex(packet("me000ed34,4")), "little") == 0x801f2000
+            print(f"{image}: guest MPU protection and fault passed")
+            return
         # Execute a Thumb LDR from unallocated FlexRAM, with a local HardFault
         # vector. Unlike qtest reads, this exercises the CPU's bus-fault path.
         for request in (
@@ -637,6 +658,7 @@ def main():
     }
     check(qemu, stock, l6max)
     check(qemu, patched, l6max)
+    check_main_stack_entry(qemu, stock, mpu_test=True)
     check_main_stack_entry(qemu, stock)
     check_main_stack_entry(qemu, stock, 0x20020000, 0x10)
     check_main_stack_entry(qemu, stock, 0x202d8000, 0x20)

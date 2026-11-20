@@ -16,10 +16,11 @@ persistent flash image remains 64 KiB for state compatibility; only its first
 and the [panel manual audit](panel-manual-audit.md) for register-level findings
 and remaining work.
 
-The L6 MAIN processor is an i.MX RT1041. The L6max processor has not been
-identified; the two profiles share the emulated CPU topology without assuming
-identical physical silicon. For L6 peripheral semantics, use the RT1040
-reference manual. L6 external resource NOR uses LPSPI3 at `0x403a0000`.
+The L6 MAIN processor is an i.MX RT1041. The L6max dump identifies the
+i.MX RT106x family, but does not distinguish RT1061 from RT1062. The profiles
+share an emulated CPU topology without assuming identical physical silicon.
+For L6 peripheral semantics, use the RT1040 reference manual; for L6max, use
+the RT1060 manual. L6 external resource NOR uses LPSPI3 at `0x403a0000`.
 
 When starting L6max MAIN directly, the board seeds
 clock fields recovered from L6max bootloader 1.00: the 600 MHz ARM setup,
@@ -123,6 +124,9 @@ descriptor state was not captured. QEMU's
 Cortex-M7 model does not implement caches and does not retain writes to the
 CCR instruction/data cache-enable bits, so the matching cache-disabled value
 does not simulate cache maintenance or establish parity when caches are on.
+The handoff test also configures an MPU no-access region and executes a guest
+load to check the resulting memory-management fault; it does not measure hardware
+region contents or verify every MPU attribute.
 
 ## QEMU device-model reuse
 

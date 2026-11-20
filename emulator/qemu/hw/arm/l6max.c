@@ -4957,6 +4957,13 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
             GUINT_TO_POINTER((ccm_reset[i].offset >> 2) + 1),
             GUINT_TO_POINTER(ccm_reset[i].value));
     }
+    /* ROM reset's clock initializer clears CCGR4 bits 31:16. The reviewed
+     * first stage only sets its low IOMUXC gate; later indirect ROM writes
+     * and the physical handoff value have not been established. */
+    gpointer ccgr4 = GUINT_TO_POINTER((0x0fc078 >> 2) + 1);
+    uint32_t rom_ccgr4 = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, ccgr4));
+    g_hash_table_insert(s->registers, ccgr4,
+                        GUINT_TO_POINTER(rom_ccgr4 & 0x0000ffffu));
     /* PLL and PFD controls are reset by SRC as system modules. These are
      * reference-manual reset fallbacks, not a complete ROM clock trace. */
     static const struct { hwaddr offset; uint32_t value; } analog_reset[] = {

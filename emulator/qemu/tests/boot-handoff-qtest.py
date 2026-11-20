@@ -1167,7 +1167,7 @@ def check_flexram_boundaries(qemu, image):
             assert int(command(f"readl {address:#x}").split()[1], 16) == expected
         # CCM and SEMC are reset by SRC cold reset; IOMUXC is retained.
         assert int(command("readl 0x400fc070").split()[1], 16) == 0xfc3f303f
-        assert int(command("readl 0x400fc078").split()[1], 16) == 0xffffffff
+        assert int(command("readl 0x400fc078").split()[1], 16) == 0x0000ffff
         assert int(command("readl 0x400fc06c").split()[1], 16) == 0xfc0ccc00
         clock_handoff = {
             0x400fc000: 0x0401107f, 0x400fc00c: 0x100,
@@ -1223,7 +1223,9 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0x80000100 0xdeadbeef")
         for address in gate_results:
             command(f"writel {address:#x} 0xffffffff")
+        command("writel 0x400fc078 0xffffffff")  # dirty ROM-cleared gates
         qmp_execute("system_reset")
+        assert int(command("readl 0x400fc078").split()[1], 16) == 0x0000ffff
         assert int(command("readl 0x80000100").split()[1], 16) == 0xdeadbeef
         for address, expected in ((0x202275f0, 0x50100),
                                   (0x202275f4, 0x80000000),
@@ -1280,7 +1282,7 @@ def main():
         0x40084110: 0xffffffff, 0x40084118: 5,
         0x400fc068: 0xc0000fff, 0x400fc06c: 0xfc0ccc00,
         0x400fc070: 0xfc3f303f, 0x400fc074: 0xffffff30,
-        0x400fc078: 0xffffffff, 0x400fc07c: 0xf0033ff3,
+        0x400fc078: 0x0000ffff, 0x400fc07c: 0xf0033ff3,
         0x400fc080: 0xffff3fc3, 0x400fc084: 0xfffffc33,
         0x400fc000: 0x0401107f, 0x400fc00c: 0x100,
         0x400fc010: 1, 0x400fc014: 0x00098340, 0x400fc018: 0x7dae8324,

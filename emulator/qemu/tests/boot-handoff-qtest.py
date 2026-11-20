@@ -266,6 +266,17 @@ def check_flexram_boundaries(qemu, image):
             assert int(command(f"readl {base:#x}").split()[1], 16) == (
                 (original & 0x40404040) | 0xbfbfbfbf
             )
+        # USB2 PLL shares the RT1060 USB PLL control layout. LOCK is
+        # synthesized only while powered and enabled, and aliases share state.
+        assert int(command("readl 0x400d8020").split()[1], 16) == 0x12000
+        command("writel 0x400d8024 0x1040")
+        assert int(command("readl 0x400d8024").split()[1], 16) == 0x80013040
+        command("writel 0x400d8028 0x1000")
+        assert int(command("readl 0x400d8028").split()[1], 16) == 0x12040
+        command("writel 0x400d802c 0x40")
+        assert int(command("readl 0x400d802c").split()[1], 16) == 0x12000
+        command("writel 0x400d8020 0x80000000")
+        assert int(command("readl 0x400d8020").split()[1], 16) == 0
         for address in (0x400d8020, 0x400d80a0, 0x400d80e0, 0x400d8160, 0x400d8170):
             command(f"writel {address:#x} 0xffffffff")
         command("writel 0x400d8010 0")

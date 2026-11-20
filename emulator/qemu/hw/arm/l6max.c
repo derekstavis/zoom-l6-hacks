@@ -2314,9 +2314,12 @@ static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
             GUINT_TO_POINTER((0x0d8070 >> 2) + 1)));
         return l6_audio_pll_status(control);
     }
-    if (!s->panel && offset == 0x0d8010 && size == 4) {
+    hwaddr usb_pll_base = offset & ~(hwaddr)0xf;
+    if (!s->panel && size == 4 && !(offset & 3) &&
+        ((usb_pll_base == 0x0d8010 && offset == usb_pll_base) ||
+         (s->profile == &L6MAX_PROFILE && usb_pll_base == 0x0d8020))) {
         uint32_t control = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
-            GUINT_TO_POINTER((0x0d8010 >> 2) + 1)));
+            GUINT_TO_POINTER((usb_pll_base >> 2) + 1)));
         return l6_usb1_pll_status(control);
     }
     if (s->profile->resource_flash && offset == 0x3a005c && size == 4) {
@@ -3471,14 +3474,16 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
             store_word = false;
         }
     }
-    if (!s->panel && size == 4 && offset >= 0x0d8010 &&
-        offset <= 0x0d801c && !(offset & 3)) {
-        gpointer control_key = GUINT_TO_POINTER((0x0d8010 >> 2) + 1);
+    hwaddr usb_pll_base = offset & ~(hwaddr)0xf;
+    if (!s->panel && size == 4 && !(offset & 3) &&
+        (usb_pll_base == 0x0d8010 ||
+         (s->profile == &L6MAX_PROFILE && usb_pll_base == 0x0d8020))) {
+        gpointer control_key = GUINT_TO_POINTER((usb_pll_base >> 2) + 1);
         uint32_t control = GPOINTER_TO_UINT(g_hash_table_lookup(
             s->registers, control_key));
-        L6Usb1PllAlias alias = offset == 0x0d8014 ? L6_USB1_PLL_SET :
-                               offset == 0x0d8018 ? L6_USB1_PLL_CLEAR :
-                               offset == 0x0d801c ? L6_USB1_PLL_TOGGLE :
+        L6Usb1PllAlias alias = offset == usb_pll_base + 4 ? L6_USB1_PLL_SET :
+                               offset == usb_pll_base + 8 ? L6_USB1_PLL_CLEAR :
+                               offset == usb_pll_base + 12 ? L6_USB1_PLL_TOGGLE :
                                L6_USB1_PLL_DIRECT;
         control = l6_usb1_pll_apply(control, value, alias);
         g_hash_table_insert(s->registers, control_key,

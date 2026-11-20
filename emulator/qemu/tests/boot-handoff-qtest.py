@@ -1087,11 +1087,16 @@ def check_flexram_boundaries(qemu, image):
             assert int(command(f"readl {base:#x}").split()[1], 16) == (
                 (original & 0x40404040) | 0xbfbfbfbf
             )
-        # USB2 PLL shares the RT1060 USB PLL control layout. LOCK is
-        # synthesized only while powered and enabled, and aliases share state.
+        # USB PLL lock follows power independently of the output enable.
+        command("writel 0x400d8018 0x2000")
+        assert int(command("readl 0x400d8010").split()[1], 16) & 0x80000000
+        command("writel 0x400d8014 0x2000")
         assert int(command("readl 0x400d8020").split()[1], 16) == 0x12000
         command("writel 0x400d8024 0x1040")
         assert int(command("readl 0x400d8024").split()[1], 16) == 0x80013040
+        command("writel 0x400d8028 0x2000")
+        assert int(command("readl 0x400d8020").split()[1], 16) == 0x80011040
+        command("writel 0x400d8024 0x2000")
         command("writel 0x400d8028 0x1000")
         assert int(command("readl 0x400d8028").split()[1], 16) == 0x12040
         command("writel 0x400d802c 0x40")
@@ -1117,7 +1122,7 @@ def check_flexram_boundaries(qemu, image):
             command(f"writel {base:#x} {0x80001000 | divider:#x}")
             assert int(command(f"readl {base:#x}").split()[1], 16) == 0x1000 | divider
         # Video control aliases share state; status follows the same
-        # immediate power/enable approximation as the audio PLL.
+        # immediate powered-state approximation as the audio PLL.
         assert int(command("readl 0x400d80a0").split()[1], 16) == 0x13000
         command("writel 0x400d80a4 0x1e")
         command("writel 0x400d80a8 0x1000")

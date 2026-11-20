@@ -401,4 +401,12 @@ static inline uint32_t l6_usb1_pll_status(uint32_t control)
     return control;
 }
 
+/* RT1060 USB PLL ENABLE gates the output; POWER controls the PLL itself.
+ * Model lock as immediate while powered, independent of that output gate. */
+static inline uint32_t l6max_usb_pll_status(uint32_t control)
+{
+    control &= ~L6_USB1_PLL_LOCK;
+    return (control & L6_USB1_PLL_POWER) ? control | L6_USB1_PLL_LOCK : control;
+}
+
 #endif /* HW_ARM_L6_CCM_ANALOG_H */

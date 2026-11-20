@@ -2698,7 +2698,8 @@ not_flexram_read:
          (s->profile == &L6MAX_PROFILE && usb_pll_base == 0x0d8020))) {
         uint32_t control = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
             GUINT_TO_POINTER((usb_pll_base >> 2) + 1)));
-        uint32_t status = l6_usb1_pll_status(control);
+        uint32_t status = s->profile == &L6MAX_PROFILE ?
+                          l6max_usb_pll_status(control) : l6_usb1_pll_status(control);
         if (s->profile == &L6MAX_PROFILE && !(control & 0xc000u) &&
             !l6max_bus_clocks(s).oscillator_hz) {
             status &= ~0x80000000u;
@@ -5275,7 +5276,7 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
     }
     /* boot_configure_usb1_pll uses DIV_SELECT=0 and oscillator bypass
      * source, powers/enables the PLL, waits for LOCK, then clears bypass.
-     * LOCK is synthesized by l6_usb1_pll_status on reads. */
+     * LOCK is synthesized by l6max_usb_pll_status on reads. */
     g_hash_table_insert(s->registers,
         GUINT_TO_POINTER((0x0d8010 >> 2) + 1),
         GUINT_TO_POINTER(0x00003040u));

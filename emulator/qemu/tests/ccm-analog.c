@@ -118,6 +118,7 @@ int main(void)
      * documented POWER and ENABLE controls have been set. */
     control = l6_usb1_pll_apply(control, L6_USB1_PLL_POWER, L6_USB1_PLL_SET);
     assert(!(l6_usb1_pll_status(control) & L6_USB1_PLL_LOCK));
+    assert(l6max_usb_pll_status(control) & L6_USB1_PLL_LOCK);
     control = l6_usb1_pll_apply(control, L6_USB1_PLL_ENABLE, L6_USB1_PLL_SET);
     assert(l6_usb1_pll_status(control) & L6_USB1_PLL_LOCK);
 

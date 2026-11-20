@@ -162,8 +162,8 @@ is unknown. The surrounding inherited register bits were not captured physically
 The USB2, video and Ethernet PLL controls reflect the bootloader's recovered
 bypass/power sequence. Their clock outputs and physical lock timing are not
 simulated. Ethernet LOCK is approximated as immediate while powered, independent
-of the Ethernet output enables; audio and video LOCK use the same immediate
-powered-state approximation, independent of their output enables.
+of the Ethernet output enables; audio, video and L6max USB PLL LOCK use the
+same immediate powered-state approximation, independent of their output enables.
 Both control registers support SET/CLR/TOG and read-only LOCK.
 USB1 is initialized powered, enabled and out of bypass with the 480 MHz
 selection; its LOCK status follows the existing immediate-lock model. L6max

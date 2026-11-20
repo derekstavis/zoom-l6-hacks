@@ -1,0 +1,73 @@
+# Opening the menu while the dialog shows must leave the menu as it draws
+# with no dialog: the dialog's cleanup clears only its own layer.
+version = 1
+name = "knob-dialog-menu"
+models = ["l6max"]
+backends = ["headless"]
+patches = ["knob-dialog"]
+
+[case]
+suites = ["full"]
+
+[[step]]
+action = "wait"
+until = "mixer-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "delay"
+guest_ms = 8000
+guest_timeout_ms = 20000
+wall_timeout_s = 300
+
+[[step]]
+action = "press"
+control = "recorder-function-1"
+
+[[step]]
+action = "delay"
+guest_ms = 1500
+
+[[step]]
+action = "checkpoint"
+name = "menu"
+
+[[step]]
+action = "press"
+control = "recorder-function-1"
+
+[[step]]
+action = "delay"
+guest_ms = 3000
+
+[[step]]
+action = "checkpoint"
+name = "recorder"
+
+[[step]]
+action = "encoder"
+channel = 1
+steps = -2
+
+[[step]]
+action = "delay"
+guest_ms = 300
+
+[[step]]
+action = "expect-display"
+checkpoint = "recorder"
+changed = true
+
+[[step]]
+action = "press"
+control = "recorder-function-1"
+
+[[step]]
+action = "delay"
+guest_ms = 1500
+
+[[step]]
+action = "expect-display"
+checkpoint = "menu"
+changed = false

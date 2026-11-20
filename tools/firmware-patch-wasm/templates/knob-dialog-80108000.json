@@ -13,9 +13,9 @@
   ],
   "model": "L6max",
   "name": "knob-dialog",
-  "patch_info_offset": 3220,
+  "patch_info_offset": 3248,
   "payload_file": "knob-dialog-80108000.bin",
-  "payload_length": 3244,
+  "payload_length": 3272,
   "window_byte_total": 4,
   "windows": [
     {

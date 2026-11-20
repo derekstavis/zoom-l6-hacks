@@ -439,6 +439,24 @@ unsafe fn restore_widget(widget: *mut u8, id: usize) {
     }
 }
 
+/// Put the borrowed widget and background descriptors back on their stock
+/// layers. The scene's pixels stay on layer 4 until it is cleared.
+unsafe fn return_descriptors() {
+    unsafe {
+        for widget_id in [TITLE_WIDGET, VALUE_WIDGET] {
+            let widget = widget_descriptor(widget_id);
+            restore_widget(widget, widget_id);
+        }
+        for (background_id, stock_layer) in SCENE_BACKGROUNDS
+            .into_iter()
+            .zip(STOCK_BACKGROUND_LAYERS)
+        {
+            let background = background_descriptor(background_id);
+            write(background, stock_layer);
+        }
+    }
+}
+
 unsafe fn restore_scene(discard_pending: bool) {
     unsafe {
         let pointer = state();
@@ -458,17 +476,7 @@ unsafe fn restore_scene(discard_pending: bool) {
         if !shared_text_buffer.is_null() {
             restore_shared_text(shared_text_buffer);
         }
-        for widget_id in [TITLE_WIDGET, VALUE_WIDGET] {
-            let widget = widget_descriptor(widget_id);
-            restore_widget(widget, widget_id);
-        }
-        for (background_id, stock_layer) in SCENE_BACKGROUNDS
-            .into_iter()
-            .zip(STOCK_BACKGROUND_LAYERS)
-        {
-            let background = background_descriptor(background_id);
-            write(background, stock_layer);
-        }
+        return_descriptors();
         write(core::ptr::addr_of_mut!((*pointer).ticks), 0);
         #[cfg(sd_dynamic_module)]
         KNOB_DIALOG_EXTERNAL_TEXT_ACTIVE.store(0, Ordering::Release);
@@ -514,6 +522,10 @@ unsafe fn render_scene(title_text: &[u16; 24], value_text: &[u16; 24]) {
         set_widget_style(VALUE_WIDGET, value, DIALOG_VALUE_STYLE);
         gui_set_widget_text(VALUE_WIDGET as u32, value_text.as_ptr() as u32);
         gui_draw_text_widget(VALUE_WIDGET as u32);
+        // Return the descriptors as soon as the scene is drawn. A window that
+        // opens while the scene shows, such as the menu, draws its title with
+        // them; on layer 4 that title would be cleared with the scene.
+        return_descriptors();
         gui_publish(0);
     }
 }

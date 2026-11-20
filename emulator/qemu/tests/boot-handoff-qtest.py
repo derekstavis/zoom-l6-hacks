@@ -198,6 +198,40 @@ def check_flexram_boundaries(qemu, image):
         assert 5998 <= systick_ticks() <= 6002
         command("writel 0xe000e010 0")
         print(f"{image}: ARM clock, SysTick source and stopped clock passed")
+        # SAI1 FIFO progress follows its CCGR gate and programmed root rate.
+        old_gate = int(command("readl 0x400fc07c").split()[1], 16)
+        command("writel 0x400fc07c " + hex(old_gate & ~(3 << 18)))
+        command("writel 0x40384010 0x05000000")  # master, MCLK1, /2
+        command("writel 0x40384014 0x00010000")  # TX data line 0
+        command("writel 0x40384018 0x00070000")  # eight slots
+        command("writel 0x4038401c 0x001f0000")  # 32-bit words
+        command("writel 0x40384008 0x80000000")  # TX enable
+        def fill_sai():
+            for i in range(16):
+                command(f"writel 0x40384020 {i}")
+            return int(command("readl 0x40384040").split()[1], 16) & 31
+        before = fill_sai()
+        command("clock_step 2000000")
+        assert int(command("readl 0x40384040").split()[1], 16) & 31 == before
+        command("writel 0x400fc07c " + hex(old_gate | (3 << 18)))
+        command("clock_step 1000000")
+        assert (int(command("readl 0x40384040").split()[1], 16) - before) & 31 == 16
+        before = fill_sai()
+        command("clock_step 1000000")
+        assert int(command("readl 0x40384040").split()[1], 16) & 31 == before
+        command("clock_step 400000")
+        assert (int(command("readl 0x40384040").split()[1], 16) - before) & 31 == 16
+        command("writel 0x400fc028 0x0ec102c3")  # double SAI1 PODF
+        command("clock_step 1400000")  # previous block finishes, new rate applies
+        before = fill_sai()
+        command("clock_step 2000000")
+        assert int(command("readl 0x40384040").split()[1], 16) & 31 == before
+        command("clock_step 800000")
+        assert (int(command("readl 0x40384040").split()[1], 16) - before) & 31 == 16
+        command("writel 0x40384008 0")
+        command("writel 0x400fc07c " + hex(old_gate))
+        command("writel 0x400fc028 0x0ec102c1")
+        print(f"{image}: SAI1 clock gate and divider drive FIFO cadence")
         # Reassign bank 0 from OCRAM to ITCM. Bank 7 moves to the next
         # ITCM address, while both physical banks retain their contents.
         command("writel 0x20280000 0x13579bdf")
@@ -477,7 +511,8 @@ def main():
         # divider writes; the device's inherited ROM phase is not captured.
         0x400d80f0: 0x13111061, 0x400d8100: 0x105d1058,
         0x400d8170: 0x00272727,
-        0x400d80a0: 0x13000, 0x400d80e0: 0x80312001,
+        0x400d80a0: 0x13000, 0x400d80b0: 0x05f5e100,
+        0x400d80c0: 0x10a24447, 0x400d80e0: 0x80312001,
         0xe000e010: 0, 0xe000ed08: 0x80000000,
         0xe000ed14: 0x200, 0xe000ed24: 0, 0xe000ed94: 0,
     }

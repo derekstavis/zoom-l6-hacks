@@ -45,6 +45,7 @@
 #include "l6-panel-gpio.h"
 #include "l6-panel-timer.h"
 #include "l6-sai.h"
+#include "l6-sai-clock.h"
 #include "l6-edma.h"
 #include "l6-ccm-analog.h"
 #include <fcntl.h>
@@ -1746,6 +1747,33 @@ static void l6_rom_uart_tick(void *opaque)
  * overrides. Normal profiles use the clocked SAI/eDMA paths instead. */
 static unsigned l6_sai_audio_clock_advance(L6ChipState *s, unsigned frames);
 
+static uint32_t l6max_clock_register(L6ChipState *s, hwaddr offset)
+{
+    return GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+                                               GUINT_TO_POINTER((offset >> 2) + 1)));
+}
+
+static uint32_t l6max_sai1_source_hz(L6ChipState *s, uint32_t tcr2)
+{
+    const L6MaxSaiClocks clocks = {
+        .gpr1 = l6max_clock_register(s, 0x0ac004),
+        .cscmr1 = l6max_clock_register(s, L6_CCM_CSCMR1_OFFSET),
+        .cs1cdr = l6max_clock_register(s, L6_CCM_CS1CDR_OFFSET),
+        .cs2cdr = l6max_clock_register(s, L6_CCM_CS2CDR_OFFSET),
+        .ccgr5 = l6max_clock_register(s, 0x0fc07c),
+        .audio_pll = l6max_clock_register(s, L6_CCM_ANALOG_PLL_AUDIO),
+        .audio_num = l6max_clock_register(s, L6_CCM_ANALOG_PLL_AUDIO_NUM),
+        .audio_denom = l6max_clock_register(s, L6_CCM_ANALOG_PLL_AUDIO_DENOM),
+        .video_pll = l6max_clock_register(s, 0x0d80a0),
+        .video_num = l6max_clock_register(s, 0x0d80b0),
+        .video_denom = l6max_clock_register(s, 0x0d80c0),
+        .misc2 = l6max_clock_register(s, L6_CCM_ANALOG_MISC2),
+        .usb1_pll = l6max_clock_register(s, 0x0d8010),
+        .pfd_480 = l6max_clock_register(s, L6_CCM_ANALOG_PFD_480),
+    };
+    return l6max_sai1_master_hz(&clocks, tcr2);
+}
+
 static unsigned l6_sai_master_sample_rate(L6ChipState *s)
 {
     if (!s->profile->audio_source_clock_hz) {
@@ -1757,8 +1785,10 @@ static unsigned l6_sai_master_sample_rate(L6ChipState *s)
         uint32_t tx = sai->regs[L6_SAI_TCSR / 4];
         uint32_t rx = sai->regs[L6_SAI_RCSR / 4];
         if ((tcr2 & L6_SAI_BCD) && ((tx & L6_SAI_TE) || (rx & L6_SAI_RE))) {
-            return l6_sai_sample_rate(s->profile->audio_source_clock_hz,
-                                      tcr2,
+            uint32_t source_hz = s->profile == &L6MAX_PROFILE ?
+                                 l6max_sai1_source_hz(s, tcr2) :
+                                 s->profile->audio_source_clock_hz;
+            return l6_sai_sample_rate(source_hz, tcr2,
                                       sai->regs[L6_SAI_TCR4 / 4],
                                       sai->regs[L6_SAI_TCR5 / 4]);
         }
@@ -4909,6 +4939,7 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
                 { 0x0fc000, 0x0401107fu }, { 0x0fc00c, 0x00000100u },
                 { 0x0fc010, 0x00000001u }, { 0x0fc014, 0x000a8300u },
                 { 0x0fc018, 0x2dae8324u }, { 0x0d8000, 0x00013063u },
+                { 0x0d80b0, 0x05f5e100u }, { 0x0d80c0, 0x10a24447u },
                 { 0x0d8170, 0x00272727u },
                 { 0x0fc020, 0x13192f06u }, { 0x0fc024, 0x06490b00u },
                 { 0x0fc030, 0x33f71f92u }, { 0x0fc038, 0x00029150u },

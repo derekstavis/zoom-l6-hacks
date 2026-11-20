@@ -8,10 +8,17 @@ physical jack routing, analog fidelity, or USB audio support.
 ## Observed firmware configuration
 
 The inspected L6 uses an RT1041; its SAI register semantics follow the RT1040
-reference manual. The L6max physical processor has not been identified. Both
-firmware profiles use a nominal 24.576 MHz source and 48 kHz audio cadence.
-The physical clock source remains unverified. L6 configures SAI1 and SAI3;
-L6max configures SAI1.
+reference manual. The L6max dump is consistent with the RT106x family. Both
+stock firmware profiles use a nominal 24.576 MHz source and 48 kHz audio
+cadence. L6 configures SAI1 and SAI3 and retains a nominal clock assumption.
+L6max configures SAI1; its model derives the selected internal MCLK1/MCLK2
+source from the clock gate, IOMUX route, CCM dividers and audio, video or
+USB1 PFD2 PLL settings. The recovered bootloader selects the audio PLL, but
+its inherited post-divider and the physical clock frequency are unverified.
+Bus-clock selection, SPDIF and external MCLK inputs are not implemented, and
+MISC2 SET/CLR/TOG aliases do not yet update its divider fields. The SAI
+scheduler advances in blocks; host audio stays configured for 48 kHz even
+if the guest selects a different rate.
 
 ## Firmware audio data path
 

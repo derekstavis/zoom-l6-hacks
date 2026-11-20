@@ -1,0 +1,68 @@
+/* RT1060 SAI1 master-clock routing and fractional PLL behavior. */
+#include "../hw/arm/l6-sai-clock.h"
+#include "../hw/arm/l6-sai.h"
+#include <assert.h>
+#include <stdio.h>
+
+int main(void)
+{
+    L6MaxSaiClocks c = {
+        .cscmr1 = 2u << 10, .cs1cdr = (3u << 6) | 1u,
+        .ccgr5 = 3u << 18, .audio_pll = 0x2020,
+        .audio_num = 96, .audio_denom = 125,
+        .usb1_pll = 0x3040, .pfd_480 = 17u << 16,
+    };
+    const uint32_t master1 = 1u << 26;
+    assert(l6max_sai1_master_hz(&c, master1) == 24576000u);
+    assert(l6_sai_sample_rate(l6max_sai1_master_hz(&c, master1),
+                              0, 7u << 16, 31u << 16) == 48000u);
+    c.cs1cdr = (3u << 6) | 3u;
+    assert(l6max_sai1_master_hz(&c, master1) == 12288000u);
+    c.cs1cdr = (3u << 6) | 1u;
+    c.misc2 = 1u << 15;
+    assert(l6max_sai1_master_hz(&c, master1) == 12288000u);
+    c.misc2 = 0;
+    c.audio_pll = 0x102020; /* post-divider /1 */
+    assert(l6max_sai1_master_hz(&c, master1) == 98304000u);
+    c.audio_pll = 0x2020;
+    c.audio_num = 0x3fffffffu; /* -1 */
+    c.audio_denom = 4;
+    assert(l6max_sai1_master_hz(&c, master1) == 23812500u);
+    c.audio_denom = 0;
+    assert(l6max_sai1_master_hz(&c, master1) == 0);
+    c.audio_denom = 125;
+    c.audio_num = 96;
+    c.ccgr5 = 0;
+    assert(l6max_sai1_master_hz(&c, master1) == 0);
+    c.ccgr5 = 3u << 18;
+    assert(l6max_sai1_master_hz(&c, 0) == 0);
+    c.gpr1 = 3;
+    assert(l6max_sai1_master_hz(&c, master1) == 0);
+    c.gpr1 = 0;
+    c.cscmr1 = 0;
+    assert(l6max_sai1_master_hz(&c, master1) ==
+           (uint64_t)480000000u * 18 / 17 / 8);
+    c.pfd_480 |= 1u << 23;
+    assert(l6max_sai1_master_hz(&c, master1) == 0);
+    c.pfd_480 &= ~(1u << 23);
+    c.cscmr1 = 1u << 10;
+    c.video_pll = 0x13000; /* bypass oscillator, PLL powered down */
+    assert(l6max_sai1_master_hz(&c, master1) == 3000000u);
+    c.video_pll = 0x2020;
+    c.video_num = 96;
+    c.video_denom = 125;
+    assert(l6max_sai1_master_hz(&c, master1) == 24576000u);
+    c.gpr1 = 1u << 3; /* MCLK2 selects SAI2 root */
+    c.cscmr1 = 2u << 12;
+    c.cs2cdr = (1u << 6) | 3u;
+    assert(l6max_sai1_master_hz(&c, 2u << 26) == 24576000u);
+    c.gpr1 = 1; /* MCLK1 selects SAI2 root */
+    c.cscmr1 = 2u << 12;
+    c.cs2cdr = (1u << 6) | 3u;
+    assert(l6max_sai1_master_hz(&c, master1) == 24576000u);
+    c.gpr1 = 0;
+    c.cscmr1 = 2u << 10;
+    c.audio_pll |= 0x1000;
+    assert(l6max_sai1_master_hz(&c, master1) == 0);
+    puts("L6max SAI1 clock routing passed");
+}

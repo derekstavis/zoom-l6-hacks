@@ -22,6 +22,7 @@ const BOARD_SOURCES: &[&str] = &[
     "l6max-indicators.h",
     "l6max-usb.h",
     "l6-sai.h",
+    "l6-sai-clock.h",
     "l6-edma.h",
     "l6-ccm-analog.h",
 ];

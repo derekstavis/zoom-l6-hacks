@@ -126,6 +126,7 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
         assert regs[1] == 0x80000415, hex(regs[1])
         assert regs[2] == 0x01000000, hex(regs[2])  # modeled CCR << 15
         assert regs[3:6] == [frame[0] - frame[2], 0x2021e080, 0x2000], regs[3:6]
+        assert regs[6:12] == [0xa5a5a5a5] * 6, regs[6:12]
         assert regs[13] == 0x202275f0, hex(regs[13])  # inferred boot stack
         assert regs[14] == 0x2020e453, hex(regs[14])
         assert "QMP" in json.loads(qmp.readline())
@@ -141,6 +142,8 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
                 assert packet("P2=00000000") == "OK"
                 assert packet("P3=00000000") == "OK"
                 assert packet("P5=00000000") == "OK"
+                for reg in range(6, 12):
+                    assert packet(f"P{reg:x}=00000000") == "OK"
                 assert packet("Pd=00000000") == "OK"
                 assert packet("Pe=00000000") == "OK"
                 assert packet("M202275f0,c:000000000000000000000000") == "OK"
@@ -157,6 +160,7 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
         assert_frame()
         assert regs[:3] == [0xe000ed14, 0x80000415, 0x01000000], regs[:3]
         assert regs[3:6] == [frame[0] - frame[2], 0x2021e080, 0x2000], regs[3:6]
+        assert regs[6:12] == [0xa5a5a5a5] * 6, regs[6:12]
         assert regs[13] == 0x202275f0, hex(regs[13])
         assert regs[14] == 0x2020e453, hex(regs[14])
         if mpu_test:

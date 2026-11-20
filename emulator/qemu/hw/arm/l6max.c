@@ -6435,6 +6435,12 @@ static void l6_main_reset(MachineState *machine, ResetType type)
         s->armv7m.cpu->env.regs[3] = 0x50000u + main_size - final_chunk;
         s->armv7m.cpu->env.regs[4] = 0x2021e080u;
         s->armv7m.cpu->env.regs[5] = 0x2000u;
+        /* The boot task stack is filled with 0xa5 before the saved
+         * context is created. SVC restores r6-r11 from untouched slots;
+         * the reviewed Main and transfer paths preserve them. */
+        for (unsigned reg = 6; reg <= 11; reg++) {
+            s->armv7m.cpu->env.regs[reg] = 0xa5a5a5a5u;
+        }
         /* With D-cache already disabled, the transfer uses BLX at
          * 0x2020e450; LR is the Thumb return address in the boot image. */
         s->armv7m.cpu->env.regs[14] = 0x2020e453u;

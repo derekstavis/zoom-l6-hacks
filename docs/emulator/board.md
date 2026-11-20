@@ -218,6 +218,9 @@ leaves its final source offset in `r3`, its remaining-length global's address
 in `r4`, and its 8 KiB chunk limit in `r5`. The emulator seeds these values
 and the copy loop's two OCRAM globals from its selected image length. It uses
 its modeled CCR for `r2` and does not load bootloader instructions at LR.
+The inferred initial task context also leaves `r6`–`r11` at `0xa5a5a5a5`;
+the emulator seeds those registers based on the boot task's stack fill and
+context restore. Physical handoff registers were not captured.
 The bootloader calls with its current task stack; it does not load the MAIN
 vector's initial MSP at that call. The emulator seeds an inferred MSP of
 `0x202275f0`, based on bootloader 1.00's allocation and call frame. It also

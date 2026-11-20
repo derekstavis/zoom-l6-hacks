@@ -47,8 +47,10 @@ preserving other stored bits. Peripheral clock mux and divider writes use
 RT1060 reset values for fields, including clock gates, whose prior ROM state has not been captured;
 the resulting complete values are assumptions, not hardware measurements.
 The USB2, video and Ethernet PLL controls reflect the bootloader's recovered
-bypass/power sequence. Ethernet LOCK is seeded based on the successful
-bootloader wait; these PLLs' timing and outputs are not simulated.
+bypass/power sequence. Their clock outputs and physical lock timing are not
+simulated. Ethernet LOCK is approximated as immediate while powered, independent
+of the Ethernet output enables; video LOCK uses the audio PLL approximation.
+Both control registers support SET/CLR/TOG and read-only LOCK.
 USB1 is initialized powered, enabled and out of bypass with the 480 MHz
 selection; its LOCK status follows the existing immediate-lock model. L6max
 USB2 has the same modeled control and SET/CLR/TOG behavior, with immediate

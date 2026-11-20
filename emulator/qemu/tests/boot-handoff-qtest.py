@@ -277,6 +277,24 @@ def check_flexram_boundaries(qemu, image):
         assert int(command("readl 0x400d802c").split()[1], 16) == 0x12000
         command("writel 0x400d8020 0x80000000")
         assert int(command("readl 0x400d8020").split()[1], 16) == 0
+        # Video control aliases share state; status follows the same
+        # immediate power/enable approximation as the audio PLL.
+        assert int(command("readl 0x400d80a0").split()[1], 16) == 0x13000
+        command("writel 0x400d80a4 0x1e")
+        command("writel 0x400d80a8 0x1000")
+        assert int(command("readl 0x400d80a4").split()[1], 16) == 0x8001201e
+        command("writel 0x400d80ac 0x1000")
+        assert int(command("readl 0x400d80a0").split()[1], 16) == 0x1301e
+        # ENET lock follows PLL power, independently of its output enable.
+        assert int(command("readl 0x400d80e0").split()[1], 16) == 0x80312001
+        command("writel 0x400d80e8 0x2000")
+        assert int(command("readl 0x400d80ec").split()[1], 16) == 0x80310001
+        command("writel 0x400d80e4 0x80001000")
+        assert int(command("readl 0x400d80e4").split()[1], 16) == 0x00311001
+        command("writel 0x400d80ec 0x1000")
+        assert int(command("readl 0x400d80e0").split()[1], 16) == 0x80310001
+        command("writel 0x400d80e0 0x80001000")
+        assert int(command("readl 0x400d80e0").split()[1], 16) == 0x1000
         for address in (0x400d8020, 0x400d80a0, 0x400d80e0, 0x400d8160, 0x400d8170):
             command(f"writel {address:#x} 0xffffffff")
         command("writel 0x400d8010 0")

@@ -2308,11 +2308,15 @@ static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
         return GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
             GUINT_TO_POINTER((pfd_base >> 2) + 1)));
     }
+    hwaddr analog_pll_base = offset & ~(hwaddr)0xf;
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
-        offset >= 0x0d8070 && offset <= 0x0d807c && !(offset & 3)) {
+        !(offset & 3) && (analog_pll_base == 0x0d8070 ||
+                          analog_pll_base == 0x0d80a0 ||
+                          analog_pll_base == 0x0d80e0)) {
         uint32_t control = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
-            GUINT_TO_POINTER((0x0d8070 >> 2) + 1)));
-        return l6_audio_pll_status(control);
+            GUINT_TO_POINTER((analog_pll_base >> 2) + 1)));
+        return analog_pll_base == 0x0d80e0 ? l6_enet_pll_status(control) :
+                                            l6_audio_pll_status(control);
     }
     hwaddr usb_pll_base = offset & ~(hwaddr)0xf;
     if (!s->panel && size == 4 && !(offset & 3) &&
@@ -3457,16 +3461,21 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
             store_word = false;
         }
     }
+    hwaddr analog_pll_base = offset & ~(hwaddr)0xf;
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
-        offset >= 0x0d8070 && offset <= 0x0d807c && !(offset & 3)) {
-        gpointer control_key = GUINT_TO_POINTER((0x0d8070 >> 2) + 1);
+        !(offset & 3) && (analog_pll_base == 0x0d8070 ||
+                          analog_pll_base == 0x0d80a0 ||
+                          analog_pll_base == 0x0d80e0)) {
+        gpointer control_key = GUINT_TO_POINTER((analog_pll_base >> 2) + 1);
         uint32_t control = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
                                                                control_key));
-        L6Usb1PllAlias alias = offset == 0x0d8074 ? L6_USB1_PLL_SET :
-                               offset == 0x0d8078 ? L6_USB1_PLL_CLEAR :
-                               offset == 0x0d807c ? L6_USB1_PLL_TOGGLE :
+        L6Usb1PllAlias alias = offset == analog_pll_base + 4 ? L6_USB1_PLL_SET :
+                               offset == analog_pll_base + 8 ? L6_USB1_PLL_CLEAR :
+                               offset == analog_pll_base + 12 ? L6_USB1_PLL_TOGGLE :
                                L6_USB1_PLL_DIRECT;
-        control = l6_audio_pll_apply(control, value, alias);
+        control = analog_pll_base == 0x0d80e0 ?
+                  l6_enet_pll_apply(control, value, alias) :
+                  l6_audio_pll_apply(control, value, alias);
         g_hash_table_insert(s->registers, control_key, GUINT_TO_POINTER(control));
         if (alias == L6_USB1_PLL_DIRECT) {
             word = control;

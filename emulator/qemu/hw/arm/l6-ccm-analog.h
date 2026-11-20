@@ -146,7 +146,7 @@ static inline uint32_t l6_pfd_apply(uint32_t control, uint32_t value,
     return stable | writable;
 }
 
-/* RT1060 PLL_AUDIO control and its SET/CLR/TOG aliases. LOCK is read-only. */
+/* RT1060 PLL_AUDIO/PLL_VIDEO controls share their writable bit layout. */
 #define L6_AUDIO_PLL_WRITABLE 0x0019f07fu
 static inline uint32_t l6_audio_pll_apply(uint32_t control, uint32_t value,
                                           L6Usb1PllAlias alias)
@@ -169,6 +169,30 @@ static inline uint32_t l6_audio_pll_status(uint32_t control)
         control |= 0x80000000u;
     }
     return control;
+}
+
+/* RT1060 Ethernet PLL: output enables do not power the PLL itself. */
+#define L6_ENET_PLL_WRITABLE 0x0031f00fu
+static inline uint32_t l6_enet_pll_apply(uint32_t control, uint32_t value,
+                                         L6Usb1PllAlias alias)
+{
+    control &= L6_ENET_PLL_WRITABLE;
+    value &= L6_ENET_PLL_WRITABLE;
+    switch (alias) {
+    case L6_USB1_PLL_DIRECT: return value;
+    case L6_USB1_PLL_SET: return control | value;
+    case L6_USB1_PLL_CLEAR: return control & ~value;
+    case L6_USB1_PLL_TOGGLE: return control ^ value;
+    }
+    return control;
+}
+
+/* Approximate the analog lock as immediate while powered; the three output
+ * enables and bypass select affect outputs, not the PLL's power state. */
+static inline uint32_t l6_enet_pll_status(uint32_t control)
+{
+    control &= L6_ENET_PLL_WRITABLE;
+    return (control & 0x1000u) ? control : control | 0x80000000u;
 }
 
 static inline uint32_t l6_usb1_pll_apply(uint32_t control, uint32_t value,

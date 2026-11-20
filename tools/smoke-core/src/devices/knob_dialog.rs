@@ -1065,13 +1065,6 @@ pub(super) fn run_knob_dialog(
     settled_turn("window-scene-before-invalid-state-metadata")?;
     qmp.stop()?;
     let metadata = qmp.read_memory(0, state, 4)?;
-    let overlay_descriptors = || {
-        [widget7, widget33, background10, background37, background48]
-            .into_iter()
-            .map(|descriptor| qmp.read_memory(0, descriptor, 16))
-            .collect::<Result<Vec<_>, _>>()
-    };
-    let descriptors_before = overlay_descriptors()?;
     let metadata_word = u32::from_le_bytes(metadata.clone().try_into().unwrap());
     let invalid_metadata = metadata_word ^ 1;
     debugger.write(state, &invalid_metadata.to_le_bytes())?;
@@ -1085,13 +1078,15 @@ pub(super) fn run_knob_dialog(
         wall_timeout_s,
     )?;
     qmp.stop()?;
+    // The payload returns borrowed descriptors after every draw, so they
+    // cannot show a rejection; an accepted state rewrites its word and the
+    // dialog's bitmap entry.
     let invalid_metadata_rejected = qmp.read_memory(0, state, 4)? == invalid_metadata.to_le_bytes()
-        && qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)? == original_bitmap
-        && overlay_descriptors()? == descriptors_before;
+        && qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)? == original_bitmap;
     debugger.write(state, &metadata)?;
     qmp.resume()?;
     if !invalid_metadata_rejected {
-        return Err("invalid state signature changed an overlay descriptor".into());
+        return Err("the payload accepted an invalid state signature".into());
     }
     settled_turn("window-scene-after-invalid-state-metadata")?;
     let invalid_tag_discarded = true;

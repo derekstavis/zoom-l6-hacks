@@ -78,10 +78,13 @@ applies the recovered ROM startup gate masks before first-stage setup. On the
 reviewed normal boot path, ROM re-enables TRNG but leaves the USB controller
 gate clear; the first stage enables the USB PLL independently. On L6max the
 USB model suppresses frame interrupts and transfer requests while the controller
-clock gate is off. It retains cable events and register access as compatibility
-approximations; USB PLL/PHY gating, low-power gate modes and bus access behavior
-while gated are not modeled. Other indirect writes and physical handoff readback
-remain unverified. The RT1060
+clock gate, PLL USB output, or PHY UTMI clock is off, or PHY reset is asserted.
+The PHY control register implements the observed SET/CLR/TOG sequence and reset;
+its handoff value is assumed to be the reference-manual reset value because ROM
+and physical handoff state have not been fully traced. Cable events and register
+access remain approximations; oscillator dependencies, low-power wakeup, other
+PHY behavior and bus access while gated are not modeled. Other indirect writes
+and physical handoff readback remain unverified. The RT1060
 reset controller resets CCM, PLLs and functional modules on cold reset while
 retaining IOMUXC; the model retains the latter's stored bits. The model resets
 SEMC configuration and selected FlexSPI controls before replaying their boot
@@ -140,8 +143,7 @@ The selected crystal or RC source stops the modeled internal clocks when it
 is disabled; the enabled RC source is approximated as 24 MHz. Analog oscillator
 and voltage transitions are not simulated. Internal-source PLL lock drops when
 the source is disabled and returns immediately when enabled; actual lock timing
-is unknown. The
-the surrounding inherited register bits were not captured physically.
+is unknown. The surrounding inherited register bits were not captured physically.
 The USB2, video and Ethernet PLL controls reflect the bootloader's recovered
 bypass/power sequence. Their clock outputs and physical lock timing are not
 simulated. Ethernet LOCK is approximated as immediate while powered, independent

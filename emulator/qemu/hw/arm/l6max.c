@@ -1773,7 +1773,12 @@ static uint32_t l6max_clock_register(L6ChipState *s, hwaddr offset)
 static bool l6max_usb_clock_enabled(void *opaque)
 {
     L6ChipState *s = opaque;
-    return (l6max_clock_register(s, 0x0fc080) & 3u) != 0;
+    uint32_t pll = l6max_clock_register(s, 0x0d8010);
+    uint32_t phy = l6max_clock_register(s, 0x0d9030);
+    return (l6max_clock_register(s, 0x0fc080) & 3u) != 0 &&
+           (pll & (L6_USB1_PLL_POWER | L6_USB1_PLL_EN_USB_CLKS)) ==
+               (L6_USB1_PLL_POWER | L6_USB1_PLL_EN_USB_CLKS) &&
+           !(phy & 0xc0000000u);
 }
 
 static L6MaxBusClocks l6max_bus_clocks(L6ChipState *s)
@@ -2592,6 +2597,10 @@ static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
         return value >> ((offset & 3) * 8);
     }
 not_flexram_read:
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
+        (offset & ~(hwaddr)0xf) == 0x0d9030) {
+        return l6max_clock_register(s, 0x0d9030);
+    }
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
         ((offset & ~(hwaddr)0xf) == 0x0d8150 ||
          (offset & ~(hwaddr)0xf) == 0x0d82c0 ||
@@ -3832,6 +3841,30 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
                           uint64_t value, unsigned size)
 {
     L6ChipState *s = opaque;
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
+        (offset & ~(hwaddr)0xf) == 0x0d9030) {
+        gpointer key = GUINT_TO_POINTER((0x0d9030 >> 2) + 1);
+        uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
+        uint32_t next;
+        switch (offset & 0xf) {
+        case 4: next = old | value; break;
+        case 8: next = old & ~value; break;
+        case 12: next = old ^ value; break;
+        default: next = value; break;
+        }
+        /* SFTRST resets the PHY configuration on assertion; later CLR
+         * writes may ungate the clock before releasing reset. */
+        if (!(old & 0x80000000u) && (next & 0x80000000u)) {
+            next = 0xc0200000u;
+            g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0d9000 >> 2) + 1),
+                                GUINT_TO_POINTER(0x001e1c00u));
+            g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0d9010 >> 2) + 1),
+                                GUINT_TO_POINTER(0x10060607u));
+            g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0d9020 >> 2) + 1), NULL);
+        }
+        g_hash_table_insert(s->registers, key, GUINT_TO_POINTER(next));
+        return;
+    }
     if (!s->panel && s->profile == &L6MAX_PROFILE &&
         offset >= 0x2a8000 && offset < 0x2ac000) {
         /* LUTKEY must immediately precede a valid lock/unlock request.
@@ -4943,6 +4976,14 @@ static void l6_main_gpio_setup(L6ChipState *s, MemoryRegion *system_memory)
 /* Apply the modeled L6max bootloader handoff after every machine reset. */
 static void l6max_seed_boot_handoff(L6ChipState *s)
 {
+    /* PHY state was not captured at MAIN entry; use the manual reset value. */
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0d9000 >> 2) + 1),
+                        GUINT_TO_POINTER(0x001e1c00u));
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0d9010 >> 2) + 1),
+                        GUINT_TO_POINTER(0x10060607u));
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0d9020 >> 2) + 1), NULL);
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0d9030 >> 2) + 1),
+                        GUINT_TO_POINTER(0xc0200000u));
     /* SRC cold reset resets CCM and functional modules, but not IOMUXC.
      * Use RM reset values as the fallback for ROM-inherited CCM fields on
      * every boot; the actual ROM's intervening writes remain unmeasured. */

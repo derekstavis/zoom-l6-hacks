@@ -1301,9 +1301,28 @@ def check_usb_clock(qemu, image):
         assert not command("readl 0x402e0144") & 0x80
         assert request(2, 2, 0, bytes(8)) == -19  # controller clock stopped
         command("writel 0x400fc080 0x00fc3fc3")
+        # Controller gate alone is insufficient while the PHY is in reset.
+        command("clock_step 2000000")
+        assert not command("readl 0x402e0144") & 0x80
+        command("writel 0x400d9038 0xc0000000")  # release reset and clock
+        assert command("readl 0x400d9030") == 0x00200000
         command("clock_step 2000000")
         assert command("readl 0x402e0144") & 0x80
         assert request(2, 3, 0, bytes(8)) == 0
+        # PHY UTMI gate and PLL USB output independently stop progress.
+        for off, on, bit in ((0x400d9034, 0x400d9038, 0x40000000),
+                             (0x400d8018, 0x400d8014, 0x40),
+                             (0x400d8018, 0x400d8014, 0x1000)):
+            command("writel 0x402e0144 0xffffffff")
+            command(f"writel {off:#x} {bit:#x}")
+            command("clock_step 2000000")
+            assert not command("readl 0x402e0144") & 0x80
+            command(f"writel {on:#x} {bit:#x}")
+            command("clock_step 2000000")
+            assert command("readl 0x402e0144") & 0x80
+        command("writel 0x400d9034 0x80000000")
+        assert command("readl 0x400d9030") == 0xc0200000
+        command("writel 0x400d9038 0xc0000000")
         # USB is a system-bus DMA master; CPU-private PPB must not be
         # accessible, whereas the DTCM system-bus alias is accessible.
         command("writel 0x402e0158 0xe000e000")
@@ -1373,6 +1392,8 @@ def main():
         0x400d8150: 0x04000000, 0x400d8270: 0x14001,
         0x40080000: 0x94030111, 0x4008000c: 0x113,
         0x400d8010: 0x80003040, 0x400d8020: 0x12000, 0x400d8070: 0x80002020,
+        0x400d9000: 0x001e1c00, 0x400d9010: 0x10060607,
+        0x400d9020: 0, 0x400d9030: 0xc0200000,
         # Simulation values assume the manual reset phase before the boot
         # divider writes; the device's inherited ROM phase is not captured.
         0x400d80f0: 0x13111061, 0x400d8100: 0x105d1058,

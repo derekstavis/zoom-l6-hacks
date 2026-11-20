@@ -281,7 +281,9 @@ def check_no_cache_selector(qemu, image):
     try:
         for command, expected in (("readl 0xe000ed78", 0),
                                   ("writel 0xe000ed84 1", None),
-                                  ("readl 0xe000ed84", 0)):
+                                  ("readl 0xe000ed84", 0),
+                                  ("writel 0xe000ed14 0x30200", None),
+                                  ("readl 0xe000ed14", 0x200)):
             process.stdin.write(command + "\n")
             process.stdin.flush()
             if not select.select([process.stdout], [], [], 10)[0]:
@@ -434,7 +436,15 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0xe000ed84 2")
         assert int(command("readl 0xe000ed84").split()[1], 16) == 0
         assert int(command("readl 0xe000ed80").split()[1], 16) == 0xf01fe019
-        print(f"{image}: cache identification and selector passed")
+        # Preserve cache enable state so guest initialization can read it
+        # back, even though QEMU does not emulate cache contents.
+        for bits in (0x10000, 0x20000, 0x30000, 0):
+            command(f"writel 0xe000ed14 {0x200 | bits:#x}")
+            assert int(command("readl 0xe000ed14").split()[1], 16) == 0x200 | bits
+        command("writel 0xe000ed14 0x30200")
+        qmp_execute("system_reset")
+        assert int(command("readl 0xe000ed14").split()[1], 16) == 0x200
+        print(f"{image}: cache identification, enable state and reset passed")
         # Aligned byte and halfword PIT accesses share the same timer state.
         command("writel 0x40084120 0x12345678")
         command("writeb 0x40084121 0xab")

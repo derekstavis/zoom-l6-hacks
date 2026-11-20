@@ -254,16 +254,18 @@ boot path, not a physical handoff register capture.
 At direct MAIN entry the modeled MPU and cache-enable bits are clear. QEMU's
 Cortex-M reset clears all 16 MPU region descriptors; the reviewed ROM cleanup
 conditionally clears regions 0–6 before transfer, but the complete physical
-descriptor state was not captured. QEMU's
-Cortex-M7 model does not implement caches and does not retain writes to the
-CCR instruction/data cache-enable bits, so the matching cache-disabled value
-does not simulate cache maintenance or establish parity when caches are on.
+descriptor state was not captured. The Cortex-M7 model retains the CCR
+instruction/data cache-enable bits when the configured core reports separate
+L1 caches, including the cleared handoff and reset state. QEMU does not model
+cache contents or maintenance, so enabled bits do not provide cache behavior
+or DMA coherence.
 The RT1060 manual specifies separate 32 KiB instruction and data caches.
 L6max now exposes the corresponding Cortex-M7 CLIDR, CTR and CCSIDR geometry
 and a selectable CSSELR, inferred from the RT1060 manual and
 [Arm Cortex-M7 guide, section 4.5](https://documentation-service.arm.com/static/61efd6602dd99944d051417b?token=)
-rather than captured from the device. These identification registers do not model cache contents, enable
-bits, maintenance operations, timing, or DMA coherence effects. QEMU also does
+rather than captured from the device. The identification and control registers
+do not model cache contents, maintenance operations, timing, or DMA coherence
+effects. QEMU also does
 not implement the M7 ITCMCR and DTCMCR control registers: they read zero and
 ignore writes while the modeled TCM memory remains accessible. The ARM core
 registers instead select TCM versus AXI routing, and FlexRAM bank mapping alone

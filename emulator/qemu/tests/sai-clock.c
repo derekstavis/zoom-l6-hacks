@@ -53,9 +53,11 @@ int main(void)
     c.cscmr1 = 0;
     assert(l6max_sai1_master_hz(&c, master1) ==
            (uint64_t)480000000u * 18 / 17 / 8);
-    c.usb1_pll |= 0x10000u; /* PFD receives VCO even if main is bypassed. */
-    assert(l6max_sai1_master_hz(&c, master1) ==
-           (uint64_t)480000000u * 18 / 17 / 8);
+    c.usb1_pll |= 0x10000u; /* PFD output follows bypass reference. */
+    assert(l6max_sai1_master_hz(&c, master1) == 3000000u);
+    c.usb1_pll &= ~0x2000u;
+    assert(l6max_sai1_master_hz(&c, master1) == 0);
+    c.usb1_pll |= 0x2000u;
     c.usb1_pll &= ~0x10000u;
     c.pfd_480 |= 1u << 23;
     assert(l6max_sai1_master_hz(&c, master1) == 0);
@@ -63,6 +65,8 @@ int main(void)
     c.cscmr1 = 1u << 10;
     c.video_pll = 0x13000; /* bypass oscillator, PLL powered down */
     assert(l6max_sai1_master_hz(&c, master1) == 3000000u);
+    c.video_pll &= ~0x2000u;
+    assert(l6max_sai1_master_hz(&c, master1) == 0);
     c.video_pll = 0x2020;
     c.video_num = 96;
     c.video_denom = 125;

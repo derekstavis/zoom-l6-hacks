@@ -49,7 +49,10 @@ int main(void)
     assert(l6max_arm_root_hz(0x00001064u, 1) == 0);
     assert(l6max_arm_root_hz(0x00006064u, 1) == UINT32_MAX);
     assert(l6max_arm_root_hz(0x00005064u, 1) == 0); /* powered down */
-    assert(l6max_arm_root_hz(0x00014064u, 1) == UINT32_MAX); /* bypass CLK1 */
+    assert(l6max_arm_root_hz(0x00016064u, 1) == UINT32_MAX); /* bypass CLK1 */
+    assert(l6max_arm_root_hz(0x00010064u, 1) == 0); /* bypass output gated */
+    assert(l6max_usb1_main_hz(0x00011040u) == 0); /* bypass output gated */
+    assert(l6max_usb1_main_hz(0x00013040u) == 24000000u);
     assert(l6max_arm_root_hz(0x00002001u, 1) == UINT32_MAX);
     L6MaxBusClocks bus_clocks = {
         .oscillator_hz = 24000000u,
@@ -75,8 +78,11 @@ int main(void)
     assert(l6max_ahb_clock_hz(&bus_clocks) == (uint64_t)528000000u * 18 / 29);
     bus_clocks.cbcmr = (bus_clocks.cbcmr & ~(3u << 18)) | (2u << 18);
     assert(l6max_ahb_clock_hz(&bus_clocks) == 396000000u);
-    bus_clocks.sys_pll |= 0x10000u; /* PFD receives VCO, bypass affects PLL main. */
-    assert(l6max_ahb_clock_hz(&bus_clocks) == 396000000u);
+    bus_clocks.sys_pll |= 0x10000u; /* bypass feeds reference to PFD outputs */
+    assert(l6max_ahb_clock_hz(&bus_clocks) == 24000000u);
+    bus_clocks.sys_pll &= ~0x2000u;
+    assert(l6max_ahb_clock_hz(&bus_clocks) == 0);
+    bus_clocks.sys_pll |= 0x2000u;
     bus_clocks.sys_pll &= ~0x10000u;
     bus_clocks.sys_pll = 0x5001; /* CLK1 selected but VCO powered down */
     assert(l6max_ahb_clock_hz(&bus_clocks) == 0);

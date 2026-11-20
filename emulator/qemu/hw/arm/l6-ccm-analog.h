@@ -200,6 +200,9 @@ static inline uint32_t l6max_arm_root_hz(uint32_t pll, uint32_t cacrr)
 {
     const uint32_t oscillator_hz = 24000000u;
     uint64_t source;
+    if (!(pll & 0x2000u)) {
+        return 0;
+    }
     if (pll & 0x10000u) {
         if (pll & 0xc000u) {
             return UINT32_MAX; /* External CLK1 is not wired by this board. */
@@ -251,10 +254,13 @@ static inline uint32_t l6max_sys_pll_vco_hz(const L6MaxBusClocks *c)
 
 static inline uint32_t l6max_sys_pll_hz(const L6MaxBusClocks *c)
 {
+    if (!(c->sys_pll & 0x2000u)) {
+        return 0;
+    }
     if (c->sys_pll & 0x10000u) {
         return (c->sys_pll & 0xc000u) ? UINT32_MAX : 24000000u;
     }
-    return (c->sys_pll & 0x2000u) ? l6max_sys_pll_vco_hz(c) : 0;
+    return l6max_sys_pll_vco_hz(c);
 }
 
 static inline uint32_t l6max_pll2_pfd_hz(const L6MaxBusClocks *c, unsigned lane)
@@ -263,6 +269,12 @@ static inline uint32_t l6max_pll2_pfd_hz(const L6MaxBusClocks *c, unsigned lane)
     unsigned fraction = (c->pfd_528 >> shift) & 0x3fu;
     if (c->pfd_528 & (0x80u << shift)) {
         return 0;
+    }
+    if (!(c->sys_pll & 0x2000u)) {
+        return 0;
+    }
+    if (c->sys_pll & 0x10000u) {
+        return (c->sys_pll & 0xc000u) ? UINT32_MAX : 24000000u;
     }
     uint32_t pll = l6max_sys_pll_vco_hz(c);
     if (!pll) {
@@ -276,6 +288,9 @@ static inline uint32_t l6max_pll2_pfd_hz(const L6MaxBusClocks *c, unsigned lane)
 
 static inline uint32_t l6max_usb1_main_hz(uint32_t pll)
 {
+    if (!(pll & 0x2000u)) {
+        return 0;
+    }
     if (pll & 0x10000u) {
         return (pll & 0xc000u) ? UINT32_MAX : 24000000u;
     }

@@ -131,6 +131,9 @@ video PLL fractional registers implement the
 modeled clock calculations. The L6max QEMU CPU clock input follows the RT1060
 peripheral mux and AHB divider, including PLL1, PLL2, PLL2
 PFDs and the alternate oscillator or PLL3 path; SysTick follows that clock.
+The RT1060 manual describes PLL bypass as passing the reference to associated
+PFD outputs and output disable as gating those outputs. The modeled PLL2 and
+PLL3 PFD paths follow that description; physical switching has not been measured.
 The IPG divider also supplies SAI1 when its bus-clock input is selected.
 SAI1 MCLK3 can use the internal SPDIF root, including its PLL source mux
 and dividers; the other SPDIF clock sources are not modeled. SysTick pauses if its

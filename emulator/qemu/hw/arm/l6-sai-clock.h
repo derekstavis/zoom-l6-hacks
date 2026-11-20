@@ -21,6 +21,9 @@ static inline uint32_t l6max_fractional_pll_hz(uint32_t control, uint32_t num,
     static const unsigned post_div[] = { 4, 2, 1, 0 };
     static const unsigned misc_div[] = { 1, 2, 1, 4 };
     uint64_t hz;
+    if (!(control & 0x2000u)) {
+        return 0;
+    }
     if (control & 0xc000u) {
         return 0; /* External CLK1 is not connected in this model. */
     }
@@ -48,10 +51,18 @@ static inline uint32_t l6max_fractional_pll_hz(uint32_t control, uint32_t num,
 static inline uint32_t l6max_usb1_pfd2_hz(uint32_t pll, uint32_t pfd)
 {
     unsigned frac = (pfd >> 16) & 0x3fu;
-    if ((pll & 0xc000u) || (pfd & 0x00800000u) || frac < 12 || frac > 35) {
+    if ((pll & 0xc000u) || (pfd & 0x00800000u)) {
         return 0;
     }
-    /* The PFD is fed by PLL3's VCO, not the PLL output bypass mux. */
+    if (!(pll & 0x2000u)) {
+        return 0;
+    }
+    if (pll & 0x10000u) {
+        return 24000000u;
+    }
+    if (frac < 12 || frac > 35) {
+        return 0;
+    }
     if (!(pll & 0x1000u)) {
         return 0;
     }

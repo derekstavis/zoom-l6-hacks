@@ -862,6 +862,13 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0x400d8050 1")
         command(f"writel 0x400fc018 {(boot_cbcmr & ~(3 << 18)) | (1 << 18):#x}")
         assert 1655 <= systick_ticks() <= 1659  # PLL2 PFD2 / 2
+        command("writel 0x400d8034 0x10000")  # bypass PLL2 and its PFD
+        assert 118 <= systick_ticks() <= 122  # 24 MHz reference / 2
+        command("writel 0x400d8038 0x2000")  # gate PLL2 outputs
+        assert systick_ticks() == 0
+        command("writel 0x400d8034 0x2000")
+        command("writel 0x400d8038 0x10000")
+        assert 1655 <= systick_ticks() <= 1659
         command("writel 0x400d8104 0x00800000")
         assert systick_ticks() == 0
         command("writel 0x400d8108 0x00800000")

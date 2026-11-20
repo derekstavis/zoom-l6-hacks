@@ -214,13 +214,18 @@ there are no arbitrary shell commands, expressions or loop constructs.
 
 ## Editor support
 
-`tests/emulator/schemas/` holds JSON Schemas for case and fragment files,
-generated from the Rust types that parse them, and `tombi.toml` applies them.
-An editor with the [Tombi](https://tombi-toml.github.io/tombi/) extension
-completes and checks actions, fields, `expect-memory` symbols and suite names;
-`uvx tombi lint <files>` checks from the command line. Loading a scenario stays
-the authority: per-model symbol scope, step order and file references are
-checked only there.
+[Tombi](https://tombi-toml.github.io/tombi/) is the supported TOML tooling for
+case and fragment files. `tombi.toml` applies the JSON Schemas in
+`tests/emulator/schemas/`, generated from the Rust types that parse these files.
+Through Tombi's language server, in an editor or an agent's LSP client, they
+give completion, documentation and errors while a file is written: actions,
+fields, `expect-memory` symbols and suite names. `uvx tombi lint <files>` reports
+the same errors from the command line.
+
+The Rust loader is the authority, and Tombi only gives earlier feedback.
+`cargo l6test list` loads and validates every case and fragment without
+firmware. It also checks what the schema cannot: per-model symbol scope, step
+order, includes and file references.
 
 Run `cargo l6test schema` after changing a scenario, step or `[case]` type, or
 declaring a symbol or suite; `cargo test -p l6test` fails while the committed

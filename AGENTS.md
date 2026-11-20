@@ -6,7 +6,9 @@ Keep changes on a feature branch until the user approves a merge.
 Read `docs/development/current-status.md`, then `docs/development/testing.md`
 for where tests live, suites, and how to add a case or a patch's checks. Use the
 suite driver: `cargo l6test list`, `cargo l6test run`. Paths in scenarios,
-includes and specs are written from the repository root.
+includes and specs are written from the repository root. Use Tombi's language
+server (or `uvx tombi lint`) for fast feedback while editing case and fragment
+files; `cargo l6test list` is the authoritative check and needs no firmware.
 For focused runtime observations outside qualification, use
 `docs/development/diagnostics.md` and the `l6dbg` tool documentation.
 Local firmware package and audio paths belong in ignored `config.toml`; never commit

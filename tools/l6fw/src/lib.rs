@@ -5,13 +5,26 @@ use std::{fs, io::Write, path::Path};
 const L6MAX_FORMAT: &str = "l6max-observed-v1";
 const L6_FORMAT: &str = "l6-observed-v1";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
 pub enum Model {
     L6,
     L6max,
 }
 
 impl Model {
+    pub const ALL: [Model; 2] = [Model::L6, Model::L6max];
+
+    /// The name scenarios, cases and reports use: `l6` or `l6max`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Model::L6 => "l6",
+            Model::L6max => "l6max",
+        }
+    }
+
     /// Guest address the MAIN image loads at.
     pub fn main_base(self) -> u32 {
         profile(self).main_base
@@ -653,3 +666,20 @@ mod tests {
 }
 
 pub mod update;
+
+impl std::fmt::Display for Model {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl std::str::FromStr for Model {
+    type Err = String;
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        Model::ALL
+            .into_iter()
+            .find(|model| model.name() == name)
+            .ok_or_else(|| format!("unknown model {name:?}; expected l6 or l6max"))
+    }
+}

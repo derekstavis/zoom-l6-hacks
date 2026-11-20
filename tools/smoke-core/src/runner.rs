@@ -1,6 +1,6 @@
 //! Backend-independent scenario state machine and assertions.
 use crate::{
-    Action, Command, Scenario, control_target, devices, model_name,
+    Action, Command, Scenario, control_target, devices,
     scenario::mode_index,
     trace::{self, TraceCursor},
 };
@@ -92,7 +92,7 @@ pub struct Runner {
 }
 impl Runner {
     pub fn new(scenario: Scenario, model: Model, logs: PathBuf) -> Result<Self, String> {
-        if !scenario.models.iter().any(|m| m == model_name(model)) {
+        if !scenario.models.contains(&model) {
             return Err("scenario does not support this model".into());
         }
         if scenario
@@ -104,7 +104,7 @@ impl Runner {
         }
         let mut trace = TraceCursor::default();
         for step in &scenario.step {
-            if !step.models.is_empty() && !step.models.iter().any(|m| m == model_name(model)) {
+            if !step.applies_to(model) {
                 continue;
             }
             match &step.action {
@@ -230,15 +230,13 @@ impl Runner {
             self.record(json!({"event":"observation","step":self.step+1,"state":obs.summary()}));
         }
         if now.saturating_duration_since(self.last_progress) >= Duration::from_secs(15) {
-            tracing::info!(event="scenario_progress",scenario=%self.scenario.name,model=model_name(self.model),step=self.step+1,guest_ms=obs.panel.guest_ms,rings=?rings(obs.data.indicators),sweep_seen=self.startup.all_lit_seen,"scenario running");
+            tracing::info!(event="scenario_progress",scenario=%self.scenario.name,model=self.model.name(),step=self.step+1,guest_ms=obs.panel.guest_ms,rings=?rings(obs.data.indicators),sweep_seen=self.startup.all_lit_seen,"scenario running");
             self.last_progress = now;
         }
         self.last = Some(obs.clone());
         let powered_off_action = self.scenario.step[self.step..]
             .iter()
-            .find(|step| {
-                step.models.is_empty() || step.models.iter().any(|m| m == model_name(self.model))
-            })
+            .find(|step| step.applies_to(self.model))
             .is_some_and(|step| match &step.action {
                 Action::ExpectPowered { powered: false } => true,
                 Action::Press { control } if control == "power" => true,
@@ -257,8 +255,7 @@ impl Runner {
                 && !matches!(
                     self.scenario.step[self.step..]
                         .iter()
-                        .find(|s| s.models.is_empty()
-                            || s.models.iter().any(|m| m == model_name(self.model)))
+                        .find(|s| s.applies_to(self.model))
                         .map(|s| &s.action),
                     Some(Action::Restart)
                 ))
@@ -270,12 +267,12 @@ impl Runner {
         }
         while self.step < self.scenario.step.len() {
             let step = self.scenario.step[self.step].clone();
-            if !step.models.is_empty() && !step.models.iter().any(|m| m == model_name(self.model)) {
+            if !step.applies_to(self.model) {
                 self.step += 1;
                 continue;
             }
             let (entered, guest_start) = *self.entered.get_or_insert_with(|| {
-                tracing::info!(event="step_started",scenario=%self.scenario.name,model=model_name(self.model),step=self.step+1,action=?step.action,guest_ms=obs.panel.guest_ms,"step started");
+                tracing::info!(event="step_started",scenario=%self.scenario.name,model=self.model.name(),step=self.step+1,action=?step.action,guest_ms=obs.panel.guest_ms,"step started");
                 (now, obs.panel.guest_ms)
             });
             let elapsed = obs.panel.guest_ms.wrapping_sub(guest_start);
@@ -1258,7 +1255,7 @@ impl Runner {
     }
 
     fn record(&mut self, event: Value) {
-        tracing::debug!(event=event["event"].as_str().unwrap_or("observation"),scenario=%self.scenario.name,model=model_name(self.model),step=self.step+1,detail=%event,"scenario event");
+        tracing::debug!(event=event["event"].as_str().unwrap_or("observation"),scenario=%self.scenario.name,model=self.model.name(),step=self.step+1,detail=%event,"scenario event");
         if self.history.len() == 128 {
             self.history.pop_front();
         }
@@ -1266,11 +1263,11 @@ impl Runner {
     }
     pub fn finish(&self, outcome: &str, error: Option<&str>) -> Result<(), String> {
         if let Some(error) = error {
-            tracing::error!(event="scenario_finished",scenario=%self.scenario.name,model=model_name(self.model),step=self.step+1,outcome,%error,"scenario failed");
+            tracing::error!(event="scenario_finished",scenario=%self.scenario.name,model=self.model.name(),step=self.step+1,outcome,%error,"scenario failed");
         } else {
-            tracing::info!(event="scenario_finished",scenario=%self.scenario.name,model=model_name(self.model),outcome,"scenario completed");
+            tracing::info!(event="scenario_finished",scenario=%self.scenario.name,model=self.model.name(),outcome,"scenario completed");
         }
-        let report = json!({"schema":1,"scenario":self.scenario.name,"model":model_name(self.model),"outcome":outcome,
+        let report = json!({"schema":1,"scenario":self.scenario.name,"model":self.model.name(),"outcome":outcome,
             "failed_step": if error.is_some(){Some(self.step+1)}else{None}, "error":error,"wall_seconds":self.started.elapsed().as_secs_f64(),
             "trace_file":self.trace_path,"completed_steps":self.completed,"last_observation":self.last.as_ref().map(Observation::summary),"events":self.history});
         fs::write(
@@ -1910,16 +1907,8 @@ action='l6-din-sweep'
             for model in &scenario.models {
                 let mut runner = test_runner("[[step]]\naction='delay'\nguest_ms=1\n");
                 let temp = runner.logs.clone();
-                runner = Runner::new(
-                    scenario.clone(),
-                    if model == "l6" {
-                        Model::L6
-                    } else {
-                        Model::L6max
-                    },
-                    temp,
-                )
-                .unwrap_or_else(|e| panic!("{} / {model}: {e}", path.display()));
+                runner = Runner::new(scenario.clone(), *model, temp)
+                    .unwrap_or_else(|e| panic!("{} / {model}: {e}", path.display()));
                 fs::remove_dir_all(runner.logs).unwrap();
             }
         }
@@ -1949,7 +1938,7 @@ action='l6-din-sweep'
         );
         fs::write(dir.join("test.toml"), &prefix).unwrap();
         let loaded = Scenario::load(&dir.join("test.toml")).unwrap();
-        assert_eq!(loaded.step[0].models, ["l6max"]);
+        assert_eq!(loaded.step[0].models, [Model::L6max]);
         // A generated scenario composes the same way from its text alone.
         assert_eq!(Scenario::from_text(&prefix).unwrap().step.len(), 1);
         fs::write(
@@ -2142,7 +2131,7 @@ action='l6-din-sweep'
             });
             if restart {
                 let mut skipped = runner.scenario.step[0].clone();
-                skipped.models = vec!["l6max".into()];
+                skipped.models = vec![Model::L6max];
                 skipped.action = Action::Delay { guest_ms: 1 };
                 runner.scenario.step.insert(0, skipped);
             }

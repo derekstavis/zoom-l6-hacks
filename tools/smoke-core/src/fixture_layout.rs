@@ -22,7 +22,7 @@ pub const PATCHED_UPDATE: &str = "patched-update.bin";
 
 /// Files under the case directory that `scenario` reads for `model`, relative
 /// to that directory.
-pub fn required(scenario: &Scenario, model: &str) -> Vec<String> {
+pub fn required(scenario: &Scenario, model: l6fw::Model) -> Vec<String> {
     let mut files = Vec::new();
     if let Some(patches) = &scenario.sd_patches {
         files.push(format!("{SD_STOCK_FIRMWARE}/main_firmware.bin"));
@@ -36,7 +36,7 @@ pub fn required(scenario: &Scenario, model: &str) -> Vec<String> {
     }
     if scenario
         .update_patches
-        .get(model)
+        .get(&model)
         .is_some_and(|patches| !patches.is_empty())
     {
         files.push(PATCHED_UPDATE.into());

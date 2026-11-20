@@ -1712,7 +1712,7 @@ fn main() {
         .as_ref()
         .map(|path| {
             smoke_core::Scenario::load_for_case(path).and_then(|scenario| {
-                if !scenario.backends.iter().any(|b| b == "gui") {
+                if !scenario.backends.contains(&smoke_core::Backend::Gui) {
                     return Err("scenario requires the headless backend".into());
                 }
                 Ok(scenario)

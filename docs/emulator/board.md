@@ -74,10 +74,11 @@ preserving other stored bits. Peripheral clock mux and divider writes use
 RT1060 reset values for fields, including clock gates, whose prior ROM state has
 not been captured. On direct boot and cold reset, modeled CCM and PLL registers
 start from those reset values before the recovered boot writes. The model also
-applies the recovered ROM startup gate masks before first-stage setup, while
-retaining reset assumptions for USB and TRNG gates that can be changed by
-later ROM paths. Other indirect writes and physical handoff readback remain
-unverified. The RT1060
+applies the recovered ROM startup gate masks before first-stage setup. On the
+reviewed normal boot path, ROM re-enables TRNG but leaves the USB controller
+gate clear; the first stage enables the USB PLL independently. The emulator
+does not enforce the USB controller gate. Other indirect writes and physical
+handoff readback remain unverified. The RT1060
 reset controller resets CCM, PLLs and functional modules on cold reset while
 retaining IOMUXC; the model retains the latter's stored bits. The model resets
 SEMC configuration and selected FlexSPI controls before replaying their boot

@@ -4957,19 +4957,23 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
             GUINT_TO_POINTER((ccm_reset[i].offset >> 2) + 1),
             GUINT_TO_POINTER(ccm_reset[i].value));
     }
-    /* ROM startup masks CCGR0..6 before the first-stage writes. Later ROM
-     * paths can enable USB and TRNG (CCGR6 fields 0 and 6); retain their
-     * reset fallback until those path-dependent effects are established.
+    /* ROM startup masks CCGR0..6 before the first-stage writes. On the
+     * reviewed normal boot path, TRNG initialization re-enables CCGR6 CG6;
+     * the USB gate is enabled by the downloader path, not that normal path.
      * Other indirect writes and physical handoff values remain unverified. */
     static const uint32_t rom_gate_keep[] = {
         0xc0c00fffu, 0xfcfcc000u, 0x0ffff033u, 0xf00ff330u,
-        0x0000ffffu, 0xf0033c33u, 0x00fc33c3u,
+        0x0000ffffu, 0xf0033c33u, 0x00fc03c0u,
     };
     for (unsigned i = 0; i < ARRAY_SIZE(rom_gate_keep); i++) {
         gpointer key = GUINT_TO_POINTER(((0x0fc068 + i * 4) >> 2) + 1);
         uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
         g_hash_table_insert(s->registers, key, GUINT_TO_POINTER(old & rom_gate_keep[i]));
     }
+    gpointer rom_ccgr6 = GUINT_TO_POINTER((0x0fc080 >> 2) + 1);
+    uint32_t rom_ccgr6_value = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, rom_ccgr6));
+    g_hash_table_insert(s->registers, rom_ccgr6,
+                        GUINT_TO_POINTER(rom_ccgr6_value | 0x00003000u));
     /* PLL and PFD controls are reset by SRC as system modules. These are
      * reference-manual reset fallbacks, not a complete ROM clock trace. */
     static const struct { hwaddr offset; uint32_t value; } analog_reset[] = {

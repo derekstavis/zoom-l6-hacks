@@ -5502,6 +5502,11 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
     object_property_set_link(OBJECT(&s->armv7m), "memory",
                              OBJECT(system_memory), &error_abort);
     sysbus_realize(SYS_BUS_DEVICE(&s->armv7m), &error_fatal);
+    if (!panel && profile == &L6MAX_PROFILE) {
+        /* Physical dump CPUID: Cortex-M7 r1p1. This changes identification,
+         * not QEMU's generic Cortex-M7 revision-specific behavior. */
+        s->armv7m.cpu->midr = 0x411fc271;
+    }
     if (!panel && profile->audio_codec_bus) {
         s->audio_i2c_bus = i2c_init_bus(cpu, "lpi2c1");
         i2c_slave_create_simple(s->audio_i2c_bus, TYPE_L6MAX_AUDIO_ADC, 0x4c);

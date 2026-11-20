@@ -21,6 +21,9 @@ i.MX RT106x family, but does not distinguish RT1061 from RT1062. The profiles
 share an emulated CPU topology without assuming identical physical silicon.
 For L6 peripheral semantics, use the RT1040 reference manual; for L6max, use
 the RT1060 manual. L6 external resource NOR uses LPSPI3 at `0x403a0000`.
+L6max's CPUID matches the captured Cortex-M7 r1p1 value `0x411fc271`;
+this identifies the guest-visible revision and does not model differences
+between Cortex-M7 revisions.
 
 When starting L6max MAIN directly, the board seeds
 clock fields recovered from L6max bootloader 1.00: the 600 MHz ARM setup,
@@ -74,6 +77,9 @@ STABLE bits. The model toggles a phase bit immediately when a valid divider
 change takes effect, assuming gated changes take effect on ungating. Physical
 transition timing and the inherited ROM phase are not verified; the initial
 phase uses the reference manual reset values.
+ROM initializes PIT channel registers without restoring their reset values;
+the physical handoff values are not captured, and those timer registers are
+not modeled by the direct-boot board.
 IOMUX register storage does not
 model pad electrical characteristics or reroute pins dynamically. SDRAM
 timing and refresh register values are seeded from the bootloader's nominal

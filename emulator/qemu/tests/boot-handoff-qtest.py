@@ -653,7 +653,7 @@ def main():
         0x400d8170: 0x00272727,
         0x400d80a0: 0x13000, 0x400d80b0: 0x05f5e100,
         0x400d80c0: 0x10a24447, 0x400d80e0: 0x80312001,
-        0xe000e010: 0, 0xe000ed08: 0x80000000,
+        0xe000e010: 0, 0xe000ed00: 0x411fc271, 0xe000ed08: 0x80000000,
         0xe000ed14: 0x200, 0xe000ed24: 0, 0xe000ed94: 0,
     }
     check(qemu, stock, l6max)
@@ -664,7 +664,8 @@ def main():
     check_main_stack_entry(qemu, stock, 0x202d8000, 0x20)
     check_main_stack_entry(qemu, patched)
     check_flexram_boundaries(qemu, stock)
-    check(qemu, l6, {0x400ac038: 0, 0x401f8204: 0, 0x402f0010: 0})
+    check(qemu, l6, {0x400ac038: 0, 0x401f8204: 0, 0x402f0010: 0,
+                     0xe000ed00: 0x411fc272})
 
 
 if __name__ == "__main__":

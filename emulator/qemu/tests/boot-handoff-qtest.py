@@ -277,6 +277,63 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
             assert packet("s").startswith("T05")
             assert registers()[:2] == [0x9abcdef0, 0x12345678]
             print(f"{image}: guest PIT lifetime-counter reads passed")
+            # Reuse MAIN 1.10's region-10 attributes at a test RAM address.
+            # A separate executable region covers the guest code and stack.
+            # PRIVDEFENA must allow privileged background reads, while AP=3
+            # permits unprivileged reads and writes inside region 10.
+            for request in (
+                "M20230000,2:0868",        # ldr r0,[r1]
+                "M20230100,c:002383f31488bff36f8f7047",  # restore privilege; bx lr
+                "M8000002c,4:01012320",    # SVC handler at 0x20230101
+                "M80102000,4:78563412",
+                "Me000ed98,4:09000000",    # region 9: code and stack
+                "Me000ed9c,4:00002020",    # base 0x20200000
+                "Me000eda0,4:25000303",    # 512 KiB, full access, normal RAM
+                "Me000ed98,4:0a000000",    # region 10: MAIN's attributes
+                "Me000ed9c,4:00001080",    # base 0x80100000
+                "Me000eda0,4:27001003",    # MAIN 1.10 RASR 0x03100027
+                "Me000ed94,4:05000000",    # MPU on, privileged background
+                "P1=00000080", "Pd=00102320", "Pf=00002320",
+            ):
+                assert packet(request) == "OK", request
+            assert packet("s").startswith("T05")
+            assert registers()[0] == main_msp, (registers(), hex(main_msp))
+            for request in (
+                "M20230000,1a:62b683f31488bff36f8feff3148408680130086000dfeff31484",
+                "P1=00201080", "P3=01000000", "Pf=00002320",
+            ):
+                assert packet(request) == "OK", request
+            for _ in range(8):
+                assert packet("s").startswith("T05")
+            assert registers()[15] == 0x20230100, [hex(x) for x in registers()]
+            assert registers()[4] & 1  # CONTROL.nPRIV was set in Thread mode
+            assert int.from_bytes(bytes.fromhex(packet("m80102000,4")), "little") == 0x12345679
+            for _ in range(4):
+                assert packet("s").startswith("T05")
+            assert registers()[15] == 0x20230016
+            assert packet("s").startswith("T05")  # mrs r4,control
+            assert not registers()[4] & 1  # SVC handler restored privilege
+            assert packet("M8000002c,4:" + svc_vector) == "OK"
+            if mpu_test == "privilege":
+                # PRIVDEFENA must not grant an unprivileged data access to
+                # SDRAM outside either enabled MPU region.
+                for request in (
+                    "M20230000,c:62b683f31488bff36f8f0868",
+                    "M20230200,2:fee7", "M8000000c,4:01022320",
+                    "P1=00002080", "P3=01000000", "Pf=00002320",
+                ):
+                    assert packet(request) == "OK", request
+                for _ in range(4):
+                    assert packet("s").startswith("T05")
+                assert registers()[15] == 0x20230200, [hex(x) for x in registers()]
+                assert int.from_bytes(bytes.fromhex(packet("me000ed28,4")), "little") & 0x82 == 0x82
+                assert int.from_bytes(bytes.fromhex(packet("me000ed34,4")), "little") == 0x80200000
+                print(f"{image}: unprivileged MPU background fault passed")
+                return
+            for request in ("Me000ed98,4:09000000", "Me000eda0,4:00000000",
+                            "Me000ed98,4:0a000000", "Me000eda0,4:00000000"):
+                assert packet(request) == "OK", request
+            print(f"{image}: guest MAIN MPU permissions and background passed")
             # A protected data region must affect guest accesses after MAIN
             # enables the MPU. Privileged background access keeps code executable.
             for request in (
@@ -1576,6 +1633,7 @@ def main():
     check(qemu, stock, l6max)
     check(qemu, patched, l6max)
     check_main_stack_entry(qemu, stock, mpu_test=True)
+    check_main_stack_entry(qemu, stock, mpu_test="privilege")
     check_main_stack_entry(qemu, stock)
     check_main_stack_entry(qemu, stock, 0x20020000, 0x10)
     check_main_stack_entry(qemu, stock, 0x202d8000, 0x20)

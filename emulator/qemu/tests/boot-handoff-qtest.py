@@ -237,6 +237,16 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0x400b0018 0")
         command("writel 0xe000e284 0x40")
         print(f"{image}: FlexRAM access status and shared IRQ passed")
+        # SEMC SWRST clears itself without clearing configuration. STS0 is
+        # read-only and idle because this model executes no timed commands.
+        command("writel 0x402f0010 0x8000001b")
+        command("writel 0x402f0000 0x1fff0005")
+        assert int(command("readl 0x402f0000").split()[1], 16) == 0x1fff0004
+        assert int(command("readl 0x402f0010").split()[1], 16) == 0x8000001b
+        command("writel 0x402f00c0 0xffffffff")
+        assert int(command("readl 0x402f00c0").split()[1], 16) == 1
+        assert int(command("readb 0x402f00c0").split()[1], 16) == 1
+        assert int(command("readb 0x402f00c1").split()[1], 16) == 0
         # Fractional PLL registers reserve bits 31:30 even for partial writes.
         for address in (0x400d8050, 0x400d8060, 0x400d8080,
                         0x400d8090, 0x400d80b0, 0x400d80c0):
@@ -674,6 +684,7 @@ def main():
         0x402f004c: 0x08070a01, 0x400a8000: 5,
         0x402f0090: 0x82000000, 0x402f0094: 2,
         0x402f0098: 0, 0x402f00a0: 0x33,
+        0x402f00c0: 1,
         0x400ac00c: 0x0000f0f0, 0x400ac028: 7,
         0x400ac038: 0x00860000, 0x400ac040: 0x00200007,
         0x400ac044: 0x5555ea95,

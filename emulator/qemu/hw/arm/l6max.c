@@ -2402,6 +2402,11 @@ static const MemoryRegionOps l6max_flexram_hole_ops = {
 static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
 {
     L6ChipState *s = opaque;
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (offset & ~(hwaddr)3) == 0x2f00c0) {
+        /* SEMC is idle because no timed controller operations are modeled. */
+        return (1u >> ((offset & 3) * 8));
+    }
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4) {
         switch (offset) {
         case 0x0b0000: return s->flexram_tcm_ctrl;
@@ -3582,6 +3587,15 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
     unsigned shift = (offset & 3) * 8;
     uint32_t mask = size == 4 ? UINT32_MAX : ((1u << (size * 8)) - 1) << shift;
     word = (word & ~mask) | (((uint32_t)value << shift) & mask);
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (offset & ~(hwaddr)3) == 0x2f0000) {
+        /* SWRST resets internal logic, not configuration, and self-clears. */
+        word &= ~1u;
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (offset & ~(hwaddr)3) == 0x2f00c0) {
+        store_word = false; /* STS0 is read-only. */
+    }
     /* The RT1060 fractional PLL NUM and DENOM fields are 30 bits; their
      * two high bits read as zero, including after byte or halfword writes. */
     hwaddr aligned = offset & ~(hwaddr)3;

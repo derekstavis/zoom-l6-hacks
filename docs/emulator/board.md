@@ -43,6 +43,8 @@ last SDRAM initialization command's address, size and mode data are also
 stored; the commands themselves and their timing are not simulated. Other IO
 mux bits use the reset value initially and retain their stored value on
 subsequent resets; the physical inherited state was not captured. The
+SEMC software-reset bit clears immediately without resetting configuration,
+and status reports idle because timed SEMC transactions are not modeled. The
 first 2 MiB is writable RAM seeded from current NOR at reset, before the CPU
 reads its vector. The guest does not execute physical SDRAM initialization.
 The copy uses the installed footer length when valid; older emulator-created

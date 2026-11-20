@@ -392,6 +392,17 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0x400ac044 0x5555ea95")
         assert int(command("readl 0x20280000").split()[1], 16) == 0x13579bdf
         assert int(command("readl 0x00000000").split()[1], 16) == 0x2468ace0
+        # Assign every FlexRAM bank to OCRAM: both TCM windows are empty.
+        # Restoring the partition must retain the former ITCM bank's data.
+        command("writel 0x400b0014 0x18")
+        command("writel 0x400ac044 0x55555555")
+        command("readl 0x00000000")
+        command("readl 0x20000000")
+        assert int(command("readl 0x400b0010").split()[1], 16) == 0x18
+        command("writel 0x400b0010 0x18")
+        command("writel 0x400b0014 0")
+        command("writel 0x400ac044 0x5555ea95")
+        assert int(command("readl 0x00000000").split()[1], 16) == 0x2468ace0
         # Source selection uses the assumed blank-fuse partition; writes to
         # GPR17 do not affect that partition until software selects it again.
         command("writel 0x400ac040 0x00200003")

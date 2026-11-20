@@ -116,6 +116,10 @@ to an interface in ascending bank order; the ordering for noncontiguous banks
 has not been verified on this device. When GPR16 selects fuses, the model uses
 the RT1060 blank-fuse partition because the device's fuse setting is unknown.
 The fixed 512 KiB OCRAM remains separate from the FlexRAM OCRAM window.
+Assigning no banks to either TCM leaves that interface unallocated; restoring
+the partition retains bank contents. GPR16 bits 0–1 are retained as written,
+but their effect is not modeled because the current RT1060 manual marks them
+reserved and older NXP examples differ.
 The controller models enabled out-of-range status, write-one-to-clear status,
 and shared interrupt 38 for each interface. Unallocated ITCM and DTCM accesses
 raise a guest bus error; unallocated FlexRAM OCRAM reads return zero and writes

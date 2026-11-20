@@ -61,6 +61,9 @@ handoff were not captured. Stock MAIN relocates its own ITCM code during
 startup, and the tested entry bytes agree with the later physical dump.
 
 At direct MAIN entry the modeled MPU and cache-enable bits are clear. QEMU's
+Cortex-M reset clears all 16 MPU region descriptors; the reviewed ROM cleanup
+conditionally clears regions 0–6 before transfer, but the complete physical
+descriptor state was not captured. QEMU's
 Cortex-M7 model does not implement caches and does not retain writes to the
 CCR instruction/data cache-enable bits, so the matching cache-disabled value
 does not simulate cache maintenance or establish parity when caches are on.

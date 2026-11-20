@@ -110,6 +110,11 @@ def check_flexram_boundaries(qemu, image):
                                (0xe000ed24, 0x70000)):
             command(f"writel {address:#x} {value:#x}")
             assert int(command(f"readl {address:#x}").split()[1], 16) & value == value
+        for region in (0, 6, 15):
+            command(f"writel 0xe000ed98 {region}")
+            command("writel 0xe000ed9c 0x20200000")
+            command("writel 0xe000eda0 0x03000019")
+            assert int(command("readl 0xe000eda0").split()[1], 16) == 0x03000019
         qmp_execute("system_reset")
         for address, expected in masks.items():
             assert int(command(f"readl {address:#x}").split()[1], 16) == expected
@@ -128,6 +133,12 @@ def check_flexram_boundaries(qemu, image):
             assert int(command(f"readl {address:#x}").split()[1], 16) == 0
         assert int(command("readl 0xe000ed08").split()[1], 16) == 0x80000000
         assert not int(command("readl 0xe000ed14").split()[1], 16) & 0x30000
+        assert int(command("readl 0xe000ed90").split()[1], 16) == 0x1000
+        for region in range(16):
+            command(f"writel 0xe000ed98 {region}")
+            rbar = int(command("readl 0xe000ed9c").split()[1], 16)
+            rasr = int(command("readl 0xe000eda0").split()[1], 16)
+            assert (rbar & ~0x1f, rasr) == (0, 0), (region, hex(rbar), hex(rasr))
         # The clock initializer disables a broad set of gates, then later
         # setup enables the known GPIO, memory-controller and IOMUX gates.
         gate_results = {

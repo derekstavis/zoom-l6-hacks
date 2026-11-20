@@ -225,7 +225,10 @@ but no faults and all-zero data in the last 160 KiB of the OCRAM window. Its
 bank configuration was not captured, so the relationship to the boot partition
 is inferred; OCRAM writes and controller status were not measured. Controller
 registers are seeded to reset defaults because their physical handoff values
-were not captured. ECC and timing are not modeled. See
+were not captured. FlexRAM `TCM_CTRL` stores the force-clock and read/write
+wait-mode bits described in RT1060 RM §31.4.1.2; it is distinct from the
+core's ITCMCR and DTCMCR. Its wait modes and forced clock do not change
+emulated timing or clock behavior. ECC and timing are not modeled. See
 [NXP AN12077](https://www.nxp.com/docs/en/application-note/AN12077.pdf) for
 runtime partitioning and data retention.
 The L6max ITCM starts as zero-filled emulator RAM; its physical contents at

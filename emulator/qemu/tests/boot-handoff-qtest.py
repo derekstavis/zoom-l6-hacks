@@ -857,6 +857,33 @@ def check_flexram_boundaries(qemu, image):
             command(f"writel {address:#x} 0xffffffff")
         command("writel 0x402a80b8 0xfffffffe")
         command("writel 0x402a80bc 0xfffffffe")
+        # Dirty SEMC controls not rewritten by the bootloader, and leave an
+        # incomplete FlexSPI page-program transaction in the controller.
+        for address in (0x402f0034, 0x402f0038, 0x402f0058,
+                        0x402f0060, 0x402f0084, 0x402f009c):
+            command(f"writel {address:#x} 0xffffffff")
+        # Earlier tests changed LUT 0; install the commands needed here.
+        command("writel 0x402a8018 0x5af05af0")
+        command("writel 0x402a801c 2")
+        for address, value in ((0x402a8200, 0x0818040b),
+                               (0x402a8210, 0x406),
+                               (0x402a8240, 0x08180402),
+                               (0x402a8250, 0x24040405)):
+            command(f"writel {address:#x} {value:#x}")
+        command("writel 0x402a8018 0x5af05af0")
+        command("writel 0x402a801c 1")
+        command("writel 0x402a80a0 0x50000")
+        command("writel 0x402a80a4 8")  # LUT 0: NOR read
+        command("writel 0x402a80b0 1")
+        fifo = int(command("readl 0x402a80f0").split()[1], 16)
+        assert fifo >= 1, (fifo, command("readl 0x402a8200"))
+        command("writel 0x402a80a4 0x10000")  # LUT 1: write enable
+        command("writel 0x402a80b0 1")
+        command("writel 0x402a80a0 0x60000")
+        command("writel 0x402a80a4 0x40008")  # LUT 4: program, 8 bytes
+        command("writel 0x402a80b0 1")
+        assert int(command("readl 0x402a8014").split()[1], 16) & 0x40
+        command("writel 0x402a8010 0xffffffff")
         command("writel 0x400d8270 0x12345678")
         command("writel 0x400d8154 0x10000")
         command("writel 0x40080000 0x12345678")
@@ -913,6 +940,20 @@ def check_flexram_boundaries(qemu, image):
                                (0x402a80bc, 0),
                                (0x402a80c0, 0x100)):
             assert int(command(f"readl {address:#x}").split()[1], 16) == value
+        for address, expected in ((0x402f0034, 0x100), (0x402f0038, 0),
+                                  (0x402f0058, 0x10410), (0x402f0060, 0),
+                                  (0x402f0084, 0), (0x402f009c, 0),
+                                  (0x402a8010, 0), (0x402a8014, 0),
+                                  (0x402a80a0, 0), (0x402a80a4, 0),
+                                  (0x402a80f0, 0), (0x402a8100, 0),
+                                  (0x402a8180, 0)):
+            assert int(command(f"readl {address:#x}").split()[1], 16) == expected
+        command("writel 0x402a8014 0x40")
+        assert int(command("readl 0x402a8014").split()[1], 16) == 0
+        # Controller reset does not itself reset the external NOR latch.
+        command("writel 0x402a80a4 0x50001")  # LUT 5: NOR status
+        command("writel 0x402a80b0 1")
+        assert int(command("readl 0x402a8100").split()[1], 16) & 2
         assert int(command("readl 0x40080000").split()[1], 16) == 0x92345678
         assert int(command("readl 0x4008000c").split()[1], 16) == 0x12345673
         assert int(command("readl 0x400ac00c").split()[1], 16) == 0xa5a5a5b5

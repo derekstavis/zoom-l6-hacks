@@ -4856,17 +4856,35 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
      * partially. The ROM may have written them before the first stage. */
     static const struct { hwaddr offset; uint32_t value; } memory_reset[] = {
         { 0x2f0004, 0 }, /* SEMC IOCR */
+        { 0x2f0034, 0x100u }, { 0x2f0038, 0 }, { 0x2f003c, 0 },
+        { 0x2f0050, 0 }, { 0x2f0054, 0 }, { 0x2f0058, 0x10410u },
+        { 0x2f005c, 0 }, { 0x2f0060, 0 }, { 0x2f0064, 0 },
+        { 0x2f0068, 0 }, { 0x2f006c, 0 }, { 0x2f0070, 0 },
+        { 0x2f0074, 0 }, { 0x2f0078, 0 }, { 0x2f007c, 0 },
+        { 0x2f0080, 0 }, { 0x2f0084, 0 }, { 0x2f009c, 0 },
+        { 0x2f00b0, 0 },
         { 0x2a8008, 0x200081f7u }, { 0x2a800c, 0x18u },
+        { 0x2a8010, 0 }, { 0x2a8014, 0 },
         { 0x2a8020, 0x80000020u }, { 0x2a8024, 0x80010020u },
         { 0x2a8028, 0x80020020u }, { 0x2a802c, 0x80030020u },
-        { 0x2a8080, 0 }, { 0x2a8094, 0 },
-        { 0x2a80b8, 0 }, { 0x2a80bc, 0 },
+        { 0x2a8074, 0x63u }, { 0x2a8078, 0x63u }, { 0x2a807c, 0x63u },
+        { 0x2a8080, 0 }, { 0x2a8084, 0 }, { 0x2a8088, 0 },
+        { 0x2a808c, 0 }, { 0x2a8094, 0 },
+        { 0x2a80a0, 0 }, { 0x2a80a4, 0 }, { 0x2a80b0, 0 },
+        { 0x2a80b8, 0 }, { 0x2a80bc, 0 }, { 0x2a80c4, 0x100u },
+        { 0x2a8180, 0 }, { 0x2a8184, 0 },
     };
     for (unsigned i = 0; i < ARRAY_SIZE(memory_reset); i++) {
         g_hash_table_insert(s->registers,
             GUINT_TO_POINTER((memory_reset[i].offset >> 2) + 1),
             GUINT_TO_POINTER(memory_reset[i].value));
     }
+    /* A controller reset aborts pending FIFO work; the external NOR's
+     * write-enable latch and contents are independent of the controller. */
+    s->flexspi_rx_size = s->flexspi_rx_cursor = 0;
+    s->nor_program = false;
+    s->nor_program_address = s->nor_program_size = s->nor_program_cursor = 0;
+    l6_flexspi_rx_window(s);
     /* Clock setup enables RC OSC, selects the crystal for the 24 MHz root,
      * and sets the DCDC target to 0x13. The successful path waits for the
      * crystal-ready status. Unwritten bits use RM reset fallback. */

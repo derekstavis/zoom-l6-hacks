@@ -161,7 +161,9 @@ The selected crystal or RC source stops the modeled internal clocks when it
 is disabled; the enabled RC source is approximated as 24 MHz. Analog oscillator
 and voltage transitions are not simulated. Internal-source PLL lock drops when
 the source is disabled and returns immediately when enabled; actual lock timing
-is unknown. The surrounding inherited register bits were not captured physically.
+is unknown. Selecting an external or reserved PLL reference reports unlocked
+because the model does not supply those sources. The surrounding inherited
+register bits were not captured physically.
 The USB2, video and Ethernet PLL controls reflect the bootloader's recovered
 bypass/power sequence. Their clock outputs and physical lock timing are not
 simulated. Ethernet LOCK is approximated as immediate while powered, independent

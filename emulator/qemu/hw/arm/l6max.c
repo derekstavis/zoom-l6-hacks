@@ -2687,7 +2687,8 @@ not_flexram_read:
             status = analog_pll_base == 0x0d80e0 ? l6_enet_pll_status(control) :
                                                    l6_audio_pll_status(control);
         }
-        if (!(control & 0xc000u) && !l6max_bus_clocks(s).oscillator_hz) {
+        /* No external PLL reference is connected in this board model. */
+        if ((control & 0xc000u) || !l6max_bus_clocks(s).oscillator_hz) {
             status &= ~0x80000000u;
         }
         return status;
@@ -2700,8 +2701,8 @@ not_flexram_read:
             GUINT_TO_POINTER((usb_pll_base >> 2) + 1)));
         uint32_t status = s->profile == &L6MAX_PROFILE ?
                           l6max_usb_pll_status(control) : l6_usb1_pll_status(control);
-        if (s->profile == &L6MAX_PROFILE && !(control & 0xc000u) &&
-            !l6max_bus_clocks(s).oscillator_hz) {
+        if (s->profile == &L6MAX_PROFILE &&
+            ((control & 0xc000u) || !l6max_bus_clocks(s).oscillator_hz)) {
             status &= ~0x80000000u;
         }
         return status;

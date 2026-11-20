@@ -846,6 +846,20 @@ def check_flexram_boundaries(qemu, image):
         assert int(command("readl 0x400d8150").split()[1], 16) & 0x8000
         command("writel 0x400d8158 0x10000")
         command("writel 0x400d8278 0x10")  # restore XTAL source
+        # No external CLK1 reference is connected in this board model.
+        for base in (0x400d8000, 0x400d8010, 0x400d8030, 0x400d8070, 0x400d80e0):
+            assert int(command(f"readl {base:#x}").split()[1], 16) & 0x80000000
+            command(f"writel {base + 4:#x} 0x4000")
+            assert not int(command(f"readl {base:#x}").split()[1], 16) & 0x80000000
+            command(f"writel {base + 8:#x} 0x4000")
+            assert int(command(f"readl {base:#x}").split()[1], 16) & 0x80000000
+        for base, power_on, power_off in ((0x400d8020, 4, 8), (0x400d80a0, 8, 4)):
+            command(f"writel {base + power_on:#x} 0x1000")
+            assert int(command(f"readl {base:#x}").split()[1], 16) & 0x80000000
+            command(f"writel {base + 4:#x} 0x4000")
+            assert not int(command(f"readl {base:#x}").split()[1], 16) & 0x80000000
+            command(f"writel {base + 8:#x} 0x4000")
+            command(f"writel {base + power_off:#x} 0x1000")
         # The ARM core uses the AHB root, not the PLL1 divider directly.
         boot_cbcdr = int(command("readl 0x400fc014").split()[1], 16)
         boot_cbcmr = int(command("readl 0x400fc018").split()[1], 16)

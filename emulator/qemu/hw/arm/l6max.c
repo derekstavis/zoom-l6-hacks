@@ -3592,6 +3592,12 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
     unsigned shift = (offset & 3) * 8;
     uint32_t mask = size == 4 ? UINT32_MAX : ((1u << (size * 8)) - 1) << shift;
     word = (word & ~mask) | (((uint32_t)value << shift) & mask);
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (offset & ~(hwaddr)3) == 0x080000) {
+        /* The bootloader waits for DCDC output OK. Model settling as
+         * immediate and make the status bit read-only. */
+        word |= 0x80000000u;
+    }
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
         (offset & ~(hwaddr)0xf) == 0x0d82c0) {
         gpointer key2 = GUINT_TO_POINTER((0x0d82c0 >> 2) + 1);
@@ -4576,6 +4582,24 @@ static void l6_main_gpio_setup(L6ChipState *s, MemoryRegion *system_memory)
 /* Apply the modeled L6max bootloader handoff after every machine reset. */
 static void l6max_seed_boot_handoff(L6ChipState *s)
 {
+    /* Clock setup enables RC OSC, selects the crystal for the 24 MHz root,
+     * and sets the DCDC target to 0x13. The successful path waits for the
+     * crystal-ready status. Unwritten bits use RM reset fallback. */
+    static const struct { hwaddr offset; uint32_t reset, set, clear; } early_clock[] = {
+        { 0x0d8270, 0x4001u, 0x10001u, 0x10u },
+        { 0x080000, 0x14030111u, 0x80000000u, 0 },
+        { 0x08000c, 0x10eu, 0x13u, 0x0cu },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(early_clock); i++) {
+        gpointer key = GUINT_TO_POINTER((early_clock[i].offset >> 2) + 1);
+        gpointer stored;
+        uint32_t old = g_hash_table_lookup_extended(s->registers, key, NULL,
+                                                     &stored) ?
+                       GPOINTER_TO_UINT(stored) : early_clock[i].reset;
+        g_hash_table_insert(s->registers, key,
+                            GUINT_TO_POINTER((old & ~early_clock[i].clear) |
+                                             early_clock[i].set));
+    }
     /* Boot enables the independent RC-derived 1 MHz output and selects its
      * free-running source. Other fields are inherited, with RM reset fallback. */
     gpointer osc_key = GUINT_TO_POINTER((0x0d82c0 >> 2) + 1);

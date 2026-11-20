@@ -75,6 +75,11 @@ selections retain the last known CPU clock. PLL2 spread-spectrum modulation is
 not modeled; its control register is cleared at handoff by the recovered boot
 configuration. TCG instruction execution is not cycle-accurate and does not stop
 with this clock; other system-bus consumers are not dynamically retimed.
+The handoff also stores the bootloader's RC-enable/crystal-select bits, the
+crystal-ready status that its successful path waits for, and DCDC target
+field. DCDC ready is read-only and approximated as immediately settled.
+Analog oscillator and voltage transitions are not simulated, and
+the surrounding inherited register bits were not captured physically.
 The USB2, video and Ethernet PLL controls reflect the bootloader's recovered
 bypass/power sequence. Their clock outputs and physical lock timing are not
 simulated. Ethernet LOCK is approximated as immediate while powered, independent

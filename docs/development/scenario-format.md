@@ -109,7 +109,7 @@ card-reader mode), stays unmarked.
 | `expect-analog` | `channel`, `value` | Check a control's analog value |
 | `expect-powered` | `powered` | Check the current power state |
 | `expect-memory` | `address`, `bytes` | Compare MAIN memory bytes |
-| `expect-heap` | `minimum_free` | Require the FreeRTOS heap's lowest free byte count since boot to be at least `minimum_free`, which must fit the heap. Needs no hash guard and works on patched images; see [heap headroom](../../patches/README.md#heap-headroom) |
+| `expect-heap` | `minimum_free` | Require the FreeRTOS heap's lowest free byte count since boot to be at least `minimum_free`, which must fit the heap. Runs on patched images; see [heap headroom](../../patches/README.md#heap-headroom) |
 | `panel-event` | `target`, `column`, `row`, `event` | Inject a panel-controller event for focused event-path scenarios |
 
 Boot steps explicitly allow a longer ceiling for slow L6 TCG. Assertion
@@ -138,8 +138,9 @@ model/control combinations fail early. The L6 USB startup scenario uses `ch4-mon
 
 ## Device and lifecycle steps
 
-Scenarios default to `backends = ["headless", "gui"]`. Typed device steps require
-`backends = ["headless"]` and are rejected before boot on unsupported backends.
+Scenarios default to `backends = ["headless", "gui"]`. Steps that drive emulated
+devices require `backends = ["headless"]`; a scenario that names another backend
+is rejected when it loads.
 `trace_sd = true` enables SD trace instrumentation (also enabled by `sd-card`).
 
 | Action | Fields | Contract |
@@ -177,16 +178,16 @@ Scenarios default to `backends = ["headless", "gui"]`. Typed device steps requir
 | `l6max-panel-key-map` | — | Verify that L6max sound-pad targets 15, 20, 25 and 30 set their MAIN key-state bits and clear them after release |
 | `l6max-channel-signal-pwm` | — | Seed the twelve firmware channel-level accumulators and verify five distinct increasing sampled PWM levels on all eight green SIGNAL lamps; requires L6max MAIN 1.10 and GDB. This qualifies the firmware-to-panel brightness path, not audio-input routing. |
 | `l6-level-meter-pwm` | — | Seed ten L6 1.10 level accumulators at the measured brightness thresholds and sample the raw panel matrix; require at least one output cell with five distinct nonzero duty means. Uses GDB and no SD, USB, MIDI, or host audio. |
-| `l6-main-gpio-event` | `target`, `event` | Hash-guarded L6 GDB check that Tap target 48 submits event `0x19` and Sound Pad targets 49–52 submit `0x15`–`0x18` |
+| `l6-main-gpio-event` | `target`, `event` | L6 GDB check that Tap target 48 submits event `0x19` and Sound Pad targets 49–52 submit `0x15`–`0x18` |
 | `audio-input-transport` | `command` (`play`, `pause`, `stop` or `seek`), `position_ms` for `seek` | Control input playback |
 | `audio-input-load` | `channel`, `loaded` | Map a channel's prepared audio again, or drop it |
 | `expect-audio-input` | `playing`, `min_ms`, `max_ms` | Check the reported input playback state |
 | `expect-output-tone` | `hz`, optional `left_db`, `right_db`, `tolerance_db` (default 1) | Measure a tone in the last second of `L6_AUDIO_RAW_CAPTURE`. A side with no level must be below -70 dB |
 | `expect-recorded-tone` | `file`, `hz`, optional `left_db`, `right_db`, `tolerance_db` (default 1) | Measure a tone in a file of the newest recorder project, after its first second. A side with no level must be below -70 dB |
 | `expect-card-entry` | `path`; optional `size`, `matches_state` | Wait until the firmware has created `path` on the SD card, within `wall_timeout_s`. With `size`, the file must have exactly that many bytes. With `matches_state`, its bytes must equal that file in the device state directory, for example `main-nor.bin` |
-| `l6max-tap-handler` | none | Hash-guarded L6max GDB check that Tap target 48 reaches the firmware's TAP press handler. |
-| `l6-din-event-dispatch` | `group`, `cc`, `value` | Hash-guarded L6 check of DIN CC-to-event dispatch |
-| `l6-usb-startup` | — | First step only; exact-hash L6 probe replays the startup USB-enable sequence, verifies three firmware entry points and controller writes |
+| `l6max-tap-handler` | none | L6max GDB check that Tap target 48 reaches the firmware's TAP press handler. |
+| `l6-din-event-dispatch` | `group`, `cc`, `value` | L6 check of DIN CC-to-event dispatch |
+| `l6-usb-startup` | — | First step only; L6 probe replays the startup USB-enable sequence, verifies three firmware entry points and controller writes |
 | `l6-input-sweep` | — | Sweep supported L6 controls and record their input responses |
 | `l6-din-sweep` | — | Sweep supported L6 DIN values and record dispatch behavior |
 | `l6max-input-timing` | — | Measure L6max input timing and applied acknowledgements |
@@ -201,9 +202,10 @@ Scenarios do not name firmware hashes. Before a case boots, the runner
 identifies its MAIN image: the supported stock 1.10 image of its model, or an
 image our patch tools built from it and reported in `patch-report.json`
 (`smoke_core::firmware`). Any other image does not run. Each action's
-supported models, whether it must come first, and whether it needs the stock
-image itself are listed once in `smoke_core::requirements`; actions marked
-hash-guarded above read stock addresses and need the stock image.
+supported models, whether it needs the headless backend, whether it must come
+first, and whether it needs the stock image itself are listed once in
+`tools/smoke-core/src/requirements.rs`; this page does not repeat them. A step
+that needs the stock image fails before boot on a patched build.
 
 A fragment contains only `[[step]]` entries. Parent include model scope is
 intersected with child scopes. Use fragments for shared setup or control groups;

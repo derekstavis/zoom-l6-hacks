@@ -905,61 +905,6 @@ impl Scenario {
                         return Err(format!("unknown checkpoint {checkpoint}"));
                     }
                 }
-                Action::SdCard { .. }
-                | Action::UsbDescriptors
-                | Action::UsbStorage
-                | Action::UsbMidi { .. }
-                | Action::HostMidiRoundTrip
-                | Action::DirectUsbMidiRoundTrip { .. }
-                | Action::L6maxDinMixerControl { .. }
-                | Action::L6DinUsbForwarding
-                | Action::L6maxRecorderPlayback { .. }
-                | Action::HostMidiSync { .. }
-                | Action::KnobDialogPopup
-                | Action::ExpectMenu { .. }
-                | Action::L6MidiSync
-                | Action::L6MidiRingPinSweep { .. }
-                | Action::L6MidiMuteIndicators
-                | Action::UsbSysex { .. }
-                | Action::EditorPadAssignments
-                | Action::EditorPadPlayback { .. }
-                | Action::L6maxUiPadAssignment { .. }
-                | Action::SoundPadPlayback { .. }
-                | Action::ExpectMemory { .. }
-                | Action::ExpectSdPatch { .. }
-                | Action::EffectParameterEdit { .. }
-                | Action::EffectReplacementState { .. }
-                | Action::ExpectHeap { .. }
-                | Action::HoldChord { .. }
-                | Action::AudioCallbacks
-                | Action::KnobDialog
-                | Action::FirmwareUpdate
-                | Action::WarmReset
-                | Action::Restart
-                | Action::ExpectRecorder
-                | Action::PowerPress { .. }
-                | Action::ExpectSettings { .. }
-                | Action::PanelEvent { .. }
-                | Action::L6MainGpioEvent { .. }
-                | Action::L6maxTapHandler
-                | Action::ExpectCardEntry { .. }
-                | Action::AudioInputTransport { .. }
-                | Action::AudioInputLoad { .. }
-                | Action::ExpectAudioInput { .. }
-                | Action::ExpectOutputTone { .. }
-                | Action::ExpectRecordedTone { .. }
-                | Action::L6UsbStartup
-                | Action::L6DinEventDispatch { .. }
-                | Action::L6InputSweep
-                | Action::L6DinSweep
-                | Action::L6maxInputTiming
-                | Action::L6maxPanelKeyMap
-                | Action::L6maxChannelSignalPwm
-                | Action::L6LevelMeterPwm
-                    if value.backends.iter().any(|b| b != "headless") =>
-                {
-                    return Err("device operations require backends=[\"headless\"]".into());
-                }
                 Action::ExpectTrace { contains, absent }
                     if contains.is_empty() && absent.is_empty() =>
                 {

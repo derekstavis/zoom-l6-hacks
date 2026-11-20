@@ -1,6 +1,9 @@
 //! What each action needs to run: the models it supports, the firmware it
-//! reads, and whether it must be the scenario's first step. Scenario
-//! validation checks the model scope and position when a scenario loads;
+//! reads, whether only the headless runner can drive it, and whether it must
+//! be the scenario's first step. [`of`] lists every action, so a new action
+//! does not compile until its requirement is written here. Scenario
+//! validation checks the model scope, backends and position when a scenario
+//! loads;
 //! [`check_firmware`] checks the booted firmware before the guest starts, so
 //! an unmet requirement is reported before anything runs.
 use crate::firmware::FirmwareIdentity;
@@ -23,6 +26,8 @@ pub struct Requirement {
     /// Models the action supports; empty means every model.
     pub models: &'static [&'static str],
     pub firmware: Firmware,
+    /// The action drives devices only the headless runner emulates.
+    pub headless: bool,
     /// The action must be the scenario's first step.
     pub first: bool,
 }
@@ -30,19 +35,24 @@ pub struct Requirement {
 const ANY: Requirement = Requirement {
     models: &[],
     firmware: Firmware::Supported,
+    headless: false,
     first: false,
+};
+const HEADLESS: Requirement = Requirement {
+    headless: true,
+    ..ANY
 };
 const L6: &[&str] = &["l6"];
 const L6MAX: &[&str] = &["l6max"];
 
 const fn on(models: &'static [&'static str]) -> Requirement {
-    Requirement { models, ..ANY }
+    Requirement { models, ..HEADLESS }
 }
 const fn stock_on(models: &'static [&'static str]) -> Requirement {
     Requirement {
         models,
         firmware: Firmware::Stock,
-        first: false,
+        ..HEADLESS
     }
 }
 
@@ -72,7 +82,67 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobDialog
         | Action::KnobDialogPopup
         | Action::ExpectMenu { .. } => on(L6MAX),
-        _ => ANY,
+        Action::SdCard { .. }
+        | Action::UsbDescriptors
+        | Action::UsbStorage
+        | Action::UsbMidi { .. }
+        | Action::HostMidiRoundTrip
+        | Action::DirectUsbMidiRoundTrip { .. }
+        | Action::HostMidiSync { .. }
+        | Action::L6MidiSync
+        | Action::L6MidiRingPinSweep { .. }
+        | Action::L6MidiMuteIndicators
+        | Action::UsbSysex { .. }
+        | Action::EditorPadAssignments
+        | Action::EditorPadPlayback { .. }
+        | Action::L6maxUiPadAssignment { .. }
+        | Action::SoundPadPlayback { .. }
+        | Action::ExpectMemory { .. }
+        | Action::ExpectSdPatch { .. }
+        | Action::EffectParameterEdit { .. }
+        | Action::EffectReplacementState { .. }
+        | Action::ExpectHeap { .. }
+        | Action::HoldChord { .. }
+        | Action::FirmwareUpdate
+        | Action::WarmReset
+        | Action::Restart
+        | Action::PowerPress { .. }
+        | Action::ExpectCardEntry { .. }
+        | Action::AudioInputTransport { .. }
+        | Action::AudioInputLoad { .. }
+        | Action::ExpectAudioInput { .. }
+        | Action::ExpectOutputTone { .. }
+        | Action::ExpectRecordedTone { .. } => HEADLESS,
+        // Panel input and observation every backend can drive.
+        Action::Include { .. }
+        | Action::Checkpoint { .. }
+        | Action::ExpectDisplay { .. }
+        | Action::ExpectDisplayImage { .. }
+        | Action::ExpectTrace { .. }
+        | Action::ExpectTraceCount { .. }
+        | Action::ExpectButtonReport { .. }
+        | Action::ExpectStartupReport { .. }
+        | Action::L6RecorderPlayback { .. }
+        | Action::WasmPatch
+        | Action::ExpectPowered { .. }
+        | Action::Wait { .. }
+        | Action::Delay { .. }
+        | Action::Press { .. }
+        | Action::Hold { .. }
+        | Action::SaveScene { .. }
+        | Action::ExpectScene { .. }
+        | Action::ExpectButtonLed { .. }
+        | Action::ExpectEffect { .. }
+        | Action::Switch { .. }
+        | Action::Encoder { .. }
+        | Action::Analog { .. }
+        | Action::ExpectAnalog { .. }
+        | Action::ExpectEncoderReports
+        | Action::ExpectRing { .. }
+        | Action::ExpectRingLevel { .. }
+        | Action::ExpectMute { .. }
+        | Action::SelectMode { .. }
+        | Action::ExpectMode { .. } => ANY,
     }
 }
 
@@ -99,6 +169,9 @@ pub fn check_scope(scenario: &Scenario) -> Result<(), String> {
                 "{name} supports only {}",
                 requirement.models.join(", ")
             ));
+        }
+        if requirement.headless && scenario.backends.iter().any(|b| b != "headless") {
+            return Err(format!("{name} requires backends=[\"headless\"]"));
         }
         if requirement.first && index != 0 {
             return Err(format!("{name} must be the scenario's first step"));
@@ -192,9 +265,14 @@ mod tests {
         .unwrap_err();
         assert!(error.contains("l6-din-sweep supports only l6"), "{error}");
         let late = Scenario::from_text(
-            "version=1\nname='t'\nmodels=['l6']\n[[step]]\naction='delay'\nguest_ms=1\n[[step]]\naction='l6-usb-startup'\n",
+            "version=1\nname='t'\nmodels=['l6']\nbackends=['headless']\n[[step]]\naction='delay'\nguest_ms=1\n[[step]]\naction='l6-usb-startup'\n",
         )
         .unwrap_err();
         assert!(late.contains("first step"), "{late}");
+        let gui = Scenario::from_text(
+            "version=1\nname='t'\nmodels=['l6max']\nbackends=['headless','gui']\n[[step]]\naction='usb-descriptors'\n",
+        )
+        .unwrap_err();
+        assert!(gui.contains("usb-descriptors requires backends"), "{gui}");
     }
 }

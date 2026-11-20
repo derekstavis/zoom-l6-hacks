@@ -80,6 +80,13 @@ fn apply_patches(source: &Path, repository: &Path) -> Result<(), String> {
     apply_patch(
         source,
         repository,
+        "armv7m-cache-selector.patch",
+        "hw/intc/armv7m_nvic.c",
+        &["Cortex-M7 implements only level 1"],
+    )?;
+    apply_patch(
+        source,
+        repository,
         "coreaudio-underrun.patch",
         "audio/coreaudio.m",
         &[

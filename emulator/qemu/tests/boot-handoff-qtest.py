@@ -217,6 +217,33 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
         process.wait(timeout=5)
 
 
+def check_no_cache_selector(qemu, image):
+    # L6 currently uses the generic QEMU M7 with no cache ID. CSSELR is
+    # architecturally read-as-zero/write-ignored for this simulated profile.
+    process = subprocess.Popen(
+        [qemu, "-M", "l6max-main", "-kernel", image, "-accel", "qtest",
+         "-qtest", "stdio", "-display", "none"], stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        bufsize=1, env=isolated_env(),
+    )
+    try:
+        for command, expected in (("readl 0xe000ed78", 0),
+                                  ("writel 0xe000ed84 1", None),
+                                  ("readl 0xe000ed84", 0)):
+            process.stdin.write(command + "\n")
+            process.stdin.flush()
+            if not select.select([process.stdout], [], [], 10)[0]:
+                raise RuntimeError(f"no response to {command}")
+            reply = process.stdout.readline().strip().split()
+            assert reply[0] == "OK", reply
+            if expected is not None:
+                assert int(reply[1], 16) == expected, reply
+        print(f"{image}: no-cache selector is read-as-zero/write-ignored")
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
 def check_flexram_boundaries(qemu, image):
     qmp_host, qmp_guest = socket.socketpair()
     qmp_host.settimeout(10)
@@ -291,6 +318,15 @@ def check_flexram_boundaries(qemu, image):
         assert int(command("readl 0x402a8200").split()[1], 16) == 0x0818040b
         assert int(command("readl 0x402a801c").split()[1], 16) == 1
         print(f"{image}: FlexSPI boot LUT and lock protocol passed")
+        # RT106x cache IDs are inferred from the documented M7 geometry.
+        assert int(command("readl 0xe000ed80").split()[1], 16) == 0xf01fe019
+        command("writel 0xe000ed84 0xf")
+        assert int(command("readl 0xe000ed84").split()[1], 16) == 1
+        assert int(command("readl 0xe000ed80").split()[1], 16) == 0xf03fe009
+        command("writel 0xe000ed84 2")
+        assert int(command("readl 0xe000ed84").split()[1], 16) == 0
+        assert int(command("readl 0xe000ed80").split()[1], 16) == 0xf01fe019
+        print(f"{image}: cache identification and selector passed")
         # The reconstructed handoff gate stops the ROM lifetime counter
         # even if firmware clears MCR.MDIS before enabling its CCGR field.
         assert int(command("readl 0x40084104").split()[1], 16) == 0xffffffff
@@ -1021,7 +1057,9 @@ def main():
         0x400d80c0: 0x10a24447, 0x400d80e0: 0x80312001,
         0xe000e010: 0, 0xe000e014: 599999, 0xe000ed00: 0x411fc271, 0xe000ed08: 0x80000000,
         0xe000ed14: 0x200, 0xe000ed20: 0xf0f00000,
-        0xe000ed24: 0, 0xe000ed88: 0x00f00000, 0xe000ed94: 0,
+        0xe000ed24: 0, 0xe000ed78: 0x09000003, 0xe000ed7c: 0x8303c003,
+        0xe000ed80: 0xf01fe019, 0xe000ed84: 0,
+        0xe000ed88: 0x00f00000, 0xe000ed94: 0,
         0xe000ef34: 0xc0000000,
     }
     lut_words = [0x0818040b, 0x24043008, 0, 0,
@@ -1038,6 +1076,7 @@ def main():
     check_main_stack_entry(qemu, stock, 0x202d8000, 0x20)
     check_main_stack_entry(qemu, patched)
     check_flexram_boundaries(qemu, stock)
+    check_no_cache_selector(qemu, l6)
     check(qemu, l6, {0x400ac038: 0, 0x401f8204: 0, 0x402f0010: 0,
                      0x40084000: 0, 0x40084100: 0,
                      0x402a801c: 2, 0x402a8020: 0x80000020,

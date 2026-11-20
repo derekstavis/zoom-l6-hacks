@@ -196,8 +196,14 @@ descriptor state was not captured. QEMU's
 Cortex-M7 model does not implement caches and does not retain writes to the
 CCR instruction/data cache-enable bits, so the matching cache-disabled value
 does not simulate cache maintenance or establish parity when caches are on.
-The RT1060 manual specifies separate 32 KiB instruction and data caches;
-QEMU does not model their cache geometry, contents, or DMA coherence effects.
+The RT1060 manual specifies separate 32 KiB instruction and data caches.
+L6max now exposes the corresponding Cortex-M7 CLIDR, CTR and CCSIDR geometry
+and a selectable CSSELR, inferred from the RT1060 manual and
+[Arm Cortex-M7 guide, section 4.5](https://documentation-service.arm.com/static/61efd6602dd99944d051417b?token=)
+rather than captured from the device. These identification registers do not model cache contents, enable
+bits, maintenance operations, timing, or DMA coherence effects. QEMU also does
+not implement the M7 ITCMCR and DTCMCR control registers; FlexRAM bank mapping
+alone does not establish TCM enable, retention, or access-control parity.
 The handoff test also configures an MPU no-access region and executes a guest
 load to check the resulting memory-management fault; it does not measure hardware
 region contents or verify every MPU attribute.

@@ -5962,6 +5962,11 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
         /* Physical dump CPUID: Cortex-M7 r1p1. This changes identification,
          * not QEMU's generic Cortex-M7 revision-specific behavior. */
         s->armv7m.cpu->midr = 0x411fc271;
+        /* Inferred RT106x cache identification, not cache emulation. */
+        SET_IDREG(&s->armv7m.cpu->isar, CLIDR, 0x09000003);
+        s->armv7m.cpu->ctr = 0x8303c003;
+        s->armv7m.cpu->ccsidr[0] = 0xf01fe019;
+        s->armv7m.cpu->ccsidr[1] = 0xf03fe009;
     }
     if (!panel && profile->audio_codec_bus) {
         s->audio_i2c_bus = i2c_init_bus(cpu, "lpi2c1");

@@ -5043,6 +5043,23 @@ static void l6_main_gpio_setup(L6ChipState *s, MemoryRegion *system_memory)
 /* Apply the modeled L6max bootloader handoff after every machine reset. */
 static void l6max_seed_boot_handoff(L6ChipState *s)
 {
+    /* RT1060 RM 49.6.1.1: functional reset values. ROM/bootloader UART
+     * writes at handoff have not been completely traced. */
+    static const uint32_t uart_reset[] = {
+        0x04010003u, 0x00000202u, 0, 0, 0x0f000004u, 0x00c00000u,
+        0, 0x00001000u, 0, 0, 0x00c00011u, 0,
+    };
+    for (unsigned instance = 0; instance < 8; instance++) {
+        for (unsigned reg = 0; reg < ARRAY_SIZE(uart_reset); reg++) {
+            hwaddr offset = 0x184000 + instance * 0x4000 + reg * 4;
+            g_hash_table_insert(s->registers,
+                GUINT_TO_POINTER((offset >> 2) + 1),
+                GUINT_TO_POINTER(uart_reset[reg]));
+        }
+    }
+    s->main_rx_pending = false;
+    s->main_midi_rx_pending = false;
+    g_byte_array_set_size(s->main_midi_rx, 0);
     /* The adapter owns these USDHC fields outside the reset QEMU device. */
     s->sd_sysctl = L6_USDHC_SYS_CTRL_RESET;
     s->sd_vend_spec2 = L6_USDHC_VEND_SPEC2_RESET;

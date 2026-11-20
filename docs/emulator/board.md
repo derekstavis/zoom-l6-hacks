@@ -90,7 +90,10 @@ PLL2 PFD. Physical handoff readback and indirect writes remain unverified.
 The RT1060 reset controller resets CCM, PLLs and functional modules on cold reset while
 retaining IOMUXC; the model retains the latter's stored bits. The model resets
 SEMC configuration and selected FlexSPI controls before replaying their boot
-configuration, and resets the modeled L6max SAI1 registers and FIFO. The
+configuration, restores L6max LPUART registers to RT1060 reset values, and
+resets the modeled L6max SAI1 registers and FIFO. ROM and bootloader UART
+writes have not been completely traced, so the UART handoff values are reset
+assumptions rather than physical measurements. The
 reference manual specifies SAI reset on system reset; no SAI1 setup was found
 in direct-address scans of the recovered ROM and first-stage boot image, though
 indirect accesses remain possible. The model also resets L6max DMAMUX

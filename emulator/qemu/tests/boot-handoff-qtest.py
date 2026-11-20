@@ -1212,6 +1212,12 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0xe000ef34 0")
         command("writel 0x400b0014 0x38")
         command("writel 0x400b0018 0x38")
+        for instance in range(8):
+            base = 0x40184000 + instance * 0x4000
+            command(f"writel {base + 0x10:#x} 0x12345678")
+            command(f"writel {base + 0x20:#x} 0x12345678")
+            assert int(command(f"readl {base + 0x10:#x}").split()[1], 16) == 0x12345678
+            assert int(command(f"readl {base + 0x20:#x}").split()[1], 16) == 0x12345678
         # Dirty DMAMUX/eDMA controls and an implementation-unknown TCD.
         for address in (0x400ec000, 0x400ec030, 0x400ec07c):
             command(f"writel {address:#x} 0x8000007f")
@@ -1236,6 +1242,10 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0x402c00c8 0")
         command("writel 0x402c0028 0x07000000")
         qmp_execute("system_reset")
+        for instance in range(8):
+            base = 0x40184000 + instance * 0x4000
+            assert int(command(f"readl {base + 0x10:#x}").split()[1], 16) == 0x0f000004
+            assert int(command(f"readl {base + 0x20:#x}").split()[1], 16) == 0
         assert int(command("readl 0x402c002c").split()[1], 16) == 0x0080800f
         assert int(command("readl 0x402c00c8").split()[1], 16) == 0x00019006
         assert not int(command("readl 0x402c0028").split()[1], 16) & 0x07000000

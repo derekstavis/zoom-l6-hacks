@@ -33,8 +33,10 @@ clock settling, the full clock tree, or the real SD installer.
 The L6max bootloader configures two 32 MiB SEMC SDRAM windows covering
 `0x80000000` through `0x83ffffff`. The direct-MAIN board seeds their SEMC
 base registers and bounds the remaining RAM mapping at that endpoint. The
-first 2 MiB remains the emulator's MAIN image mapping; the guest does not
-execute the physical SDRAM initialization. L6 keeps its existing map.
+first 2 MiB is writable RAM seeded with the installed MAIN image at reset;
+the guest does not execute physical SDRAM initialization. The emulator still
+loads a fixed-size NOR segment rather than the physical bootloader's exact
+footer-specified copy length. L6 keeps its existing map.
 
 For the same bootloader handoff, the L6max board seeds observed IOMUX register
 values, clock-tree gate clears, selected later gate enables, and GPIO output

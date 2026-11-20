@@ -79,6 +79,9 @@ def check_flexram_boundaries(qemu, image):
             assert int(command(f"readl {last:#x}").split()[1], 16) == 0x1234abcd
             assert int(command(f"readl {beyond:#x}").split()[1], 16) != 0x5678efab
         print(f"{image}: FlexRAM mapping boundaries passed")
+        main_vector = int(command("readl 0x80000000").split()[1], 16)
+        command("writel 0x80000000 0x1234abcd")
+        assert int(command("readl 0x80000000").split()[1], 16) == 0x1234abcd
         masks = {
             0x400ac004: 0xfff9f000, 0x400ac008: 0xfb00ffff,
             0x400ac014: 0xcfffffff, 0x400ac068: 0xefeffffb,
@@ -116,6 +119,7 @@ def check_flexram_boundaries(qemu, image):
             command("writel 0xe000eda0 0x03000019")
             assert int(command("readl 0xe000eda0").split()[1], 16) == 0x03000019
         qmp_execute("system_reset")
+        assert int(command("readl 0x80000000").split()[1], 16) == main_vector
         for address, expected in masks.items():
             assert int(command(f"readl {address:#x}").split()[1], 16) == expected
         assert int(command("readl 0x400fc070").split()[1], 16) == 0x0c000030

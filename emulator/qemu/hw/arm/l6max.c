@@ -5067,8 +5067,14 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
     clock_set_hz(s->refclk, 1000000);
     if (!panel) { l6_prepare_nor(s, kernel_filename); }
 
-    memory_region_init_rom(&s->flash, NULL, flash_name,
-                           flash_size, &error_fatal);
+    if (!panel && profile == &L6MAX_PROFILE) {
+        /* The first-stage loader copies MAIN into SDRAM before branching. */
+        memory_region_init_ram(&s->flash, NULL, flash_name,
+                               flash_size, &error_fatal);
+    } else {
+        memory_region_init_rom(&s->flash, NULL, flash_name,
+                               flash_size, &error_fatal);
+    }
     if (panel) {
         memory_region_init_alias(&s->panel_flash_window, NULL,
                                  "panel.flash-window", &s->flash, 0, flash_map_size);

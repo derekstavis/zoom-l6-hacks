@@ -808,9 +808,12 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0x402a8004 0")
         command("writel 0x402a8008 0xffffffff")
         command("writel 0x402a800c 0xffffffff")
-        for address in (0x402a8060, 0x402a8070, 0x402a8080,
-                        0x402a8094, 0x402a80c0):
+        for address in (0x402a8020, 0x402a8024, 0x402a8028, 0x402a802c,
+                        0x402a8060, 0x402a8064, 0x402a8068, 0x402a806c,
+                        0x402a8070, 0x402a8080, 0x402a8094, 0x402a80c0):
             command(f"writel {address:#x} 0xffffffff")
+        command("writel 0x402a80b8 0xfffffffe")
+        command("writel 0x402a80bc 0xfffffffe")
         command("writel 0x400d8270 0x12345678")
         command("writel 0x400d8154 0x10000")
         command("writel 0x40080000 0x12345678")
@@ -854,10 +857,17 @@ def check_flexram_boundaries(qemu, image):
                                (0x402a8004, 0xffffffff),
                                (0x402a8008, 0x20f777ff),
                                (0x402a800c, 0xffffff87),
+                               (0x402a8020, 0xfcffff00),
+                               (0x402a8024, 0xfcffff00),
+                               (0x402a8028, 0xfcf0ff20),
+                               (0x402a802c, 0xfcf0ff20),
                                (0x402a8060, 0x800),
-                               (0x402a8070, 0x30063),
+                               (0x402a8064, 0), (0x402a8068, 0),
+                               (0x402a806c, 0), (0x402a8070, 0x30063),
                                (0x402a8080, 0x80001010),
                                (0x402a8094, 0xfffffffb),
+                               (0x402a80b8, 0xffffffc2),
+                               (0x402a80bc, 0xffffffc2),
                                (0x402a80c0, 0x100)):
             assert int(command(f"readl {address:#x}").split()[1], 16) == value
         assert int(command("readl 0x40080000").split()[1], 16) == 0x92345678
@@ -973,6 +983,10 @@ def main():
         0x402f00c0: 1,
         0x402a8000: 0xffff1000, 0x402a8004: 0xffffffff,
         0x402a8008: 0x200001f7, 0x402a800c: 0, 0x402a801c: 1,
+        0x402a8020: 0x800f0000, 0x402a8024: 0x800f0000,
+        0x402a8028: 0x80000020, 0x402a802c: 0x80000020,
+        0x402a8064: 0, 0x402a8068: 0, 0x402a806c: 0,
+        0x402a80b8: 0, 0x402a80bc: 0,
         0x402a8200: 0x0818040b, 0x402a8204: 0x24043008,
         0x402a8210: 0x406, 0x402a8220: 0x08180420,
         0x402a8230: 0x081804d8, 0x402a8240: 0x08180402,
@@ -1026,7 +1040,8 @@ def main():
     check_flexram_boundaries(qemu, stock)
     check(qemu, l6, {0x400ac038: 0, 0x401f8204: 0, 0x402f0010: 0,
                      0x40084000: 0, 0x40084100: 0,
-                     0x402a801c: 2, 0x402a8200: 0,
+                     0x402a801c: 2, 0x402a8020: 0x80000020,
+                     0x402a8064: 0x10000, 0x402a8200: 0,
                      0xe000e014: 0, 0xe000ed00: 0x411fc272, 0xe000ed20: 0,
                      0xe000ed88: 0})
 

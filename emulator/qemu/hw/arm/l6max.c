@@ -5032,6 +5032,31 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
                                                           flexspi_ahbcr));
     g_hash_table_insert(s->registers, flexspi_ahbcr,
                         GUINT_TO_POINTER(ahbcr & ~0x78u));
+    /* Default controller configuration sets AHB receive buffers 0/1 to
+     * master ID 15 with size zero, and buffers 2/3 to 256 bytes each.
+     * The SDK helper preserves the surrounding inherited register bits. */
+    static const uint32_t ahb_buffers[] = {
+        0x800f0000u, 0x800f0000u, 0x80000020u, 0x80000020u,
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(ahb_buffers); i++) {
+        gpointer key = GUINT_TO_POINTER(((0x2a8020 + i * 4) >> 2) + 1);
+        uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
+        g_hash_table_insert(s->registers, key,
+            GUINT_TO_POINTER((old & 0x7cf0ff00u) | ahb_buffers[i]));
+    }
+    /* Initialization clears all flash-size windows; the NOR helper later
+     * configures only A1. Other ports therefore stay disabled. */
+    for (unsigned i = 1; i < 4; i++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER(((0x2a8060 + i * 4) >> 2) + 1), NULL);
+    }
+    /* The default RX/TX FIFO watermarks are eight bytes. */
+    for (unsigned i = 0; i < 2; i++) {
+        gpointer key = GUINT_TO_POINTER(((0x2a80b8 + i * 4) >> 2) + 1);
+        uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
+        g_hash_table_insert(s->registers, key,
+                            GUINT_TO_POINTER(old & ~0x3cu));
+    }
     /* The NOR helper installs six four-word command sequences (fast read,
      * write enable, sector/block erase, page program and status read), then
      * locks the LUT. Later software reset leaves configuration intact. */

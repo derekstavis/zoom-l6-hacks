@@ -53,7 +53,8 @@ fixed size. L6 keeps its existing map.
 
 The boot task also initializes FlexSPI1 with its default controller record and
 enables it while configuring the NOR device. The modeled handoff stores the
-reconstructed MCR0, MCR1, modified MCR2/AHBCR and flash-device control fields.
+reconstructed MCR0, MCR1, modified MCR2/AHBCR, AHB buffer, FIFO watermark
+and flash-device control fields, including the cleared unused flash windows.
 The boot image’s NOR configuration record sets port A1 to 2 MiB and specifies
 its chip-select timing. Fields the bootloader preserves start from reset
 assumptions, and the resulting values have not been read back at physical

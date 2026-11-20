@@ -177,6 +177,12 @@ MSP. The precise bootloader task stack at the call has not been recovered, so
 this remains a difference at the first instructions, including for firmware
 whose reset handler is changed.
 
+The boot scheduler sets PendSV and SysTick priorities to `0xf0`, enables
+CP10/CP11 floating-point access and sets FPCCR automatic and lazy preservation.
+The L6max handoff seeds those settings on startup and reset; the priority bits
+use QEMU's four-bit NVIC configuration. This is reconstructed from the normal
+boot path, not a physical handoff register capture.
+
 At direct MAIN entry the modeled MPU and cache-enable bits are clear. QEMU's
 Cortex-M reset clears all 16 MPU region descriptors; the reviewed ROM cleanup
 conditionally clears regions 0–6 before transfer, but the complete physical

@@ -26,6 +26,7 @@
 #include "hw/i2c/i2c.h"
 #include "system/address-spaces.h"
 #include "system/blockdev.h"
+#include "qemu/error-report.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
 #include "qemu/timer.h"
@@ -6079,6 +6080,27 @@ static void l6_main_reset(MachineState *machine, ResetType type)
     qemu_devices_reset(type);
     if (type != RESET_TYPE_SNAPSHOT_LOAD && s->profile == &L6MAX_PROFILE) {
         l6max_seed_boot_handoff(s);
+        /* FreeRTOS startup sets PendSV/SysTick to the lowest implemented
+         * priority and enables CP10/CP11 before entering the boot task. */
+        static const struct { hwaddr address; uint32_t set; } core_setup[] = {
+            { 0xe000ed20u, 0xf0f00000u }, { 0xe000ed88u, 0x00f00000u },
+            { 0xe000ef34u, 0xc0000000u },
+        };
+        AddressSpace *as = CPU(s->armv7m.cpu)->as;
+        for (unsigned i = 0; i < ARRAY_SIZE(core_setup); i++) {
+            uint8_t bytes[4];
+            if (address_space_read(as, core_setup[i].address,
+                                   MEMTXATTRS_UNSPECIFIED, bytes, 4) != MEMTX_OK) {
+                error_report("failed to read L6max core handoff register");
+                abort();
+            }
+            stl_le_p(bytes, ldl_le_p(bytes) | core_setup[i].set);
+            if (address_space_write(as, core_setup[i].address,
+                                    MEMTXATTRS_UNSPECIFIED, bytes, 4) != MEMTX_OK) {
+                error_report("failed to write L6max core handoff register");
+                abort();
+            }
+        }
         /* The 1.00 transfer routine loads CCR's address into r0 and the
          * image reset-vector word into r1 before BLX, on both cache paths. */
         s->armv7m.cpu->env.regs[0] = 0xe000ed14u;

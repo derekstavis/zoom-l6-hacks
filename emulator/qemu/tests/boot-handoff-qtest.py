@@ -120,6 +120,25 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
                     break
         regs = registers()
         assert regs[0] == 0xe000ed14 and regs[1] == 0x80000415, regs[:2]
+        if mpu_test:
+            # Inspect QEMU's initial masks with guest MRS instructions. The
+            # physical values are inferred from task startup, not captured.
+            for request in ("M801f0000,c:eff31080eff31381eff31182",
+                            "Pf=00001f80"):
+                assert packet(request) == "OK", request
+            for _ in range(3):
+                assert packet("s").startswith("T05")
+            assert registers()[:3] == [0, 0, 0]
+            # Before MAIN executes, the inherited CPACR must permit an FP
+            # register round trip without taking a UsageFault.
+            for request in ("M801f0000,8:00ee100a10ee101a",  # vmov s0,r0; vmov r1,s0
+                            "P0=78563412", "Pf=00001f80"):
+                assert packet(request) == "OK", request
+            assert packet("s").startswith("T05")
+            assert packet("s").startswith("T05")
+            assert registers()[1] == 0x12345678
+            assert packet("Pf=14040080") == "OK"
+            print(f"{image}: guest floating-point access at handoff passed")
         main_msp = regs[13]
         inherited_msp = 0xdeadbee8  # Deliberately unmapped and aligned.
         assert main_msp != inherited_msp
@@ -766,11 +785,18 @@ def check_flexram_boundaries(qemu, image):
         for address in (0x40084000, 0x40084100, 0x40084108,
                         0x40084110, 0x40084118):
             command(f"writel {address:#x} 0x12345678")
+        command("writel 0xe000ed20 0")
+        command("writel 0xe000ed88 0")
+        command("writel 0xe000ef34 0")
         command("writel 0x400b0014 0x38")
         command("writel 0x400b0018 0x38")
         command("readl 0x20000000")
         assert int(command("readl 0x400b0010").split()[1], 16) == 0x10
         qmp_execute("system_reset")
+        for address, value in ((0xe000ed20, 0xf0f00000),
+                               (0xe000ed88, 0x00f00000),
+                               (0xe000ef34, 0xc0000000)):
+            assert int(command(f"readl {address:#x}").split()[1], 16) == value
         assert int(command("readl 0x400d8040").split()[1], 16) == 0
         assert int(command("readl 0x400d82c0").split()[1], 16) == 0x00010fff
         assert int(command("readl 0x400d8270").split()[1], 16) == 0x00054661
@@ -925,7 +951,9 @@ def main():
         0x400d80a0: 0x13000, 0x400d80b0: 0x05f5e100,
         0x400d80c0: 0x10a24447, 0x400d80e0: 0x80312001,
         0xe000e010: 0, 0xe000ed00: 0x411fc271, 0xe000ed08: 0x80000000,
-        0xe000ed14: 0x200, 0xe000ed24: 0, 0xe000ed94: 0,
+        0xe000ed14: 0x200, 0xe000ed20: 0xf0f00000,
+        0xe000ed24: 0, 0xe000ed88: 0x00f00000, 0xe000ed94: 0,
+        0xe000ef34: 0xc0000000,
     }
     check(qemu, stock, l6max)
     check(qemu, patched, l6max)
@@ -937,7 +965,8 @@ def main():
     check_flexram_boundaries(qemu, stock)
     check(qemu, l6, {0x400ac038: 0, 0x401f8204: 0, 0x402f0010: 0,
                      0x40084000: 0, 0x40084100: 0,
-                     0xe000ed00: 0x411fc272})
+                     0xe000ed00: 0x411fc272, 0xe000ed20: 0,
+                     0xe000ed88: 0})
 
 
 if __name__ == "__main__":

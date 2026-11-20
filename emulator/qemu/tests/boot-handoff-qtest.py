@@ -917,7 +917,7 @@ def check_flexram_boundaries(qemu, image):
         command("clock_step 2000000")
         assert int(command("readl 0x40384040").split()[1], 16) & 31 == before
         command("writel 0x400fc07c " + hex(old_gate | (3 << 18)))
-        command("clock_step 1000000")
+        command("clock_step 1400000")
         assert (int(command("readl 0x40384040").split()[1], 16) - before) & 31 == 16
         before = fill_sai()
         command("clock_step 1000000")
@@ -925,7 +925,6 @@ def check_flexram_boundaries(qemu, image):
         command("clock_step 400000")
         assert (int(command("readl 0x40384040").split()[1], 16) - before) & 31 == 16
         command("writel 0x400fc028 0x0ec102c3")  # double SAI1 PODF
-        command("clock_step 1400000")  # previous block finishes, new rate applies
         before = fill_sai()
         command("clock_step 2000000")
         assert int(command("readl 0x40384040").split()[1], 16) & 31 == before
@@ -946,6 +945,21 @@ def check_flexram_boundaries(qemu, image):
         before = fill_sai()
         command("clock_step 1400000")
         assert (int(command("readl 0x40384040").split()[1], 16) - before) & 31 == 16
+        # Route MCLK1 through PLL3 PFD2. Its bypass reference reaches SAI
+        # only when the PLL output is enabled.
+        old_cscmr1 = int(command("readl 0x400fc01c").split()[1], 16)
+        command(f"writel 0x400fc01c {old_cscmr1 & ~(3 << 10):#x}")
+        command("writel 0x400d8014 0x10000")  # bypass PLL3
+        command("writel 0x400d8018 0x2000")  # gate PLL3 output
+        command("clock_step 20000000")
+        before = fill_sai()
+        command("clock_step 20000000")
+        assert int(command("readl 0x40384040").split()[1], 16) & 31 == before
+        command("writel 0x400d8014 0x2000")
+        command("clock_step 30000000")
+        assert (int(command("readl 0x40384040").split()[1], 16) - before) & 31 == 16
+        command("writel 0x400d8018 0x10000")
+        command(f"writel 0x400fc01c {old_cscmr1:#x}")
         # MSEL=0 selects the IPG bus clock; it must drive SAI FIFO progress.
         command("writel 0x40384010 0x01000000")
         command("clock_step 2000000")

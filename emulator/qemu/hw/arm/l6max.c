@@ -1862,6 +1862,22 @@ static unsigned l6_sai_master_sample_rate(L6ChipState *s)
     return 0;
 }
 
+/* Clock changes restart the block phase rather than retaining a deadline
+ * computed at a different rate. */
+static void l6max_sai_clock_recheck(L6ChipState *s)
+{
+    unsigned rate = l6_sai_master_sample_rate(s);
+    if (!s->main_audio_service_timer || rate == s->audio_service_rate_hz) {
+        return;
+    }
+    uint64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    s->audio_service_rate_hz = rate;
+    s->audio_service_period_remainder = 0;
+    s->audio_service_deadline_ns = now +
+        (rate ? MAX(1ULL, 64000000000ULL / rate) : 1000000ULL);
+    timer_mod(s->main_audio_service_timer, s->audio_service_deadline_ns);
+}
+
 static void l6_audio_output_flush(L6ChipState *s, size_t available)
 {
     /* Queue a little audio before the first write. The guest cannot run ahead
@@ -4508,6 +4524,14 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
            clock_alias == L6_CCM_ANALOG_PFD_528 || clock_alias == 0x0d8010 ||
            clock_alias == 0x0d8150 || clock_alias == 0x0d8270)))) {
         l6max_update_cpu_clock(s);
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        ((sai && (sai_offset == L6_SAI_TCSR || sai_offset == L6_SAI_RCSR ||
+                  sai_offset == L6_SAI_TCR2 || sai_offset == L6_SAI_TCR4 ||
+                  sai_offset == L6_SAI_TCR5)) || clock_word == 0x0ac004 ||
+         (clock_word >= 0x0fc000 && clock_word <= 0x0fc084) ||
+         (clock_word >= 0x0d8000 && clock_word <= 0x0d82cc))) {
+        l6max_sai_clock_recheck(s);
     }
     if (s->panel) {
         static const hwaddr timer_bases[] = { 0, 0x400, 0x2000 };

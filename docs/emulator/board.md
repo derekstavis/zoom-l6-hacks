@@ -286,8 +286,11 @@ ignore writes while the modeled TCM memory remains accessible. The ARM core
 registers instead select TCM versus AXI routing, and FlexRAM bank mapping alone
 does not establish that routing or the physical handoff state.
 The handoff test also configures an MPU no-access region and executes a guest
-load to check the resulting memory-management fault; it does not measure hardware
-region contents or verify every MPU attribute.
+load to check the resulting memory-management fault. After stock L6max MAIN 1.10
+starts, the boot-memory case checks MPU_CTRL `5`, selected region 10, its RBAR
+and RASR, and both cache-enable bits against the recovered MAIN initialization.
+Those checks do not measure hardware region contents, simulate cache data, or
+verify every MPU attribute.
 
 ## QEMU device-model reuse
 

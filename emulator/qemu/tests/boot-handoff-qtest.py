@@ -11,6 +11,7 @@ import socket
 import struct
 import subprocess
 import sys
+import time
 
 
 def isolated_env():
@@ -18,6 +19,79 @@ def isolated_env():
     env.pop("L6_STATE_DIR", None)
     env.pop("L6_EXTERNAL_RAM_FD", None)
     return env
+
+
+def check_uart_receive_clock(qemu, image):
+    host, guest = socket.socketpair()
+    panel_host, panel_guest = socket.socketpair()
+    env = isolated_env()
+    env["L6_MAIN_MIDI_UART_FD"] = str(guest.fileno())
+    process = subprocess.Popen(
+        [qemu, "-M", "l6max-main", "-kernel", image, "-accel", "qtest",
+         "-qtest", "stdio", "-display", "none",
+         "-chardev", f"socket,id=panel-test,fd={panel_guest.fileno()}",
+         "-serial", "chardev:panel-test"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        text=True, bufsize=1, pass_fds=(guest.fileno(), panel_guest.fileno()), env=env,
+    )
+    guest.close()
+    panel_guest.close()
+
+    def command(text):
+        process.stdin.write(text + "\n")
+        process.stdin.flush()
+        if not select.select([process.stdout], [], [], 10)[0]:
+            raise RuntimeError(f"no response to {text}")
+        reply = process.stdout.readline().strip().split()
+        assert reply[0] == "OK", reply
+        return int(reply[1], 16) if len(reply) > 1 else None
+
+    def receive(base, expected):
+        deadline = time.monotonic() + 5
+        while not command(f"readl {base + 0x14:#x}") & (1 << 21):
+            if time.monotonic() >= deadline:
+                raise AssertionError("MIDI UART receive timed out")
+            time.sleep(0.01)
+        assert command(f"readl {base + 0x1c:#x}") == expected
+
+    try:
+        gate = command("readl 0x400fc068")
+        assert not gate & 0x3000  # reconstructed LPUART3 gate is off
+        divider = command("readl 0x400fc024")
+        command(f"writel 0x400fc024 {divider | 0x40:#x}")  # UART root = OSC
+        command("writel 0x4018c018 0x40000")  # receiver enable
+        host.sendall(b"\x55")
+        for _ in range(8):
+            command("clock_step 1000")
+        assert not command("readl 0x4018c014") & (1 << 21)
+        command(f"writel 0x400fc068 {gate | 0x3000:#x}")
+        host.sendall(b"\x66")
+        receive(0x4018c000, 0x66)
+        command(f"writel 0x400fc024 {divider & ~0x40:#x}")  # root = PLL3
+        command("writel 0x400d8018 0x2000")  # gate PLL3 output
+        host.sendall(b"\x77")
+        for _ in range(8):
+            command("clock_step 1000")
+        assert not command("readl 0x4018c014") & (1 << 21)
+        command("writel 0x400d8014 0x2000")
+        host.sendall(b"\x88")
+        receive(0x4018c000, 0x88)
+        panel_gate = command("readl 0x400fc07c")
+        assert not panel_gate & 0x03000000
+        command("writel 0x40184018 0x40000")
+        panel_host.sendall(b"\x11")
+        for _ in range(8):
+            command("clock_step 1000")
+        assert not command("readl 0x40184014") & (1 << 21)
+        command(f"writel 0x400fc07c {panel_gate | 0x03000000:#x}")
+        panel_host.sendall(b"\x22")
+        receive(0x40184000, 0x22)
+        print(f"{image}: LPUART1/3 receive clock gating passed")
+    finally:
+        host.close()
+        panel_host.close()
+        process.terminate()
+        process.wait(timeout=5)
 
 
 def check(qemu, image, expected):
@@ -1781,6 +1855,7 @@ def main():
                   for i, value in enumerate(lut_words)})
     check(qemu, stock, l6max)
     check(qemu, patched, l6max)
+    check_uart_receive_clock(qemu, stock)
     check_main_stack_entry(qemu, stock, mpu_test=True)
     check_main_stack_entry(qemu, stock, mpu_test="privilege")
     check_main_stack_entry(qemu, stock, mpu_test="dtcm")

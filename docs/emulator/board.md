@@ -100,7 +100,10 @@ configuration, restores L6max LPUART registers to RT1060 reset values, and
 resets the modeled L6max SAI1 registers and FIFO. ROM and bootloader UART
 writes have not been completely traced, so the UART handoff values are reset
 assumptions rather than physical measurements. The UART adapter enforces the
-RT1060 read-only semantics of the VERID and PARAM registers. The
+RT1060 read-only semantics of the VERID and PARAM registers. L6max panel and
+MIDI UART receive paths discard incoming wire bytes while their instance gate,
+IPG clock or selected baud-clock source is stopped. UART transmit gating,
+serial timing and register access while gated remain approximations. The
 reference manual specifies SAI reset on system reset; no SAI1 setup was found
 in direct-address scans of the recovered ROM and first-stage boot image, though
 indirect accesses remain possible. The model also resets L6max DMAMUX

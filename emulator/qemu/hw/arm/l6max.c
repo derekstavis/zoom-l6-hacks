@@ -1471,6 +1471,8 @@ static void l6_panel_tim2_tick(void *opaque)
     }
 }
 
+static bool l6max_uart_receive_clock_running(L6ChipState *s, bool panel_uart);
+
 static int l6_main_uart_can_receive(void *opaque)
 {
     L6ChipState *s = opaque;
@@ -1514,9 +1516,11 @@ static void l6_main_uart_receive(void *opaque, const uint8_t *buf, int size)
     /* i.MX RT LPUART CTRL.RE gates reception. Consume but discard bytes that
      * arrive while disabled; holding one until RE is enabled would invent a
      * receive FIFO and can stall the UART link behind a stale byte. */
-    if (!(ctrl & (1u << 18))) {
+    if (!(ctrl & (1u << 18)) ||
+        (s->profile == &L6MAX_PROFILE &&
+         !l6max_uart_receive_clock_running(s, true))) {
         qemu_log_mask(LOG_UNIMP,
-                      "l6 main LPUART%u (panel link) RX discarded (RE=0) %02x\n",
+                      "l6 main LPUART%u (panel link) RX discarded (disabled receiver or clock) %02x\n",
                       l6_panel_uart_number(s), buf[0]);
         return;
     }
@@ -1565,9 +1569,11 @@ static void l6_main_midi_read_host(void *opaque)
                   !!(ctrl & (1u << 18)), !!(ctrl & (1u << 21)));
     /* The DIN socket is the wire-facing endpoint, so disabled receivers lose
      * these bytes just like the panel UART path above. */
-    if (!(ctrl & (1u << 18))) {
+    if (!(ctrl & (1u << 18)) ||
+        (s->profile == &L6MAX_PROFILE &&
+         !l6max_uart_receive_clock_running(s, false))) {
         qemu_log_mask(LOG_UNIMP,
-                      "l6 main LPUART%u (MIDI jacks) RX discarded (RE=0) %d bytes\n",
+                      "l6 main LPUART%u (MIDI jacks) RX discarded (disabled receiver or clock) %d bytes\n",
                       s->profile->midi_uart_number, (int)n);
         return;
     }
@@ -1815,6 +1821,26 @@ static L6MaxBusClocks l6max_bus_clocks(L6ChipState *s)
         .cbcdr = l6max_clock_register(s, L6_CCM_CBCDR_OFFSET),
         .cbcmr = l6max_clock_register(s, L6_CCM_CBCMR_OFFSET),
     };
+}
+
+/* The panel and MIDI receivers use LPUART1 and LPUART3 respectively. The
+ * serial root is OSC or PLL3/6, and both the baud and IPG clocks share the
+ * instance gate (RT1060 RM table 14-4). The socket represents the wire, so
+ * bytes arriving while a modeled source is stopped cannot be sampled. */
+static bool l6max_uart_receive_clock_running(L6ChipState *s, bool panel_uart)
+{
+    L6MaxBusClocks clocks = l6max_bus_clocks(s);
+    uint32_t gate = l6max_clock_register(s, panel_uart ? 0x0fc07c : 0x0fc068);
+    unsigned shift = panel_uart ? 24 : 12;
+    if (!(gate & (1u << shift)) || !clocks.oscillator_hz ||
+        !l6max_ipg_clock_running(s, &clocks)) {
+        return false;
+    }
+    if (l6max_clock_register(s, 0x0fc024) & 0x40u) {
+        return true;
+    }
+    uint32_t pll = l6max_usb1_main_hz(clocks.usb1_pll);
+    return pll != 0 && pll != UINT32_MAX;
 }
 
 static uint32_t l6max_sai1_source_hz(L6ChipState *s, uint32_t tcr2)

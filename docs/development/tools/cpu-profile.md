@@ -1,7 +1,8 @@
 # `cpu-profile`
 
-`cpu-profile` measures QEMU process CPU use while sampling guest execution,
-exception numbers, guest time, and startup indicators. It writes
+`cpu-profile` measures the MAIN QEMU process's CPU use while sampling MAIN
+and panel guest execution, exception numbers, guest time, and startup indicators.
+Its CPU percentage does not include the separate panel QEMU process. It writes
 `startup-indicators.tsv` into the engine log directory.
 
 ```sh

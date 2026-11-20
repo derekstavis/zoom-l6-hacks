@@ -4810,6 +4810,63 @@ static void l6_main_gpio_setup(L6ChipState *s, MemoryRegion *system_memory)
 /* Apply the modeled L6max bootloader handoff after every machine reset. */
 static void l6max_seed_boot_handoff(L6ChipState *s)
 {
+    /* SRC cold reset resets CCM and functional modules, but not IOMUXC.
+     * Use RM reset values as the fallback for ROM-inherited CCM fields on
+     * every boot; the actual ROM's intervening writes remain unmeasured. */
+    static const struct { hwaddr offset; uint32_t value; } ccm_reset[] = {
+        { 0x0fc000, 0x0401107fu }, { 0x0fc00c, 0x00000100u },
+        { 0x0fc010, 0x00000001u }, { 0x0fc014, 0x000a8300u },
+        { 0x0fc018, 0x2dae8324u }, { 0x0fc01c, L6_CCM_CSCMR1_RESET },
+        { 0x0fc020, 0x13192f06u }, { 0x0fc024, 0x06490b00u },
+        { 0x0fc028, L6_CCM_CS1CDR_RESET },
+        { 0x0fc02c, L6_CCM_CS2CDR_RESET },
+        { 0x0fc030, 0x33f71f92u }, { 0x0fc038, 0x00029150u },
+        { 0x0fc060, 0x000a0001u },
+        { 0x0fc068, 0xffffffffu }, { 0x0fc06c, 0xffffffffu },
+        { 0x0fc070, 0xfc3fffffu }, { 0x0fc074, 0xffffffcfu },
+        { 0x0fc078, 0xffffffffu }, { 0x0fc07c, 0xffffffffu },
+        { 0x0fc080, 0xffffffffu }, { 0x0fc084, 0xffffffffu },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(ccm_reset); i++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER((ccm_reset[i].offset >> 2) + 1),
+            GUINT_TO_POINTER(ccm_reset[i].value));
+    }
+    /* PLL and PFD controls are reset by SRC as system modules. These are
+     * reference-manual reset fallbacks, not a complete ROM clock trace. */
+    static const struct { hwaddr offset; uint32_t value; } analog_reset[] = {
+        { 0x0d8000, 0x00013063u }, { 0x0d8010, 0x00012000u },
+        { 0x0d8020, 0x00012000u }, { 0x0d8030, 0x00013001u },
+        { 0x0d8040, 0 }, { 0x0d8050, 0 }, { 0x0d8060, 0x12u },
+        { 0x0d8070, 0x00011006u }, { 0x0d8080, 0x05f5e100u },
+        { 0x0d8090, 0x2964619cu }, { 0x0d80a0, 0x0001100cu },
+        { 0x0d80b0, 0x05f5e100u }, { 0x0d80c0, 0x10a24447u },
+        { 0x0d80e0, 0x00011001u }, { 0x0d80f0, 0x1311100cu },
+        { 0x0d8100, 0x1018101bu }, { 0x0d8160, 0 },
+        { 0x0d8170, 0x00272727u },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(analog_reset); i++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER((analog_reset[i].offset >> 2) + 1),
+            GUINT_TO_POINTER(analog_reset[i].value));
+    }
+    s->pfd_applied[0] = 0x1311100cu;
+    s->pfd_applied[1] = 0x1018101bu;
+    /* Reset controller fields which the recovered boot code modifies only
+     * partially. The ROM may have written them before the first stage. */
+    static const struct { hwaddr offset; uint32_t value; } memory_reset[] = {
+        { 0x2f0004, 0 }, /* SEMC IOCR */
+        { 0x2a8008, 0x200081f7u }, { 0x2a800c, 0x18u },
+        { 0x2a8020, 0x80000020u }, { 0x2a8024, 0x80010020u },
+        { 0x2a8028, 0x80020020u }, { 0x2a802c, 0x80030020u },
+        { 0x2a8080, 0 }, { 0x2a8094, 0 },
+        { 0x2a80b8, 0 }, { 0x2a80bc, 0 },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(memory_reset); i++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER((memory_reset[i].offset >> 2) + 1),
+            GUINT_TO_POINTER(memory_reset[i].value));
+    }
     /* Clock setup enables RC OSC, selects the crystal for the 24 MHz root,
      * and sets the DCDC target to 0x13. The successful path waits for the
      * crystal-ready status. Unwritten bits use RM reset fallback. */

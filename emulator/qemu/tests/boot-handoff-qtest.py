@@ -843,6 +843,8 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0x400d8010 0")
         assert not int(command("readl 0x400d8010").split()[1], 16) & 0x80000000
         command("writel 0x400d8070 0x00080000")
+        command("writel 0x400d80b0 7")
+        command("writel 0x400d80c0 13")
         command("writel 0x400d8040 0xffffffff")
         command("writel 0x400d82c0 0x00030fff")
         command("writel 0x402a8000 0xffffffff")
@@ -896,19 +898,19 @@ def check_flexram_boundaries(qemu, image):
         assert int(command("readl 0x400d8150").split()[1], 16) == 0x04000000
         for address, value in ((0x402a8000, 0xffff1000),
                                (0x402a8004, 0xffffffff),
-                               (0x402a8008, 0x20f777ff),
-                               (0x402a800c, 0xffffff87),
-                               (0x402a8020, 0xfcffff00),
-                               (0x402a8024, 0xfcffff00),
-                               (0x402a8028, 0xfcf0ff20),
-                               (0x402a802c, 0xfcf0ff20),
+                               (0x402a8008, 0x200001f7),
+                               (0x402a800c, 0),
+                               (0x402a8020, 0x800f0000),
+                               (0x402a8024, 0x800f0000),
+                               (0x402a8028, 0x80000020),
+                               (0x402a802c, 0x80000020),
                                (0x402a8060, 0x800),
                                (0x402a8064, 0), (0x402a8068, 0),
                                (0x402a806c, 0), (0x402a8070, 0x30063),
-                               (0x402a8080, 0x80001010),
-                               (0x402a8094, 0xfffffffb),
-                               (0x402a80b8, 0xffffffc2),
-                               (0x402a80bc, 0xffffffc2),
+                               (0x402a8080, 0),
+                               (0x402a8094, 1),
+                               (0x402a80b8, 0),
+                               (0x402a80bc, 0),
                                (0x402a80c0, 0x100)):
             assert int(command(f"readl {address:#x}").split()[1], 16) == value
         assert int(command("readl 0x40080000").split()[1], 16) == 0x92345678
@@ -916,7 +918,7 @@ def check_flexram_boundaries(qemu, image):
         assert int(command("readl 0x400ac00c").split()[1], 16) == 0xa5a5a5b5
         assert int(command("readl 0x400ac028").split()[1], 16) == 0x5a5a5a4a
         for address, value in ((0x402f0000, 0x1fff0004),
-                               (0x402f0004, 0xffffffe8),
+                               (0x402f0004, 8),
                                (0x402f0008, 0x81), (0x402f000c, 0x81),
                                (0x402f0018, 0), (0x402f0030, 0),
                                (0x402f0090, 0x82000000), (0x402f0094, 2),
@@ -944,19 +946,28 @@ def check_flexram_boundaries(qemu, image):
         assert int(command("readl 0x400ac038").split()[1], 16) == 0x00860000
         for address, expected in masks.items():
             assert int(command(f"readl {address:#x}").split()[1], 16) == expected
-        assert int(command("readl 0x400fc070").split()[1], 16) == 0x0c000030
-        assert int(command("readl 0x400fc078").split()[1], 16) == 0xc
-        assert int(command("readl 0x400fc06c").split()[1], 16) == 0xcc0c4000
-        for address, (keep, value) in clocks.items():
-            assert int(command(f"readl {address:#x}").split()[1], 16) == keep | value
+        # CCM and SEMC are reset by SRC cold reset; IOMUXC is retained.
+        assert int(command("readl 0x400fc070").split()[1], 16) == 0xfc3f303f
+        assert int(command("readl 0x400fc078").split()[1], 16) == 0xffffffff
+        assert int(command("readl 0x400fc06c").split()[1], 16) == 0xfc0ccc00
+        clock_handoff = {
+            0x400fc000: 0x0401107f, 0x400fc00c: 0x100,
+            0x400fc020: 0x13192e06, 0x400fc024: 0x06490b00,
+            0x400fc02c: 0x007336c1, 0x400fc030: 0x33f71f92,
+            0x400fc038: 0x00029150, 0x400fc060: 0x00120001,
+        }
+        for address, expected in clock_handoff.items():
+            assert int(command(f"readl {address:#x}").split()[1], 16) == expected
         for address, value in ((0x400d8000, 0x80002064),
                                (0x400d8030, 0x80002001),
                                (0x400d8010, 0x80003040),
                                (0x400d8020, 0x12000), (0x400d80a0, 0x13000),
                                (0x400d80e0, 0x80312001),
-                               (0x400d8070, 0x80082020),
-                               (0x400d8160, 0xffffffe0),
-                               (0x400d8170, 0x3f2727a7)):
+                               (0x400d8070, 0x80002020),
+                               (0x400d80b0, 0x05f5e100),
+                               (0x400d80c0, 0x10a24447),
+                               (0x400d8160, 0),
+                               (0x400d8170, 0x00272727)):
             assert int(command(f"readl {address:#x}").split()[1], 16) == value
         for address in (0xe000e100, 0xe000e200, 0xe000e010,
                         0xe000ed94, 0xe000ed24):

@@ -216,8 +216,9 @@ The bootloader calls with its current task stack; it does not load the MAIN
 vector's initial MSP at that call. The emulator seeds an inferred MSP of
 `0x202275f0`, based on bootloader 1.00's allocation and call frame. A later
 OCRAM dump corroborates the allocation prefix, but the register itself was
-not captured and the emulator does not reproduce the boot task's stack
-contents. Stock MAIN 1.10 installs its own vector MSP at `0x8000041e`, before
+not captured. The model seeds three transfer-frame locals from the selected
+MAIN copy size; other boot task stack contents remain unknown. Stock MAIN 1.10
+installs its own vector MSP at `0x8000041e`, before
 accessing the inherited stack; this was checked by stepping both stock and a
 patched image with an unmapped initial MSP. Other reset handlers may depend on
 the inherited stack or its contents.

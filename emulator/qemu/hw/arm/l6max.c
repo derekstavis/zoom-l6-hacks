@@ -6347,11 +6347,12 @@ static void l6_panel_init(MachineState *machine)
 static void l6_main_reset(MachineState *machine, ResetType type)
 {
     L6ChipState *s = &L6_MACHINE(machine)->chip;
+    uint32_t main_size = 0;
     if (type != RESET_TYPE_SNAPSHOT_LOAD && s->profile == &L6MAX_PROFILE) {
         /* The physical bootloader takes the MAIN copy size from the installed
          * footer. Older emulator-created NOR images lack that field, so use
          * their package trailer as a fallback. */
-        uint32_t main_size = ldl_le_p(s->nor_flash + 0x1f7ff8);
+        main_size = ldl_le_p(s->nor_flash + 0x1f7ff8);
         if (main_size < 8 || main_size > 0x1a2ff8) {
             main_size = ldl_le_p(s->nor_flash + 0x1f2ff8);
         }
@@ -6406,6 +6407,17 @@ static void l6_main_reset(MachineState *machine, ResetType type)
          * The allocator prefix survives in the later physical OCRAM dump;
          * no register was captured at the branch, so this is inferred. */
         s->armv7m.cpu->env.regs[13] = 0x202275f0u;
+        /* These locals are written by the MAIN copy loop. Other boot stack
+         * contents are unknown and deliberately left as existing RAM. */
+        uint8_t frame_locals[12];
+        stl_le_p(frame_locals, 0x50000u + main_size);
+        stl_le_p(frame_locals + 4, 0x80000000u);
+        stl_le_p(frame_locals + 8, ((main_size - 1) % 0x2000u) + 1);
+        if (address_space_write(as, 0x202275f0u, MEMTXATTRS_UNSPECIFIED,
+                                frame_locals, sizeof(frame_locals)) != MEMTX_OK) {
+            error_report("failed to write L6max boot transfer frame");
+            abort();
+        }
     }
 }
 

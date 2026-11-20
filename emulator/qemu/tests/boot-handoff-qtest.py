@@ -101,7 +101,23 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
                 for i in range(0, 16 * 4, 4)]
 
     try:
+        # With no persisted NOR, the package trailer supplies the copy size.
+        trailer_path = os.path.join(os.path.dirname(image), "main_trailer.bin")
+        try:
+            with open(trailer_path, "rb") as trailer:
+                copy_size = int.from_bytes(trailer.read(4), "little")
+        except FileNotFoundError:
+            copy_size = 0
+        if not 8 <= copy_size <= 0x1a2ff8:
+            copy_size = 0x1a2ff8
+        frame = (0x50000 + copy_size, 0x80000000,
+                 ((copy_size - 1) % 0x2000) + 1)
+        def assert_frame():
+            raw = bytes.fromhex(packet("m202275f0,c"))
+            assert tuple(int.from_bytes(raw[i:i + 4], "little")
+                         for i in (0, 4, 8)) == frame
         packet("?")
+        assert_frame()
         regs = registers()
         assert regs[15] == 0x80000414, hex(regs[15])
         assert regs[0] == 0xe000ed14, hex(regs[0])
@@ -117,6 +133,7 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
                 assert packet("P2=00000000") == "OK"
                 assert packet("Pd=00000000") == "OK"
                 assert packet("Pe=00000000") == "OK"
+                assert packet("M202275f0,c:000000000000000000000000") == "OK"
             qmp.write(json.dumps({"execute": name}).encode() + b"\n")
             while True:
                 reply = json.loads(qmp.readline())
@@ -125,6 +142,7 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
                 if "return" in reply:
                     break
         regs = registers()
+        assert_frame()
         assert regs[:3] == [0xe000ed14, 0x80000415, 0x01000000], regs[:3]
         assert regs[13] == 0x202275f0, hex(regs[13])
         assert regs[14] == 0x2020e453, hex(regs[14])
@@ -1167,6 +1185,10 @@ def check_flexram_boundaries(qemu, image):
             command(f"writel {address:#x} 0xffffffff")
         qmp_execute("system_reset")
         assert int(command("readl 0x80000100").split()[1], 16) == 0xdeadbeef
+        for address, expected in ((0x202275f0, 0x50100),
+                                  (0x202275f4, 0x80000000),
+                                  (0x202275f8, 0x100)):
+            assert int(command(f"readl {address:#x}").split()[1], 16) == expected
         for address, expected in gate_results.items():
             assert int(command(f"readl {address:#x}").split()[1], 16) == expected
         print(f"{image}: masked GPR, gate and CPU reset passed")

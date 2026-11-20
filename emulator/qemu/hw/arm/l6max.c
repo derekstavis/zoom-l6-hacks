@@ -4662,6 +4662,23 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
             GUINT_TO_POINTER((boot_iomux[i].offset >> 2) + 1),
             GUINT_TO_POINTER(boot_iomux[i].value));
     }
+    /* The SEMC helper clears BR0..BR8, resets its internal logic, sets
+     * loopback DQS and command/bus timeouts, then enables both queues. */
+    for (unsigned i = 0; i < 9; i++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER(((0x2f0010 + 4 * i) >> 2) + 1), NULL);
+    }
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x2f0000 >> 2) + 1),
+                        GUINT_TO_POINTER(0x1fff0004u));
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x2f0008 >> 2) + 1),
+                        GUINT_TO_POINTER(0x81u));
+    g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x2f000c >> 2) + 1),
+                        GUINT_TO_POINTER(0x81u));
+    /* SDRAM setup modifies selected IOCR mux bits, preserving other fields. */
+    gpointer semc_iocr = GUINT_TO_POINTER((0x2f0004 >> 2) + 1);
+    uint32_t iocr = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, semc_iocr));
+    g_hash_table_insert(s->registers, semc_iocr,
+                        GUINT_TO_POINTER((iocr & ~0x1fu) | 8u));
     /* Bootloader 1.00 configures two 32 MiB SEMC SDRAM windows.
      * These base registers describe mapping, not detected capacity. */
     g_hash_table_insert(s->registers,

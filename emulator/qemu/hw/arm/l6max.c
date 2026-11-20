@@ -3582,6 +3582,15 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
     unsigned shift = (offset & 3) * 8;
     uint32_t mask = size == 4 ? UINT32_MAX : ((1u << (size * 8)) - 1) << shift;
     word = (word & ~mask) | (((uint32_t)value << shift) & mask);
+    /* The RT1060 fractional PLL NUM and DENOM fields are 30 bits; their
+     * two high bits read as zero, including after byte or halfword writes. */
+    hwaddr aligned = offset & ~(hwaddr)3;
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (aligned == 0x0d8050 || aligned == 0x0d8060 ||
+         aligned == 0x0d8080 || aligned == 0x0d8090 ||
+         aligned == 0x0d80b0 || aligned == 0x0d80c0)) {
+        word &= 0x3fffffffu;
+    }
     hwaddr pfd_base = offset & ~(hwaddr)0xf;
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
         !(offset & 3) && (pfd_base == L6_CCM_ANALOG_PFD_480 ||

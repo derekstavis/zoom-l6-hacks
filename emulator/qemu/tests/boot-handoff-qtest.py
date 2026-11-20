@@ -237,6 +237,15 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0x400b0018 0")
         command("writel 0xe000e284 0x40")
         print(f"{image}: FlexRAM access status and shared IRQ passed")
+        # Fractional PLL registers reserve bits 31:30 even for partial writes.
+        for address in (0x400d8050, 0x400d8060, 0x400d8080,
+                        0x400d8090, 0x400d80b0, 0x400d80c0):
+            old = int(command(f"readl {address:#x}").split()[1], 16)
+            command(f"writel {address:#x} 0xffffffff")
+            assert int(command(f"readl {address:#x}").split()[1], 16) == 0x3fffffff
+            command(f"writeb {address + 3:#x} 0xff")
+            assert int(command(f"readl {address:#x}").split()[1], 16) == 0x3fffffff
+            command(f"writel {address:#x} {old:#x}")
         # Observe the actual SysTick countdown in qtest virtual time. The
         # recovered 600 MHz ARM root halves when CACRR changes to divide by 4.
         command("writel 0xe000e010 0")
@@ -285,6 +294,10 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0x400d8060 4")
         command("writel 0x400d8050 1")
         assert 2668 <= systick_ticks() <= 2672  # PLL2 534 MHz / 2
+        command("writel 0x400d8050 0xffffffff")
+        assert int(command("readl 0x400d8050").split()[1], 16) == 0x3fffffff
+        assert 2608 <= systick_ticks() <= 2612  # signed -1 / 4 => 522 MHz / 2
+        command("writel 0x400d8050 1")
         command(f"writel 0x400fc018 {(boot_cbcmr & ~(3 << 18)) | (1 << 18):#x}")
         assert 1655 <= systick_ticks() <= 1659  # PLL2 PFD2 / 2
         command("writel 0x400d8104 0x00800000")

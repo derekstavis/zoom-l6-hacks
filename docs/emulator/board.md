@@ -51,8 +51,11 @@ preserving other stored bits. Peripheral clock mux and divider writes use
 RT1060 reset values for fields, including clock gates, whose prior ROM state has not been captured;
 the resulting complete values are assumptions, not hardware measurements.
 The ARM and system PLL control aliases share their respective register state;
-LOCK is approximated as immediate while powered. L6max QEMU CPU clock input
-follows the RT1060 peripheral mux and AHB divider, including PLL1, PLL2, PLL2
+LOCK is approximated as immediate while powered. The L6max system, audio and
+video PLL fractional registers implement the
+30-bit numerator and denominator readback masks; signed numerators feed the
+modeled clock calculations. The L6max QEMU CPU clock input follows the RT1060
+peripheral mux and AHB divider, including PLL1, PLL2, PLL2
 PFDs and the alternate oscillator or PLL3 path; SysTick follows that clock.
 The IPG divider also supplies SAI1 when its bus-clock input is selected.
 SysTick pauses if its selected clock stops and retains its separate reference

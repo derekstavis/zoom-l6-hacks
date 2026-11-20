@@ -497,10 +497,7 @@ A new placeable patch fails generation until it has a
 The effect-slot checks and menu-loader's menu walk depend on the combination,
 so the generator writes those steps itself. A Patches-screen reference is
 named after the rows it shows and, when the list scrolls, its length
-(`…__of-5.png`), so each name maps to one screen. With knob-dialog
-installed, about half the boots draw that screen without the line under its
-title, so the image comparison is skipped for those combinations until the
-redraw is fixed; the `expect-menu` checks still run. `l6test list` shows the case count,
+(`…__of-5.png`), so each name maps to one screen. `l6test list` shows the case count,
 which grows with each placeable patch. Adding, removing or changing a
 generated case changes the reviewed case matrix in
 `tools/l6test/snapshots/cases.json`; see [Case matrix](#case-matrix). Run one case at a time: the heaviest

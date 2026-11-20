@@ -142,8 +142,12 @@ Addresses refer to this main firmware revision's runtime address space.
   remain unchanged. First use scans the other initialized widget and background
   descriptors, declining if another widget references resource 179 or another
   descriptor already uses scene layer 4.
-- The scene temporarily changes widget descriptors 7 and 33 and background
-  descriptors 10, 37, and 48 to render on layer 4. At first use, the patch
+- The scene changes widget descriptors 7 and 33 and background descriptors
+  10, 37, and 48 to render on layer 4 only while it draws, then puts them back
+  on their stock layers. A window that opens while the scene shows, such as the
+  menu, draws its title on the stock layers, so clearing layer 4 when the
+  scene closes erases only the scene. Resource 179 keeps the scene's text
+  until the scene closes. At first use, the patch
   checks both widget descriptors against the exact recorder defaults in the
   supported firmware image before publishing state. The display callback
   repeats the check immediately before the first draw because it runs in a

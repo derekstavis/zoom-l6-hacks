@@ -383,9 +383,6 @@ fn menu_rows(
 /// menu-loader's reviewed display images, from the repository root.
 const MENU_REFERENCES: &str = "patches/menu-loader/tests/emulator/references";
 /// Rows of a menu the display shows at once.
-/// The patch whose presence makes the System > Patches screen render
-/// nondeterministically (the title's underline is sometimes missing).
-const UNSTABLE_PATCHES_SCREEN: &str = "knob-dialog";
 const VISIBLE_ROWS: usize = 3;
 
 /// The reviewed image of System > Patches as it opens, named after the rows
@@ -510,18 +507,13 @@ fn menu_checks(
     delay(text, 500);
     press(text, "recorder-function-4", 1);
     delay(text, 1000);
-    // With Knob Dialog installed, about half the boots draw this screen
-    // without the line under the title, so its image is compared only
-    // when Knob Dialog is absent until that is fixed.
-    if !combination.installs(UNSTABLE_PATCHES_SCREEN) {
-        step(
-            text,
-            &format!(
-                "action = \"expect-display-image\"\nimage = {:?}",
-                patches_screen_reference(&rows)
-            ),
-        );
-    }
+    step(
+        text,
+        &format!(
+            "action = \"expect-display-image\"\nimage = {:?}",
+            patches_screen_reference(&rows)
+        ),
+    );
     press(text, "recorder-function-1", 1);
     delay(text, 1000);
     // Run each item's action in menu order, moving down from Patches.

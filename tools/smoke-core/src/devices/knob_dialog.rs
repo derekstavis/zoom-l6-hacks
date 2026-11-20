@@ -577,8 +577,11 @@ pub(super) fn run_knob_dialog(
         == 0x4b4e
         && first_slot5 & 1 == 1
         && qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 3, 1)? == u8::MAX.to_le_bytes()
-        && qmp.read_memory(0, widget7, 1)? == [4]
-        && qmp.read_memory(0, background10, 1)? == [4]
+        // A nonzero timeout means a scene is showing; its descriptors are
+        // already back on their stock layers.
+        && first_state[2] != 0
+        && qmp.read_memory(0, widget7, 16)? == original_widget7
+        && qmp.read_memory(0, background10, 1)? == original_background_layers[0]
         && notification_lock_still_held;
     debugger.write(notification_semaphore + 56, &semaphore_count)?;
     qmp.resume()?;
@@ -724,26 +727,26 @@ pub(super) fn run_knob_dialog(
     {
         return Err("custom overlay replaced the active firmware window".into());
     }
-    if qmp.read_memory(0, widget7, 1)? != [4]
-        || qmp.read_memory(0, widget33, 1)? != [4]
-        || qmp.read_memory(0, background10, 1)? != [4]
-        || qmp.read_memory(0, background37, 1)? != [4]
-        || qmp.read_memory(0, background48, 1)? != [4]
-    {
-        return Err("custom overlay did not use compositor layer 4".into());
-    }
-    if qmp.read_memory(0, widget7 + 6, 2)? != 0u16.to_le_bytes()
-        || qmp.read_memory(0, widget33 + 6, 2)? != 0u16.to_le_bytes()
-    {
-        return Err("custom overlay widgets were not positioned at the left edge".into());
-    }
-    for widget in [widget7, widget33] {
-        let resource = u16::from_le_bytes(qmp.read_memory(0, widget + 4, 2)?.try_into().unwrap());
-        if resource != 179 {
-            return Err(
-                format!("dialog widget did not use shared text resource 179: {resource}").into(),
-            );
-        }
+    // The scene borrows the descriptors only while it draws, so a window that
+    // opens over it draws its own title on the stock layers.
+    let shown = (
+        qmp.read_memory(0, widget7, 16)?,
+        qmp.read_memory(0, widget33, 16)?,
+        [background10, background37, background48]
+            .into_iter()
+            .map(|background| qmp.read_memory(0, background, 1))
+            .collect::<Result<Vec<_>, _>>()?,
+    );
+    let stock = (
+        original_widget7.clone(),
+        original_widget33.clone(),
+        original_background_layers.to_vec(),
+    );
+    if shown != stock {
+        return Err(format!(
+            "custom overlay kept borrowed descriptors after drawing: widgets and background layers are {shown:02x?}, stock {stock:02x?}"
+        )
+        .into());
     }
     if u32::from_le_bytes(
         qmp.read_memory(0, text_table + 179 * 4, 4)?
@@ -1062,6 +1065,13 @@ pub(super) fn run_knob_dialog(
     settled_turn("window-scene-before-invalid-state-metadata")?;
     qmp.stop()?;
     let metadata = qmp.read_memory(0, state, 4)?;
+    let overlay_descriptors = || {
+        [widget7, widget33, background10, background37, background48]
+            .into_iter()
+            .map(|descriptor| qmp.read_memory(0, descriptor, 16))
+            .collect::<Result<Vec<_>, _>>()
+    };
+    let descriptors_before = overlay_descriptors()?;
     let metadata_word = u32::from_le_bytes(metadata.clone().try_into().unwrap());
     let invalid_metadata = metadata_word ^ 1;
     debugger.write(state, &invalid_metadata.to_le_bytes())?;
@@ -1077,12 +1087,7 @@ pub(super) fn run_knob_dialog(
     qmp.stop()?;
     let invalid_metadata_rejected = qmp.read_memory(0, state, 4)? == invalid_metadata.to_le_bytes()
         && qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)? == original_bitmap
-        && [widget7, widget33, background10, background37, background48]
-            .into_iter()
-            .all(|descriptor| {
-                qmp.read_memory(0, descriptor, 1)
-                    .is_ok_and(|layer| layer[0] == 4)
-            });
+        && overlay_descriptors()? == descriptors_before;
     debugger.write(state, &metadata)?;
     qmp.resume()?;
     if !invalid_metadata_rejected {

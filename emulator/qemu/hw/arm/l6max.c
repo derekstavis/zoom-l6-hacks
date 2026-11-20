@@ -4879,6 +4879,41 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
             GUINT_TO_POINTER((memory_reset[i].offset >> 2) + 1),
             GUINT_TO_POINTER(memory_reset[i].value));
     }
+    /* DMAMUX channels, eDMA requests and interrupts reset disabled. TCD
+     * fields have unknown reset values in the RT1060 manual: retain their
+     * emulated contents rather than claiming that they reset to zero. */
+    uint32_t old_dma_irqs = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+        GUINT_TO_POINTER((0x0e8024 >> 2) + 1)));
+    for (unsigned channel = 0; channel < 32; channel++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER(((0x0ec000 + 4 * channel) >> 2) + 1), NULL);
+        if (old_dma_irqs & (1u << channel)) {
+            l6_edma_update_irq_level(s, channel, 0);
+        }
+    }
+    s->edma_erq = 0;
+    s->audio_edma_irq_raised = false;
+    static const hwaddr edma_zero[] = {
+        0x0e8004, 0x0e800c, 0x0e8014, 0x0e8018, 0x0e801c,
+        0x0e8024, 0x0e802c, 0x0e8034, 0x0e8044,
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(edma_zero); i++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER((edma_zero[i] >> 2) + 1), NULL);
+    }
+    gpointer edma_cr_key = GUINT_TO_POINTER((0x0e8000 >> 2) + 1);
+    uint32_t edma_cr = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+                                                           edma_cr_key));
+    g_hash_table_insert(s->registers, edma_cr_key,
+                        GUINT_TO_POINTER((edma_cr & 0x7f000000u) | 0x400u));
+    for (unsigned group = 0; group < 8; group++) {
+        uint32_t base = group * 4;
+        uint32_t priority = (base << 24) | ((base + 1) << 16) |
+                            ((base + 2) << 8) | (base + 3);
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER(((0x0e8100 + 4 * group) >> 2) + 1),
+            GUINT_TO_POINTER(priority));
+    }
     /* SAI1 is reset by system reset. No SAI setup was found in the reviewed
      * boot path; indirect ROM or bootloader writes remain unverified. */
     for (unsigned i = 0; i < s->profile->sai_count; i++) {

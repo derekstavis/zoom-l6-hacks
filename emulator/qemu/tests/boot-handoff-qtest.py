@@ -911,6 +911,14 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0xe000ef34 0")
         command("writel 0x400b0014 0x38")
         command("writel 0x400b0018 0x38")
+        # Dirty DMAMUX/eDMA controls and an implementation-unknown TCD.
+        for address in (0x400ec000, 0x400ec030, 0x400ec07c):
+            command(f"writel {address:#x} 0x8000007f")
+        command("writel 0x400e800c 0x80001001")
+        command("writel 0x400e8000 0xffffffff")
+        command("writel 0x400e811c 0xffffffff")
+        command("writel 0x400e9180 0x12345678")
+        assert int(command("readl 0x400e800c").split()[1], 16) == 0x80001001
         # A system reset must discard SAI configuration and FIFO contents.
         command("writel 0x40384014 0x10000")
         command("writel 0x40384020 0x12345678")
@@ -923,6 +931,14 @@ def check_flexram_boundaries(qemu, image):
         command("readl 0x20000000")
         assert int(command("readl 0x400b0010").split()[1], 16) == 0x10
         qmp_execute("system_reset")
+        for address in (0x400ec000, 0x400ec030, 0x400ec07c,
+                        0x400e800c, 0x400e8024):
+            assert int(command(f"readl {address:#x}").split()[1], 16) == 0
+        assert int(command("readl 0x400e8000").split()[1], 16) == 0x7f000400
+        assert int(command("readl 0x400e8100").split()[1], 16) == 0x00010203
+        assert int(command("readl 0x400e811c").split()[1], 16) == 0x1c1d1e1f
+        # The reference manual marks the descriptor reset value unknown.
+        assert int(command("readl 0x400e9180").split()[1], 16) == 0x12345678
         for address in (0x40384008, 0x40384010, 0x40384014,
                         0x40384040, 0x40384088, 0x40384094):
             assert int(command(f"readl {address:#x}").split()[1], 16) == 0

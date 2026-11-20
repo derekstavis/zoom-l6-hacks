@@ -80,8 +80,14 @@ SEMC configuration and selected FlexSPI controls before replaying their boot
 configuration, and resets the modeled L6max SAI1 registers and FIFO. The
 reference manual specifies SAI reset on system reset; no SAI1 setup was found
 in direct-address scans of the recovered ROM and first-stage boot image, though
-indirect accesses remain possible. The model does not yet reset every
-functional-module register, including all eDMA/DMAMUX state. Intervening ROM writes are
+indirect accesses remain possible. The model also resets L6max DMAMUX
+channels, eDMA request enables, interrupt state and documented priority fields.
+The RT1060 manual marks transfer-descriptor reset contents unknown; QEMU
+retains its prior descriptor contents without asserting physical retention.
+The boot images' direct-address scans found no DMA setup, but indirect accesses
+remain possible. The eDMA model still maps channels directly to IRQ numbers;
+RT1060 IRQs 0–15 each combine two channels. Other functional-module reset
+behavior remains incomplete. Intervening ROM writes are
 not fully traced, so the resulting complete values are assumptions, not hardware
 measurements.
 The ARM and system PLL control aliases share their respective register state;

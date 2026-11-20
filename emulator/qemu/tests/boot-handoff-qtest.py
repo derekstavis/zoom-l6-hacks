@@ -282,15 +282,28 @@ def check_flexram_boundaries(qemu, image):
                 if "return" in reply:
                     return reply["return"]
         qmp_execute("qmp_capabilities")
-        # RT1060 channels 3 and 19 share IRQ 3. Generate real SAI-paced
-        # major-loop completions, then acknowledge each channel separately.
-        command("writel 0x20200000 0x12345678")
+        # eDMA is a system bus master, not the CPU: its reads cannot access
+        # private SCB registers even though privileged CPU reads can.
         command("writel 0x40384014 0x10000")
         command("writel 0x40384008 0x80000001")  # TE | FRDE
         command("writel 0xe000e100 8")
+        base = 0x400e9060  # channel 3
+        for offset, value in ((0, 0xe000ed00), (4, 0x02020000),
+                              (8, 4), (12, 0), (16, 0x40384020),
+                              (20, 0x00010000), (24, 0), (28, 0x0001000a)):
+            command(f"writel {base + offset:#x} {value:#x}")
+        command("writel 0x400ec00c 0x80000014")
+        command("writel 0x400e800c 8")
+        assert not int(command("readl 0x400e8024").split()[1], 16) & 8
+        assert not int(command("readl 0x40384040").split()[1], 16) & 0x1f0000
+        command("writel 0x400e800c 0")
+        command("writel 0x400ec00c 0")
+        # RT1060 channels 3 and 19 share IRQ 3. Generate real SAI-paced
+        # completions from DTCM through the system side of the TCM interface.
+        command("writel 0x20000000 0x12345678")
         for channel in (3, 19):
             base = 0x400e9000 + channel * 0x20
-            for offset, value in ((0, 0x20200000), (4, 0x02020000),
+            for offset, value in ((0, 0x20000000), (4, 0x02020000),
                                   (8, 4), (12, 0), (16, 0x40384020),
                                   (20, 0x00010000), (24, 0),
                                   (28, 0x0001000a)):

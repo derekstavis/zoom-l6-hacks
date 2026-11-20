@@ -3004,6 +3004,14 @@ static void l6_edma_raise_interrupt(L6ChipState *s, unsigned channel)
     s->audio_edma_irq_raised = true;
 }
 
+/* L6max eDMA is a system bus master; the CPU container also exposes PPB
+ * and must not be used for DMA. Keep L6's existing routing until audited. */
+static AddressSpace *l6_edma_address_space(L6ChipState *s)
+{
+    return s->profile == &L6MAX_PROFILE ? &address_space_memory :
+                                         CPU(s->armv7m.cpu)->as;
+}
+
 static bool l6_edma_as_read(void *opaque, uint32_t address, void *buffer,
                             size_t size)
 {
@@ -3049,7 +3057,7 @@ static bool l6_edma_transfer_read(void *opaque, uint32_t address,
         stl_le_p(buffer, l6_sai_read(sai, reg_offset, 4));
         return true;
     }
-    return l6_edma_as_read(CPU(s->armv7m.cpu)->as, address, buffer, size);
+    return l6_edma_as_read(l6_edma_address_space(s), address, buffer, size);
 }
 
 static bool l6_edma_transfer_write(void *opaque, uint32_t address,
@@ -3062,7 +3070,7 @@ static bool l6_edma_transfer_write(void *opaque, uint32_t address,
         l6_sai_write(sai, reg_offset, ldl_le_p(buffer), 4);
         return true;
     }
-    return l6_edma_as_write(CPU(s->armv7m.cpu)->as, address, buffer, size);
+    return l6_edma_as_write(l6_edma_address_space(s), address, buffer, size);
 }
 
 static uint32_t l6_edma_register(L6ChipState *s, hwaddr offset)
@@ -3120,7 +3128,7 @@ static void l6_edma_tcd_store(L6ChipState *s, unsigned channel,
  * cyclic audio ring just because ERQ was set. */
 static bool l6_edma_service_request(L6ChipState *s, uint8_t request)
 {
-    AddressSpace *as = CPU(s->armv7m.cpu)->as;
+    AddressSpace *as = l6_edma_address_space(s);
     bool serviced = false;
 
     if (!l6_sai_edma_request_active(s, request)) {
@@ -3551,7 +3559,7 @@ static void l6_edma_service_active_sai(L6ChipState *s)
 
 static bool l6_display_dma_transfer(L6ChipState *s)
 {
-    AddressSpace *as = CPU(s->armv7m.cpu)->as;
+    AddressSpace *as = l6_edma_address_space(s);
     uint8_t tx[32], rx[32], wire[4096];
     unsigned wire_size = 0;
     uint32_t tcr = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,

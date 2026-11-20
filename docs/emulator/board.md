@@ -87,7 +87,11 @@ retains its prior descriptor contents without asserting physical retention.
 The boot images' direct-address scans found no DMA setup, but indirect accesses
 remain possible. L6max eDMA IRQs 0–15 each combine two channel completion
 signals, as specified for RT1060; the test exercises both members of one pair
-and independent acknowledgements. Other functional-module reset behavior remains
+and independent acknowledgements. L6max eDMA and its display transfer helper
+use the system address space rather than the CPU's private peripheral space;
+qtests check an SCB source is rejected and DTCM can feed SAI. The current eDMA
+model does not report complete bus-error status, and other DMA masters have not
+been audited for this separation. Other functional-module reset behavior remains
 incomplete. Intervening ROM writes are
 not fully traced, so the resulting complete values are assumptions, not hardware
 measurements.

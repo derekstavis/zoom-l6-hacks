@@ -4296,6 +4296,12 @@ static void l6_main_gpio_setup(L6ChipState *s, MemoryRegion *system_memory)
 /* Apply the modeled L6max bootloader handoff after every machine reset. */
 static void l6max_seed_boot_handoff(L6ChipState *s)
 {
+    /* boot_configure_usb1_pll uses DIV_SELECT=0 and oscillator bypass
+     * source, powers/enables the PLL, waits for LOCK, then clears bypass.
+     * LOCK is synthesized by l6_usb1_pll_status on reads. */
+    g_hash_table_insert(s->registers,
+        GUINT_TO_POINTER((0x0d8010 >> 2) + 1),
+        GUINT_TO_POINTER(0x00003040u));
     /* First-stage entry selects the software FlexRAM partition: one 32 KiB
      * ITCM bank, four DTCM banks and eleven OCRAM banks. GPR16's other
      * fields are inherited; its reset value supplies the initial VTOR. */

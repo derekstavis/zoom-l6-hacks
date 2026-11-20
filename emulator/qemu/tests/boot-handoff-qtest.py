@@ -166,6 +166,8 @@ def check_flexram_boundaries(qemu, image):
             )
         for address in (0x400d8020, 0x400d80a0, 0x400d80e0, 0x400d8160, 0x400d8170):
             command(f"writel {address:#x} 0xffffffff")
+        command("writel 0x400d8010 0")
+        assert not int(command("readl 0x400d8010").split()[1], 16) & 0x80000000
         command("writel 0x400d8070 0x00080000")
         # Exercise handoff cleanup from a dirty CPU, rather than merely
         # comparing QEMU's reset defaults on an untouched guest.
@@ -191,7 +193,8 @@ def check_flexram_boundaries(qemu, image):
         assert int(command("readl 0x400fc06c").split()[1], 16) == 0xcc0c4000
         for address, (keep, value) in clocks.items():
             assert int(command(f"readl {address:#x}").split()[1], 16) == keep | value
-        for address, value in ((0x400d8020, 0x12000), (0x400d80a0, 0x13000),
+        for address, value in ((0x400d8010, 0x80003040),
+                               (0x400d8020, 0x12000), (0x400d80a0, 0x13000),
                                (0x400d80e0, 0x80312001),
                                (0x400d8070, 0x80082020),
                                (0x400d8160, 0xffffffe0),
@@ -264,7 +267,7 @@ def main():
         0x400fc020: 0x13192e06, 0x400fc024: 0x06490b00,
         0x400fc02c: 0x007336c1, 0x400fc030: 0x33f71f92,
         0x400fc038: 0x00029150, 0x400fc060: 0x00120001,
-        0x400d8020: 0x12000, 0x400d8070: 0x80002020,
+        0x400d8010: 0x80003040, 0x400d8020: 0x12000, 0x400d8070: 0x80002020,
         0x400d8170: 0x00272727,
         0x400d80a0: 0x13000, 0x400d80e0: 0x80312001,
         0xe000e010: 0, 0xe000ed08: 0x80000000,

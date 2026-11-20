@@ -49,6 +49,8 @@ the resulting complete values are assumptions, not hardware measurements.
 The USB2, video and Ethernet PLL controls reflect the bootloader's recovered
 bypass/power sequence. Ethernet LOCK is seeded based on the successful
 bootloader wait; these PLLs' timing and outputs are not simulated.
+USB1 is initialized powered, enabled and out of bypass with the 480 MHz
+selection; its LOCK status follows the existing immediate-lock model.
 For L6max, PLL_AUDIO SET/CLR/TOG aliases update the control register and
 LOCK follows enable/power state immediately; physical lock timing is not
 modeled.

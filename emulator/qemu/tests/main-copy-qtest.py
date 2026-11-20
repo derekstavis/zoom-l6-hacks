@@ -104,14 +104,17 @@ def run(qemu, directory, model):
             assert command(f"readl {BASE + 0x100:#x}") == 0x55667788
             assert command(f"readl {BASE + 0x1000:#x}") == 0xa1b2c3d4
 
-            # Older state without a valid footer falls back to the trailer.
+            # Older state without a valid footer uses the full slot, even if
+            # the package trailer contains a valid but stale shorter length.
             write_nor(0x1f7ff8, 0xffffffff)
             write_nor(0x1f2ff8, 0x1100)
             write_nor(NOR_MAIN + 0x10fc, 0x11223344)
+            write_nor(NOR_MAIN + 0x1100, 0x31415926)
             command(f"writel {BASE + 0x1100:#x} 0xabcdef01")
             qmp_execute("system_reset")
             assert command(f"readl {BASE + 0x10fc:#x}") == 0x11223344
-            assert command(f"readl {BASE + 0x1100:#x}") == 0xabcdef01
+            assert command(f"readl {BASE + 0x1100:#x}") == 0x31415926
+            assert command(f"readl {BASE + SLOT - 4:#x}") == 0x10203040
 
             # Both lengths invalid: compatibility fallback is bounded to the
             # MAIN slot, excluding the fixed trailer immediately following it.

@@ -5151,12 +5151,10 @@ static void l6_main_reset(MachineState *machine, ResetType type)
 
     if (type != RESET_TYPE_SNAPSHOT_LOAD && s->profile == &L6MAX_PROFILE) {
         /* Bootloader 1.00 reads the installed length from the boot-data
-         * footer. Older emulator state lacks it; use the package trailer,
-         * then a bounded compatibility fallback. */
+         * footer. If older emulator state lacks a valid footer, preserve the
+         * previous emulator's complete MAIN-slot copy rather than trusting a
+         * potentially stale package trailer. */
         uint32_t length = ldl_le_p(s->nor_flash + 0x1f7ff8);
-        if (length < 8 || length > 0x1a2ff8) {
-            length = ldl_le_p(s->nor_flash + 0x1f2ff8);
-        }
         if (length < 8 || length > 0x1a2ff8) {
             length = 0x1a2ff8;
         }

@@ -97,10 +97,10 @@ the captured ROM and bootloader transferred to a synthetic `0x1a2ff8`-byte
 MAIN and copied a marker at its last word; this tests the modeled copy path,
 not physical update acceptance or safe use of the entire image. The emulator's L6max direct boot
 copies that many bytes from current emulated NOR into writable SDRAM on reset.
-For older emulated state without a valid installed length it uses the package
-trailer, then the bounded slot size. These fallbacks are emulator compatibility
-behavior; L6 and other L6max firmware or bootloader revisions are not covered
-by the L6max 1.10 measurements above.
+For older emulated state without a valid installed length it copies the entire
+bounded slot, as the emulator did previously. This fallback is emulator
+compatibility behavior; L6 and other L6max firmware or bootloader revisions
+are not covered by the L6max 1.10 measurements above.
 
 The error record `FW UPDT ERR\0` starts at `0x1ff008`. The application consumes
 and erases these handoff records during startup. See the

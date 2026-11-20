@@ -226,7 +226,7 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
     let model = l6fw::model_from_main(&main).map_err(|e| e.to_string())?;
     crate::requirements::check_firmware(
         scenario,
-        crate::model_name(model),
+        model,
         &crate::firmware::identify(&main, &options.logs),
     )?;
     if scenario.step.iter().any(|s| {
@@ -468,7 +468,7 @@ pub fn run_wasm_patch(options: &Options) -> Result<(), String> {
     let main = fs::read(options.firmware_dir.join("main_firmware.bin"))
         .map_err(|error| error.to_string())?;
     let model = l6fw::model_from_main(&main).map_err(|error| error.to_string())?;
-    let label = crate::model_name(model);
+    let label = model.name();
     let root = options.logs.join("wasm-patch-lifecycle");
     fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     let stock_path = root.join("stock.bin");
@@ -7990,7 +7990,7 @@ fn verify_sai_edma_trace(
                 .ok_or_else(|| {
                     format!(
                         "{} SAI at {base:#010x} did not enable {direction} FIFO DMA requests",
-                        crate::scenario::model_name(model)
+                        model.name()
                     )
                 })?;
             enable_times.push(enabled_at);
@@ -8014,7 +8014,7 @@ fn verify_sai_edma_trace(
             {
                 return Err(format!(
                     "{} SAI at {base:#010x} had no post-enable {direction} FIFO traffic",
-                    crate::scenario::model_name(model)
+                    model.name()
                 )
                 .into());
             }
@@ -8025,7 +8025,7 @@ fn verify_sai_edma_trace(
             {
                 return Err(format!(
                     "{} SAI {direction} at {base:#010x} had no eDMA channel {channel} TCD activity",
-                    crate::scenario::model_name(model)
+                    model.name()
                 )
                 .into());
             }

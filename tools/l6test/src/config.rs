@@ -9,7 +9,7 @@ use std::{
 /// What the driver runs with: the configuration's firmware packages, and the QEMU
 /// and packaged app chosen for this run.
 pub(crate) struct Config {
-    pub(crate) firmware: BTreeMap<String, PathBuf>,
+    pub(crate) firmware: BTreeMap<l6fw::Model, PathBuf>,
     pub(crate) qemu: PathBuf,
     pub(crate) qemu_sha256: String,
     pub(crate) app: Option<App>,
@@ -78,14 +78,15 @@ pub(crate) fn load_config(
     app: Option<&Path>,
 ) -> Result<Config, String> {
     let path = fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let firmware = l6max_host::config::Config::load(&path)?.firmware;
-    for (model, firmware) in &firmware {
-        if !firmware.is_file() {
+    let mut firmware = BTreeMap::new();
+    for (model, package) in l6max_host::config::Config::load(&path)?.firmware {
+        if !package.is_file() {
             return Err(format!(
                 "firmware for {model} must be an update package: {}",
-                firmware.display()
+                package.display()
             ));
         }
+        firmware.insert(model.parse()?, package);
     }
     let qemu = resolve_qemu(root, build, qemu)?;
     Ok(Config {

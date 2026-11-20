@@ -21,12 +21,13 @@ use catalog::Case;
 use config::{Config, load_config};
 use fixture::case_fixture;
 use hashing::{files, hash};
+use l6fw::Model;
 use l6max_host::engine::Options;
 use report::{CaseResult, Outcome};
 use schedule::schedule;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use smoke_core::Scenario;
+use smoke_core::{Backend, Scenario};
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
@@ -216,7 +217,11 @@ fn execute() -> Result<i32, String> {
             println!(
                 "{:<24} {:<12} {}{}",
                 case.id,
-                case.models.join(","),
+                case.models
+                    .iter()
+                    .map(|model| model.name())
+                    .collect::<Vec<_>>()
+                    .join(","),
                 case.suites.join(","),
                 if case.scenario.is_none() {
                     " [packaged app required]"
@@ -337,10 +342,10 @@ fn execute() -> Result<i32, String> {
         println!("Preflight passed. QEMU is pinned by binary hash for this run.");
         return Ok(0);
     }
-    let backends: Vec<&str> = if args.backend == "both" {
-        vec!["headless", "gui"]
-    } else {
-        vec![&args.backend]
+    let backends = match args.backend.as_str() {
+        "both" => vec![Backend::Headless, Backend::Gui],
+        "gui" => vec![Backend::Gui],
+        _ => vec![Backend::Headless],
     };
     // Expand cases into jobs before building, so only the executables the
     // selected jobs need are built.
@@ -354,7 +359,8 @@ fn execute() -> Result<i32, String> {
         for model in case
             .models
             .iter()
-            .filter(|m| args.model == "all" || *m == &args.model)
+            .copied()
+            .filter(|m| args.model == "all" || m.name() == args.model)
         {
             for backend in catalog::backends(case, scenario.as_ref(), &backends) {
                 if args
@@ -367,11 +373,11 @@ fn execute() -> Result<i32, String> {
                     continue;
                 }
                 // GUI windows are the remaining host-wide exclusive resource.
-                let exclusive = backend == "gui";
+                let exclusive = backend == Backend::Gui;
                 let midi_namespace = format!("p{}-{}", std::process::id(), jobs.len());
                 jobs.push(Job {
                     case,
-                    model: model.clone(),
+                    model,
                     backend,
                     exclusive,
                     midi_namespace,
@@ -390,7 +396,7 @@ fn execute() -> Result<i32, String> {
         if case.blocked.is_some() || case.scenario.is_none() && config.app.is_none() {
             continue;
         }
-        if job.backend == "gui" && case.scenario.is_some() {
+        if job.backend == Backend::Gui && case.scenario.is_some() {
             packages.insert("l6max-gui");
         }
         needs_l6patch |= case
@@ -468,7 +474,7 @@ fn execute() -> Result<i32, String> {
         update_references: args.update_references,
     };
     let run_job = |job: &Job| -> CaseResult {
-        let case_span = tracing::info_span!("smoke_case",case=%job.case.id,model=%job.model,backend=job.backend,artifacts=%job.dir.display());
+        let case_span = tracing::info_span!("smoke_case",case=%job.case.id,model=%job.model,backend=job.backend.name(),artifacts=%job.dir.display());
         let _entered = case_span.enter();
         tracing::info!(event = "case_started", "case started");
         let fixture = job
@@ -477,9 +483,7 @@ fn execute() -> Result<i32, String> {
             .as_ref()
             .map(|path| Scenario::load(&catalog::scenario_file(path)))
             .transpose()
-            .and_then(|scenario| {
-                case_fixture(&config, &job.model, &job.case.id, scenario.as_ref())
-            });
+            .and_then(|scenario| case_fixture(&config, job.model, &job.case.id, scenario.as_ref()));
         let result = match fixture {
             Ok(fixture) => report::with_retries(args.retries, |attempt| {
                 let (dir, namespace) = if attempt == 1 {
@@ -494,7 +498,7 @@ fn execute() -> Result<i32, String> {
             }),
             Err(detail) => CaseResult {
                 detail,
-                ..CaseResult::new(&job.case.id, &job.model, job.backend, &job.dir)
+                ..CaseResult::new(&job.case.id, job.model, job.backend, &job.dir)
             },
         };
         let mut result = result;
@@ -558,8 +562,8 @@ fn execute() -> Result<i32, String> {
 }
 struct Job<'a> {
     case: &'a Case,
-    model: String,
-    backend: &'a str,
+    model: Model,
+    backend: Backend,
     exclusive: bool,
     midi_namespace: String,
     dir: PathBuf,

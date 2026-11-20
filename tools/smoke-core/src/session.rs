@@ -114,7 +114,7 @@ impl Session {
 
 /// Execute a scenario without GPUI, with the production panel feed and shared assertions.
 pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
-    if !scenario.backends.iter().any(|b| b == "headless") {
+    if !scenario.backends.contains(&crate::Backend::Headless) {
         return Err("scenario does not support headless execution".into());
     }
     if scenario.step.len() == 1 && matches!(scenario.step[0].action, crate::Action::FirmwareUpdate)
@@ -128,7 +128,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
         let report = json!({
             "schema": 1,
             "scenario": scenario.name,
-            "model": crate::model_name(model),
+            "model": model.name(),
             "outcome": if result.is_ok() { "PASS" } else { "FAIL" },
             "failed_step": if result.is_err() { Some(1) } else { None },
             "error": result.as_ref().err(),
@@ -152,7 +152,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
         let report = json!({
             "schema": 1,
             "scenario": scenario.name,
-            "model": crate::model_name(model),
+            "model": model.name(),
             "outcome": if result.is_ok() { "PASS" } else { "FAIL" },
             "failed_step": if result.is_err() { Some(1) } else { None },
             "error": result.as_ref().err(),

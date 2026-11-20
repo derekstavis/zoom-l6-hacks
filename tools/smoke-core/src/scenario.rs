@@ -7,10 +7,28 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-pub fn model_name(model: Model) -> &'static str {
-    match model {
-        Model::L6 => "l6",
-        Model::L6max => "l6max",
+/// How a case drives the emulator.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Backend {
+    /// The scenario runner drives a headless engine.
+    Headless,
+    /// The scenario runs through the GUI.
+    Gui,
+}
+
+impl Backend {
+    pub fn name(self) -> &'static str {
+        match self {
+            Backend::Headless => "headless",
+            Backend::Gui => "gui",
+        }
+    }
+}
+
+impl std::fmt::Display for Backend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
     }
 }
 
@@ -19,7 +37,7 @@ pub fn model_name(model: Model) -> &'static str {
 pub struct Scenario {
     pub version: u32,
     pub name: String,
-    pub models: Vec<String>,
+    pub models: Vec<Model>,
     /// Boot from the state spec `tests/emulator/fixtures/states/<model>-<state>.toml`;
     /// [`DEFAULT_STATE`] when the file names none, and no state (first boot)
     /// for `"none"`.
@@ -51,7 +69,7 @@ pub struct Scenario {
     pub sd_bundle_mode: Option<String>,
     /// Patches for the update package, per model, applied to the configured package.
     #[serde(default)]
-    pub update_patches: std::collections::BTreeMap<String, Vec<String>>,
+    pub update_patches: std::collections::BTreeMap<Model, Vec<String>>,
     #[serde(default)]
     pub gdb: bool,
     pub audio_device: Option<String>,
@@ -59,7 +77,7 @@ pub struct Scenario {
     #[serde(default)]
     pub audio_input: Vec<AudioInput>,
     #[serde(default = "default_backends")]
-    pub backends: Vec<String>,
+    pub backends: Vec<Backend>,
     #[serde(default)]
     pub trace_sd: bool,
     pub step: Vec<Step>,
@@ -82,7 +100,7 @@ pub struct AudioInput {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Step {
     #[serde(default)]
-    pub models: Vec<String>,
+    pub models: Vec<Model>,
     /// UI input that only brings the device to the scenario's starting
     /// state. Skipped when the case state was built from a state spec.
     #[serde(default)]
@@ -94,8 +112,15 @@ pub struct Step {
     #[serde(flatten)]
     pub action: Action,
 }
-fn default_backends() -> Vec<String> {
-    vec!["headless".into(), "gui".into()]
+impl Step {
+    /// Whether the step runs on `model`; a step without its own models runs
+    /// on every model the scenario supports.
+    pub fn applies_to(&self, model: Model) -> bool {
+        self.models.is_empty() || self.models.contains(&model)
+    }
+}
+fn default_backends() -> Vec<Backend> {
+    vec![Backend::Headless, Backend::Gui]
 }
 fn default_midi_cable() -> u8 {
     1
@@ -548,10 +573,9 @@ impl Scenario {
                 return Err("unknown SD patch name".into());
             }
             for model in &value.models {
-                let firmware_model = match model.as_str() {
-                    "l6" => firmware_patch_core::FirmwareModel::L6,
-                    "l6max" => firmware_patch_core::FirmwareModel::L6max,
-                    _ => unreachable!("models are validated before patch support"),
+                let firmware_model = match model {
+                    Model::L6 => firmware_patch_core::FirmwareModel::L6,
+                    Model::L6max => firmware_patch_core::FirmwareModel::L6max,
                 };
                 if let Some(name) = patches
                     .iter()
@@ -578,8 +602,7 @@ impl Scenario {
             )
             .map_err(|error| format!("invalid effect_replacements: {error}"))?;
         }
-        if value.backends.is_empty() || value.backends.iter().any(|b| b != "headless" && b != "gui")
-        {
+        if value.backends.is_empty() {
             return Err("backends must contain headless and/or gui".into());
         }
         let mut checkpoints = std::collections::BTreeSet::new();
@@ -606,8 +629,8 @@ impl Scenario {
                     if *pad > 3 {
                         return Err("l6max-ui-pad-assignment pad must be 0..3".into());
                     }
-                    if value.models.as_slice() != ["l6max"]
-                        || step.models.iter().any(|model| model != "l6max")
+                    if value.models.as_slice() != [Model::L6max]
+                        || step.models.iter().any(|model| *model != Model::L6max)
                     {
                         return Err(
                             "l6max-ui-pad-assignment scenarios must be scoped to L6max".into()
@@ -624,9 +647,9 @@ impl Scenario {
                     if *pad > 3 {
                         return Err("editor-pad-playback pad must be 0..3".into());
                     }
-                    if step.models.iter().any(|model| model != "l6")
+                    if step.models.iter().any(|model| *model != Model::L6)
                         || (step.models.is_empty()
-                            && value.models.iter().any(|model| model != "l6"))
+                            && value.models.iter().any(|model| *model != Model::L6))
                     {
                         return Err("editor-pad-playback scenarios must be scoped to L6".into());
                     }
@@ -659,9 +682,9 @@ impl Scenario {
                     if *target != 4 {
                         return Err("l6-recorder-playback requires MAIN target 4".into());
                     }
-                    if step.models.iter().any(|model| model != "l6")
+                    if step.models.iter().any(|model| *model != Model::L6)
                         || (step.models.is_empty()
-                            && value.models.iter().any(|model| model != "l6"))
+                            && value.models.iter().any(|model| *model != Model::L6))
                     {
                         return Err("l6-recorder-playback scenarios must be scoped to L6".into());
                     }
@@ -690,15 +713,8 @@ impl Scenario {
             }
             if let Action::ExpectMode { mode } | Action::SelectMode { mode } = &step.action {
                 for model in &value.models {
-                    if step.models.is_empty() || step.models.contains(model) {
-                        mode_index(
-                            if model == "l6" {
-                                Model::L6
-                            } else {
-                                Model::L6max
-                            },
-                            mode,
-                        )?;
+                    if step.applies_to(*model) {
+                        mode_index(*model, mode)?;
                     }
                 }
             }
@@ -757,22 +773,12 @@ impl Scenario {
                 return Err(format!("expect-menu names an unknown menu {menu:?}"));
             }
             if matches!(step.action, Action::FirmwareUpdate)
-                && (value.models.is_empty()
-                    || value.step.len() != 1
-                    || step
-                        .models
-                        .iter()
-                        .any(|m| !["l6", "l6max"].contains(&m.as_str())))
+                && (value.models.is_empty() || value.step.len() != 1)
             {
                 return Err("firmware-update is a standalone L6/L6max scenario operation".into());
             }
             if matches!(step.action, Action::WasmPatch)
-                && (value.models.is_empty()
-                    || value.step.len() != 1
-                    || step
-                        .models
-                        .iter()
-                        .any(|m| !["l6", "l6max"].contains(&m.as_str())))
+                && (value.models.is_empty() || value.step.len() != 1)
             {
                 return Err("wasm-patch is a standalone L6/L6max scenario operation".into());
             }
@@ -846,12 +852,8 @@ impl Scenario {
                     );
                 }
                 for model in &value.models {
-                    if step.models.is_empty() || step.models.contains(model) {
-                        let model = if model == "l6" {
-                            Model::L6
-                        } else {
-                            Model::L6max
-                        };
+                    if step.applies_to(*model) {
+                        let model = *model;
                         let mut targets = std::collections::BTreeSet::new();
                         for control in controls {
                             let target = control_target(model, control)?;
@@ -925,9 +927,9 @@ impl Scenario {
                     return Err("scene index must be between 1 and 3".into());
                 }
                 Action::SaveScene { .. }
-                    if (value.models.iter().any(|m| m == "l6max")
+                    if (value.models.iter().any(|m| *m == Model::L6max)
                         && (step.models.is_empty()
-                            || step.models.iter().any(|m| m == "l6max"))) =>
+                            || step.models.iter().any(|m| *m == Model::L6max))) =>
                 {
                     return Err("save-scene currently supports L6 only".into());
                 }
@@ -935,29 +937,23 @@ impl Scenario {
                     return Err("scene index must be between 1 and 3".into());
                 }
                 Action::ExpectScene { .. }
-                    if (value.models.iter().any(|m| m == "l6max")
+                    if (value.models.iter().any(|m| *m == Model::L6max)
                         && (step.models.is_empty()
-                            || step.models.iter().any(|m| m == "l6max"))) =>
+                            || step.models.iter().any(|m| *m == Model::L6max))) =>
                 {
                     return Err("scene lamp assertions currently support L6 only".into());
                 }
                 Action::ExpectButtonLed { control, .. } => {
                     for model in &value.models {
-                        if step.models.is_empty() || step.models.contains(model) {
-                            l6_button_led_index(
-                                if model == "l6" {
-                                    Model::L6
-                                } else {
-                                    Model::L6max
-                                },
-                                control,
-                            )?;
+                        if step.applies_to(*model) {
+                            l6_button_led_index(*model, control)?;
                         }
                     }
                 }
                 Action::ExpectEffect { .. }
-                    if value.models.iter().any(|m| m == "l6max")
-                        && (step.models.is_empty() || step.models.iter().any(|m| m == "l6max")) =>
+                    if value.models.iter().any(|m| *m == Model::L6max)
+                        && (step.models.is_empty()
+                            || step.models.iter().any(|m| *m == Model::L6max)) =>
                 {
                     return Err("effect assertions currently support L6 only".into());
                 }
@@ -977,36 +973,15 @@ impl Scenario {
                 | Action::ExpectButtonReport { control }
                 | Action::ExpectStartupReport { control } => {
                     for model in &value.models {
-                        if step.models.is_empty() || step.models.contains(model) {
-                            let target = control_target(
-                                if model == "l6" {
-                                    Model::L6
-                                } else {
-                                    Model::L6max
-                                },
-                                control,
-                            )?;
+                        if step.applies_to(*model) {
+                            let target = control_target(*model, control)?;
                             if matches!(step.action, Action::Switch { .. })
-                                && !is_switch(
-                                    if model == "l6" {
-                                        Model::L6
-                                    } else {
-                                        Model::L6max
-                                    },
-                                    target,
-                                )
+                                && !is_switch(*model, target)
                             {
                                 return Err("switch action requires a latching switch".into());
                             }
                             if matches!(step.action, Action::Press { .. } | Action::Hold { .. })
-                                && is_switch(
-                                    if model == "l6" {
-                                        Model::L6
-                                    } else {
-                                        Model::L6max
-                                    },
-                                    target,
-                                )
+                                && is_switch(*model, target)
                             {
                                 return Err("use switch action for a latching switch".into());
                             }
@@ -1015,14 +990,7 @@ impl Scenario {
                                 Action::ExpectButtonReport { .. }
                                     | Action::ExpectStartupReport { .. }
                             ) {
-                                trace::button_packets(
-                                    if model == "l6" {
-                                        Model::L6
-                                    } else {
-                                        Model::L6max
-                                    },
-                                    control,
-                                )?;
+                                trace::button_packets(*model, control)?;
                             }
                         }
                     }
@@ -1090,8 +1058,8 @@ impl Scenario {
             | Action::ExpectMute { channel } = &step.action
             {
                 for model in &value.models {
-                    if (step.models.is_empty() || step.models.contains(model))
-                        && !(1..=if model == "l6" { 6 } else { 8 }).contains(channel)
+                    if step.applies_to(*model)
+                        && !(1..=if *model == Model::L6 { 6 } else { 8 }).contains(channel)
                     {
                         return Err(format!("channel {channel} is not available on {model}"));
                     }
@@ -1197,7 +1165,7 @@ struct Fragment {
 /// the scenario does not run (`scope`) are left out.
 fn expand_steps(
     steps: Vec<Step>,
-    scope: &[String],
+    scope: &[Model],
     stack: &mut Vec<PathBuf>,
     sources: &mut Vec<PathBuf>,
 ) -> Result<Vec<Step>, String> {
@@ -1245,8 +1213,8 @@ fn expand_steps(
     }
     Ok(expanded)
 }
-fn validate_models(models: &[String]) -> Result<(), String> {
-    if models.is_empty() || models.iter().any(|m| m != "l6" && m != "l6max") {
+fn validate_models(models: &[Model]) -> Result<(), String> {
+    if models.is_empty() {
         return Err("models must contain l6 and/or l6max".into());
     }
     Ok(())

@@ -3,8 +3,10 @@
 //! `report.json` schema 2 keeps every schema 1 field of a result (`case`,
 //! `model`, `backend`, `outcome`, `detail`, `artifacts`) and adds the phase a
 //! case stopped in, durations, attempts and input identities.
+use l6fw::Model;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use smoke_core::Backend;
 use std::{collections::BTreeMap, fmt, io::Write, path::Path, path::PathBuf};
 
 pub const SCHEMA: u32 = 2;
@@ -120,8 +122,8 @@ pub struct Attempt {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CaseResult {
     pub case: String,
-    pub model: String,
-    pub backend: String,
+    pub model: Model,
+    pub backend: Backend,
     pub outcome: Outcome,
     pub detail: String,
     pub artifacts: PathBuf,
@@ -141,11 +143,11 @@ pub struct CaseResult {
 }
 
 impl CaseResult {
-    pub fn new(case: &str, model: &str, backend: &str, artifacts: &Path) -> Self {
+    pub fn new(case: &str, model: Model, backend: Backend, artifacts: &Path) -> Self {
         Self {
             case: case.into(),
-            model: model.into(),
-            backend: backend.into(),
+            model,
+            backend,
             outcome: Outcome::Blocked,
             detail: String::new(),
             artifacts: artifacts.into(),
@@ -357,7 +359,12 @@ mod tests {
             phase,
             detail: format!("{outcome}"),
             duration_s: 1.0,
-            ..CaseResult::new("case", "l6max", "headless", Path::new("/run/case"))
+            ..CaseResult::new(
+                "case",
+                Model::L6max,
+                Backend::Headless,
+                Path::new("/run/case"),
+            )
         }
     }
 

@@ -7,17 +7,19 @@ use crate::{
     catalog::{Case, ExpectedFailure},
     config::Config,
     fixture::{
-        Fixture, engine_args, expand, fixture_options, package_model, prepare_sd_patch, wasm_patch,
+        Execution, Fixture, Inputs, engine_args, expand, fixture_options, package_model,
+        prepare_sd_patch, wasm_patch,
     },
     hashing::{digest, files, hash, hash_sparse},
     identity::CaseIdentity,
     report::{CaseError, CaseResult, InPhase, Outcome, Phase},
     supervise::{cancelled, supervise},
 };
+use l6fw::Model;
 use l6max_host::engine::Options;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use smoke_core::{Scenario, fixture_layout as layout};
+use smoke_core::{Backend, Scenario, fixture_layout as layout};
 use std::{
     collections::BTreeMap,
     env, fs,
@@ -50,7 +52,7 @@ struct Prepared {
     scenario: Option<Scenario>,
     fixture: Fixture,
     options: Options,
-    manifest: Value,
+    inputs: Inputs,
     spec_state: bool,
 }
 
@@ -69,12 +71,12 @@ pub(crate) fn run_case(
     ctx: &Context,
     fixture: &Fixture,
     case: &Case,
-    backend: &str,
+    backend: Backend,
     dir: &Path,
     midi_namespace: &str,
 ) -> CaseResult {
     let started = Instant::now();
-    let mut result = CaseResult::new(&case.id, &fixture.model, backend, dir);
+    let mut result = CaseResult::new(&case.id, fixture.model, backend, dir);
     match attempt(
         ctx,
         fixture,
@@ -126,7 +128,7 @@ fn attempt(
     ctx: &Context,
     fixture: &Fixture,
     case: &Case,
-    backend: &str,
+    backend: Backend,
     dir: &Path,
     midi_namespace: &str,
     result: &mut CaseResult,
@@ -149,7 +151,7 @@ fn preflight(
     ctx: &Context,
     fixture: &Fixture,
     case: &Case,
-    backend: &str,
+    backend: Backend,
 ) -> Result<Option<Scenario>, CaseError> {
     let blocked = |message: String| Err(CaseError::blocked(Phase::Preflight, message));
     if cancelled() {
@@ -165,7 +167,7 @@ fn preflight(
         .transpose()
         .failed_in(Phase::Preflight)?;
     if let Some(scenario) = &scenario
-        && !scenario.backends.iter().any(|b| b == backend)
+        && !scenario.backends.contains(&backend)
     {
         return blocked(format!("scenario does not support {backend} backend"));
     }
@@ -223,7 +225,7 @@ fn build_fixture(
     if case.no_sd {
         selected.card_spec = None;
     }
-    let (mut options, mut manifest) =
+    let (mut options, mut inputs) =
         fixture_options(ctx.config, &selected, dir, ctx.cache).failed_in(Phase::Fixture)?;
     if case.volatile && selected.state_spec.is_none() {
         options.state_dir = None;
@@ -234,9 +236,8 @@ fn build_fixture(
     }
     // Setup-input steps are skipped when the spec already built their result.
     let spec_state = selected.state_spec.is_some();
-    manifest["execution_spec_state"] = json!(spec_state);
     if let Some(scenario) = &scenario {
-        for file in layout::required(scenario, &fixture.model) {
+        for file in layout::required(scenario, fixture.model) {
             if !dir.join(&file).exists() {
                 return Err(failed(format!(
                     "the fixture lacks {file}, which the scenario reads"
@@ -263,23 +264,16 @@ fn build_fixture(
         })?;
     }
     (|| -> Result<(), String> {
-        manifest["execution_volatile"] = json!(case.volatile);
-        manifest["execution_no_sd"] = json!(case.no_sd);
-        manifest["execution_sd_sha256"] = options
-            .sd_image
-            .as_ref()
-            .map(|path| hash_sparse(path))
-            .transpose()?
-            .map_or(Value::Null, |value| json!(value));
-        manifest["execution_state_sha256"] = options
-            .state_dir
-            .as_ref()
-            .map(|path| files(path))
-            .transpose()?
-            .map_or(Value::Null, |value| json!(value));
+        inputs.execution = Some(Execution {
+            spec_state,
+            volatile: case.volatile,
+            no_sd: case.no_sd,
+            sd_sha256: options.sd_image.as_deref().map(hash_sparse).transpose()?,
+            state_sha256: options.state_dir.as_deref().map(files).transpose()?,
+        });
         fs::write(
             dir.join("inputs.json"),
-            serde_json::to_vec_pretty(&manifest).unwrap(),
+            serde_json::to_vec_pretty(&inputs).unwrap(),
         )
         .map_err(|e| e.to_string())
     })()
@@ -288,7 +282,7 @@ fn build_fixture(
         scenario,
         fixture: selected,
         options,
-        manifest,
+        inputs,
         spec_state,
     })
 }
@@ -297,7 +291,7 @@ fn build_fixture(
 fn plan_invocation(
     ctx: &Context,
     case: &Case,
-    backend: &str,
+    backend: Backend,
     dir: &Path,
     midi_namespace: &str,
     prepared: &Prepared,
@@ -312,7 +306,7 @@ fn plan_invocation(
             .ok_or("requires a packaged application; pass --app PATH")?
             .executable
             .clone(),
-        (Some(_), "headless") => ctx.output.join("bin/l6test"),
+        (Some(_), Backend::Headless) => ctx.output.join("bin/l6test"),
         (Some(_), _) => ctx.output.join("bin/l6max-gui"),
     };
     let binary_sha256 = hash(&binary)?;
@@ -327,8 +321,8 @@ fn plan_invocation(
     command.env("L6_LOG_FORMAT", log_format);
     command
         .env("SMOKE_CASE", &case.id)
-        .env("SMOKE_MODEL", &prepared.fixture.model)
-        .env("SMOKE_BACKEND", backend)
+        .env("SMOKE_MODEL", prepared.fixture.model.name())
+        .env("SMOKE_BACKEND", backend.name())
         .env(
             smoke_core::STATE_SPEC_ENV,
             if prepared.spec_state { "1" } else { "0" },
@@ -349,7 +343,7 @@ fn plan_invocation(
     );
     if let Some(path) = &case.scenario {
         let scenario = crate::catalog::scenario_file(path);
-        if backend == "headless" {
+        if backend == Backend::Headless {
             command.arg("__scenario").arg(&scenario);
         } else {
             command.arg("--smoke-scenario").arg(&scenario);
@@ -372,7 +366,7 @@ fn plan_invocation(
     }
     for (key, value) in &case.environment {
         let mut value = expand(value, options);
-        if let Some(package) = config.firmware.get("l6") {
+        if let Some(package) = config.firmware.get(&Model::L6) {
             value = value.replace("{l6_package}", &package.display().to_string());
         }
         if let Some(app) = &config.app {
@@ -412,15 +406,15 @@ fn plan_invocation(
 /// scenario.
 fn identify(ctx: &Context, prepared: &Prepared, invocation: &Invocation) -> Option<CaseIdentity> {
     prepared.scenario.as_ref()?;
-    let manifest = &prepared.manifest;
-    let text = |value: &Value| value.as_str().map(str::to_owned);
+    let inputs = &prepared.inputs;
+    let execution = inputs.execution.as_ref()?;
     Some(CaseIdentity {
         qemu_sha256: ctx.config.qemu_sha256.clone(),
         runner_sha256: invocation.binary_sha256.clone(),
-        firmware_package_sha256: text(&manifest["package_sha256"]),
-        firmware: digest(&manifest["firmware"]),
-        card_sha256: text(&manifest["execution_sd_sha256"]),
-        state: digest(&manifest["execution_state_sha256"]),
+        firmware_package_sha256: inputs.package_sha256.clone(),
+        firmware: digest(&json!(inputs.firmware)),
+        card_sha256: execution.sd_sha256.clone(),
+        state: digest(&json!(execution.state_sha256)),
         audio_input: invocation.audio_input.clone(),
     })
 }
@@ -509,20 +503,20 @@ mod tests {
     fn expected_failures_match_the_exact_step_and_error_and_expose_unexpected_passes() {
         let failures = [
             ExpectedFailure {
-                model: "l6".into(),
+                model: Model::L6,
                 step: 10,
                 contains: "ExpectRing".into(),
                 reason: "Link to the tracked investigation".into(),
             },
             // A second known failure for the same model must also match.
             ExpectedFailure {
-                model: "l6".into(),
+                model: Model::L6,
                 step: 12,
                 contains: "ExpectLed".into(),
                 reason: "Second investigation".into(),
             },
             ExpectedFailure {
-                model: "l6max".into(),
+                model: Model::L6max,
                 step: 3,
                 contains: "anything".into(),
                 reason: "Other model".into(),
@@ -541,14 +535,19 @@ mod tests {
             let mut result = CaseResult {
                 outcome: initial,
                 detail: detail.into(),
-                ..CaseResult::new("controls", model, "headless", Path::new(""))
+                ..CaseResult::new(
+                    "controls",
+                    model.parse().unwrap(),
+                    Backend::Headless,
+                    Path::new(""),
+                )
             };
             apply_expected(&mut result, &json!({"failed_step":step}), &failures);
             assert_eq!(result.outcome, expected, "{model} step {step}: {detail}");
         }
         let mut unlisted = CaseResult {
             outcome: Pass,
-            ..CaseResult::new("controls", "l6", "headless", Path::new(""))
+            ..CaseResult::new("controls", Model::L6, Backend::Headless, Path::new(""))
         };
         apply_expected(&mut unlisted, &json!({}), &[]);
         assert_eq!(unlisted.outcome, Pass);

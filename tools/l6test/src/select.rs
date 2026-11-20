@@ -1,6 +1,8 @@
 //! Case selection beyond one suite: id globs, shards and reruns of a report.
 use crate::report::Outcome;
+use l6fw::Model;
 use sha2::{Digest, Sha256};
+use smoke_core::Backend;
 use std::{collections::BTreeSet, path::Path};
 
 /// Match `text` against a glob of `*` (any run) and `?` (any one character).
@@ -62,7 +64,7 @@ impl Shard {
     }
     /// A job's shard depends only on its case, model and backend, so a shard
     /// keeps its cases when other cases are added or removed.
-    pub fn contains(&self, case: &str, model: &str, backend: &str) -> bool {
+    pub fn contains(&self, case: &str, model: Model, backend: Backend) -> bool {
         let digest = Sha256::digest(format!("{case}\0{model}\0{backend}").as_bytes());
         let value = u64::from_le_bytes(digest[..8].try_into().unwrap());
         value % self.count == self.index - 1
@@ -71,7 +73,7 @@ impl Shard {
 
 /// The jobs of an earlier report to run again.
 pub struct Rerun {
-    jobs: BTreeSet<(String, String, String)>,
+    jobs: BTreeSet<(String, Model, Backend)>,
 }
 
 /// Outcomes `--rerun` selects unless `--only` names others.
@@ -112,9 +114,8 @@ impl Rerun {
     pub fn has_case(&self, case: &str) -> bool {
         self.jobs.iter().any(|(id, _, _)| id == case)
     }
-    pub fn contains(&self, case: &str, model: &str, backend: &str) -> bool {
-        self.jobs
-            .contains(&(case.to_owned(), model.to_owned(), backend.to_owned()))
+    pub fn contains(&self, case: &str, model: Model, backend: Backend) -> bool {
+        self.jobs.contains(&(case.to_owned(), model, backend))
     }
     pub fn is_empty(&self) -> bool {
         self.jobs.is_empty()
@@ -153,7 +154,7 @@ mod tests {
             let owners: Vec<_> = shards
                 .iter()
                 .enumerate()
-                .filter(|(_, s)| s.contains(job, "l6max", "headless"))
+                .filter(|(_, s)| s.contains(job, Model::L6max, Backend::Headless))
                 .map(|(i, _)| i)
                 .collect();
             assert_eq!(owners.len(), 1, "{job} belongs to exactly one shard");
@@ -161,10 +162,10 @@ mod tests {
         }
         assert!(sizes.iter().all(|size| *size > 60), "{sizes:?}");
         assert!(
-            shards[0].contains("case-0", "l6max", "headless")
+            shards[0].contains("case-0", Model::L6max, Backend::Headless)
                 == Shard::parse("1/3")
                     .unwrap()
-                    .contains("case-0", "l6max", "headless")
+                    .contains("case-0", Model::L6max, Backend::Headless)
         );
         assert!(Shard::parse("0/3").is_err());
         assert!(Shard::parse("4/3").is_err());
@@ -184,10 +185,10 @@ mod tests {
         )
         .unwrap();
         let rerun = Rerun::load(&dir, RERUN_DEFAULT).unwrap();
-        assert!(rerun.contains("a", "l6", "headless"));
+        assert!(rerun.contains("a", Model::L6, Backend::Headless));
         assert!(!rerun.has_case("b"));
-        assert!(rerun.contains("c", "l6max", "gui"));
-        assert!(!rerun.contains("c", "l6max", "headless"));
+        assert!(rerun.contains("c", Model::L6max, Backend::Gui));
+        assert!(!rerun.contains("c", Model::L6max, Backend::Headless));
         let only = Rerun::load(&dir, &parse_outcomes("pass").unwrap()).unwrap();
         assert!(only.has_case("b") && !only.has_case("a"));
         assert!(parse_outcomes("nope").is_err());

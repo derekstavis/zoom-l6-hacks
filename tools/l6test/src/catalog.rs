@@ -7,10 +7,11 @@
 //! (`scenario`, to run it differently) or, with neither, drives the packaged
 //! application. A case's id is its file name.
 use crate::patch_matrix;
+use l6fw::Model;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use smoke_core::Scenario;
+use smoke_core::{Backend, Scenario};
 use std::{
     collections::BTreeMap,
     fs,
@@ -87,7 +88,7 @@ pub const PATCH_SPEC: &str = "tests/emulator";
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExpectedFailure {
-    pub model: String,
+    pub model: Model,
     pub step: usize,
     pub contains: String,
     pub reason: String,
@@ -101,7 +102,7 @@ struct Header {
     scenario: Option<PathBuf>,
     /// The models of a case without a scenario of its own; otherwise the
     /// scenario's `models` decide.
-    models: Option<Vec<String>>,
+    models: Option<Vec<Model>>,
     #[serde(default)]
     suites: Vec<String>,
     #[serde(default)]
@@ -125,7 +126,7 @@ pub struct Case {
     pub expected_failure: Vec<ExpectedFailure>,
     pub id: String,
     pub suites: Vec<String>,
-    pub models: Vec<String>,
+    pub models: Vec<Model>,
     /// The scenario file, from the repository root (absolute for generated
     /// cases). None for a case that drives the packaged application.
     pub scenario: Option<PathBuf>,
@@ -164,7 +165,7 @@ pub fn spec_dirs(root: &Path) -> Result<Vec<PathBuf>, String> {
 }
 
 /// A state spec for `model`, by the name a scenario gives it.
-pub fn state_spec(model: &str, name: &str) -> PathBuf {
+pub fn state_spec(model: Model, name: &str) -> PathBuf {
     l6max_host::paths::repository_root().join(format!("{SPEC}/fixtures/states/{model}-{name}.toml"))
 }
 
@@ -280,7 +281,7 @@ pub fn load(root: &Path) -> Result<Catalog, String> {
             expected_failure: Vec::new(),
             id: case.id.clone(),
             suites: case.suites.iter().map(|suite| (*suite).into()).collect(),
-            models: vec![case.model.into()],
+            models: vec![case.model.parse()?],
             // Replaced by the written file in `write_generated`.
             scenario: Some(PathBuf::from(format!("generated/{}.toml", case.id))),
             environment: BTreeMap::new(),
@@ -340,19 +341,19 @@ pub fn write_generated(catalog: &mut Catalog, dir: &Path) -> Result<(), String> 
 /// The backends a case runs on, given the requested ones. A `gui` scenario
 /// case runs on the GUI whatever was requested; a case without a scenario runs
 /// on its declared backend.
-pub fn backends<'a>(
-    case: &Case,
-    scenario: Option<&Scenario>,
-    requested: &[&'a str],
-) -> Vec<&'a str> {
+pub fn backends(case: &Case, scenario: Option<&Scenario>, requested: &[Backend]) -> Vec<Backend> {
     match scenario {
-        Some(_) if case.gui => vec!["gui"],
+        Some(_) if case.gui => vec![Backend::Gui],
         Some(scenario) => requested
             .iter()
             .copied()
-            .filter(|b| scenario.backends.iter().any(|s| s == b))
+            .filter(|backend| scenario.backends.contains(backend))
             .collect(),
-        None => vec![if case.gui { "gui" } else { "headless" }],
+        None => vec![if case.gui {
+            Backend::Gui
+        } else {
+            Backend::Headless
+        }],
     }
 }
 
@@ -361,8 +362,8 @@ pub fn backends<'a>(
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub struct Row {
     pub case: String,
-    pub model: String,
-    pub backend: String,
+    pub model: Model,
+    pub backend: Backend,
     pub suites: Vec<String>,
     /// Digest of what the case runs for this model, independent of where its
     /// files live and how they are composed: the scenario's steps for this
@@ -372,7 +373,7 @@ pub struct Row {
 }
 
 /// Digest of what `case` runs for `model`; see [`Row::definition`].
-fn definition(case: &Case, scenario: Option<&Scenario>, model: &str) -> Result<String, String> {
+fn definition(case: &Case, scenario: Option<&Scenario>, model: Model) -> Result<String, String> {
     let (scenario, state, card) = match scenario {
         Some(scenario) => (
             Some(resolved_scenario(scenario, model)?),
@@ -389,7 +390,7 @@ fn definition(case: &Case, scenario: Option<&Scenario>, model: &str) -> Result<S
                 .card
                 .as_ref()
                 .map(|name| {
-                    let spec = sd_image::spec::CardSpec::load_for(&card_spec(name), model)?;
+                    let spec = sd_image::spec::CardSpec::load_for(&card_spec(name), model.name())?;
                     serde_json::to_value(spec).map_err(|e| e.to_string())
                 })
                 .transpose()?,
@@ -419,7 +420,7 @@ fn definition(case: &Case, scenario: Option<&Scenario>, model: &str) -> Result<S
 /// how they are composed: its steps after includes, kept to those for `model`,
 /// without its name or model list, and with each reference image replaced by
 /// its content hash.
-pub(crate) fn resolved_scenario(scenario: &Scenario, model: &str) -> Result<Value, String> {
+pub(crate) fn resolved_scenario(scenario: &Scenario, model: Model) -> Result<Value, String> {
     let mut value = serde_json::to_value(scenario).map_err(|e| e.to_string())?;
     let object = value.as_object_mut().unwrap();
     object.remove("name");
@@ -428,7 +429,7 @@ pub(crate) fn resolved_scenario(scenario: &Scenario, model: &str) -> Result<Valu
     steps.retain(|step| {
         step["models"]
             .as_array()
-            .is_none_or(|models| models.is_empty() || models.iter().any(|m| m == model))
+            .is_none_or(|models| models.is_empty() || models.iter().any(|m| m == model.name()))
     });
     for step in steps.iter_mut() {
         let step = step.as_object_mut().unwrap();
@@ -453,20 +454,27 @@ pub fn matrix(catalog: &Catalog) -> Result<Vec<Row>, String> {
     for case in &catalog.cases {
         let scenario = catalog.scenarios.get(&case.id);
         for model in &case.models {
-            let definition = definition(case, scenario, model)
+            let definition = definition(case, scenario, *model)
                 .map_err(|error| format!("{}: {error}", case.id))?;
-            for backend in backends(case, scenario, &["headless", "gui"]) {
+            for backend in backends(case, scenario, &[Backend::Headless, Backend::Gui]) {
                 rows.push(Row {
                     case: case.id.clone(),
-                    model: model.clone(),
-                    backend: backend.into(),
+                    model: *model,
+                    backend,
                     suites: case.suites.clone(),
                     definition: definition.clone(),
                 });
             }
         }
     }
-    rows.sort_by(|a, b| (&a.case, &a.model, &a.backend).cmp(&(&b.case, &b.model, &b.backend)));
+    // By name, so the order matches the serialized rows.
+    rows.sort_by(|a, b| {
+        (&a.case, a.model.name(), a.backend.name()).cmp(&(
+            &b.case,
+            b.model.name(),
+            b.backend.name(),
+        ))
+    });
     Ok(rows)
 }
 

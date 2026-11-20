@@ -7,7 +7,8 @@
 //! [`check_firmware`] checks the booted firmware before the guest starts, so
 //! an unmet requirement is reported before anything runs.
 use crate::firmware::FirmwareIdentity;
-use crate::scenario::{Action, Scenario};
+use crate::scenario::{Action, Backend, Scenario};
+use l6fw::Model;
 
 /// The firmware an action can run on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,7 +25,7 @@ pub enum Firmware {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Requirement {
     /// Models the action supports; empty means every model.
-    pub models: &'static [&'static str],
+    pub models: &'static [Model],
     pub firmware: Firmware,
     /// The action drives devices only the headless runner emulates.
     pub headless: bool,
@@ -42,13 +43,13 @@ const HEADLESS: Requirement = Requirement {
     headless: true,
     ..ANY
 };
-const L6: &[&str] = &["l6"];
-const L6MAX: &[&str] = &["l6max"];
+const L6: &[Model] = &[Model::L6];
+const L6MAX: &[Model] = &[Model::L6max];
 
-const fn on(models: &'static [&'static str]) -> Requirement {
+const fn on(models: &'static [Model]) -> Requirement {
     Requirement { models, ..HEADLESS }
 }
-const fn stock_on(models: &'static [&'static str]) -> Requirement {
+const fn stock_on(models: &'static [Model]) -> Requirement {
     Requirement {
         models,
         firmware: Firmware::Stock,
@@ -146,31 +147,25 @@ pub fn of(action: &Action) -> Requirement {
     }
 }
 
-/// The models `step` applies to in `scenario`.
-fn step_models<'a>(scenario: &'a Scenario, step: &'a crate::scenario::Step) -> &'a [String] {
-    if step.models.is_empty() {
-        &scenario.models
-    } else {
-        &step.models
-    }
-}
-
 /// Check each step's model scope and position.
 pub fn check_scope(scenario: &Scenario) -> Result<(), String> {
     for (index, step) in scenario.step.iter().enumerate() {
         let requirement = of(&step.action);
         let name = action_name(&step.action);
         if !requirement.models.is_empty()
-            && step_models(scenario, step)
+            && scenario
+                .models
                 .iter()
-                .any(|model| !requirement.models.contains(&model.as_str()))
+                .any(|&model| step.applies_to(model) && !requirement.models.contains(&model))
         {
-            return Err(format!(
-                "{name} supports only {}",
-                requirement.models.join(", ")
-            ));
+            let names: Vec<_> = requirement
+                .models
+                .iter()
+                .map(|model| model.name())
+                .collect();
+            return Err(format!("{name} supports only {}", names.join(", ")));
         }
-        if requirement.headless && scenario.backends.iter().any(|b| b != "headless") {
+        if requirement.headless && scenario.backends.iter().any(|b| *b != Backend::Headless) {
             return Err(format!("{name} requires backends=[\"headless\"]"));
         }
         if requirement.first && index != 0 {
@@ -184,14 +179,13 @@ pub fn check_scope(scenario: &Scenario) -> Result<(), String> {
 /// step that applies to that model.
 pub fn check_firmware(
     scenario: &Scenario,
-    model: &str,
+    model: Model,
     firmware: &FirmwareIdentity,
 ) -> Result<(), String> {
     let mut needed = Firmware::Supported;
     let mut needed_by = None;
     for step in &scenario.step {
-        let applies = step.models.is_empty() || step.models.iter().any(|m| m == model);
-        if applies && of(&step.action).firmware == Firmware::Stock {
+        if step.applies_to(model) && of(&step.action).firmware == Firmware::Stock {
             needed = Firmware::Stock;
             needed_by.get_or_insert_with(|| action_name(&step.action));
         }
@@ -245,15 +239,15 @@ mod tests {
         };
         let reads_stock = scenario("['l6']", &["l6-din-sweep"]);
         let ordinary = scenario("['l6']", &["restart"]);
-        assert!(check_firmware(&reads_stock, "l6", &stock).is_ok());
+        assert!(check_firmware(&reads_stock, Model::L6, &stock).is_ok());
         assert!(
-            check_firmware(&reads_stock, "l6", &built)
+            check_firmware(&reads_stock, Model::L6, &built)
                 .unwrap_err()
                 .contains("l6-din-sweep")
         );
-        assert!(check_firmware(&ordinary, "l6", &built).is_ok());
+        assert!(check_firmware(&ordinary, Model::L6, &built).is_ok());
         for scenario in [&reads_stock, &ordinary] {
-            assert!(check_firmware(scenario, "l6", &unknown).is_err());
+            assert!(check_firmware(scenario, Model::L6, &unknown).is_err());
         }
     }
 

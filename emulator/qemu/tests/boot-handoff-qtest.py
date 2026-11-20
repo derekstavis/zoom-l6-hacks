@@ -106,11 +106,13 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
         assert regs[15] == 0x80000414, hex(regs[15])
         assert regs[0] == 0xe000ed14, hex(regs[0])
         assert regs[1] == 0x80000415, hex(regs[1])
+        assert regs[14] == 0x2020e453, hex(regs[14])
         assert "QMP" in json.loads(qmp.readline())
         for name in ("qmp_capabilities", "system_reset"):
             if name == "system_reset":
                 assert packet("P0=00000000") == "OK"
                 assert packet("P1=00000000") == "OK"
+                assert packet("Pe=00000000") == "OK"
             qmp.write(json.dumps({"execute": name}).encode() + b"\n")
             while True:
                 reply = json.loads(qmp.readline())
@@ -120,6 +122,7 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
                     break
         regs = registers()
         assert regs[0] == 0xe000ed14 and regs[1] == 0x80000415, regs[:2]
+        assert regs[14] == 0x2020e453, hex(regs[14])
         if mpu_test:
             # Inspect QEMU's initial masks with guest MRS instructions. The
             # physical values are inferred from task startup, not captured.

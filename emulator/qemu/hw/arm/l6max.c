@@ -6394,6 +6394,9 @@ static void l6_main_reset(MachineState *machine, ResetType type)
          * image reset-vector word into r1 before BLX, on both cache paths. */
         s->armv7m.cpu->env.regs[0] = 0xe000ed14u;
         s->armv7m.cpu->env.regs[1] = ldl_le_p(s->nor_flash + 0x50004);
+        /* With D-cache already disabled, the transfer uses BLX at
+         * 0x2020e450; LR is the Thumb return address in the boot image. */
+        s->armv7m.cpu->env.regs[14] = 0x2020e453u;
     }
 }
 

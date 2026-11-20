@@ -2375,7 +2375,10 @@ static MemTxResult l6max_flexram_hole_read(void *opaque, hwaddr offset,
 {
     *value = 0;
     l6max_flexram_access_error(opaque);
-    return MEMTX_ERROR;
+    /* The later physical dump read zeros beyond the configured OCRAM range
+     * without recording bus faults. TCM holes instead produced bus faults. */
+    return ((L6FlexRamHole *)opaque)->error_bit == (1u << 5) ?
+           MEMTX_OK : MEMTX_ERROR;
 }
 
 static MemTxResult l6max_flexram_hole_write(void *opaque, hwaddr offset,
@@ -2383,7 +2386,9 @@ static MemTxResult l6max_flexram_hole_write(void *opaque, hwaddr offset,
                                              MemTxAttrs attrs)
 {
     l6max_flexram_access_error(opaque);
-    return MEMTX_ERROR;
+    /* OCRAM writes were not probed on hardware; discard them for now. */
+    return ((L6FlexRamHole *)opaque)->error_bit == (1u << 5) ?
+           MEMTX_OK : MEMTX_ERROR;
 }
 
 static const MemoryRegionOps l6max_flexram_hole_ops = {

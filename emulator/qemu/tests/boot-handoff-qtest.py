@@ -119,11 +119,17 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08):
         ):
             assert packet(request) == "OK", request
         assert packet("s").startswith("T05")
-        assert registers()[15] == 0x801f0100
-        assert int.from_bytes(bytes.fromhex(packet("me000ed28,4")), "little") & 0x8200 == 0x8200
-        assert int.from_bytes(bytes.fromhex(packet("me000ed38,4")), "little") == invalid
+        if error_bit == 0x20:
+            regs = registers()
+            assert regs[15] == 0x801f0002 and regs[0] == 0
+            assert int.from_bytes(bytes.fromhex(packet("me000ed28,4")), "little") & 0x8200 == 0
+        else:
+            assert registers()[15] == 0x801f0100
+            assert int.from_bytes(bytes.fromhex(packet("me000ed28,4")), "little") & 0x8200 == 0x8200
+            assert int.from_bytes(bytes.fromhex(packet("me000ed38,4")), "little") == invalid
         assert int.from_bytes(bytes.fromhex(packet("m400b0010,4")), "little") == error_bit
-        print(f"{image}: unallocated FlexRAM at {invalid:#x} produces a guest bus fault")
+        print(f"{image}: unallocated FlexRAM at {invalid:#x} produces " +
+              ("a zero read" if error_bit == 0x20 else "a guest bus fault"))
     finally:
         host.close()
         process.terminate()
@@ -204,6 +210,7 @@ def check_flexram_boundaries(qemu, image):
         for address in bad:
             command(f"writel {address:#x} 0x12345678")
         assert int(command("readl 0x400b0010").split()[1], 16) == 0x10
+        assert int(command("readl 0x202d8000").split()[1], 16) == 0
         command("writel 0x400b0010 0x38")
         command("writel 0x400b0014 0")
         command("writel 0x400b0018 0")

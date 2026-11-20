@@ -390,7 +390,8 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0x400ac028 0x5a5a5a5a")
         command("writel 0x402f0004 0xffffffff")
         for address in (0x402f0000, 0x402f0008, 0x402f000c,
-                        0x402f0018, 0x402f0030):
+                        0x402f0018, 0x402f0030, 0x402f0090,
+                        0x402f0094, 0x402f0098, 0x402f00a0):
             command(f"writel {address:#x} 0x12345678")
         assert int(command("readl 0x20280000").split()[1], 16) == 0x13579bdf
         command("writel 0x400ac044 0x5555ea95")
@@ -572,7 +573,9 @@ def check_flexram_boundaries(qemu, image):
         for address, value in ((0x402f0000, 0x1fff0004),
                                (0x402f0004, 0xffffffe8),
                                (0x402f0008, 0x81), (0x402f000c, 0x81),
-                               (0x402f0018, 0), (0x402f0030, 0)):
+                               (0x402f0018, 0), (0x402f0030, 0),
+                               (0x402f0090, 0x82000000), (0x402f0094, 2),
+                               (0x402f0098, 0), (0x402f00a0, 0x33)):
             assert int(command(f"readl {address:#x}").split()[1], 16) == value
         for address, value in ((0x40084000, 2), (0x40084100, 0xffffffff),
                                (0x40084108, 1), (0x40084110, 0xffffffff),
@@ -669,6 +672,8 @@ def main():
         0x402f0014: 0x8200001b, 0x402f0040: 0xf31,
         0x402f0044: 0x00664b22, 0x402f0048: 0x0009090b,
         0x402f004c: 0x08070a01, 0x400a8000: 5,
+        0x402f0090: 0x82000000, 0x402f0094: 2,
+        0x402f0098: 0, 0x402f00a0: 0x33,
         0x400ac00c: 0x0000f0f0, 0x400ac028: 7,
         0x400ac038: 0x00860000, 0x400ac040: 0x00200007,
         0x400ac044: 0x5555ea95,

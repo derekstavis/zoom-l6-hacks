@@ -4702,6 +4702,18 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
     g_hash_table_insert(s->registers,
         GUINT_TO_POINTER((0x2f004c >> 2) + 1),
         GUINT_TO_POINTER(0x08070a01u));
+    /* The successful final SDRAM mode-register command targets CS1. Its
+     * address, transfer size and mode word remain in the IP registers;
+     * actual command execution and timing are not simulated. */
+    static const struct { hwaddr offset; uint32_t value; } semc_ip[] = {
+        { 0x2f0090, 0x82000000u }, { 0x2f0094, 2u },
+        { 0x2f0098, 0u }, { 0x2f00a0, 0x33u },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(semc_ip); i++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER((semc_ip[i].offset >> 2) + 1),
+            GUINT_TO_POINTER(semc_ip[i].value));
+    }
     static const hwaddr offsets[] = {
         0x0fc000, 0x0fc00c, 0x0fc020, 0x0fc024,
         0x0fc02c, 0x0fc030, 0x0fc038, 0x0fc060,

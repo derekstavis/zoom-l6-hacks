@@ -4839,6 +4839,26 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
                                                           flexspi_ahbcr));
     g_hash_table_insert(s->registers, flexspi_ahbcr,
                         GUINT_TO_POINTER(ahbcr & ~0x78u));
+    /* The 1.00 NOR-device record, copied from its initialized data,
+     * configures port A1 for 2 MiB and chip-select timing. The helper
+     * preserves selected CR2/CR4 fields; their inherited values are unknown. */
+    static const struct { hwaddr offset; uint32_t value; } flash_device[] = {
+        { 0x2a8060, 0x800u }, { 0x2a8070, 0x30063u },
+        { 0x2a80c0, 0x100u },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(flash_device); i++) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER((flash_device[i].offset >> 2) + 1),
+            GUINT_TO_POINTER(flash_device[i].value));
+    }
+    gpointer flash_cr2 = GUINT_TO_POINTER((0x2a8080 >> 2) + 1);
+    uint32_t cr2 = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, flash_cr2));
+    g_hash_table_insert(s->registers, flash_cr2,
+                        GUINT_TO_POINTER(cr2 & 0x80001010u));
+    gpointer flash_cr4 = GUINT_TO_POINTER((0x2a8094 >> 2) + 1);
+    uint32_t cr4 = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, flash_cr4));
+    g_hash_table_insert(s->registers, flash_cr4,
+                        GUINT_TO_POINTER((cr4 & ~5u) | 1u));
     static const hwaddr offsets[] = {
         0x0fc000, 0x0fc00c, 0x0fc020, 0x0fc024,
         0x0fc02c, 0x0fc030, 0x0fc038, 0x0fc060,

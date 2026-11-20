@@ -366,6 +366,12 @@ def check_flexram_boundaries(qemu, image):
             command(f"writel {base + offset:#x} {value:#x}")
         command("writel 0x400ec00c 0x80000014")
         command("writel 0x400e800c 8")
+        # Handoff leaves the shared eDMA/DMAMUX gate off; a pending SAI
+        # request must wait until firmware turns it on.
+        gate = int(command("readl 0x400fc07c").split()[1], 16)
+        assert not gate & 0xc0
+        assert int(command("readl 0x400e802c").split()[1], 16) == 0
+        command(f"writel 0x400fc07c {gate | 0xc0:#x}")
         assert not int(command("readl 0x400e8024").split()[1], 16) & 8
         assert not int(command("readl 0x40384040").split()[1], 16) & 0x1f0000
         assert int(command("readl 0x400e802c").split()[1], 16) == 8
@@ -392,8 +398,13 @@ def check_flexram_boundaries(qemu, image):
                                   (20, 0x00010000), (24, 0),
                                   (28, 0x0001000a)):
                 command(f"writel {base + offset:#x} {value:#x}")
+            if channel == 3:
+                command(f"writel 0x400fc07c {gate:#x}")  # stop DMA clock
             command(f"writel {0x400ec000 + channel * 4:#x} 0x80000014")
             command(f"writel 0x400e800c {1 << channel:#x}")
+            if channel == 3:
+                assert not int(command("readl 0x400e8024").split()[1], 16) & 8
+                command(f"writel 0x400fc07c {gate | 0xc0:#x}")
             assert int(command("readl 0x400e8024").split()[1], 16) & (1 << channel)
             command(f"writel {0x400ec000 + channel * 4:#x} 0")
             command("writel 0x40384008 0x82000001")  # reset TX FIFO

@@ -3179,6 +3179,14 @@ static void l6_edma_tcd_store(L6ChipState *s, unsigned channel,
     }
 }
 
+/* RT1060 CCGR5 CG3 clocks both eDMA and DMAMUX. Keep L6's existing
+ * behavior until its clock tree is independently audited. */
+static bool l6_edma_clock_enabled(L6ChipState *s)
+{
+    return s->profile != &L6MAX_PROFILE ||
+           (l6max_clock_register(s, 0x0fc07c) & 0xc0u) != 0;
+}
+
 /* A DMAMUX request services exactly one RT1041 32-bit-TCD minor loop. The
  * peripheral request is the pacing edge; this routine never drains an entire
  * cyclic audio ring just because ERQ was set. */
@@ -3187,7 +3195,7 @@ static bool l6_edma_service_request(L6ChipState *s, uint8_t request)
     AddressSpace *as = l6_edma_address_space(s);
     bool serviced = false;
 
-    if (!l6_sai_edma_request_active(s, request)) {
+    if (!l6_edma_clock_enabled(s) || !l6_sai_edma_request_active(s, request)) {
         return false;
     }
 
@@ -4421,6 +4429,16 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
             l6max_flexram_map(s, gpr16, gpr17);
         }
     }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (offset & ~(hwaddr)3) == 0x0fc07c &&
+        !(previous_word & 0xc0u) && (word & 0xc0u)) {
+        /* Requests can already be asserted while the DMA clock is stopped. */
+        l6_edma_service_active_sai(s);
+        uint32_t der = l6max_clock_register(s, 0x3a001c);
+        if ((der & 3) == 3 && (s->edma_erq & 0xc) == 0xc) {
+            l6_display_dma_transfer(s);
+        }
+    }
     hwaddr clock_word = offset & ~(hwaddr)3;
     hwaddr clock_alias = offset & ~(hwaddr)0xf;
     if (!s->panel && s->profile == &L6MAX_PROFILE &&
@@ -4634,8 +4652,8 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
     if (offset >= 0x0ec000 && offset < 0x0ec080) {
         l6_edma_service_active_sai(s);
     }
-    if (!s->panel && s->profile->oled && offset == 0x3a001c &&
-        size == 4 && (word & 3) == 3 &&
+    if (!s->panel && s->profile->oled && l6_edma_clock_enabled(s) &&
+        offset == 0x3a001c && size == 4 && (word & 3) == 3 &&
         (s->edma_erq & 0xc) == 0xc) {
         if (!l6_display_dma_transfer(s)) {
             qemu_log_mask(LOG_UNIMP,

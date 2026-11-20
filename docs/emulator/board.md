@@ -94,8 +94,11 @@ reference manual specifies SAI reset on system reset; no SAI1 setup was found
 in direct-address scans of the recovered ROM and first-stage boot image, though
 indirect accesses remain possible. The model also resets L6max DMAMUX
 channels, eDMA request enables, interrupt state and documented priority fields.
-The RT1060 manual marks transfer-descriptor reset contents unknown; QEMU
-retains its prior descriptor contents without asserting physical retention.
+The shared CCGR5 eDMA/DMAMUX gate starts off on the reconstructed boot path;
+modeled SAI and display DMA requests wait while gated and are rechecked when
+it opens. Register access while gated and bus timing are not modeled. The
+RT1060 manual marks transfer-descriptor reset contents unknown; QEMU retains
+its prior descriptor contents without asserting physical retention.
 The boot images' direct-address scans found no DMA setup, but indirect accesses
 remain possible. L6max eDMA IRQs 0–15 each combine two channel completion
 signals, as specified for RT1060; the test exercises both members of one pair

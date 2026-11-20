@@ -97,8 +97,8 @@ run out.
 ## Build and test
 
 ```sh
-cargo run --offline --locked -p l6patch -- STOCK_DIR OUTPUT_DIR \
-  --experimental-patch-loader --patch menu-loader
+cargo run --offline --locked -p l6patch -- firmware STOCK_DIR OUTPUT_DIR \
+  --loader --patch menu-loader
 cargo run --offline --locked -p l6test -- run --case sd-menu-loader \
   --model l6max --backend headless --jobs 1
 ```

@@ -2,10 +2,10 @@
 # Run it on firmware built with the Patch loader and menu-loader, and a blank
 # card whose PATCHES/ directory holds a midi-sync module:
 #
-#   cargo run --offline --locked -p l6patch -- STOCK_DIR FW_DIR \
-#     --experimental-patch-loader --patch menu-loader --patch knob-dialog
-#   cargo run --offline --locked -p l6patch -- STOCK_DIR SD_DIR \
-#     --experimental-patch-bundle --patch midi-sync
+#   cargo run --offline --locked -p l6patch -- firmware STOCK_DIR FW_DIR \
+#     --loader --patch menu-loader --patch knob-dialog
+#   cargo run --offline --locked -p l6patch -- module STOCK_DIR SD_DIR \
+#     --patch midi-sync
 #   cargo run --offline --locked -p l6fs -- card create CARD.img --model l6max \
 #     --file PATCHES/10-MIDI.BIN=SD_DIR/PATCHES/midi-sync-1.0.0.bin
 #

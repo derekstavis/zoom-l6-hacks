@@ -1,3 +1,6 @@
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    l6patch::run_cli()
+fn main() {
+    if let Err(error) = l6patch::run_cli() {
+        eprintln!("error: {error}");
+        std::process::exit(2);
+    }
 }

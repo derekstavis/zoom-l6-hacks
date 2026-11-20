@@ -47,7 +47,7 @@ vector and select this profile automatically.
 
 ```sh
 cargo run -p l6fw -- unpack /path/to/L6.BIN unpacked-l6
-cargo run -p l6patch -- unpacked-l6 firmware-midi-sync-l6 --patch midi-sync
+cargo run -p l6patch -- firmware unpacked-l6 firmware-midi-sync-l6 --patch midi-sync
 python3 patches/midi-sync/l6/tests/cpu_sim.py firmware-midi-sync-l6/main_firmware.bin
 cargo run -p qemu-run -- --qemu /path/to/qemu-system-arm \
   --firmware-dir firmware-midi-sync-l6 --logs /tmp/l6-midi-sync --seconds 5

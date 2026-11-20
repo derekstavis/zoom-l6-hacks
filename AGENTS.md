@@ -20,12 +20,9 @@ smallest set of cases that covers the change (`--case`, globs, `--rerun`). Run
 about two hours) once at the top of a stack, and fix what it finds in the PR
 that owns the cause. Run one suite at a time; the default `--jobs` is intended.
 
-When changing anything under `patches/` (including `patches/api`), the patch
-tools, `Cargo.toml` or `Cargo.lock`, regenerate the committed browser templates
-and web SD modules with both `firmware-patch-wasm-prebuild` and
-`tools/build-web-loadable-patches.sh`, using supported unpacked L6max and L6
-firmware; `cargo test -p firmware-patch-wasm-prebuild` fails while either is
-stale. Do not hand-edit generated files. Run `wasm-patch` for both models and the
+When `cargo l6patch prebuilt --check` reports stale prebuilt files (after
+changing `patches/`, the patch tool crates or their dependencies), run `cargo
+l6patch prebuilt` and commit the result. Do not hand-edit generated files. Run `wasm-patch` for both models and the
 `sd-matrix` suite to check browser/native parity and SD loading. See
 `docs/development/testing.md#firmware-patch` for commands and interpretation.
 

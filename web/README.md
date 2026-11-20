@@ -51,26 +51,15 @@ RAM. Extract the ZIP to the SD card's main folder and follow the model-specific
 update instructions. The modules clear from RAM when the mixer restarts.
 Patches without an SD module can only be included as built-in firmware patches.
 
-Regenerate the hosted modules from local unpacked stock firmware for both
-models:
+The hosted modules in `public/loadable-patches/` and the browser patcher's
+templates are generated together from the stock packages in the repository's
+`config.toml`:
 
 ```sh
-tools/build-web-loadable-patches.sh /path/to/unpacked-l6max /path/to/unpacked-l6
+cargo l6patch prebuilt
 ```
 
-The script writes only the generated `.BIN` modules and their manifest to
-`public/loadable-patches/`. It uses the native `l6patch` builder to validate
-the model image and produce the same files used by Patch loader.
-The firmware templates used by the browser loader are regenerated separately:
-
-```sh
-cargo run --offline --locked -p firmware-patch-wasm-prebuild -- \
-  /path/to/unpacked-l6max /path/to/unpacked-l6
-```
-
-That maintainer-only prebuild verifies both stock firmware revisions, strips
-all copied firmware byte windows from the templates, and writes the templates
-under `../tools/firmware-patch-wasm/templates/`.
+See [`l6patch`](../docs/development/tools/l6patch.md#prebuilt-files).
 
 ## Stack
 

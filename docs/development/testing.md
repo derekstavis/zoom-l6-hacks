@@ -517,16 +517,14 @@ firmware. Use `knob-dialog`, `patched-update`,
 
 The committed browser templates and the SD modules the web page and emulator
 serve are generated, and their manifests record a fingerprint of the sources
-that produced them: everything under `patches/` except `tests/`, the patch tool
-crates, `Cargo.toml` and `Cargo.lock`. A change to any of these, including a new
-`patches/api` declaration or an unrelated dependency, makes them stale, and
-`cargo test -p firmware-patch-wasm-prebuild` fails until both are regenerated
-from supported unpacked stock firmware for both models:
+that produced them: everything under `patches/` except `tests/`,
+`rust-toolchain.toml`, and the crates `l6patch` is built from. A change to any
+of these, including a new `patches/api` declaration, makes them stale, and
+`cargo l6patch prebuilt --check` and `cargo test -p l6patch` fail until they
+are regenerated from the stock packages in `config.toml`:
 
 ```sh
-cargo run --offline --locked -p firmware-patch-wasm-prebuild -- \
-  /path/to/unpacked-l6max /path/to/unpacked-l6
-tools/build-web-loadable-patches.sh /path/to/unpacked-l6max /path/to/unpacked-l6
+cargo l6patch prebuilt
 ```
 
 Review the generated changes under `tools/firmware-patch-wasm/templates/` and

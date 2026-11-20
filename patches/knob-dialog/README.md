@@ -58,7 +58,7 @@ pinned Rust toolchain with `thumbv7em-none-eabihf` installed. Homebrew LLVM at
 
 ```sh
 rustup target add thumbv7em-none-eabihf
-cargo run --offline -p l6patch -- unpacked firmware-knob-dialog-recorder-fix-v112 --update-version 0112
+cargo run --offline -p l6patch -- firmware unpacked firmware-knob-dialog-recorder-fix-v112 --version 0112
 cargo run --offline -p l6max-gui -- --qemu /path/to/qemu-system-arm --firmware-dir firmware-knob-dialog-recorder-fix-v112 --volatile
 ```
 
@@ -93,11 +93,11 @@ been hardware-tested.
 
 The default patch version is `0112` (1.12), a local development marker that
 triggers the startup update prompt over stock 1.10. Use
-`--update-version FOUR_DIGITS` to override it; `0110` retains the stock marker
+`--version FOUR_DIGITS` to override it; `0110` retains the stock marker
 and uses the manual **System → Firmware → Firmware Update** menu:
 
 ```sh
-cargo run --offline -p l6patch -- unpacked firmware-knob-dialog-recorder-fix-v112 --update-version 0112
+cargo run --offline -p l6patch -- firmware unpacked firmware-knob-dialog-recorder-fix-v112 --version 0112
 cargo run --offline -p l6fs -- card demo emulator/state/sd-card-knob-synchronized.img --firmware-package firmware-knob-dialog-recorder-fix-v112/L6max.bin
 cargo run --offline -p l6max-gui -- --state-dir emulator/state/knob-synchronized-demo --sd-image emulator/state/sd-card-knob-synchronized.img
 ```

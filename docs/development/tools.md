@@ -24,11 +24,10 @@ The diagnostic recipe schema is documented in the [l6dbg reference](tools/l6dbg.
 
 | Tool | Purpose | Reference |
 | --- | --- | --- |
-| `l6patch` | Apply supported, revision-guarded firmware patches | [l6patch](tools/l6patch.md) |
+| `l6patch` | Build patched firmware and SD modules, list patches, regenerate prebuilt files | [l6patch](tools/l6patch.md) |
 | `qemu-build` | Build the repository’s pinned QEMU fork | [qemu-build](tools/qemu-build.md) |
 | `macos-package` | Package a macOS `.app` without firmware | [macos-package](tools/macos-package.md) |
 | `linux-package` | Package a Linux AppDir/AppImage without firmware | [linux-package](tools/linux-package.md) |
-| `firmware-patch-wasm-prebuild` | Maintainer build helper for browser patch templates | [WASM template prebuild](tools/firmware-patch-wasm-prebuild.md) |
 
 `smoke-core`, `sd-image`, `l6max-diagnostics`, patch compiler crates, and media
 libraries are workspace implementation crates, not standalone user commands.

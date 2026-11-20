@@ -1,97 +1,97 @@
 {
-  "generator_source_sha256": "53dbb9c4d43ea203f896dcafa75db32a2eb1ed2c47edc3b5b3cf3d86a7d8bffe",
-  "source_firmware_sha256": "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461",
-  "l6_source_firmware_sha256": "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799",
-  "modules": [
-    {
-      "id": "knob-dialog",
-      "model": "L6max",
-      "file": "L6max/knob-dialog-1.0.0.bin",
-      "format_version": 1,
-      "loader_abi": 1,
-      "sha256": "7449e58304ad4b4617966369702255dc11e005a2b1be01a8a6320d24c4bde578"
-    },
-    {
-      "id": "midi-sync",
-      "model": "L6",
-      "file": "L6/midi-sync-1.0.0.bin",
-      "format_version": 1,
-      "loader_abi": 1,
-      "sha256": "a3813cc6ba596f9043c304b7ad75aa4ed2ce232549cf39721ab975f8ef35d7da"
-    },
-    {
-      "id": "midi-sync",
-      "model": "L6max",
-      "file": "L6max/midi-sync-1.0.0.bin",
-      "format_version": 1,
-      "loader_abi": 1,
-      "sha256": "8b05dac6e7cb6cbee516aaa0576ee0d89a42b44fa2397289275fae082c81f412"
-    }
-  ],
   "effect_replacements": [
     {
-      "room": "stock",
-      "spring": "plateau",
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-plateau-1.0.0-room-stock-spring-plateau.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "eae9be0960c6017e4d544834271ad27446ed636fa33db70a20f76b67e67c0671"
+      "room": "stock",
+      "sha256": "eae9be0960c6017e4d544834271ad27446ed636fa33db70a20f76b67e67c0671",
+      "spring": "plateau"
     },
     {
-      "room": "stock",
-      "spring": "velvet",
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-room-stock-spring-velvet.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "af67eb78ab1d991ecc3d7fb73323d7c2f216eb0a86b54cb843ecae8667269de1"
+      "room": "stock",
+      "sha256": "af67eb78ab1d991ecc3d7fb73323d7c2f216eb0a86b54cb843ecae8667269de1",
+      "spring": "velvet"
     },
     {
-      "room": "plateau",
-      "spring": "stock",
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-plateau-1.0.0-room-plateau-spring-stock.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "0ddca505e3e771b59edc6fe34f962c888aedb61b40be499f25c62e3bfa7df427"
+      "room": "plateau",
+      "sha256": "0ddca505e3e771b59edc6fe34f962c888aedb61b40be499f25c62e3bfa7df427",
+      "spring": "stock"
     },
     {
-      "room": "plateau",
-      "spring": "plateau",
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-plateau-1.0.0-room-plateau-spring-plateau.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "540b529d039ae0a824d236b7a5a58be0a162b6a961ed05ef771bc0285eaf6988"
+      "room": "plateau",
+      "sha256": "540b529d039ae0a824d236b7a5a58be0a162b6a961ed05ef771bc0285eaf6988",
+      "spring": "plateau"
     },
     {
-      "room": "plateau",
-      "spring": "velvet",
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-efx-plateau-1.0.0-room-plateau-spring-velvet.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "4e2b5e297b2b28e96b02860d933e94a4f556db131aed3b3aaadf1de1653a2a44"
+      "room": "plateau",
+      "sha256": "4e2b5e297b2b28e96b02860d933e94a4f556db131aed3b3aaadf1de1653a2a44",
+      "spring": "velvet"
     },
     {
-      "room": "velvet",
-      "spring": "stock",
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-room-velvet-spring-stock.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "c4ce9c88ca90923a7aa12ceca123f4ace02bbbdb319c7cca9c4abab992b74ab1"
+      "room": "velvet",
+      "sha256": "c4ce9c88ca90923a7aa12ceca123f4ace02bbbdb319c7cca9c4abab992b74ab1",
+      "spring": "stock"
     },
     {
-      "room": "velvet",
-      "spring": "plateau",
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-efx-plateau-1.0.0-room-velvet-spring-plateau.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "8192666d4d262cbd3809e09f08603c91a7b8773f9929fb9a9e437b08e3859477"
+      "room": "velvet",
+      "sha256": "8192666d4d262cbd3809e09f08603c91a7b8773f9929fb9a9e437b08e3859477",
+      "spring": "plateau"
     },
     {
-      "room": "velvet",
-      "spring": "velvet",
       "file": "L6max/efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-room-velvet-spring-velvet.bin",
       "format_version": 1,
       "loader_abi": 1,
-      "sha256": "51356455873913d3a5a6b185209a3104a091ccc6695e539ea6b456416ae74794"
+      "room": "velvet",
+      "sha256": "51356455873913d3a5a6b185209a3104a091ccc6695e539ea6b456416ae74794",
+      "spring": "velvet"
     }
-  ]
+  ],
+  "generator_source_sha256": "248a2ca2d0c2b4f020896713ad58361bafc9523a608dd96696b26eacaeaa23ae",
+  "l6_source_firmware_sha256": "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799",
+  "modules": [
+    {
+      "file": "L6max/knob-dialog-1.0.0.bin",
+      "format_version": 1,
+      "id": "knob-dialog",
+      "loader_abi": 1,
+      "model": "L6max",
+      "sha256": "7449e58304ad4b4617966369702255dc11e005a2b1be01a8a6320d24c4bde578"
+    },
+    {
+      "file": "L6/midi-sync-1.0.0.bin",
+      "format_version": 1,
+      "id": "midi-sync",
+      "loader_abi": 1,
+      "model": "L6",
+      "sha256": "a3813cc6ba596f9043c304b7ad75aa4ed2ce232549cf39721ab975f8ef35d7da"
+    },
+    {
+      "file": "L6max/midi-sync-1.0.0.bin",
+      "format_version": 1,
+      "id": "midi-sync",
+      "loader_abi": 1,
+      "model": "L6max",
+      "sha256": "8b05dac6e7cb6cbee516aaa0576ee0d89a42b44fa2397289275fae082c81f412"
+    }
+  ],
+  "source_firmware_sha256": "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461"
 }

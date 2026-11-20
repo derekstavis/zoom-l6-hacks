@@ -41,12 +41,12 @@ From the repository root, using locally unpacked stock firmware:
 
 ```sh
 # One-time loader; optionally add --patch NAME to install a feature statically.
-cargo run --offline --locked -p l6patch -- STOCK_DIR LOADER_DIR --experimental-patch-loader
+cargo run --offline --locked -p l6patch -- firmware STOCK_DIR LOADER_DIR --loader
 
 # Build a separate SD set from the same stock firmware. Select only patches
 # not already installed statically in LOADER_DIR.
-cargo run --offline --locked -p l6patch -- STOCK_DIR BUNDLE_DIR \
-  --experimental-patch-bundle --patch midi-sync
+cargo run --offline --locked -p l6patch -- module STOCK_DIR BUNDLE_DIR \
+  --patch midi-sync
 ```
 
 The builder emits one compact file at `BUNDLE_DIR/PATCHES/midi-sync-1.0.0.bin`. At mount,

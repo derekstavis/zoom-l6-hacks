@@ -81,6 +81,15 @@ The L6max ITCM starts as zero-filled emulator RAM; its physical contents at
 handoff were not captured. Stock MAIN relocates its own ITCM code during
 startup, and the tested entry bytes agree with the later physical dump.
 
+Bootloader 1.00 calls the MAIN reset vector with its current task stack; it
+does not load the MAIN vector's initial MSP at that call. The emulator's CPU
+reset instead starts with the MAIN vector MSP. Stock MAIN 1.10 installs that
+same MSP itself at `0x8000041e`, before accessing the inherited stack; this
+was checked by stepping both stock and a patched image with an unmapped initial
+MSP. The precise bootloader task stack at the call has not been recovered, so
+this remains a difference at the first instructions, including for firmware
+whose reset handler is changed.
+
 At direct MAIN entry the modeled MPU and cache-enable bits are clear. QEMU's
 Cortex-M reset clears all 16 MPU region descriptors; the reviewed ROM cleanup
 conditionally clears regions 0–6 before transfer, but the complete physical

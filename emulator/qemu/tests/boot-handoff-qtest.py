@@ -45,6 +45,74 @@ def check(qemu, image, expected):
     print(f"{image}: initial handoff and reset passed")
 
 
+def check_main_stack_entry(qemu, image):
+    # Bootloader 1.00 calls the reset handler with its current task stack.
+    # MAIN 1.10's first six instructions install its own vector-table MSP
+    # without accessing that inherited stack. Run those instructions with a
+    # deliberately different MSP to verify this revision-specific property.
+    host, guest = socket.socketpair()
+    host.settimeout(10)
+    process = subprocess.Popen(
+        [qemu, "-M", "l6max-main", "-kernel", image, "-S", "-display", "none",
+         "-chardev", f"socket,id=entry-gdb,fd={guest.fileno()}",
+         "-gdb", "chardev:entry-gdb"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, pass_fds=(guest.fileno(),), env=isolated_env(),
+    )
+    guest.close()
+
+    def packet(request):
+        body = request.encode("ascii")
+        host.sendall(b"$" + body + b"#" + f"{sum(body) & 255:02x}".encode())
+        while True:
+            char = host.recv(1)
+            if not char:
+                raise EOFError("GDB connection closed")
+            if char == b"$":
+                break
+        response = bytearray()
+        while True:
+            char = host.recv(1)
+            if char == b"#":
+                break
+            if not char:
+                raise EOFError("GDB connection closed")
+            response.extend(char)
+        checksum = bytearray()
+        while len(checksum) < 2:
+            chunk = host.recv(2 - len(checksum))
+            if not chunk:
+                raise EOFError("GDB connection closed")
+            checksum.extend(chunk)
+        assert int(checksum, 16) == sum(response) & 255
+        host.sendall(b"+")
+        return response.decode("ascii")
+
+    def registers():
+        data = bytes.fromhex(packet("g"))
+        return [int.from_bytes(data[i:i + 4], "little")
+                for i in range(0, 16 * 4, 4)]
+
+    try:
+        packet("?")
+        regs = registers()
+        assert regs[15] == 0x80000414, hex(regs[15])
+        main_msp = regs[13]
+        inherited_msp = 0xdeadbee8  # Deliberately unmapped and aligned.
+        assert main_msp != inherited_msp
+        assert packet("Pd=" + inherited_msp.to_bytes(4, "little").hex()) == "OK"
+        for instruction in range(6):
+            assert packet("s").startswith("T05")
+            regs = registers()
+            assert regs[13] == (main_msp if instruction == 5 else inherited_msp)
+        assert regs[15] == 0x80000422, hex(regs[15])
+        print(f"{image}: MAIN reset handler replaces inherited MSP passed")
+    finally:
+        host.close()
+        process.terminate()
+        process.wait(timeout=5)
+
+
 def check_flexram_boundaries(qemu, image):
     qmp_host, qmp_guest = socket.socketpair()
     qmp_host.settimeout(10)
@@ -316,6 +384,8 @@ def main():
     }
     check(qemu, stock, l6max)
     check(qemu, patched, l6max)
+    check_main_stack_entry(qemu, stock)
+    check_main_stack_entry(qemu, patched)
     check_flexram_boundaries(qemu, stock)
     check(qemu, l6, {0x401f8204: 0, 0x402f0010: 0})
 

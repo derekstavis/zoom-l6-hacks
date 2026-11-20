@@ -286,7 +286,8 @@ def check_flexram_boundaries(qemu, image):
         # private SCB registers even though privileged CPU reads can.
         command("writel 0x40384014 0x10000")
         command("writel 0x40384008 0x80000001")  # TE | FRDE
-        command("writel 0xe000e100 8")
+        command("writel 0xe000e100 0x10008")  # DMA completion + error IRQs
+        command("writeb 0x400e8019 3")  # SEEI: enable channel 3 errors
         base = 0x400e9060  # channel 3
         for offset, value in ((0, 0xe000ed00), (4, 0x02020000),
                               (8, 4), (12, 0), (16, 0x40384020),
@@ -296,8 +297,20 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0x400e800c 8")
         assert not int(command("readl 0x400e8024").split()[1], 16) & 8
         assert not int(command("readl 0x40384040").split()[1], 16) & 0x1f0000
+        assert int(command("readl 0x400e802c").split()[1], 16) == 8
+        assert int(command("readl 0x400e8004").split()[1], 16) == 0x80000302
+        assert int(command("readl 0xe000e200").split()[1], 16) & 0x10000
+        assert int(command("readl 0x400e800c").split()[1], 16) == 8
         command("writel 0x400e800c 0")
         command("writel 0x400ec00c 0")
+        command("writeb 0x400e801e 0x83")  # NOP must not clear
+        assert int(command("readl 0x400e802c").split()[1], 16) == 8
+        command("writeb 0x400e801e 3")  # CERR channel 3
+        assert int(command("readl 0x400e802c").split()[1], 16) == 0
+        assert not int(command("readl 0x400e8004").split()[1], 16) & 0x80000000
+        command("writel 0xe000e280 0x10000")
+        assert not int(command("readl 0xe000e200").split()[1], 16) & 0x10000
+        command("writeb 0x400e8018 3")
         # RT1060 channels 3 and 19 share IRQ 3. Generate real SAI-paced
         # completions from DTCM through the system side of the TCM interface.
         command("writel 0x20000000 0x12345678")

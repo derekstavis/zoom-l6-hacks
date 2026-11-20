@@ -2955,6 +2955,10 @@ static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
         }
         return value;
     }
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 1 &&
+        (offset == 0x0e8018 || offset == 0x0e8019 || offset == 0x0e801e)) {
+        return 0; /* CEEI, SEEI and CERR are write-only. */
+    }
     if (!s->panel && offset == 0x0e800c && size == 4) {
         return s->edma_erq;
     }
@@ -3010,6 +3014,29 @@ static AddressSpace *l6_edma_address_space(L6ChipState *s)
 {
     return s->profile == &L6MAX_PROFILE ? &address_space_memory :
                                          CPU(s->armv7m.cpu)->as;
+}
+
+/* RT1060 eDMA error IRQ 16 is the OR of enabled channel errors. */
+static void l6max_edma_update_error_irq(L6ChipState *s)
+{
+    uint32_t errors = l6max_clock_register(s, 0x0e802c);
+    uint32_t enabled = l6max_clock_register(s, 0x0e8014);
+    qemu_set_irq(qdev_get_gpio_in(DEVICE(&s->armv7m), 16),
+                 (errors & enabled) != 0);
+}
+
+static void l6max_edma_record_bus_error(L6ChipState *s, unsigned channel,
+                                         bool source)
+{
+    gpointer err_key = GUINT_TO_POINTER((0x0e802c >> 2) + 1);
+    gpointer es_key = GUINT_TO_POINTER((0x0e8004 >> 2) + 1);
+    uint32_t errors = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, err_key));
+    g_hash_table_insert(s->registers, err_key,
+                        GUINT_TO_POINTER(errors | (1u << channel)));
+    g_hash_table_insert(s->registers, es_key,
+                        GUINT_TO_POINTER(0x80000000u | (channel << 8) |
+                                         (source ? 2u : 1u)));
+    l6max_edma_update_error_irq(s);
 }
 
 static bool l6_edma_as_read(void *opaque, uint32_t address, void *buffer,
@@ -3208,10 +3235,20 @@ static bool l6_edma_service_request(L6ChipState *s, uint8_t request)
             }
             L6EdmaMinorResult result = l6_edma_transfer_minor(
                 &tcd, l6_edma_transfer_read, l6_edma_transfer_write, s);
-            if (result == L6_EDMA_MINOR_ERROR) {
+            if (result < 0) {
+                if (s->profile == &L6MAX_PROFILE &&
+                    (result == L6_EDMA_MINOR_SOURCE_BUS_ERROR ||
+                     result == L6_EDMA_MINOR_DEST_BUS_ERROR)) {
+                    /* Preserve progress up to the failing transfer. Exact
+                     * hardware bus pipelining is not simulated. */
+                    l6_edma_tcd_encode(raw, &tcd);
+                    l6_edma_tcd_store(s, channel, raw);
+                    l6max_edma_record_bus_error(s, channel,
+                        result == L6_EDMA_MINOR_SOURCE_BUS_ERROR);
+                }
                 qemu_log_mask(LOG_UNIMP,
-                              "l6 eDMA unsupported request source=%u channel=%u TCD=%08x/%08x nbytes=%u citer=%04x attr=%04x\n",
-                              request, channel, tcd.saddr, tcd.daddr,
+                              "l6 eDMA transfer error=%d request source=%u channel=%u TCD=%08x/%08x nbytes=%u citer=%04x attr=%04x\n",
+                              result, request, channel, tcd.saddr, tcd.daddr,
                               tcd.nbytes, tcd.citer, tcd.attr);
                 return false;
             }
@@ -4199,6 +4236,51 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
          * against QEMU's I2C bus and the L6max-compatible codec slaves. */
         l6_lpi2c_mtdr_write(s, value);
     }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        offset == 0x0e8004 && size == 4) {
+        return; /* ES is read-only. */
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        offset == 0x0e802c && size == 4) {
+        /* ERR is write-one-to-clear; ES.VLD reflects all channel errors. */
+        gpointer err_key = GUINT_TO_POINTER((0x0e802c >> 2) + 1);
+        gpointer es_key = GUINT_TO_POINTER((0x0e8004 >> 2) + 1);
+        uint32_t errors = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, err_key));
+        errors &= ~(uint32_t)value;
+        g_hash_table_insert(s->registers, err_key, GUINT_TO_POINTER(errors));
+        if (!errors) {
+            uint32_t es = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, es_key));
+            g_hash_table_insert(s->registers, es_key, GUINT_TO_POINTER(es & 0x7fffffffu));
+        }
+        l6max_edma_update_error_irq(s);
+        return;
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 1 &&
+        (offset == 0x0e8018 || offset == 0x0e8019 || offset == 0x0e801e)) {
+        /* CEEI, SEEI and CERR: NOP, all-channels or indexed command. */
+        if (!(value & 0x80)) {
+            hwaddr target = offset == 0x0e801e ? 0x0e802c : 0x0e8014;
+            gpointer key = GUINT_TO_POINTER((target >> 2) + 1);
+            uint32_t current = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
+            uint32_t mask = (value & 0x40) ? UINT32_MAX : 1u << (value & 0x1f);
+            current = offset == 0x0e8019 ? current | mask : current & ~mask;
+            g_hash_table_insert(s->registers, key, GUINT_TO_POINTER(current));
+            if (offset == 0x0e801e && !current) {
+                gpointer es_key = GUINT_TO_POINTER((0x0e8004 >> 2) + 1);
+                uint32_t es = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, es_key));
+                g_hash_table_insert(s->registers, es_key, GUINT_TO_POINTER(es & 0x7fffffffu));
+            }
+            l6max_edma_update_error_irq(s);
+        }
+        return;
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        offset == 0x0e8014 && size == 4) {
+        g_hash_table_insert(s->registers,
+            GUINT_TO_POINTER((offset >> 2) + 1), GUINT_TO_POINTER((uint32_t)value));
+        l6max_edma_update_error_irq(s);
+        return;
+    }
     if (offset == 0x0e8024 && size == 4) {
         /* eDMA INT is write-one-to-clear. */
         uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
@@ -4913,6 +4995,7 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
         g_hash_table_insert(s->registers,
             GUINT_TO_POINTER((edma_zero[i] >> 2) + 1), NULL);
     }
+    l6max_edma_update_error_irq(s);
     gpointer edma_cr_key = GUINT_TO_POINTER((0x0e8000 >> 2) + 1);
     uint32_t edma_cr = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
                                                            edma_cr_key));

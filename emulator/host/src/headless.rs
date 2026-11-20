@@ -48,7 +48,10 @@ impl Headless {
     /// holds the panel CPU, as during an L6 update or first boot.
     fn clocks(&self) -> (u32, u32) {
         let inputs = self.engine.inputs.as_ref().unwrap();
-        (inputs.panel.snapshot().guest_ms, inputs.main.snapshot().guest_ms)
+        (
+            inputs.panel.snapshot().guest_ms,
+            inputs.main.snapshot().guest_ms,
+        )
     }
     pub fn until(&self, ms: u32) -> io::Result<()> {
         // A loaded host runs the guest slower than real time, so the wall

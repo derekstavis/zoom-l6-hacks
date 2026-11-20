@@ -139,6 +139,8 @@ descriptor state was not captured. QEMU's
 Cortex-M7 model does not implement caches and does not retain writes to the
 CCR instruction/data cache-enable bits, so the matching cache-disabled value
 does not simulate cache maintenance or establish parity when caches are on.
+The RT1060 manual specifies separate 32 KiB instruction and data caches;
+QEMU does not model their cache geometry, contents, or DMA coherence effects.
 The handoff test also configures an MPU no-access region and executes a guest
 load to check the resulting memory-management fault; it does not measure hardware
 region contents or verify every MPU attribute.

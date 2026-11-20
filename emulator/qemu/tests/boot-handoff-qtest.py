@@ -5,10 +5,18 @@ Usage: boot-handoff-qtest.py QEMU L6MAX_MAIN PATCHED_L6MAX_MAIN L6_MAIN
 Each MAIN is an unpacked firmware component; no device state is modified.
 """
 import json
+import os
 import select
 import socket
 import subprocess
 import sys
+
+
+def isolated_env():
+    env = dict(os.environ)
+    env.pop("L6_STATE_DIR", None)
+    env.pop("L6_EXTERNAL_RAM_FD", None)
+    return env
 
 
 def check(qemu, image, expected):
@@ -23,7 +31,7 @@ def check(qemu, image, expected):
         [qemu, "-M", "l6max-main", "-kernel", image,
          "-display", "none", "-S", "-qmp", "stdio"],
         input="\n".join(map(json.dumps, commands)) + "\n",
-        capture_output=True, text=True, timeout=30, check=True,
+        capture_output=True, text=True, timeout=30, check=True, env=isolated_env(),
     )
     values = []
     for line in result.stdout.splitlines():
@@ -46,7 +54,7 @@ def check_flexram_boundaries(qemu, image):
          "-chardev", f"socket,id=handoff-qmp,fd={qmp_guest.fileno()}",
          "-mon", "chardev=handoff-qmp,mode=control"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        text=True, bufsize=1, pass_fds=(qmp_guest.fileno(),),
+        text=True, bufsize=1, pass_fds=(qmp_guest.fileno(),), env=isolated_env(),
     )
     qmp_guest.close()
     qmp = qmp_host.makefile("rwb", buffering=0)
@@ -63,14 +71,17 @@ def check_flexram_boundaries(qemu, image):
 
     try:
         assert "QMP" in json.loads(qmp.readline())
-        def qmp_execute(name):
-            qmp.write(json.dumps({"execute": name}).encode() + b"\n")
+        def qmp_execute(name, arguments=None):
+            request = {"execute": name}
+            if arguments is not None:
+                request["arguments"] = arguments
+            qmp.write(json.dumps(request).encode() + b"\n")
             while True:
                 reply = json.loads(qmp.readline())
                 if "error" in reply:
                     raise AssertionError(reply["error"])
                 if "return" in reply:
-                    return
+                    return reply["return"]
         qmp_execute("qmp_capabilities")
         for last, beyond in ((0x7ffc, 0x8000), (0x2001fffc, 0x20020000),
                              (0x202d7ffc, 0x202d8000)):
@@ -82,6 +93,29 @@ def check_flexram_boundaries(qemu, image):
         main_vector = int(command("readl 0x80000000").split()[1], 16)
         command("writel 0x80000000 0x1234abcd")
         assert int(command("readl 0x80000000").split()[1], 16) == 0x1234abcd
+        # Program four bytes in the emulated NOR through FlexSPI, leaving the
+        # current SDRAM image alone until the next bootloaderless reset.
+        main_word = int(command("readl 0x80000100").split()[1], 16)
+        assert main_word != 0
+        command("writel 0x402a8200 0x06")       # write enable
+        command("writel 0x402a80a4 0")
+        command("writel 0x402a80b0 1")
+        command("writel 0x402a8200 0x02")       # page program
+        command("writel 0x402a80a0 0x50100")
+        command("writel 0x402a80a4 4")
+        command("writel 0x402a80b0 1")
+        command("writel 0x402a8180 0")
+        command("writel 0x402a8014 0x40")       # commit TX FIFO
+        assert int(command("readl 0x80000100").split()[1], 16) == main_word
+        command("writel 0x402a8200 0x06")
+        command("writel 0x402a80a4 0")
+        command("writel 0x402a80b0 1")
+        command("writel 0x402a8200 0x02")
+        command("writel 0x402a80a0 0x50000")
+        command("writel 0x402a80a4 4")
+        command("writel 0x402a80b0 1")
+        command("writel 0x402a8180 0x20200000")
+        command("writel 0x402a8014 0x40")
         masks = {
             0x400ac004: 0xfff9f000, 0x400ac008: 0xfb00ffff,
             0x400ac014: 0xcfffffff, 0x400ac068: 0xefeffffb,
@@ -119,7 +153,10 @@ def check_flexram_boundaries(qemu, image):
             command("writel 0xe000eda0 0x03000019")
             assert int(command("readl 0xe000eda0").split()[1], 16) == 0x03000019
         qmp_execute("system_reset")
-        assert int(command("readl 0x80000000").split()[1], 16) == main_vector
+        assert int(command("readl 0x80000000").split()[1], 16) == main_vector & 0x20200000
+        assert int(command("readl 0x80000100").split()[1], 16) == 0
+        registers = qmp_execute("human-monitor-command", {"command-line": "info registers"})
+        assert "R13=20200000" in registers, registers
         for address, expected in masks.items():
             assert int(command(f"readl {address:#x}").split()[1], 16) == expected
         assert int(command("readl 0x400fc070").split()[1], 16) == 0x0c000030
@@ -151,9 +188,22 @@ def check_flexram_boundaries(qemu, image):
             0x400fc07c: 0xf0033ff3, 0x400fc080: 0xffff3fc3,
             0x400fc084: 0xfffffc33,
         }
+        # A valid installed footer limits the next copy; bytes beyond it
+        # retain SDRAM contents even when NOR holds different bytes.
+        command("writel 0x402a8200 0x06")
+        command("writel 0x402a80a4 0")
+        command("writel 0x402a80b0 1")
+        command("writel 0x402a8200 0x02")
+        command("writel 0x402a80a0 0x1f7ff8")
+        command("writel 0x402a80a4 4")
+        command("writel 0x402a80b0 1")
+        command("writel 0x402a8180 0x100")
+        command("writel 0x402a8014 0x40")
+        command("writel 0x80000100 0xdeadbeef")
         for address in gate_results:
             command(f"writel {address:#x} 0xffffffff")
         qmp_execute("system_reset")
+        assert int(command("readl 0x80000100").split()[1], 16) == 0xdeadbeef
         for address, expected in gate_results.items():
             assert int(command(f"readl {address:#x}").split()[1], 16) == expected
         print(f"{image}: masked GPR, gate and CPU reset passed")

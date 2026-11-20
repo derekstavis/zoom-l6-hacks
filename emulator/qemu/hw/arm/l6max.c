@@ -5234,7 +5234,7 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
         rom_add_blob_fixed_as("l6-panel-installed", s->persistent_panel,
                               flash_map_size, flash_base, CPU(s->armv7m.cpu)->as);
     }
-    if (!panel) {
+    if (!panel && profile != &L6MAX_PROFILE) {
         rom_add_blob_fixed_as("l6-main-installed", s->nor_flash + 0x50000,
                              0x1a2ff8, flash_base, CPU(s->armv7m.cpu)->as);
     }
@@ -5335,6 +5335,22 @@ static void l6_panel_init(MachineState *machine)
 static void l6_main_reset(MachineState *machine, ResetType type)
 {
     L6ChipState *s = &L6_MACHINE(machine)->chip;
+    if (type != RESET_TYPE_SNAPSHOT_LOAD && s->profile == &L6MAX_PROFILE) {
+        /* The physical bootloader takes the MAIN copy size from the installed
+         * footer. Older emulator-created NOR images lack that field, so use
+         * their package trailer as a fallback. */
+        uint32_t main_size = ldl_le_p(s->nor_flash + 0x1f7ff8);
+        if (main_size < 8 || main_size > 0x1a2ff8) {
+            main_size = ldl_le_p(s->nor_flash + 0x1f2ff8);
+        }
+        if (main_size < 8 || main_size > 0x1a2ff8) {
+            main_size = 0x1a2ff8;
+        }
+        /* CPU reset reads the vector after this copy. */
+        address_space_write(&address_space_memory, 0x80000000,
+                            MEMTXATTRS_UNSPECIFIED, s->nor_flash + 0x50000,
+                            main_size);
+    }
     qemu_devices_reset(type);
     if (type != RESET_TYPE_SNAPSHOT_LOAD && s->profile == &L6MAX_PROFILE) {
         l6max_seed_boot_handoff(s);

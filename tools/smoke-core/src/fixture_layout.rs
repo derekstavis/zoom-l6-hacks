@@ -9,6 +9,9 @@ pub const SD_STOCK_FIRMWARE: &str = "sd-stock-firmware";
 pub const LOADER_BUILD: &str = "patch-loader-firmware";
 /// The SD bundle build, with its `patch.json` report and `PATCHES/`.
 pub const SD_BUNDLE_BUILD: &str = "sd-patches-build";
+/// The patch tools' report for the MAIN image the case boots, when they
+/// built it; [`crate::firmware`] identifies the image by it.
+pub const FIRMWARE_REPORT: &str = "patch-report.json";
 /// The report an `l6patch` build writes beside its output.
 pub const PATCH_REPORT: &str = "patch.json";
 /// Present when the card holds a pass-through module ahead of the real one.

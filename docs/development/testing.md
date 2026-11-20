@@ -291,12 +291,12 @@ Outcomes:
 | Outcome | Meaning |
 | --- | --- |
 | PASS | Ran and passed |
-| FAIL | Its fixture failed to build, a firmware guard on an image our tools built did not match, or it ran and failed |
+| FAIL | Its fixture failed to build, the image our patch tools built is not the one they reported or a step needs the stock image the patches replaced, or it ran and failed |
 | XFAIL, XPASS | Failed as expected; passed despite an expected failure |
-| BLOCKED | Did not run, or its result is not valid: missing configuration or `--app`, unsupported backend, the configured package is for another model, a firmware guard on the configured stock image did not match, the run was interrupted, or QEMU or the executable changed during the case |
+| BLOCKED | Did not run, or its result is not valid: missing configuration or `--app`, unsupported backend, the configured package is for another model or not the supported stock image, the run was interrupted, or QEMU or the executable changed during the case |
 | FLAKY | Failed, then passed on a retry. Never counted as a pass |
 
-A broken patch build, or a patched image that no longer matches its guard,
+A broken patch build, or a patched image that differs from its build report,
 is a FAIL in the `fixture` phase, not BLOCKED. Before a case runs, the driver
 also checks that its fixture holds every file the scenario reads from the case
 directory (`smoke_core::fixture_layout`); a missing one is a fixture FAIL.
@@ -551,8 +551,8 @@ cargo run --offline --locked -p l6test -- run --config config.toml \
   --app "/tmp/l6-app-package/L6max Emulator.app"
 ```
 
-Use firmware revisions accepted by the tests' hash guards. A guard mismatch is
-BLOCKED coverage, not a passing test. Read `report.json` and distinguish PASS,
+Configure the supported stock 1.10 packages. Another revision is BLOCKED
+coverage, not a passing test. Read `report.json` and distinguish PASS,
 FAIL and BLOCKED totals. Retry timing-sensitive failures with `--retries` or
 `--rerun`: a failure that passes on retry is FLAKY, and both attempts are kept.
 

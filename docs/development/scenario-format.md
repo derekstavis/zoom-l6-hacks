@@ -50,8 +50,6 @@ tables. Unknown header fields fail parsing.
 | `gdb` | no | Enable the debugger socket. |
 | `audio_device` | no | QEMU audio-device syntax; `{logs}` expands to the case's log directory. |
 | `audio_input` | no | Array of tables assigning audio to input channels: `channel` plus one card-file source such as `loop-tone` or `copy`. Nothing plays until an `audio-input-transport` step. See [audio input](../emulator/audio.md#input). |
-| `main_sha256` | no | Exact 64-character hexadecimal MAIN firmware hash for revision-specific operations. |
-| `main_sha256_any` | no | Additional explicitly allowed MAIN hashes for the same guarded operations. |
 | `backends` | no | `"headless"` and/or `"gui"`; defaults to both. Typed device/GDB operations require headless. |
 | `trace_sd` | no | Enable SD trace instrumentation for the scenario. |
 
@@ -110,7 +108,7 @@ card-reader mode), stays unmarked.
 | `analog` | `channel`, `steps`, optional `gesture` | Move a one-based analog control by signed steps |
 | `expect-analog` | `channel`, `value` | Check a control's analog value |
 | `expect-powered` | `powered` | Check the current power state |
-| `expect-memory` | `address`, `bytes` | Compare MAIN memory bytes under the scenario's firmware hash guard |
+| `expect-memory` | `address`, `bytes` | Compare MAIN memory bytes |
 | `expect-heap` | `minimum_free` | Require the FreeRTOS heap's lowest free byte count since boot to be at least `minimum_free`, which must fit the heap. Needs no hash guard and works on patched images; see [heap headroom](../../patches/README.md#heap-headroom) |
 | `panel-event` | `target`, `column`, `row`, `event` | Inject a panel-controller event for focused event-path scenarios |
 
@@ -199,9 +197,13 @@ installed MAIN bytes must match the selected image. Firmware addresses stay in
 Rust. Restart preserves the settings comparison checkpoint but clears stale
 per-action observations and boot readiness.
 
-`main_sha256` allows one exact MAIN image for address-sensitive work.
-`main_sha256_any` adds explicitly qualified alternatives while retaining the
-same runtime checks.
+Scenarios do not name firmware hashes. Before a case boots, the runner
+identifies its MAIN image: the supported stock 1.10 image of its model, or an
+image our patch tools built from it and reported in `patch-report.json`
+(`smoke_core::firmware`). Any other image does not run. Each action's
+supported models, whether it must come first, and whether it needs the stock
+image itself are listed once in `smoke_core::requirements`; actions marked
+hash-guarded above read stock addresses and need the stock image.
 
 A fragment contains only `[[step]]` entries. Parent include model scope is
 intersected with child scopes. Use fragments for shared setup or control groups;

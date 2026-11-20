@@ -227,6 +227,12 @@ pub(crate) fn prepare_sd_patch(
         &fixture.patches,
         &[],
     )?;
+    // The case boots the loader build; its report identifies that MAIN.
+    fs::copy(
+        loader.join(layout::PATCH_REPORT),
+        dir.join(layout::FIRMWARE_REPORT),
+    )
+    .map_err(|e| e.to_string())?;
     fixture.firmware_package = Some(loader.join(if fixture.model == "l6" {
         "L6.BIN"
     } else {
@@ -308,7 +314,7 @@ pub(crate) fn fixture_options(
             (build.join(name), report)
         };
         fs::write(
-            dir.join("patch-report.json"),
+            dir.join(layout::FIRMWARE_REPORT),
             serde_json::to_vec_pretty(&report).unwrap(),
         )
         .map_err(|e| e.to_string())?;

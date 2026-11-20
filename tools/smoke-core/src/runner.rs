@@ -1805,19 +1805,21 @@ mod tests {
         );
     }
     #[test]
-    fn l6max_recorder_playback_is_scoped_to_its_verified_firmware_and_gpio() {
-        let prefix = "version=1\nname='recorder-playback'\nmodels=['l6max']\nbackends=['headless']\nmain_sha256='980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461'\n";
-        let scenario = format!("{prefix}[[step]]\naction='l6max-recorder-playback'\ntarget=4\n");
+    fn l6max_recorder_playback_is_scoped_to_l6max_and_its_gpio() {
+        let prefix = "version=1
+name='recorder-playback'
+models=['l6max']
+backends=['headless']
+";
+        let scenario = format!(
+            "{prefix}[[step]]
+action='l6max-recorder-playback'
+target=4
+"
+        );
         assert!(Scenario::parse(&scenario).is_ok());
         assert!(Scenario::parse(&scenario.replace("target=4", "target=5")).is_err());
         assert!(Scenario::parse(&scenario.replace("models=['l6max']", "models=['l6']")).is_err());
-        assert!(
-            Scenario::parse(&scenario.replace(
-                "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461",
-                "0000000000000000000000000000000000000000000000000000000000000000"
-            ))
-            .is_err()
-        );
     }
     #[test]
     fn unsupported_schema_and_zero_timeouts_fail_before_boot() {
@@ -1835,37 +1837,37 @@ mod tests {
         assert!(Scenario::parse(&base.replace("target=48", "target=53")).is_err());
     }
     #[test]
-    fn l6_usb_startup_requires_first_step_l6_scope_and_exact_firmware_hash() {
-        let base = "version=1\nname='usb'\nmodels=['l6']\nbackends=['headless']\nmain_sha256='827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799'\n[[step]]\naction='l6-usb-startup'\n";
+    fn l6_usb_startup_requires_first_step_and_l6_scope() {
+        let base = "version=1
+name='usb'
+models=['l6']
+backends=['headless']
+[[step]]
+action='l6-usb-startup'
+";
         assert!(Scenario::parse(base).is_ok());
-        assert!(
-            Scenario::parse(&base.replace(
-                "main_sha256='827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799'\n",
-                ""
-            ))
-            .is_err()
-        );
         assert!(Scenario::parse(&base.replace("models=['l6']", "models=['l6max']")).is_err());
         let late = base.replace(
-            "[[step]]\naction='l6-usb-startup'",
-            "[[step]]\naction='delay'\nguest_ms=1\n[[step]]\naction='l6-usb-startup'",
+            "[[step]]
+action='l6-usb-startup'",
+            "[[step]]
+action='delay'
+guest_ms=1
+[[step]]
+action='l6-usb-startup'",
         );
         assert!(Scenario::parse(&late).is_err());
     }
     #[test]
-    fn l6_din_sweep_requires_its_l6_110_main_hash() {
-        let base = "version=1\nname='din-sweep'\nmodels=['l6']\nbackends=['headless']\nmain_sha256='827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799'\n[[step]]\naction='l6-din-sweep'\n";
+    fn l6_din_sweep_is_scoped_to_l6() {
+        let base = "version=1
+name='din-sweep'
+models=['l6']
+backends=['headless']
+[[step]]
+action='l6-din-sweep'
+";
         assert!(Scenario::parse(base).is_ok());
-        let without_hash = base.replace(
-            "main_sha256='827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799'\n",
-            "",
-        );
-        assert!(Scenario::parse(&without_hash).is_err());
-        let wrong_hash = base.replace(
-            "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799",
-            "0000000000000000000000000000000000000000000000000000000000000000",
-        );
-        assert!(Scenario::parse(&wrong_hash).is_err());
         assert!(Scenario::parse(&base.replace("models=['l6']", "models=['l6max']")).is_err());
     }
     #[test]

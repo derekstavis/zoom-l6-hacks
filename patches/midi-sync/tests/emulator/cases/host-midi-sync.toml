@@ -4,8 +4,6 @@ models = ["l6max"]
 card = "none"
 backends = ["headless"]
 patches = ["midi-sync"]
-main_sha256 = "a224a9e1da62f2dac3b931aab17f0c9a6e76b2c3caeb1ab1b81ec90d44a308c5"
-main_sha256_any = ["a3f32acf2c29a32f1d7a5667a0fed5d313594fafd926dabc214d97fd88b1b644", "2518be3e15c31611c990a5ec6a6afde0aef158070038ed0b9d2bde34b5cef06d", "3d50d8070c5b87e44cfd3932b6f4069c0bf5bf9b053b1d2f5582f786d97b9126", "735b2058d0286e58cf14006c33bef28001a7b3526a53f3438fa0cf63b53e4efe", "9d56ac7d5308b34f1301640e9a2aee8ad9378cd1fa5cd0716b8c31e1c03221a2", "8e3c526dd7c47404ec181e6fecab4bbec64496957fb027ce5e90afa99ce884fb", "2b15804c9872d8f8d9c2b7bc024ea1dfbbbb474f3cf621942212f47c58981351"]
 
 [case]
 suites = ["full"]

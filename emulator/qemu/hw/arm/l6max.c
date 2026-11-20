@@ -2338,6 +2338,11 @@ static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
         return GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
             GUINT_TO_POINTER((pfd_base >> 2) + 1)));
     }
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
+        !(offset & 3) && (offset & ~(hwaddr)0xf) == L6_CCM_ANALOG_MISC2) {
+        return GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+            GUINT_TO_POINTER((L6_CCM_ANALOG_MISC2 >> 2) + 1)));
+    }
     hwaddr analog_pll_base = offset & ~(hwaddr)0xf;
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
         !(offset & 3) && (analog_pll_base == L6_CCM_ANALOG_PLL_ARM ||
@@ -3506,6 +3511,23 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
                                L6_USB1_PLL_DIRECT;
         control = l6_pfd_apply(control, value, alias,
                                &s->pfd_applied[pfd_base == L6_CCM_ANALOG_PFD_528]);
+        g_hash_table_insert(s->registers, control_key, GUINT_TO_POINTER(control));
+        if (alias == L6_USB1_PLL_DIRECT) {
+            word = control;
+        } else {
+            store_word = false;
+        }
+    }
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
+        !(offset & 3) && (offset & ~(hwaddr)0xf) == L6_CCM_ANALOG_MISC2) {
+        gpointer control_key = GUINT_TO_POINTER((L6_CCM_ANALOG_MISC2 >> 2) + 1);
+        uint32_t control = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+                                                               control_key));
+        L6Usb1PllAlias alias = offset == L6_CCM_ANALOG_MISC2 + 4 ? L6_USB1_PLL_SET :
+                               offset == L6_CCM_ANALOG_MISC2 + 8 ? L6_USB1_PLL_CLEAR :
+                               offset == L6_CCM_ANALOG_MISC2 + 12 ? L6_USB1_PLL_TOGGLE :
+                               L6_USB1_PLL_DIRECT;
+        control = l6_misc2_apply(control, value, alias);
         g_hash_table_insert(s->registers, control_key, GUINT_TO_POINTER(control));
         if (alias == L6_USB1_PLL_DIRECT) {
             word = control;

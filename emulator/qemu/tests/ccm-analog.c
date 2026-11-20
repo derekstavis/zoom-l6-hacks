@@ -16,6 +16,15 @@ int main(void)
     assert(L6_CCM_ANALOG_PFD_480_RESET == 0x13111018u);
     assert(L6_CCM_ANALOG_PFD_528_RESET == 0x1018101bu);
 
+    /* MISC2 aliases leave inherited read-only and reserved bits untouched. */
+    uint32_t misc_status = 0x00585858u;
+    assert(l6_misc2_apply(misc_status, 0xffffffffu, L6_USB1_PLL_DIRECT) ==
+           0xffffffffu);
+    assert(l6_misc2_apply(0xffffffffu, 0xffffffffu, L6_USB1_PLL_CLEAR) ==
+           misc_status);
+    assert(l6_misc2_apply(misc_status, misc_status, L6_USB1_PLL_TOGGLE) ==
+           misc_status);
+
     /* The recovered L6max boot clock setup selects PLL4 for SAI1 and
      * configures its 32 + 96/125 multiplier and /4, /2 SAI dividers. */
     uint32_t mux = l6max_boot_clock_value(L6_CCM_CSCMR1_OFFSET,

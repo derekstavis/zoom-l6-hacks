@@ -171,6 +171,24 @@ static inline uint32_t l6_audio_pll_status(uint32_t control)
     return control;
 }
 
+/* CCM_ANALOG_MISC2 includes read-only PMU status and reserved bits. The
+ * writable bits include audio/video dividers and PMU configuration fields. */
+#define L6_MISC2_WRITABLE 0xffa7a7a7u
+static inline uint32_t l6_misc2_apply(uint32_t control, uint32_t value,
+                                      L6Usb1PllAlias alias)
+{
+    uint32_t preserved = control & ~L6_MISC2_WRITABLE;
+    uint32_t writable = control & L6_MISC2_WRITABLE;
+    value &= L6_MISC2_WRITABLE;
+    switch (alias) {
+    case L6_USB1_PLL_DIRECT: writable = value; break;
+    case L6_USB1_PLL_SET: writable |= value; break;
+    case L6_USB1_PLL_CLEAR: writable &= ~value; break;
+    case L6_USB1_PLL_TOGGLE: writable ^= value; break;
+    }
+    return preserved | writable;
+}
+
 /* ARM and system PLL output ENABLE is separate from POWERDOWN. */
 /* RT1060 ARM root from PLL1 and CACRR. UINT32_MAX means an unmodeled
  * external reference or an out-of-range divider; zero means no PLL output. */

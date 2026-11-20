@@ -228,6 +228,21 @@ def check_flexram_boundaries(qemu, image):
         assert int(command("readl 0x40384040").split()[1], 16) & 31 == before
         command("clock_step 800000")
         assert (int(command("readl 0x40384040").split()[1], 16) - before) & 31 == 16
+        # Restore the SAI divider, then halve the audio PLL output through
+        # MISC2_SET; the running scheduler must follow that alias write.
+        command("writel 0x400fc028 0x0ec102c1")
+        command("writel 0x400d8174 0x8000")
+        command("clock_step 2800000")
+        before = fill_sai()
+        command("clock_step 2000000")
+        assert int(command("readl 0x40384040").split()[1], 16) & 31 == before
+        command("clock_step 800000")
+        assert (int(command("readl 0x40384040").split()[1], 16) - before) & 31 == 16
+        command("writel 0x400d8178 0x8000")
+        command("clock_step 2800000")
+        before = fill_sai()
+        command("clock_step 1400000")
+        assert (int(command("readl 0x40384040").split()[1], 16) - before) & 31 == 16
         command("writel 0x40384008 0")
         command("writel 0x400fc07c " + hex(old_gate))
         command("writel 0x400fc028 0x0ec102c1")
@@ -388,6 +403,15 @@ def check_flexram_boundaries(qemu, image):
         assert int(command("readl 0x400d80e0").split()[1], 16) == 0x80310001
         command("writel 0x400d80e0 0x80001000")
         assert int(command("readl 0x400d80e0").split()[1], 16) == 0x1000
+        # MISC2 aliases share the register and cannot set PMU status or
+        # reserved bits. The bootloader later clears both audio divider bits.
+        assert int(command("readl 0x400d8170").split()[1], 16) == 0x00272727
+        command("writel 0x400d8174 0x0058d858")
+        assert int(command("readl 0x400d8174").split()[1], 16) == 0x0027a727
+        command("writel 0x400d817c 0x00808000")
+        assert int(command("readl 0x400d817c").split()[1], 16) == 0x00a72727
+        command("writel 0x400d8178 0x00800000")
+        assert int(command("readl 0x400d8178").split()[1], 16) == 0x00272727
         for address in (0x400d8020, 0x400d80a0, 0x400d80e0, 0x400d8160, 0x400d8170):
             command(f"writel {address:#x} 0xffffffff")
         command("writel 0x400d8010 0")
@@ -435,7 +459,7 @@ def check_flexram_boundaries(qemu, image):
                                (0x400d80e0, 0x80312001),
                                (0x400d8070, 0x80082020),
                                (0x400d8160, 0xffffffe0),
-                               (0x400d8170, 0x3f7f7fff)):
+                               (0x400d8170, 0x3f2727a7)):
             assert int(command(f"readl {address:#x}").split()[1], 16) == value
         for address in (0xe000e100, 0xe000e200, 0xe000e010,
                         0xe000ed94, 0xe000ed24):

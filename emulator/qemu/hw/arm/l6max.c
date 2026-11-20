@@ -2297,6 +2297,12 @@ static L6Sai *l6_sai_at(L6ChipState *s, hwaddr offset, hwaddr *reg_offset)
 static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
 {
     L6ChipState *s = opaque;
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
+        offset >= 0x0d8070 && offset <= 0x0d807c && !(offset & 3)) {
+        uint32_t control = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+            GUINT_TO_POINTER((0x0d8070 >> 2) + 1)));
+        return l6_audio_pll_status(control);
+    }
     if (!s->panel && offset == 0x0d8010 && size == 4) {
         uint32_t control = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
             GUINT_TO_POINTER((0x0d8010 >> 2) + 1)));
@@ -3390,6 +3396,23 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
     unsigned shift = (offset & 3) * 8;
     uint32_t mask = size == 4 ? UINT32_MAX : ((1u << (size * 8)) - 1) << shift;
     word = (word & ~mask) | (((uint32_t)value << shift) & mask);
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
+        offset >= 0x0d8070 && offset <= 0x0d807c && !(offset & 3)) {
+        gpointer control_key = GUINT_TO_POINTER((0x0d8070 >> 2) + 1);
+        uint32_t control = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+                                                               control_key));
+        L6Usb1PllAlias alias = offset == 0x0d8074 ? L6_USB1_PLL_SET :
+                               offset == 0x0d8078 ? L6_USB1_PLL_CLEAR :
+                               offset == 0x0d807c ? L6_USB1_PLL_TOGGLE :
+                               L6_USB1_PLL_DIRECT;
+        control = l6_audio_pll_apply(control, value, alias);
+        g_hash_table_insert(s->registers, control_key, GUINT_TO_POINTER(control));
+        if (alias == L6_USB1_PLL_DIRECT) {
+            word = control;
+        } else {
+            store_word = false;
+        }
+    }
     if (!s->panel && size == 4 && offset >= 0x0d8010 &&
         offset <= 0x0d801c && !(offset & 3)) {
         gpointer control_key = GUINT_TO_POINTER((0x0d8010 >> 2) + 1);

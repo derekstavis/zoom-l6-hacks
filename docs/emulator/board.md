@@ -49,6 +49,9 @@ the resulting complete values are assumptions, not hardware measurements.
 The USB2, video and Ethernet PLL controls reflect the bootloader's recovered
 bypass/power sequence. Ethernet LOCK is seeded based on the successful
 bootloader wait; these PLLs' timing and outputs are not simulated.
+For L6max, PLL_AUDIO SET/CLR/TOG aliases update the control register and
+LOCK follows enable/power state immediately; physical lock timing is not
+modeled.
 IOMUX register storage does not
 model pad electrical characteristics or reroute pins dynamically. SDRAM
 timing and refresh register values are seeded from the bootloader's nominal

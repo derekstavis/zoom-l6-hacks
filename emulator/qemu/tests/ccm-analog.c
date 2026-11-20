@@ -40,6 +40,14 @@ int main(void)
     assert((l6max_boot_clock_value(L6_CCM_ANALOG_PLL_AUDIO, 0x80000) &
             0x180000) == 0x80000);
 
+    uint32_t audio = l6_audio_pll_apply(0, 0x80002020u, L6_USB1_PLL_DIRECT);
+    assert(audio == 0x2020u && (l6_audio_pll_status(audio) & 0x80000000u));
+    audio = l6_audio_pll_apply(audio, 0x1000u, L6_USB1_PLL_SET);
+    assert(!(l6_audio_pll_status(audio) & 0x80000000u));
+    audio = l6_audio_pll_apply(audio, 0x1000u, L6_USB1_PLL_CLEAR);
+    audio = l6_audio_pll_apply(audio, 0x10000u, L6_USB1_PLL_TOGGLE);
+    assert((audio & 0x10000u) && (l6_audio_pll_status(audio) & 0x80000000u));
+
     /* Separate SET writes are cumulative; LOCK appears only after both the
      * documented POWER and ENABLE controls have been set. */
     control = l6_usb1_pll_apply(control, L6_USB1_PLL_POWER, L6_USB1_PLL_SET);

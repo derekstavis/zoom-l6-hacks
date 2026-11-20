@@ -119,6 +119,31 @@ typedef enum L6Usb1PllAlias {
     L6_USB1_PLL_TOGGLE,
 } L6Usb1PllAlias;
 
+/* RT1060 PLL_AUDIO control and its SET/CLR/TOG aliases. LOCK is read-only. */
+#define L6_AUDIO_PLL_WRITABLE 0x0019f07fu
+static inline uint32_t l6_audio_pll_apply(uint32_t control, uint32_t value,
+                                          L6Usb1PllAlias alias)
+{
+    control &= L6_AUDIO_PLL_WRITABLE;
+    value &= L6_AUDIO_PLL_WRITABLE;
+    switch (alias) {
+    case L6_USB1_PLL_DIRECT: return value;
+    case L6_USB1_PLL_SET: return control | value;
+    case L6_USB1_PLL_CLEAR: return control & ~value;
+    case L6_USB1_PLL_TOGGLE: return control ^ value;
+    }
+    return control;
+}
+
+static inline uint32_t l6_audio_pll_status(uint32_t control)
+{
+    control &= L6_AUDIO_PLL_WRITABLE;
+    if ((control & 0x3000u) == 0x2000u) {
+        control |= 0x80000000u;
+    }
+    return control;
+}
+
 static inline uint32_t l6_usb1_pll_apply(uint32_t control, uint32_t value,
                                          L6Usb1PllAlias alias)
 {

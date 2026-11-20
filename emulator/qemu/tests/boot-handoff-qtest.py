@@ -138,6 +138,20 @@ def check_flexram_boundaries(qemu, image):
         }
         for address in clocks:
             command(f"writel {address:#x} 0xffffffff")
+        # PLL_AUDIO aliases update one control register and LOCK follows
+        # ENABLE/POWERDOWN instead of accepting writes to the status bit.
+        command("writel 0x400d8078 0x2000")
+        assert not int(command("readl 0x400d8070").split()[1], 16) & 0x80000000
+        command("writel 0x400d8074 0x2000")
+        assert int(command("readl 0x400d8074").split()[1], 16) & 0x80000000
+        command("writel 0x400d8074 0x1000")
+        assert not int(command("readl 0x400d8070").split()[1], 16) & 0x80000000
+        command("writel 0x400d8078 0x1000")
+        assert int(command("readl 0x400d8078").split()[1], 16) & 0x80000000
+        command("writel 0x400d807c 0x10000")
+        assert int(command("readl 0x400d8070").split()[1], 16) & 0x10000
+        command("writel 0x400d8070 0x80000000")
+        assert int(command("readl 0x400d8070").split()[1], 16) == 0
         for address in (0x400d8020, 0x400d80a0, 0x400d80e0, 0x400d8160, 0x400d8170):
             command(f"writel {address:#x} 0xffffffff")
         command("writel 0x400d8070 0x00080000")

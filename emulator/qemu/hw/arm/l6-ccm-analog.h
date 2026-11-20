@@ -119,6 +119,24 @@ typedef enum L6Usb1PllAlias {
     L6_USB1_PLL_TOGGLE,
 } L6Usb1PllAlias;
 
+/* PFD stable bits are read-only phase indicators; this model retains them
+ * rather than predicting their transition timing. */
+#define L6_PFD_STABLE_MASK 0x40404040u
+static inline uint32_t l6_pfd_apply(uint32_t control, uint32_t value,
+                                    L6Usb1PllAlias alias)
+{
+    uint32_t stable = control & L6_PFD_STABLE_MASK;
+    uint32_t writable = control & ~L6_PFD_STABLE_MASK;
+    value &= ~L6_PFD_STABLE_MASK;
+    switch (alias) {
+    case L6_USB1_PLL_DIRECT: writable = value; break;
+    case L6_USB1_PLL_SET: writable |= value; break;
+    case L6_USB1_PLL_CLEAR: writable &= ~value; break;
+    case L6_USB1_PLL_TOGGLE: writable ^= value; break;
+    }
+    return stable | writable;
+}
+
 /* RT1060 PLL_AUDIO control and its SET/CLR/TOG aliases. LOCK is read-only. */
 #define L6_AUDIO_PLL_WRITABLE 0x0019f07fu
 static inline uint32_t l6_audio_pll_apply(uint32_t control, uint32_t value,

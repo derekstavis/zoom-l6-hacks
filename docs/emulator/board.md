@@ -52,6 +52,9 @@ bootloader wait; these PLLs' timing and outputs are not simulated.
 For L6max, PLL_AUDIO SET/CLR/TOG aliases update the control register and
 LOCK follows enable/power state immediately; physical lock timing is not
 modeled.
+The PFD SET/CLR/TOG aliases share control state and preserve read-only
+STABLE bits. Their hardware phase transitions are not modeled, so those
+diagnostic bit values are not verified handoff values.
 IOMUX register storage does not
 model pad electrical characteristics or reroute pins dynamically. SDRAM
 timing and refresh register values are seeded from the bootloader's nominal

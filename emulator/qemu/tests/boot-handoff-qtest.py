@@ -152,6 +152,18 @@ def check_flexram_boundaries(qemu, image):
         assert int(command("readl 0x400d8070").split()[1], 16) & 0x10000
         command("writel 0x400d8070 0x80000000")
         assert int(command("readl 0x400d8070").split()[1], 16) == 0
+        for base in (0x400d80f0, 0x400d8100):
+            original = int(command(f"readl {base:#x}").split()[1], 16)
+            command(f"writel {base + 4:#x} 0x80")
+            assert int(command(f"readl {base + 4:#x}").split()[1], 16) == original | 0x80
+            command(f"writel {base + 8:#x} 0x80")
+            assert int(command(f"readl {base:#x}").split()[1], 16) == original & ~0x80
+            command(f"writel {base + 12:#x} 0x80")
+            assert int(command(f"readl {base:#x}").split()[1], 16) == original ^ 0x80
+            command(f"writel {base:#x} 0xffffffff")
+            assert int(command(f"readl {base:#x}").split()[1], 16) == (
+                (original & 0x40404040) | 0xbfbfbfbf
+            )
         for address in (0x400d8020, 0x400d80a0, 0x400d80e0, 0x400d8160, 0x400d8170):
             command(f"writel {address:#x} 0xffffffff")
         command("writel 0x400d8070 0x00080000")

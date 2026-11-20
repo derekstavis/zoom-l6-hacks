@@ -38,6 +38,9 @@ firmware_variables! {
     /// Fixed shared DSP state region cleared and reused by the stock effect selector.
     /// Use `.address()` to access it in place; reading this variable would copy 768 KB.
     pub mut dsp_effect_workspace: [u8; DSP_EFFECT_WORKSPACE_BYTES], at 0x80d0_0000;
+    /// The EQ coefficients the audio task applies between blocks, three `f32`;
+    /// the identity filter at neutral.
+    pub dsp_eq_coefficients: [f32; 3], at 0x2001_5588;
 }
 
 firmware_symbols! {

@@ -30,4 +30,8 @@ firmware_symbols! {
 firmware_variables! {
     /// Events waiting in the MAIN task's queue.
     pub main_event_queue_pending: u32, at 0x806b_2f20;
+    /// Sound Pad 1's WAV path (UTF-16) in the active assignment record.
+    pub sound_pad1_path: u16, at 0x8044_5524;
+    /// Sound Pad 1's play mode from its SD assignment; 0 is one-shot.
+    pub sound_pad1_play_mode: u8, at 0x8044_1d8c;
 }

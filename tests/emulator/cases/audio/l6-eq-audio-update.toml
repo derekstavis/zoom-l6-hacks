@@ -22,7 +22,7 @@ guest_timeout_ms = 30000
 # The mixer starts at neutral; the audio coefficient is the identity filter.
 [[step]]
 action = "expect-memory"
-address = 0x20016510
+symbol = "dsp_eq_coefficients"
 bytes = [0, 0, 128, 63]
 
 [[step]]
@@ -38,5 +38,5 @@ guest_ms = 3000
 # ring, between audio blocks. These bytes are specific to 1.10.
 [[step]]
 action = "expect-memory"
-address = 0x20016510
+symbol = "dsp_eq_coefficients"
 bytes = [250, 40, 135, 62, 72, 212, 94, 189, 199, 88, 74, 63]

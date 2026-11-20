@@ -32,7 +32,7 @@ image = "tests/emulator/references/l6max-storage-removed.png"
 # Live settings struct: setup_required loaded from the synthesized bank.
 [[step]]
 action = "expect-memory"
-address = 0x804601e0
+symbol = "setup_required"
 bytes = [0]
 
 # The firmware read the spec's bank (first commit lands in slot 0x1f9000) and

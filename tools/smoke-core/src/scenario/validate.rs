@@ -297,12 +297,22 @@ impl Scenario {
                     return Err("expect-heap minimum_free must be positive and fit the heap".into());
                 }
             }
-            if let Action::ExpectMemory { address, bytes } = &step.action {
-                if bytes.is_empty()
-                    || bytes.len() > 4096
-                    || address.checked_add(bytes.len() as u32).is_none()
-                {
-                    return Err("expect-memory needs 1..4096 bytes in a valid address range".into());
+            if let Action::ExpectMemory { symbol, bytes } = &step.action {
+                if bytes.is_empty() || bytes.len() > 4096 {
+                    return Err("expect-memory needs 1..4096 bytes".into());
+                }
+                for &model in value.models.iter().filter(|&&model| step.applies_to(model)) {
+                    let address = crate::firmware::symbol(model, symbol).ok_or_else(|| {
+                        format!(
+                            "expect-memory symbol {symbol} is not declared in patches/api/{}",
+                            model.name()
+                        )
+                    })?;
+                    if address.checked_add(bytes.len() as u32).is_none() {
+                        return Err(format!(
+                            "expect-memory {symbol} reads past the address space"
+                        ));
+                    }
                 }
             }
             if let Action::ExpectSdPatch {

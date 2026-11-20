@@ -11,4 +11,6 @@ firmware_variables! {
     pub rec_mode: u32, at 0x8057_8ebc;
     /// Eight-byte key of the selected recording.
     pub rec_selected_key: u8, at 0x8061_01a8;
+    /// The Record lamp as level-meter record 0x15; 16 while recording.
+    pub rec_record_lamp: u16, at 0x8062_93c6;
 }

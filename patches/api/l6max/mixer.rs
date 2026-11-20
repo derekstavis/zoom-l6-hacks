@@ -34,4 +34,6 @@ firmware_variables! {
     /// One byte per channel, 0-127.
     pub mixer_channel_levels: u8, at 0x8046_00a4;
     pub mixer_efx_type: u8, at 0x8046_00b2;
+    /// Channel 1's EQ high gain; 64 is neutral.
+    pub mixer_first_channel_eq_high: u8, at 0x8045_ff86;
 }

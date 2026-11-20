@@ -530,8 +530,11 @@ impl Runner {
                         devices::Operation::L6maxRecorderPlayback { target },
                     ));
                 }
-                Action::ExpectMemory { address, bytes } => {
+                Action::ExpectMemory { symbol, bytes } => {
+                    let address = crate::firmware::symbol(self.model, &symbol)
+                        .ok_or_else(|| format!("{symbol} is not declared for this model"))?;
                     return Ok(Progress::Device(devices::Operation::ExpectMemory {
+                        symbol,
                         address,
                         bytes,
                     }));

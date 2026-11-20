@@ -517,19 +517,29 @@ def check_flexram_boundaries(qemu, image):
         for address in bad:
             command(f"readl {address:#x}")
         assert int(command("readl 0x400b0010").split()[1], 16) == 0
+        command("writew 0x400b0000 5")
+        assert int(command("readl 0x400b0000").split()[1], 16) == 5
+        command("writew 0x400b0002 0xffff")
+        assert int(command("readw 0x400b0000").split()[1], 16) == 5
         command("writel 0x400b0000 0xffffffff")
         assert int(command("readl 0x400b0000").split()[1], 16) == 7
-        command("writel 0x400b0014 0xffffffff")
+        command("writeb 0x400b0014 0xff")
+        assert int(command("readl 0x400b0014").split()[1], 16) == 0x38
+        assert int(command("readb 0x400b0014").split()[1], 16) == 0x38
+        assert int(command("readw 0x400b0014").split()[1], 16) == 0x38
+        command("writeb 0x400b0015 0xff")
         assert int(command("readl 0x400b0014").split()[1], 16) == 0x38
         command("writel 0xe000e284 0x40")
         for address in bad:
             command(f"readl {address:#x}")
         assert int(command("readl 0x400b0010").split()[1], 16) == 0x38
         assert not int(command("readl 0xe000e204").split()[1], 16) & 0x40
-        command("writel 0x400b0018 0x08")
+        command("writeb 0x400b0018 0x08")
         assert int(command("readl 0xe000e204").split()[1], 16) & 0x40
-        command("writel 0x400b0010 0x08")
-        assert int(command("readl 0x400b0010").split()[1], 16) == 0x30
+        command("writeb 0x400b0011 0xff")
+        assert int(command("readb 0x400b0010").split()[1], 16) == 0x38
+        command("writeb 0x400b0010 0x08")
+        assert int(command("readw 0x400b0010").split()[1], 16) == 0x30
         command("writel 0xe000e284 0x40")
         assert not int(command("readl 0xe000e204").split()[1], 16) & 0x40
         command("writel 0x400b0018 0x30")

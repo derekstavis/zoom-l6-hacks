@@ -192,7 +192,9 @@ the partition retains bank contents. GPR16 bits 0–1 are retained as written,
 but their effect is not modeled because the current RT1060 manual marks them
 reserved and older NXP examples differ.
 The controller models enabled out-of-range status, write-one-to-clear status,
-and shared interrupt 38 for each interface. Unallocated ITCM and DTCM accesses
+and shared interrupt 38 for each interface. Its control and interrupt registers
+share state across aligned byte, halfword and word accesses; misaligned access
+behavior is not modeled. Unallocated ITCM and DTCM accesses
 raise a guest bus error; unallocated FlexRAM OCRAM reads return zero and writes
 are discarded. A later physical dump recorded faults in the ITCM and DTCM gaps,
 but no faults and all-zero data in the last 160 KiB of the OCRAM window. Its

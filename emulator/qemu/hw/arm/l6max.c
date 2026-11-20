@@ -2568,14 +2568,19 @@ static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
         /* SEMC is idle because no timed controller operations are modeled. */
         return (1u >> ((offset & 3) * 8));
     }
-    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4) {
-        switch (offset) {
-        case 0x0b0000: return s->flexram_tcm_ctrl;
-        case 0x0b0010: return s->flexram_status;
-        case 0x0b0014: return s->flexram_status_en;
-        case 0x0b0018: return s->flexram_sig_en;
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (offset & 3) + size <= 4) {
+        uint32_t value;
+        switch (offset & ~(hwaddr)3) {
+        case 0x0b0000: value = s->flexram_tcm_ctrl; break;
+        case 0x0b0010: value = s->flexram_status; break;
+        case 0x0b0014: value = s->flexram_status_en; break;
+        case 0x0b0018: value = s->flexram_sig_en; break;
+        default: goto not_flexram_read;
         }
+        return value >> ((offset & 3) * 8);
     }
+not_flexram_read:
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
         ((offset & ~(hwaddr)0xf) == 0x0d8150 ||
          (offset & ~(hwaddr)0xf) == 0x0d82c0 ||
@@ -3840,12 +3845,28 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
         l6max_pit_write(s, offset, value)) {
         return;
     }
-    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4) {
-        switch (offset) {
-        case 0x0b0000: s->flexram_tcm_ctrl = value & 7u; return;
-        case 0x0b0010: s->flexram_status &= ~(value & 0x38u); l6max_flexram_irq_update(s); return;
-        case 0x0b0014: s->flexram_status_en = value & 0x38u; l6max_flexram_irq_update(s); return;
-        case 0x0b0018: s->flexram_sig_en = value & 0x38u; l6max_flexram_irq_update(s); return;
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (offset & 3) + size <= 4) {
+        unsigned shift = (offset & 3) * 8;
+        uint32_t mask = size == 4 ? UINT32_MAX :
+                        ((1u << (size * 8)) - 1u) << shift;
+        uint32_t written = ((uint32_t)value << shift) & mask;
+        switch (offset & ~(hwaddr)3) {
+        case 0x0b0000:
+            s->flexram_tcm_ctrl = ((s->flexram_tcm_ctrl & ~mask) | written) & 7u;
+            return;
+        case 0x0b0010:
+            s->flexram_status &= ~(written & mask & 0x38u);
+            l6max_flexram_irq_update(s);
+            return;
+        case 0x0b0014:
+            s->flexram_status_en = ((s->flexram_status_en & ~mask) | written) & 0x38u;
+            l6max_flexram_irq_update(s);
+            return;
+        case 0x0b0018:
+            s->flexram_sig_en = ((s->flexram_sig_en & ~mask) | written) & 0x38u;
+            l6max_flexram_irq_update(s);
+            return;
         }
     }
     bool store_word = true;

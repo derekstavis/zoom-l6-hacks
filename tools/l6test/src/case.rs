@@ -35,6 +35,8 @@ pub(crate) struct Context<'a> {
     pub(crate) patch_artifact_dir: &'a Path,
     /// Stop after building fixtures and computing identities.
     pub(crate) fixtures_only: bool,
+    /// Let display checks replace references that differ.
+    pub(crate) update_references: bool,
 }
 
 /// How an attempt ended without an error.
@@ -333,6 +335,14 @@ fn plan_invocation(
         )
         .env("L6_MIDI_NAMESPACE", midi_namespace);
     command.env("L6_PATCH_ARTIFACT_DIR", ctx.patch_artifact_dir);
+    if ctx.update_references {
+        command
+            .env(smoke_core::devices::UPDATE_REFERENCES_ENV, "1")
+            .env(
+                smoke_core::devices::REFERENCE_RECORDS_ENV,
+                ctx.output.join("references"),
+            );
+    }
     command.env(
         "RUST_LOG",
         env::var("RUST_LOG").unwrap_or_else(|_| l6max_host::logging::DEFAULT_FILTER.into()),

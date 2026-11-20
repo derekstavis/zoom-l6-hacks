@@ -380,6 +380,31 @@ fn menu_rows(
     Ok((rows, items))
 }
 
+/// menu-loader's reviewed display images, from the repository root.
+const MENU_REFERENCES: &str = "patches/menu-loader/tests/emulator/references";
+/// Rows of a menu the display shows at once.
+/// The patch whose presence makes the System > Patches screen render
+/// nondeterministically (the title's underline is sometimes missing).
+const UNSTABLE_PATCHES_SCREEN: &str = "knob-dialog";
+const VISIBLE_ROWS: usize = 3;
+
+/// The reviewed image of System > Patches as it opens, named after the rows
+/// it shows (`patch-loader-1.0.0__knob-dialog-1.0.0-sd.png`) and, when the
+/// list is longer than the display, how many rows the scroll bar spans
+/// (`…__of-4.png`).
+fn patches_screen_reference(rows: &[String]) -> String {
+    let mut name = rows
+        .iter()
+        .take(VISIBLE_ROWS)
+        .map(|row| row.to_lowercase().replace(" (sd)", "-sd").replace(' ', "-"))
+        .collect::<Vec<_>>()
+        .join("__");
+    if rows.len() > VISIBLE_ROWS {
+        name.push_str(&format!("__of-{}", rows.len()));
+    }
+    format!("{MENU_REFERENCES}/patches-suite/{name}.png")
+}
+
 fn include(text: &mut String, path: &str) {
     step(text, &format!("action = \"include\"\npath = {path:?}"));
 }
@@ -474,7 +499,32 @@ fn menu_checks(
     delay(text, 500);
     press(text, "recorder-function-4", 1);
     delay(text, 1000);
-    // Run each item's action in menu order, moving down from the top.
+    // Open System > Patches and compare its rows as drawn; back in System
+    // the cursor stays on Patches. Each item a patch adds comes after
+    // Patches, so the actions below move down from there.
+    let patches = items
+        .iter()
+        .position(|item| item == "Patches")
+        .ok_or("System menu has no Patches")?;
+    press(text, "recorder-function-3", patches);
+    delay(text, 500);
+    press(text, "recorder-function-4", 1);
+    delay(text, 1000);
+    // With Knob Dialog installed, about half the boots draw this screen
+    // without the line under the title, so its image is compared only
+    // when Knob Dialog is absent until that is fixed.
+    if !combination.installs(UNSTABLE_PATCHES_SCREEN) {
+        step(
+            text,
+            &format!(
+                "action = \"expect-display-image\"\nimage = {:?}",
+                patches_screen_reference(&rows)
+            ),
+        );
+    }
+    press(text, "recorder-function-1", 1);
+    delay(text, 1000);
+    // Run each item's action in menu order, moving down from Patches.
     let mut actions: Vec<(usize, &str)> = Vec::new();
     for (name, patch) in &all.order {
         if !combination.installs(name) {
@@ -489,7 +539,7 @@ fn menu_checks(
         }
     }
     actions.sort();
-    let mut cursor = 0;
+    let mut cursor = patches;
     for (index, steps) in actions {
         press(text, "recorder-function-3", index - cursor);
         delay(text, 500);

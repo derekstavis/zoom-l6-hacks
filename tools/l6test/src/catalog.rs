@@ -434,12 +434,14 @@ pub(crate) fn resolved_scenario(scenario: &Scenario, model: &str) -> Result<Valu
         let step = step.as_object_mut().unwrap();
         step.remove("models");
         if let Some(Value::String(image)) = step.get("image") {
+            // A reference not recorded yet fails its check when the case runs;
+            // `--update-references` records it.
             let path = smoke_core::spec_path(Path::new(image))?;
-            let bytes = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-            step.insert(
-                "image".into(),
-                format!("sha256:{:x}", Sha256::digest(bytes)).into(),
-            );
+            let identity = match fs::read(&path) {
+                Ok(bytes) => format!("sha256:{:x}", Sha256::digest(bytes)),
+                Err(_) => format!("missing:{image}"),
+            };
+            step.insert("image".into(), identity.into());
         }
     }
     Ok(value)

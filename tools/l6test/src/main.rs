@@ -60,6 +60,9 @@ struct Args {
     fixtures_only: bool,
     /// Build every fixture per case, without the run cache.
     no_cache: bool,
+    /// Replace display references that are missing or differ with the
+    /// rendered display, for review in the diff.
+    update_references: bool,
 }
 /// Each guest runs one single-threaded TCG engine plus its scenario process.
 /// Leave headroom so concurrent guests keep up with real time.
@@ -89,6 +92,7 @@ fn parse_args() -> Result<Args, String> {
         only: select::RERUN_DEFAULT.to_vec(),
         fixtures_only: false,
         no_cache: false,
+        update_references: false,
     };
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -129,6 +133,7 @@ fn parse_args() -> Result<Args, String> {
             "--strict" => result.strict = true,
             "--fixtures-only" => result.fixtures_only = true,
             "--no-cache" => result.no_cache = true,
+            "--update-references" => result.update_references = true,
             "--shard" => {
                 result.shard = Some(select::Shard::parse(
                     &args.next().ok_or("--shard needs I/N")?,
@@ -224,7 +229,7 @@ fn execute() -> Result<i32, String> {
     }
     if !["run", "check"].contains(&args.command.as_str()) {
         println!(
-            "Usage: cargo l6test list [--format text|json]\n       cargo l6test check|run [--config config.toml] [--suite NAME | --case ID,GLOB,... | --rerun RUN [--only OUTCOMES]] [--model l6|l6max|all] [--backend headless|gui|both] [--shard I/N] [--retries N] [--strict] [--fixtures-only] [--no-cache] [--output NEW_DIR] [--no-build] [--jobs N] [--qemu BINARY] [--app PACKAGED_APP]\n       cargo l6test probe gui --keys TARGET,... --volatile [engine options]\n       cargo l6test capture screen --out FILE.gif [capture options] --volatile [engine options]"
+            "Usage: cargo l6test list [--format text|json]\n       cargo l6test check|run [--config config.toml] [--suite NAME | --case ID,GLOB,... | --rerun RUN [--only OUTCOMES]] [--model l6|l6max|all] [--backend headless|gui|both] [--shard I/N] [--retries N] [--strict] [--fixtures-only] [--no-cache] [--update-references] [--output NEW_DIR] [--no-build] [--jobs N] [--qemu BINARY] [--app PACKAGED_APP]\n       cargo l6test probe gui --keys TARGET,... --volatile [engine options]\n       cargo l6test capture screen --out FILE.gif [capture options] --volatile [engine options]"
         );
         return Ok(0);
     }
@@ -460,6 +465,7 @@ fn execute() -> Result<i32, String> {
         cache: &cache,
         patch_artifact_dir: &built_dir,
         fixtures_only: args.fixtures_only,
+        update_references: args.update_references,
     };
     let run_job = |job: &Job| -> CaseResult {
         let case_span = tracing::info_span!("smoke_case",case=%job.case.id,model=%job.model,backend=job.backend,artifacts=%job.dir.display());
@@ -491,6 +497,14 @@ fn execute() -> Result<i32, String> {
                 ..CaseResult::new(&job.case.id, &job.model, job.backend, &job.dir)
             },
         };
+        let mut result = result;
+        if let Ok(list) = fs::read_to_string(
+            result
+                .artifacts
+                .join(smoke_core::devices::UPDATED_REFERENCES_FILE),
+        ) {
+            result.updated_references = list.lines().map(str::to_owned).collect();
+        }
         match result.outcome {
             Outcome::Pass => {
                 tracing::info!(event="case_finished",outcome=%result.outcome,detail=%result.detail,seconds=result.duration_s,"case completed")

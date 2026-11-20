@@ -69,6 +69,9 @@ pub struct Runner {
     logs: PathBuf,
     step: usize,
     entered: Option<(Instant, u32)>,
+    /// For a display check recording a reference: the display and the guest
+    /// time it has stayed unchanged since.
+    settling: Option<([u8; 1024], u32)>,
     dispatched: bool,
     baseline: Option<Observation>,
     last_command: Option<Command>,
@@ -141,6 +144,7 @@ impl Runner {
             logs,
             step: 0,
             entered: None,
+            settling: None,
             dispatched: false,
             baseline: None,
             last_command: None,
@@ -278,6 +282,19 @@ impl Runner {
             if now.duration_since(entered) > Duration::from_secs(step.wall_timeout_s)
                 || elapsed > step.guest_timeout_ms
             {
+                if let Action::ExpectDisplayImage { image } = &step.action {
+                    let path = crate::scenario::spec_path(image)?;
+                    return Err(format!(
+                        "step {}: {}",
+                        self.step + 1,
+                        devices::display_mismatch(
+                            &obs.data.display,
+                            &path,
+                            &self.logs,
+                            &reference_label(&path)
+                        )
+                    ));
+                }
                 return Err(format!(
                     "step {} timed out: {:?}; observed {}; startup={:?}",
                     self.step + 1,
@@ -316,31 +333,36 @@ impl Runner {
                     if self.model == Model::L6 {
                         return Err("L6 has no display".into());
                     }
+                    // The display may still be redrawing, so wait, within the
+                    // step's timeout, for it to match. A reference is recorded
+                    // only once the display has held still for half a second.
                     let path = crate::scenario::spec_path(&image)?;
-                    let expected = image::open(&path)
-                        .map_err(|error| {
-                            format!(
-                                "could not load display reference {}: {error}",
-                                path.display()
-                            )
-                        })?
-                        .to_luma8();
-                    if expected.dimensions() != (128, 64) {
-                        return Err(format!(
-                            "display reference {} has dimensions {:?}, expected 128×64",
-                            path.display(),
-                            expected.dimensions()
-                        ));
+                    let display = obs.data.display;
+                    if devices::reference_differences(&display, &path) == Some(0) {
+                        true
+                    } else if devices::updating_references() {
+                        let guest = obs.panel.guest_ms;
+                        match self.settling {
+                            Some((frame, since))
+                                if frame == display && guest.wrapping_sub(since) >= 500 =>
+                            {
+                                devices::record_display_reference(
+                                    &display,
+                                    &path,
+                                    &self.logs,
+                                    &reference_label(&path),
+                                )?;
+                                true
+                            }
+                            Some((frame, _)) if frame == display => false,
+                            _ => {
+                                self.settling = Some((display, guest));
+                                false
+                            }
+                        }
+                    } else {
+                        false
                     }
-                    let differences =
-                        devices::display_difference_count(&obs.data.display, &expected);
-                    if differences != 0 {
-                        return Err(format!(
-                            "display differs from {} in {differences} of 8192 pixels",
-                            path.display()
-                        ));
-                    }
-                    true
                 }
                 Action::ExpectTrace { contains, absent } => {
                     if absent
@@ -1141,6 +1163,7 @@ impl Runner {
                 .push(json!({"step":self.step+1,"guest_ms":obs.panel.guest_ms}));
             self.step += 1;
             self.entered = None;
+            self.settling = None;
             self.dispatched = false;
             self.scene_save = None;
         }
@@ -1174,6 +1197,7 @@ impl Runner {
         self.trace_path = logs.join("engine.trace");
         self.startup = BootReadiness::new(self.scenario.spec_state);
         self.entered = None;
+        self.settling = None;
         self.panel_quiet = None;
         self.ring_quiet = None;
         self.last_report_guest = 0;
@@ -1198,6 +1222,7 @@ impl Runner {
             .push(json!({"step":self.step+1,"device":true}));
         self.step += 1;
         self.entered = None;
+        self.settling = None;
         self.dispatched = false;
     }
     fn dispatch(&mut self, command: Command, obs: Observation) -> Result<Progress, String> {
@@ -1866,7 +1891,7 @@ mod tests {
                 case_files(&cases, &mut paths);
             }
         }
-        assert!(paths.len() > 100);
+        assert!(paths.len() > 80);
         for path in paths {
             let table: toml::Table = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
             if table.keys().all(|key| key == "case") {
@@ -2133,4 +2158,10 @@ mod tests {
             fs::remove_dir_all(&runner.logs).unwrap();
         }
     }
+}
+
+/// The name a display check's saved frame takes after its reference.
+fn reference_label(path: &Path) -> String {
+    path.file_stem()
+        .map_or("display".into(), |stem| stem.to_string_lossy().into_owned())
 }

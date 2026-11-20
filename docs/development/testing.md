@@ -326,6 +326,17 @@ directory (`smoke_core::fixture_layout`); a missing one is a fixture FAIL.
   never hides an earlier failure.
 - A `--case` pattern that matches no case is an error.
 
+### Reference images
+
+`expect-display-image` waits, within the step's timeout, for the display to
+match its reference; on a timeout the last frame is saved next to the case
+logs as `<reference>.actual.png`. `--update-references` instead records the
+display into the reference once it has held still for half a second, and
+lists every rewritten path in `summary.md`, so the new images show in the
+diff for review before they are committed. When two cases in the run record
+different screens for the same reference, the later one fails rather than
+overwriting it. Rerun without the flag to confirm the recorded images pass.
+
 ### Fixture cache
 
 Within a run, each distinct `l6patch` build, browser-patched package, unpacked
@@ -473,7 +484,7 @@ shows every case.
   | Effect replacements | `expect-heap`, then for each slot `effect-replacement-state` with the assigned effect ID and nonzero output, or no replacement |
   | midi-sync | `direct-usb-midi-round-trip`, then `host-midi-sync` |
   | din-mixer-control | `l6max-din-mixer-control` |
-  | menu-loader | `expect-menu` for System and System > Patches |
+  | menu-loader | `expect-menu` for System and System > Patches, then System > Patches as drawn against `patches/menu-loader/tests/emulator/references/patches-suite/` (skipped with knob-dialog; see below) |
   | midi-sync with menu-loader | **Send MIDI State**, then `host-midi-sync` with `request = false` |
   | dump-rom | **Dump ROM**, then every file's size and the NOR file's contents |
 
@@ -490,7 +501,12 @@ shows every case.
 A new placeable patch fails generation until it has a
 `tests/emulator/checks.toml` and a place in `tests/emulator/patches.toml`.
 The effect-slot checks and menu-loader's menu walk depend on the combination,
-so the generator writes those steps itself. `l6test list` shows the case count,
+so the generator writes those steps itself. A Patches-screen reference is
+named after the rows it shows and, when the list scrolls, its length
+(`…__of-5.png`), so each name maps to one screen. With knob-dialog
+installed, about half the boots draw that screen without the line under its
+title, so the image comparison is skipped for those combinations until the
+redraw is fixed; the `expect-menu` checks still run. `l6test list` shows the case count,
 which grows with each placeable patch. Adding, removing or changing a
 generated case changes the reviewed case matrix in
 `tools/l6test/snapshots/cases.json`; see [Case matrix](#case-matrix). Run one case at a time: the heaviest

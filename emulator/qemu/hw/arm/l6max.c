@@ -335,6 +335,11 @@ typedef struct L6MainGPIOAdapter {
     unsigned bank;
 } L6MainGPIOAdapter;
 
+typedef struct L6FlexRamHole {
+    struct L6ChipState *chip;
+    uint32_t error_bit;
+} L6FlexRamHole;
+
 typedef struct L6ChipState {
     ARMv7MState armv7m;
     MemoryRegion flash;
@@ -347,6 +352,9 @@ typedef struct L6ChipState {
     MemoryRegion flexram;
     MemoryRegion flexram_bank[16];
     bool flexram_mapped[16];
+    MemoryRegion flexram_holes[3];
+    L6FlexRamHole flexram_hole_context[3];
+    uint32_t flexram_tcm_ctrl, flexram_status, flexram_status_en, flexram_sig_en;
     MemoryRegion external_ram;
     MemoryRegion peripheral;
     MemoryRegion sd_adapter;
@@ -2345,9 +2353,58 @@ static L6Sai *l6_sai_at(L6ChipState *s, hwaddr offset, hwaddr *reg_offset)
     return NULL;
 }
 
+/* RT1060 FlexRAM reports accesses beyond each allocated bank range. */
+static void l6max_flexram_irq_update(L6ChipState *s)
+{
+    qemu_set_irq(qdev_get_gpio_in(DEVICE(&s->armv7m), 38),
+                 (s->flexram_status & s->flexram_sig_en) != 0);
+}
+
+static void l6max_flexram_access_error(L6FlexRamHole *hole)
+{
+    L6ChipState *s = hole->chip;
+    if (s->flexram_status_en & hole->error_bit) {
+        s->flexram_status |= hole->error_bit;
+        l6max_flexram_irq_update(s);
+    }
+}
+
+static MemTxResult l6max_flexram_hole_read(void *opaque, hwaddr offset,
+                                            uint64_t *value, unsigned size,
+                                            MemTxAttrs attrs)
+{
+    *value = 0;
+    l6max_flexram_access_error(opaque);
+    return MEMTX_ERROR;
+}
+
+static MemTxResult l6max_flexram_hole_write(void *opaque, hwaddr offset,
+                                             uint64_t value, unsigned size,
+                                             MemTxAttrs attrs)
+{
+    l6max_flexram_access_error(opaque);
+    return MEMTX_ERROR;
+}
+
+static const MemoryRegionOps l6max_flexram_hole_ops = {
+    .read_with_attrs = l6max_flexram_hole_read,
+    .write_with_attrs = l6max_flexram_hole_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid.min_access_size = 1,
+    .valid.max_access_size = 8,
+};
+
 static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
 {
     L6ChipState *s = opaque;
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4) {
+        switch (offset) {
+        case 0x0b0000: return s->flexram_tcm_ctrl;
+        case 0x0b0010: return s->flexram_status;
+        case 0x0b0014: return s->flexram_status_en;
+        case 0x0b0018: return s->flexram_sig_en;
+        }
+    }
     hwaddr pfd_base = offset & ~(hwaddr)0xf;
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
         !(offset & 3) && (pfd_base == L6_CCM_ANALOG_PFD_480 ||
@@ -3499,6 +3556,14 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
                           uint64_t value, unsigned size)
 {
     L6ChipState *s = opaque;
+    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4) {
+        switch (offset) {
+        case 0x0b0000: s->flexram_tcm_ctrl = value & 7u; return;
+        case 0x0b0010: s->flexram_status &= ~(value & 0x38u); l6max_flexram_irq_update(s); return;
+        case 0x0b0014: s->flexram_status_en = value & 0x38u; l6max_flexram_irq_update(s); return;
+        case 0x0b0018: s->flexram_sig_en = value & 0x38u; l6max_flexram_irq_update(s); return;
+        }
+    }
     bool store_word = true;
     if (s->audio_trace && !s->panel &&
         (l6_audio_trace_register(offset) ||
@@ -4486,6 +4551,10 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
     g_hash_table_insert(s->registers, flexram_select,
                         GUINT_TO_POINTER(gpr16 | 7u));
     l6max_flexram_map(s, gpr16 | 7u, 0x5555ea95u);
+    /* No FlexRAM control state was captured from ROM: assume reset defaults. */
+    s->flexram_tcm_ctrl = s->flexram_status = 0;
+    s->flexram_status_en = s->flexram_sig_en = 0;
+    l6max_flexram_irq_update(s);
     /* Pad setup and clock setup each clear selected IOMUX GPR fields.
      * Preserve the inherited bits that the bootloader does not modify. */
     static const struct { hwaddr offset; uint32_t keep; } gpr_masks[] = {
@@ -5325,6 +5394,18 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
         if (profile == &L6MAX_PROFILE) {
             memory_region_init_ram(&s->flexram, NULL, "main.flexram", 0x80000,
                                    &error_fatal);
+            static const hwaddr holes[] = { 0x00000000, 0x20000000, 0x20280000 };
+            static const uint32_t error_bits[] = { 1u << 3, 1u << 4, 1u << 5 };
+            for (unsigned i = 0; i < ARRAY_SIZE(holes); i++) {
+                g_autofree char *name = g_strdup_printf("main.flexram-hole%u", i);
+                s->flexram_hole_context[i].chip = s;
+                s->flexram_hole_context[i].error_bit = error_bits[i];
+                memory_region_init_io(&s->flexram_holes[i], NULL,
+                                      &l6max_flexram_hole_ops,
+                                      &s->flexram_hole_context[i], name, 0x80000);
+                memory_region_add_subregion_overlap(system_memory, holes[i],
+                                                    &s->flexram_holes[i], -1);
+            }
             for (unsigned bank = 0; bank < 16; bank++) {
                 g_autofree char *name = g_strdup_printf("main.flexram-bank%u", bank);
                 memory_region_init_alias(&s->flexram_bank[bank], NULL, name,

@@ -45,7 +45,7 @@ def check(qemu, image, expected):
     print(f"{image}: initial handoff and reset passed")
 
 
-def check_main_stack_entry(qemu, image):
+def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08):
     # Bootloader 1.00 calls the reset handler with its current task stack.
     # MAIN 1.10's first six instructions install its own vector-table MSP
     # without accessing that inherited stack. Run those instructions with a
@@ -107,6 +107,23 @@ def check_main_stack_entry(qemu, image):
             assert regs[13] == (main_msp if instruction == 5 else inherited_msp)
         assert regs[15] == 0x80000422, hex(regs[15])
         print(f"{image}: MAIN reset handler replaces inherited MSP passed")
+        # Execute a Thumb LDR from unallocated FlexRAM, with a local HardFault
+        # vector. Unlike qtest reads, this exercises the CPU's bus-fault path.
+        for request in (
+            "M801f0000,2:0868",      # ldr r0, [r1]
+            "M801f0100,2:fee7",      # b . (HardFault handler)
+            "M8000000c,4:01011f80",  # HardFault vector = 0x801f0101
+            "M400b0014,4:" + error_bit.to_bytes(4, "little").hex(),
+            "P1=" + invalid.to_bytes(4, "little").hex(),
+            "Pf=00001f80",           # pc = test instruction
+        ):
+            assert packet(request) == "OK", request
+        assert packet("s").startswith("T05")
+        assert registers()[15] == 0x801f0100
+        assert int.from_bytes(bytes.fromhex(packet("me000ed28,4")), "little") & 0x8200 == 0x8200
+        assert int.from_bytes(bytes.fromhex(packet("me000ed38,4")), "little") == invalid
+        assert int.from_bytes(bytes.fromhex(packet("m400b0010,4")), "little") == error_bit
+        print(f"{image}: unallocated FlexRAM at {invalid:#x} produces a guest bus fault")
     finally:
         host.close()
         process.terminate()
@@ -158,6 +175,40 @@ def check_flexram_boundaries(qemu, image):
             assert int(command(f"readl {last:#x}").split()[1], 16) == 0x1234abcd
             assert int(command(f"readl {beyond:#x}").split()[1], 16) != 0x5678efab
         print(f"{image}: FlexRAM mapping boundaries passed")
+        # The controller latches enabled unallocated-access events, and
+        # routes selected latched bits to shared IRQ 38 (NVIC word 1 bit 6).
+        bad = (0x8000, 0x20020000, 0x202d8000)
+        for address in bad:
+            command(f"readl {address:#x}")
+        assert int(command("readl 0x400b0010").split()[1], 16) == 0
+        command("writel 0x400b0000 0xffffffff")
+        assert int(command("readl 0x400b0000").split()[1], 16) == 7
+        command("writel 0x400b0014 0xffffffff")
+        assert int(command("readl 0x400b0014").split()[1], 16) == 0x38
+        command("writel 0xe000e284 0x40")
+        for address in bad:
+            command(f"readl {address:#x}")
+        assert int(command("readl 0x400b0010").split()[1], 16) == 0x38
+        assert not int(command("readl 0xe000e204").split()[1], 16) & 0x40
+        command("writel 0x400b0018 0x08")
+        assert int(command("readl 0xe000e204").split()[1], 16) & 0x40
+        command("writel 0x400b0010 0x08")
+        assert int(command("readl 0x400b0010").split()[1], 16) == 0x30
+        command("writel 0xe000e284 0x40")
+        assert not int(command("readl 0xe000e204").split()[1], 16) & 0x40
+        command("writel 0x400b0018 0x30")
+        assert int(command("readl 0xe000e204").split()[1], 16) & 0x40
+        command("writel 0x400b0010 0x30")
+        command("writel 0xe000e284 0x40")
+        command("writel 0x400b0014 0x10")
+        for address in bad:
+            command(f"writel {address:#x} 0x12345678")
+        assert int(command("readl 0x400b0010").split()[1], 16) == 0x10
+        command("writel 0x400b0010 0x38")
+        command("writel 0x400b0014 0")
+        command("writel 0x400b0018 0")
+        command("writel 0xe000e284 0x40")
+        print(f"{image}: FlexRAM access status and shared IRQ passed")
         # Observe the actual SysTick countdown in qtest virtual time. The
         # recovered 600 MHz ARM root halves when CACRR changes to divide by 4.
         command("writel 0xe000e010 0")
@@ -461,7 +512,13 @@ def check_flexram_boundaries(qemu, image):
             command("writel 0xe000eda0 0x03000019")
             assert int(command("readl 0xe000eda0").split()[1], 16) == 0x03000019
         command("writel 0x400ac044 0xffffffff")
+        command("writel 0x400b0014 0x38")
+        command("writel 0x400b0018 0x38")
+        command("readl 0x20000000")
+        assert int(command("readl 0x400b0010").split()[1], 16) == 0x10
         qmp_execute("system_reset")
+        for address in (0x400b0000, 0x400b0010, 0x400b0014, 0x400b0018):
+            assert int(command(f"readl {address:#x}").split()[1], 16) == 0
         assert int(command("readl 0x400ac044").split()[1], 16) == 0x5555ea95
         command("writel 0xe000e014 100000")
         command("writel 0xe000e018 0")
@@ -574,6 +631,8 @@ def main():
     check(qemu, stock, l6max)
     check(qemu, patched, l6max)
     check_main_stack_entry(qemu, stock)
+    check_main_stack_entry(qemu, stock, 0x20020000, 0x10)
+    check_main_stack_entry(qemu, stock, 0x202d8000, 0x20)
     check_main_stack_entry(qemu, patched)
     check_flexram_boundaries(qemu, stock)
     check(qemu, l6, {0x400ac038: 0, 0x401f8204: 0, 0x402f0010: 0})

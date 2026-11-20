@@ -92,8 +92,13 @@ to an interface in ascending bank order; the ordering for noncontiguous banks
 has not been verified on this device. When GPR16 selects fuses, the model uses
 the RT1060 blank-fuse partition because the device's fuse setting is unknown.
 The fixed 512 KiB OCRAM remains separate from the FlexRAM OCRAM window.
-FlexRAM-specific out-of-range interrupts, access faults, ECC and timing are
-not modeled. See
+The controller models enabled out-of-range status, write-one-to-clear status,
+and shared interrupt 38 for each interface; the emulator also reports an
+access error to the guest CPU. Controller registers are seeded to their reset
+defaults because their physical handoff values were not captured. Physical
+out-of-range ITCM and DTCM reads faulted, but OCRAM reads did not fault across
+the captured 1 MiB window, so the emulator's OCRAM fault behavior remains an
+unverified approximation. ECC and timing are not modeled. See
 [NXP AN12077](https://www.nxp.com/docs/en/application-note/AN12077.pdf) for
 runtime partitioning and data retention.
 The L6max ITCM starts as zero-filled emulator RAM; its physical contents at

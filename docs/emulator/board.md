@@ -82,6 +82,10 @@ disables PIT without restoring its channel registers. The board seeds the
 reconstructed MCR, channel 0/1 load and control fields; intervening indirect
 writes and physical handoff values are not captured. PIT counting, status,
 interrupts and the effect of its clock gate are not modeled.
+ROM image-transfer cleanup also selects the SNVS master-key route and sets
+the GPR3 key selector. The board stores those two bit changes, assuming reset
+defaults for initially unknown surrounding fields; key routing, register locks
+and physical inherited values are not modeled.
 IOMUX register storage does not
 model pad electrical characteristics or reroute pins dynamically. SDRAM
 timing and refresh register values are seeded from the bootloader's nominal

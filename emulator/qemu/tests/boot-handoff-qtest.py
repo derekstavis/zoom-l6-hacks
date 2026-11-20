@@ -373,6 +373,8 @@ def check_flexram_boundaries(qemu, image):
         # GPR17 do not affect that partition until software selects it again.
         command("writel 0x400ac040 0x00200003")
         command("writel 0x400ac044 0xffffffff")
+        command("writel 0x400ac00c 0xa5a5a5a5")
+        command("writel 0x400ac028 0x5a5a5a5a")
         assert int(command("readl 0x20280000").split()[1], 16) == 0x13579bdf
         command("writel 0x400ac044 0x5555ea95")
         command("writel 0x400ac040 0x00200007")
@@ -548,6 +550,8 @@ def check_flexram_boundaries(qemu, image):
         command("readl 0x20000000")
         assert int(command("readl 0x400b0010").split()[1], 16) == 0x10
         qmp_execute("system_reset")
+        assert int(command("readl 0x400ac00c").split()[1], 16) == 0xa5a5a5b5
+        assert int(command("readl 0x400ac028").split()[1], 16) == 0x5a5a5a4a
         for address, value in ((0x40084000, 2), (0x40084100, 0xffffffff),
                                (0x40084108, 1), (0x40084110, 0xffffffff),
                                (0x40084118, 5)):
@@ -641,6 +645,7 @@ def main():
         0x402f0014: 0x8200001b, 0x402f0040: 0xf31,
         0x402f0044: 0x00664b22, 0x402f0048: 0x0009090b,
         0x402f004c: 0x08070a01, 0x400a8000: 5,
+        0x400ac00c: 0x0000f0f0, 0x400ac028: 7,
         0x400ac038: 0x00860000, 0x400ac040: 0x00200007,
         0x400ac044: 0x5555ea95,
         0x40084000: 2, 0x40084100: 0xffffffff, 0x40084108: 1,

@@ -4542,6 +4542,23 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
                             GUINT_TO_POINTER((pit_handoff[i].offset >> 2) + 1),
                             GUINT_TO_POINTER(pit_handoff[i].value));
     }
+    /* ROM image-transfer cleanup sets GPR3.DCP_KEY_SEL and clears
+     * GPR10.DCPKEY_OCOTP_OR_KEYMUX. Untouched initial fields use the
+     * manual's reset values; physical inherited and lock state is unknown. */
+    static const struct { hwaddr offset; uint32_t reset, set, clear; } rom_gpr[] = {
+        { 0x0ac00c, 0x0000f0f0u, 0x10u, 0 },
+        { 0x0ac028, 0x00000007u, 0, 0x10u },
+    };
+    for (unsigned i = 0; i < ARRAY_SIZE(rom_gpr); i++) {
+        gpointer key = GUINT_TO_POINTER((rom_gpr[i].offset >> 2) + 1);
+        gpointer stored;
+        uint32_t old = g_hash_table_lookup_extended(s->registers, key, NULL,
+                                                     &stored) ?
+                       GPOINTER_TO_UINT(stored) : rom_gpr[i].reset;
+        g_hash_table_insert(s->registers, key,
+                            GUINT_TO_POINTER((old | rom_gpr[i].set) &
+                                             ~rom_gpr[i].clear));
+    }
     /* boot_configure_usb1_pll uses DIV_SELECT=0 and oscillator bypass
      * source, powers/enables the PLL, waits for LOCK, then clears bypass.
      * LOCK is synthesized by l6_usb1_pll_status on reads. */

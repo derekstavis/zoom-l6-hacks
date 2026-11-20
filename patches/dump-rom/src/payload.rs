@@ -131,12 +131,27 @@ const REGIONS: [Region; 6] = [
 ];
 const MANIFEST_PATH: [u16; 32] = card_path("L6MAX_DUMP.TXT");
 
-/// Identification words recorded in the manifest. The SoC registers are the
-/// i.MX RT10xx locations; they are read through the probe like memory.
-const ID_WORDS: [(&str, u32); 6] = [
+/// Register values sampled while MAIN runs, one at a time. The SoC addresses
+/// are RT10xx locations; unimplemented reads are reported by the probe.
+const ID_WORDS: [(&str, u32); 21] = [
     ("CPUID", SCB_CPUID as u32),
+    ("CCR", SCB_CCR as u32),
     ("MPU_TYPE", MPU_TYPE as u32),
     ("MPU_CTRL", MPU_CTRL as u32),
+    ("MPU_RNR_BEFORE", 0xe000_ed98),
+    ("MPU_RBAR", 0xe000_ed9c),
+    ("MPU_RASR", 0xe000_eda0),
+    ("MPU_RNR_AFTER", 0xe000_ed98),
+    ("CLIDR", 0xe000_ed78),
+    ("CTR", 0xe000_ed7c),
+    ("CSSELR_BEFORE", 0xe000_ed84),
+    ("CCSIDR", 0xe000_ed80),
+    ("CSSELR_AFTER", 0xe000_ed84),
+    ("ITCMCR", 0xe000_ef90),
+    ("DTCMCR", 0xe000_ef94),
+    ("IOMUXC_GPR14", 0x400a_c038),
+    ("IOMUXC_GPR16", 0x400a_c040),
+    ("IOMUXC_GPR17", 0x400a_c044),
     ("USB_ANALOG_DIGPROG", 0x400d_8260),
     ("SRC_SBMR1", 0x400f_8004),
     ("SRC_SBMR2", 0x400f_801c),
@@ -210,9 +225,18 @@ unsafe fn dump_into(work: &mut Work) -> Result<(), i32> {
     let text = &mut work.manifest;
     text.push("L6max memory dump from the dump-rom patch\n");
     text.push("Unreadable pages are zero in the files and listed here.\n\n");
+    text.push("Registers sampled individually while MAIN is running.\n");
     for (name, address) in ID_WORDS {
         let mut word = 0u32;
-        let readable = unsafe { probe_copy(address as usize, &mut word, 1) };
+        // The probe temporarily changes CCR and MPU_CTRL; read these two
+        // known Cortex-M7 registers before entering it, so their recorded
+        // values are not the probe's own temporary settings.
+        let readable = if address as usize == SCB_CCR || address as usize == MPU_CTRL {
+            word = unsafe { read(address as *const u32) };
+            true
+        } else {
+            unsafe { probe_copy(address as usize, &mut word, 1) }
+        };
         text.push(name);
         text.push(" ");
         if readable {

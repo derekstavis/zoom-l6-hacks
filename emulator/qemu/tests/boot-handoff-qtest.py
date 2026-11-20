@@ -131,6 +131,22 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
         assert regs[15] == 0x80000422, hex(regs[15])
         print(f"{image}: MAIN reset handler replaces inherited MSP passed")
         if mpu_test:
+            # Exercise the ROM's lifetime-counter access pattern with guest
+            # LDR instructions, including the high-read latching the low half.
+            # Hold MCR.MDIS so the programmed values are deterministic.
+            for request in (
+                "M40084000,4:02000000",  # PIT disabled
+                "M40084108,4:00000000", "M40084118,4:00000000",
+                "M40084100,4:78563412", "M40084110,4:f0debc9a",
+                "M40084108,4:01000000", "M40084118,4:05000000",
+                "M801f0000,4:10681968",  # ldr r0,[r2]; ldr r1,[r3]
+                "P2=e0400840", "P3=e4400840", "Pf=00001f80",
+            ):
+                assert packet(request) == "OK", request
+            assert packet("s").startswith("T05")
+            assert packet("s").startswith("T05")
+            assert registers()[:2] == [0x9abcdef0, 0x12345678]
+            print(f"{image}: guest PIT lifetime-counter reads passed")
             # A protected data region must affect guest accesses after MAIN
             # enables the MPU. Privileged background access keeps code executable.
             for request in (

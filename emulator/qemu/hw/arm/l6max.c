@@ -6407,6 +6407,8 @@ static void l6_main_reset(MachineState *machine, ResetType type)
          * The allocator prefix survives in the later physical OCRAM dump;
          * no register was captured at the branch, so this is inferred. */
         s->armv7m.cpu->env.regs[13] = 0x202275f0u;
+        /* Thread mode now uses MSP; PSP retains the value copied to MSP. */
+        s->armv7m.cpu->env.v7m.other_sp = 0x202275f0u;
         /* These locals are written by the MAIN copy loop. Other boot stack
          * contents are unknown and deliberately left as existing RAM. */
         uint8_t frame_locals[12];

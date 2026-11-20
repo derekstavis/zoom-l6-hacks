@@ -214,9 +214,10 @@ its modeled CCR for `r2` and reproduces these register values on startup and
 reset; it does not load the bootloader instructions at that return address.
 The bootloader calls with its current task stack; it does not load the MAIN
 vector's initial MSP at that call. The emulator seeds an inferred MSP of
-`0x202275f0`, based on bootloader 1.00's allocation and call frame. A later
-OCRAM dump corroborates the allocation prefix, but the register itself was
-not captured. The model seeds three transfer-frame locals from the selected
+`0x202275f0`, based on bootloader 1.00's allocation and call frame. It also
+seeds PSP to that value: the reviewed task path copies PSP to MSP before
+branching and leaves PSP unchanged. A later OCRAM dump corroborates the
+allocation prefix, but neither register was captured at handoff. The model seeds three transfer-frame locals from the selected
 MAIN copy size; other boot task stack contents remain unknown. Stock MAIN 1.10
 installs its own vector MSP at `0x8000041e`, before
 accessing the inherited stack; this was checked by stepping both stock and a

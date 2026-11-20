@@ -128,6 +128,11 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
         assert "QMP" in json.loads(qmp.readline())
         for name in ("qmp_capabilities", "system_reset"):
             if name == "system_reset":
+                # Make PSP differ before reset, using guest MSR PSP, r4.
+                for request in ("M801f0000,4:84f30988", "P4=78563412",
+                                "Pf=00001f80"):
+                    assert packet(request) == "OK", request
+                assert packet("s").startswith("T05")
                 assert packet("P0=00000000") == "OK"
                 assert packet("P1=00000000") == "OK"
                 assert packet("P2=00000000") == "OK"
@@ -147,12 +152,13 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
         assert regs[13] == 0x202275f0, hex(regs[13])
         assert regs[14] == 0x2020e453, hex(regs[14])
         if mpu_test:
-            # Confirm guest MRS observes the inferred MSP, not just the GDB
-            # register view, before MAIN replaces it.
-            for request in ("M801f0000,4:eff30883", "Pf=00001f80"):
+            # Confirm guest MRS observes both stack pointers before MAIN
+            # replaces MSP. PSP retains the copied boot-task stack value.
+            for request in ("M801f0000,8:eff30883eff30984", "Pf=00001f80"):
                 assert packet(request) == "OK", request
             assert packet("s").startswith("T05")
-            assert registers()[3] == 0x202275f0
+            assert packet("s").startswith("T05")
+            assert registers()[3:5] == [0x202275f0, 0x202275f0]
             # Inspect QEMU's initial masks with guest MRS instructions. The
             # physical values are inferred from task startup, not captured.
             for request in ("M801f0000,c:eff31080eff31381eff31182",

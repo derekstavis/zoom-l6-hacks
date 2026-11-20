@@ -138,8 +138,13 @@ clock and parameters, but refresh and SDRAM commands are not modeled.
 
 First-stage entry also writes `0x00860000` to IOMUX GPR14, clearing its
 documented comparator fields. The emulator stores the written value; the
-upper bits are reserved in the RT1060 manual, and their physical readback has
-not been measured.
+upper bits are reserved in the current RT1060 manual, and their physical
+readback has not been measured. The [older RT1060 manual, revision 1](https://www.pjrc.com/teensy/IMXRT1060RM_rev1.pdf)
+names bits 19–16 and 23–20 as ITCM and DTCM size configuration: the values
+written by this bootloader encode 32 KiB and 128 KiB, matching its FlexRAM
+allocation. [NXP later stated](https://community.nxp.com/t5/i-MX-RT-Crossover-MCUs/i-MXRT-106X-CM7-CFGITCMSZ-and-CM7-CFGDTCMSZ/td-p/1585334)
+the removed size fields are not dynamically changeable. This write therefore
+establishes software intent, not the core TCM size register values.
 
 The bootloader's entry code selects FlexRAM configuration `0x5555ea95`: one
 32 KiB bank for ITCM, four for DTCM and eleven for OCRAM. With the RT1060's
@@ -202,8 +207,10 @@ and a selectable CSSELR, inferred from the RT1060 manual and
 [Arm Cortex-M7 guide, section 4.5](https://documentation-service.arm.com/static/61efd6602dd99944d051417b?token=)
 rather than captured from the device. These identification registers do not model cache contents, enable
 bits, maintenance operations, timing, or DMA coherence effects. QEMU also does
-not implement the M7 ITCMCR and DTCMCR control registers; FlexRAM bank mapping
-alone does not establish TCM enable, retention, or access-control parity.
+not implement the M7 ITCMCR and DTCMCR control registers: they read zero and
+ignore writes while the modeled TCM memory remains accessible. The ARM core
+registers instead select TCM versus AXI routing, and FlexRAM bank mapping alone
+does not establish that routing or the physical handoff state.
 The handoff test also configures an MPU no-access region and executes a guest
 load to check the resulting memory-management fault; it does not measure hardware
 region contents or verify every MPU attribute.

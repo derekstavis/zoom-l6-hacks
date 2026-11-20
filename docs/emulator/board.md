@@ -79,6 +79,9 @@ The handoff also stores the bootloader's RC-enable/crystal-select bits, the
 crystal-ready status that its successful path waits for, and DCDC target
 field. LOWPWR_CTRL SET/CLR/TOG aliases share writable state and preserve the
 read-only crystal-ready status. DCDC ready is read-only and approximated as immediately settled.
+The crystal detector's MISC0 control and aliases are stored, with the
+bootloader's final detector-disable write applied; detector and bandgap status
+transitions are not modeled.
 Analog oscillator and voltage transitions are not simulated, and
 the surrounding inherited register bits were not captured physically.
 The USB2, video and Ethernet PLL controls reflect the bootloader's recovered

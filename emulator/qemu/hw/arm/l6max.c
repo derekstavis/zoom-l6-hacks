@@ -2416,7 +2416,8 @@ static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
         }
     }
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
-        ((offset & ~(hwaddr)0xf) == 0x0d82c0 ||
+        ((offset & ~(hwaddr)0xf) == 0x0d8150 ||
+         (offset & ~(hwaddr)0xf) == 0x0d82c0 ||
          (offset & ~(hwaddr)0xf) == 0x0d8270)) {
         return GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
             GUINT_TO_POINTER(((offset & ~(hwaddr)0xf) >> 2) + 1)));
@@ -3600,11 +3601,14 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
         word |= 0x80000000u;
     }
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
-        ((offset & ~(hwaddr)0xf) == 0x0d82c0 ||
+        ((offset & ~(hwaddr)0xf) == 0x0d8150 ||
+         (offset & ~(hwaddr)0xf) == 0x0d82c0 ||
          (offset & ~(hwaddr)0xf) == 0x0d8270)) {
         hwaddr base = offset & ~(hwaddr)0xf;
-        uint32_t writable_mask = base == 0x0d8270 ? 0x0006eff1u : 0x00030fffu;
-        uint32_t status_mask = base == 0x0d8270 ? 0x00010000u : 0x80000000u;
+        uint32_t writable_mask = base == 0x0d8150 ? 0xde017c79u :
+                                 base == 0x0d8270 ? 0x0006eff1u : 0x00030fffu;
+        uint32_t status_mask = base == 0x0d8150 ? 0x20008080u :
+                               base == 0x0d8270 ? 0x00010000u : 0x80000000u;
         gpointer key2 = GUINT_TO_POINTER((base >> 2) + 1);
         uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key2));
         uint32_t writable = old & writable_mask;
@@ -4592,6 +4596,7 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
      * crystal-ready status. Unwritten bits use RM reset fallback. */
     static const struct { hwaddr offset; uint32_t reset, set, clear; } early_clock[] = {
         { 0x0d8270, 0x4001u, 0x10001u, 0x10u },
+        { 0x0d8150, 0x04000000u, 0, 0x10000u },
         { 0x080000, 0x14030111u, 0x80000000u, 0 },
         { 0x08000c, 0x10eu, 0x13u, 0x0cu },
     };

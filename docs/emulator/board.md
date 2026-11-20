@@ -77,7 +77,11 @@ start from those reset values before the recovered boot writes. The RT1060
 reset controller resets CCM, PLLs and functional modules on cold reset while
 retaining IOMUXC; the model retains the latter's stored bits. The model resets
 SEMC configuration and selected FlexSPI controls before replaying their boot
-configuration; it does not yet reset every functional-module register. Intervening ROM writes are
+configuration, and resets the modeled L6max SAI1 registers and FIFO. The
+reference manual specifies SAI reset on system reset; no SAI1 setup was found
+in direct-address scans of the recovered ROM and first-stage boot image, though
+indirect accesses remain possible. The model does not yet reset every
+functional-module register, including all eDMA/DMAMUX state. Intervening ROM writes are
 not fully traced, so the resulting complete values are assumptions, not hardware
 measurements.
 The ARM and system PLL control aliases share their respective register state;

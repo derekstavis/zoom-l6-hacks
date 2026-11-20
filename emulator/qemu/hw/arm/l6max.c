@@ -4879,6 +4879,13 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
             GUINT_TO_POINTER((memory_reset[i].offset >> 2) + 1),
             GUINT_TO_POINTER(memory_reset[i].value));
     }
+    /* SAI1 is reset by system reset. No SAI setup was found in the reviewed
+     * boot path; indirect ROM or bootloader writes remain unverified. */
+    for (unsigned i = 0; i < s->profile->sai_count; i++) {
+        l6_sai_init(&s->sai[i], s->profile->sai_bases[i] == 0x384000);
+    }
+    s->audio_service_rate_hz = 0;
+    s->audio_service_period_remainder = 0;
     /* A controller reset aborts pending FIFO work; the external NOR's
      * write-enable latch and contents are independent of the controller. */
     s->flexspi_rx_size = s->flexspi_rx_cursor = 0;

@@ -911,9 +911,23 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0xe000ef34 0")
         command("writel 0x400b0014 0x38")
         command("writel 0x400b0018 0x38")
+        # A system reset must discard SAI configuration and FIFO contents.
+        command("writel 0x40384014 0x10000")
+        command("writel 0x40384020 0x12345678")
+        command("writel 0x40384010 0x01020304")
+        command("writel 0x40384008 0x80000000")
+        command("writel 0x40384094 0x10000")
+        command("writel 0x40384088 0x80000000")
+        assert int(command("readl 0x40384040").split()[1], 16) & 0x1f0000
+        assert int(command("readl 0x40384008").split()[1], 16) & 0x80000000
         command("readl 0x20000000")
         assert int(command("readl 0x400b0010").split()[1], 16) == 0x10
         qmp_execute("system_reset")
+        for address in (0x40384008, 0x40384010, 0x40384014,
+                        0x40384040, 0x40384088, 0x40384094):
+            assert int(command(f"readl {address:#x}").split()[1], 16) == 0
+        assert int(command("readl 0x40384000").split()[1], 16) == 0x03000000
+        assert int(command("readl 0x40384004").split()[1], 16) == 0x00050504
         for address, value in ((0xe000e014, 599999),
                                (0xe000ed20, 0xf0f00000),
                                (0xe000ed88, 0x00f00000),

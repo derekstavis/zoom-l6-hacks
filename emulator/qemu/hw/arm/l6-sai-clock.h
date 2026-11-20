@@ -7,7 +7,7 @@
 #include "l6-ccm-analog.h"
 
 typedef struct L6MaxSaiClocks {
-    uint32_t gpr1, cscmr1, cs1cdr, cs2cdr, ccgr5;
+    uint32_t gpr1, cscmr1, cs1cdr, cs2cdr, cdcdr, ccgr5;
     uint32_t audio_pll, audio_num, audio_denom;
     uint32_t video_pll, video_num, video_denom, misc2;
     uint32_t usb1_pll, pfd_480;
@@ -72,7 +72,36 @@ static inline uint32_t l6max_sai1_master_hz(const L6MaxSaiClocks *c,
         return ipg == UINT32_MAX ? 0 : ipg;
     }
     if (msel == 3) {
-        return 0; /* SPDIF/external clock is not modeled. */
+        /* GPR1 selects SPDIF0_CLK_ROOT or one of three other SPDIF
+         * clocks. Only the CCM root is connected in this board model. */
+        if (((c->gpr1 >> 6) & 3u) || !c->bus.oscillator_hz) {
+            return 0;
+        }
+        uint32_t source;
+        switch ((c->cdcdr >> 20) & 3u) {
+        case 0:
+            source = l6max_fractional_pll_hz(c->audio_pll, c->audio_num,
+                c->audio_denom, ((c->misc2 >> 22) & 2) |
+                                ((c->misc2 >> 15) & 1));
+            break;
+        case 1:
+            source = l6max_usb1_pfd2_hz(c->usb1_pll, c->pfd_480);
+            break;
+        case 2:
+            source = l6max_fractional_pll_hz(c->video_pll, c->video_num,
+                                              c->video_denom, c->misc2 >> 30);
+            break;
+        default:
+            source = (c->bus.ccsr & 1u) ?
+                ((c->usb1_pll & 0xc000u) ? UINT32_MAX : 24000000u) :
+                l6max_usb1_main_hz(c->usb1_pll);
+            break;
+        }
+        if (source == UINT32_MAX) {
+            return 0;
+        }
+        return source / (((c->cdcdr >> 25) & 7u) + 1) /
+                        (((c->cdcdr >> 22) & 7u) + 1);
     }
     unsigned route = (c->gpr1 >> (msel == 1 ? 0 : 3)) & 7;
     if (route > 2) {

@@ -105,8 +105,10 @@ modeled clock calculations. The L6max QEMU CPU clock input follows the RT1060
 peripheral mux and AHB divider, including PLL1, PLL2, PLL2
 PFDs and the alternate oscillator or PLL3 path; SysTick follows that clock.
 The IPG divider also supplies SAI1 when its bus-clock input is selected.
-SysTick pauses if its selected clock stops and uses the RT1060's separate
-100 kHz external reference when selected. QEMU derives SysTick's calibration
+SAI1 MCLK3 can use the internal SPDIF root, including its PLL source mux
+and dividers; the other SPDIF clock sources are not modeled. SysTick pauses if its
+selected clock stops and uses the RT1060's separate 100 kHz external reference
+when selected. QEMU derives SysTick's calibration
 register from that modeled reference; when it is stopped, the model reports
 unknown calibration rather than an underflowed reload. The physical calibration
 register was not captured and need not track the live clock. The bootloader

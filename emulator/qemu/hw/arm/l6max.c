@@ -1796,6 +1796,7 @@ static uint32_t l6max_sai1_source_hz(L6ChipState *s, uint32_t tcr2)
         .cscmr1 = l6max_clock_register(s, L6_CCM_CSCMR1_OFFSET),
         .cs1cdr = l6max_clock_register(s, L6_CCM_CS1CDR_OFFSET),
         .cs2cdr = l6max_clock_register(s, L6_CCM_CS2CDR_OFFSET),
+        .cdcdr = l6max_clock_register(s, 0x0fc030),
         .ccgr5 = l6max_clock_register(s, 0x0fc07c),
         .audio_pll = l6max_clock_register(s, L6_CCM_ANALOG_PLL_AUDIO),
         .audio_num = l6max_clock_register(s, L6_CCM_ANALOG_PLL_AUDIO_NUM),

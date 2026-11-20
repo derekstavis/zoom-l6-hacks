@@ -710,7 +710,26 @@ def check_flexram_boundaries(qemu, image):
         before = fill_sai()
         command("clock_step 500000")
         assert (int(command("readl 0x40384040").split()[1], 16) - before) & 31 == 16
+        # MCLK3 selects the internal SPDIF root. Route PLL4 through /4 and
+        # /2, giving the same 24.576 MHz root and 48 kHz frame cadence.
+        old_cdcdr = int(command("readl 0x400fc030").split()[1], 16)
+        old_gpr1 = int(command("readl 0x400ac004").split()[1], 16)
+        command(f"writel 0x400ac004 {old_gpr1 & ~(3 << 6):#x}")
+        command(f"writel 0x400fc030 {(old_cdcdr & ~0x0ff00000) | (3 << 25) | (1 << 22):#x}")
+        command("writel 0x40384010 0x0d000000")  # master, MCLK3, /2
+        command("clock_step 2000000")
+        before = fill_sai()
+        command("clock_step 1400000")
+        assert (int(command("readl 0x40384040").split()[1], 16) - before) & 31 == 16
+        # External SPDIF input is unconnected; selecting it stops progress.
+        command(f"writel 0x400ac004 {(old_gpr1 & ~(3 << 6)) | (1 << 6):#x}")
+        command("clock_step 2000000")
+        before = fill_sai()
+        command("clock_step 2000000")
+        assert int(command("readl 0x40384040").split()[1], 16) & 31 == before
         command("writel 0x40384008 0")
+        command(f"writel 0x400ac004 {old_gpr1:#x}")
+        command(f"writel 0x400fc030 {old_cdcdr:#x}")
         command("writel 0x400fc07c " + hex(old_gate))
         command("writel 0x400fc028 0x0ec102c1")
         print(f"{image}: SAI1 clock gate and divider drive FIFO cadence")

@@ -79,5 +79,28 @@ int main(void)
     c.cscmr1 = 2u << 10;
     c.audio_pll |= 0x1000;
     assert(l6max_sai1_master_hz(&c, master1) == 0);
+    /* MCLK3 can receive the divided SPDIF root independently of the
+     * external SPDIF clock inputs. Exercise all four root selectors. */
+    c.audio_pll = 0x2020;
+    c.gpr1 = 0;
+    const uint32_t master3 = 3u << 26;
+    c.cdcdr = 0x33f71f92u; /* reconstructed 1.00 handoff: PLL3 /2 /8 */
+    assert(l6max_sai1_master_hz(&c, master3) == 30000000u);
+    c.cdcdr = (3u << 25) | (1u << 22);
+    assert(l6max_sai1_master_hz(&c, master3) == 24576000u);
+    c.cdcdr |= 1u << 20;
+    assert(l6max_sai1_master_hz(&c, master3) ==
+           (uint64_t)480000000u * 18 / 17 / 8);
+    c.cdcdr = (c.cdcdr & ~(3u << 20)) | (2u << 20);
+    assert(l6max_sai1_master_hz(&c, master3) == 24576000u);
+    c.cdcdr |= 1u << 20;
+    assert(l6max_sai1_master_hz(&c, master3) == 60000000u);
+    c.bus.ccsr |= 1u;
+    assert(l6max_sai1_master_hz(&c, master3) == 3000000u);
+    c.gpr1 = 1u << 6;
+    assert(l6max_sai1_master_hz(&c, master3) == 0);
+    c.gpr1 = 0;
+    c.bus.oscillator_hz = 0;
+    assert(l6max_sai1_master_hz(&c, master3) == 0);
     puts("L6max SAI1 clock routing passed");
 }

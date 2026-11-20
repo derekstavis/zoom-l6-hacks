@@ -568,6 +568,7 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0x400d8010 0")
         assert not int(command("readl 0x400d8010").split()[1], 16) & 0x80000000
         command("writel 0x400d8070 0x00080000")
+        command("writel 0x400d8040 0xffffffff")
         # Exercise handoff cleanup from a dirty CPU, rather than merely
         # comparing QEMU's reset defaults on an untouched guest.
         for address, value in ((0xe000e100, 1), (0xe000e200, 1),
@@ -589,6 +590,7 @@ def check_flexram_boundaries(qemu, image):
         command("readl 0x20000000")
         assert int(command("readl 0x400b0010").split()[1], 16) == 0x10
         qmp_execute("system_reset")
+        assert int(command("readl 0x400d8040").split()[1], 16) == 0
         assert int(command("readl 0x400ac00c").split()[1], 16) == 0xa5a5a5b5
         assert int(command("readl 0x400ac028").split()[1], 16) == 0x5a5a5a4a
         for address, value in ((0x402f0000, 0x1fff0004),
@@ -711,6 +713,7 @@ def main():
         0x400fc02c: 0x007336c1, 0x400fc030: 0x33f71f92,
         0x400fc038: 0x00029150, 0x400fc060: 0x00120001,
         0x400d8000: 0x80002064, 0x400d8030: 0x80002001,
+        0x400d8040: 0,
         0x400d8010: 0x80003040, 0x400d8020: 0x12000, 0x400d8070: 0x80002020,
         # Simulation values assume the manual reset phase before the boot
         # divider writes; the device's inherited ROM phase is not captured.

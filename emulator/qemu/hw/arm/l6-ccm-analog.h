@@ -71,6 +71,8 @@ static inline uint32_t l6max_boot_clock_value(uint32_t offset, uint32_t old)
         return (old & ~0x1f07fu) | 0x80002064u;
     case L6_CCM_ANALOG_PLL_SYS_NUM:
         return 0;
+    case 0x0d8040: /* PLL_SYS_SS: STOP, ENABLE and STEP from boot record. */
+        return 0;
     case L6_CCM_ANALOG_PLL_SYS_DENOM:
         return 1;
     case L6_CCM_ANALOG_MISC2:

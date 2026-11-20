@@ -69,7 +69,8 @@ The IPG divider also supplies SAI1 when its bus-clock input is selected.
 SysTick pauses if its selected clock stops and retains its separate reference
 clock when selected. External CLK1, invalid PLL dividers and reserved mux
 selections retain the last known CPU clock. PLL2 spread-spectrum modulation is
-not modeled. TCG instruction execution is not cycle-accurate and does not stop
+not modeled; its control register is cleared at handoff by the recovered boot
+configuration. TCG instruction execution is not cycle-accurate and does not stop
 with this clock; other system-bus consumers are not dynamically retimed.
 The USB2, video and Ethernet PLL controls reflect the bootloader's recovered
 bypass/power sequence. Their clock outputs and physical lock timing are not

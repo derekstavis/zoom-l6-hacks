@@ -543,6 +543,31 @@ def check_flexram_boundaries(qemu, image):
         assert not int(command("readl 0x400e8024").split()[1], 16) & 8
         command("writeb 0x4038400b 0x80")
         assert int(command("readl 0x400e8024").split()[1], 16) & 8
+        # Fill RX while its DMA request is disabled, arm the channel, then
+        # enable FRDE through the low byte and require immediate completion.
+        command("writel 0x400e8024 8")
+        command("writel 0x400e800c 0")
+        command("writel 0x400ec00c 0")
+        command("writel 0x40384008 0")
+        command(f"writel 0x400fc07c {gate | 0x000c00c0:#x}")
+        command("writel 0x40384010 0x05000000")
+        command("writel 0x40384018 0x00070000")
+        command("writel 0x4038401c 0x001f0000")
+        command("writel 0x40384094 0x00010000")
+        command("writel 0x40384088 0x80000000")
+        command("clock_step 2000000")
+        assert int(command("readl 0x40384088").split()[1], 16) & 0x10000
+        command("writel 0x20000004 0xffffffff")
+        for offset, value in ((0, 0x403840a0), (4, 0x02020000),
+                              (8, 4), (12, 0), (16, 0x20000004),
+                              (20, 0x00010000), (24, 0), (28, 0x0001000a)):
+            command(f"writel {base + offset:#x} {value:#x}")
+        command("writel 0x400ec00c 0x80000013")
+        command("writel 0x400e800c 8")
+        assert not int(command("readl 0x400e8024").split()[1], 16) & 8
+        command("writeb 0x40384088 1")
+        assert int(command("readl 0x400e8024").split()[1], 16) & 8
+        assert int(command("readl 0x20000004").split()[1], 16) == 0
         qmp_execute("system_reset")
         print(f"{image}: paired DMA interrupt assertion and acknowledgement passed")
         # Bootloader installed and locked the NOR command table. Verify the

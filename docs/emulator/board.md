@@ -47,13 +47,15 @@ preserving other stored bits. Peripheral clock mux and divider writes use
 RT1060 reset values for fields, including clock gates, whose prior ROM state has not been captured;
 the resulting complete values are assumptions, not hardware measurements.
 The ARM and system PLL control aliases share their respective register state;
-LOCK is approximated as immediate while powered. L6max ARM PLL and CACRR
-changes update QEMU's CPU clock input, including the 24 MHz bypass path, so
-SysTick follows the selected rate. SysTick pauses if that clock stops and
-retains its separate reference clock when selected. External CLK1 and invalid
-PLL dividers are not modeled; the last known CPU clock is retained in those
-cases. TCG instruction execution is not cycle-accurate and does not stop with
-this clock; system-bus clocks are not dynamically propagated.
+LOCK is approximated as immediate while powered. L6max QEMU CPU clock input
+follows the RT1060 peripheral mux and AHB divider, including PLL1, PLL2, PLL2
+PFDs and the alternate oscillator or PLL3 path; SysTick follows that clock.
+The IPG divider also supplies SAI1 when its bus-clock input is selected.
+SysTick pauses if its selected clock stops and retains its separate reference
+clock when selected. External CLK1, invalid PLL dividers and reserved mux
+selections retain the last known CPU clock. PLL2 spread-spectrum modulation is
+not modeled. TCG instruction execution is not cycle-accurate and does not stop
+with this clock; other system-bus consumers are not dynamically retimed.
 The USB2, video and Ethernet PLL controls reflect the bootloader's recovered
 bypass/power sequence. Their clock outputs and physical lock timing are not
 simulated. Ethernet LOCK is approximated as immediate while powered, independent

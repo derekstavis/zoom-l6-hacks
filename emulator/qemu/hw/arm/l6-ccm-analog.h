@@ -195,15 +195,18 @@ static inline uint32_t l6_misc2_apply(uint32_t control, uint32_t value,
 static inline uint32_t l6max_arm_root_hz(uint32_t pll, uint32_t cacrr)
 {
     const uint32_t oscillator_hz = 24000000u;
-    if (pll & 0xc000u) {
-        return UINT32_MAX; /* External CLK1 is not wired by this board. */
-    }
     uint64_t source;
     if (pll & 0x10000u) {
+        if (pll & 0xc000u) {
+            return UINT32_MAX; /* External CLK1 is not wired by this board. */
+        }
         source = oscillator_hz;
     } else if ((pll & 0x3000u) != 0x2000u) {
         source = 0;
     } else {
+        if (pll & 0xc000u) {
+            return UINT32_MAX;
+        }
         unsigned divider = pll & 0x7fu;
         if (divider < 54 || divider > 108) {
             return UINT32_MAX;
@@ -211,6 +214,106 @@ static inline uint32_t l6max_arm_root_hz(uint32_t pll, uint32_t cacrr)
         source = (uint64_t)oscillator_hz * divider / 2;
     }
     return source / ((cacrr & 7u) + 1);
+}
+
+/* RT1060 peripheral mux -> AHB -> IPG. Unknown means an unconnected
+ * external reference, a reserved selection, or an invalid PLL setting. */
+typedef struct L6MaxBusClocks {
+    uint32_t arm_pll, cacrr, sys_pll, sys_num, sys_denom, pfd_528;
+    uint32_t usb1_pll, ccsr, cbcdr, cbcmr;
+} L6MaxBusClocks;
+
+static inline uint32_t l6max_sys_pll_vco_hz(const L6MaxBusClocks *c)
+{
+    uint32_t control = c->sys_pll;
+    if (control & 0x1000u) {
+        return 0;
+    }
+    if (control & 0xc000u) {
+        return UINT32_MAX;
+    }
+    uint32_t denom = c->sys_denom & 0x3fffffffu;
+    int64_t num = c->sys_num & 0x3fffffffu;
+    if (num & (1u << 29)) {
+        num -= 1u << 30;
+    }
+    if (!denom || num >= (int64_t)denom || num <= -(int64_t)denom) {
+        return UINT32_MAX;
+    }
+    int64_t ratio = (int64_t)(20 + 2 * (control & 1u)) * denom + num;
+    return (uint64_t)24000000u * ratio / denom;
+}
+
+static inline uint32_t l6max_sys_pll_hz(const L6MaxBusClocks *c)
+{
+    if (c->sys_pll & 0x10000u) {
+        return (c->sys_pll & 0xc000u) ? UINT32_MAX : 24000000u;
+    }
+    return (c->sys_pll & 0x2000u) ? l6max_sys_pll_vco_hz(c) : 0;
+}
+
+static inline uint32_t l6max_pll2_pfd_hz(const L6MaxBusClocks *c, unsigned lane)
+{
+    unsigned shift = lane * 8;
+    unsigned fraction = (c->pfd_528 >> shift) & 0x3fu;
+    if (c->pfd_528 & (0x80u << shift)) {
+        return 0;
+    }
+    uint32_t pll = l6max_sys_pll_vco_hz(c);
+    if (!pll) {
+        return 0;
+    }
+    if (pll == UINT32_MAX || fraction < 12 || fraction > 35) {
+        return UINT32_MAX;
+    }
+    return (uint64_t)pll * 18 / fraction;
+}
+
+static inline uint32_t l6max_usb1_main_hz(uint32_t pll)
+{
+    if (pll & 0x10000u) {
+        return (pll & 0xc000u) ? UINT32_MAX : 24000000u;
+    }
+    if ((pll & 0x3000u) != 0x3000u) {
+        return 0;
+    }
+    return (pll & 0xc000u) ? UINT32_MAX :
+           ((pll & 2u) ? 528000000u : 480000000u);
+}
+
+static inline uint32_t l6max_ahb_clock_hz(const L6MaxBusClocks *c)
+{
+    uint32_t source;
+    if (c->cbcdr & (1u << 25)) {
+        switch ((c->cbcmr >> 12) & 3u) {
+        case 0:
+            source = (c->ccsr & 1u) ?
+                ((c->usb1_pll & 0xc000u) ? UINT32_MAX : 24000000u) :
+                l6max_usb1_main_hz(c->usb1_pll);
+            break;
+        case 1: source = 24000000u; break;
+        case 2: source = (c->sys_pll & 0xc000u) ? UINT32_MAX : 24000000u; break;
+        default: return UINT32_MAX;
+        }
+        if (source == UINT32_MAX) {
+            return source;
+        }
+        source /= ((c->cbcdr >> 27) & 7u) + 1;
+    } else {
+        switch ((c->cbcmr >> 18) & 3u) {
+        case 0: source = l6max_sys_pll_hz(c); break;
+        case 1: source = l6max_pll2_pfd_hz(c, 2); break;
+        case 2: source = l6max_pll2_pfd_hz(c, 0); break;
+        default: source = l6max_arm_root_hz(c->arm_pll, c->cacrr); break;
+        }
+    }
+    return source == UINT32_MAX ? source : source / (((c->cbcdr >> 10) & 7u) + 1);
+}
+
+static inline uint32_t l6max_ipg_clock_hz(const L6MaxBusClocks *c)
+{
+    uint32_t ahb = l6max_ahb_clock_hz(c);
+    return ahb == UINT32_MAX ? ahb : ahb / (((c->cbcdr >> 8) & 3u) + 1);
 }
 
 #define L6_ARM_PLL_WRITABLE 0x0001f07fu

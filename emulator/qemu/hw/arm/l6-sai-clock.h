@@ -4,12 +4,14 @@
 #define HW_ARM_L6_SAI_CLOCK_H
 
 #include <stdint.h>
+#include "l6-ccm-analog.h"
 
 typedef struct L6MaxSaiClocks {
     uint32_t gpr1, cscmr1, cs1cdr, cs2cdr, ccgr5;
     uint32_t audio_pll, audio_num, audio_denom;
     uint32_t video_pll, video_num, video_denom, misc2;
     uint32_t usb1_pll, pfd_480;
+    L6MaxBusClocks bus;
 } L6MaxSaiClocks;
 
 /* Audio/video PLL post-divider is before bypass; MISC2 follows bypass. */
@@ -49,14 +51,11 @@ static inline uint32_t l6max_usb1_pfd2_hz(uint32_t pll, uint32_t pfd)
     if ((pll & 0xc000u) || (pfd & 0x00800000u) || frac < 12 || frac > 35) {
         return 0;
     }
-    uint32_t source;
-    if (pll & 0x10000u) {
-        source = 24000000u;
-    } else if ((pll & 0x3000u) == 0x3000u) {
-        source = (pll & 2u) ? 528000000u : 480000000u;
-    } else {
+    /* The PFD is fed by PLL3's VCO, not the PLL output bypass mux. */
+    if (!(pll & 0x1000u)) {
         return 0;
     }
+    uint32_t source = (pll & 2u) ? 528000000u : 480000000u;
     return (uint64_t)source * 18 / frac;
 }
 
@@ -68,8 +67,12 @@ static inline uint32_t l6max_sai1_master_hz(const L6MaxSaiClocks *c,
         return 0;
     }
     unsigned msel = (tcr2 >> 26) & 3;
-    if (msel != 1 && msel != 2) {
-        return 0; /* Bus clock and SPDIF/external clock are not modeled. */
+    if (msel == 0) {
+        uint32_t ipg = l6max_ipg_clock_hz(&c->bus);
+        return ipg == UINT32_MAX ? 0 : ipg;
+    }
+    if (msel == 3) {
+        return 0; /* SPDIF/external clock is not modeled. */
     }
     unsigned route = (c->gpr1 >> (msel == 1 ? 0 : 3)) & 7;
     if (route > 2) {

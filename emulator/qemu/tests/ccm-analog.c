@@ -48,7 +48,55 @@ int main(void)
     assert(l6max_arm_root_hz(0x00012064u, 1) == 12000000u);
     assert(l6max_arm_root_hz(0x00001064u, 1) == 0);
     assert(l6max_arm_root_hz(0x00006064u, 1) == UINT32_MAX);
+    assert(l6max_arm_root_hz(0x00005064u, 1) == 0); /* powered down */
+    assert(l6max_arm_root_hz(0x00014064u, 1) == UINT32_MAX); /* bypass CLK1 */
     assert(l6max_arm_root_hz(0x00002001u, 1) == UINT32_MAX);
+    L6MaxBusClocks bus_clocks = {
+        .arm_pll = 0x2064, .cacrr = 1, .sys_pll = 0x2001,
+        .sys_num = 0, .sys_denom = 1, .pfd_528 = 0x101d1018,
+        .usb1_pll = 0x3040, .ccsr = 0x100,
+        .cbcdr = 0x00098340, .cbcmr = 0x7dae8324,
+    };
+    assert(l6max_ahb_clock_hz(&bus_clocks) == 600000000u);
+    assert(l6max_ipg_clock_hz(&bus_clocks) == 150000000u);
+    bus_clocks.cbcdr = (bus_clocks.cbcdr & ~(7u << 10)) | (1u << 10);
+    assert(l6max_ahb_clock_hz(&bus_clocks) == 300000000u);
+    assert(l6max_ipg_clock_hz(&bus_clocks) == 75000000u);
+    bus_clocks.cbcdr &= ~(7u << 10);
+    bus_clocks.cbcmr &= ~(3u << 18);
+    assert(l6max_ahb_clock_hz(&bus_clocks) == 528000000u);
+    bus_clocks.sys_num = 0x3fffffffu; /* -1/4 of the 24 MHz reference */
+    bus_clocks.sys_denom = 4;
+    assert(l6max_ahb_clock_hz(&bus_clocks) == 522000000u);
+    bus_clocks.sys_num = 0;
+    bus_clocks.sys_denom = 1;
+    bus_clocks.cbcmr |= 1u << 18;
+    assert(l6max_ahb_clock_hz(&bus_clocks) == (uint64_t)528000000u * 18 / 29);
+    bus_clocks.cbcmr = (bus_clocks.cbcmr & ~(3u << 18)) | (2u << 18);
+    assert(l6max_ahb_clock_hz(&bus_clocks) == 396000000u);
+    bus_clocks.sys_pll |= 0x10000u; /* PFD receives VCO, bypass affects PLL main. */
+    assert(l6max_ahb_clock_hz(&bus_clocks) == 396000000u);
+    bus_clocks.sys_pll &= ~0x10000u;
+    bus_clocks.sys_pll = 0x5001; /* CLK1 selected but VCO powered down */
+    assert(l6max_ahb_clock_hz(&bus_clocks) == 0);
+    bus_clocks.sys_pll = 0x2001;
+    bus_clocks.pfd_528 |= 0x80u;
+    assert(l6max_ahb_clock_hz(&bus_clocks) == 0);
+    bus_clocks.pfd_528 &= ~0x80u;
+    bus_clocks.cbcdr |= 1u << 25;
+    bus_clocks.cbcmr &= ~(3u << 12);
+    assert(l6max_ahb_clock_hz(&bus_clocks) == 480000000u);
+    bus_clocks.ccsr |= 1u; /* PLL3 switch selects bypass reference */
+    assert(l6max_ahb_clock_hz(&bus_clocks) == 24000000u);
+    bus_clocks.ccsr &= ~1u;
+    bus_clocks.cbcmr |= 1u << 12;
+    assert(l6max_ahb_clock_hz(&bus_clocks) == 24000000u);
+    bus_clocks.cbcdr |= 1u << 27;
+    assert(l6max_ahb_clock_hz(&bus_clocks) == 12000000u);
+    bus_clocks.cbcmr = (bus_clocks.cbcmr & ~(3u << 12)) | (2u << 12);
+    assert(l6max_ahb_clock_hz(&bus_clocks) == 12000000u); /* PLL2 bypass /2 */
+    bus_clocks.cbcmr |= 1u << 12;
+    assert(l6max_ahb_clock_hz(&bus_clocks) == UINT32_MAX);
     assert((arm & 0x7f) == 100 && (arm_div & 7) == 1);
     assert((bus & 0xc0) == 0x40 && ((bus >> 16) & 7) == 1);
     /* The post-divider is inherited, not established by the dump. */

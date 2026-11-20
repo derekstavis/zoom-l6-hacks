@@ -15,8 +15,8 @@ L6max configures SAI1; its model derives the selected internal MCLK1/MCLK2
 source from the clock gate, IOMUX route, CCM dividers and audio, video or
 USB1 PFD2 PLL settings. The recovered bootloader selects the audio PLL, but
 its inherited post-divider and the physical clock frequency are unverified.
-Bus-clock selection, SPDIF and external MCLK inputs are not implemented.
-MISC2 SET/CLR/TOG update the audio and video divider fields; its PMU status is
+Bus-clock selection uses the modeled IPG clock. SPDIF and external MCLK
+inputs are not implemented. MISC2 SET/CLR/TOG update the audio and video divider fields; its PMU status is
 stored and PLL3_DISABLE has no modeled low-power effect. The SAI scheduler advances in blocks; host audio stays configured for 48 kHz even
 if the guest selects a different rate.
 

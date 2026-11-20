@@ -196,6 +196,31 @@ def check_flexram_boundaries(qemu, image):
         assert 4798 <= systick_ticks() <= 4802
         command("writel 0x400d8000 0x2064")
         assert 5998 <= systick_ticks() <= 6002
+        # The ARM core uses the AHB root, not the PLL1 divider directly.
+        boot_cbcdr = int(command("readl 0x400fc014").split()[1], 16)
+        boot_cbcmr = int(command("readl 0x400fc018").split()[1], 16)
+        command(f"writel 0x400fc014 {boot_cbcdr | (1 << 10):#x}")
+        assert 2998 <= systick_ticks() <= 3002
+        command(f"writel 0x400fc018 {boot_cbcmr & ~(3 << 18):#x}")
+        assert 2638 <= systick_ticks() <= 2642  # PLL2 528 MHz / 2
+        command("writel 0x400d8060 4")
+        command("writel 0x400d8050 1")
+        assert 2668 <= systick_ticks() <= 2672  # PLL2 534 MHz / 2
+        command(f"writel 0x400fc018 {(boot_cbcmr & ~(3 << 18)) | (1 << 18):#x}")
+        assert 1655 <= systick_ticks() <= 1659  # PLL2 PFD2 / 2
+        command("writel 0x400d8104 0x00800000")
+        assert systick_ticks() == 0
+        command("writel 0x400d8108 0x00800000")
+        assert 1655 <= systick_ticks() <= 1659
+        # Switch to the alternate 24 MHz oscillator, still with AHB /2.
+        command(f"writel 0x400fc018 {(boot_cbcmr & ~(3 << 12)) | (1 << 12):#x}")
+        command(f"writel 0x400fc014 {boot_cbcdr | (1 << 10) | (1 << 25):#x}")
+        assert 118 <= systick_ticks() <= 122
+        command("writel 0x400d8050 0")
+        command("writel 0x400d8060 1")
+        command(f"writel 0x400fc018 {boot_cbcmr:#x}")
+        command(f"writel 0x400fc014 {boot_cbcdr:#x}")
+        assert 5998 <= systick_ticks() <= 6002
         command("writel 0xe000e010 0")
         print(f"{image}: ARM clock, SysTick source and stopped clock passed")
         # SAI1 FIFO progress follows its CCGR gate and programmed root rate.
@@ -242,6 +267,12 @@ def check_flexram_boundaries(qemu, image):
         command("clock_step 2800000")
         before = fill_sai()
         command("clock_step 1400000")
+        assert (int(command("readl 0x40384040").split()[1], 16) - before) & 31 == 16
+        # MSEL=0 selects the IPG bus clock; it must drive SAI FIFO progress.
+        command("writel 0x40384010 0x01000000")
+        command("clock_step 2000000")
+        before = fill_sai()
+        command("clock_step 500000")
         assert (int(command("readl 0x40384040").split()[1], 16) - before) & 31 == 16
         command("writel 0x40384008 0")
         command("writel 0x400fc07c " + hex(old_gate))

@@ -1753,6 +1753,22 @@ static uint32_t l6max_clock_register(L6ChipState *s, hwaddr offset)
                                                GUINT_TO_POINTER((offset >> 2) + 1)));
 }
 
+static L6MaxBusClocks l6max_bus_clocks(L6ChipState *s)
+{
+    return (L6MaxBusClocks) {
+        .arm_pll = l6max_clock_register(s, L6_CCM_ANALOG_PLL_ARM),
+        .cacrr = l6max_clock_register(s, L6_CCM_CACRR_OFFSET),
+        .sys_pll = l6max_clock_register(s, L6_CCM_ANALOG_PLL_SYS),
+        .sys_num = l6max_clock_register(s, L6_CCM_ANALOG_PLL_SYS_NUM),
+        .sys_denom = l6max_clock_register(s, L6_CCM_ANALOG_PLL_SYS_DENOM),
+        .pfd_528 = l6max_clock_register(s, L6_CCM_ANALOG_PFD_528),
+        .usb1_pll = l6max_clock_register(s, 0x0d8010),
+        .ccsr = l6max_clock_register(s, 0x0fc00c),
+        .cbcdr = l6max_clock_register(s, L6_CCM_CBCDR_OFFSET),
+        .cbcmr = l6max_clock_register(s, L6_CCM_CBCMR_OFFSET),
+    };
+}
+
 static uint32_t l6max_sai1_source_hz(L6ChipState *s, uint32_t tcr2)
 {
     const L6MaxSaiClocks clocks = {
@@ -1770,6 +1786,7 @@ static uint32_t l6max_sai1_source_hz(L6ChipState *s, uint32_t tcr2)
         .misc2 = l6max_clock_register(s, L6_CCM_ANALOG_MISC2),
         .usb1_pll = l6max_clock_register(s, 0x0d8010),
         .pfd_480 = l6max_clock_register(s, L6_CCM_ANALOG_PFD_480),
+        .bus = l6max_bus_clocks(s),
     };
     return l6max_sai1_master_hz(&clocks, tcr2);
 }
@@ -3467,15 +3484,12 @@ static void l6max_flexram_map(L6ChipState *s, uint32_t gpr16, uint32_t gpr17)
     memory_region_transaction_commit();
 }
 
-/* Propagate the modeled ARM root to clock consumers such as SysTick.
- * TCG instruction execution itself is not cycle-accurate. */
+/* The RT1060 core uses AHB_CLK_ROOT. TCG instruction execution itself
+ * remains non-cycle-accurate; SysTick consumes the propagated clock. */
 static void l6max_update_cpu_clock(L6ChipState *s)
 {
-    uint32_t pll = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
-        GUINT_TO_POINTER((L6_CCM_ANALOG_PLL_ARM >> 2) + 1)));
-    uint32_t cacrr = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
-        GUINT_TO_POINTER((L6_CCM_CACRR_OFFSET >> 2) + 1)));
-    uint32_t hz = l6max_arm_root_hz(pll, cacrr);
+    L6MaxBusClocks clocks = l6max_bus_clocks(s);
+    uint32_t hz = l6max_ahb_clock_hz(&clocks);
     if (hz != UINT32_MAX) {
         clock_update_hz(s->sysclk, hz);
     }
@@ -3890,10 +3904,17 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
             l6max_flexram_map(s, gpr16, gpr17);
         }
     }
+    hwaddr clock_word = offset & ~(hwaddr)3;
+    hwaddr clock_alias = offset & ~(hwaddr)0xf;
     if (!s->panel && s->profile == &L6MAX_PROFILE &&
-        (((offset & ~3u) == L6_CCM_CACRR_OFFSET) ||
+        (clock_word == 0x0fc00c || clock_word == L6_CCM_CACRR_OFFSET ||
+         clock_word == L6_CCM_CBCDR_OFFSET || clock_word == L6_CCM_CBCMR_OFFSET ||
+         clock_word == L6_CCM_ANALOG_PLL_SYS_NUM ||
+         clock_word == L6_CCM_ANALOG_PLL_SYS_DENOM ||
          (size == 4 && !(offset & 3) &&
-          (offset & ~(hwaddr)0xf) == L6_CCM_ANALOG_PLL_ARM))) {
+          (clock_alias == L6_CCM_ANALOG_PLL_ARM ||
+           clock_alias == L6_CCM_ANALOG_PLL_SYS ||
+           clock_alias == L6_CCM_ANALOG_PFD_528 || clock_alias == 0x0d8010)))) {
         l6max_update_cpu_clock(s);
     }
     if (s->panel) {

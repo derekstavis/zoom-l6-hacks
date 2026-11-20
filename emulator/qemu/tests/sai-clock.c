@@ -35,13 +35,23 @@ int main(void)
     c.ccgr5 = 0;
     assert(l6max_sai1_master_hz(&c, master1) == 0);
     c.ccgr5 = 3u << 18;
-    assert(l6max_sai1_master_hz(&c, 0) == 0);
+    c.bus = (L6MaxBusClocks) {
+        .arm_pll = 0x2064, .cacrr = 1, .cbcdr = 0x00098340,
+        .cbcmr = 3u << 18,
+    };
+    assert(l6max_sai1_master_hz(&c, 0) == 150000000u);
+    c.bus.cbcdr |= 1u << 10;
+    assert(l6max_sai1_master_hz(&c, 0) == 75000000u);
     c.gpr1 = 3;
     assert(l6max_sai1_master_hz(&c, master1) == 0);
     c.gpr1 = 0;
     c.cscmr1 = 0;
     assert(l6max_sai1_master_hz(&c, master1) ==
            (uint64_t)480000000u * 18 / 17 / 8);
+    c.usb1_pll |= 0x10000u; /* PFD receives VCO even if main is bypassed. */
+    assert(l6max_sai1_master_hz(&c, master1) ==
+           (uint64_t)480000000u * 18 / 17 / 8);
+    c.usb1_pll &= ~0x10000u;
     c.pfd_480 |= 1u << 23;
     assert(l6max_sai1_master_hz(&c, master1) == 0);
     c.pfd_480 &= ~(1u << 23);

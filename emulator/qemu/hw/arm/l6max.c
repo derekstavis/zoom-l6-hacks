@@ -3904,6 +3904,12 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
                           uint64_t value, unsigned size)
 {
     L6ChipState *s = opaque;
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        offset >= 0x184000 && offset < 0x1a4000 &&
+        (offset & 0x3fff) < 8) {
+        /* RT1060 LPUART VERID and PARAM are read-only. */
+        return;
+    }
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
         (offset & ~(hwaddr)0xf) == 0x0d9030) {
         gpointer key = GUINT_TO_POINTER((0x0d9030 >> 2) + 1);

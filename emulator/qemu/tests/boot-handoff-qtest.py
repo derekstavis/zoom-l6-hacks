@@ -1214,6 +1214,10 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0x400b0018 0x38")
         for instance in range(8):
             base = 0x40184000 + instance * 0x4000
+            command(f"writel {base:#x} 0xffffffff")
+            command(f"writeb {base + 4:#x} 0xff")
+            assert int(command(f"readl {base:#x}").split()[1], 16) == 0x04010003
+            assert int(command(f"readl {base + 4:#x}").split()[1], 16) == 0x202
             command(f"writel {base + 0x10:#x} 0x12345678")
             command(f"writel {base + 0x20:#x} 0x12345678")
             assert int(command(f"readl {base + 0x10:#x}").split()[1], 16) == 0x12345678

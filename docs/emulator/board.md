@@ -84,9 +84,10 @@ The PHY control register implements the observed SET/CLR/TOG sequence and reset;
 its handoff value is assumed to be the reference-manual reset value because ROM
 and physical handoff state have not been fully traced. Cable events and register
 access remain approximations; oscillator settling, low-power wakeup, other PHY
-behavior and bus access while gated are not modeled. Other indirect writes
-and physical handoff readback remain unverified. The RT1060
-reset controller resets CCM, PLLs and functional modules on cold reset while
+behavior and bus access while gated are not modeled. USDHC1 starts with its
+reconstructed CCGR6 gate off; its card clock also depends on IPG and the selected
+PLL2 PFD. Physical handoff readback and indirect writes remain unverified.
+The RT1060 reset controller resets CCM, PLLs and functional modules on cold reset while
 retaining IOMUXC; the model retains the latter's stored bits. The model resets
 SEMC configuration and selected FlexSPI controls before replaying their boot
 configuration, and resets the modeled L6max SAI1 registers and FIFO. The

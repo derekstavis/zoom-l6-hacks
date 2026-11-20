@@ -1120,7 +1120,14 @@ def check_flexram_boundaries(qemu, image):
         assert int(command("readl 0x40384008").split()[1], 16) & 0x80000000
         command("readl 0x20000000")
         assert int(command("readl 0x400b0010").split()[1], 16) == 0x10
+        # Adapter-owned USDHC fields must reset with the controller.
+        command("writel 0x402c002c 0x00123450")
+        command("writel 0x402c00c8 0")
+        command("writel 0x402c0028 0x07000000")
         qmp_execute("system_reset")
+        assert int(command("readl 0x402c002c").split()[1], 16) == 0x0080800f
+        assert int(command("readl 0x402c00c8").split()[1], 16) == 0x00019006
+        assert not int(command("readl 0x402c0028").split()[1], 16) & 0x07000000
         for address in (0x400ec000, 0x400ec030, 0x400ec07c,
                         0x400e800c, 0x400e8024):
             assert int(command(f"readl {address:#x}").split()[1], 16) == 0
@@ -1392,6 +1399,64 @@ def check_usb_clock(qemu, image):
         process.wait(timeout=5)
 
 
+def check_usdhc_clock(qemu, image):
+    process = subprocess.Popen(
+        [qemu, "-M", "l6max-main", "-kernel", image, "-accel", "qtest",
+         "-qtest", "stdio", "-display", "none"], stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        bufsize=1, env=isolated_env(),
+    )
+
+    def command(text):
+        process.stdin.write(text + "\n")
+        process.stdin.flush()
+        if not select.select([process.stdout], [], [], 10)[0]:
+            raise RuntimeError(f"no response to {text}")
+        reply = process.stdout.readline().strip().split()
+        assert reply[0] == "OK", reply
+        return int(reply[1], 0) if len(reply) > 1 else None
+
+    try:
+        gate = command("readl 0x400fc080")
+        assert not gate & 0xc
+        command("writel 0x402c002c 0x00808000")  # initialize adapter clock
+        command("writel 0x402c0034 0xffffffff")  # status enables
+        command("writel 0x402c0030 0xffffffff")  # clear status
+        assert not command("readl 0x402c0024") & 8
+        command("writel 0x402c000c 0x08020000")  # CMD8 with response
+        assert not command("readl 0x402c0030") & 0x18001
+        # Select PLL2 PFD2, enable controller gate; an empty slot must still
+        # produce a command timeout when a running controller is addressed.
+        cscmr1 = command("readl 0x400fc01c")
+        command(f"writel 0x400fc01c {cscmr1 & ~0x10000:#x}")
+        command(f"writel 0x400fc080 {gate | 0xc:#x}")
+        assert command("readl 0x402c0024") & 8
+        command("writel 0x402c000c 0x08020000")
+        assert command("readl 0x402c0030") & 0x10000
+        command("writel 0x402c0030 0xffffffff")
+        command("writel 0x400d8104 0x00800000")  # stop selected PFD2
+        assert not command("readl 0x402c0024") & 8
+        command("writel 0x402c000c 0x08020000")
+        assert not command("readl 0x402c0030") & 0x18001
+        command(f"writel 0x400fc01c {cscmr1 | 0x10000:#x}")  # PFD0
+        assert command("readl 0x402c0024") & 8
+        command("writel 0x400d8104 0x00000080")  # stop PFD0 too
+        assert not command("readl 0x402c0024") & 8
+        command("writel 0x400d8108 0x00000080")
+        assert command("readl 0x402c0024") & 8
+        command("writel 0x400d8004 0x1000")  # stop IPG, leave PLL2 on
+        assert not command("readl 0x402c0024") & 8
+        command("writel 0x400d8008 0x1000")
+        assert command("readl 0x402c0024") & 8
+        command("writel 0x400d8108 0x00800000")
+        command("writel 0x402c000c 0x08020000")
+        assert command("readl 0x402c0030") & 0x10000
+        print(f"{image}: USDHC clock gate and PFD transitions passed")
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
 def main():
     if len(sys.argv) != 5:
         raise SystemExit(__doc__)
@@ -1471,6 +1536,7 @@ def main():
     check_main_stack_entry(qemu, patched)
     check_flexram_boundaries(qemu, stock)
     check_usb_clock(qemu, stock)
+    check_usdhc_clock(qemu, stock)
     check_no_cache_selector(qemu, l6)
     check(qemu, l6, {0x400ac038: 0, 0x401f8204: 0, 0x402f0010: 0,
                      0x40084000: 0, 0x40084100: 0,

@@ -2231,9 +2231,27 @@ static void l6_rom_write_byte(L6ChipState *s, uint8_t byte)
  * slot completes with a command timeout. PROT_CTRL WECINT/WECINS/WECRM only
  * enable wakeup events, so they are kept out of SDHCI's interrupt decision.
  */
+/* RT1060 USDHC1 uses IPG plus the selected PLL2 PFD through CCGR6 CG1.
+ * Unknown PLL/PFD settings retain the prior compatibility behavior. */
+static bool l6_sd_clock_running(L6ChipState *s)
+{
+    if (s->profile != &L6MAX_PROFILE) {
+        return true;
+    }
+    L6MaxBusClocks clocks = l6max_bus_clocks(s);
+    uint32_t mux = l6max_clock_register(s, L6_CCM_CSCMR1_OFFSET);
+    uint32_t source = l6max_pll2_pfd_hz(&clocks, (mux & 0x10000u) ? 0 : 2);
+    return (l6max_clock_register(s, 0x0fc080) & 0xcu) != 0 &&
+           l6max_ipg_clock_running(s, &clocks) && clocks.oscillator_hz &&
+           source != 0;
+}
+
 static uint64_t l6_sd_read(void *opaque, hwaddr offset, unsigned size)
 {
     L6ChipState *s = opaque;
+    if (offset == 0x24 && size == 4 && !l6_sd_clock_running(s)) {
+        return s->sd_ops->read(s->sdhc, offset, size) & ~(1u << 3);
+    }
     if (offset == 0x2c && size == 4) {
         return s->sd_sysctl;
     }
@@ -2272,6 +2290,11 @@ static void l6_sd_write(void *opaque, hwaddr offset, uint64_t value, unsigned si
         return;
     }
     if (offset == 0x0c) {
+        /* Bus behavior while gated is not captured; discard the command
+         * instead of issuing a transfer without a controller clock. */
+        if (!l6_sd_clock_running(s)) {
+            return;
+        }
         s->sdhc->clkcon |= 7u;
     }
     s->sd_ops->write(s->sdhc, offset, value, size);
@@ -5020,6 +5043,10 @@ static void l6_main_gpio_setup(L6ChipState *s, MemoryRegion *system_memory)
 /* Apply the modeled L6max bootloader handoff after every machine reset. */
 static void l6max_seed_boot_handoff(L6ChipState *s)
 {
+    /* The adapter owns these USDHC fields outside the reset QEMU device. */
+    s->sd_sysctl = L6_USDHC_SYS_CTRL_RESET;
+    s->sd_vend_spec2 = L6_USDHC_VEND_SPEC2_RESET;
+    s->sd_wakeup = 0;
     /* PHY state was not captured at MAIN entry; use the manual reset value. */
     g_hash_table_insert(s->registers, GUINT_TO_POINTER((0x0d9000 >> 2) + 1),
                         GUINT_TO_POINTER(0x001e1c00u));

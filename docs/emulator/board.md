@@ -54,9 +54,11 @@ selection; its LOCK status follows the existing immediate-lock model.
 For L6max, PLL_AUDIO SET/CLR/TOG aliases update the control register and
 LOCK follows enable/power state immediately; physical lock timing is not
 modeled.
-The PFD SET/CLR/TOG aliases share control state and preserve read-only
-STABLE bits. Their hardware phase transitions are not modeled, so those
-diagnostic bit values are not verified handoff values.
+The PFD SET/CLR/TOG aliases share control state and protect read-only
+STABLE bits. The model toggles a phase bit immediately when a valid divider
+change takes effect, assuming gated changes take effect on ungating. Physical
+transition timing and the inherited ROM phase are not verified; the initial
+phase uses the reference manual reset values.
 IOMUX register storage does not
 model pad electrical characteristics or reroute pins dynamically. SDRAM
 timing and refresh register values are seeded from the bootloader's nominal

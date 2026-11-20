@@ -358,6 +358,7 @@ typedef struct L6ChipState {
     Clock *sysclk;
     Clock *refclk;
     GHashTable *registers;
+    uint32_t pfd_applied[2];
     size_t flash_payload_size;
     uint8_t *nor_flash;
     uint8_t *resource_flash;
@@ -3414,7 +3415,8 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
                                offset == pfd_base + 8 ? L6_USB1_PLL_CLEAR :
                                offset == pfd_base + 12 ? L6_USB1_PLL_TOGGLE :
                                L6_USB1_PLL_DIRECT;
-        control = l6_pfd_apply(control, value, alias);
+        control = l6_pfd_apply(control, value, alias,
+                               &s->pfd_applied[pfd_base == L6_CCM_ANALOG_PFD_528]);
         g_hash_table_insert(s->registers, control_key, GUINT_TO_POINTER(control));
         if (alias == L6_USB1_PLL_DIRECT) {
             word = control;
@@ -4417,8 +4419,13 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
     for (unsigned i = 0; i < ARRAY_SIZE(offsets); i++) {
         gpointer key = GUINT_TO_POINTER((offsets[i] >> 2) + 1);
         uint32_t old = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
-        g_hash_table_insert(s->registers, key,
-            GUINT_TO_POINTER(l6max_boot_clock_value(offsets[i], old)));
+        uint32_t value = l6max_boot_clock_value(offsets[i], old);
+        if (offsets[i] == L6_CCM_ANALOG_PFD_480 ||
+            offsets[i] == L6_CCM_ANALOG_PFD_528) {
+            value = l6_pfd_apply(old, value, L6_USB1_PLL_DIRECT,
+                &s->pfd_applied[offsets[i] == L6_CCM_ANALOG_PFD_528]);
+        }
+        g_hash_table_insert(s->registers, key, GUINT_TO_POINTER(value));
     }
     /* The clock-tree routine clears these fields after pad setup. Later
      * GPIO/SEMC/FlexSPI initialization restores the enabled fields below. */
@@ -4712,6 +4719,8 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
     g_autofree char *external_ram_name = g_strdup_printf("%s.external_ram", prefix);
     g_autofree char *unmodeled_mmio_name = g_strdup_printf("%s.unmodeled_mmio", prefix);
     s->registers = g_hash_table_new(g_direct_hash, g_direct_equal);
+    s->pfd_applied[0] = L6_CCM_ANALOG_PFD_480_RESET;
+    s->pfd_applied[1] = L6_CCM_ANALOG_PFD_528_RESET;
     s->panel = panel;
     s->profile = profile;
     if (!panel) {

@@ -119,11 +119,11 @@ typedef enum L6Usb1PllAlias {
     L6_USB1_PLL_TOGGLE,
 } L6Usb1PllAlias;
 
-/* PFD stable bits are read-only phase indicators; this model retains them
- * rather than predicting their transition timing. */
+/* Model valid divider changes as taking effect immediately when ungated.
+ * Gated changes are deferred; physical timing and inherited phase are unknown. */
 #define L6_PFD_STABLE_MASK 0x40404040u
 static inline uint32_t l6_pfd_apply(uint32_t control, uint32_t value,
-                                    L6Usb1PllAlias alias)
+                                    L6Usb1PllAlias alias, uint32_t *applied)
 {
     uint32_t stable = control & L6_PFD_STABLE_MASK;
     uint32_t writable = control & ~L6_PFD_STABLE_MASK;
@@ -133,6 +133,15 @@ static inline uint32_t l6_pfd_apply(uint32_t control, uint32_t value,
     case L6_USB1_PLL_SET: writable |= value; break;
     case L6_USB1_PLL_CLEAR: writable &= ~value; break;
     case L6_USB1_PLL_TOGGLE: writable ^= value; break;
+    }
+    for (unsigned shift = 0; shift < 32; shift += 8) {
+        uint32_t frac_mask = 0x3fu << shift;
+        uint32_t frac = (writable >> shift) & 0x3fu;
+        if (!(writable & (0x80u << shift)) && frac >= 12 && frac <= 35 &&
+            ((writable ^ *applied) & frac_mask)) {
+            stable ^= 0x40u << shift;
+            *applied = (*applied & ~frac_mask) | (writable & frac_mask);
+        }
     }
     return stable | writable;
 }

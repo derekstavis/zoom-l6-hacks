@@ -160,6 +160,19 @@ def check_flexram_boundaries(qemu, image):
             assert int(command(f"readl {base:#x}").split()[1], 16) == original & ~0x80
             command(f"writel {base + 12:#x} 0x80")
             assert int(command(f"readl {base:#x}").split()[1], 16) == original ^ 0x80
+            # A valid divider change is deferred while gated, then updates
+            # the phase indicator when this model applies it on ungating.
+            programmed = ((original & ~0x3f) | 0x80 |
+                          ((original & 0x3f) + 1))
+            command(f"writel {base:#x} {programmed:#x}")
+            assert int(command(f"readl {base:#x}").split()[1], 16) == programmed
+            command(f"writel {base + 8:#x} 0x80")
+            applied = (programmed & ~0x80) ^ 0x40
+            assert int(command(f"readl {base:#x}").split()[1], 16) == applied
+            command(f"writel {base + 4:#x} 0x80")
+            command(f"writel {base + 8:#x} 0x80")
+            assert int(command(f"readl {base:#x}").split()[1], 16) == applied
+            original = applied
             command(f"writel {base:#x} 0xffffffff")
             assert int(command(f"readl {base:#x}").split()[1], 16) == (
                 (original & 0x40404040) | 0xbfbfbfbf
@@ -268,6 +281,9 @@ def main():
         0x400fc02c: 0x007336c1, 0x400fc030: 0x33f71f92,
         0x400fc038: 0x00029150, 0x400fc060: 0x00120001,
         0x400d8010: 0x80003040, 0x400d8020: 0x12000, 0x400d8070: 0x80002020,
+        # Simulation values assume the manual reset phase before the boot
+        # divider writes; the device's inherited ROM phase is not captured.
+        0x400d80f0: 0x13111061, 0x400d8100: 0x105d1058,
         0x400d8170: 0x00272727,
         0x400d80a0: 0x13000, 0x400d80e0: 0x80312001,
         0xe000e010: 0, 0xe000ed08: 0x80000000,

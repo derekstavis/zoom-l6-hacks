@@ -328,6 +328,15 @@ def check_flexram_boundaries(qemu, image):
         assert int(command("readl 0x40084104").split()[1], 16) == 24
         print(f"{image}: PIT clock sources, gate, chaining, reload and IRQ passed")
         qmp_execute("system_reset")
+        # The handoff stopped SysTick but retained its 1 ms scheduler load.
+        # Re-enable without reprogramming LOAD to exercise the retained value.
+        assert int(command("readl 0xe000e014").split()[1], 16) == 599999
+        command("writel 0xe000e018 0")
+        command("writel 0xe000e010 5")
+        command("clock_step 500000")
+        remaining = int(command("readl 0xe000e018").split()[1], 16)
+        assert 299998 <= remaining <= 300001, remaining
+        command("writel 0xe000e010 0")
         for last, beyond in ((0x7ffc, 0x8000), (0x2001fffc, 0x20020000),
                              (0x202d7ffc, 0x202d8000)):
             command(f"writel {last:#x} 0x1234abcd")
@@ -785,6 +794,7 @@ def check_flexram_boundaries(qemu, image):
         for address in (0x40084000, 0x40084100, 0x40084108,
                         0x40084110, 0x40084118):
             command(f"writel {address:#x} 0x12345678")
+        command("writel 0xe000e014 1")
         command("writel 0xe000ed20 0")
         command("writel 0xe000ed88 0")
         command("writel 0xe000ef34 0")
@@ -793,7 +803,8 @@ def check_flexram_boundaries(qemu, image):
         command("readl 0x20000000")
         assert int(command("readl 0x400b0010").split()[1], 16) == 0x10
         qmp_execute("system_reset")
-        for address, value in ((0xe000ed20, 0xf0f00000),
+        for address, value in ((0xe000e014, 599999),
+                               (0xe000ed20, 0xf0f00000),
                                (0xe000ed88, 0x00f00000),
                                (0xe000ef34, 0xc0000000)):
             assert int(command(f"readl {address:#x}").split()[1], 16) == value
@@ -950,7 +961,7 @@ def main():
         0x400d8170: 0x00272727,
         0x400d80a0: 0x13000, 0x400d80b0: 0x05f5e100,
         0x400d80c0: 0x10a24447, 0x400d80e0: 0x80312001,
-        0xe000e010: 0, 0xe000ed00: 0x411fc271, 0xe000ed08: 0x80000000,
+        0xe000e010: 0, 0xe000e014: 599999, 0xe000ed00: 0x411fc271, 0xe000ed08: 0x80000000,
         0xe000ed14: 0x200, 0xe000ed20: 0xf0f00000,
         0xe000ed24: 0, 0xe000ed88: 0x00f00000, 0xe000ed94: 0,
         0xe000ef34: 0xc0000000,
@@ -965,7 +976,7 @@ def main():
     check_flexram_boundaries(qemu, stock)
     check(qemu, l6, {0x400ac038: 0, 0x401f8204: 0, 0x402f0010: 0,
                      0x40084000: 0, 0x40084100: 0,
-                     0xe000ed00: 0x411fc272, 0xe000ed20: 0,
+                     0xe000e014: 0, 0xe000ed00: 0x411fc272, 0xe000ed20: 0,
                      0xe000ed88: 0})
 
 

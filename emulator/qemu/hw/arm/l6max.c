@@ -6080,11 +6080,14 @@ static void l6_main_reset(MachineState *machine, ResetType type)
     qemu_devices_reset(type);
     if (type != RESET_TYPE_SNAPSHOT_LOAD && s->profile == &L6MAX_PROFILE) {
         l6max_seed_boot_handoff(s);
-        /* FreeRTOS startup sets PendSV/SysTick to the lowest implemented
-         * priority and enables CP10/CP11 before entering the boot task. */
-        static const struct { hwaddr address; uint32_t set; } core_setup[] = {
-            { 0xe000ed20u, 0xf0f00000u }, { 0xe000ed88u, 0x00f00000u },
-            { 0xe000ef34u, 0xc0000000u },
+        /* FreeRTOS sets a 600 MHz / 1000 SysTick reload and lowest
+         * PendSV/SysTick priorities, then enables floating-point access.
+         * The transfer stops SysTick without clearing the reload register. */
+        static const struct { hwaddr address; uint32_t keep, set; } core_setup[] = {
+            { 0xe000e014u, 0, 599999u },
+            { 0xe000ed20u, UINT32_MAX, 0xf0f00000u },
+            { 0xe000ed88u, UINT32_MAX, 0x00f00000u },
+            { 0xe000ef34u, UINT32_MAX, 0xc0000000u },
         };
         AddressSpace *as = CPU(s->armv7m.cpu)->as;
         for (unsigned i = 0; i < ARRAY_SIZE(core_setup); i++) {
@@ -6094,7 +6097,8 @@ static void l6_main_reset(MachineState *machine, ResetType type)
                 error_report("failed to read L6max core handoff register");
                 abort();
             }
-            stl_le_p(bytes, ldl_le_p(bytes) | core_setup[i].set);
+            stl_le_p(bytes, (ldl_le_p(bytes) & core_setup[i].keep) |
+                            core_setup[i].set);
             if (address_space_write(as, core_setup[i].address,
                                     MEMTXATTRS_UNSPECIFIED, bytes, 4) != MEMTX_OK) {
                 error_report("failed to write L6max core handoff register");

@@ -75,6 +75,33 @@ application executes at `0x80000000`; its installed NOR region starts at
 | `0x1fe000–0x1fefff` | Unclassified | No verified assignment |
 | `0x1ff000–0x1fffff` | Firmware-update marker sector | Eight-byte `FW UPDT\0` read/write/erase routines |
 
+### L6max 1.10 MAIN growth
+
+The supported L6max 1.10 package has a fixed MAIN slot of `0x1a2ff8`
+(1,716,216) bytes, ending just before its length/version trailer. The stock
+MAIN image is `0x107fe8` (1,081,320) bytes, leaving `0x9b010` (634,896)
+bytes of package padding. The patch builder starts static payloads at
+`0x80108000`, 24 bytes after the stock image; at most `0x9aff8` (634,872)
+bytes remain between that address and the slot end. Alignment, other patches,
+and any reserved loader space reduce the space available for a particular
+payload. The builder also requires consumed package padding to be erased.
+These are bounds for the supported package layout, not a guarantee that a
+maximum-sized image is safe at runtime or accepted by the physical updater.
+
+In one physical L6max dump, a patched `0x118000`-byte MAIN image was present
+both in NOR at `0x50000` and in SDRAM at `0x80000000`, with `0x118000` in
+the installed length footer. This establishes that image's copy on that boot,
+not physical acceptance at the package ceiling. The recovered bootloader 1.00
+uses the installed length when copying MAIN. In an experimental emulated run,
+the captured ROM and bootloader transferred to a synthetic `0x1a2ff8`-byte
+MAIN and copied a marker at its last word; this tests the modeled copy path,
+not physical update acceptance or safe use of the entire image. The emulator's L6max direct boot
+copies that many bytes from current emulated NOR into writable SDRAM on reset.
+For older emulated state without a valid installed length it uses the package
+trailer, then the bounded slot size. These fallbacks are emulator compatibility
+behavior; L6 and other L6max firmware or bootloader revisions are not covered
+by the L6max 1.10 measurements above.
+
 The error record `FW UPDT ERR\0` starts at `0x1ff008`. The application consumes
 and erases these handoff records during startup. See the
 [firmware update map](../firmware/updates.md) for the package checks,

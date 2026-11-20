@@ -2,7 +2,7 @@
 use crate::trace;
 use l6fw::Model;
 pub use l6max_host::controls::{control_target, mode_index};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -14,16 +14,23 @@ pub fn model_name(model: Model) -> &'static str {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Scenario {
     pub version: u32,
     pub name: String,
     pub models: Vec<String>,
-    /// Boot from `states/<model>-<state>.toml` beside the catalog.
+    /// Boot from the state spec `tests/emulator/fixtures/states/<model>-<state>.toml`;
+    /// [`DEFAULT_STATE`] when the file names none, and no state (first boot)
+    /// for `"none"`.
     pub state: Option<String>,
-    /// Build the case's card from `cards/<model>-<card>.toml` beside the catalog.
+    /// Build the case's card from `tests/emulator/fixtures/cards/<card>.toml`;
+    /// [`DEFAULT_CARD`] when the file names none, and no card for `"none"`.
     pub card: Option<String>,
+    /// How the test driver runs this scenario as a case; the scenario itself
+    /// ignores it.
+    #[serde(default, skip_serializing)]
+    pub case: Option<toml::Table>,
     /// Firmware patches applied to the configured package.
     #[serde(default)]
     pub patches: Vec<String>,
@@ -67,7 +74,7 @@ pub struct Scenario {
     #[serde(skip)]
     pub sources: Vec<PathBuf>,
 }
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AudioInput {
     /// One-based input channel. See the audio model for each model's channels.
@@ -75,7 +82,7 @@ pub struct AudioInput {
     #[serde(flatten)]
     pub content: sd_image::spec::Content,
 }
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Step {
     #[serde(default)]
     pub models: Vec<String>,
@@ -118,7 +125,7 @@ fn guest_timeout() -> u32 {
 fn wall_timeout() -> u64 {
     180
 }
-#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Gesture {
     #[default]
@@ -126,14 +133,14 @@ pub enum Gesture {
     DragVertical,
     DragHorizontal,
 }
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum PadAssignmentSource {
     #[default]
     Editor,
     SavedState,
 }
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct UsbSysexRequest {
     pub bytes: Vec<u8>,
@@ -145,7 +152,7 @@ pub struct UsbSysexRequest {
     pub min_reply_bytes: Option<usize>,
     pub reply_timeout_ms: Option<u32>,
 }
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "action", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Action {
     Include {
@@ -474,9 +481,25 @@ pub enum Action {
 
 impl Scenario {
     pub fn parse(text: &str) -> Result<Self, String> {
-        let value: Self = toml::from_str(text).map_err(|e| e.to_string())?;
+        let mut value: Self = toml::from_str(text).map_err(|e| e.to_string())?;
+        value.apply_defaults();
         value.validate()?;
         Ok(value)
+    }
+    /// A scenario boots from the completed-setup state with an empty card
+    /// unless it names others; `"none"` asks for no state (first boot) or no
+    /// card.
+    fn apply_defaults(&mut self) {
+        for (field, default) in [
+            (&mut self.state, DEFAULT_STATE),
+            (&mut self.card, DEFAULT_CARD),
+        ] {
+            match field.as_deref() {
+                None => *field = Some(default.into()),
+                Some(NONE) => *field = None,
+                Some(_) => {}
+            }
+        }
     }
     fn validate(&self) -> Result<(), String> {
         let value = self;
@@ -977,16 +1000,9 @@ impl Scenario {
             }
             match &step.action {
                 Action::ExpectDisplayImage { image } => {
-                    if image.is_absolute()
-                        || image
-                            .components()
-                            .any(|component| !matches!(component, std::path::Component::Normal(_)))
-                        || image.extension().is_none_or(|extension| extension != "png")
-                    {
-                        return Err(
-                            "expect-display-image needs a relative PNG path under tests/smoke"
-                                .into(),
-                        );
+                    spec_path(image)?;
+                    if image.extension().is_none_or(|extension| extension != "png") {
+                        return Err("expect-display-image needs a PNG image".into());
                     }
                 }
                 Action::Checkpoint { name } => {
@@ -1288,29 +1304,27 @@ impl Scenario {
         }
         Ok(())
     }
+    /// Load the scenario file at `path`. Its includes and images are paths
+    /// from the repository root; see [`spec_path`].
     pub fn load(path: &Path) -> Result<Self, String> {
-        let path = fs::canonicalize(path).map_err(|e| e.to_string())?;
-        let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        Self::parse_at(&text, path)
+        let path = fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        Self::compose(&text, Some(path))
     }
-    /// Parse `text` as if it were the scenario file at `path`, which need not
-    /// exist: includes resolve beside it, within its directory. `sources`
-    /// starts with `path`.
-    pub fn from_text(text: &str, path: &Path) -> Result<Self, String> {
-        let directory = path.parent().ok_or("scenario path has no directory")?;
-        let name = path.file_name().ok_or("scenario path has no file name")?;
-        let directory = fs::canonicalize(directory).map_err(|e| e.to_string())?;
-        Self::parse_at(text, directory.join(name))
+    /// Parse and compose a scenario that is not a file, such as a generated
+    /// one. Includes resolve from the repository root as in any scenario.
+    pub fn from_text(text: &str) -> Result<Self, String> {
+        Self::compose(text, None)
     }
-    fn parse_at(text: &str, path: PathBuf) -> Result<Self, String> {
-        let root = path.parent().unwrap();
+    fn compose(text: &str, path: Option<PathBuf>) -> Result<Self, String> {
         let mut value: Self = toml::from_str(text).map_err(|e| e.to_string())?;
-        value.sources.push(path.clone());
+        value.apply_defaults();
+        value.sources.extend(path.clone());
+        let scope = value.models.clone();
         value.step = expand_steps(
             value.step,
-            root,
-            root,
-            &mut vec![path.clone()],
+            &scope,
+            &mut path.into_iter().collect(),
             &mut value.sources,
         )?;
         value.validate()?;
@@ -1346,18 +1360,41 @@ impl Scenario {
                 .any(|step| matches!(step.action, Action::WasmPatch))
     }
 }
+/// Resolve a path written in a scenario or fragment (an include or a
+/// reference image). Every such path is relative to the repository root,
+/// whichever file it appears in; absolute paths and `..` are rejected.
+pub fn spec_path(path: &Path) -> Result<PathBuf, String> {
+    if path.as_os_str().is_empty()
+        || !path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(format!(
+            "{}: scenario paths are relative to the repository root, without `..`",
+            path.display()
+        ));
+    }
+    Ok(l6max_host::paths::repository_root().join(path))
+}
+/// The state a scenario boots from when it names none.
+pub const DEFAULT_STATE: &str = "setup-complete";
+/// The card a scenario gets when it names none.
+pub const DEFAULT_CARD: &str = "empty";
+/// The `state` or `card` value that asks for none.
+const NONE: &str = "none";
 /// Environment variable the driver sets to `1` for cases whose persistent
 /// state was built from a state spec.
 pub const STATE_SPEC_ENV: &str = "SMOKE_STATE_SPEC";
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Fragment {
     step: Vec<Step>,
 }
+/// Expand includes. A fragment is shared, so its steps scoped only to models
+/// the scenario does not run (`scope`) are left out.
 fn expand_steps(
     steps: Vec<Step>,
-    base: &Path,
-    root: &Path,
+    scope: &[String],
     stack: &mut Vec<PathBuf>,
     sources: &mut Vec<PathBuf>,
 ) -> Result<Vec<Step>, String> {
@@ -1367,9 +1404,11 @@ fn expand_steps(
             if stack.len() >= 8 {
                 return Err("scenario include depth exceeds eight".into());
             }
-            let path = fs::canonicalize(base.join(path)).map_err(|e| e.to_string())?;
-            if !path.starts_with(root) || stack.contains(&path) {
-                return Err("include escapes scenario directory or creates a cycle".into());
+            let resolved = spec_path(path)?;
+            let path = fs::canonicalize(&resolved)
+                .map_err(|e| format!("include {}: {e}", resolved.display()))?;
+            if stack.contains(&path) {
+                return Err(format!("include {} creates a cycle", path.display()));
             }
             let fragment: Fragment =
                 toml::from_str(&fs::read_to_string(&path).map_err(|e| e.to_string())?)
@@ -1378,8 +1417,7 @@ fn expand_steps(
             if !sources.contains(&path) {
                 sources.push(path.clone());
             }
-            let mut nested =
-                expand_steps(fragment.step, path.parent().unwrap(), root, stack, sources)?;
+            let mut nested = expand_steps(fragment.step, scope, stack, sources)?;
             stack.pop();
             for child in &mut nested {
                 child.setup_input |= step.setup_input;
@@ -1394,6 +1432,9 @@ fn expand_steps(
                     }
                 }
             }
+            nested.retain(|child| {
+                child.models.is_empty() || child.models.iter().any(|m| scope.contains(m))
+            });
             expanded.extend(nested);
         } else {
             expanded.push(step);

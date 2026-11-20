@@ -1,0 +1,8 @@
+# L6 playback state for the isolated MASTER meter case.
+# The SD image supplies the saved Pad 1 assignment and sweep WAV.
+version = 1
+model = "l6"
+extends = "tests/emulator/fixtures/states/l6-setup-complete.toml"
+
+[rtc]
+datetime = "2026-10-30T12:00:00"

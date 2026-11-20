@@ -29,7 +29,7 @@ guest_timeout_ms = 3000
 
 The example abbreviates prepared setup (SD navigation, mixer restoration and
 LEVEL selection); see the checked-in
-`tests/smoke/scenarios/mute.toml` for the prepared sequence.
+`tests/emulator/cases/panel/mute.toml` for the prepared sequence.
 
 ## Scenario header and common step fields
 
@@ -41,8 +41,8 @@ tables. Unknown header fields fail parsing.
 | `version` | yes | Schema version; currently `1`. |
 | `name` | yes | Nonempty scenario name used in reports. |
 | `models` | yes | One or both of `"l6"` and `"l6max"`. |
-| `state` | no | Boot from `tests/smoke/states/<model>-<state>.toml`; first boot without it. |
-| `card` | no | Card to build for each run, from `tests/smoke/cards/<model>-<card>.toml`; no card without it. |
+| `state` | no, default `setup-complete` | Boot from `tests/emulator/fixtures/states/<model>-<state>.toml`; `"none"` boots without a state (first boot). |
+| `card` | no, default `empty` | Card to build for each run, from `tests/emulator/fixtures/cards/<card>.toml`, resolved for the model; `"none"` attaches no card. |
 | `patches` | no | Firmware patches applied to the model's package. |
 | `installed_patches` | no | Patches the engine installs on a device seeded with the model's stock package, as `--patch` does. |
 | `installed_sd_patches` | no | Patches the engine delivers on the case's card, as `--sd-patch` does: it installs the Patch loader and writes the hosted modules to `PATCHES/`. Requires `card`; cannot combine with `sd_patches`. |
@@ -67,6 +67,13 @@ Every `[[step]]` has a required `action` and may also set:
 Each action table adds its action-specific fields below. For composed scenarios,
 `include` takes a path to a TOML fragment containing only `[[step]]` tables.
 
+Every path a scenario or fragment names, an `include` or an `expect-display-image`
+reference, is written from the repository root, whichever file it appears in:
+`path = "tests/emulator/fragments/prepared-home.toml"`. Absolute paths
+and `..` are rejected, so a generated scenario composes the same way from its
+text alone. A fragment's steps scoped only to models the scenario does not run
+are left out, so a single-model scenario can include a shared fragment.
+
 Mark only input whose result a state spec reproduces with `setup_input`. Input
 that is the behavior under test, or that sets runtime-only state (for example
 card-reader mode), stays unmarked.
@@ -77,12 +84,12 @@ card-reader mode), stays unmarked.
 | --- | --- | --- |
 | `wait` | `until = "boot-ready"`, `"mixer-ready"` or `"panel-settled"` | Boot waits for the full LED sweep, then an L6 mode lamp or L6max pixels; prepared mixer readiness requires nonzero values on every visible ring and, on L6, a lit mode lamp; settling waits for one guest second of unchanged output |
 | `delay` | `guest_ms` | Wait on guest time, not host time |
-| `include` | `path` | Expand a strict `[[step]]` fragment relative to its containing file; paths stay inside the scenario directory, cycles/depth are checked |
+| `include` | `path` | Expand a strict `[[step]]` fragment named from the repository root; cycles and depth (eight) are checked |
 | `select-mode` | `mode` | Pass if the mode lamp is lit; otherwise wait for one guest second of stable panel output and press the mode button |
 | `switch` | `control`, `enabled` | Set a latching switch using its real GUI toggle or one headless electrical edge |
 | `checkpoint` | `name` | Save display/rings and PNG/ASCII evidence under a unique simple name |
 | `expect-display` | `checkpoint`, `changed` | Compare retained pixels with the checkpoint; scoped to L6max |
-| `expect-display-image` | `image` | Compare all 128×64 L6max display pixels exactly with a PNG under `tests/smoke/` |
+| `expect-display-image` | `image` | Compare all 128×64 L6max display pixels exactly with a PNG named from the repository root |
 | `expect-trace` | `contains`, optional `absent` | Require every listed pattern and reject forbidden patterns in the active trace |
 | `expect-trace-count` | `pattern`, `count`, optional `at_least`, `checkpoint` | Assert exact or minimum active-trace match count, optionally relative to a checkpoint |
 | `expect-button-report` | `control` | Exact L6max press/release UART edges relative to the preceding press/switch, including no spurious switch release |
@@ -118,8 +125,9 @@ scroll accumulation and redraw bugs remain GUI-adapter coverage. Fractional
 motion is additionally covered by production gesture unit tests.
 
 For UI behavior, use `expect-display-image` to compare the rendered 128×64
-L6max pixels with a reviewed PNG stored under `tests/smoke/` (normally in
-`tests/smoke/images/`). Comparison is exact after converting the reference to
+L6max pixels with a reviewed PNG, named from the repository root (normally
+under `tests/emulator/references/`, or a patch's
+`tests/emulator/references/` for its own UI). Comparison is exact after converting the reference to
 black-and-white pixels. Review the screenshot before updating a reference;
 memory and firmware-state assertions may supplement image comparisons but do
 not establish that the UI rendered correctly.

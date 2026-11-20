@@ -1,0 +1,19 @@
+version = 1
+name = "l6max-din-mixer-control-patched"
+models = ["l6max"]
+backends = ["headless"]
+patches = ["din-mixer-control"]
+
+[case]
+suites = []
+wall_timeout_s = 900
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/l6max-din-mixer-setup.toml"
+
+[[step]]
+action = "l6max-din-mixer-control"
+expect_din_ring_change = true
+guest_timeout_ms = 10000
+wall_timeout_s = 120

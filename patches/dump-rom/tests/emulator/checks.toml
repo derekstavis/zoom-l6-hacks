@@ -1,0 +1,8 @@
+# What the generated `patches` suite checks when dump-rom is installed: its
+# System menu item, run by menu-loader's check.
+version = 1
+system_items = ["Dump ROM"]
+
+[[menu_action]]
+item = "Dump ROM"
+steps = "patches/dump-rom/tests/emulator/fragments/dump-files.toml"

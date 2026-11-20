@@ -1,0 +1,14 @@
+# L6max setup state with every input channel's level raised.
+version = 1
+model = "l6max"
+extends = "tests/emulator/fixtures/states/l6max-setup-complete.toml"
+
+[settings.values]
+"mixer.current.level[0]" = 30
+"mixer.current.level[1]" = 30
+"mixer.current.level[2]" = 30
+"mixer.current.level[3]" = 30
+"mixer.current.level[4]" = 30
+"mixer.current.level[6]" = 30
+"mixer.current.level[8]" = 30
+"mixer.current.level[10]" = 30

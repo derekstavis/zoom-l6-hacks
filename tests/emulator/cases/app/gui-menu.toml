@@ -1,0 +1,5 @@
+[case]
+models = ["l6max"]
+suites = ["full"]
+gui = true
+environment = { L6_APP_DATA = "{logs}/app-data", L6_MENU_SMOKE_FIRMWARE = "{package}", L6_MENU_SMOKE_QEMU_SHA256 = "{app_qemu_sha256}" }

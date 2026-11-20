@@ -133,6 +133,9 @@ pub struct CaseResult {
     /// Hashes of the binaries and fixtures the case ran on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity: Option<Value>,
+    /// With `--update-references`, the reference images this case rewrote.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub updated_references: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attempts: Vec<Attempt>,
 }
@@ -150,6 +153,7 @@ impl CaseResult {
             duration_s: 0.0,
             timings: Timings::default(),
             identity: None,
+            updated_references: Vec::new(),
             attempts: Vec::new(),
         }
     }
@@ -291,6 +295,20 @@ pub fn write_summary(
                 "- {} {} {}: {}\n",
                 result.case, result.model, result.backend, result.detail
             ));
+        }
+    }
+    let mut updated: Vec<&str> = results
+        .iter()
+        .flat_map(|r| r.updated_references.iter().map(String::as_str))
+        .collect();
+    updated.sort();
+    updated.dedup();
+    if !updated.is_empty() {
+        text.push_str(
+            "\nReference images rewritten from the display (review them in the diff before committing):\n\n",
+        );
+        for path in updated {
+            text.push_str(&format!("- `{path}`\n"));
         }
     }
     if let Some(cache) = cache.as_object().filter(|cache| !cache.is_empty()) {

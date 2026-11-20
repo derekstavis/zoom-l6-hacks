@@ -60,6 +60,9 @@ struct Args {
     fixtures_only: bool,
     /// Build every fixture per case, without the run cache.
     no_cache: bool,
+    /// Replace display references that are missing or differ with the
+    /// rendered display, for review in the diff.
+    update_references: bool,
 }
 /// Each guest runs one single-threaded TCG engine plus its scenario process.
 /// Leave headroom so concurrent guests keep up with real time.
@@ -89,6 +92,7 @@ fn parse_args() -> Result<Args, String> {
         only: select::RERUN_DEFAULT.to_vec(),
         fixtures_only: false,
         no_cache: false,
+        update_references: false,
     };
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -129,6 +133,7 @@ fn parse_args() -> Result<Args, String> {
             "--strict" => result.strict = true,
             "--fixtures-only" => result.fixtures_only = true,
             "--no-cache" => result.no_cache = true,
+            "--update-references" => result.update_references = true,
             "--shard" => {
                 result.shard = Some(select::Shard::parse(
                     &args.next().ok_or("--shard needs I/N")?,
@@ -200,11 +205,10 @@ impl Drop for RunJournal {
 fn execute() -> Result<i32, String> {
     let args = parse_args()?;
     let root = l6max_host::paths::repository_root();
-    let source_spec = root.join("tests/smoke");
-    let mut catalog = catalog::load(&source_spec)?;
+    let mut catalog = catalog::load(root)?;
     if args.command == "list" {
         if args.json {
-            let rows = catalog::matrix(&catalog, &source_spec)?;
+            let rows = catalog::matrix(&catalog)?;
             println!("{}", serde_json::to_string_pretty(&rows).unwrap());
             return Ok(0);
         }
@@ -214,7 +218,7 @@ fn execute() -> Result<i32, String> {
                 case.id,
                 case.models.join(","),
                 case.suites.join(","),
-                if case.needs_configuration && case.scenario.is_none() {
+                if case.scenario.is_none() {
                     " [packaged app required]"
                 } else {
                     ""
@@ -225,7 +229,7 @@ fn execute() -> Result<i32, String> {
     }
     if !["run", "check"].contains(&args.command.as_str()) {
         println!(
-            "Usage: cargo l6test list [--format text|json]\n       cargo l6test check|run [--config config.toml] [--suite NAME | --case ID,GLOB,... | --rerun RUN [--only OUTCOMES]] [--model l6|l6max|all] [--backend headless|gui|both] [--shard I/N] [--retries N] [--strict] [--fixtures-only] [--no-cache] [--output NEW_DIR] [--no-build] [--jobs N] [--qemu BINARY] [--app PACKAGED_APP]\n       cargo l6test probe gui --keys TARGET,... --volatile [engine options]\n       cargo l6test capture screen --out FILE.gif [capture options] --volatile [engine options]"
+            "Usage: cargo l6test list [--format text|json]\n       cargo l6test check|run [--config config.toml] [--suite NAME | --case ID,GLOB,... | --rerun RUN [--only OUTCOMES]] [--model l6|l6max|all] [--backend headless|gui|both] [--shard I/N] [--retries N] [--strict] [--fixtures-only] [--no-cache] [--update-references] [--output NEW_DIR] [--no-build] [--jobs N] [--qemu BINARY] [--app PACKAGED_APP]\n       cargo l6test probe gui --keys TARGET,... --volatile [engine options]\n       cargo l6test capture screen --out FILE.gif [capture options] --volatile [engine options]"
         );
         return Ok(0);
     }
@@ -286,7 +290,7 @@ fn execute() -> Result<i32, String> {
                 untracked.insert(name.to_owned(), hash(&path)?);
             }
         }
-        let manifest = json!({"schema":report::SCHEMA,"tooling_commit":git(root,&["rev-parse","HEAD"]),"working_tree":git(root,&["status","--short"]),"tracked_diff_sha256":format!("{:x}",Sha256::digest(git(root,&["diff","--binary","HEAD"]).as_bytes())),"untracked":untracked,"qemu":config.qemu,"qemu_sha256":config.qemu_sha256,"qemu_provenance":"explicitly pinned external binary; build source not attested","scenario_files":files(&source_spec)?,"generated_scenarios":files(&generated_dir)?,"board_sources":files(&root.join("emulator/qemu/hw/arm"))?,"qemu_patches":files(&root.join("emulator/qemu/patches"))?,"logging":{"format":env::var("L6_LOG_FORMAT").unwrap_or_else(|_|"json".into()),"filter":env::var("RUST_LOG").unwrap_or_else(|_|l6max_host::logging::DEFAULT_FILTER.into())},"driver_sha256":hash(&env::current_exe().map_err(|e|e.to_string())?)?,"suite":args.suite,"case":args.case,"backend":args.backend,"model":args.model,"shard":args.shard.map(|s|format!("{}/{}",s.index,s.count)),"rerun":args.rerun,"retries":args.retries});
+        let manifest = json!({"schema":report::SCHEMA,"tooling_commit":git(root,&["rev-parse","HEAD"]),"working_tree":git(root,&["status","--short"]),"tracked_diff_sha256":format!("{:x}",Sha256::digest(git(root,&["diff","--binary","HEAD"]).as_bytes())),"untracked":untracked,"qemu":config.qemu,"qemu_sha256":config.qemu_sha256,"qemu_provenance":"explicitly pinned external binary; build source not attested","scenario_files":catalog::spec_dirs(root)?.iter().map(|dir|Ok((dir.strip_prefix(root).unwrap().display().to_string(),files(dir)?))).collect::<Result<BTreeMap<_,_>,String>>()?,"generated_scenarios":files(&generated_dir)?,"board_sources":files(&root.join("emulator/qemu/hw/arm"))?,"qemu_patches":files(&root.join("emulator/qemu/patches"))?,"logging":{"format":env::var("L6_LOG_FORMAT").unwrap_or_else(|_|"json".into()),"filter":env::var("RUST_LOG").unwrap_or_else(|_|l6max_host::logging::DEFAULT_FILTER.into())},"driver_sha256":hash(&env::current_exe().map_err(|e|e.to_string())?)?,"suite":args.suite,"case":args.case,"backend":args.backend,"model":args.model,"shard":args.shard.map(|s|format!("{}/{}",s.index,s.count)),"rerun":args.rerun,"retries":args.retries});
         Ok((config, manifest))
     };
     let (config, manifest) = match preflight() {
@@ -301,13 +305,14 @@ fn execute() -> Result<i32, String> {
         serde_json::to_vec_pretty(&manifest).unwrap(),
     )
     .map_err(|e| e.to_string())?;
+    let suite = catalog.suites.members(&args.suite)?;
     let cases: Vec<&Case> = catalog
         .cases
         .iter()
         .filter(|c| match (&rerun, &args.case) {
             (Some(rerun), _) => rerun.has_case(&c.id),
             (None, Some(selection)) => select::case_matches(selection, &c.id),
-            (None, None) => c.suites.contains(&args.suite),
+            (None, None) => c.suites.iter().any(|s| suite.contains(s)),
         })
         .collect();
     if let (None, Some(selection)) = (&rerun, &args.case) {
@@ -344,7 +349,7 @@ fn execute() -> Result<i32, String> {
         let scenario = case
             .scenario
             .as_ref()
-            .map(|p| Scenario::load(&source_spec.join(p)))
+            .map(|p| Scenario::load(&catalog::scenario_file(p)))
             .transpose()?;
         for model in case
             .models
@@ -382,13 +387,8 @@ fn execute() -> Result<i32, String> {
     let mut needs_l6patch = false;
     for job in &jobs {
         let case = job.case;
-        if case.blocked.is_some()
-            || case.needs_configuration && case.scenario.is_none() && config.app.is_none()
-        {
+        if case.blocked.is_some() || case.scenario.is_none() && config.app.is_none() {
             continue;
-        }
-        if let Some(package) = &case.package {
-            packages.insert(package.as_str());
         }
         if job.backend == "gui" && case.scenario.is_some() {
             packages.insert("l6max-gui");
@@ -396,7 +396,7 @@ fn execute() -> Result<i32, String> {
         needs_l6patch |= case
             .scenario
             .as_ref()
-            .and_then(|path| Scenario::load(&source_spec.join(path)).ok())
+            .and_then(|path| Scenario::load(&catalog::scenario_file(path)).ok())
             .is_some_and(|scenario| scenario.needs_patch_builder());
     }
     if args.build {
@@ -460,12 +460,12 @@ fn execute() -> Result<i32, String> {
     };
     let ctx = Context {
         root,
-        spec: &source_spec,
         output: &output,
         config: &config,
         cache: &cache,
         patch_artifact_dir: &built_dir,
         fixtures_only: args.fixtures_only,
+        update_references: args.update_references,
     };
     let run_job = |job: &Job| -> CaseResult {
         let case_span = tracing::info_span!("smoke_case",case=%job.case.id,model=%job.model,backend=job.backend,artifacts=%job.dir.display());
@@ -475,16 +475,10 @@ fn execute() -> Result<i32, String> {
             .case
             .scenario
             .as_ref()
-            .map(|path| Scenario::load(&source_spec.join(path)))
+            .map(|path| Scenario::load(&catalog::scenario_file(path)))
             .transpose()
             .and_then(|scenario| {
-                case_fixture(
-                    &config,
-                    &source_spec,
-                    &job.model,
-                    &job.case.id,
-                    scenario.as_ref(),
-                )
+                case_fixture(&config, &job.model, &job.case.id, scenario.as_ref())
             });
         let result = match fixture {
             Ok(fixture) => report::with_retries(args.retries, |attempt| {
@@ -503,6 +497,14 @@ fn execute() -> Result<i32, String> {
                 ..CaseResult::new(&job.case.id, &job.model, job.backend, &job.dir)
             },
         };
+        let mut result = result;
+        if let Ok(list) = fs::read_to_string(
+            result
+                .artifacts
+                .join(smoke_core::devices::UPDATED_REFERENCES_FILE),
+        ) {
+            result.updated_references = list.lines().map(str::to_owned).collect();
+        }
         match result.outcome {
             Outcome::Pass => {
                 tracing::info!(event="case_finished",outcome=%result.outcome,detail=%result.detail,seconds=result.duration_s,"case completed")

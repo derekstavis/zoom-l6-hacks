@@ -1,0 +1,12 @@
+# L6max state for the generated `patches` suite: setup complete, Mixer Control
+# via MIDI on (din-mixer-control acts only then), and the stock Room effect
+# selected with channel 1 sent to it, so an effect replacement has input.
+version = 1
+model = "l6max"
+extends = "tests/emulator/fixtures/states/l6max-setup-complete.toml"
+
+[settings.values]
+mixer_control_via_midi = 1
+"mixer.current.efx_type" = 1
+"mixer.current.channel[0].efx[0]" = 64
+"mixer.current.level[0]" = 30

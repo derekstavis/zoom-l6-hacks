@@ -29,14 +29,14 @@ use std::{
 /// What every case of a run shares.
 pub(crate) struct Context<'a> {
     pub(crate) root: &'a Path,
-    /// The test spec, `tests/smoke`.
-    pub(crate) spec: &'a Path,
     pub(crate) output: &'a Path,
     pub(crate) config: &'a Config,
     pub(crate) cache: &'a RunCache,
     pub(crate) patch_artifact_dir: &'a Path,
     /// Stop after building fixtures and computing identities.
     pub(crate) fixtures_only: bool,
+    /// Let display checks replace references that differ.
+    pub(crate) update_references: bool,
 }
 
 /// How an attempt ended without an error.
@@ -161,7 +161,7 @@ fn preflight(
     let scenario = case
         .scenario
         .as_ref()
-        .map(|path| Scenario::load(&ctx.spec.join(path)))
+        .map(|path| Scenario::load(&crate::catalog::scenario_file(path)))
         .transpose()
         .failed_in(Phase::Preflight)?;
     if let Some(scenario) = &scenario
@@ -169,7 +169,7 @@ fn preflight(
     {
         return blocked(format!("scenario does not support {backend} backend"));
     }
-    if case.needs_configuration && case.scenario.is_none() && ctx.config.app.is_none() {
+    if case.scenario.is_none() && ctx.config.app.is_none() {
         return blocked("requires a packaged application; pass --app PATH".into());
     }
     if hash(&ctx.config.qemu).blocked_in(Phase::Preflight)? != ctx.config.qemu_sha256 {
@@ -304,18 +304,16 @@ fn plan_invocation(
 ) -> Result<Invocation, String> {
     let config = ctx.config;
     let options = &prepared.options;
-    let packaged = case.needs_configuration && case.scenario.is_none();
-    let binary = if let Some(app) = config.app.as_ref().filter(|_| packaged) {
-        app.executable.clone()
-    } else {
-        let name = if case.scenario.is_some() && backend == "headless" {
-            "l6test"
-        } else if case.scenario.is_some() {
-            "l6max-gui"
-        } else {
-            case.package.as_deref().ok_or("case has no executable")?
-        };
-        ctx.output.join("bin").join(name)
+    // A case without a scenario drives the packaged application itself.
+    let binary = match (&case.scenario, backend) {
+        (None, _) => config
+            .app
+            .as_ref()
+            .ok_or("requires a packaged application; pass --app PATH")?
+            .executable
+            .clone(),
+        (Some(_), "headless") => ctx.output.join("bin/l6test"),
+        (Some(_), _) => ctx.output.join("bin/l6max-gui"),
     };
     let binary_sha256 = hash(&binary)?;
     let mut command = Command::new(&binary);
@@ -337,33 +335,35 @@ fn plan_invocation(
         )
         .env("L6_MIDI_NAMESPACE", midi_namespace);
     command.env("L6_PATCH_ARTIFACT_DIR", ctx.patch_artifact_dir);
+    if ctx.update_references {
+        command
+            .env(smoke_core::devices::UPDATE_REFERENCES_ENV, "1")
+            .env(
+                smoke_core::devices::REFERENCE_RECORDS_ENV,
+                ctx.output.join("references"),
+            );
+    }
     command.env(
         "RUST_LOG",
         env::var("RUST_LOG").unwrap_or_else(|_| l6max_host::logging::DEFAULT_FILTER.into()),
     );
-    let arguments: Vec<String> = case.arguments.iter().map(|a| expand(a, options)).collect();
-    if arguments.iter().any(|a| a.contains('{')) {
-        return Err(
-            "unresolved legacy argument placeholder; supply the required package/path explicitly"
-                .into(),
-        );
-    }
     if let Some(path) = &case.scenario {
-        let scenario = ctx.spec.join(path);
+        let scenario = crate::catalog::scenario_file(path);
         if backend == "headless" {
             command.arg("__scenario").arg(&scenario);
         } else {
             command.arg("--smoke-scenario").arg(&scenario);
         }
-    } else {
-        command.args(&arguments);
     }
     command.args(engine_args(options));
     let mut audio_input = Vec::new();
     if !prepared.fixture.audio_input.is_empty() {
         let directory = dir.join("audio-input");
         for input in &prepared.fixture.audio_input {
-            let bytes = input.content.bytes(ctx.spec).map_err(|e| e.to_string())?;
+            let bytes = input
+                .content
+                .bytes(&l6max_host::paths::repository_root())
+                .map_err(|e| e.to_string())?;
             audio_input.push((input.channel, format!("{:x}", Sha256::digest(&bytes))));
             l6max_host::audio_input::prepare_bytes(&directory, u32::from(input.channel), &bytes)
                 .map_err(|e| e.to_string())?;

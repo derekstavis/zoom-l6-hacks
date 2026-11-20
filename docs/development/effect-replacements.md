@@ -106,26 +106,20 @@ parameter names, units, or values. Velvet exposes seven controls.
 - The `sd-effect-replacement-map` smoke case composes and loads a Velvet-only
   bundle, checks the router and selected implementation members, and observes
   custom DSP output while the mixer selects the matching slot.
-- The effect assignment smoke cases cover all eight non-stock Room/Spring maps:
-
-  | Room | Spring | Smoke case |
-  | --- | --- | --- |
-  | Plateau | Stock | `sd-effect-replacement-plateau` |
-  | Velvet | Stock | `sd-effect-replacement-map` |
-  | Stock | Plateau | `sd-effect-assignment-spring-plateau` |
-  | Stock | Velvet | `sd-effect-assignment-spring-velvet` |
-  | Plateau | Plateau | `sd-effect-assignment-plateau-plateau` |
-  | Velvet | Velvet | `sd-effect-assignment-velvet-velvet` |
-  | Plateau | Velvet | `sd-effect-assignment-plateau-velvet` |
-  | Velvet | Plateau | `sd-effect-assignment-velvet-plateau` |
-
-  Each case boots its composed SD bundle, selects Room and Spring in turn, and
-  verifies that the router activates the assigned processor or passes through
-  stock processing for an unassigned slot. Stock/Stock has no replacement
-  bundle and remains the default firmware behavior. Run just this matrix with:
+- The generated `patches` suite covers all eight non-stock Room/Spring maps,
+  alone and combined with every patch placement (`patches-pairwise` covers
+  each map at least once). Each such case boots its composed SD bundle, checks
+  the heap left with the effects loaded, selects Room and Spring in turn, and
+  checks that each slot runs its assigned effect with output, or stock
+  processing when unassigned; see
+  [Patch combinations](testing.md#patch-combinations). Stock/Stock has no
+  replacement bundle and remains the default firmware behavior.
+- `sd-effect-replacement-plateau`, `sd-effect-editor-mode-restore` and
+  `sd-effect-velvet-ring-scale` check the effects' editor behavior. Run them
+  with:
 
   ```sh
-  cargo run --offline --locked -p l6test -- run --config config.toml --suite effect-replacement-matrix --model l6max --backend headless
+  cargo l6test run --config config.toml --suite effect-replacement-matrix --model l6max --backend headless
   ```
 - The packaged `gui-menu` case selects a Room and Spring implementation in the
   emulator workflow, checks the saved assignments and generated SD bundle, then

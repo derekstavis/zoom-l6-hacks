@@ -1,0 +1,9 @@
+# L6max setup-complete state with the stock Room effect selected.
+version = 1
+model = "l6max"
+extends = "tests/emulator/fixtures/states/l6max-setup-complete.toml"
+
+[settings.values]
+"mixer.current.efx_type" = 1
+"mixer.current.channel[0].efx[0]" = 64
+"mixer.current.level[0]" = 30

@@ -47,7 +47,6 @@ pub(crate) fn gdb_socket_path(logs: &Path) -> PathBuf {
 /// Cases without a scenario boot from the completed-setup state and an empty card.
 pub(crate) fn case_fixture(
     config: &Config,
-    catalog_dir: &Path,
     model: &str,
     case_id: &str,
     scenario: Option<&Scenario>,
@@ -59,11 +58,6 @@ pub(crate) fn case_fixture(
     let (state, card) = match scenario {
         Some(scenario) => (scenario.state.as_deref(), scenario.card.as_deref()),
         None => (Some("setup-complete"), Some("empty")),
-    };
-    let spec = |directory: &str, name: &str| {
-        catalog_dir
-            .join(directory)
-            .join(format!("{model}-{name}.toml"))
     };
     Ok(Fixture {
         name: case_id.into(),
@@ -77,8 +71,8 @@ pub(crate) fn case_fixture(
         sd_bundle_mode: scenario.and_then(|s| s.sd_bundle_mode.clone()),
         sd_bundle: None,
         update_package: None,
-        state_spec: state.map(|name| spec("states", name)),
-        card_spec: card.map(|name| spec("cards", name)),
+        state_spec: state.map(|name| crate::catalog::state_spec(model, name)),
+        card_spec: card.map(crate::catalog::card_spec),
         audio_device: scenario.and_then(|s| s.audio_device.clone()),
         audio_input: scenario.map_or_else(Vec::new, |s| s.audio_input.clone()),
         gdb: scenario.is_some_and(|s| s.gdb),
@@ -353,16 +347,15 @@ pub(crate) fn fixture_options(
         .state_spec
         .as_ref()
         .map(|path| -> Result<Value, String> {
-            // A state depends only on its spec and the firmware it seeds from.
-            let spec_sha256 = hash(path)?;
-            let key = json!({"spec": spec_sha256, "firmware": firmware_files}).to_string();
+            // A state depends only on its spec, with what it extends, and the
+            // firmware it seeds from.
+            let spec = l6nor::StateSpec::load(path)?;
+            let resolved =
+                crate::hashing::digest(&serde_json::to_value(&spec).map_err(|e| e.to_string())?);
+            let key = json!({"spec": resolved, "firmware": firmware_files}).to_string();
             let built = cache.directory("state", &key, |out| {
                 fs::create_dir_all(out.join("state")).map_err(|e| e.to_string())?;
-                let report = l6nor::state::apply(
-                    &l6nor::StateSpec::load(path)?,
-                    Some(&firmware),
-                    &out.join("state"),
-                )?;
+                let report = l6nor::state::apply(&spec, Some(&firmware), &out.join("state"))?;
                 fs::write(
                     out.join("applied.json"),
                     serde_json::to_vec_pretty(&json!(report)).unwrap(),
@@ -374,7 +367,7 @@ pub(crate) fn fixture_options(
                 &fs::read(built.join("applied.json")).map_err(|e| e.to_string())?,
             )
             .map_err(|e| e.to_string())?;
-            Ok(json!({"sha256": spec_sha256, "applied": report}))
+            Ok(json!({"sha256": hash(path)?, "resolved": resolved, "applied": report}))
         })
         .transpose()?;
     let audio_device = audio_device_spec(fixture, dir);
@@ -396,7 +389,7 @@ pub(crate) fn fixture_options(
     }
     let sd_hash = if let Some(spec) = &fixture.card_spec {
         let target = dir.join("card.img");
-        let mut card = sd_image::spec::CardSpec::load(spec)?;
+        let mut card = sd_image::spec::CardSpec::load_for(spec, &fixture.model)?;
         if let Some(bundle_dir) = &fixture.sd_bundle
             && fixture.sd_bundle_mode.as_deref() != Some("absent")
         {
@@ -526,21 +519,20 @@ pub(crate) fn fixture_options(
                 });
             }
         }
-        let base = spec.parent().unwrap_or(Path::new("."));
+        // `copy` paths in a card spec are from the repository root.
+        let base = l6max_host::paths::repository_root();
         if cache.clones() {
-            // A card depends on its spec and the bytes of every file it holds.
-            let mut contents = Vec::new();
+            // A card depends on its resolved spec, with the files the driver
+            // added, and the bytes of every file it copies.
+            let mut copies = Vec::new();
             for file in &card.file {
-                contents.push(json!([
-                    file.path,
-                    match &file.content {
-                        sd_image::spec::Content::Copy(path) => hash(&base.join(path))?,
-                        content => format!("{content:?}"),
-                    }
-                ]));
+                if let sd_image::spec::Content::Copy(path) = &file.content {
+                    copies.push(json!([file.path, hash(&base.join(path))?]));
+                }
             }
+            let resolved = serde_json::to_value(&card).map_err(|e| e.to_string())?;
             let key =
-                json!({"spec": hash(spec)?, "model": fixture.model, "files": contents}).to_string();
+                json!({"card": crate::hashing::digest(&resolved), "copies": copies}).to_string();
             let built = cache.directory("card", &key, |out| {
                 fs::create_dir_all(out).map_err(|e| e.to_string())?;
                 card.build(&out.join("card.img"), base)
@@ -700,7 +692,6 @@ mod tests {
             .ok()
             .map(|s| s.split(',').map(str::to_owned).collect())
             .unwrap_or_default();
-        let root = l6max_host::paths::repository_root();
         let dir = temp();
         let mut fixture = Fixture {
             name: "sd-fixture".into(),
@@ -715,7 +706,7 @@ mod tests {
             sd_bundle: None,
             update_package: None,
             state_spec: None,
-            card_spec: Some(root.join(format!("tests/smoke/cards/{model}-empty.toml"))),
+            card_spec: Some(crate::catalog::card_spec("empty")),
             audio_device: None,
             audio_input: vec![],
             gdb: false,
@@ -753,7 +744,7 @@ mod tests {
         let unpacked = dir.join("verify-loader");
         l6fw::unpack(package, &unpacked).unwrap();
         let spec = fixture.card_spec.as_ref().unwrap();
-        let mut card = sd_image::spec::CardSpec::load(spec).unwrap();
+        let mut card = sd_image::spec::CardSpec::load_for(spec, &fixture.model).unwrap();
         let patch_path = format!("PATCHES/{}", filename.to_string_lossy());
         card.file.push(sd_image::spec::File {
             path: patch_path.clone(),
@@ -811,27 +802,19 @@ mod tests {
     }
     #[test]
     fn a_case_fixture_comes_from_its_scenario() {
-        let root = l6max_host::paths::repository_root();
-        let catalog = root.join("tests/smoke");
         let config = Config {
             firmware: BTreeMap::from([("l6max".to_string(), PathBuf::from("L6max.bin"))]),
             qemu: PathBuf::new(),
             qemu_sha256: String::new(),
             app: None,
         };
-        let scenario = Scenario::load(&catalog.join("scenarios/host-midi-sync.toml")).unwrap();
-        let fixture = case_fixture(
-            &config,
-            &catalog,
-            "l6max",
-            "host-midi-sync",
-            Some(&scenario),
-        )
-        .unwrap();
+        let catalog = crate::catalog::load(&l6max_host::paths::repository_root()).unwrap();
+        let scenario = &catalog.scenarios["host-midi-sync"];
+        let fixture = case_fixture(&config, "l6max", "host-midi-sync", Some(scenario)).unwrap();
         assert_eq!(fixture.patches, ["midi-sync"]);
         assert!(fixture.state_spec.unwrap().is_file());
         assert!(
-            case_fixture(&config, &catalog, "l6", "host-midi-sync", Some(&scenario))
+            case_fixture(&config, "l6", "host-midi-sync", Some(scenario))
                 .err()
                 .unwrap()
                 .contains("no firmware package")
@@ -840,31 +823,19 @@ mod tests {
 
     #[test]
     fn every_scenario_card_has_a_valid_spec_for_each_model() {
-        let catalog_dir = l6max_host::paths::repository_root().join("tests/smoke");
+        let catalog = crate::catalog::load(&l6max_host::paths::repository_root()).unwrap();
         let mut cards = 0;
-        for entry in fs::read_dir(catalog_dir.join("scenarios")).unwrap() {
-            let path = entry.unwrap().path();
-            if path.extension().is_none_or(|extension| extension != "toml") {
-                continue;
-            }
-            let scenario = Scenario::load(&path).unwrap();
+        for (id, scenario) in &catalog.scenarios {
             for model in &scenario.models {
-                let fixture = Config {
+                let config = Config {
                     firmware: BTreeMap::from([(model.clone(), PathBuf::from("firmware.bin"))]),
                     qemu: PathBuf::new(),
                     qemu_sha256: String::new(),
                     app: None,
                 };
-                let fixture = case_fixture(
-                    &fixture,
-                    &catalog_dir,
-                    model,
-                    &scenario.name,
-                    Some(&scenario),
-                )
-                .unwrap();
+                let fixture = case_fixture(&config, model, id, Some(scenario)).unwrap();
                 if let Some(spec_path) = &fixture.card_spec {
-                    let spec = sd_image::spec::CardSpec::load(spec_path).unwrap();
+                    let spec = sd_image::spec::CardSpec::load_for(spec_path, model).unwrap();
                     assert_eq!(&spec.model, model, "{}", spec_path.display());
                     cards += 1;
                 }

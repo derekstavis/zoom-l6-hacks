@@ -1,0 +1,5 @@
+[[step]]
+action = "knob-dialog-popup"
+guest_timeout_ms = 15000
+wall_timeout_s = 120
+

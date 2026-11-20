@@ -1,0 +1,13 @@
+version = 1
+name = "wasm-patch"
+models = ["l6", "l6max"]
+backends = ["headless"]
+
+[case]
+suites = ["full"]
+volatile = true
+no_sd = true
+wall_timeout_s = 900
+
+[[step]]
+action = "wasm-patch"

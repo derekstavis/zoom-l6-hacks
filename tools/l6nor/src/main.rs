@@ -28,7 +28,7 @@ FIRMWARE is an unpacked firmware directory or an update package.
   diff PATH PATH                    annotated difference of two active settings banks
   seed --firmware FIRMWARE STATE    create the NOR images exactly as QEMU's first boot would
   apply --spec SPEC [--firmware FIRMWARE] STATE
-                                    apply a declarative state spec (see tests/smoke/states)
+                                    apply a declarative state spec (see tests/emulator/fixtures/states)
   rtc STATE [--set YYYY-MM-DDTHH:MM:SS]
                                     show or program the panel RTC calendar
 

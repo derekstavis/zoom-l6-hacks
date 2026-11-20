@@ -1,0 +1,5 @@
+# L6max setup state for the isolated Pad 4 meter case.
+# The prepared SD image supplies the Pad 4 assignment and sweep WAV.
+version = 1
+model = "l6max"
+extends = "tests/emulator/fixtures/states/l6max-setup-complete.toml"

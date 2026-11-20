@@ -69,6 +69,9 @@ pub struct Runner {
     logs: PathBuf,
     step: usize,
     entered: Option<(Instant, u32)>,
+    /// For a display check recording a reference: the display and the guest
+    /// time it has stayed unchanged since.
+    settling: Option<([u8; 1024], u32)>,
     dispatched: bool,
     baseline: Option<Observation>,
     last_command: Option<Command>,
@@ -141,6 +144,7 @@ impl Runner {
             logs,
             step: 0,
             entered: None,
+            settling: None,
             dispatched: false,
             baseline: None,
             last_command: None,
@@ -278,6 +282,19 @@ impl Runner {
             if now.duration_since(entered) > Duration::from_secs(step.wall_timeout_s)
                 || elapsed > step.guest_timeout_ms
             {
+                if let Action::ExpectDisplayImage { image } = &step.action {
+                    let path = crate::scenario::spec_path(image)?;
+                    return Err(format!(
+                        "step {}: {}",
+                        self.step + 1,
+                        devices::display_mismatch(
+                            &obs.data.display,
+                            &path,
+                            &self.logs,
+                            &reference_label(&path)
+                        )
+                    ));
+                }
                 return Err(format!(
                     "step {} timed out: {:?}; observed {}; startup={:?}",
                     self.step + 1,
@@ -316,33 +333,36 @@ impl Runner {
                     if self.model == Model::L6 {
                         return Err("L6 has no display".into());
                     }
-                    let path = l6max_host::paths::repository_root()
-                        .join("tests/smoke")
-                        .join(&image);
-                    let expected = image::open(&path)
-                        .map_err(|error| {
-                            format!(
-                                "could not load display reference {}: {error}",
-                                path.display()
-                            )
-                        })?
-                        .to_luma8();
-                    if expected.dimensions() != (128, 64) {
-                        return Err(format!(
-                            "display reference {} has dimensions {:?}, expected 128×64",
-                            path.display(),
-                            expected.dimensions()
-                        ));
+                    // The display may still be redrawing, so wait, within the
+                    // step's timeout, for it to match. A reference is recorded
+                    // only once the display has held still for half a second.
+                    let path = crate::scenario::spec_path(&image)?;
+                    let display = obs.data.display;
+                    if devices::reference_differences(&display, &path) == Some(0) {
+                        true
+                    } else if devices::updating_references() {
+                        let guest = obs.panel.guest_ms;
+                        match self.settling {
+                            Some((frame, since))
+                                if frame == display && guest.wrapping_sub(since) >= 500 =>
+                            {
+                                devices::record_display_reference(
+                                    &display,
+                                    &path,
+                                    &self.logs,
+                                    &reference_label(&path),
+                                )?;
+                                true
+                            }
+                            Some((frame, _)) if frame == display => false,
+                            _ => {
+                                self.settling = Some((display, guest));
+                                false
+                            }
+                        }
+                    } else {
+                        false
                     }
-                    let differences =
-                        devices::display_difference_count(&obs.data.display, &expected);
-                    if differences != 0 {
-                        return Err(format!(
-                            "display differs from {} in {differences} of 8192 pixels",
-                            path.display()
-                        ));
-                    }
-                    true
                 }
                 Action::ExpectTrace { contains, absent } => {
                     if absent
@@ -1143,6 +1163,7 @@ impl Runner {
                 .push(json!({"step":self.step+1,"guest_ms":obs.panel.guest_ms}));
             self.step += 1;
             self.entered = None;
+            self.settling = None;
             self.dispatched = false;
             self.scene_save = None;
         }
@@ -1176,6 +1197,7 @@ impl Runner {
         self.trace_path = logs.join("engine.trace");
         self.startup = BootReadiness::new(self.scenario.spec_state);
         self.entered = None;
+        self.settling = None;
         self.panel_quiet = None;
         self.ring_quiet = None;
         self.last_report_guest = 0;
@@ -1200,6 +1222,7 @@ impl Runner {
             .push(json!({"step":self.step+1,"device":true}));
         self.step += 1;
         self.entered = None;
+        self.settling = None;
         self.dispatched = false;
     }
     fn dispatch(&mut self, command: Command, obs: Observation) -> Result<Progress, String> {
@@ -1847,12 +1870,33 @@ mod tests {
     }
     #[test]
     fn every_checked_in_scenario_loads_after_composition() {
-        let root = l6max_host::paths::repository_root().join("tests/smoke/scenarios");
-        for path in fs::read_dir(root)
-            .unwrap()
-            .map(|e| e.unwrap().path())
-            .filter(|p| p.extension().is_some_and(|e| e == "toml"))
-        {
+        // Case files live under `tests/emulator/cases` and each patch's
+        // `tests/emulator/cases`; those with only a `[case]` table have no
+        // scenario of their own.
+        fn case_files(dir: &Path, out: &mut Vec<PathBuf>) {
+            for path in fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()) {
+                if path.is_dir() {
+                    case_files(&path, out);
+                } else if path.extension().is_some_and(|e| e == "toml") {
+                    out.push(path);
+                }
+            }
+        }
+        let root = l6max_host::paths::repository_root();
+        let mut paths = Vec::new();
+        case_files(&root.join("tests/emulator/cases"), &mut paths);
+        for patch in fs::read_dir(root.join("patches")).unwrap() {
+            let cases = patch.unwrap().path().join("tests/emulator/cases");
+            if cases.is_dir() {
+                case_files(&cases, &mut paths);
+            }
+        }
+        assert!(paths.len() > 80);
+        for path in paths {
+            let table: toml::Table = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            if table.keys().all(|key| key == "case") {
+                continue;
+            }
             let scenario =
                 Scenario::load(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
             assert!(
@@ -1878,46 +1922,58 @@ mod tests {
             }
         }
     }
+    /// A directory under the repository's ignored `target/`, as an absolute
+    /// path and as the root-relative path includes name it by.
+    fn include_test_dir(name: &str) -> (PathBuf, String) {
+        let rel = format!(
+            "target/smoke-core-include-tests/{name}-{}",
+            std::process::id()
+        );
+        let dir = l6max_host::paths::repository_root().join(&rel);
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        (dir, rel)
+    }
     #[test]
     fn includes_are_confined_cycle_checked_and_preserve_model_scope() {
-        let runner = test_runner("[[step]]\naction='delay'\nguest_ms=1\n");
-        let root = &runner.logs;
+        let (dir, rel) = include_test_dir("scope");
         fs::write(
-            root.join("fragment.toml"),
+            dir.join("fragment.toml"),
             "[[step]]\naction='delay'\nguest_ms=2\n",
         )
         .unwrap();
-        let prefix = "version=1\nname='include'\nmodels=['l6','l6max']\n[[step]]\nmodels=['l6max']\naction='include'\npath='fragment.toml'\n";
-        fs::write(root.join("test.toml"), prefix).unwrap();
-        let loaded = Scenario::load(&root.join("test.toml")).unwrap();
+        let prefix = format!(
+            "version=1\nname='include'\nmodels=['l6','l6max']\n[[step]]\nmodels=['l6max']\naction='include'\npath='{rel}/fragment.toml'\n"
+        );
+        fs::write(dir.join("test.toml"), &prefix).unwrap();
+        let loaded = Scenario::load(&dir.join("test.toml")).unwrap();
         assert_eq!(loaded.step[0].models, ["l6max"]);
+        // A generated scenario composes the same way from its text alone.
+        assert_eq!(Scenario::from_text(&prefix).unwrap().step.len(), 1);
         fs::write(
-            root.join("fragment.toml"),
-            "[[step]]\naction='include'\npath='fragment.toml'\n",
+            dir.join("fragment.toml"),
+            format!("[[step]]\naction='include'\npath='{rel}/fragment.toml'\n"),
         )
         .unwrap();
         assert!(
-            Scenario::load(&root.join("test.toml"))
+            Scenario::load(&dir.join("test.toml"))
                 .unwrap_err()
                 .contains("cycle")
         );
-        fs::write(
-            root.join("test.toml"),
-            prefix.replace("fragment.toml", "../outside.toml"),
-        )
-        .unwrap();
-        fs::write(
-            root.parent().unwrap().join("outside.toml"),
-            "[[step]]\naction='delay'\nguest_ms=1\n",
-        )
-        .unwrap();
-        assert!(
-            Scenario::load(&root.join("test.toml"))
-                .unwrap_err()
-                .contains("escapes")
-        );
-        fs::remove_file(root.parent().unwrap().join("outside.toml")).unwrap();
-        fs::remove_dir_all(&runner.logs).unwrap();
+        for path in [
+            format!("{rel}/../outside.toml"),
+            "fragment.toml/..".into(),
+            dir.join("fragment.toml").display().to_string(),
+        ] {
+            let text = prefix.replace(&format!("{rel}/fragment.toml"), &path);
+            assert!(
+                Scenario::from_text(&text)
+                    .unwrap_err()
+                    .contains("relative to the repository root"),
+                "{path}"
+            );
+        }
+        fs::remove_dir_all(&dir).unwrap();
     }
     #[test]
     fn l6max_tap_tempo_lamp_does_not_block_panel_settling() {
@@ -1943,19 +1999,16 @@ mod tests {
     }
     #[test]
     fn setup_input_propagates_through_includes_and_is_dropped_for_spec_state() {
-        let runner = test_runner("[[step]]\naction='delay'\nguest_ms=1\n");
-        let root = &runner.logs;
+        let (dir, rel) = include_test_dir("setup");
         fs::write(
-            root.join("fragment.toml"),
+            dir.join("fragment.toml"),
             "[[step]]\naction='delay'\nguest_ms=2\n[[step]]\naction='delay'\nguest_ms=3\n",
         )
         .unwrap();
-        fs::write(
-            root.join("test.toml"),
-            "version=1\nname='setup'\nmodels=['l6max']\n[[step]]\nsetup_input=true\naction='include'\npath='fragment.toml'\n[[step]]\naction='delay'\nguest_ms=4\n",
-        )
-        .unwrap();
-        let loaded = Scenario::load(&root.join("test.toml")).unwrap();
+        let text = format!(
+            "version=1\nname='setup'\nmodels=['l6max']\n[[step]]\nsetup_input=true\naction='include'\npath='{rel}/fragment.toml'\n[[step]]\naction='delay'\nguest_ms=4\n"
+        );
+        let loaded = Scenario::from_text(&text).unwrap();
         assert_eq!(
             loaded
                 .step
@@ -1967,7 +2020,7 @@ mod tests {
         let kept = loaded.without_setup_input();
         assert_eq!(kept.step.len(), 1);
         assert!(matches!(kept.step[0].action, Action::Delay { guest_ms: 4 }));
-        fs::remove_dir_all(&runner.logs).unwrap();
+        fs::remove_dir_all(&dir).unwrap();
     }
     #[test]
     fn unsupported_operations_and_switch_semantics_fail_before_boot() {
@@ -2105,4 +2158,10 @@ mod tests {
             fs::remove_dir_all(&runner.logs).unwrap();
         }
     }
+}
+
+/// The name a display check's saved frame takes after its reference.
+fn reference_label(path: &Path) -> String {
+    path.file_stem()
+        .map_or("display".into(), |stem| stem.to_string_lossy().into_owned())
 }

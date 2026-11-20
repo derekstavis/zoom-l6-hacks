@@ -1,0 +1,5 @@
+[[step]]
+action = "l6max-din-mixer-control"
+expect_din_ring_change = true
+guest_timeout_ms = 10000
+wall_timeout_s = 120

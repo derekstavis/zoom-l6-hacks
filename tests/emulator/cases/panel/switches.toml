@@ -1,0 +1,14 @@
+version = 1
+name = "switches"
+models = ["l6max"]
+
+[case]
+suites = []
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/prepared-home.toml"
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/switches.toml"

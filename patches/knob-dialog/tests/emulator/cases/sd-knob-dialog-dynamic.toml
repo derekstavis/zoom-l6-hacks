@@ -1,0 +1,33 @@
+version = 1
+name = "sd-knob-dialog-dynamic"
+models = ["l6max"]
+backends = ["headless"]
+gdb = true
+sd_patches = ["knob-dialog"]
+sd_bundle_mode = "ordered-chain"
+
+[case]
+suites = ["sd-matrix"]
+wall_timeout_s = 1200
+
+[[step]]
+action = "wait"
+until = "mixer-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "delay"
+guest_ms = 8000
+guest_timeout_ms = 20000
+wall_timeout_s = 300
+
+[[step]]
+action = "expect-sd-patch"
+loaded = true
+chain_count = 2
+
+[[step]]
+action = "knob-dialog"
+guest_timeout_ms = 180000
+wall_timeout_s = 600

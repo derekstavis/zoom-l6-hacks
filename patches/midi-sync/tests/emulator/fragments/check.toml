@@ -1,0 +1,9 @@
+[[step]]
+action = "direct-usb-midi-round-trip"
+guest_timeout_ms = 60000
+wall_timeout_s = 180
+
+[[step]]
+action = "host-midi-sync"
+guest_timeout_ms = 30000
+wall_timeout_s = 120

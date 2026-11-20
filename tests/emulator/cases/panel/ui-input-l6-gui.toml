@@ -1,0 +1,5 @@
+[case]
+scenario = "tests/emulator/cases/panel/ui-input-l6.toml"
+models = ["l6"]
+suites = ["full"]
+gui = true

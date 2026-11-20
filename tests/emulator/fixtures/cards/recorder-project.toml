@@ -1,0 +1,21 @@
+# Recorder content to load at boot, longer than the cases sample it: the L6
+# recorder scans a folder of WAV files, the L6max loads a project.
+version = 1
+
+[l6]
+# A recording in the folder layout the L6 recorder scans at boot, longer than the
+# case samples it. l6-recorder-playback checks its 960000 frames.
+
+[[l6.file]]
+path = "RECORDER/260101_000000/MASTER.WAV"
+tone = { hz = 440.0, seconds = 20.0, amplitude = 0.25 }
+
+[l6max]
+# A project for the recorder to load at boot, longer than the case samples it.
+
+[[l6max.project]]
+name = "260101_000000"
+hz = 440.0
+seconds = 20.0
+amplitude = 0.05
+level = 64

@@ -12,7 +12,7 @@ cargo run --offline --locked -p l6nor -- get STATE battery_type mixer.current.ef
 cargo run --offline --locked -p l6nor -- set STATE battery_type=1 'mixer.current.channel[0].mute=1'
 cargo run --offline --locked -p l6nor -- diff STATE_A STATE_B
 cargo run --offline --locked -p l6nor -- seed --firmware FIRMWARE NEW_STATE
-cargo run --offline --locked -p l6nor -- apply --spec tests/smoke/states/l6max-setup-complete.toml --firmware FIRMWARE STATE
+cargo run --offline --locked -p l6nor -- apply --spec tests/emulator/fixtures/states/l6max-setup-complete.toml --firmware FIRMWARE STATE
 cargo run --offline --locked -p l6nor -- rtc STATE --set 2026-02-02T01:01:00
 ```
 
@@ -88,7 +88,7 @@ firmware's default payload instead, for example when no valid bank exists.
 
 A state spec is a TOML description of a starting device. `l6test` applies it
 to each case's disposable state copy. A scenario names one with its `state`
-header, read from `tests/smoke/states/<model>-<state>.toml`; see the
+header, read from `tests/emulator/fixtures/states/<model>-<state>.toml`; see the
 [scenario format](../scenario-format.md).
 
 ```toml
@@ -110,11 +110,25 @@ datetime = "2026-02-02T01:01:00"
 programmed = true        # L6max only
 ```
 
+A spec can add to another spec of the same model with `extends`, a path from
+the repository root. Its settings values are kept unless the extending spec
+sets them, and the extending spec's `base`, `[rtc]` and `[panel]` replace the
+other's when given:
+
+```toml
+version = 1
+model = "l6max"
+extends = "tests/emulator/fixtures/states/l6max-setup-complete.toml"
+
+[settings.values]
+"mixer.current.efx_type" = 1
+```
+
 Missing `main-nor.bin` is seeded from the firmware package first. Settings are
 committed with the firmware's bank protocol, so the firmware loads them on its
 first boot. `setup_required = 0` together with a valid RTC calendar skips the
 first-boot Date/Time and Battery Type flow; a pre-programmed panel skips panel
 ROM programming.
-[`l6max-setup-complete.toml`](../../../tests/smoke/states/l6max-setup-complete.toml)
+[`l6max-setup-complete.toml`](../../../tests/emulator/fixtures/states/l6max-setup-complete.toml)
 reproduces the first-boot setup flow without input. The `state-spec` case checks the
 result.

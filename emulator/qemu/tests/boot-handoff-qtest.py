@@ -282,6 +282,36 @@ def check_flexram_boundaries(qemu, image):
                 if "return" in reply:
                     return reply["return"]
         qmp_execute("qmp_capabilities")
+        # RT1060 channels 3 and 19 share IRQ 3. Generate real SAI-paced
+        # major-loop completions, then acknowledge each channel separately.
+        command("writel 0x20200000 0x12345678")
+        command("writel 0x40384014 0x10000")
+        command("writel 0x40384008 0x80000001")  # TE | FRDE
+        command("writel 0xe000e100 8")
+        for channel in (3, 19):
+            base = 0x400e9000 + channel * 0x20
+            for offset, value in ((0, 0x20200000), (4, 0x02020000),
+                                  (8, 4), (12, 0), (16, 0x40384020),
+                                  (20, 0x00010000), (24, 0),
+                                  (28, 0x0001000a)):
+                command(f"writel {base + offset:#x} {value:#x}")
+            command(f"writel {0x400ec000 + channel * 4:#x} 0x80000014")
+            command(f"writel 0x400e800c {1 << channel:#x}")
+            assert int(command("readl 0x400e8024").split()[1], 16) & (1 << channel)
+            command(f"writel {0x400ec000 + channel * 4:#x} 0")
+            command("writel 0x40384008 0x82000001")  # reset TX FIFO
+        assert int(command("readl 0x400e8024").split()[1], 16) & 0x80008 == 0x80008
+        assert int(command("readl 0xe000e200").split()[1], 16) & 8
+        assert not int(command("readl 0xe000e200").split()[1], 16) & (1 << 19)
+        command("writel 0x400e8024 8")  # W1C channel 3 only
+        assert int(command("readl 0x400e8024").split()[1], 16) & 0x80008 == 0x80000
+        command("writel 0xe000e280 8")
+        assert int(command("readl 0xe000e200").split()[1], 16) & 8
+        command("writeb 0x400e801f 19")
+        command("writel 0xe000e280 8")
+        assert not int(command("readl 0xe000e200").split()[1], 16) & 8
+        qmp_execute("system_reset")
+        print(f"{image}: paired DMA interrupt assertion and acknowledgement passed")
         # Bootloader installed and locked the NOR command table. Verify the
         # command works before any guest table write, then the key protocol.
         assert int(command("readl 0x402a801c").split()[1], 16) == 1

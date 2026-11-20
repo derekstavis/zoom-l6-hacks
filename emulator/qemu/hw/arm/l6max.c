@@ -2975,29 +2975,33 @@ static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
     return value;
 }
 
-/* eDMA assigns one NVIC input per channel. The L6 firmware's IRQ table maps
- * channels 12–15 to IRQs 12–15, and L6max's OLED channel 3 uses IRQ 3. */
+/* RT1060 pairs DMA channels n and n+16 onto IRQ n. Keep the older L6
+ * profile's mapping until its interrupt routing is audited separately. */
+static void l6_edma_update_irq_level(L6ChipState *s, unsigned channel,
+                                     uint32_t pending)
+{
+    unsigned irq = channel;
+    uint32_t mask = 1u << channel;
+    if (s->profile == &L6MAX_PROFILE) {
+        irq &= 15u;
+        mask = (1u << irq) | (1u << (irq + 16));
+    }
+    qemu_set_irq(qdev_get_gpio_in(DEVICE(&s->armv7m), irq),
+                 (pending & mask) != 0);
+}
+
 static void l6_edma_raise_interrupt(L6ChipState *s, unsigned channel)
 {
     gpointer key = GUINT_TO_POINTER((0x0e8024 >> 2) + 1);
     uint32_t pending = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers, key));
 
-    g_hash_table_insert(s->registers, key,
-                        GUINT_TO_POINTER(pending | (1u << channel)));
+    pending |= 1u << channel;
+    g_hash_table_insert(s->registers, key, GUINT_TO_POINTER(pending));
     if (s->audio_trace && channel >= 12 && channel <= 15) {
         s->audio_trace_irq_count[channel - 12]++;
     }
-    /* RT eDMA INT bits directly drive the interrupt controller. Hold each
-     * channel high until firmware clears its pending bit through CINT/INT. */
-    qemu_set_irq(qdev_get_gpio_in(DEVICE(&s->armv7m), channel), 1);
+    l6_edma_update_irq_level(s, channel, pending);
     s->audio_edma_irq_raised = true;
-}
-
-static void l6_edma_update_irq_level(L6ChipState *s, unsigned channel,
-                                     uint32_t pending)
-{
-    qemu_set_irq(qdev_get_gpio_in(DEVICE(&s->armv7m), channel),
-                 (pending >> channel) & 1);
 }
 
 static bool l6_edma_as_read(void *opaque, uint32_t address, void *buffer,

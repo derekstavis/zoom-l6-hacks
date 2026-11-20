@@ -85,9 +85,10 @@ channels, eDMA request enables, interrupt state and documented priority fields.
 The RT1060 manual marks transfer-descriptor reset contents unknown; QEMU
 retains its prior descriptor contents without asserting physical retention.
 The boot images' direct-address scans found no DMA setup, but indirect accesses
-remain possible. The eDMA model still maps channels directly to IRQ numbers;
-RT1060 IRQs 0–15 each combine two channels. Other functional-module reset
-behavior remains incomplete. Intervening ROM writes are
+remain possible. L6max eDMA IRQs 0–15 each combine two channel completion
+signals, as specified for RT1060; the test exercises both members of one pair
+and independent acknowledgements. Other functional-module reset behavior remains
+incomplete. Intervening ROM writes are
 not fully traced, so the resulting complete values are assumptions, not hardware
 measurements.
 The ARM and system PLL control aliases share their respective register state;

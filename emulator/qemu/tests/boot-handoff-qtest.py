@@ -90,6 +90,27 @@ def check_flexram_boundaries(qemu, image):
             assert int(command(f"readl {last:#x}").split()[1], 16) == 0x1234abcd
             assert int(command(f"readl {beyond:#x}").split()[1], 16) != 0x5678efab
         print(f"{image}: FlexRAM mapping boundaries passed")
+        # Reassign bank 0 from OCRAM to ITCM. Bank 7 moves to the next
+        # ITCM address, while both physical banks retain their contents.
+        command("writel 0x20280000 0x13579bdf")
+        command("writel 0x00000000 0x2468ace0")
+        command("writel 0x20200000 0x0badf00d")
+        command("writel 0x400ac044 0x5555ea97")
+        assert int(command("readl 0x00000000").split()[1], 16) == 0x13579bdf
+        assert int(command("readl 0x00008000").split()[1], 16) == 0x2468ace0
+        assert int(command("readl 0x20200000").split()[1], 16) == 0x0badf00d
+        command("writel 0x400ac044 0x5555ea95")
+        assert int(command("readl 0x20280000").split()[1], 16) == 0x13579bdf
+        assert int(command("readl 0x00000000").split()[1], 16) == 0x2468ace0
+        # Source selection uses the assumed blank-fuse partition; writes to
+        # GPR17 do not affect that partition until software selects it again.
+        command("writel 0x400ac040 0x00200003")
+        command("writel 0x400ac044 0xffffffff")
+        assert int(command("readl 0x20280000").split()[1], 16) == 0x13579bdf
+        command("writel 0x400ac044 0x5555ea95")
+        command("writel 0x400ac040 0x00200007")
+        assert int(command("readl 0x00000000").split()[1], 16) == 0x2468ace0
+        print(f"{image}: FlexRAM bank remapping and retained contents passed")
         main_vector = int(command("readl 0x80000000").split()[1], 16)
         command("writel 0x80000000 0x1234abcd")
         assert int(command("readl 0x80000000").split()[1], 16) == 0x1234abcd
@@ -194,7 +215,11 @@ def check_flexram_boundaries(qemu, image):
             command("writel 0xe000ed9c 0x20200000")
             command("writel 0xe000eda0 0x03000019")
             assert int(command("readl 0xe000eda0").split()[1], 16) == 0x03000019
+        command("writel 0x400ac044 0xffffffff")
         qmp_execute("system_reset")
+        assert int(command("readl 0x400ac044").split()[1], 16) == 0x5555ea95
+        assert int(command("readl 0x20280000").split()[1], 16) == 0x13579bdf
+        assert int(command("readl 0x00000000").split()[1], 16) == 0x2468ace0
         assert int(command("readl 0x80000000").split()[1], 16) == main_vector & 0x20200000
         assert int(command("readl 0x80000100").split()[1], 16) == 0
         registers = qmp_execute("human-monitor-command", {"command-line": "info registers"})

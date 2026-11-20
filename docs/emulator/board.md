@@ -67,8 +67,16 @@ clock and parameters, but refresh and SDRAM commands are not modeled.
 The bootloader's entry code selects FlexRAM configuration `0x5555ea95`: one
 32 KiB bank for ITCM, four for DTCM and eleven for OCRAM. With the RT1060's
 separate 512 KiB OCRAM, the L6max direct boot exposes 32 KiB ITCM, 128 KiB
-DTCM and 864 KiB OCRAM. It seeds GPR16/GPR17 for that configuration, but
-does not dynamically repartition memory when the guest writes those registers.
+DTCM and 864 KiB OCRAM. GPR16/GPR17 writes dynamically repartition sixteen
+32 KiB banks, retaining each bank's contents. The model places banks assigned
+to an interface in ascending bank order; the ordering for noncontiguous banks
+has not been verified on this device. When GPR16 selects fuses, the model uses
+the RT1060 blank-fuse partition because the device's fuse setting is unknown.
+The fixed 512 KiB OCRAM remains separate from the FlexRAM OCRAM window.
+FlexRAM-specific out-of-range interrupts, access faults, ECC and timing are
+not modeled. See
+[NXP AN12077](https://www.nxp.com/docs/en/application-note/AN12077.pdf) for
+runtime partitioning and data retention.
 The L6max ITCM starts as zero-filled emulator RAM; its physical contents at
 handoff were not captured. Stock MAIN relocates its own ITCM code during
 startup, and the tested entry bytes agree with the later physical dump.

@@ -6401,6 +6401,11 @@ static void l6_main_reset(MachineState *machine, ResetType type)
         /* With D-cache already disabled, the transfer uses BLX at
          * 0x2020e450; LR is the Thumb return address in the boot image. */
         s->armv7m.cpu->env.regs[14] = 0x2020e453u;
+        /* Boot 1.00 allocates the Main task stack from its OCRAM heap,
+         * then copies PSP to MSP with a 0x28-byte transfer frame live.
+         * The allocator prefix survives in the later physical OCRAM dump;
+         * no register was captured at the branch, so this is inferred. */
+        s->armv7m.cpu->env.regs[13] = 0x202275f0u;
     }
 }
 

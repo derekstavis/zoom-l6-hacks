@@ -213,13 +213,14 @@ and its `BLX` at `0x2020e450` sets LR to `0x2020e453`. The emulator uses
 its modeled CCR for `r2` and reproduces these register values on startup and
 reset; it does not load the bootloader instructions at that return address.
 The bootloader calls with its current task stack; it does not load the MAIN
-vector's initial MSP at that call. The emulator's CPU
-reset instead starts with the MAIN vector MSP. Stock MAIN 1.10 installs that
-same MSP itself at `0x8000041e`, before accessing the inherited stack; this
-was checked by stepping both stock and a patched image with an unmapped initial
-MSP. The precise bootloader task stack at the call has not been recovered, so
-this remains a difference at the first instructions, including for firmware
-whose reset handler is changed.
+vector's initial MSP at that call. The emulator seeds an inferred MSP of
+`0x202275f0`, based on bootloader 1.00's allocation and call frame. A later
+OCRAM dump corroborates the allocation prefix, but the register itself was
+not captured and the emulator does not reproduce the boot task's stack
+contents. Stock MAIN 1.10 installs its own vector MSP at `0x8000041e`, before
+accessing the inherited stack; this was checked by stepping both stock and a
+patched image with an unmapped initial MSP. Other reset handlers may depend on
+the inherited stack or its contents.
 
 The boot scheduler sets the SysTick reload to `599999` for its 600 MHz,
 1 ms tick, sets PendSV and SysTick priorities to `0xf0`, enables CP10/CP11

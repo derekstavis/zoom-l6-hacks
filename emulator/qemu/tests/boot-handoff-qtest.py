@@ -28,14 +28,15 @@ def check_uart_receive_clock(qemu, image):
     env["L6_MAIN_MIDI_UART_FD"] = str(guest.fileno())
     process = subprocess.Popen(
         [qemu, "-M", "l6max-main", "-kernel", image, "-accel", "qtest",
-         "-qtest", "stdio", "-display", "none",
+         "-qtest", "stdio", "-display", "none", "-d", "unimp",
          "-chardev", f"socket,id=panel-test,fd={panel_guest.fileno()}",
          "-serial", "chardev:panel-test"],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, bufsize=1, pass_fds=(guest.fileno(), panel_guest.fileno()), env=env,
     )
     guest.close()
     panel_guest.close()
+    log_buffer = bytearray()
 
     def command(text):
         process.stdin.write(text + "\n")
@@ -54,6 +55,22 @@ def check_uart_receive_clock(qemu, image):
             time.sleep(0.01)
         assert command(f"readl {base + 0x1c:#x}") == expected
 
+    def wait_discarded():
+        # Synchronize with the wire callback rather than assuming a virtual
+        # clock step has serviced the host socket.
+        marker = b"RX discarded (disabled receiver or clock)"
+        deadline = time.monotonic() + 5
+        while marker not in log_buffer:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([process.stderr], [], [], remaining)[0]:
+                raise AssertionError("UART did not consume the gated byte")
+            chunk = os.read(process.stderr.fileno(), 4096)
+            if not chunk:
+                raise EOFError("QEMU exited while waiting for UART receive")
+            log_buffer.extend(chunk)
+        end = log_buffer.index(marker) + len(marker)
+        del log_buffer[:end]
+
     try:
         gate = command("readl 0x400fc068")
         assert not gate & 0x3000  # reconstructed LPUART3 gate is off
@@ -61,8 +78,7 @@ def check_uart_receive_clock(qemu, image):
         command(f"writel 0x400fc024 {divider | 0x40:#x}")  # UART root = OSC
         command("writel 0x4018c018 0x40000")  # receiver enable
         host.sendall(b"\x55")
-        for _ in range(8):
-            command("clock_step 1000")
+        wait_discarded()
         assert not command("readl 0x4018c014") & (1 << 21)
         command(f"writel 0x400fc068 {gate | 0x3000:#x}")
         host.sendall(b"\x66")
@@ -70,8 +86,7 @@ def check_uart_receive_clock(qemu, image):
         command(f"writel 0x400fc024 {divider & ~0x40:#x}")  # root = PLL3
         command("writel 0x400d8018 0x2000")  # gate PLL3 output
         host.sendall(b"\x77")
-        for _ in range(8):
-            command("clock_step 1000")
+        wait_discarded()
         assert not command("readl 0x4018c014") & (1 << 21)
         command("writel 0x400d8014 0x2000")
         host.sendall(b"\x88")
@@ -80,8 +95,7 @@ def check_uart_receive_clock(qemu, image):
         assert not panel_gate & 0x03000000
         command("writel 0x40184018 0x40000")
         panel_host.sendall(b"\x11")
-        for _ in range(8):
-            command("clock_step 1000")
+        wait_discarded()
         assert not command("readl 0x40184014") & (1 << 21)
         command(f"writel 0x400fc07c {panel_gate | 0x03000000:#x}")
         panel_host.sendall(b"\x22")

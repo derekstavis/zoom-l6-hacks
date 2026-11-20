@@ -8,6 +8,7 @@ import json
 import os
 import select
 import socket
+import struct
 import subprocess
 import sys
 
@@ -1246,6 +1247,65 @@ def check_flexram_boundaries(qemu, image):
         process.wait(timeout=5)
 
 
+def check_usb_clock(qemu, image):
+    host, guest = socket.socketpair()
+    host.settimeout(10)
+    env = isolated_env()
+    env["L6_USB_FD"] = str(guest.fileno())
+    process = subprocess.Popen(
+        [qemu, "-M", "l6max-main", "-kernel", image, "-accel", "qtest",
+         "-qtest", "stdio", "-display", "none"], stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        bufsize=1, pass_fds=(guest.fileno(),), env=env,
+    )
+    guest.close()
+
+    def command(text):
+        process.stdin.write(text + "\n")
+        process.stdin.flush()
+        if not select.select([process.stdout], [], [], 10)[0]:
+            raise RuntimeError(f"no response to {text}")
+        reply = process.stdout.readline().strip().split()
+        assert reply[0] == "OK", reply
+        return int(reply[1], 0) if len(reply) > 1 else None
+
+    def request(kind, seq, ep, payload=b""):
+        host.sendall(struct.pack("<5I", 0x4c365553, kind, seq, ep, len(payload)) + payload)
+        reply = b""
+        while len(reply) < 20:
+            chunk = host.recv(20 - len(reply))
+            if not chunk:
+                raise EOFError("USB socket closed")
+            reply += chunk
+        magic, response, actual_seq, status, size = struct.unpack("<IIIiI", reply)
+        assert (magic, response, actual_seq, size) == (0x4c365553, 0x80000000, seq, 0)
+        return status
+
+    try:
+        assert command("readl 0x400fc080") & 3 == 0
+        command("writel 0x402e0158 0x20200000")
+        command("writel 0x402e0140 1")
+        assert request(1, 1, 1) == 0  # cable connection is external
+        command("writel 0x402e0144 0xffffffff")
+        command("clock_step 2000000")
+        assert not command("readl 0x402e0144") & 0x80
+        assert request(2, 2, 0, bytes(8)) == -19  # controller clock stopped
+        command("writel 0x400fc080 0x00fc3fc3")
+        command("clock_step 2000000")
+        assert command("readl 0x402e0144") & 0x80
+        assert request(2, 3, 0, bytes(8)) == 0
+        command("writel 0x402e0144 0xffffffff")
+        command("writel 0x400fc080 0x00fc3fc0")
+        command("clock_step 2000000")
+        assert not command("readl 0x402e0144") & 0x80
+        assert request(2, 4, 0, bytes(8)) == -19
+        print(f"{image}: USB controller clock gate transitions passed")
+    finally:
+        host.close()
+        process.terminate()
+        process.wait(timeout=5)
+
+
 def main():
     if len(sys.argv) != 5:
         raise SystemExit(__doc__)
@@ -1322,6 +1382,7 @@ def main():
     check_main_stack_entry(qemu, stock, 0x202d8000, 0x20)
     check_main_stack_entry(qemu, patched)
     check_flexram_boundaries(qemu, stock)
+    check_usb_clock(qemu, stock)
     check_no_cache_selector(qemu, l6)
     check(qemu, l6, {0x400ac038: 0, 0x401f8204: 0, 0x402f0010: 0,
                      0x40084000: 0, 0x40084100: 0,

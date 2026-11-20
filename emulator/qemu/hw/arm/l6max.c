@@ -1768,6 +1768,14 @@ static uint32_t l6max_clock_register(L6ChipState *s, hwaddr offset)
                                                GUINT_TO_POINTER((offset >> 2) + 1)));
 }
 
+/* CCGR6 CG0 gates the USB controller's IPG and AHB clocks. L6's clock
+ * tree is separate and remains on the existing compatibility path. */
+static bool l6max_usb_clock_enabled(void *opaque)
+{
+    L6ChipState *s = opaque;
+    return (l6max_clock_register(s, 0x0fc080) & 3u) != 0;
+}
+
 static L6MaxBusClocks l6max_bus_clocks(L6ChipState *s)
 {
     uint32_t lowpwr = l6max_clock_register(s, 0x0d8270);
@@ -6299,6 +6307,10 @@ static void l6_chip_init(MachineState *machine, L6ChipState *s, bool panel,
     }
     if (!panel) {
         s->usb.as = CPU(s->armv7m.cpu)->as;
+        if (profile == &L6MAX_PROFILE) {
+            s->usb.clock_enabled = l6max_usb_clock_enabled;
+            s->usb.clock_opaque = s;
+        }
         s->usb.irq = qdev_get_gpio_in(DEVICE(&s->armv7m), 113);
         s->usb.fd = -1;
         s->usb.tx = g_byte_array_new();

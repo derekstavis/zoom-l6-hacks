@@ -17,6 +17,8 @@ typedef struct L6USB {
     GByteArray *tx;
     bool connected;
     QEMUTimer *sof_timer;
+    bool (*clock_enabled)(void *opaque);
+    void *clock_opaque;
     unsigned log_count;
     uint8_t in_reason[16]; /* last logged IN-token outcome per endpoint */
     /* A host SETUP not yet completed by an EP0 transfer, and whether the
@@ -42,7 +44,8 @@ static void l6_usb_irq(L6USB *u)
 static void l6_usb_sof(void *opaque)
 {
     L6USB *u = opaque;
-    if (u->connected && (u->regs[0x140 / 4] & 1)) {
+    if ((!u->clock_enabled || u->clock_enabled(u->clock_opaque)) &&
+        u->connected && (u->regs[0x140 / 4] & 1)) {
         u->regs[0x144 / 4] |= 0x80; /* SOF received */
         l6_usb_irq(u);
     }
@@ -179,7 +182,8 @@ static void l6_usb_request(L6USB *u)
         u->regs[0x144 / 4] |= ep ? 0x44 : 4;
         l6_usb_irq(u);
         l6_usb_reply(u, seq, 0, NULL, 0);
-    } else if (!u->connected || !(u->regs[0x140 / 4] & 1)) {
+    } else if (!u->connected || !(u->regs[0x140 / 4] & 1) ||
+               (u->clock_enabled && !u->clock_enabled(u->clock_opaque))) {
         l6_usb_reply(u, seq, -ENODEV, NULL, 0);
     } else if (kind == 2 && size == 8 && ep == 0) {
         uint32_t qh = u->regs[0x158 / 4] & ~0x7ffu;

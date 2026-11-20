@@ -76,9 +76,12 @@ not been captured. On direct boot and cold reset, modeled CCM and PLL registers
 start from those reset values before the recovered boot writes. The model also
 applies the recovered ROM startup gate masks before first-stage setup. On the
 reviewed normal boot path, ROM re-enables TRNG but leaves the USB controller
-gate clear; the first stage enables the USB PLL independently. The emulator
-does not enforce the USB controller gate. Other indirect writes and physical
-handoff readback remain unverified. The RT1060
+gate clear; the first stage enables the USB PLL independently. On L6max the
+USB model suppresses frame interrupts and transfer requests while the controller
+clock gate is off. It retains cable events and register access as compatibility
+approximations; USB PLL/PHY gating, low-power gate modes and bus access behavior
+while gated are not modeled. Other indirect writes and physical handoff readback
+remain unverified. The RT1060
 reset controller resets CCM, PLLs and functional modules on cold reset while
 retaining IOMUXC; the model retains the latter's stored bits. The model resets
 SEMC configuration and selected FlexSPI controls before replaying their boot

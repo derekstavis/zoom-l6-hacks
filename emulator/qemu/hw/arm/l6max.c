@@ -2528,26 +2528,28 @@ static bool l6max_pit_read(L6ChipState *s, hwaddr offset, uint32_t *value)
     return true;
 }
 
-static bool l6max_pit_write(L6ChipState *s, hwaddr offset, uint32_t value)
+static bool l6max_pit_write(L6ChipState *s, hwaddr offset, uint32_t value,
+                            uint32_t mask)
 {
     if (offset != 0x084000 && (offset < 0x084100 || offset > 0x08413c || (offset & 3u))) {
         return false;
     }
     l6max_pit_sync(s);
     if (offset == 0x084000) {
-        s->pit_mcr = value & 3u;
+        s->pit_mcr = ((s->pit_mcr & ~mask) | (value & mask)) & 3u;
     } else {
         unsigned channel = (offset - 0x084100) >> 4;
         switch (offset & 0xfu) {
-        case 0: s->pit_load[channel] = value; break;
+        case 0: s->pit_load[channel] = (s->pit_load[channel] & ~mask) | (value & mask); break;
         case 4: break; /* CVAL is read-only. */
         case 8:
+            value = (s->pit_ctrl[channel] & ~mask) | (value & mask);
             if (!(s->pit_ctrl[channel] & 1u) && (value & 1u)) {
                 s->pit_count[channel] = s->pit_load[channel];
             }
             s->pit_ctrl[channel] = value & (channel ? 7u : 3u);
             break;
-        case 12: s->pit_flag[channel] &= ~(value & 1u); break;
+        case 12: s->pit_flag[channel] &= ~(value & mask & 1u); break;
         }
     }
     l6max_pit_irq(s);
@@ -2559,9 +2561,10 @@ static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
 {
     L6ChipState *s = opaque;
     uint32_t pit_value;
-    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
-        l6max_pit_read(s, offset, &pit_value)) {
-        return pit_value;
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (offset & 3) + size <= 4 &&
+        l6max_pit_read(s, offset & ~(hwaddr)3, &pit_value)) {
+        return pit_value >> ((offset & 3) * 8);
     }
     if (!s->panel && s->profile == &L6MAX_PROFILE &&
         (offset & ~(hwaddr)3) == 0x2f00c0) {
@@ -3841,9 +3844,15 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
             }
         }
     }
-    if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&
-        l6max_pit_write(s, offset, value)) {
-        return;
+    if (!s->panel && s->profile == &L6MAX_PROFILE &&
+        (offset & 3) + size <= 4) {
+        unsigned shift = (offset & 3) * 8;
+        uint32_t mask = size == 4 ? UINT32_MAX :
+                        ((1u << (size * 8)) - 1u) << shift;
+        if (l6max_pit_write(s, offset & ~(hwaddr)3,
+                            (uint32_t)value << shift, mask)) {
+            return;
+        }
     }
     if (!s->panel && s->profile == &L6MAX_PROFILE &&
         (offset & 3) + size <= 4) {

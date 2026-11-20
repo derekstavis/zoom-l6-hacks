@@ -422,6 +422,14 @@ def check_flexram_boundaries(qemu, image):
         assert int(command("readl 0xe000ed84").split()[1], 16) == 0
         assert int(command("readl 0xe000ed80").split()[1], 16) == 0xf01fe019
         print(f"{image}: cache identification and selector passed")
+        # Aligned byte and halfword PIT accesses share the same timer state.
+        command("writel 0x40084120 0x12345678")
+        command("writeb 0x40084121 0xab")
+        command("writew 0x40084122 0xcdef")
+        assert int(command("readl 0x40084120").split()[1], 16) == 0xcdefab78
+        assert int(command("readw 0x40084120").split()[1], 16) == 0xab78
+        assert int(command("readb 0x40084123").split()[1], 16) == 0xcd
+        command("writel 0x40084120 0")
         # The reconstructed handoff gate stops the ROM lifetime counter
         # even if firmware clears MCR.MDIS before enabling its CCGR field.
         assert int(command("readl 0x40084104").split()[1], 16) == 0xffffffff
@@ -441,7 +449,9 @@ def check_flexram_boundaries(qemu, image):
         command(f"writel 0x400fc01c {(cscmr & ~0x7f) | 0x40:#x}")
         command(f"writel 0x400fc06c {(gate & ~0x3000) | 0x3000:#x}")
         command("writel 0x40084000 0")
-        command("writel 0x40084118 7")  # channel 1, chained + interrupt
+        command("writeb 0x40084118 7")  # channel 1, chained + interrupt
+        command("writeb 0x40084119 0xff")  # reserved lane preserves TCTRL
+        assert int(command("readw 0x40084118").split()[1], 16) == 7
         command("writel 0x40084108 1")
         command("writel 0xe000e10c 0x04000000")
         command("clock_step 500")
@@ -455,7 +465,9 @@ def check_flexram_boundaries(qemu, image):
         command("clock_step 1000")
         assert int(command("readl 0x4008411c").split()[1], 16) == 1
         assert int(command("readl 0xe000e20c").split()[1], 16) & 0x04000000
-        command("writel 0x4008411c 1")
+        command("writeb 0x4008411d 0xff")  # upper byte must not clear flag
+        assert int(command("readb 0x4008411c").split()[1], 16) == 1
+        command("writeb 0x4008411c 1")
         command("writel 0xe000e28c 0x04000000")
         assert not int(command("readl 0xe000e20c").split()[1], 16) & 0x04000000
         command(f"writel 0x400fc06c {gate & ~0x3000:#x}")

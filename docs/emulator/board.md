@@ -156,9 +156,11 @@ reconstructed MCR, channel 0/1 load and control fields. The stopped counter
 values were not captured and start at `0xffffffff` as an approximation.
 The L6max PIT uses modeled PERCLK selection and division, its CCM gate and
 MCR disable, four chained downcounters, status and shared interrupt 122. Its
-clock transitions use virtual time; hardware phase and transition latency,
-debug freeze, DMA triggers, register-access gating and non-word accesses are not modeled. Intervening
-boot writes and physical handoff values have not been captured.
+clock transitions use virtual time; aligned byte, halfword and word accesses
+share the modeled register state. Hardware phase and transition latency, debug
+freeze, DMA triggers, register-access gating and misaligned register accesses
+are not modeled. Intervening boot writes and physical handoff values have not
+been captured.
 ROM image-transfer cleanup also selects the SNVS master-key route and sets
 the GPR3 key selector. The board stores those two bit changes, assuming reset
 defaults for initially unknown surrounding fields; key routing, register locks

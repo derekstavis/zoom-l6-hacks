@@ -5,7 +5,7 @@
       "format_version": 1,
       "loader_abi": 1,
       "room": "stock",
-      "sha256": "eae9be0960c6017e4d544834271ad27446ed636fa33db70a20f76b67e67c0671",
+      "sha256": "c3444412add257075cf4a11f2db759f9267fe185eb97215feec357aeeafe5b5c",
       "spring": "plateau"
     },
     {
@@ -13,7 +13,7 @@
       "format_version": 1,
       "loader_abi": 1,
       "room": "stock",
-      "sha256": "af67eb78ab1d991ecc3d7fb73323d7c2f216eb0a86b54cb843ecae8667269de1",
+      "sha256": "29b77070af4adba643834464c06592d4fb6866fa42dfe789b9ddb857592ade3a",
       "spring": "velvet"
     },
     {
@@ -21,7 +21,7 @@
       "format_version": 1,
       "loader_abi": 1,
       "room": "plateau",
-      "sha256": "0ddca505e3e771b59edc6fe34f962c888aedb61b40be499f25c62e3bfa7df427",
+      "sha256": "887526849b7fdf60d08d94786c6303ac1b667ec007d14327f6c6041a0356b073",
       "spring": "stock"
     },
     {
@@ -29,7 +29,7 @@
       "format_version": 1,
       "loader_abi": 1,
       "room": "plateau",
-      "sha256": "540b529d039ae0a824d236b7a5a58be0a162b6a961ed05ef771bc0285eaf6988",
+      "sha256": "50ec298ee121556a8c4711d79dbc4c000aa8e84621cf285b8a9b818aaaa426d2",
       "spring": "plateau"
     },
     {
@@ -37,7 +37,7 @@
       "format_version": 1,
       "loader_abi": 1,
       "room": "plateau",
-      "sha256": "4e2b5e297b2b28e96b02860d933e94a4f556db131aed3b3aaadf1de1653a2a44",
+      "sha256": "8cfb098181020251ed20f67ecb30bb6d6bbabca10b9f9c2e9a2c73debe7d0f80",
       "spring": "velvet"
     },
     {
@@ -45,7 +45,7 @@
       "format_version": 1,
       "loader_abi": 1,
       "room": "velvet",
-      "sha256": "c4ce9c88ca90923a7aa12ceca123f4ace02bbbdb319c7cca9c4abab992b74ab1",
+      "sha256": "96231d12d10755ee9a8dfcb14cd8316698cf7bcb1c07fc8ea4f6df6b20e0f61e",
       "spring": "stock"
     },
     {
@@ -53,7 +53,7 @@
       "format_version": 1,
       "loader_abi": 1,
       "room": "velvet",
-      "sha256": "8192666d4d262cbd3809e09f08603c91a7b8773f9929fb9a9e437b08e3859477",
+      "sha256": "b043f4db71206968c4df305b1f40a802317022a3cd5bc74110143a725c51f0ff",
       "spring": "plateau"
     },
     {
@@ -61,11 +61,11 @@
       "format_version": 1,
       "loader_abi": 1,
       "room": "velvet",
-      "sha256": "51356455873913d3a5a6b185209a3104a091ccc6695e539ea6b456416ae74794",
+      "sha256": "c7efad15a41c5219d3a0c8434d5d43948662b39efbe177401d6767fbbd18d7fb",
       "spring": "velvet"
     }
   ],
-  "generator_source_sha256": "248a2ca2d0c2b4f020896713ad58361bafc9523a608dd96696b26eacaeaa23ae",
+  "generator_source_sha256": "0d5da7569225980d26f6eb23553b7f0ed60cd13b1f2d4772518eeea27043984a",
   "l6_source_firmware_sha256": "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799",
   "modules": [
     {
@@ -74,7 +74,7 @@
       "id": "knob-dialog",
       "loader_abi": 1,
       "model": "L6max",
-      "sha256": "7449e58304ad4b4617966369702255dc11e005a2b1be01a8a6320d24c4bde578"
+      "sha256": "5467d99c8b690ef6799943300c62d43ad5c1d8d5441eb4dfcfe984fed60efd93"
     },
     {
       "file": "L6/midi-sync-1.0.0.bin",
@@ -82,7 +82,7 @@
       "id": "midi-sync",
       "loader_abi": 1,
       "model": "L6",
-      "sha256": "a3813cc6ba596f9043c304b7ad75aa4ed2ce232549cf39721ab975f8ef35d7da"
+      "sha256": "18e830981b60e0f398da808185a82fdd674755196490e494e09853296f718a11"
     },
     {
       "file": "L6max/midi-sync-1.0.0.bin",
@@ -90,7 +90,7 @@
       "id": "midi-sync",
       "loader_abi": 1,
       "model": "L6max",
-      "sha256": "8b05dac6e7cb6cbee516aaa0576ee0d89a42b44fa2397289275fae082c81f412"
+      "sha256": "422c458db83b05b20afea49e457e07da2dc22a45168fca1e4c9d17c088294a6c"
     }
   ],
   "source_firmware_sha256": "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461"

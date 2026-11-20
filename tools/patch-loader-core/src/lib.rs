@@ -48,8 +48,6 @@ pub mod registry {
     pub const MODULE_LEN_OFFSET: u32 = 164;
     /// Number of site records after the header, from the loader's catalog.
     pub const SITE_COUNT_OFFSET: u32 = 168;
-    /// The QEMU-only module arena's next free address.
-    pub const ARENA_NEXT_OFFSET: u32 = 172;
     /// First site record. Site `n`'s record is at `SITES_OFFSET + n * 16`.
     pub const SITES_OFFSET: u32 = 0x100;
     pub const SITE_RECORD_LEN: u32 = 16;
@@ -60,7 +58,7 @@ pub mod registry {
     const _: () = assert!(
         MODULE_TABLE_OFFSET + MAX_MODULES * MODULE_TABLE_ENTRY_LEN <= MODULE_PTR_OFFSET
             && MODULE_LEN_OFFSET < SITE_COUNT_OFFSET
-            && ARENA_NEXT_OFFSET + 4 <= SITES_OFFSET
+            && SITE_COUNT_OFFSET + 4 <= SITES_OFFSET
             && SITE_RECORD_LEN as usize == core::mem::size_of::<super::dynamic::SiteChain>()
     );
 

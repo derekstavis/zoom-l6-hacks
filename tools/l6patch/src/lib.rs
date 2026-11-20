@@ -5,8 +5,8 @@ pub mod prebuilt;
 mod sd_bundle;
 use firmware_patch_compile::{
     FunctionHookSiteMetadata, HookRegistration, compile, compile_l6_patch_loader, compile_sd,
-    compile_sd_relocatable_composed, compile_with_continuations, compile_with_continuations_cfg,
-    decode_thumb_bl_target, function_hook_sites, hook_registrations, symbol,
+    compile_sd_relocatable_composed, compile_with_continuations, decode_thumb_bl_target,
+    function_hook_sites, hook_registrations, symbol,
 };
 use firmware_patch_core::{
     FirmwareModel, HookEdit, L6_MAIN_BASE, L6_SLOT_END, PatchEdits, apply_patch_with_map, branch,
@@ -19,7 +19,7 @@ use std::{
 };
 const USAGE: &str = "\
 Usage:
-  l6patch firmware STOCK_DIR OUTPUT_DIR [--patch NAME]... [--version DIGITS] [--loader [--qemu-module-arena]]
+  l6patch firmware STOCK_DIR OUTPUT_DIR [--patch NAME]... [--version DIGITS] [--loader]
   l6patch module STOCK_DIR OUTPUT_DIR [--patch NAME]... [--effect SLOT=ID]...
   l6patch catalog [--model l6|l6max] [--format text|json]
   l6patch prebuilt [--config PATH | --l6max DIR --l6 DIR] [--check]
@@ -47,7 +47,6 @@ struct Options {
     version: Option<String>,
     experimental_sd_bundle: bool,
     experimental_patch_loader: bool,
-    experimental_qemu_module_arena: bool,
 }
 /// The original flag form, `l6patch STOCK_DIR OUTPUT_DIR [--experimental-*]`.
 fn parse_legacy(
@@ -61,7 +60,6 @@ fn parse_legacy(
     let mut version = None;
     let mut experimental_sd_bundle = false;
     let mut experimental_patch_loader = false;
-    let mut experimental_qemu_module_arena = false;
     while let Some(flag) = args.next() {
         if flag == "--experimental-patch-bundle" {
             experimental_sd_bundle = true;
@@ -69,10 +67,6 @@ fn parse_legacy(
         }
         if flag == "--experimental-patch-loader" {
             experimental_patch_loader = true;
-            continue;
-        }
-        if flag == "--experimental-qemu-module-arena" {
-            experimental_qemu_module_arena = true;
             continue;
         }
         let value = args.next().ok_or(USAGE)?;
@@ -111,9 +105,6 @@ fn parse_legacy(
     if !effect_replacements.is_empty() && !experimental_sd_bundle {
         return Err("effect replacements are available only in an SD patch bundle".into());
     }
-    if experimental_qemu_module_arena && !experimental_patch_loader {
-        return Err("the QEMU module arena requires --experimental-patch-loader".into());
-    }
     Ok(Options {
         source: PathBuf::from(source),
         output: PathBuf::from(output),
@@ -123,7 +114,6 @@ fn parse_legacy(
         version,
         experimental_sd_bundle,
         experimental_patch_loader,
-        experimental_qemu_module_arena,
     })
 }
 
@@ -329,14 +319,10 @@ pub struct BuildRequest {
     pub effect_replacements: Vec<(String, String)>,
     pub version: Option<String>,
     pub mode: BuildMode,
-    pub experimental_qemu_module_arena: bool,
 }
 
 /// Build firmware or SD patch artifacts directly, without spawning the CLI.
 pub fn build(request: BuildRequest) -> Result<(), Box<dyn std::error::Error>> {
-    if request.experimental_qemu_module_arena && request.mode != BuildMode::PatchLoader {
-        return Err("the QEMU module arena requires patch-loader mode".into());
-    }
     if !request.effect_replacements.is_empty() && request.mode != BuildMode::SdBundle {
         return Err("effect replacements are available only in an SD patch bundle".into());
     }
@@ -356,7 +342,6 @@ pub fn build(request: BuildRequest) -> Result<(), Box<dyn std::error::Error>> {
         version: request.version,
         experimental_sd_bundle: request.mode == BuildMode::SdBundle,
         experimental_patch_loader: request.mode == BuildMode::PatchLoader,
-        experimental_qemu_module_arena: request.experimental_qemu_module_arena,
     })
 }
 
@@ -418,7 +403,6 @@ fn parse_build(
         } else {
             BuildMode::Firmware
         },
-        experimental_qemu_module_arena: false,
     };
     while let Some(flag) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{flag} needs a value"));
@@ -436,7 +420,6 @@ fn parse_build(
             }
             "--version" if !module => request.version = Some(value()?),
             "--loader" if !module => request.mode = BuildMode::PatchLoader,
-            "--qemu-module-arena" if !module => request.experimental_qemu_module_arena = true,
             _ => return Err(format!("unknown {command} option {flag}\n\n{USAGE}").into()),
         }
     }
@@ -536,9 +519,6 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         l6fw::Model::L6 => (FirmwareModel::L6, L6_MAIN_BASE, L6_SLOT_END),
         l6fw::Model::L6max => (FirmwareModel::L6max, 0x80000000, 0x801a2ff8),
     };
-    if options.experimental_qemu_module_arena && model != l6fw::Model::L6max {
-        return Err("the experimental QEMU module arena is L6max-only".into());
-    }
     let (module_base, module_end) = match model {
         l6fw::Model::L6 => (L6_SD_MODULE_BASE, L6_SD_MODULE_END),
         l6fw::Model::L6max => (SD_MODULE_BASE, SD_MODULE_END),
@@ -795,19 +775,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         let (payload, symbols) = if model == l6fw::Model::L6 {
             compile_l6_patch_loader(&source, &root, &output, "patch-loader", end, &[])?
         } else {
-            if options.experimental_qemu_module_arena {
-                compile_with_continuations_cfg(
-                    &source,
-                    &root,
-                    &[],
-                    &output,
-                    "patch-loader",
-                    end,
-                    &["sd_qemu_module_arena"],
-                )?
-            } else {
-                compile_with_continuations(&source, &root, &[], &output, "patch-loader", end)?
-            }
+            compile_with_continuations(&source, &root, &[], &output, "patch-loader", end)?
         };
         static_identities.push(symbol(&symbols, firmware_patch_compile::PATCH_INFO_SYMBOL)?);
         let catalog = function_hook_sites(&output.join("patch-loader.payload.elf"))?;

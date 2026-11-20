@@ -282,23 +282,18 @@ pub fn compile_with_continuations(
     name: &str,
     base: u32,
 ) -> Result<(Vec<u8>, String), Box<dyn std::error::Error>> {
-    compile_with_continuations_cfg(source, root, continuation_roots, output, name, base, &[])
-}
-
-/// Compile with named additional Rust cfgs. Used for emulator-only loader
-/// experiments that must not be enabled in normal firmware builds.
-pub fn compile_with_continuations_cfg(
-    source: &Path,
-    root: &Path,
-    continuation_roots: &[&Path],
-    output: &Path,
-    name: &str,
-    base: u32,
-    extra_cfgs: &[&str],
-) -> Result<(Vec<u8>, String), Box<dyn std::error::Error>> {
     let _ = continuation_roots;
     compile_inner(
-        source, root, output, name, base, None, false, true, true, extra_cfgs,
+        source,
+        root,
+        output,
+        name,
+        base,
+        None,
+        false,
+        true,
+        true,
+        &[],
     )
 }
 
@@ -529,72 +524,26 @@ pub fn compile_sd_relocatable_composed(
         source_text.push_str(&format!("{stock_type} => {action},\n"));
     }
     source_text.push_str("_ => 0, } }\n");
-    source_text.push_str("pub fn parameter_count(slot: u32) -> usize { match slot {\n");
-    for (slot, _, module_name, _, controls, _) in &selected_effects {
-        if controls
-            .iter()
-            .any(|control| control == "encoder-parameters")
-        {
-            let stock_type = if *slot == "room" { 1 } else { 2 };
-            source_text.push_str(&format!(
-                "{stock_type} => crate::{module_name}::PARAMETER_COUNT,\n"
-            ));
+    // Encoder editing is table-driven by efx-loader's shared controls; an
+    // effect only exposes its `CONTROLS`. Only efx-loader asks for them.
+    let has_router = roots
+        .iter()
+        .any(|(name, _)| *name == firmware_patch_core::EFFECT_REPLACEMENT_ROUTER_PACKAGE);
+    if has_router {
+        source_text.push_str("pub fn controls(slot: u32) -> Option<&'static crate::efx_loader::controls::Effect> { match slot {\n");
+        for (slot, _, module_name, _, controls, _) in &selected_effects {
+            if controls
+                .iter()
+                .any(|control| control == "encoder-parameters")
+            {
+                let stock_type = if *slot == "room" { 1 } else { 2 };
+                source_text.push_str(&format!(
+                    "{stock_type} => Some(&crate::{module_name}::CONTROLS),\n"
+                ));
+            }
         }
+        source_text.push_str("_ => None, } }\n");
     }
-    source_text.push_str("_ => 0, } }\n");
-    source_text.push_str("pub unsafe fn parameter_position(slot: u32, state: *mut u8, encoder: usize) -> Option<u32> { match slot {\n");
-    for (slot, _, module_name, _, controls, _) in &selected_effects {
-        if controls
-            .iter()
-            .any(|control| control == "encoder-parameters")
-        {
-            let stock_type = if *slot == "room" { 1 } else { 2 };
-            source_text.push_str(&format!(
-                "{stock_type} => unsafe {{ crate::{module_name}::parameter_ring_position(state, encoder) }},\n"
-            ));
-        }
-    }
-    source_text.push_str("_ => None, } }\n");
-    source_text.push_str("pub unsafe fn preview_parameter_position(slot: u32, state: *mut u8, encoder: usize, delta: i32) -> Option<u32> { match slot {\n");
-    for (slot, _, module_name, _, controls, _) in &selected_effects {
-        if controls
-            .iter()
-            .any(|control| control == "encoder-parameters")
-        {
-            let stock_type = if *slot == "room" { 1 } else { 2 };
-            source_text.push_str(&format!(
-                "{stock_type} => unsafe {{ crate::{module_name}::preview_parameter_ring_position(state, encoder, delta) }},\n"
-            ));
-        }
-    }
-    source_text.push_str("_ => None, } }\n");
-    source_text.push_str("pub unsafe fn edit_parameter(slot: u32, state: *mut u8, encoder: usize, delta: i32) -> Option<u32> { match slot {\n");
-    for (slot, _, module_name, _, controls, _) in &selected_effects {
-        if controls
-            .iter()
-            .any(|control| control == "encoder-parameters")
-        {
-            let stock_type = if *slot == "room" { 1 } else { 2 };
-            source_text.push_str(&format!(
-                "{stock_type} => unsafe {{ crate::{module_name}::edit_parameter(state, encoder, delta) }},\n"
-            ));
-        }
-    }
-    source_text.push_str("_ => None, } }\n");
-    source_text
-        .push_str("pub unsafe fn show_editor_state(slot: u32, enabled: bool) { match slot {\n");
-    for (slot, _, module_name, _, controls, _) in &selected_effects {
-        if controls
-            .iter()
-            .any(|control| control == "encoder-parameters")
-        {
-            let stock_type = if *slot == "room" { 1 } else { 2 };
-            source_text.push_str(&format!(
-                "{stock_type} => unsafe {{ crate::{module_name}::show_editor_state(enabled) }},\n"
-            ));
-        }
-    }
-    source_text.push_str("_ => {}, } }\n");
     source_text.push_str("pub unsafe fn tap_tempo(slot: u32, state: *mut u8) { match slot {\n");
     for (slot, _, module_name, _, controls, _) in &selected_effects {
         if controls.iter().any(|control| control == "tap-tempo") {

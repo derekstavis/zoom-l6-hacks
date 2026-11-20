@@ -147,7 +147,6 @@ pub(crate) fn l6patch_build(
         effect_replacements,
         version,
         mode,
-        experimental_qemu_module_arena,
     } = &request;
     let key = json!({
         "package": cache.file_hash(package)?,
@@ -155,7 +154,6 @@ pub(crate) fn l6patch_build(
         "patches": patches,
         "effect_replacements": effect_replacements,
         "version": version,
-        "experimental_qemu_module_arena": experimental_qemu_module_arena,
     })
     .to_string();
     let built = cache.directory("l6patch", &key, |out| {
@@ -225,14 +223,11 @@ pub(crate) fn prepare_sd_patch(
         &unpacked(cache, &package)?,
         &dir.join(layout::SD_STOCK_FIRMWARE),
     )?;
-    let has_effect_replacements = !fixture.effect_replacements.is_empty();
     let build = |output: &Path,
                  mode: l6patch::BuildMode,
                  selected: &[String],
                  effect_replacements: &[(String, String)]|
      -> Result<(), String> {
-        let experimental_qemu_module_arena =
-            mode == l6patch::BuildMode::PatchLoader && has_effect_replacements;
         let result = l6patch_build(
             cache,
             &package,
@@ -244,7 +239,6 @@ pub(crate) fn prepare_sd_patch(
                 effect_replacements: effect_replacements.to_vec(),
                 version: None,
                 mode,
-                experimental_qemu_module_arena,
             },
         );
         let name = if mode == l6patch::BuildMode::PatchLoader {
@@ -344,7 +338,6 @@ pub(crate) fn fixture_options(
                     effect_replacements: Vec::new(),
                     version: None,
                     mode: l6patch::BuildMode::Firmware,
-                    experimental_qemu_module_arena: false,
                 },
             )?;
             let report: Value = serde_json::from_slice(

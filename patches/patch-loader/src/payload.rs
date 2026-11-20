@@ -29,10 +29,6 @@ const REGISTRY_STOCK: u32 = core_loader::registry::L6_POINTER_STOCK;
 // Cap a single code + zero-filled state allocation at 384 KiB. Larger modules
 // are rejected before allocating from the shared FreeRTOS heap.
 const MODULE_CAPACITY: usize = 0x60000;
-#[cfg(sd_qemu_module_arena)]
-const MODULE_ARENA_BASE: usize = 0x83e0_0000;
-#[cfg(sd_qemu_module_arena)]
-const MODULE_ARENA_END: usize = MODULE_ARENA_BASE + 0x80000;
 /// Dynamic dispatch sites in this loader's hook catalog. The registry holds
 /// one record per site, so no set of SD modules can outgrow it.
 const SITES: usize = {
@@ -81,10 +77,6 @@ fn dynamic_site(index: usize) -> Option<&'static patch_api::FunctionHookSite> {
         .iter()
         .filter(|site| site.dynamic_dispatch)
         .nth(index)
-}
-#[cfg(sd_qemu_module_arena)]
-fn module_arena_next_word() -> usize {
-    registry_word(core_loader::registry::ARENA_NEXT_OFFSET)
 }
 #[cfg(not(sd_l6))]
 const SHA: [u8; 32] = [
@@ -148,11 +140,6 @@ unsafe fn ensure_registry() -> bool {
             (base + core_loader::registry::SITE_COUNT_OFFSET as usize) as *mut u32,
             SITES as u32,
         );
-        #[cfg(sd_qemu_module_arena)]
-        ptr::write_volatile(
-            (base + core_loader::registry::ARENA_NEXT_OFFSET as usize) as *mut u32,
-            MODULE_ARENA_BASE as u32,
-        );
         ptr::write_volatile(base as *mut u32, core_loader::registry::MAGIC);
         let primask: u32;
         asm!("dmb", "mrs {0}, PRIMASK", "cpsid i", out(reg) primask, options(nostack, preserves_flags));
@@ -208,39 +195,10 @@ unsafe fn close(handle: u32) {
     }
 }
 unsafe fn alloc(size: usize) -> *mut u8 {
-    #[cfg(sd_qemu_module_arena)]
-    {
-        let next = unsafe { ptr::read_volatile(module_arena_next_word() as *const u32) as usize };
-        let Some(start) = next.checked_add(7).map(|address| address & !7) else {
-            return ptr::null_mut();
-        };
-        let Some(end) = start.checked_add(size) else {
-            return ptr::null_mut();
-        };
-        if start < MODULE_ARENA_BASE || end > MODULE_ARENA_END {
-            return ptr::null_mut();
-        }
-        unsafe { ptr::write_volatile(module_arena_next_word() as *mut u32, end as u32) };
-        start as *mut u8
-    }
-    #[cfg(not(sd_qemu_module_arena))]
-    {
-        unsafe { pvPortMalloc(size) }
-    }
+    unsafe { pvPortMalloc(size) }
 }
 unsafe fn free(p: *mut u8) {
-    #[cfg(sd_qemu_module_arena)]
-    {
-        let address = p as usize;
-        let current = unsafe { ptr::read_volatile(module_arena_next_word() as *const u32) as usize };
-        if (MODULE_ARENA_BASE..=current).contains(&address) {
-            unsafe { ptr::write_volatile(module_arena_next_word() as *mut u32, address as u32) };
-        }
-    }
-    #[cfg(not(sd_qemu_module_arena))]
-    unsafe {
-        vPortFree(p);
-    }
+    unsafe { vPortFree(p) }
 }
 
 #[repr(align(4))]

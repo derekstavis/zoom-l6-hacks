@@ -47,7 +47,7 @@ def check_uart_receive_clock(qemu, image):
         assert reply[0] == "OK", reply
         return int(reply[1], 16) if len(reply) > 1 else None
 
-    def receive(base, expected):
+    def receive(base, expected, width="readl"):
         deadline = time.monotonic() + 5
         while not command(f"readl {base + 0x14:#x}") & (1 << 21):
             if time.monotonic() >= deadline:
@@ -55,7 +55,7 @@ def check_uart_receive_clock(qemu, image):
             time.sleep(0.01)
         assert command(f"readb {base + 0x16:#x}") & 0xe0 == 0xe0
         assert command(f"readw {base + 0x16:#x}") & 0xe0 == 0xe0
-        assert command(f"readl {base + 0x1c:#x}") == expected
+        assert command(f"{width} {base + 0x1c:#x}") == expected
         assert command(f"readb {base + 0x16:#x}") & 0xe0 == 0xc0
 
     def wait_discarded():
@@ -85,7 +85,7 @@ def check_uart_receive_clock(qemu, image):
         assert not command("readl 0x4018c014") & (1 << 21)
         command(f"writel 0x400fc068 {gate | 0x3000:#x}")
         host.sendall(b"\x66")
-        receive(0x4018c000, 0x66)
+        receive(0x4018c000, 0x66, "readb")
         command(f"writel 0x400fc024 {divider & ~0x40:#x}")  # root = PLL3
         command("writel 0x400d8018 0x2000")  # gate PLL3 output
         host.sendall(b"\x77")
@@ -102,7 +102,11 @@ def check_uart_receive_clock(qemu, image):
         assert not command("readl 0x40184014") & (1 << 21)
         command(f"writel 0x400fc07c {panel_gate | 0x03000000:#x}")
         panel_host.sendall(b"\x22")
-        receive(0x40184000, 0x22)
+        receive(0x40184000, 0x22, "readw")
+        command("writeb 0x4018c01c 0xa5")
+        assert select.select([host], [], [], 5)[0] and host.recv(1) == b"\xa5"
+        command("writew 0x4018401c 0x5a")
+        assert select.select([panel_host], [], [], 5)[0] and panel_host.recv(1) == b"\x5a"
         print(f"{image}: LPUART1/3 receive clock gating passed")
     finally:
         host.close()

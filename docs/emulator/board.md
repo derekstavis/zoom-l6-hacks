@@ -105,6 +105,8 @@ MIDI UART receive paths discard incoming wire bytes while their instance gate,
 IPG clock or selected baud-clock source is stopped. UART transmit gating,
 serial timing and register access while gated remain approximations. Aligned
 byte and halfword reads of the modeled UART status share the word-read state.
+Low-lane byte and halfword DATA accesses use the same modeled 8-bit stream as
+word accesses; wider character and FIFO behavior remains incomplete.
 The
 reference manual specifies SAI reset on system reset; no SAI1 setup was found
 in direct-address scans of the recovered ROM and first-stage boot image, though

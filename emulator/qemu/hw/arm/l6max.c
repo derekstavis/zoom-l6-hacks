@@ -2997,7 +2997,8 @@ not_flexram_read:
         return size == 4 ? status :
                (status >> ((offset & 3) * 8)) & ((1u << (size * 8)) - 1);
     }
-    if (!s->panel && offset == l6_midi_uart_base(s) + 0x1c && size == 4) {
+    if (!s->panel && offset == l6_midi_uart_base(s) + 0x1c &&
+        (size == 4 || (s->profile == &L6MAX_PROFILE && (size == 1 || size == 2)))) {
         uint8_t byte = s->main_midi_rx_byte;
         qemu_log_mask(LOG_UNIMP,
                       "l6 main LPUART%u (MIDI jacks) DATA read %02x\n",
@@ -3036,7 +3037,8 @@ not_flexram_read:
                       (unsigned long)offset, value);
         return value;
     }
-    if (!s->panel && offset == l6_panel_uart_base(s) + 0x1c && size == 4) {
+    if (!s->panel && offset == l6_panel_uart_base(s) + 0x1c &&
+        (size == 4 || (s->profile == &L6MAX_PROFILE && (size == 1 || size == 2)))) {
         if (s->main_rom_mode) {
             if (s->rom_reply_read < s->rom_reply_visible) {
                 uint8_t byte = s->rom_reply[s->rom_reply_read++];
@@ -4673,7 +4675,8 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
                          !!(word & (1u << 21)));
         }
     }
-    if (!s->panel && offset == l6_panel_uart_base(s) + 0x1c && size == 4) {
+    if (!s->panel && offset == l6_panel_uart_base(s) + 0x1c &&
+        (size == 4 || (s->profile == &L6MAX_PROFILE && (size == 1 || size == 2)))) {
         uint8_t byte = value;
         s->main_tx_count++;
         vaddr pc = current_cpu && CPU_GET_CLASS(current_cpu)->get_pc ?
@@ -4734,7 +4737,8 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
                       "l6 main LPUART (other) DATA write +%05lx = %02x\n",
                       (unsigned long)offset, (uint8_t)value);
     }
-    if (!s->panel && offset == l6_midi_uart_base(s) + 0x1c && size == 4) {
+    if (!s->panel && offset == l6_midi_uart_base(s) + 0x1c &&
+        (size == 4 || (s->profile == &L6MAX_PROFILE && (size == 1 || size == 2)))) {
         /* The selected MIDI UART's TX: forward bytes to the MIDI OUT jack
          * inherited socket like L6_USB_FD, one byte at a time. */
         uint8_t byte = value;

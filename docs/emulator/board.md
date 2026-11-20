@@ -320,7 +320,9 @@ starts, the boot-memory case checks MPU_CTRL `5`, selected region 10, its RBAR
 and RASR, and both cache-enable bits against the recovered MAIN initialization.
 A separate guest test applies MAIN's region attributes to test RAM and verifies
 unprivileged reads/writes, privileged background access, and an unprivileged
-background fault. Those checks do not measure hardware region contents, simulate
+background fault. Another synthetic region permits data reads but denies
+instruction fetch; a guest test checks the resulting execute-never fault.
+Those checks do not measure hardware region contents, simulate
 cache data, or verify every MPU attribute.
 
 ## QEMU device-model reuse

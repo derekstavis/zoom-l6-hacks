@@ -334,6 +334,32 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
                             "Me000ed98,4:0a000000", "Me000eda0,4:00000000"):
                 assert packet(request) == "OK", request
             print(f"{image}: guest MAIN MPU permissions and background passed")
+            if mpu_test == "execute":
+                # An executable background region remains available for the
+                # HardFault handler, while region 0 denies instruction fetch.
+                for request in (
+                    "M801f2000,4:013000bf",  # adds r0,#1; nop
+                    "M801f0000,2:0868",      # ldr r0,[r1]
+                    "M801f0100,2:fee7",      # b . (HardFault handler)
+                    "M8000000c,4:01011f80",  # HardFault vector
+                    "Me000ed98,4:00000000",  # region 0
+                    "Me000ed9c,4:00201f80",  # base 0x801f2000
+                    "Me000eda0,4:09000013",  # 32 bytes, full access, XN
+                    "Me000ed28,4:ffffffff",  # clear prior fault status
+                    "Me000ed94,4:05000000",  # MPU + privileged background
+                    "P1=00201f80", "Pf=00001f80",
+                ):
+                    assert packet(request) == "OK", request
+                assert packet("s").startswith("T05")
+                assert registers()[0] == 0xbf003001  # data read is allowed
+                for request in ("P0=00000000", "Pf=00201f80"):
+                    assert packet(request) == "OK", request
+                assert packet("s").startswith("T05")
+                regs = registers()
+                assert regs[15] == 0x801f0100 and regs[0] == 0, regs
+                assert int.from_bytes(bytes.fromhex(packet("me000ed28,4")), "little") & 1
+                print(f"{image}: guest MPU execute-never fault passed")
+                return
             # A protected data region must affect guest accesses after MAIN
             # enables the MPU. Privileged background access keeps code executable.
             protected = 0x20000000 if mpu_test == "dtcm" else 0x801f2000
@@ -1758,6 +1784,7 @@ def main():
     check_main_stack_entry(qemu, stock, mpu_test=True)
     check_main_stack_entry(qemu, stock, mpu_test="privilege")
     check_main_stack_entry(qemu, stock, mpu_test="dtcm")
+    check_main_stack_entry(qemu, stock, mpu_test="execute")
     check_main_stack_entry(qemu, stock)
     check_main_stack_entry(qemu, stock, 0x20020000, 0x10)
     check_main_stack_entry(qemu, stock, 0x202d8000, 0x20)

@@ -410,7 +410,10 @@ both results and identify it as flaky.
 
 ## Power, storage, and USB
 
-Use the `lifecycle` or `devices` suite and the relevant individual cases.
+Use the `lifecycle` or `devices` suite and the relevant individual cases. The
+focused `sd-warm-reset` case checks SD patch loading, a reset with the card
+removed, and on L6max a second reset after reinsertion. It is not registered
+in a suite; select it explicitly.
 
 ## Editor
 

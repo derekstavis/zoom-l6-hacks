@@ -5905,6 +5905,10 @@ static void l6_main_reset(MachineState *machine, ResetType type)
     qemu_devices_reset(type);
     if (type != RESET_TYPE_SNAPSHOT_LOAD && s->profile == &L6MAX_PROFILE) {
         l6max_seed_boot_handoff(s);
+        /* The 1.00 transfer routine loads CCR's address into r0 and the
+         * image reset-vector word into r1 before BLX, on both cache paths. */
+        s->armv7m.cpu->env.regs[0] = 0xe000ed14u;
+        s->armv7m.cpu->env.regs[1] = ldl_le_p(s->nor_flash + 0x50004);
     }
 }
 

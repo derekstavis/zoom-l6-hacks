@@ -51,15 +51,22 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
     # without accessing that inherited stack. Run those instructions with a
     # deliberately different MSP to verify this revision-specific property.
     host, guest = socket.socketpair()
+    qmp_host, qmp_guest = socket.socketpair()
     host.settimeout(10)
+    qmp_host.settimeout(10)
     process = subprocess.Popen(
         [qemu, "-M", "l6max-main", "-kernel", image, "-S", "-display", "none",
          "-chardev", f"socket,id=entry-gdb,fd={guest.fileno()}",
-         "-gdb", "chardev:entry-gdb"],
+         "-gdb", "chardev:entry-gdb",
+         "-chardev", f"socket,id=entry-qmp,fd={qmp_guest.fileno()}",
+         "-mon", "chardev=entry-qmp,mode=control"],
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL, pass_fds=(guest.fileno(),), env=isolated_env(),
+        stderr=subprocess.DEVNULL, pass_fds=(guest.fileno(), qmp_guest.fileno()),
+        env=isolated_env(),
     )
     guest.close()
+    qmp_guest.close()
+    qmp = qmp_host.makefile("rwb", buffering=0)
 
     def packet(request):
         body = request.encode("ascii")
@@ -97,6 +104,22 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
         packet("?")
         regs = registers()
         assert regs[15] == 0x80000414, hex(regs[15])
+        assert regs[0] == 0xe000ed14, hex(regs[0])
+        assert regs[1] == 0x80000415, hex(regs[1])
+        assert "QMP" in json.loads(qmp.readline())
+        for name in ("qmp_capabilities", "system_reset"):
+            if name == "system_reset":
+                assert packet("P0=00000000") == "OK"
+                assert packet("P1=00000000") == "OK"
+            qmp.write(json.dumps({"execute": name}).encode() + b"\n")
+            while True:
+                reply = json.loads(qmp.readline())
+                if "error" in reply:
+                    raise AssertionError(reply["error"])
+                if "return" in reply:
+                    break
+        regs = registers()
+        assert regs[0] == 0xe000ed14 and regs[1] == 0x80000415, regs[:2]
         main_msp = regs[13]
         inherited_msp = 0xdeadbee8  # Deliberately unmapped and aligned.
         assert main_msp != inherited_msp
@@ -152,6 +175,8 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
         print(f"{image}: unallocated FlexRAM at {invalid:#x} produces " +
               ("a zero read" if error_bit == 0x20 else "a guest bus fault"))
     finally:
+        qmp.close()
+        qmp_host.close()
         host.close()
         process.terminate()
         process.wait(timeout=5)

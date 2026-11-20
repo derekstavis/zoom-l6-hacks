@@ -77,11 +77,12 @@ configuration. TCG instruction execution is not cycle-accurate and does not stop
 with this clock; other system-bus consumers are not dynamically retimed.
 The handoff also stores the bootloader's RC-enable/crystal-select bits, the
 crystal-ready status that its successful path waits for, and DCDC target
-field. LOWPWR_CTRL SET/CLR/TOG aliases share writable state and preserve the
-read-only crystal-ready status. DCDC ready is read-only and approximated as immediately settled.
+field. LOWPWR_CTRL SET/CLR/TOG aliases share writable state. Crystal-ready
+status follows modeled power and detector enable immediately; physical settling
+is unmeasured. DCDC ready is read-only and approximated as immediately settled.
 The crystal detector's MISC0 control and aliases are stored, with the
-bootloader's final detector-disable write applied; detector and bandgap status
-transitions are not modeled.
+bootloader's final detector-disable write applied; bandgap status transitions
+are not modeled.
 The selected crystal or RC source stops the modeled internal clocks when it
 is disabled; the enabled RC source is approximated as 24 MHz. Analog oscillator
 and voltage transitions are not simulated. Internal-source PLL lock drops when

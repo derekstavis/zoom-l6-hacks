@@ -2424,8 +2424,19 @@ static uint64_t l6_mmio_read(void *opaque, hwaddr offset, unsigned size)
         ((offset & ~(hwaddr)0xf) == 0x0d8150 ||
          (offset & ~(hwaddr)0xf) == 0x0d82c0 ||
          (offset & ~(hwaddr)0xf) == 0x0d8270)) {
-        return GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
-            GUINT_TO_POINTER(((offset & ~(hwaddr)0xf) >> 2) + 1)));
+        hwaddr base = offset & ~(hwaddr)0xf;
+        uint32_t control = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+            GUINT_TO_POINTER((base >> 2) + 1)));
+        uint32_t misc0 = GPOINTER_TO_UINT(g_hash_table_lookup(s->registers,
+            GUINT_TO_POINTER((0x0d8150 >> 2) + 1)));
+        bool crystal_on = !(misc0 & 0x40000000u);
+        if (base == 0x0d8270) {
+            control = (control & ~0x10000u) | (crystal_on ? 0x10000u : 0);
+        } else if (base == 0x0d8150) {
+            control = (control & ~0x8000u) |
+                      (crystal_on && (misc0 & 0x10000u) ? 0x8000u : 0);
+        }
+        return control;
     }
     hwaddr pfd_base = offset & ~(hwaddr)0xf;
     if (!s->panel && s->profile == &L6MAX_PROFILE && size == 4 &&

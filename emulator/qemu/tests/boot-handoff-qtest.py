@@ -259,7 +259,7 @@ def check_flexram_boundaries(qemu, image):
         # and bandgap status bits cannot be set by software.
         assert int(command("readl 0x400d8150").split()[1], 16) == 0x04000000
         command("writel 0x400d8154 0x00018080")
-        assert int(command("readl 0x400d8158").split()[1], 16) == 0x04010000
+        assert int(command("readl 0x400d8158").split()[1], 16) == 0x04018000
         command("writel 0x400d815c 0x10000")
         assert int(command("readl 0x400d8150").split()[1], 16) == 0x04000000
         # SEMC SWRST clears itself without clearing configuration. STS0 is
@@ -322,6 +322,9 @@ def check_flexram_boundaries(qemu, image):
         # All modeled internal roots stop when their selected 24 MHz source
         # stops; selecting an enabled RC source restores both SysTick paths.
         command("writel 0x400d8154 0x40000000")  # power down selected XTAL
+        assert not int(command("readl 0x400d8270").split()[1], 16) & 0x10000
+        command("writel 0x400d8154 0x10000")
+        assert not int(command("readl 0x400d8150").split()[1], 16) & 0x8000
         assert systick_ticks() == 0
         for address in (0x400d8000, 0x400d8010, 0x400d8030, 0x400d8070):
             assert not int(command(f"readl {address:#x}").split()[1], 16) & 0x80000000
@@ -338,6 +341,9 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0x400d8274 1")
         assert 5998 <= systick_ticks() <= 6002
         command("writel 0x400d8158 0x40000000")
+        assert int(command("readl 0x400d8270").split()[1], 16) & 0x10000
+        assert int(command("readl 0x400d8150").split()[1], 16) & 0x8000
+        command("writel 0x400d8158 0x10000")
         command("writel 0x400d8278 0x10")  # restore XTAL source
         # The ARM core uses the AHB root, not the PLL1 divider directly.
         boot_cbcdr = int(command("readl 0x400fc014").split()[1], 16)

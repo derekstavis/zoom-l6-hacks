@@ -28,8 +28,6 @@ cargo l6test run --config config.toml --suite quick --backend both
   `--only OUTCOMES` names others. `--shard I/N` runs one of N stable parts.
 - `--retries N` retries execution failures; a failure that later passes is
   FLAKY, and `--strict` makes FLAKY fail the run.
-- `--reuse RUN` reports cases that RUN passed with identical inputs as REUSED
-  instead of running them. See [reuse](../testing.md#reuse).
 - `--fixtures-only` builds each case's fixture and identity without booting;
   `--no-cache` builds fixtures per case instead of once per run.
 - `--output NEW_DIRECTORY` chooses an artifact directory. It must not already

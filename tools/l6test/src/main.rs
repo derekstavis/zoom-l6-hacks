@@ -7,9 +7,9 @@ mod fixture;
 mod gui_capture;
 mod gui_probe;
 mod hashing;
+mod identity;
 mod patch_matrix;
 mod report;
-mod reuse;
 mod schedule;
 mod screen_gif;
 mod select;
@@ -56,7 +56,6 @@ struct Args {
     shard: Option<select::Shard>,
     rerun: Option<PathBuf>,
     only: Vec<Outcome>,
-    reuse: Option<PathBuf>,
     /// Build every fixture and compute identities without booting.
     fixtures_only: bool,
     /// Build every fixture per case, without the run cache.
@@ -88,7 +87,6 @@ fn parse_args() -> Result<Args, String> {
         shard: None,
         rerun: None,
         only: select::RERUN_DEFAULT.to_vec(),
-        reuse: None,
         fixtures_only: false,
         no_cache: false,
     };
@@ -145,11 +143,6 @@ fn parse_args() -> Result<Args, String> {
             "--only" => {
                 result.only = select::parse_outcomes(&args.next().ok_or("--only needs outcomes")?)?
             }
-            "--reuse" => {
-                result.reuse = Some(PathBuf::from(
-                    args.next().ok_or("--reuse needs a run directory")?,
-                ))
-            }
             "--jobs" => {
                 result.jobs = args
                     .next()
@@ -164,9 +157,6 @@ fn parse_args() -> Result<Args, String> {
         || !["l6", "l6max", "all"].contains(&result.model.as_str())
     {
         return Err("invalid backend or model".into());
-    }
-    if result.fixtures_only && result.reuse.is_some() {
-        return Err("--fixtures-only builds inputs and never reuses results".into());
     }
     if result.rerun.is_some() && result.case.is_some() {
         return Err("--rerun selects cases itself; do not combine it with --case".into());
@@ -235,7 +225,7 @@ fn execute() -> Result<i32, String> {
     }
     if !["run", "check"].contains(&args.command.as_str()) {
         println!(
-            "Usage: cargo l6test list [--format text|json]\n       cargo l6test check|run [--config config.toml] [--suite NAME | --case ID,GLOB,... | --rerun RUN [--only OUTCOMES]] [--model l6|l6max|all] [--backend headless|gui|both] [--shard I/N] [--retries N] [--strict] [--reuse RUN] [--fixtures-only] [--no-cache] [--output NEW_DIR] [--no-build] [--jobs N] [--qemu BINARY] [--app PACKAGED_APP]\n       cargo l6test probe gui --keys TARGET,... --volatile [engine options]\n       cargo l6test capture screen --out FILE.gif [capture options] --volatile [engine options]"
+            "Usage: cargo l6test list [--format text|json]\n       cargo l6test check|run [--config config.toml] [--suite NAME | --case ID,GLOB,... | --rerun RUN [--only OUTCOMES]] [--model l6|l6max|all] [--backend headless|gui|both] [--shard I/N] [--retries N] [--strict] [--fixtures-only] [--no-cache] [--output NEW_DIR] [--no-build] [--jobs N] [--qemu BINARY] [--app PACKAGED_APP]\n       cargo l6test probe gui --keys TARGET,... --volatile [engine options]\n       cargo l6test capture screen --out FILE.gif [capture options] --volatile [engine options]"
         );
         return Ok(0);
     }
@@ -246,18 +236,6 @@ fn execute() -> Result<i32, String> {
         .transpose()?;
     if rerun.as_ref().is_some_and(select::Rerun::is_empty) {
         return Err("the report has no results with the selected outcomes".into());
-    }
-    let earlier = args
-        .reuse
-        .as_ref()
-        .map(|run| reuse::Earlier::load(run))
-        .transpose()?;
-    if let Some(earlier) = &earlier {
-        tracing::info!(
-            event = "reuse_loaded",
-            results = earlier.len(),
-            "earlier results available for reuse"
-        );
     }
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -308,7 +286,7 @@ fn execute() -> Result<i32, String> {
                 untracked.insert(name.to_owned(), hash(&path)?);
             }
         }
-        let manifest = json!({"schema":report::SCHEMA,"tooling_commit":git(root,&["rev-parse","HEAD"]),"working_tree":git(root,&["status","--short"]),"tracked_diff_sha256":format!("{:x}",Sha256::digest(git(root,&["diff","--binary","HEAD"]).as_bytes())),"untracked":untracked,"qemu":config.qemu,"qemu_sha256":config.qemu_sha256,"qemu_provenance":"explicitly pinned external binary; build source not attested","scenario_files":files(&source_spec)?,"generated_scenarios":files(&generated_dir)?,"board_sources":files(&root.join("emulator/qemu/hw/arm"))?,"qemu_patches":files(&root.join("emulator/qemu/patches"))?,"logging":{"format":env::var("L6_LOG_FORMAT").unwrap_or_else(|_|"json".into()),"filter":env::var("RUST_LOG").unwrap_or_else(|_|l6max_host::logging::DEFAULT_FILTER.into())},"driver_sha256":hash(&env::current_exe().map_err(|e|e.to_string())?)?,"suite":args.suite,"case":args.case,"backend":args.backend,"model":args.model,"shard":args.shard.map(|s|format!("{}/{}",s.index,s.count)),"rerun":args.rerun,"retries":args.retries,"reuse":args.reuse});
+        let manifest = json!({"schema":report::SCHEMA,"tooling_commit":git(root,&["rev-parse","HEAD"]),"working_tree":git(root,&["status","--short"]),"tracked_diff_sha256":format!("{:x}",Sha256::digest(git(root,&["diff","--binary","HEAD"]).as_bytes())),"untracked":untracked,"qemu":config.qemu,"qemu_sha256":config.qemu_sha256,"qemu_provenance":"explicitly pinned external binary; build source not attested","scenario_files":files(&source_spec)?,"generated_scenarios":files(&generated_dir)?,"board_sources":files(&root.join("emulator/qemu/hw/arm"))?,"qemu_patches":files(&root.join("emulator/qemu/patches"))?,"logging":{"format":env::var("L6_LOG_FORMAT").unwrap_or_else(|_|"json".into()),"filter":env::var("RUST_LOG").unwrap_or_else(|_|l6max_host::logging::DEFAULT_FILTER.into())},"driver_sha256":hash(&env::current_exe().map_err(|e|e.to_string())?)?,"suite":args.suite,"case":args.case,"backend":args.backend,"model":args.model,"shard":args.shard.map(|s|format!("{}/{}",s.index,s.count)),"rerun":args.rerun,"retries":args.retries});
         Ok((config, manifest))
     };
     let (config, manifest) = match preflight() {
@@ -422,12 +400,10 @@ fn execute() -> Result<i32, String> {
             .is_some_and(|scenario| scenario.needs_patch_builder());
     }
     if args.build {
-        // The driver itself is built too, so the runner identity can check the
-        // running executable is the one built from the working tree.
         let mut command = Command::new("cargo");
         command
             .current_dir(root)
-            .args(["build", "--offline", "--locked", "-p", "l6test"]);
+            .args(["build", "--offline", "--locked"]);
         for package in &packages {
             command.arg("-p").arg(package);
         }
@@ -473,29 +449,10 @@ fn execute() -> Result<i32, String> {
         output.join("bin/l6test"),
     )
     .map_err(|e| e.to_string())?;
-    let gui_built = packages.contains("l6max-gui");
     for package in packages {
         fs::copy(built_dir.join(package), output.join("bin").join(package))
             .map_err(|e| e.to_string())?;
     }
-    // Identities of the scenario runners, for reuse. The GUI binary is
-    // identified by its hash: it links far more than the scenario runner.
-    let mut runners = BTreeMap::new();
-    runners.insert(
-        "headless",
-        reuse::runner_identity(
-            root,
-            args.build.then(|| built_dir.join("l6test")).as_deref(),
-            &env::current_exe().map_err(|e| e.to_string())?,
-        )?,
-    );
-    if gui_built {
-        runners.insert(
-            "gui",
-            json!({"binary_sha256": hash(&output.join("bin/l6max-gui"))?}),
-        );
-    }
-    let references = hashing::tree_digest(&root.join("tests/smoke/images"))?;
     let cache = if args.no_cache {
         RunCache::disabled(output.join("cache"))
     } else {
@@ -504,13 +461,9 @@ fn execute() -> Result<i32, String> {
     let ctx = Context {
         root,
         spec: &source_spec,
-        generated: &generated_dir,
         output: &output,
         config: &config,
         cache: &cache,
-        runners: &runners,
-        references: &references,
-        earlier: earlier.as_ref(),
         patch_artifact_dir: &built_dir,
         fixtures_only: args.fixtures_only,
     };
@@ -551,7 +504,7 @@ fn execute() -> Result<i32, String> {
             },
         };
         match result.outcome {
-            Outcome::Pass | Outcome::Reused => {
+            Outcome::Pass => {
                 tracing::info!(event="case_finished",outcome=%result.outcome,detail=%result.detail,seconds=result.duration_s,"case completed")
             }
             Outcome::Blocked | Outcome::Xfail | Outcome::Flaky => {

@@ -1,4 +1,4 @@
-//! Running one case: preflight, fixture, invocation, identity, reuse and
+//! Running one case: preflight, fixture, invocation, identity and
 //! execution. Each step classifies its own errors: a case that did not run (or
 //! whose result is not valid) is BLOCKED; a fixture or execution failure is
 //! FAIL.
@@ -10,8 +10,8 @@ use crate::{
         Fixture, engine_args, expand, fixture_options, package_model, prepare_sd_patch, wasm_patch,
     },
     hashing::{digest, files, hash, hash_sparse},
-    report::{CaseError, CaseResult, InPhase, Outcome, Phase, Reused},
-    reuse::{self, CaseIdentity},
+    identity::CaseIdentity,
+    report::{CaseError, CaseResult, InPhase, Outcome, Phase},
     supervise::{cancelled, supervise},
 };
 use l6max_host::engine::Options;
@@ -31,16 +31,9 @@ pub(crate) struct Context<'a> {
     pub(crate) root: &'a Path,
     /// The test spec, `tests/smoke`.
     pub(crate) spec: &'a Path,
-    /// The run's generated scenarios.
-    pub(crate) generated: &'a Path,
     pub(crate) output: &'a Path,
     pub(crate) config: &'a Config,
     pub(crate) cache: &'a RunCache,
-    /// Identity of the scenario runner per backend.
-    pub(crate) runners: &'a BTreeMap<&'static str, Value>,
-    /// Digest of the reference images assertions read.
-    pub(crate) references: &'a str,
-    pub(crate) earlier: Option<&'a reuse::Earlier>,
     pub(crate) patch_artifact_dir: &'a Path,
     /// Stop after building fixtures and computing identities.
     pub(crate) fixtures_only: bool,
@@ -50,7 +43,6 @@ pub(crate) struct Context<'a> {
 enum CaseRun {
     Ran { success: bool, scenario: Value },
     FixturesOnly,
-    Reused(Reused),
 }
 
 /// A case's built fixture and engine options.
@@ -115,7 +107,6 @@ pub(crate) fn run_case(
             result.phase = Phase::Fixture;
             result.detail = "fixtures built; not run".into();
         }
-        Ok(CaseRun::Reused(earlier)) => reuse::reuse(&mut result, &earlier),
         Err(error) => {
             result.outcome = error.outcome;
             result.phase = error.phase;
@@ -145,27 +136,10 @@ fn attempt(
     let prepared = build_fixture(ctx, fixture, case, scenario, dir)?;
     let invocation = plan_invocation(ctx, case, backend, dir, midi_namespace, &prepared)
         .failed_in(Phase::Fixture)?;
-    let identity =
-        identify(ctx, case, backend, dir, &prepared, &invocation).failed_in(Phase::Fixture)?;
     result.timings.fixture_s = started.elapsed().as_secs_f64();
-    result.identity = identity.as_ref().map(|identity| json!(identity));
+    result.identity = identify(ctx, &prepared, &invocation).map(|identity| json!(identity));
     if ctx.fixtures_only {
-        // Nothing runs, so the result carries no reuse key.
         return Ok(CaseRun::FixturesOnly);
-    }
-    if let Some(identity) = &identity {
-        result.reuse_key = Some(identity.key());
-        if let Some(earlier) = ctx.earlier {
-            if let Some(reused) = earlier.find(identity) {
-                fs::write(
-                    dir.join("reused.json"),
-                    serde_json::to_vec_pretty(reused).unwrap(),
-                )
-                .blocked_in(Phase::Reuse)?;
-                return Ok(CaseRun::Reused(reused.clone()));
-            }
-            result.not_reused = Some(earlier.explain_miss(identity));
-        }
     }
     execute(ctx, case, dir, invocation, result)
 }
@@ -434,45 +408,21 @@ fn plan_invocation(
     })
 }
 
-/// The case's identity, if its result follows from recorded inputs alone.
-fn identify(
-    ctx: &Context,
-    case: &Case,
-    backend: &str,
-    dir: &Path,
-    prepared: &Prepared,
-    invocation: &Invocation,
-) -> Result<Option<CaseIdentity>, String> {
-    let (Some(scenario), Some(runner)) = (&prepared.scenario, ctx.runners.get(backend)) else {
-        return Ok(None);
-    };
-    if !is_reusable(scenario) {
-        return Ok(None);
-    }
+/// The binaries and fixtures the case runs on; none for a case without a
+/// scenario.
+fn identify(ctx: &Context, prepared: &Prepared, invocation: &Invocation) -> Option<CaseIdentity> {
+    prepared.scenario.as_ref()?;
     let manifest = &prepared.manifest;
     let text = |value: &Value| value.as_str().map(str::to_owned);
-    Ok(Some(CaseIdentity {
-        case: case.id.clone(),
-        model: prepared.fixture.model.clone(),
-        backend: backend.into(),
+    Some(CaseIdentity {
         qemu_sha256: ctx.config.qemu_sha256.clone(),
-        runner: runner.clone(),
+        runner_sha256: invocation.binary_sha256.clone(),
         firmware_package_sha256: text(&manifest["package_sha256"]),
         firmware: digest(&manifest["firmware"]),
-        case_files: reuse::case_files(dir)?,
         card_sha256: text(&manifest["execution_sd_sha256"]),
         state: digest(&manifest["execution_state_sha256"]),
-        scenario: reuse::scenario_digest(ctx.spec, ctx.generated, &scenario.sources)?,
-        references: ctx.references.to_owned(),
         audio_input: invocation.audio_input.clone(),
-        invocation: reuse::normalized_invocation(
-            &invocation.arguments,
-            &invocation.environment,
-            ctx.output,
-            dir,
-        ),
-        behavior: reuse::behavior(case),
-    }))
+    })
 }
 
 /// Run the case's child process under supervision.
@@ -526,16 +476,6 @@ fn execute(
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or(Value::Null);
     Ok(CaseRun::Ran { success, scenario })
-}
-
-/// Whether a scenario's result follows from its recorded inputs. A scenario
-/// that builds patches while it runs depends on sources the identity does not
-/// hash, so it always runs.
-fn is_reusable(scenario: &Scenario) -> bool {
-    !scenario
-        .step
-        .iter()
-        .any(|step| matches!(step.action, smoke_core::Action::WasmPatch))
 }
 
 /// Apply a case's expected failures for this model. A failure matching any of

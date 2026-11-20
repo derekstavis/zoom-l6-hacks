@@ -6,7 +6,7 @@ use std::{
     collections::BTreeMap,
     fs,
     io::{Read, Seek},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 pub(crate) fn hash(path: &Path) -> Result<String, String> {
@@ -177,25 +177,6 @@ fn write_sorted(value: &Value, out: &mut String) {
 /// SHA-256 of the canonical form of `value`.
 pub(crate) fn digest(value: &Value) -> String {
     format!("{:x}", Sha256::digest(canonical(value).as_bytes()))
-}
-
-/// Digest of files by name and content, independent of where they live.
-pub(crate) fn digest_files(files: &[(String, PathBuf)]) -> Result<String, String> {
-    let mut sha = Sha256::new();
-    for (name, path) in files {
-        sha.update((name.len() as u64).to_le_bytes());
-        sha.update(name.as_bytes());
-        sha.update(hash(path)?.as_bytes());
-    }
-    Ok(format!("{:x}", sha.finalize()))
-}
-
-/// Digest of every file under `root`, or of nothing if it does not exist.
-pub(crate) fn tree_digest(root: &Path) -> Result<String, String> {
-    if !root.exists() {
-        return Ok(digest(&Value::Null));
-    }
-    Ok(digest(&serde_json::json!(files(root)?)))
 }
 
 #[cfg(test)]

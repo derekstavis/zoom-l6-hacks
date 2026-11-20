@@ -2,7 +2,7 @@
 //!
 //! `report.json` schema 2 keeps every schema 1 field of a result (`case`,
 //! `model`, `backend`, `outcome`, `detail`, `artifacts`) and adds the phase a
-//! case stopped in, durations, attempts, input identities and reuse.
+//! case stopped in, durations, attempts and input identities.
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, fmt, io::Write, path::Path, path::PathBuf};
@@ -22,8 +22,6 @@ pub enum Outcome {
     Blocked,
     /// Failed, then passed on a retry. Never counted as a pass.
     Flaky,
-    /// Not run: an earlier run passed with identical inputs.
-    Reused,
 }
 
 impl fmt::Display for Phase {
@@ -32,7 +30,6 @@ impl fmt::Display for Phase {
             Phase::Preflight => "preflight",
             Phase::Fixture => "fixture",
             Phase::Execute => "execute",
-            Phase::Reuse => "reuse",
         })
     }
 }
@@ -46,7 +43,6 @@ impl fmt::Display for Outcome {
             Outcome::Xpass => "XPASS",
             Outcome::Blocked => "BLOCKED",
             Outcome::Flaky => "FLAKY",
-            Outcome::Reused => "REUSED",
         })
     }
 }
@@ -59,11 +55,10 @@ pub enum Phase {
     Preflight,
     Fixture,
     Execute,
-    Reuse,
 }
 
 /// An error that ends a case: where it happened, and whether the case did not
-/// run (BLOCKED) or failed (FAIL). A BLOCKED case is never retried or reused.
+/// run (BLOCKED) or failed (FAIL). A BLOCKED case is never retried.
 #[derive(Debug)]
 pub struct CaseError {
     pub phase: Phase,
@@ -112,15 +107,6 @@ pub struct Timings {
     pub execute_s: f64,
 }
 
-/// The earlier passing result a reused case stands on.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Reused {
-    /// The run directory that executed the case.
-    pub run: PathBuf,
-    pub artifacts: PathBuf,
-    pub outcome: Outcome,
-}
-
 /// One execution of a case. A case without retries has one attempt.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Attempt {
@@ -144,18 +130,9 @@ pub struct CaseResult {
     pub duration_s: f64,
     #[serde(default)]
     pub timings: Timings,
-    /// Hashes of everything that decides this case's result.
+    /// Hashes of the binaries and fixtures the case ran on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity: Option<Value>,
-    /// Digest of `identity`; equal keys mean identical inputs.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reuse_key: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reused: Option<Reused>,
-    /// With `--reuse`, why the same job in the earlier run was not reused:
-    /// the identity fields that differ, or why its result was unusable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub not_reused: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attempts: Vec<Attempt>,
 }
@@ -173,18 +150,7 @@ impl CaseResult {
             duration_s: 0.0,
             timings: Timings::default(),
             identity: None,
-            reuse_key: None,
-            reused: None,
-            not_reused: None,
             attempts: Vec::new(),
-        }
-    }
-    /// The outcome that counts toward the run: a reused case counts as the
-    /// outcome it was reused from.
-    pub fn effective(&self) -> Outcome {
-        match (&self.outcome, &self.reused) {
-            (Outcome::Reused, Some(reused)) => reused.outcome,
-            (outcome, _) => *outcome,
         }
     }
     fn attempt(&self) -> Attempt {
@@ -243,7 +209,7 @@ pub fn with_retries(retries: usize, mut attempt: impl FnMut(usize) -> CaseResult
 /// The run's outcome and exit code. FAIL and XPASS fail the run (1); BLOCKED
 /// gives 2; FLAKY fails the run only when `strict`.
 pub fn summarize(results: &[CaseResult], strict: bool) -> (Outcome, i32) {
-    let has = |outcome: Outcome| results.iter().any(|r| r.effective() == outcome);
+    let has = |outcome: Outcome| results.iter().any(|r| r.outcome == outcome);
     if has(Outcome::Fail) || has(Outcome::Xpass) {
         (Outcome::Fail, 1)
     } else if has(Outcome::Blocked) {
@@ -304,13 +270,14 @@ pub fn write_summary(
     text.push_str("| Case | Model | Backend | Result | Phase | Seconds |\n");
     text.push_str("| --- | --- | --- | --- | --- | --- |\n");
     for result in results {
-        let shown = match &result.reused {
-            Some(reused) => format!("REUSED ({})", reused.outcome),
-            None => result.outcome.to_string(),
-        };
         text.push_str(&format!(
             "| {} | {} | {} | {} | {} | {:.1} |\n",
-            result.case, result.model, result.backend, shown, result.phase, result.duration_s
+            result.case,
+            result.model,
+            result.backend,
+            result.outcome,
+            result.phase,
+            result.duration_s
         ));
     }
     let flaky: Vec<_> = results
@@ -325,18 +292,6 @@ pub fn write_summary(
                 result.case, result.model, result.backend, result.detail
             ));
         }
-    }
-    let reused: Vec<_> = results.iter().filter_map(|r| r.reused.as_ref()).collect();
-    if !reused.is_empty() {
-        let runs: std::collections::BTreeSet<_> = reused.iter().map(|r| &r.run).collect();
-        text.push_str(&format!(
-            "\n{} cases were not run: identical inputs passed in {}.\n",
-            reused.len(),
-            runs.iter()
-                .map(|run| run.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
     }
     if let Some(cache) = cache.as_object().filter(|cache| !cache.is_empty()) {
         text.push_str("\nFixture cache (hits/builds):");
@@ -468,18 +423,6 @@ mod tests {
         assert_eq!(run(&[Pass, Flaky], true), (Flaky, 1));
         assert_eq!(run(&[Pass, Xfail], false), (Xfail, 0));
         assert_eq!(run(&[Pass], false), (Pass, 0));
-    }
-
-    #[test]
-    fn a_reused_case_counts_as_the_outcome_it_was_reused_from() {
-        let mut reused = result(Outcome::Reused, Phase::Reuse);
-        reused.reused = Some(Reused {
-            run: "/earlier".into(),
-            artifacts: "/earlier/case".into(),
-            outcome: Outcome::Xfail,
-        });
-        assert_eq!(reused.effective(), Outcome::Xfail);
-        assert_eq!(summarize(&[reused], false), (Outcome::Xfail, 0));
     }
 
     #[test]

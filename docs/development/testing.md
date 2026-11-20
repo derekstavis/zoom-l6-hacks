@@ -214,7 +214,7 @@ completed actions. L6 compares only its six physical rings.
 Default artifact directories are short paths under `/tmp` so Unix socket paths
 fit platform limits. Retain useful runs outside temporary storage before cleanup.
 `--output /short/new/path` selects a retained location. Completed cases are written
-incrementally. Exit 0 means PASS, explicitly matched XFAIL, REUSED, or FLAKY
+incrementally. Exit 0 means PASS, explicitly matched XFAIL, or FLAKY
 without `--strict`; 1 means FAIL or XPASS (or FLAKY with `--strict`); 2 means
 BLOCKED. Read the outcome rather than inferring a clean pass from exit 0. Keep a
 baseline with XFAIL labeled as incomplete.
@@ -237,11 +237,10 @@ keeps the schema 1 fields (`case`, `model`, `backend`, `outcome`, `detail`,
 
 | Field | Meaning |
 | --- | --- |
-| `phase` | Where the case stopped: `preflight`, `fixture`, `execute` or `reuse` |
+| `phase` | Where the case stopped: `preflight`, `fixture` or `execute` |
 | `duration_s`, `timings` | Wall seconds in total, building fixtures and executing |
-| `identity`, `reuse_key` | Hashes of the case's inputs and their digest (see [Reuse](#reuse)) |
+| `identity` | Hashes of what the case ran on: QEMU, the runner executable, the firmware package and unpacked firmware, the card, the state and audio input |
 | `attempts` | Every attempt, when the case was retried |
-| `reused` | The run and artifacts a REUSED result stands on |
 
 Outcomes:
 
@@ -252,7 +251,6 @@ Outcomes:
 | XFAIL, XPASS | Failed as expected; passed despite an expected failure |
 | BLOCKED | Did not run, or its result is not valid: missing configuration or `--app`, unsupported backend, the configured package is for another model, a firmware guard on the configured stock image did not match, the run was interrupted, or QEMU or the executable changed during the case |
 | FLAKY | Failed, then passed on a retry. Never counted as a pass |
-| REUSED | Not run: an earlier run passed it with identical inputs |
 
 A broken patch build, or a patched image that no longer matches its guard,
 is a FAIL in the `fixture` phase, not BLOCKED. Before a case runs, the driver
@@ -276,35 +274,6 @@ directory (`smoke_core::fixture_layout`); a missing one is a fixture FAIL.
   never hides an earlier failure.
 - A `--case` pattern that matches no case is an error.
 
-### Reuse
-
-`--reuse RUN` skips a case when RUN passed (or expectedly failed) the same case
-with identical inputs, and reports it as REUSED with a link to the run that
-executed it. A case that is not reused records why in `not_reused` (for
-example `inputs differ: card_sha256, case_files`). A case's `identity` hashes:
-
-- QEMU, and the code that runs the scenario. For the headless runner, when
-  the driver built itself from the working tree and is the executable running,
-  that is every repository file its Cargo dep-info lists (compiled sources,
-  embedded files and build-script outputs) except the driver's own sources,
-  plus the manifests, `Cargo.lock`, the Cargo configuration, the compiler,
-  profile and flags. Otherwise (for example with `--no-build`) it is the
-  runner binary's hash. For the GUI backend, the `l6max-gui` binary.
-- The firmware package and unpacked firmware the case boots, the card image,
-  the state files, and every other file the driver wrote into the case
-  directory: patched and update packages and their reports, the SD bundle and
-  loader builds and their reports, and the stock image the SD checks read.
-  These are hashed as built bytes, so a change to the driver alone keeps keys.
-- The scenario file and its included fragments, the reference images under
-  `tests/smoke/images`, audio input, the invocation with run and debugger
-  socket paths removed, and the catalog fields that change how the case runs
-  or is judged (not its suites or expected-failure wording).
-
-A scenario that builds patches while it runs (`wasm-patch`) is never reused.
-FAIL, BLOCKED and FLAKY results are never reused, nor are results whose
-artifacts no longer exist. Reuse is off unless requested, and is not a
-substitute for the full verification at the stack tip.
-
 ### Fixture cache
 
 Within a run, each distinct `l6patch` build, browser-patched package, unpacked
@@ -317,8 +286,7 @@ runs. The cache lives only as long as its run. `summary.md` lists hits and
 builds per kind.
 
 `--fixtures-only` builds every selected case's fixture and records its
-identity without booting a guest; results are PASS in the `fixture` phase and
-carry no reuse key. `--no-cache` builds every fixture per case. Comparing the
+identity without booting a guest; results are PASS in the `fixture` phase. `--no-cache` builds every fixture per case. Comparing the
 identities of a cached and an uncached `--fixtures-only` run shows the cache
 does not change what cases boot.
 

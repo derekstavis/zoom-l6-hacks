@@ -336,23 +336,24 @@ def check_main_stack_entry(qemu, image, invalid=0x8000, error_bit=0x08, mpu_test
             print(f"{image}: guest MAIN MPU permissions and background passed")
             # A protected data region must affect guest accesses after MAIN
             # enables the MPU. Privileged background access keeps code executable.
+            protected = 0x20000000 if mpu_test == "dtcm" else 0x801f2000
             for request in (
                 "M801f0000,2:0868",      # ldr r0, [r1]
                 "M801f0100,2:fee7",      # b . (HardFault handler)
                 "M8000000c,4:01011f80",  # HardFault vector = 0x801f0101
                 "Me000ed98,4:00000000",  # region 0
-                "Me000ed9c,4:00201f80",  # base = 0x801f2000
+                "Me000ed9c,4:" + protected.to_bytes(4, "little").hex(),
                 "Me000eda0,4:09000000",  # 32 bytes, no access, enabled
                 "Me000ed94,4:05000000",  # MPU enabled, privileged default map
-                "P1=00201f80",
+                "P1=" + protected.to_bytes(4, "little").hex(),
                 "Pf=00001f80",
             ):
                 assert packet(request) == "OK", request
             assert packet("s").startswith("T05")
             assert registers()[15] == 0x801f0100
             assert int.from_bytes(bytes.fromhex(packet("me000ed28,4")), "little") & 0x82 == 0x82
-            assert int.from_bytes(bytes.fromhex(packet("me000ed34,4")), "little") == 0x801f2000
-            print(f"{image}: guest MPU protection and fault passed")
+            assert int.from_bytes(bytes.fromhex(packet("me000ed34,4")), "little") == protected
+            print(f"{image}: guest MPU protection and fault at {protected:#x} passed")
             return
         # Execute a Thumb LDR from unallocated FlexRAM, with a local HardFault
         # vector. Unlike qtest reads, this exercises the CPU's bus-fault path.
@@ -492,8 +493,14 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0xe000e280 0x10000")
         assert not int(command("readl 0xe000e200").split()[1], 16) & 0x10000
         command("writeb 0x400e8018 3")
-        # RT1060 channels 3 and 19 share IRQ 3. Generate real SAI-paced
-        # completions from DTCM through the system side of the TCM interface.
+        # RT1060 channels 3 and 19 share IRQ 3. Protect DTCM from CPU access;
+        # system-bus DMA must still reach it through the TCM slave interface.
+        command("writel 0xe000ed98 15")
+        command("writel 0xe000ed9c 0x20000000")
+        command("writel 0xe000eda0 0x21")  # 128 KiB, no CPU access
+        command("writel 0xe000ed94 5")
+        assert int(command("readl 0xe000ed94").split()[1], 16) == 5
+        assert int(command("readl 0xe000eda0").split()[1], 16) == 0x21
         command("writel 0x20000000 0x12345678")
         for channel in (3, 19):
             base = 0x400e9000 + channel * 0x20
@@ -512,6 +519,7 @@ def check_flexram_boundaries(qemu, image):
             assert int(command("readl 0x400e8024").split()[1], 16) & (1 << channel)
             command(f"writel {0x400ec000 + channel * 4:#x} 0")
             command("writel 0x40384008 0x82000001")  # reset TX FIFO
+        assert int(command("readl 0x400e802c").split()[1], 16) == 0
         assert int(command("readl 0x400e8024").split()[1], 16) & 0x80008 == 0x80008
         assert int(command("readl 0xe000e200").split()[1], 16) & 8
         assert not int(command("readl 0xe000e200").split()[1], 16) & (1 << 19)
@@ -1490,11 +1498,15 @@ def check_usb_clock(qemu, image):
         assert request(2, 5, 0, bytes.fromhex("0102030405060708")) == 0
         assert command("readl 0x20000028") == 0x04030201
         assert command("readl 0x2000002c") == 0x08070605
+        command("writel 0x402e0158 0x00000000")
+        assert request(2, 6, 0, bytes.fromhex("1122334455667788")) == 0
+        assert command("readl 0x00000028") == 0x44332211
+        assert command("readl 0x0000002c") == 0x88776655
         command("writel 0x402e0144 0xffffffff")
         command("writel 0x400fc080 0x00fc3fc0")
         command("clock_step 2000000")
         assert not command("readl 0x402e0144") & 0x80
-        assert request(2, 6, 0, bytes(8)) == -19
+        assert request(2, 7, 0, bytes(8)) == -19
         print(f"{image}: USB controller clock and DMA address-space checks passed")
     finally:
         host.close()
@@ -1634,6 +1646,7 @@ def main():
     check(qemu, patched, l6max)
     check_main_stack_entry(qemu, stock, mpu_test=True)
     check_main_stack_entry(qemu, stock, mpu_test="privilege")
+    check_main_stack_entry(qemu, stock, mpu_test="dtcm")
     check_main_stack_entry(qemu, stock)
     check_main_stack_entry(qemu, stock, 0x20020000, 0x10)
     check_main_stack_entry(qemu, stock, 0x202d8000, 0x20)

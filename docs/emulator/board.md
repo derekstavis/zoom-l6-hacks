@@ -107,8 +107,12 @@ remain possible. L6max eDMA IRQs 0–15 each combine two channel completion
 signals, as specified for RT1060; the test exercises both members of one pair
 and independent acknowledgements. L6max eDMA, its display transfer helper and USB DMA use the system address
 space rather than the CPU's private peripheral space. Qtests check that eDMA
-rejects an SCB source, USB rejects a private-peripheral destination, and both
-can access DTCM. Source and
+rejects an SCB source, USB rejects a private-peripheral destination, eDMA can
+read MPU-protected DTCM, and USB can write ITCM and DTCM. Separate guest tests
+check that the CPU faults on that protected DTCM. The [Arm Cortex-M7 reference
+manual, section 5.7](https://documentation-service.arm.com/static/5e906dc68259fe2368e2abbe)
+specifies that the system-side TCM interface bypasses the CPU MPU and its TCM
+enable bits; QEMU does not yet model the latter or bus arbitration. Source and
 destination bus faults set the modeled eDMA ERR and ES registers and can
 assert the shared error IRQ 16 when enabled. Error clearing is modeled, but
 bus pipeline timing, halt-on-error and other eDMA error causes remain incomplete.

@@ -1044,10 +1044,9 @@ def check_flexram_boundaries(qemu, image):
         }
         for address in clocks:
             command(f"writel {address:#x} 0xffffffff")
-        # PLL_AUDIO aliases update one control register and LOCK follows
-        # ENABLE/POWERDOWN instead of accepting writes to the status bit.
+        # Audio/video PLL output enable is separate from PLL power and LOCK.
         command("writel 0x400d8078 0x2000")
-        assert not int(command("readl 0x400d8070").split()[1], 16) & 0x80000000
+        assert int(command("readl 0x400d8070").split()[1], 16) & 0x80000000
         command("writel 0x400d8074 0x2000")
         assert int(command("readl 0x400d8074").split()[1], 16) & 0x80000000
         command("writel 0x400d8074 0x1000")
@@ -1057,7 +1056,12 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0x400d807c 0x10000")
         assert int(command("readl 0x400d8070").split()[1], 16) & 0x10000
         command("writel 0x400d8070 0x80000000")
-        assert int(command("readl 0x400d8070").split()[1], 16) == 0
+        assert int(command("readl 0x400d8070").split()[1], 16) == 0x80000000
+        command("writel 0x400d80a0 0x1000")
+        assert not int(command("readl 0x400d80a0").split()[1], 16) & 0x80000000
+        command("writel 0x400d80a8 0x1000")
+        assert int(command("readl 0x400d80a0").split()[1], 16) & 0x80000000
+        command("writel 0x400d80a0 0x13000")
         for base in (0x400d80f0, 0x400d8100):
             original = int(command(f"readl {base:#x}").split()[1], 16)
             command(f"writel {base + 4:#x} 0x80")

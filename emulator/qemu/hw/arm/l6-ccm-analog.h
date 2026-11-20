@@ -167,7 +167,9 @@ static inline uint32_t l6_audio_pll_apply(uint32_t control, uint32_t value,
 static inline uint32_t l6_audio_pll_status(uint32_t control)
 {
     control &= L6_AUDIO_PLL_WRITABLE;
-    if ((control & 0x3000u) == 0x2000u) {
+    /* ENABLE gates the output; POWERDOWN controls the PLL itself. Lock
+     * is approximated as immediate while powered, independent of ENABLE. */
+    if (!(control & 0x1000u)) {
         control |= 0x80000000u;
     }
     return control;

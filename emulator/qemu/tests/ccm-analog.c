@@ -109,6 +109,8 @@ int main(void)
     audio = l6_audio_pll_apply(audio, 0x1000u, L6_USB1_PLL_SET);
     assert(!(l6_audio_pll_status(audio) & 0x80000000u));
     audio = l6_audio_pll_apply(audio, 0x1000u, L6_USB1_PLL_CLEAR);
+    audio = l6_audio_pll_apply(audio, 0x2000u, L6_USB1_PLL_CLEAR);
+    assert(l6_audio_pll_status(audio) & 0x80000000u);
     audio = l6_audio_pll_apply(audio, 0x10000u, L6_USB1_PLL_TOGGLE);
     assert((audio & 0x10000u) && (l6_audio_pll_status(audio) & 0x80000000u));
 

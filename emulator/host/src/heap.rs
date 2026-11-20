@@ -4,6 +4,7 @@
 //! allocator code itself: `pvPortMalloc` and `vPortFree` must match their
 //! 1.10 bytes in guest memory before the counter addresses are trusted.
 use crate::qmp::QmpClient;
+use firmware_api::{l6, l6max};
 use l6fw::Model;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -22,17 +23,17 @@ struct Layout {
 
 const L6: Layout = Layout {
     size: 0x7cff0,
-    counters: 0x801f_9020,
+    counters: l6::xFreeBytesRemaining,
     allocator: [
         (
             "pvPortMalloc",
-            0x8006_de78,
+            l6::pvPortMalloc,
             0x1c8,
             "a25462aa95a97b6f238b0aa8f51b2f612f54abb8965a965332e48113ac16bb8f",
         ),
         (
             "vPortFree",
-            0x8007_3f48,
+            l6::vPortFree,
             0xd8,
             "f95e7e19bcdde5d236cf123ecaa2e87f1b604a66d5ca32056696e17c9716eada",
         ),
@@ -41,17 +42,17 @@ const L6: Layout = Layout {
 
 const L6MAX: Layout = Layout {
     size: 0x7cff8,
-    counters: 0x8020_ab1c,
+    counters: l6max::xFreeBytesRemaining,
     allocator: [
         (
             "pvPortMalloc",
-            0x8008_5478,
+            l6max::pvPortMalloc,
             0x1c4,
             "553dd1e9cbb9f58c30b57f91827a1e627fa34e55d1d8419f9a4c09bb0ec77d8e",
         ),
         (
             "vPortFree",
-            0x8008_e588,
+            l6max::vPortFree,
             0xd4,
             "2a2649e2ee66a717ac2051c30853d14190add0aab9dcffcdd253e154d9fcf7d2",
         ),

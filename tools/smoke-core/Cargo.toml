@@ -10,6 +10,7 @@ sd-image.workspace = true
 tracing.workspace = true
 l6max-host.workspace = true
 l6fw.workspace = true
+firmware-api.workspace = true
 l6patch = { path = "../l6patch" }
 firmware-patch-core.workspace = true
 firmware-patch-wasm.workspace = true

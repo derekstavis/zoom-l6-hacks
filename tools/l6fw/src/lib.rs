@@ -11,6 +11,13 @@ pub enum Model {
     L6max,
 }
 
+impl Model {
+    /// Guest address the MAIN image loads at.
+    pub fn main_base(self) -> u32 {
+        profile(self).main_base
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Profile {
     model: Model,

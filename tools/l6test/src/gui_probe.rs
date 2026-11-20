@@ -1,4 +1,5 @@
 //! Exploratory screen capture through scripted guest buttons; not qualification.
+use firmware_api::l6max;
 use l6max_host::{engine::Options, headless::Headless};
 use std::{
     ffi::OsString,
@@ -87,7 +88,7 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), Box<dyn std::error::Error>> {
         }
         let window = u32::from_le_bytes(
             guest.engine.management[0]
-                .read_memory(0, 0x80202610, 4)?
+                .read_memory(0, l6max::current_window, 4)?
                 .try_into()
                 .unwrap(),
         );

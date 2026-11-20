@@ -58,9 +58,6 @@ pub struct Scenario {
     /// Audio fed to input channels for the whole run.
     #[serde(default)]
     pub audio_input: Vec<AudioInput>,
-    pub main_sha256: Option<String>,
-    #[serde(default)]
-    pub main_sha256_any: Vec<String>,
     #[serde(default = "default_backends")]
     pub backends: Vec<String>,
     #[serde(default)]
@@ -506,21 +503,8 @@ impl Scenario {
         if value.version != 1 || value.name.is_empty() || value.step.is_empty() {
             return Err("scenario needs version=1, a name and nonempty steps".into());
         }
-        if value.main_sha256.as_ref().is_some_and(|hash| {
-            hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
-        }) {
-            return Err("main_sha256 must be a 64-digit hexadecimal SHA-256".into());
-        }
-        if value
-            .main_sha256_any
-            .iter()
-            .any(|hash| hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        {
-            return Err(
-                "main_sha256_any entries must be 64-digit hexadecimal SHA-256 values".into(),
-            );
-        }
         validate_models(&value.models)?;
+        crate::requirements::check_scope(value)?;
         if let Some(mode) = &value.sd_bundle_mode {
             if ![
                 "valid",
@@ -718,16 +702,6 @@ impl Scenario {
                     }
                 }
             }
-            if matches!(
-                step.action,
-                Action::ExpectRecorder | Action::ExpectSettings { .. }
-            ) && value
-                .models
-                .iter()
-                .any(|m| m == "l6" && (step.models.is_empty() || step.models.contains(m)))
-            {
-                return Err("startup/settings layout currently supports L6max only".into());
-            }
             if let Action::PowerPress { hold_ms, .. } = &step.action {
                 if *hold_ms == 0 || *hold_ms > step.guest_timeout_ms {
                     return Err("power hold must fit the guest deadline".into());
@@ -750,138 +724,33 @@ impl Scenario {
                 event,
             } = &step.action
             {
-                if !value.models.iter().all(|m| m == "l6")
-                    || *target >= 54
-                    || *column > 3
-                    || *row > 7
-                    || *event > 31
-                {
-                    return Err("panel-event requires L6 scope and valid target/map values".into());
+                if *target >= 54 || *column > 3 || *row > 7 || *event > 31 {
+                    return Err("panel-event requires valid target/map values".into());
                 }
             }
             if let Action::L6DinEventDispatch { group, .. } = &step.action {
-                if value.models.iter().any(|m| m != "l6")
-                    || step.models.iter().any(|m| m != "l6")
-                    || *group > 15
-                {
-                    return Err("l6-din-event-dispatch requires L6 and a group from 0 to 15".into());
+                if *group > 15 {
+                    return Err("l6-din-event-dispatch requires a group from 0 to 15".into());
                 }
-            }
-            if matches!(step.action, Action::L6maxChannelSignalPwm)
-                && (value.models.iter().any(|model| model != "l6max")
-                    || step.models.iter().any(|model| model != "l6max")
-                    || value.main_sha256.as_deref()
-                        != Some("980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461"))
-            {
-                return Err(
-                    "l6max-channel-signal-pwm requires L6max MAIN 1.10 and its exact firmware hash"
-                        .into(),
-                );
-            }
-            if matches!(step.action, Action::L6LevelMeterPwm)
-                && (value.models.iter().any(|model| model != "l6")
-                    || step.models.iter().any(|model| model != "l6")
-                    || value.main_sha256.as_deref()
-                        != Some("827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799"))
-            {
-                return Err(
-                    "l6-level-meter-pwm requires L6 MAIN 1.10 and its exact firmware hash".into(),
-                );
             }
             if let Action::L6maxRecorderPlayback { target } = step.action {
-                if step.models.iter().any(|model| model != "l6max")
-                    || (step.models.is_empty() && value.models.iter().any(|model| model != "l6max"))
-                    || target != 4
-                    || (value.main_sha256.as_deref()
-                        != Some("980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461")
-                        && !value
-                            .sd_patches
-                            .as_ref()
-                            .is_some_and(|patches| !patches.is_empty()))
-                {
-                    return Err(
-                        "l6max-recorder-playback requires L6max MAIN 1.10, MAIN target 4, and its exact firmware hash".into(),
-                    );
+                if target != 4 {
+                    return Err("l6max-recorder-playback requires MAIN target 4".into());
                 }
             }
-            if matches!(step.action, Action::L6DinUsbForwarding)
-                && (value.models.iter().any(|m| m != "l6") || step.models.iter().any(|m| m != "l6"))
-            {
-                return Err("l6-din-usb-forwarding requires an L6-only scenario".into());
-            }
-            if matches!(step.action, Action::L6InputSweep)
-                && (value.models.iter().any(|m| m != "l6") || step.models.iter().any(|m| m != "l6"))
-            {
-                return Err("l6-input-sweep requires L6 scope".into());
-            }
-            if matches!(step.action, Action::L6DinSweep)
-                && (value.models.iter().any(|m| m != "l6")
-                    || step.models.iter().any(|m| m != "l6")
-                    || value.main_sha256.as_deref()
-                        != Some("827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799"))
-            {
-                return Err(
-                    "l6-din-sweep requires L6 1.10 and its exact MAIN firmware hash".into(),
-                );
-            }
-            if matches!(step.action, Action::L6maxInputTiming)
-                && (value.models.iter().any(|m| m != "l6max")
-                    || step.models.iter().any(|m| m != "l6max"))
-            {
-                return Err("l6max-input-timing requires L6max scope".into());
-            }
-            if matches!(step.action, Action::L6maxPanelKeyMap)
-                && (value.models.iter().any(|m| m != "l6max")
-                    || step.models.iter().any(|m| m != "l6max"))
-            {
-                return Err("l6max-panel-key-map requires L6max scope".into());
-            }
+
             if let Action::L6MainGpioEvent { target, event } = step.action
-                && (value.models.iter().any(|m| m != "l6")
-                    || step.models.iter().any(|m| m != "l6")
-                    || !matches!(
-                        (target, event),
-                        (48, 0x19) | (49, 0x15) | (50, 0x16) | (51, 0x17) | (52, 0x18)
-                    ))
+                && (!matches!(
+                    (target, event),
+                    (48, 0x19) | (49, 0x15) | (50, 0x16) | (51, 0x17) | (52, 0x18)
+                ))
             {
                 return Err(
                     "l6-main-gpio-event requires L6 target/event pairs 48/0x19 or 49–52/0x15–0x18"
                         .into(),
                 );
             }
-            if matches!(step.action, Action::L6maxTapHandler)
-                && (value.models.iter().any(|m| m != "l6max")
-                    || step.models.iter().any(|m| m != "l6max"))
-            {
-                return Err("l6max-tap-handler requires L6max scope".into());
-            }
-            if matches!(step.action, Action::L6UsbStartup)
-                && (value.models.iter().any(|m| m != "l6")
-                    || step.models.iter().any(|m| m != "l6")
-                    || !matches!(
-                        value.step.first().map(|first| &first.action),
-                        Some(Action::L6UsbStartup)
-                    ))
-            {
-                return Err("l6-usb-startup must be the first action and requires L6 scope".into());
-            }
-            if matches!(step.action, Action::L6UsbStartup) && value.main_sha256.is_none() {
-                return Err("l6-usb-startup requires an exact MAIN firmware hash guard".into());
-            }
-            if matches!(step.action, Action::KnobDialog)
-                && (value.models.iter().any(|m| m != "l6max")
-                    || step.models.iter().any(|m| m != "l6max"))
-            {
-                return Err("knob-dialog requires L6max scope".into());
-            }
-            if matches!(
-                step.action,
-                Action::KnobDialogPopup | Action::ExpectMenu { .. }
-            ) && (value.models.iter().any(|m| m != "l6max")
-                || step.models.iter().any(|m| m != "l6max"))
-            {
-                return Err("knob-dialog-popup and expect-menu require L6max scope".into());
-            }
+
             if let Action::ExpectMenu { menu, .. } = &step.action
                 && !["main", "project", "sound-pad", "mixer", "system"].contains(&menu.as_str())
             {
@@ -949,11 +818,6 @@ impl Scenario {
                     || address.checked_add(bytes.len() as u32).is_none()
                 {
                     return Err("expect-memory needs 1..4096 bytes in a valid address range".into());
-                }
-                if value.main_sha256.is_none() && value.main_sha256_any.is_empty() {
-                    return Err(
-                        "expect-memory requires a scenario main_sha256 firmware guard".into(),
-                    );
                 }
             }
             if let Action::ExpectSdPatch {
@@ -1040,61 +904,6 @@ impl Scenario {
                     if !checkpoints.contains(checkpoint) {
                         return Err(format!("unknown checkpoint {checkpoint}"));
                     }
-                }
-                Action::SdCard { .. }
-                | Action::UsbDescriptors
-                | Action::UsbStorage
-                | Action::UsbMidi { .. }
-                | Action::HostMidiRoundTrip
-                | Action::DirectUsbMidiRoundTrip { .. }
-                | Action::L6maxDinMixerControl { .. }
-                | Action::L6DinUsbForwarding
-                | Action::L6maxRecorderPlayback { .. }
-                | Action::HostMidiSync { .. }
-                | Action::KnobDialogPopup
-                | Action::ExpectMenu { .. }
-                | Action::L6MidiSync
-                | Action::L6MidiRingPinSweep { .. }
-                | Action::L6MidiMuteIndicators
-                | Action::UsbSysex { .. }
-                | Action::EditorPadAssignments
-                | Action::EditorPadPlayback { .. }
-                | Action::L6maxUiPadAssignment { .. }
-                | Action::SoundPadPlayback { .. }
-                | Action::ExpectMemory { .. }
-                | Action::ExpectSdPatch { .. }
-                | Action::EffectParameterEdit { .. }
-                | Action::EffectReplacementState { .. }
-                | Action::ExpectHeap { .. }
-                | Action::HoldChord { .. }
-                | Action::AudioCallbacks
-                | Action::KnobDialog
-                | Action::FirmwareUpdate
-                | Action::WarmReset
-                | Action::Restart
-                | Action::ExpectRecorder
-                | Action::PowerPress { .. }
-                | Action::ExpectSettings { .. }
-                | Action::PanelEvent { .. }
-                | Action::L6MainGpioEvent { .. }
-                | Action::L6maxTapHandler
-                | Action::ExpectCardEntry { .. }
-                | Action::AudioInputTransport { .. }
-                | Action::AudioInputLoad { .. }
-                | Action::ExpectAudioInput { .. }
-                | Action::ExpectOutputTone { .. }
-                | Action::ExpectRecordedTone { .. }
-                | Action::L6UsbStartup
-                | Action::L6DinEventDispatch { .. }
-                | Action::L6InputSweep
-                | Action::L6DinSweep
-                | Action::L6maxInputTiming
-                | Action::L6maxPanelKeyMap
-                | Action::L6maxChannelSignalPwm
-                | Action::L6LevelMeterPwm
-                    if value.backends.iter().any(|b| b != "headless") =>
-                {
-                    return Err("device operations require backends=[\"headless\"]".into());
                 }
                 Action::ExpectTrace { contains, absent }
                     if contains.is_empty() && absent.is_empty() =>
@@ -1294,12 +1103,6 @@ impl Scenario {
                 && *cable > 15
             {
                 return Err("direct-usb-midi-round-trip cable must be 0..15".into());
-            }
-            if matches!(step.action, Action::L6maxDinMixerControl { .. })
-                && (value.models.iter().any(|model| model != "l6max")
-                    || step.models.iter().any(|model| model != "l6max"))
-            {
-                return Err("l6max-din-mixer-control requires L6max scope".into());
             }
         }
         Ok(())

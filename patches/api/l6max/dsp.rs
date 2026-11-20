@@ -39,3 +39,7 @@ firmware_variables! {
     /// Use `.address()` to access it in place; reading this variable would copy 768 KB.
     pub mut dsp_effect_workspace: [u8; DSP_EFFECT_WORKSPACE_BYTES], at 0x80d0_0000;
 }
+
+firmware_symbols! {
+    pub audio_ring_consumer at 0x8001_49b0;
+}

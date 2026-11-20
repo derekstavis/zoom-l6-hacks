@@ -1,7 +1,9 @@
 //! Shared scenario definition, execution and evidence for headless and GPUI tests.
 pub mod devices;
+pub mod firmware;
 pub mod fixture_layout;
 pub mod host_midi;
+pub mod requirements;
 mod runner;
 mod scenario;
 mod session;

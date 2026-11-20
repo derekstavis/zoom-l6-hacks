@@ -1,5 +1,6 @@
 //! Typed peripheral operations. Sequencing, timing and artifacts stay in the runner.
 use crate::{Scenario, Session, scenario::PadAssignmentSource, waveform};
+use firmware_api::{l6, l6max};
 use l6max_host::{engine::Options, headless::Headless};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -221,26 +222,13 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
     if scenario.name == "factory-protocol" {
         prepare_factory_fixture(options)?;
     }
-    if (scenario.main_sha256.is_some() || !scenario.main_sha256_any.is_empty())
-        && scenario.sd_patches.as_ref().is_none_or(Vec::is_empty)
-    {
-        use sha2::{Digest, Sha256};
-        let main = selected_main_image(options)?;
-        let actual = format!("{:x}", Sha256::digest(main));
-        let accepted: Vec<_> = scenario
-            .main_sha256
-            .iter()
-            .chain(&scenario.main_sha256_any)
-            .collect();
-        if !accepted
-            .iter()
-            .any(|expected| actual.eq_ignore_ascii_case(expected))
-        {
-            return Err(format!(
-                "firmware MAIN hash {actual} does not match scenario guard {accepted:?}"
-            ));
-        }
-    }
+    let main = selected_main_image(options)?;
+    let model = l6fw::model_from_main(&main).map_err(|e| e.to_string())?;
+    crate::requirements::check_firmware(
+        scenario,
+        crate::model_name(model),
+        &crate::firmware::identify(&main, &options.logs),
+    )?;
     if scenario.step.iter().any(|s| {
         matches!(
             s.action,
@@ -249,18 +237,8 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
                 | crate::Action::ExpectRecorder
         )
     }) {
-        use sha2::{Digest, Sha256};
         let main =
             fs::read(options.firmware_dir.join("main_firmware.bin")).map_err(|e| e.to_string())?;
-        let hash = format!("{:x}", Sha256::digest(&main));
-        if ![
-            "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799",
-            "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461",
-        ]
-        .contains(&hash.as_str())
-        {
-            return Err("unsupported firmware revision for callback/settings addresses".into());
-        }
         if let Some(path) = options
             .state_dir
             .as_ref()
@@ -279,14 +257,6 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
         .iter()
         .any(|s| matches!(s.action, crate::Action::AudioCallbacks))
     {
-        if !matches!(
-            scenario.step.first().map(|s| &s.action),
-            Some(crate::Action::AudioCallbacks)
-        ) {
-            return Err(
-                "audio-callbacks must be the first step so callbacks cannot be missed".into(),
-            );
-        }
         options.start_paused = true;
         options.gdb_socket = Some(gdb_socket_path(&options.logs, "audio"));
     }
@@ -295,13 +265,6 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
         .iter()
         .any(|s| matches!(s.action, crate::Action::PanelEvent { .. }))
     {
-        let main =
-            fs::read(options.firmware_dir.join("main_firmware.bin")).map_err(|e| e.to_string())?;
-        use sha2::{Digest, Sha256};
-        let hash = format!("{:x}", Sha256::digest(main));
-        if hash != "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799" {
-            return Err("panel-event requires the hash-verified stock L6 MAIN image".into());
-        }
         options.gdb_socket = Some(gdb_socket_path(&options.logs, "panel-event-map"));
     }
     if scenario
@@ -309,13 +272,6 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
         .iter()
         .any(|s| matches!(s.action, crate::Action::L6MainGpioEvent { .. }))
     {
-        use sha2::{Digest, Sha256};
-        let main =
-            fs::read(options.firmware_dir.join("main_firmware.bin")).map_err(|e| e.to_string())?;
-        let hash = format!("{:x}", Sha256::digest(main));
-        if hash != "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799" {
-            return Err("l6-main-gpio-event requires the hash-verified stock L6 MAIN image".into());
-        }
         options.gdb_socket = Some(gdb_socket_path(&options.logs, "l6-main-gpio-event"));
     }
     if scenario
@@ -323,15 +279,6 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
         .iter()
         .any(|s| matches!(s.action, crate::Action::L6maxTapHandler))
     {
-        use sha2::{Digest, Sha256};
-        let main =
-            fs::read(options.firmware_dir.join("main_firmware.bin")).map_err(|e| e.to_string())?;
-        let hash = format!("{:x}", Sha256::digest(main));
-        if hash != "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461" {
-            return Err(
-                "l6max-tap-handler requires the hash-verified stock L6max MAIN image".into(),
-            );
-        }
         options.gdb_socket = Some(gdb_socket_path(&options.logs, "l6max-tap-handler"));
     }
     if scenario
@@ -339,15 +286,6 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
         .iter()
         .any(|s| matches!(s.action, crate::Action::L6UsbStartup))
     {
-        if !matches!(
-            scenario.step.first().map(|step| &step.action),
-            Some(crate::Action::L6UsbStartup)
-        ) {
-            return Err("l6-usb-startup must be the first scenario action".into());
-        }
-        if scenario.main_sha256.is_none() {
-            return Err("l6-usb-startup requires an exact MAIN firmware hash guard".into());
-        }
         options.start_paused = true;
         options.usb_enabled = false;
         options.midi_enabled = false;
@@ -358,15 +296,6 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
         .iter()
         .any(|s| matches!(s.action, crate::Action::L6DinEventDispatch { .. }))
     {
-        use sha2::{Digest, Sha256};
-        let main =
-            fs::read(options.firmware_dir.join("main_firmware.bin")).map_err(|e| e.to_string())?;
-        let hash = format!("{:x}", Sha256::digest(main));
-        if hash != "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799" {
-            return Err(
-                "l6-din-event-dispatch requires the hash-verified stock L6 MAIN image".into(),
-            );
-        }
         options.start_paused = true;
         options.usb_enabled = false;
         options.midi_enabled = false;
@@ -377,13 +306,6 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
         .iter()
         .any(|s| matches!(s.action, crate::Action::L6DinSweep))
     {
-        use sha2::{Digest, Sha256};
-        let main =
-            fs::read(options.firmware_dir.join("main_firmware.bin")).map_err(|e| e.to_string())?;
-        let hash = format!("{:x}", Sha256::digest(main));
-        if hash != "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799" {
-            return Err("l6-din-sweep requires the hash-verified stock L6 MAIN image".into());
-        }
         options.usb_enabled = false;
         options.midi_enabled = true;
         options.gdb_socket = Some(gdb_socket_path(&options.logs, "l6-din-sweep"));
@@ -456,8 +378,6 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
 }
 
 fn prepare_factory_fixture(options: &mut Options) -> Result<(), String> {
-    use sha2::{Digest, Sha256};
-    const FACTORY_MAIN: &str = "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461";
     let state = options.logs.join("factory-state");
     let card = options.logs.join("factory-card.img");
     if options.state_dir.as_ref() == Some(&state)
@@ -472,7 +392,7 @@ fn prepare_factory_fixture(options: &mut Options) -> Result<(), String> {
     }
     let main = fs::read(options.firmware_dir.join("main_firmware.bin"))
         .map_err(|error| error.to_string())?;
-    if format!("{:x}", Sha256::digest(main)) != FACTORY_MAIN {
+    if !crate::firmware::is_stock(&main, l6fw::Model::L6max) {
         return Err("factory-protocol requires the hash-verified L6max MAIN image".into());
     }
     fs::create_dir_all(&options.logs).map_err(|error| error.to_string())?;
@@ -484,7 +404,7 @@ fn prepare_factory_fixture(options: &mut Options) -> Result<(), String> {
     Ok(())
 }
 
-fn selected_main_image(options: &Options) -> Result<Vec<u8>, String> {
+pub(crate) fn selected_main_image(options: &Options) -> Result<Vec<u8>, String> {
     let source = fs::read(options.firmware_dir.join("main_firmware.bin"))
         .map_err(|error| error.to_string())?;
     let Some(nor_path) = options
@@ -791,9 +711,7 @@ fn run_l6_update(options: &Options, main_image: &[u8]) -> Result<(), String> {
             return Err("L6 update package MAIN differs from the selected firmware".into());
         }
     } else {
-        use sha2::{Digest, Sha256};
-        if format!("{:x}", Sha256::digest(main_image))
-            != "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799"
+        if !crate::firmware::is_stock(main_image, l6fw::Model::L6)
             || packaged_main.as_slice() == main_image
         {
             return Err(
@@ -875,7 +793,7 @@ fn run_l6_update(options: &Options, main_image: &[u8]) -> Result<(), String> {
         return Err("installed L6 resource NOR differs from package".into());
     }
     let reset_vector = u32::from_le_bytes(packaged_main[4..8].try_into().unwrap());
-    if update_word(&installed, 0x80001004)? != reset_vector {
+    if update_word(&installed, l6fw::Model::L6.main_base() + 4)? != reset_vector {
         return Err("installed L6 MAIN reset vector does not match package".into());
     }
     installed.until(40_000).map_err(|e| e.to_string())?;
@@ -949,8 +867,6 @@ fn update_checksum(package: &[u8]) -> u32 {
 
 fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), String> {
     use sha2::{Digest, Sha256};
-    const ORIGINAL_PACKAGE_SHA256: &str =
-        "4e20f92c9c5131ed082c0feec2b2d7d0445fb576296f11f6dace56a4fc0c9b47";
     let source = options
         .firmware_package
         .as_ref()
@@ -962,9 +878,8 @@ fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), String> {
         .transpose()
         .map_err(|e| e.to_string())?;
     let original = fs::read(source).map_err(|e| e.to_string())?;
-    if format!("{:x}", Sha256::digest(&original)) != ORIGINAL_PACKAGE_SHA256
-        || format!("{:x}", Sha256::digest(main))
-            != "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461"
+    if format!("{:x}", Sha256::digest(&original)) != crate::firmware::STOCK_L6MAX_PACKAGE_SHA256
+        || !crate::firmware::is_stock(main, l6fw::Model::L6max)
     {
         return Err(
             "L6max firmware-update requires the hash-pinned stock 1.10 package and MAIN".into(),
@@ -1024,9 +939,9 @@ fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), String> {
         local.logs = directory.join("boot");
         let guest = Headless::start(&local).map_err(|e| e.to_string())?;
         guest.until(40_000).map_err(|e| e.to_string())?;
-        let mode = update_word(&guest, 0x80462d9c)?;
+        let mode = update_word(&guest, l6max::system_mode)?;
         let flags = guest.engine.management[0]
-            .read_memory(0, 0x8020a5ca, 1)
+            .read_memory(0, l6max::update_package_flags, 1)
             .map_err(|e| e.to_string())?[0];
         if flags & 9 != 0 || mode != if valid { 6 } else { 1 } {
             return Err(format!(
@@ -1035,13 +950,13 @@ fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), String> {
         }
         let nor_path = directory.join("state/main-nor.bin");
         if valid {
-            if update_word(&guest, 0x80202610)? != 0x802003b4 {
+            if update_word(&guest, l6max::current_window)? != l6max::GUI_UPDATE_DIALOG_WINDOW {
                 return Err("valid L6max package did not open the update dialog".into());
             }
             guest.tap(2, 50, 1000).map_err(|e| e.to_string())?;
             guest.tap(3, 50, 1000).map_err(|e| e.to_string())?;
-            if update_word(&guest, 0x80202610)? != 0x8020029c
-                || update_word(&guest, 0x8020029c)? & 0x100 == 0
+            if update_word(&guest, l6max::current_window)? != l6max::GUI_UPDATE_PROGRESS_WINDOW
+                || update_word(&guest, l6max::GUI_UPDATE_PROGRESS_WINDOW)? & 0x100 == 0
             {
                 return Err("valid L6max update preparation did not complete".into());
             }
@@ -1084,8 +999,10 @@ fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), String> {
             if fs::read_to_string(local.logs.join("update-bootloader.log"))
                 .map_err(|e| e.to_string())?
                 != "Installed\n"
-                || update_word(&installed, 0x80462d9c)? != 4
-                || (target_package.is_none() && update_word(&installed, 0x8000001c)? != 0x13579bdf)
+                || update_word(&installed, l6max::system_mode)? != 4
+                || (target_package.is_none()
+                    && update_word(&installed, l6fw::Model::L6max.main_base() + 0x1c)?
+                        != 0x13579bdf)
             {
                 return Err("L6max update install or application handoff failed".into());
             }
@@ -1122,7 +1039,8 @@ fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), String> {
             local.logs = directory.join("restart");
             let restarted = Headless::start(&local).map_err(|e| e.to_string())?;
             restarted.until(40_000).map_err(|e| e.to_string())?;
-            if (target_package.is_none() && update_word(&restarted, 0x8000001c)? != 0x13579bdf)
+            if (target_package.is_none()
+                && update_word(&restarted, l6fw::Model::L6max.main_base() + 0x1c)? != 0x13579bdf)
                 || fs::read_to_string(local.logs.join("update-bootloader.log"))
                     .map_err(|e| e.to_string())?
                     != "NoPending\n"
@@ -1363,9 +1281,9 @@ fn run_l6_usb_startup(
 ) -> Result<Value, String> {
     use l6max_diagnostics::gdb;
     const BREAKPOINTS: [(u32, &str); 3] = [
-        (0x8007_3b84, "usb_start_wrapper"),
-        (0x8004_1190, "usb_start_initializer"),
-        (0x8007_2e88, "usb_phy_gate"),
+        (l6::usb_start_wrapper, "usb_start_wrapper"),
+        (l6::usb_start_initializer, "usb_start_initializer"),
+        (l6::usb_phy_gate, "usb_phy_gate"),
     ];
     let qmp = &session.engine.management[0];
     let inputs = session
@@ -1748,12 +1666,12 @@ fn run_l6_level_meter_pwm(
 
     // Skip the long boot-time panel output sequence; the PWM probe exercises
     // the task's normal meter loop and panel updates.
-    const TASK_ENTRY: u32 = 0x8002_b140;
-    const STARTUP_CALL: u32 = 0x8002_b150;
-    const THRESHOLD_BUILDER: u32 = 0x8002_6f88;
-    const TASK_PHASE: u32 = 0x801f_8e84;
-    const ACTIVE_GATES: u32 = 0x801f_8e74;
-    const CONVERTED_ACCUMULATORS: u32 = 0x801f_90b8;
+    use firmware_api::l6::level_meter_active_gates;
+    use firmware_api::l6::level_meter_converted_accumulators;
+    use firmware_api::l6::level_meter_task;
+    use firmware_api::l6::level_meter_task_phase;
+    use firmware_api::l6::level_meter_task_startup_call;
+    use firmware_api::l6::level_meter_threshold_builder;
     const THRESHOLD_STAGES: [u32; 6] = [0, 1_500_000, 2_000_000, 3_000_000, 4_000_000, 6_000_000];
     const STAGE_WINDOW_MS: u32 = 500;
     const SETTLE_MS: u32 = 100;
@@ -1761,17 +1679,17 @@ fn run_l6_level_meter_pwm(
     let started_guest = inputs.panel.snapshot().guest_ms;
     let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
     let initial_gates = qmp
-        .read_memory(0, ACTIVE_GATES, 3)
+        .read_memory(0, level_meter_active_gates, 3)
         .map_err(|error| error.to_string())?;
     let initial_phase = u32::from_le_bytes(
-        qmp.read_memory(0, TASK_PHASE, 4)
+        qmp.read_memory(0, level_meter_task_phase, 4)
             .map_err(|error| error.to_string())?
             .try_into()
             .unwrap(),
     );
     qmp.stop().map_err(|error| error.to_string())?;
     debugger
-        .breakpoint(TASK_ENTRY, true)
+        .breakpoint(level_meter_task, true)
         .map_err(|error| format!("setting LevelMeterLed task-entry breakpoint: {error}"))?;
     if let Err(error) = debugger.continue_until_stop(Duration::from_secs(wall_timeout_s.min(30))) {
         let status = qmp
@@ -1780,7 +1698,7 @@ fn run_l6_level_meter_pwm(
             .unwrap_or_else(|read| format!("unavailable: {read}"));
         qmp.resume().map_err(|resume| resume.to_string())?;
         return Err(format!(
-            "LevelMeterLed task entry {TASK_ENTRY:#010x} was not reached within {}s (phase {initial_phase}, gates {initial_gates:02x?}, QEMU {status}): {error}; PWM probe was not run",
+            "LevelMeterLed task entry {level_meter_task:#010x} was not reached within {}s (phase {initial_phase}, gates {initial_gates:02x?}, QEMU {status}): {error}; PWM probe was not run",
             wall_timeout_s.min(30)
         ));
     }
@@ -1788,32 +1706,32 @@ fn run_l6_level_meter_pwm(
         .read_register(15)
         .map_err(|error| error.to_string())?
         & !1;
-    if entry_pc != TASK_ENTRY {
+    if entry_pc != level_meter_task {
         qmp.resume().map_err(|error| error.to_string())?;
         return Err(format!(
-            "LevelMeterLed entry breakpoint stopped at {entry_pc:#010x}, expected {TASK_ENTRY:#010x}"
+            "LevelMeterLed entry breakpoint stopped at {entry_pc:#010x}, expected {level_meter_task:#010x}"
         ));
     }
     debugger
-        .breakpoint(TASK_ENTRY, false)
+        .breakpoint(level_meter_task, false)
         .map_err(|error| error.to_string())?;
     qmp.stop().map_err(|error| error.to_string())?;
     const NOP_PAIR: [u8; 4] = [0x00, 0xbf, 0x00, 0xbf];
     debugger
-        .write(STARTUP_CALL, &NOP_PAIR)
+        .write(level_meter_task_startup_call, &NOP_PAIR)
         .map_err(|error| format!("skipping the LevelMeterLed startup output sequence: {error}"))?;
     let patched_call = qmp
-        .read_memory(0, STARTUP_CALL, NOP_PAIR.len())
+        .read_memory(0, level_meter_task_startup_call, NOP_PAIR.len())
         .map_err(|error| error.to_string())?;
     if patched_call != NOP_PAIR {
         qmp.resume().map_err(|error| error.to_string())?;
         return Err("could not verify the focused LevelMeterLed startup skip".into());
     }
     debugger
-        .write(ACTIVE_GATES, &[1, 1])
+        .write(level_meter_active_gates, &[1, 1])
         .map_err(|error| error.to_string())?;
     debugger
-        .breakpoint(THRESHOLD_BUILDER, true)
+        .breakpoint(level_meter_threshold_builder, true)
         .map_err(|error| format!("setting L6 meter threshold-builder breakpoint: {error}"))?;
     if let Err(error) = debugger.continue_until_stop(Duration::from_secs(5)) {
         let interrupt = debugger
@@ -1824,11 +1742,11 @@ fn run_l6_level_meter_pwm(
             .map(|register| format!("{:#x}", register & !1))
             .unwrap_or_else(|read| format!("unavailable: {read}"));
         let gates = qmp
-            .read_memory(0, ACTIVE_GATES, 2)
+            .read_memory(0, level_meter_active_gates, 2)
             .map(|bytes| format!("{bytes:02x?}"))
             .unwrap_or_else(|read| format!("unavailable: {read}"));
         let phase = qmp
-            .read_memory(0, 0x801f_8e84, 4)
+            .read_memory(0, l6::level_meter_task_phase, 4)
             .map(|bytes| format!("{bytes:02x?}"))
             .unwrap_or_else(|read| format!("unavailable: {read}"));
         qmp.resume().map_err(|resume| resume.to_string())?;
@@ -1840,7 +1758,7 @@ fn run_l6_level_meter_pwm(
         .read_register(15)
         .map_err(|error| error.to_string())?
         & !1
-        != THRESHOLD_BUILDER
+        != level_meter_threshold_builder
     {
         return Err("L6 meter threshold-builder breakpoint was missed".into());
     }
@@ -1852,13 +1770,13 @@ fn run_l6_level_meter_pwm(
         let mut sample_count = 0_u64;
         loop {
             debugger
-                .write(ACTIVE_GATES, &[1, 1])
+                .write(level_meter_active_gates, &[1, 1])
                 .map_err(|error| error.to_string())?;
             debugger
-                .write(CONVERTED_ACCUMULATORS, &bytes)
+                .write(level_meter_converted_accumulators, &bytes)
                 .map_err(|error| error.to_string())?;
             let injected = qmp
-                .read_memory(0, CONVERTED_ACCUMULATORS, bytes.len())
+                .read_memory(0, level_meter_converted_accumulators, bytes.len())
                 .map_err(|error| error.to_string())?;
             if injected != bytes {
                 return Err(format!(
@@ -1872,7 +1790,7 @@ fn run_l6_level_meter_pwm(
                 .read_register(15)
                 .map_err(|error| error.to_string())?
                 & !1
-                != THRESHOLD_BUILDER
+                != level_meter_threshold_builder
             {
                 return Err("L6 meter threshold-builder breakpoint was missed".into());
             }
@@ -1899,13 +1817,13 @@ fn run_l6_level_meter_pwm(
             return Err("L6 level-meter PWM captured no panel samples".into());
         }
         let group_a_records = qmp
-            .read_memory(0, 0x8062_93dc, 12)
+            .read_memory(0, l6::level_meter_group_a_records, 12)
             .map_err(|error| error.to_string())?;
         let group_b_records = qmp
-            .read_memory(0, 0x8062_93e8, 12)
+            .read_memory(0, l6::level_meter_group_b_records, 12)
             .map_err(|error| error.to_string())?;
         let threshold_masks_and_codes = qmp
-            .read_memory(0, 0x801f_8e88, 0x32)
+            .read_memory(0, l6::level_meter_thresholds, 0x32)
             .map_err(|error| error.to_string())?;
         let mean_levels: [[f64; 24]; 8] = std::array::from_fn(|row| {
             std::array::from_fn(|column| sums[row][column] as f64 / sample_count as f64)
@@ -1952,7 +1870,7 @@ fn run_l6_level_meter_pwm(
         })
         .count();
     debugger
-        .breakpoint(THRESHOLD_BUILDER, false)
+        .breakpoint(level_meter_threshold_builder, false)
         .map_err(|error| error.to_string())?;
     qmp.resume().map_err(|error| error.to_string())?;
 
@@ -1983,13 +1901,13 @@ fn run_l6max_panel_key_map(session: &Session, wall_timeout_s: u64) -> Result<Val
         .as_ref()
         .ok_or("panel inputs unavailable")?;
     let qmp = &session.engine.management[0];
-    const KEY_TABLE: u32 = 0x800c_48c4;
-    const KEY_STATE: u32 = 0x8088_3554;
+    use firmware_api::l6max::PANEL_KEY_TABLE;
+    use firmware_api::l6max::panel_key_state;
     const KEYS: [(u32, u32); 4] = [(15, 0x19), (20, 0x1a), (25, 0x1b), (30, 0x1c)];
 
     let read_words = || -> Result<[u32; 6], String> {
         let bytes = qmp
-            .read_memory(0, KEY_STATE, 24)
+            .read_memory(0, panel_key_state, 24)
             .map_err(|error| error.to_string())?;
         Ok(std::array::from_fn(|index| {
             u32::from_le_bytes(bytes[index * 4..index * 4 + 4].try_into().unwrap())
@@ -1999,7 +1917,7 @@ fn run_l6max_panel_key_map(session: &Session, wall_timeout_s: u64) -> Result<Val
     let mut observations = Vec::with_capacity(KEYS.len());
     for (target, code) in KEYS {
         let lookup = qmp
-            .read_memory(0, KEY_TABLE + code * 8, 8)
+            .read_memory(0, PANEL_KEY_TABLE + code * 8, 8)
             .map_err(|error| error.to_string())?;
         // The table stores the key's bit number within its state word.
         let bit = u32::from_le_bytes(lookup[..4].try_into().unwrap());
@@ -2244,12 +2162,12 @@ fn start_l6_din_dispatch_monitor(
     };
 
     const BREAKPOINTS: [u32; 6] = [
-        0x8002f490, // DIN MIDI CC handler
-        0x80020ca0, // Main event submitter
-        0x80020690, // Main event queue reader
-        0x8003d790, // mixer setter
-        0x8003e0c8, // mixer setter
-        0x8003e408, // mixer setter
+        l6::midi_in,                 // DIN MIDI CC handler
+        l6::main_event_submit,       // Main event submitter
+        l6::main_event_queue_reader, // Main event queue reader
+        l6::mixer_setter,            // mixer setter
+        l6::mixer_din_setter_6,      // mixer setter
+        l6::mixer_set_eq,            // mixer setter
     ];
     let mut gdb = Gdb::connect(socket).map_err(|error| error.to_string())?;
     for address in BREAKPOINTS {
@@ -2273,10 +2191,12 @@ fn start_l6_din_dispatch_monitor(
             };
             let address = pc & !1;
             let counter = match address {
-                0x8002f490 => Some(&worker_counts[0]),
-                0x80020ca0 => Some(&worker_counts[1]),
-                0x80020690 => Some(&worker_counts[2]),
-                0x8003d790 | 0x8003e0c8 | 0x8003e408 => Some(&worker_counts[3]),
+                l6::midi_in => Some(&worker_counts[0]),
+                l6::main_event_submit => Some(&worker_counts[1]),
+                l6::main_event_queue_reader => Some(&worker_counts[2]),
+                l6::mixer_setter | l6::mixer_din_setter_6 | l6::mixer_set_eq => {
+                    Some(&worker_counts[3])
+                }
                 _ => None,
             };
             if let Some(counter) = counter {
@@ -2311,10 +2231,10 @@ fn run_l6_din_sweep_inner(
     let mixer_snapshot = || -> Result<Vec<u8>, String> {
         let qmp = &session.engine.management[0];
         let mut snapshot = qmp
-            .read_memory(0, 0x80440dca, 0x7e)
+            .read_memory(0, l6::mixer_state, 0x7e)
             .map_err(|error| error.to_string())?;
         snapshot.extend(
-            qmp.read_memory(0, 0x80440e9a, 6)
+            qmp.read_memory(0, l6::mixer_state_tail, 6)
                 .map_err(|error| error.to_string())?,
         );
         Ok(snapshot)
@@ -2323,7 +2243,7 @@ fn run_l6_din_sweep_inner(
     let ready_deadline = Instant::now() + Duration::from_secs(120);
     let main_queue_pending = || -> Result<u32, String> {
         let bytes = session.engine.management[0]
-            .read_memory(0, 0x806b2f20, 4)
+            .read_memory(0, l6::main_event_queue_pending, 4)
             .map_err(|e| e.to_string())?;
         Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
     };
@@ -2347,7 +2267,7 @@ fn run_l6_din_sweep_inner(
         start_l6_din_dispatch_monitor(socket)?;
     let before = l6max_host::indicators::rings(inputs.panel.snapshot().indicators)[0];
     let queue_before = session.engine.management[0]
-        .read_memory(0, 0x806b2f20, 4)
+        .read_memory(0, l6::main_event_queue_pending, 4)
         .map_err(|e| e.to_string())?;
     let queue_before = u32::from_le_bytes(queue_before.try_into().unwrap());
     let mixer_before = mixer_snapshot()?;
@@ -2388,13 +2308,13 @@ fn run_l6_din_sweep_inner(
     let (din_ring, ring_state) = loop {
         session.poll()?;
         let state = session.engine.management[0]
-            .read_memory(0, 0x8062eda8, 0x20)
+            .read_memory(0, l6::midi_din_ring_state, 0x20)
             .map_err(|e| e.to_string())?;
         let write_index = u32::from_le_bytes(state[4..8].try_into().unwrap());
         let read_index = u32::from_le_bytes(state[12..16].try_into().unwrap());
         if write_index >= expected.len() as u32 && read_index >= expected.len() as u32 {
             let bytes = session.engine.management[0]
-                .read_memory(0, 0x8062e5a8, expected.len())
+                .read_memory(0, l6::midi_din_ring, expected.len())
                 .map_err(|e| e.to_string())?;
             break (bytes, state);
         }
@@ -2423,7 +2343,7 @@ fn run_l6_din_sweep_inner(
     let write_index = u32::from_le_bytes(ring_state[4..8].try_into().unwrap());
     let read_index = u32::from_le_bytes(ring_state[12..16].try_into().unwrap());
     let queue_after = session.engine.management[0]
-        .read_memory(0, 0x806b2f20, 4)
+        .read_memory(0, l6::main_event_queue_pending, 4)
         .map_err(|e| e.to_string())?;
     let queue_after = u32::from_le_bytes(queue_after.try_into().unwrap());
     let mixer_after = mixer_snapshot()?;
@@ -2433,7 +2353,7 @@ fn run_l6_din_sweep_inner(
         .filter(|(a, b)| a != b)
         .count();
     let dispatch_map = session.engine.management[0]
-        .read_memory(0, 0x80629bb8, 128)
+        .read_memory(0, l6::midi_cc_dispatch_map, 128)
         .map_err(|e| e.to_string())?;
     let mapped_cc_count = dispatch_map.iter().filter(|cc| **cc != 0xff).count();
     fs::write(
@@ -2941,8 +2861,8 @@ impl State {
             .and_then(|line| tx_sample_signature(line));
 
         qmp.stop()?;
-        const SUBMIT: u32 = 0x8004_5458;
-        debugger.breakpoint(SUBMIT, true)?;
+        use firmware_api::l6max::play_event_submit;
+        debugger.breakpoint(play_event_submit, true)?;
         let before_applied = inputs.main.snapshot().applied;
         inputs.main.down(target, 10_000)?;
         let input_deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(30));
@@ -2968,34 +2888,34 @@ impl State {
         let submit_args = (0..4)
             .map(|register| debugger.read_register(register))
             .collect::<Result<Vec<_>, _>>()?;
-        if submit_pc != SUBMIT || submit_args.get(2) != Some(&0x2c) {
+        if submit_pc != play_event_submit || submit_args.get(2) != Some(&0x2c) {
             return Err(std::io::Error::other(format!(
-                "L6max target 4 did not submit Play event 0x2c at {SUBMIT:#010x}: pc={submit_pc:#010x}, args={submit_args:?}"
+                "L6max target 4 did not submit Play event 0x2c at {play_event_submit:#010x}: pc={submit_pc:#010x}, args={submit_args:?}"
             ))
             .into());
         }
-        debugger.breakpoint(SUBMIT, false)?;
-        const SEND_RETURN: u32 = 0x8002_80a0;
-        debugger.breakpoint(SEND_RETURN, true)?;
+        debugger.breakpoint(play_event_submit, false)?;
+        use firmware_api::l6max::play_event_send_return;
+        debugger.breakpoint(play_event_send_return, true)?;
         debugger.continue_until_stop(Duration::from_secs(5))?;
         let send_pc = debugger.read_register(15)? & !1;
         let send_result = debugger.read_register(0)?;
-        if send_pc != SEND_RETURN || send_result != 0 {
+        if send_pc != play_event_send_return || send_result != 0 {
             return Err(std::io::Error::other(format!(
                 "L6max Play queue submission failed: pc={send_pc:#010x}, result={send_result:#010x}"
             ))
             .into());
         }
-        debugger.breakpoint(SEND_RETURN, false)?;
+        debugger.breakpoint(play_event_send_return, false)?;
 
-        const HANDLER: u32 = 0x8003_6a40;
-        debugger.breakpoint(HANDLER, true)?;
+        use firmware_api::l6max::panel_handle_main_button_event;
+        debugger.breakpoint(panel_handle_main_button_event, true)?;
         debugger.continue_until_stop(Duration::from_secs(10))?;
         let handler_pc = debugger.read_register(15)? & !1;
         let event_pointer = debugger.read_register(0)?;
-        if handler_pc != HANDLER {
+        if handler_pc != panel_handle_main_button_event {
             return Err(std::io::Error::other(format!(
-                "L6max Play dispatch stopped at {handler_pc:#010x}, expected {HANDLER:#010x}"
+                "L6max Play dispatch stopped at {handler_pc:#010x}, expected {panel_handle_main_button_event:#010x}"
             ))
             .into());
         }
@@ -3010,10 +2930,10 @@ impl State {
             ))
             .into());
         }
-        debugger.breakpoint(HANDLER, false)?;
+        debugger.breakpoint(panel_handle_main_button_event, false)?;
 
-        const CALLBACK_SCHEDULER: u32 = 0x8008_bd90;
-        debugger.breakpoint(CALLBACK_SCHEDULER, true)?;
+        use firmware_api::l6max::gui_callback_schedule;
+        debugger.breakpoint(gui_callback_schedule, true)?;
         let callback_deadline = Instant::now() + Duration::from_secs(10);
         let callback_target = loop {
             if Instant::now() >= callback_deadline {
@@ -3025,7 +2945,7 @@ impl State {
             debugger
                 .continue_until_stop(callback_deadline.saturating_duration_since(Instant::now()))?;
             let pc = debugger.read_register(15)? & !1;
-            if pc != CALLBACK_SCHEDULER {
+            if pc != gui_callback_schedule {
                 return Err(std::io::Error::other(format!(
                     "L6max callback scheduler stopped at {pc:#010x}"
                 ))
@@ -3033,9 +2953,16 @@ impl State {
             }
             let callback = debugger.read_register(0)?;
             let caller = debugger.read_register(14)? & !1;
-            if callback == 2 && (0x8003_6a40..0x8003_728c).contains(&caller) {
-                let window =
-                    u32::from_le_bytes(qmp.read_memory(0, 0x8020_2610, 4)?.try_into().unwrap());
+            if callback == 2
+                && (l6max::panel_handle_main_button_event
+                    ..l6max::panel_handle_main_button_event_end)
+                    .contains(&caller)
+            {
+                let window = u32::from_le_bytes(
+                    qmp.read_memory(0, l6max::current_window, 4)?
+                        .try_into()
+                        .unwrap(),
+                );
                 let table =
                     u32::from_le_bytes(qmp.read_memory(0, window + 24, 4)?.try_into().unwrap());
                 let target =
@@ -3048,11 +2975,11 @@ impl State {
                 }
                 break target;
             }
-            debugger.breakpoint(CALLBACK_SCHEDULER, false)?;
+            debugger.breakpoint(gui_callback_schedule, false)?;
             debugger.request("s")?;
-            debugger.breakpoint(CALLBACK_SCHEDULER, true)?;
+            debugger.breakpoint(gui_callback_schedule, true)?;
         };
-        debugger.breakpoint(CALLBACK_SCHEDULER, false)?;
+        debugger.breakpoint(gui_callback_schedule, false)?;
         debugger.breakpoint(callback_target, true)?;
         debugger.continue_until_stop(Duration::from_secs(5))?;
         let callback_pc = debugger.read_register(15)? & !1;
@@ -3063,25 +2990,25 @@ impl State {
             .into());
         }
         debugger.breakpoint(callback_target, false)?;
-        const RECORDER_ACTION: u32 = 0x8004_6d68;
-        debugger.breakpoint(RECORDER_ACTION, true)?;
+        use firmware_api::l6max::rec_play_action;
+        debugger.breakpoint(rec_play_action, true)?;
         debugger.continue_until_stop(Duration::from_secs(5))?;
         let action_pc = debugger.read_register(15)? & !1;
-        if action_pc != RECORDER_ACTION {
+        if action_pc != rec_play_action {
             return Err(std::io::Error::other(format!(
                 "L6max Play callback did not reach recorder action: stopped at {action_pc:#010x}"
             ))
             .into());
         }
-        debugger.breakpoint(RECORDER_ACTION, false)?;
-        const STREAM_READ: u32 = 0x8004_a130;
-        debugger.breakpoint(STREAM_READ, true)?;
+        debugger.breakpoint(rec_play_action, false)?;
+        use firmware_api::l6max::rec_stream_read;
+        debugger.breakpoint(rec_stream_read, true)?;
         let stream_read_hit = match debugger.continue_until_stop(Duration::from_secs(10)) {
             Ok(_) => {
                 let pc = debugger.read_register(15)? & !1;
-                if pc != STREAM_READ {
+                if pc != rec_stream_read {
                     return Err(std::io::Error::other(format!(
-                        "L6max recorder stream-read probe stopped at {pc:#010x}, expected {STREAM_READ:#010x}"
+                        "L6max recorder stream-read probe stopped at {pc:#010x}, expected {rec_stream_read:#010x}"
                     ))
                     .into());
                 }
@@ -3098,7 +3025,7 @@ impl State {
             }
             Err(error) => return Err(error.into()),
         };
-        debugger.breakpoint(STREAM_READ, false)?;
+        debugger.breakpoint(rec_stream_read, false)?;
         qmp.resume()?;
 
         let sample_deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
@@ -3328,14 +3255,14 @@ impl State {
         let mut l6_remaining = Vec::new();
         let (expected_count, expected_status) = if model == l6fw::Model::L6 {
             let qmp = &session.engine.management[0];
-            let channel = qmp.read_memory(0, 0x804410f0, 1)?[0];
+            let channel = qmp.read_memory(0, l6::midi_configured_channel, 1)?[0];
             if channel > 15 {
                 return Err(std::io::Error::other(format!(
                     "invalid configured L6 MIDI channel {channel}"
                 ))
                 .into());
             }
-            for cc in qmp.read_memory(0, 0x804410f5, 54)? {
+            for cc in qmp.read_memory(0, l6::midi_cc_map, 54)? {
                 if cc != 0xff {
                     if let Some((_, count)) =
                         l6_remaining.iter_mut().find(|(mapped, _)| *mapped == cc)
@@ -3420,12 +3347,12 @@ impl State {
         session: &Session,
         options: &Options,
     ) -> Result<Value, Box<dyn std::error::Error>> {
-        const IDLE: u32 = 0x80046d50;
-        const HOOK: u32 = 0x8002f490;
-        const SENDER: u32 = 0x80031648;
+        use firmware_api::l6::idle_loop;
+        use firmware_api::l6::midi_in;
+        use firmware_api::l6::midi_send;
         const EVENT: u32 = 0x841ff000;
-        const MIDI_CHANNEL: u32 = 0x804410f0;
-        const CC_MAP: u32 = 0x804410f5;
+        use firmware_api::l6::midi_cc_map;
+        use firmware_api::l6::midi_configured_channel;
         if session.engine.model() != l6fw::Model::L6 {
             return Err(std::io::Error::other("l6-midi-sync requires L6 firmware").into());
         }
@@ -3445,13 +3372,13 @@ impl State {
                     .map_err(std::io::Error::other)?;
             let entry_offset = edits
                 .iter()
-                .find(|(address, _, _)| *address == HOOK)
+                .find(|(address, _, _)| *address == midi_in)
                 .map(|(_, _, offset)| *offset)
                 .ok_or("dynamic SD bundle has no L6 midi-sync entry")?;
             let registry = sd_registry(qmp, session.engine.model())?;
             let loaded_base =
                 u32::from_le_bytes(qmp.read_memory(0, registry + 160, 4)?.try_into().unwrap());
-            let slot = sd_dynamic_handler_slot(options, session.engine.model(), registry, HOOK)
+            let slot = sd_dynamic_handler_slot(options, session.engine.model(), registry, midi_in)
                 .map_err(std::io::Error::other)?;
             let entry = u32::from_le_bytes(qmp.read_memory(0, slot, 4)?.try_into().unwrap());
             if loaded_base == 0 || entry != (loaded_base + entry_offset | 1) {
@@ -3473,23 +3400,23 @@ impl State {
                 .ok_or("L6 MIDI entry hook target is not numeric")? as u32
                 & !1
         };
-        gdb.breakpoint(IDLE, true)?;
+        gdb.breakpoint(idle_loop, true)?;
         gdb.continue_until_stop(Duration::from_secs(60))?;
         let pc = gdb.read_register(15)? & !1;
-        if pc != IDLE {
+        if pc != idle_loop {
             return Err(std::io::Error::other(format!(
-                "expected L6 Idle task at {IDLE:#x}, stopped at {pc:#x}"
+                "expected L6 Idle task at {idle_loop:#x}, stopped at {pc:#x}"
             ))
             .into());
         }
-        let channel = qmp.read_memory(0, MIDI_CHANNEL, 1)?[0];
+        let channel = qmp.read_memory(0, midi_configured_channel, 1)?[0];
         if channel > 15 {
             return Err(std::io::Error::other(format!(
                 "invalid configured L6 MIDI channel {channel}"
             ))
             .into());
         }
-        let cc_map = qmp.read_memory(0, CC_MAP, 54)?;
+        let cc_map = qmp.read_memory(0, midi_cc_map, 54)?;
         let mut expected_ccs = Vec::new();
         for channel_index in 0..6 {
             for group in 0..9 {
@@ -3506,10 +3433,10 @@ impl State {
         event[4..7].copy_from_slice(&[0xb0 | channel, 127, 127]);
         gdb.write(EVENT, &event)?;
         gdb.breakpoint(payload, true)?;
-        gdb.breakpoint(SENDER, true)?;
+        gdb.breakpoint(midi_send, true)?;
         gdb.register(0, EVENT)?;
-        gdb.register(14, IDLE | 1)?;
-        gdb.register(15, HOOK)?;
+        gdb.register(14, idle_loop | 1)?;
+        gdb.register(15, midi_in)?;
         gdb.continue_until_stop(Duration::from_secs(10))?;
         let entry_pc = gdb.read_register(15)? & !1;
         if entry_pc != payload {
@@ -3534,14 +3461,14 @@ impl State {
         let mut completed = false;
         for _ in 0..expected_ccs.len() + 64 {
             let pc = gdb.read_register(15)? & !1;
-            if pc == IDLE {
+            if pc == idle_loop {
                 return Err(std::io::Error::other(format!(
                     "L6 midi-sync returned after {expected_index}/{} mapped CCs",
                     expected_ccs.len()
                 ))
                 .into());
             }
-            if pc != SENDER {
+            if pc != midi_send {
                 return Err(std::io::Error::other(format!(
                     "L6 midi-sync stopped unexpectedly at {pc:#x}"
                 ))
@@ -3570,7 +3497,7 @@ impl State {
                 expected_index += 1;
             }
             if expected_index == expected_ccs.len() {
-                gdb.breakpoint(SENDER, false)?;
+                gdb.breakpoint(midi_send, false)?;
                 gdb.breakpoint(return_pc, true)?;
                 gdb.continue_until_stop(Duration::from_secs(10))?;
                 let stopped_pc = gdb.read_register(15)? & !1;
@@ -3753,7 +3680,7 @@ impl State {
     ) -> Result<Value, Box<dyn std::error::Error>> {
         match operation {
             Operation::ExpectRecorder => {
-                let mode = session.engine.management[0].read_memory(0, 0x80462d9c, 4)?;
+                let mode = session.engine.management[0].read_memory(0, l6max::system_mode, 4)?;
                 if mode != 0u32.to_le_bytes() {
                     return Err(
                         format!("restart did not restore recorder mode: {mode:02x?}").into(),
@@ -3812,19 +3739,19 @@ impl State {
                     sd_fixture_edits(options, &main, session.engine.model())
                         .map_err(std::io::Error::other)?;
                 let qmp = &session.engine.management[0];
-                let (image_base, loader_calls): (u32, &[u32]) = match session.engine.model() {
-                    l6fw::Model::L6 => (0x8000_1000, &[0x8000_9a60, 0x8000_9aa0]),
-                    l6fw::Model::L6max => (
-                        0x8000_0000,
-                        &[
-                            0x8000_fe08,
-                            0x8000_e9fa,
-                            0x8000_ea24,
-                            0x8001_0118,
-                            0x8002_bc7e,
-                            0x8000_ebac,
-                        ],
-                    ),
+                let image_base = session.engine.model().main_base();
+                // The patch loader's own hook sites (patches/patch-loader),
+                // which its build report does not list.
+                let loader_calls: &[u32] = match session.engine.model() {
+                    l6fw::Model::L6 => &[0x8000_9a60, 0x8000_9aa0],
+                    l6fw::Model::L6max => &[
+                        l6max::sys_main_startup_initialize,
+                        0x8000_e9fa,
+                        0x8000_ea24,
+                        0x8001_0118,
+                        0x8002_bc7e,
+                        0x8000_ebac,
+                    ],
                 };
                 for &address in loader_calls {
                     let offset = (address - image_base) as usize;
@@ -3961,52 +3888,14 @@ impl State {
                     .map(|link| (link.entry, link.next_slot, link.order, link.module_base))
                     .collect();
                 for (address, _, _entry_offset) in &edits {
-                    let slot = if module_hooks.iter().any(|hook| hook.address == *address) {
-                        sd_dynamic_handler_slot(options, session.engine.model(), registry, *address)
-                            .map_err(std::io::Error::other)?
-                    } else if *address == 0x8003_e8ee {
-                        registry + 16
-                    } else {
-                        let index = match *address {
-                            0x8000_6110 => 0,
-                            0x8000_64c0 => 1,
-                            0x8000_6660 => 2,
-                            0x8000_63b8 => 3,
-                            0x8000_6370 => 4,
-                            0x8000_68a0 => 5,
-                            0x8000_62d0 => 6,
-                            0x8000_6070 => 7,
-                            0x8000_6348 => 8,
-                            0x8000_65f8 => 9,
-                            0x8000_6560 => 10,
-                            0x8000_68f8 => 11,
-                            0x8000_69b0 => 12,
-                            0x8000_6bd0 => 13,
-                            0x8000_7080 => 14,
-                            0x8000_70b0 => 15,
-                            0x8000_7090 => 16,
-                            0x8000_6fa8 => 17,
-                            0x8006_1ab0 => 18,
-                            0x8000_6d50 => 19,
-                            0x8000_6d00 => 20,
-                            0x8006_1738 => 21,
-                            0x8000_5ee0 => 22,
-                            0x8002_4eb8 => 23,
-                            0x8008_bd40 => 24,
-                            0x8000_6060 => 25,
-                            0x8000_5e70 => 26,
-                            0x8003_6c74 => 27,
-                            0x8000_648e => 28,
-                            0x8000_6126 => 29,
-                            0x8000_62c0 => 30,
-                            _ => {
-                                return Err(
-                                    format!("no SD dispatch slot for {address:#010x}").into()
-                                );
-                            }
-                        };
-                        registry + 32 + index * 4
-                    };
+                    // Every edit is one of the module's hooks (sd_fixture_edits).
+                    let slot = sd_dynamic_handler_slot(
+                        options,
+                        session.engine.model(),
+                        registry,
+                        *address,
+                    )
+                    .map_err(std::io::Error::other)?;
                     let handler =
                         u32::from_le_bytes(qmp.read_memory(0, slot, 4)?.try_into().unwrap());
                     let valid = if !loaded {
@@ -4315,9 +4204,9 @@ impl State {
                 row,
                 event,
             } => {
-                const DISPATCHER: u32 = 0x800393d0;
-                const EVENT_SUBMIT: u32 = 0x80020ca0;
-                const REPORT: u32 = 0x808cb54d;
+                use firmware_api::l6::main_event_submit;
+                use firmware_api::l6::panel_event_dispatcher;
+                use firmware_api::l6::panel_report;
                 let inputs = &session.engine.inputs.as_ref().unwrap().panel;
                 let qmp = &session.engine.management[0];
                 let socket = options
@@ -4329,28 +4218,28 @@ impl State {
                 }
                 let gdb = self.gdb.as_mut().unwrap();
                 qmp.stop()?;
-                gdb.breakpoint(DISPATCHER, true)?;
-                gdb.breakpoint(EVENT_SUBMIT, true)?;
+                gdb.breakpoint(panel_event_dispatcher, true)?;
+                gdb.breakpoint(main_event_submit, true)?;
                 inputs.down(target, 0)?;
                 gdb.continue_until_stop(Duration::from_secs(15))?;
                 let pc = gdb.read_register(15)? & !1;
-                if pc == DISPATCHER {
-                    gdb.breakpoint(DISPATCHER, false)?;
+                if pc == panel_event_dispatcher {
+                    gdb.breakpoint(panel_event_dispatcher, false)?;
                     gdb.continue_until_stop(Duration::from_secs(15))?;
                     let pc = gdb.read_register(15)? & !1;
-                    if pc != EVENT_SUBMIT {
+                    if pc != main_event_submit {
                         return Err(format!(
                             "panel target {target} reached {pc:#x}, not event submit"
                         )
                         .into());
                     }
-                } else if pc != EVENT_SUBMIT {
+                } else if pc != main_event_submit {
                     return Err(format!(
                         "panel target {target} stopped at {pc:#x}, not dispatcher or event submit"
                     )
                     .into());
                 }
-                let response = gdb.request(&format!("m{REPORT:x},3"))?;
+                let response = gdb.request(&format!("m{panel_report:x},3"))?;
                 if response.len() != 6 {
                     return Err(format!("unexpected panel report bytes: {response}").into());
                 }
@@ -4369,9 +4258,9 @@ impl State {
                     return Err(format!("panel target {target} submitted state {state} event {observed_event}, expected press-state 0 event {event}").into());
                 }
                 let entry = if column == 0 {
-                    0x800a1834 + u32::from(row) * 0x14
+                    l6::PANEL_COLUMN0_EVENT_TABLE + u32::from(row) * 0x14
                 } else {
-                    0x800a15b4 + u32::from(column) * 0xa0 + u32::from(row) * 0x14
+                    l6::PANEL_EVENT_TABLE + u32::from(column) * 0xa0 + u32::from(row) * 0x14
                 };
                 let mapping = qmp.read_memory(0, entry + 8, 4)?;
                 let mapped_event = u32::from_le_bytes(mapping.try_into().unwrap());
@@ -4381,7 +4270,7 @@ impl State {
                     )
                     .into());
                 }
-                gdb.breakpoint(EVENT_SUBMIT, false)?;
+                gdb.breakpoint(main_event_submit, false)?;
                 qmp.resume()?;
                 inputs.up(target)?;
                 let started = inputs.snapshot().guest_ms;
@@ -4571,7 +4460,7 @@ impl State {
             }
             Operation::L6maxTapHandler => {
                 const TAP_TARGET: u32 = 48;
-                const TAP_PRESS_HANDLER: u32 = 0x80055468;
+                use firmware_api::l6max::l6max_tap_press_handler;
                 let inputs = &session.engine.inputs.as_ref().unwrap().main;
                 let qmp = &session.engine.management[0];
                 let socket = options
@@ -4583,7 +4472,7 @@ impl State {
                 }
                 let gdb = self.gdb.as_mut().unwrap();
                 qmp.stop()?;
-                gdb.breakpoint(TAP_PRESS_HANDLER, true)?;
+                gdb.breakpoint(l6max_tap_press_handler, true)?;
                 let applied = inputs.snapshot().applied;
                 inputs.down(TAP_TARGET, 0)?;
                 wait_l6_input(
@@ -4594,16 +4483,16 @@ impl State {
                 let stopped = gdb.continue_until_stop(Duration::from_secs(15));
                 if let Err(error) = stopped {
                     let _ = gdb.interrupt();
-                    let _ = gdb.breakpoint(TAP_PRESS_HANDLER, false);
+                    let _ = gdb.breakpoint(l6max_tap_press_handler, false);
                     let _ = qmp.resume();
                     return Err(format!("TAP press did not reach its handler: {error}").into());
                 }
                 let pc = gdb.read_register(15)? & !1;
-                gdb.breakpoint(TAP_PRESS_HANDLER, false)?;
+                gdb.breakpoint(l6max_tap_press_handler, false)?;
                 qmp.resume()?;
-                if pc != TAP_PRESS_HANDLER {
+                if pc != l6max_tap_press_handler {
                     return Err(format!(
-                        "TAP press stopped at {pc:#010x}, expected {TAP_PRESS_HANDLER:#010x}"
+                        "TAP press stopped at {pc:#010x}, expected {l6max_tap_press_handler:#010x}"
                     )
                     .into());
                 }
@@ -4614,11 +4503,11 @@ impl State {
                     || inputs.snapshot().applied > applied,
                     "TAP release acknowledgement",
                 )?;
-                Ok(json!({"target":TAP_TARGET,"handler":TAP_PRESS_HANDLER}))
+                Ok(json!({"target":TAP_TARGET,"handler":l6max_tap_press_handler}))
             }
             Operation::L6MainGpioEvent { target, event } => {
-                const EVENT_SUBMIT: u32 = 0x80020ca0;
-                const SOUND_PAD_EVENT_HANDLER: u32 = 0x800408b0;
+                use firmware_api::l6::main_event_submit;
+                use firmware_api::l6::sound_pad_event_handler;
                 let inputs = &session.engine.inputs.as_ref().unwrap().main;
                 let qmp = &session.engine.management[0];
                 let socket = options
@@ -4630,7 +4519,7 @@ impl State {
                 }
                 let gdb = self.gdb.as_mut().unwrap();
                 qmp.stop()?;
-                gdb.breakpoint(EVENT_SUBMIT, true)?;
+                gdb.breakpoint(main_event_submit, true)?;
                 let applied = inputs.snapshot().applied;
                 inputs.down(target, 0)?;
                 wait_l6_input(
@@ -4640,9 +4529,9 @@ impl State {
                 )?;
                 gdb.continue_until_stop(Duration::from_secs(15))?;
                 let pc = gdb.read_register(15)? & !1;
-                if pc != EVENT_SUBMIT {
+                if pc != main_event_submit {
                     return Err(format!(
-                        "L6 MAIN target {target} stopped at {pc:#010x}, expected event submit {EVENT_SUBMIT:#010x}"
+                        "L6 MAIN target {target} stopped at {pc:#010x}, expected event submit {main_event_submit:#010x}"
                     )
                     .into());
                 }
@@ -4657,26 +4546,26 @@ impl State {
                     .into());
                 }
                 let dispatch_arguments = if (0x15..=0x18).contains(&event) {
-                    gdb.breakpoint(EVENT_SUBMIT, false)?;
-                    gdb.breakpoint(SOUND_PAD_EVENT_HANDLER, true)?;
+                    gdb.breakpoint(main_event_submit, false)?;
+                    gdb.breakpoint(sound_pad_event_handler, true)?;
                     match gdb.continue_until_stop(Duration::from_secs(15)) {
                         Ok(_) => {
                             let dispatch_pc = gdb.read_register(15)? & !1;
-                            if dispatch_pc != SOUND_PAD_EVENT_HANDLER {
+                            if dispatch_pc != sound_pad_event_handler {
                                 return Err(format!(
-                                    "L6 MAIN target {target} stopped at {dispatch_pc:#010x}, expected sound-pad event handler {SOUND_PAD_EVENT_HANDLER:#010x}"
+                                    "L6 MAIN target {target} stopped at {dispatch_pc:#010x}, expected sound-pad event handler {sound_pad_event_handler:#010x}"
                                 )
                                 .into());
                             }
                             let dispatch_args = (0..3)
                                 .map(|register| gdb.read_register(register))
                                 .collect::<Result<Vec<_>, _>>()?;
-                            gdb.breakpoint(SOUND_PAD_EVENT_HANDLER, false)?;
+                            gdb.breakpoint(sound_pad_event_handler, false)?;
                             Some(dispatch_args)
                         }
                         Err(error) => {
                             let _ = gdb.interrupt();
-                            let _ = gdb.breakpoint(SOUND_PAD_EVENT_HANDLER, false);
+                            let _ = gdb.breakpoint(sound_pad_event_handler, false);
                             let _ = qmp.resume();
                             return Err(format!(
                                 "L6 MAIN target {target} submitted event {event:#04x} but did not reach the sound-pad event handler: {error}"
@@ -4685,7 +4574,7 @@ impl State {
                         }
                     }
                 } else {
-                    gdb.breakpoint(EVENT_SUBMIT, false)?;
+                    gdb.breakpoint(main_event_submit, false)?;
                     None
                 };
                 qmp.resume()?;
@@ -5439,11 +5328,11 @@ fn effect_parameter_edit(
     let callback_hits_offset = composed_export_offset(&report, "DUAL_EFFECT_CALLBACK_HITS")
         .ok_or("Effect callback counter is missing from its module report")?;
     let qmp = &session.engine.management[0];
-    const CURRENT_WINDOW: u32 = 0x8020_2610;
-    const EFX_TYPE: u32 = 0x8046_00b2;
-    const MIXER_APPLY_CHANNEL_PARAMETER: u32 = 0x8005_3b28;
+    use firmware_api::l6max::current_window;
+    use firmware_api::l6max::mixer_apply_channel_parameter;
+    use firmware_api::l6max::mixer_efx_type;
     let effect_type = qmp
-        .read_memory(0, EFX_TYPE, 1)
+        .read_memory(0, mixer_efx_type, 1)
         .map_err(|error| error.to_string())?
         .first()
         .copied()
@@ -5510,7 +5399,7 @@ fn effect_parameter_edit(
             .unwrap(),
     );
     let previous_window = qmp
-        .read_memory(0, CURRENT_WINDOW, 4)
+        .read_memory(0, current_window, 4)
         .map_err(|error| error.to_string())?;
 
     let mut debugger = l6max_diagnostics::gdb::Gdb::connect(socket)
@@ -5519,11 +5408,11 @@ fn effect_parameter_edit(
         .map_err(|error| format!("stopping QEMU for effect parameter edit: {error}"))?;
     let inject = (|| {
         debugger
-            .write(CURRENT_WINDOW, &0x8020_0408u32.to_le_bytes())
+            .write(current_window, &l6max::GUI_RECORDER_WINDOW.to_le_bytes())
             .map_err(|error| format!("selecting parameter-edit context: {error}"))?;
         let stop = debugger
             .call_thumb(
-                MIXER_APPLY_CHANNEL_PARAMETER,
+                mixer_apply_channel_parameter,
                 &[(encoder - 1) as u32, 6, 0, steps as u32, 0],
                 Duration::from_secs(3),
             )
@@ -5538,7 +5427,7 @@ fn effect_parameter_edit(
         Ok::<_, String>((stop, event))
     })();
     let restore_window = debugger
-        .write(CURRENT_WINDOW, &previous_window)
+        .write(current_window, &previous_window)
         .map_err(|error| format!("restoring current window: {error}"));
     let resume = qmp
         .resume()
@@ -5570,7 +5459,7 @@ fn effect_parameter_edit(
             qmp.stop()
                 .map_err(|error| format!("stopping QEMU after effect parameter edit: {error}"))?;
             debugger
-                .write(CURRENT_WINDOW, &previous_window)
+                .write(current_window, &previous_window)
                 .map_err(|error| format!("restoring current window: {error}"))?;
             qmp.resume().map_err(|error| {
                 format!("resuming QEMU after restoring current window: {error}")
@@ -5605,8 +5494,8 @@ fn effect_parameter_edit(
                     .try_into()
                     .unwrap(),
             );
-            let current_window = u32::from_le_bytes(
-                qmp.read_memory(0, CURRENT_WINDOW, 4)
+            let window = u32::from_le_bytes(
+                qmp.read_memory(0, current_window, 4)
                     .map_err(|error| error.to_string())?
                     .try_into()
                     .unwrap(),
@@ -5615,12 +5504,12 @@ fn effect_parameter_edit(
                 format!("stopping QEMU after effect replacement edit timeout: {error}")
             })?;
             debugger
-                .write(CURRENT_WINDOW, &previous_window)
+                .write(current_window, &previous_window)
                 .map_err(|error| format!("restoring current window after edit timeout: {error}"))?;
             qmp.resume()
                 .map_err(|error| format!("resuming QEMU after edit timeout: {error}"))?;
             return Err(format!(
-                "effect audio callback did not apply the parameter edit (counter {before}->{applied}, event={event:#010x}, event_after_hook={event_after_hook:#010x}, callbacks={callback_hits}, effect_type={effect_type}, active_callback={active_callback:#010x}, current_window={current_window:#010x}, module_base={module_base:#010x}, gdb_stop={stop_reply})"
+                "effect audio callback did not apply the parameter edit (counter {before}->{applied}, event={event:#010x}, event_after_hook={event_after_hook:#010x}, callbacks={callback_hits}, effect_type={effect_type}, active_callback={active_callback:#010x}, current_window={window:#010x}, module_base={module_base:#010x}, gdb_stop={stop_reply})"
             ));
         }
         thread::sleep(Duration::from_millis(10));
@@ -5686,7 +5575,7 @@ fn effect_replacement_state(
         return Err("effect replacement module is not loaded".into());
     }
     let effect_type = qmp
-        .read_memory(0, 0x8046_00b2, 1)
+        .read_memory(0, l6max::mixer_efx_type, 1)
         .map_err(|error| error.to_string())?
         .first()
         .copied();
@@ -5890,10 +5779,11 @@ fn sd_fixture_edits(options: &Options, main: &[u8], model: l6fw::Model) -> Resul
             .join("main_firmware.bin"),
     )
     .map_err(|e| e.to_string())?;
-    let (patch_model, image_base) = match model {
-        l6fw::Model::L6 => (firmware_patch_core::FirmwareModel::L6, 0x8000_1000u32),
-        l6fw::Model::L6max => (firmware_patch_core::FirmwareModel::L6max, 0x8000_0000u32),
+    let patch_model = match model {
+        l6fw::Model::L6 => firmware_patch_core::FirmwareModel::L6,
+        l6fw::Model::L6max => firmware_patch_core::FirmwareModel::L6max,
     };
+    let image_base = model.main_base();
     firmware_patch_core::verify_firmware_for(patch_model, &stock)?;
     let loader: Value = serde_json::from_slice(
         &fs::read(
@@ -6188,116 +6078,22 @@ fn sd_site_chain(
     Ok((chain, links))
 }
 
-fn sd_knob_edits(options: &Options, main: &[u8]) -> Result<Vec<(u32, Vec<u8>)>, String> {
-    let root = sd_fixture_root(options)?;
-    let report: Value = serde_json::from_slice(
-        &fs::read(root.join("sd-bundle-build/patch.json")).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
-    if !report["patches"].as_array().is_some_and(|items| {
-        items
-            .iter()
-            .any(|patch| patch.as_str() == Some("knob-dialog") || patch["name"] == "knob-dialog")
-    }) {
-        return Err("SD fixture does not include knob-dialog".into());
-    }
-    let (records, _payload_base, _payload, init, _relocations, _module_hooks, _module_images) =
-        sd_fixture_edits(options, main, l6fw::Model::L6max)?;
-    if init.is_none() {
-        return Err("SD knob-dialog has no late initializer".into());
-    }
-    let edits = records
-        .into_iter()
-        .map(|(address, original, _entry_offset)| {
-            let offset = (address - 0x8000_0000) as usize;
-            (address, main[offset..offset + original.len()].to_vec())
-        })
-        .collect::<Vec<_>>();
-    Ok(edits)
-}
-
 fn run_knob_dialog(
     session: &Session,
     options: &Options,
     guest_timeout_ms: u32,
     wall_timeout_s: u64,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    use l6max_host::indicators::rings;
     use std::time::Instant;
 
-    const MAIN_SHA256: [&str; 4] = [
-        // Templates regenerated from the current patch sources.
-        "98898165368380606e8a76954a4da92438030ef7a3f878e5a302ce84cfa7fe5a",
-        "76925b4e017083910ef33c2d52e3930d3cdad819cc8b4ffe5f782dd2f07212d7",
-        // Recorder-fix release rebuild of the same knob-dialog patch, version 0112.
-        "90c7cbdd0fee494bdcaf805730b1eb3931117d27d96ab651fe5dc604695c3010",
-        "863ee4475b728e9a7b1d04fcdd4eb28555aee3fc8009eca9c36d2a3032b5fc32",
-    ];
     let main = selected_main_image(options).map_err(std::io::Error::other)?;
-    use sha2::{Digest, Sha256};
-    let dynamic_knob_dialog = if options.sd_image.is_some() {
-        sd_fixture_edits(options, &main, l6fw::Model::L6max)
-            .ok()
-            .is_some_and(|(_, _, _, _, _, _, module_images)| {
-                module_images.iter().any(|(payload, _, _)| {
-                    payload
-                        .windows(b"KNOB_WIN1".len())
-                        .any(|window| window == b"KNOB_WIN1")
-                })
-            })
-    } else {
-        false
-    };
-    let statically_patched = main.get(0x40c..0x410) == Some(&0x8007eea9u32.to_le_bytes());
-    let sd_edits = if statically_patched
-        || MAIN_SHA256.contains(&format!("{:x}", Sha256::digest(&main)).as_str())
-    {
-        None
-    } else {
-        Some(sd_knob_edits(options, &main).map_err(std::io::Error::other)?)
-    };
     if main.get(0x40c..0x410) != Some(&0x8007eea9u32.to_le_bytes()) {
         return Err("patched startup hook does not reserve popup RAM".into());
     }
     let inputs = session.engine.inputs.as_ref().unwrap();
     let qmp = &session.engine.management[0];
-    let encoder_report_baseline = fs::read_to_string(options.logs.join("engine.trace"))?
-        .matches("l6 panel USART1 TX a1\n")
-        .count() as u64;
     let start = inputs.panel.snapshot().guest_ms;
     wait_guest(session, start, 40_000, guest_timeout_ms, wall_timeout_s)?;
-    if let Some(edits) = &sd_edits {
-        for (address, expected) in edits {
-            if qmp.read_memory(0, *address, expected.len())? != *expected {
-                return Err(format!("SD patch not active at {address:#010x}").into());
-            }
-        }
-        let (_, link_base, mut expected, _, relocations, _, _) =
-            sd_fixture_edits(options, &main, l6fw::Model::L6max).map_err(std::io::Error::other)?;
-        let registry = sd_registry(qmp, l6fw::Model::L6max)?;
-        let loaded_base =
-            u32::from_le_bytes(qmp.read_memory(0, registry + 160, 4)?.try_into().unwrap());
-        if loaded_base == 0 {
-            return Err("SD knob-dialog module allocation is missing".into());
-        }
-        patch_loader_core::bundle::relocate(
-            &mut expected,
-            relocations.into_iter(),
-            link_base,
-            loaded_base,
-        )
-        .map_err(|error| format!("invalid knob-dialog relocations: {error:?}"))?;
-        for (index, chunk) in expected.chunks(4096).enumerate() {
-            let address = loaded_base + (index * 4096) as u32;
-            if qmp.read_memory(0, address, chunk.len())? != chunk {
-                return Err("SD knob-dialog bytes do not match the relocated bundle".into());
-            }
-        }
-        let slot = qmp.read_memory(0, 0x8020a2a0, 4)?;
-        if u32::from_le_bytes(slot.try_into().unwrap()) & 1 == 0 {
-            return Err("SD knob-dialog late initialization did not install its sidecar".into());
-        }
-    }
     inputs.tap(3, 50)?;
     let after = inputs.panel.snapshot().guest_ms;
     wait_guest(session, after, 1_950, guest_timeout_ms, wall_timeout_s)?;
@@ -6305,13 +6101,14 @@ fn run_knob_dialog(
     let after = inputs.panel.snapshot().guest_ms;
     wait_guest(session, after, 4_950, guest_timeout_ms, wall_timeout_s)?;
 
-    let before = rings(inputs.panel.snapshot().indicators);
-    let original_resources = qmp.read_memory(0, 0x802059b8, 12)?;
-    let original_bitmap = qmp.read_memory(0, 0x80207458, 4)?;
-    let original_header = qmp.read_memory(0, 0x8020098c, 6)?;
-    let original_value_y = qmp.read_memory(0, 0x8020099c, 2)?;
-    let original_polarity = qmp.read_memory(0, 0x80200986, 2)?;
-    let lengths_table = u32::from_le_bytes(qmp.read_memory(0, 0x802050fc, 4)?.try_into().unwrap());
+    let word = |address: u32| -> Result<u32, Box<dyn std::error::Error>> {
+        Ok(u32::from_le_bytes(
+            qmp.read_memory(0, address, 4)?.try_into().unwrap(),
+        ))
+    };
+    let text_pointers = word(l6max::gui_text_pointers_by_language)?;
+    let original_resources = qmp.read_memory(0, text_pointers + 229 * 4, 12)?;
+    let lengths_table = word(l6max::gui_text_lengths_by_language)?;
     let original_lengths = qmp.read_memory(0, lengths_table + 229 * 2, 6)?;
     let mut original_text = Vec::new();
     for (pointer, capacity) in original_resources
@@ -6322,27 +6119,12 @@ fn run_knob_dialog(
         let count = (usize::from(u16::from_le_bytes(capacity.try_into()?)) + 1) * 2;
         original_text.push((address, qmp.read_memory(0, address, count)?));
     }
-    let abandoned_page = qmp.read_memory(0, 0x841ff000, 4096)?;
     let heap = || -> Result<Vec<u32>, Box<dyn std::error::Error>> {
         Ok(qmp
-            .read_memory(0, 0x8020ab1c, 16)?
+            .read_memory(0, l6max::xFreeBytesRemaining, 16)?
             .chunks_exact(4)
             .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
             .collect())
-    };
-    let text_resource = |index: u32| -> Result<String, Box<dyn std::error::Error>> {
-        let pointer = u32::from_le_bytes(
-            qmp.read_memory(0, 0x802059b8 + 4 * index, 4)?
-                .try_into()
-                .unwrap(),
-        );
-        let bytes = qmp.read_memory(0, pointer, 48)?;
-        let text = bytes
-            .chunks_exact(2)
-            .map(|b| u16::from_le_bytes([b[0], b[1]]))
-            .take_while(|c| *c != 0)
-            .collect::<Vec<_>>();
-        Ok(String::from_utf16(&text)?)
     };
     let capture = |duration: u32, name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
         let start = inputs.panel.snapshot().guest_ms;
@@ -6416,1402 +6198,1254 @@ fn run_knob_dialog(
             _ => format!("{}%", (raw as u32 * 100 + 63) / 127),
         }
     };
-    if dynamic_knob_dialog
-        || main
-            .windows(b"KNOB_WIN1".len())
-            .any(|window| window == b"KNOB_WIN1")
+    let inputs = session.engine.inputs.as_ref().unwrap();
+    // Check the first-use guard on an actual non-recorder screen before
+    // the dialog has initialized state or claimed its display callback.
+    use firmware_api::l6max::GUI_RECORDER_WINDOW;
+    if u32::from_le_bytes(
+        qmp.read_memory(0, l6max::current_window, 4)?
+            .try_into()
+            .unwrap(),
+    ) != GUI_RECORDER_WINDOW
     {
-        let inputs = session.engine.inputs.as_ref().unwrap();
-        // Check the first-use guard on an actual non-recorder screen before
-        // the dialog has initialized state or claimed its display callback.
-        const RECORDER_HOME: u32 = 0x8020_0408;
-        if u32::from_le_bytes(qmp.read_memory(0, 0x8020_2610, 4)?.try_into().unwrap())
-            != RECORDER_HOME
-        {
-            return Err("knob-dialog test did not start from the recorder screen".into());
-        }
-        if qmp.read_memory(0, 0x8020_73c8, 4)? != 0u32.to_le_bytes()
-            || qmp.read_memory(0, 0x8020_a59c + 20, 4)? != 0u32.to_le_bytes()
-        {
-            return Err(
-                "knob-dialog state or callback was already active before the guard test".into(),
-            );
-        }
-        inputs.main.tap(0, 120)?;
-        let menu_start = inputs.panel.snapshot().guest_ms;
-        wait_guest(session, menu_start, 500, guest_timeout_ms, wall_timeout_s)?;
-        let non_recorder_window =
-            u32::from_le_bytes(qmp.read_memory(0, 0x8020_2610, 4)?.try_into().unwrap());
-        if non_recorder_window == RECORDER_HOME {
-            return Err("Menu button did not leave the recorder screen for the guard test".into());
-        }
-        capture(100, "knob-dialog-non-recorder-before")?;
-        inputs.knob(0, -1)?;
-        let non_recorder_knob = inputs.panel.snapshot().guest_ms;
-        wait_guest(
-            session,
-            non_recorder_knob,
-            500,
-            guest_timeout_ms,
-            wall_timeout_s,
-        )?;
-        qmp.stop()?;
-        let non_recorder_state = qmp.read_memory(0, 0x8020_73c8, 4)?;
-        let non_recorder_slot5 = qmp.read_memory(0, 0x8020_a59c + 20, 4)?;
-        let non_recorder_window_after =
-            u32::from_le_bytes(qmp.read_memory(0, 0x8020_2610, 4)?.try_into().unwrap());
-        let non_recorder_no_dialog = non_recorder_state == 0u32.to_le_bytes()
-            && non_recorder_slot5 == 0u32.to_le_bytes()
-            && non_recorder_window_after == non_recorder_window;
-        qmp.resume()?;
-        if !non_recorder_no_dialog {
-            return Err(format!(
+        return Err("knob-dialog test did not start from the recorder screen".into());
+    }
+    if qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)? != 0u32.to_le_bytes()
+        || qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)? != 0u32.to_le_bytes()
+    {
+        return Err(
+            "knob-dialog state or callback was already active before the guard test".into(),
+        );
+    }
+    inputs.main.tap(0, 120)?;
+    let menu_start = inputs.panel.snapshot().guest_ms;
+    wait_guest(session, menu_start, 500, guest_timeout_ms, wall_timeout_s)?;
+    let non_recorder_window = u32::from_le_bytes(
+        qmp.read_memory(0, l6max::current_window, 4)?
+            .try_into()
+            .unwrap(),
+    );
+    if non_recorder_window == GUI_RECORDER_WINDOW {
+        return Err("Menu button did not leave the recorder screen for the guard test".into());
+    }
+    capture(100, "knob-dialog-non-recorder-before")?;
+    inputs.knob(0, -1)?;
+    let non_recorder_knob = inputs.panel.snapshot().guest_ms;
+    wait_guest(
+        session,
+        non_recorder_knob,
+        500,
+        guest_timeout_ms,
+        wall_timeout_s,
+    )?;
+    qmp.stop()?;
+    let non_recorder_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
+    let non_recorder_slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
+    let non_recorder_window_after = u32::from_le_bytes(
+        qmp.read_memory(0, l6max::current_window, 4)?
+            .try_into()
+            .unwrap(),
+    );
+    let non_recorder_no_dialog = non_recorder_state == 0u32.to_le_bytes()
+        && non_recorder_slot5 == 0u32.to_le_bytes()
+        && non_recorder_window_after == non_recorder_window;
+    qmp.resume()?;
+    if !non_recorder_no_dialog {
+        return Err(format!(
                 "knob event opened or changed the dialog outside recorder: state={non_recorder_state:02x?}, slot5={non_recorder_slot5:02x?}, window={non_recorder_window_after:#010x}"
             )
             .into());
-        }
-        inputs.main.tap(0, 120)?;
-        let return_start = inputs.panel.snapshot().guest_ms;
-        wait_guest(session, return_start, 500, guest_timeout_ms, wall_timeout_s)?;
-        if u32::from_le_bytes(qmp.read_memory(0, 0x8020_2610, 4)?.try_into().unwrap())
-            != RECORDER_HOME
-        {
-            return Err("Menu button did not return to recorder before dialog checks".into());
-        }
-        let non_recorder_guard_passed = true;
+    }
+    inputs.main.tap(0, 120)?;
+    let return_start = inputs.panel.snapshot().guest_ms;
+    wait_guest(session, return_start, 500, guest_timeout_ms, wall_timeout_s)?;
+    if u32::from_le_bytes(
+        qmp.read_memory(0, l6max::current_window, 4)?
+            .try_into()
+            .unwrap(),
+    ) != GUI_RECORDER_WINDOW
+    {
+        return Err("Menu button did not return to recorder before dialog checks".into());
+    }
+    let non_recorder_guard_passed = true;
 
-        let display_callbacks = qmp.read_memory(0, 0x8020_a59c, 24)?;
-        let display_callback_target =
-            u32::from_le_bytes(display_callbacks[20..24].try_into().unwrap());
-        let slot0 = u32::from_le_bytes(display_callbacks[0..4].try_into().unwrap());
-        let slot2 = u32::from_le_bytes(display_callbacks[8..12].try_into().unwrap());
-        if display_callback_target != 0 || slot0 != 0 || slot2 != 0 {
-            return Err(format!(
+    let display_callbacks = qmp.read_memory(0, l6max::gui_display_callback_table, 24)?;
+    let display_callback_target = u32::from_le_bytes(display_callbacks[20..24].try_into().unwrap());
+    let slot0 = u32::from_le_bytes(display_callbacks[0..4].try_into().unwrap());
+    let slot2 = u32::from_le_bytes(display_callbacks[8..12].try_into().unwrap());
+    if display_callback_target != 0 || slot0 != 0 || slot2 != 0 {
+        return Err(format!(
                 "expected an empty slot 5 before the first knob event; slot0={slot0:#010x}, slot2={slot2:#010x}, slot5={display_callback_target:#010x}"
             )
             .into());
-        }
-        inputs.tap(35, 50)?;
-        let pressed = inputs.panel.snapshot().guest_ms;
-        wait_guest(session, pressed, 500, guest_timeout_ms, wall_timeout_s)?;
-        let baseline = capture(100, "window-scene-before")?;
-        let original_window = qmp.read_memory(0, 0x80202610, 4)?;
-        let original_bitmap = qmp.read_memory(0, 0x80207458, 4)?;
-        let original_bitmap_descriptor = qmp.read_memory(0, 0x800c_b964, 8)?;
-        let original_state_handle = qmp.read_memory(0, 0x8020_73c8, 4)?;
-        if u32::from_le_bytes(original_bitmap.clone().try_into().unwrap()) != 0x800c_b964 {
-            return Err(
-                "stock bitmap-table entry 36 did not point at its guarded ROM descriptor".into(),
-            );
-        }
-        if original_state_handle != 0u32.to_le_bytes() {
-            return Err(format!(
-                "bitmap-table slot 0 is not the expected null sentinel: {original_state_handle:02x?}"
-            )
-            .into());
-        }
-        let original_notification_semaphore = qmp.read_memory(0, 0x8020a2a0, 4)?;
-        let notification_semaphore =
-            u32::from_le_bytes(original_notification_semaphore.clone().try_into().unwrap());
-        if notification_semaphore == 0 || notification_semaphore & 1 != 0 {
-            return Err(format!(
-                "expected the stock untagged notification semaphore, got {notification_semaphore:#010x}"
-            )
-            .into());
-        }
-        let text_table = u32::from_le_bytes(qmp.read_memory(0, 0x80205118, 4)?.try_into().unwrap());
-        let decode_text = |address: u32| -> Result<String, Box<dyn std::error::Error>> {
-            let pointer = u32::from_le_bytes(qmp.read_memory(0, address, 4)?.try_into().unwrap());
-            let bytes = qmp.read_memory(0, pointer, 48)?;
-            let units = bytes
-                .chunks_exact(2)
-                .map(|b| u16::from_le_bytes([b[0], b[1]]))
-                .take_while(|c| *c != 0)
-                .collect::<Vec<_>>();
-            Ok(String::from_utf16(&units)?)
-        };
-        let capture_demo = |name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
-            let mut frame = capture(100, name)?;
-            for _ in 0..6 {
-                if frame.iter().map(|byte| byte.count_ones()).sum::<u32>() >= 100 {
-                    return Ok(frame);
-                }
-                frame = capture(100, name)?;
+    }
+    inputs.tap(35, 50)?;
+    let pressed = inputs.panel.snapshot().guest_ms;
+    wait_guest(session, pressed, 500, guest_timeout_ms, wall_timeout_s)?;
+    let baseline = capture(100, "window-scene-before")?;
+    let original_window = qmp.read_memory(0, l6max::current_window, 4)?;
+    let original_bitmap = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)?;
+    let original_bitmap_descriptor = qmp.read_memory(0, l6max::GUI_BITMAP_36_DESCRIPTOR, 8)?;
+    let original_state_handle = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
+    if u32::from_le_bytes(original_bitmap.clone().try_into().unwrap())
+        != l6max::GUI_BITMAP_36_DESCRIPTOR
+    {
+        return Err(
+            "stock bitmap-table entry 36 did not point at its guarded ROM descriptor".into(),
+        );
+    }
+    if original_state_handle != 0u32.to_le_bytes() {
+        return Err(format!(
+            "bitmap-table slot 0 is not the expected null sentinel: {original_state_handle:02x?}"
+        )
+        .into());
+    }
+    let original_notification_semaphore = qmp.read_memory(0, l6max::notification_slot, 4)?;
+    let notification_semaphore =
+        u32::from_le_bytes(original_notification_semaphore.clone().try_into().unwrap());
+    if notification_semaphore == 0 || notification_semaphore & 1 != 0 {
+        return Err(format!(
+            "expected the stock untagged notification semaphore, got {notification_semaphore:#010x}"
+        )
+        .into());
+    }
+    let text_table = u32::from_le_bytes(
+        qmp.read_memory(0, l6max::gui_text_pointers_by_language, 4)?
+            .try_into()
+            .unwrap(),
+    );
+    let decode_text = |address: u32| -> Result<String, Box<dyn std::error::Error>> {
+        let pointer = u32::from_le_bytes(qmp.read_memory(0, address, 4)?.try_into().unwrap());
+        let bytes = qmp.read_memory(0, pointer, 48)?;
+        let units = bytes
+            .chunks_exact(2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+            .take_while(|c| *c != 0)
+            .collect::<Vec<_>>();
+        Ok(String::from_utf16(&units)?)
+    };
+    let capture_demo = |name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
+        let mut frame = capture(100, name)?;
+        for _ in 0..6 {
+            if frame.iter().map(|byte| byte.count_ones()).sum::<u32>() >= 100 {
+                return Ok(frame);
             }
-            Err(format!("demo frame {name} stayed blank").into())
-        };
-        let original_resources = qmp.read_memory(0, text_table + 229 * 4, 8)?;
-        let shared_resource_pointer = u32::from_le_bytes(
-            qmp.read_memory(0, text_table + 179 * 4, 4)?
+            frame = capture(100, name)?;
+        }
+        Err(format!("demo frame {name} stayed blank").into())
+    };
+    let original_resources = qmp.read_memory(0, text_table + 229 * 4, 8)?;
+    let shared_resource_pointer = u32::from_le_bytes(
+        qmp.read_memory(0, text_table + 179 * 4, 4)?
+            .try_into()
+            .unwrap(),
+    );
+    let original_shared_resource = qmp.read_memory(0, shared_resource_pointer, 512)?;
+    let original_lengths_table = u32::from_le_bytes(
+        qmp.read_memory(0, l6max::gui_text_lengths_by_language, 4)?
+            .try_into()
+            .unwrap(),
+    );
+    let original_lengths = qmp.read_memory(0, original_lengths_table + 229 * 2, 4)?;
+    let widget_pointer = |index: u32| -> Result<u32, Box<dyn std::error::Error>> {
+        Ok(u32::from_le_bytes(
+            qmp.read_memory(0, l6max::gui_widget_table + index * 4, 4)?
                 .try_into()
                 .unwrap(),
-        );
-        let original_shared_resource = qmp.read_memory(0, shared_resource_pointer, 512)?;
-        let original_lengths_table =
-            u32::from_le_bytes(qmp.read_memory(0, 0x802050fc, 4)?.try_into().unwrap());
-        let original_lengths = qmp.read_memory(0, original_lengths_table + 229 * 2, 4)?;
-        let widget_pointer = |index: u32| -> Result<u32, Box<dyn std::error::Error>> {
-            Ok(u32::from_le_bytes(
-                qmp.read_memory(0, 0x80200af4 + index * 4, 4)?
-                    .try_into()
-                    .unwrap(),
-            ))
-        };
-        let widget7 = widget_pointer(7)?;
-        let widget33 = widget_pointer(33)?;
-        let original_widget7 = qmp.read_memory(0, widget7, 16)?;
-        let original_widget33 = qmp.read_memory(0, widget33, 16)?;
-        if original_widget7.as_slice() != [1, 0, 0, 0, 10, 0, 1, 0, 1, 0, 126, 0, 1, 0, 1, 2]
-            || original_widget33.as_slice() != [1, 0, 1, 0, 40, 0, 30, 0, 33, 0, 67, 0, 1, 0, 1, 0]
-        {
-            return Err("recorder widgets do not match the guarded firmware defaults".into());
-        }
-        let original_shared_capacity = qmp.read_memory(0, original_lengths_table + 179 * 2, 2)?;
-        if u16::from_le_bytes(original_shared_capacity.try_into().unwrap()) != 255
-            || original_shared_resource
-                .chunks_exact(2)
-                .take(255)
-                .any(|unit| unit != b"*\0")
-            || original_shared_resource[510..512] != [0, 0]
-        {
-            return Err(
-                "shared GUI resource 179 is not the expected free 255-character buffer".into(),
-            );
-        }
-        let background_pointer = |index: u32| -> Result<u32, Box<dyn std::error::Error>> {
-            Ok(u32::from_le_bytes(
-                qmp.read_memory(0, 0x80200670 + index * 4, 4)?
-                    .try_into()
-                    .unwrap(),
-            ))
-        };
-        let background10 = background_pointer(10)?;
-        let background37 = background_pointer(37)?;
-        let background48 = background_pointer(48)?;
-        let original_background_layers = [
-            qmp.read_memory(0, background10, 1)?,
-            qmp.read_memory(0, background37, 1)?,
-            qmp.read_memory(0, background48, 1)?,
-        ];
-        let heap_before = heap()?;
-        let socket = options
-            .gdb_socket
-            .as_ref()
-            .ok_or("knob-dialog lock-contention check needs GDB")?;
-        let mut debugger = l6max_diagnostics::gdb::Gdb::connect(socket)?;
+        ))
+    };
+    let widget7 = widget_pointer(7)?;
+    let widget33 = widget_pointer(33)?;
+    let original_widget7 = qmp.read_memory(0, widget7, 16)?;
+    let original_widget33 = qmp.read_memory(0, widget33, 16)?;
+    if original_widget7.as_slice() != [1, 0, 0, 0, 10, 0, 1, 0, 1, 0, 126, 0, 1, 0, 1, 2]
+        || original_widget33.as_slice() != [1, 0, 1, 0, 40, 0, 30, 0, 33, 0, 67, 0, 1, 0, 1, 0]
+    {
+        return Err("recorder widgets do not match the guarded firmware defaults".into());
+    }
+    let original_shared_capacity = qmp.read_memory(0, original_lengths_table + 179 * 2, 2)?;
+    if u16::from_le_bytes(original_shared_capacity.try_into().unwrap()) != 255
+        || original_shared_resource
+            .chunks_exact(2)
+            .take(255)
+            .any(|unit| unit != b"*\0")
+        || original_shared_resource[510..512] != [0, 0]
+    {
+        return Err("shared GUI resource 179 is not the expected free 255-character buffer".into());
+    }
+    let background_pointer = |index: u32| -> Result<u32, Box<dyn std::error::Error>> {
+        Ok(u32::from_le_bytes(
+            qmp.read_memory(0, l6max::gui_background_table + index * 4, 4)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let background10 = background_pointer(10)?;
+    let background37 = background_pointer(37)?;
+    let background48 = background_pointer(48)?;
+    let original_background_layers = [
+        qmp.read_memory(0, background10, 1)?,
+        qmp.read_memory(0, background37, 1)?,
+        qmp.read_memory(0, background48, 1)?,
+    ];
+    let heap_before = heap()?;
+    let socket = options
+        .gdb_socket
+        .as_ref()
+        .ok_or("knob-dialog lock-contention check needs GDB")?;
+    let mut debugger = l6max_diagnostics::gdb::Gdb::connect(socket)?;
 
-        // A descriptor drift must make the patch decline first use without
-        // allocating state or claiming its callback slot.
-        qmp.stop()?;
-        debugger.write(widget7 + 6, &2u16.to_le_bytes())?;
-        qmp.resume()?;
-        inputs.knob(0, -1)?;
-        let mismatch_start = inputs.panel.snapshot().guest_ms;
-        wait_guest(
-            session,
-            mismatch_start,
-            500,
-            guest_timeout_ms,
-            wall_timeout_s,
-        )?;
-        qmp.stop()?;
-        let mismatch_state = qmp.read_memory(0, 0x8020_73c8, 4)?;
-        let mismatch_slot5 = qmp.read_memory(0, 0x8020_a59c + 20, 4)?;
-        let mismatch_heap = heap()?;
-        debugger.write(widget7 + 6, &1u16.to_le_bytes())?;
-        qmp.resume()?;
-        if mismatch_state != 0u32.to_le_bytes()
-            || mismatch_slot5 != 0u32.to_le_bytes()
-            || mismatch_heap != heap_before
-        {
-            return Err(format!(
+    // A descriptor drift must make the patch decline first use without
+    // allocating state or claiming its callback slot.
+    qmp.stop()?;
+    debugger.write(widget7 + 6, &2u16.to_le_bytes())?;
+    qmp.resume()?;
+    inputs.knob(0, -1)?;
+    let mismatch_start = inputs.panel.snapshot().guest_ms;
+    wait_guest(
+        session,
+        mismatch_start,
+        500,
+        guest_timeout_ms,
+        wall_timeout_s,
+    )?;
+    qmp.stop()?;
+    let mismatch_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
+    let mismatch_slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
+    let mismatch_heap = heap()?;
+    debugger.write(widget7 + 6, &1u16.to_le_bytes())?;
+    qmp.resume()?;
+    if mismatch_state != 0u32.to_le_bytes()
+        || mismatch_slot5 != 0u32.to_le_bytes()
+        || mismatch_heap != heap_before
+    {
+        return Err(format!(
                 "descriptor drift was not rejected cleanly: state={mismatch_state:02x?}, slot5={mismatch_slot5:02x?}, heap={mismatch_heap:?}"
             )
             .into());
-        }
+    }
 
-        // Resource 179 is borrowed by the dialog only if no other initialized
-        // widget points at it. Simulate another patch claiming that resource.
-        let alias_widget = widget_pointer(60)?;
-        let original_alias_resource = qmp.read_memory(0, alias_widget + 4, 2)?;
-        qmp.stop()?;
-        debugger.write(alias_widget + 4, &179u16.to_le_bytes())?;
-        qmp.resume()?;
-        inputs.knob(0, -1)?;
-        let alias_start = inputs.panel.snapshot().guest_ms;
-        wait_guest(session, alias_start, 500, guest_timeout_ms, wall_timeout_s)?;
-        qmp.stop()?;
-        let alias_state = qmp.read_memory(0, 0x8020_73c8, 4)?;
-        let alias_slot5 = qmp.read_memory(0, 0x8020_a59c + 20, 4)?;
-        let alias_heap = heap()?;
-        debugger.write(alias_widget + 4, &original_alias_resource)?;
-        qmp.resume()?;
-        if alias_state != 0u32.to_le_bytes()
-            || alias_slot5 != 0u32.to_le_bytes()
-            || alias_heap != heap_before
-        {
-            return Err(format!(
+    // Resource 179 is borrowed by the dialog only if no other initialized
+    // widget points at it. Simulate another patch claiming that resource.
+    let alias_widget = widget_pointer(60)?;
+    let original_alias_resource = qmp.read_memory(0, alias_widget + 4, 2)?;
+    qmp.stop()?;
+    debugger.write(alias_widget + 4, &179u16.to_le_bytes())?;
+    qmp.resume()?;
+    inputs.knob(0, -1)?;
+    let alias_start = inputs.panel.snapshot().guest_ms;
+    wait_guest(session, alias_start, 500, guest_timeout_ms, wall_timeout_s)?;
+    qmp.stop()?;
+    let alias_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
+    let alias_slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
+    let alias_heap = heap()?;
+    debugger.write(alias_widget + 4, &original_alias_resource)?;
+    qmp.resume()?;
+    if alias_state != 0u32.to_le_bytes()
+        || alias_slot5 != 0u32.to_le_bytes()
+        || alias_heap != heap_before
+    {
+        return Err(format!(
                 "shared text resource alias was not rejected cleanly: state={alias_state:02x?}, slot5={alias_slot5:02x?}, heap={alias_heap:?}"
             )
             .into());
-        }
+    }
 
-        // Layer 4 is reserved for this scene. An existing descriptor on that
-        // layer must also prevent first use from claiming it.
-        let original_alias_layer = qmp.read_memory(0, alias_widget, 2)?;
-        qmp.stop()?;
-        debugger.write(alias_widget, &4u16.to_le_bytes())?;
-        qmp.resume()?;
-        inputs.knob(0, -1)?;
-        let layer_start = inputs.panel.snapshot().guest_ms;
-        wait_guest(session, layer_start, 500, guest_timeout_ms, wall_timeout_s)?;
-        qmp.stop()?;
-        let layer_state = qmp.read_memory(0, 0x8020_73c8, 4)?;
-        let layer_slot5 = qmp.read_memory(0, 0x8020_a59c + 20, 4)?;
-        let layer_heap = heap()?;
-        debugger.write(alias_widget, &original_alias_layer)?;
-        qmp.resume()?;
-        if layer_state != 0u32.to_le_bytes()
-            || layer_slot5 != 0u32.to_le_bytes()
-            || layer_heap != heap_before
-        {
-            return Err(format!(
+    // Layer 4 is reserved for this scene. An existing descriptor on that
+    // layer must also prevent first use from claiming it.
+    let original_alias_layer = qmp.read_memory(0, alias_widget, 2)?;
+    qmp.stop()?;
+    debugger.write(alias_widget, &4u16.to_le_bytes())?;
+    qmp.resume()?;
+    inputs.knob(0, -1)?;
+    let layer_start = inputs.panel.snapshot().guest_ms;
+    wait_guest(session, layer_start, 500, guest_timeout_ms, wall_timeout_s)?;
+    qmp.stop()?;
+    let layer_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
+    let layer_slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
+    let layer_heap = heap()?;
+    debugger.write(alias_widget, &original_alias_layer)?;
+    qmp.resume()?;
+    if layer_state != 0u32.to_le_bytes()
+        || layer_slot5 != 0u32.to_le_bytes()
+        || layer_heap != heap_before
+    {
+        return Err(format!(
                 "scene layer collision was not rejected cleanly: state={layer_state:02x?}, slot5={layer_slot5:02x?}, heap={layer_heap:?}"
             )
             .into());
-        }
+    }
 
-        // The compact state record restores fixed stock layers, so reject a
-        // changed borrowed widget layer instead of trying to save metadata.
-        let original_widget_layer = qmp.read_memory(0, widget7, 1)?;
-        qmp.stop()?;
-        debugger.write(widget7, &[0])?;
-        qmp.resume()?;
-        inputs.knob(0, -1)?;
-        let widget_layer_start = inputs.panel.snapshot().guest_ms;
-        wait_guest(
-            session,
-            widget_layer_start,
-            500,
-            guest_timeout_ms,
-            wall_timeout_s,
-        )?;
-        qmp.stop()?;
-        let widget_layer_state = qmp.read_memory(0, 0x8020_73c8, 4)?;
-        let widget_layer_slot5 = qmp.read_memory(0, 0x8020_a59c + 20, 4)?;
-        let widget_layer_heap = heap()?;
-        debugger.write(widget7, &original_widget_layer)?;
-        qmp.resume()?;
-        let widget_layer_guard_rejected = widget_layer_state == 0u32.to_le_bytes()
-            && widget_layer_slot5 == 0u32.to_le_bytes()
-            && widget_layer_heap == heap_before;
-        if !widget_layer_guard_rejected {
-            return Err(format!(
+    // The compact state record restores fixed stock layers, so reject a
+    // changed borrowed widget layer instead of trying to save metadata.
+    let original_widget_layer = qmp.read_memory(0, widget7, 1)?;
+    qmp.stop()?;
+    debugger.write(widget7, &[0])?;
+    qmp.resume()?;
+    inputs.knob(0, -1)?;
+    let widget_layer_start = inputs.panel.snapshot().guest_ms;
+    wait_guest(
+        session,
+        widget_layer_start,
+        500,
+        guest_timeout_ms,
+        wall_timeout_s,
+    )?;
+    qmp.stop()?;
+    let widget_layer_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
+    let widget_layer_slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
+    let widget_layer_heap = heap()?;
+    debugger.write(widget7, &original_widget_layer)?;
+    qmp.resume()?;
+    let widget_layer_guard_rejected = widget_layer_state == 0u32.to_le_bytes()
+        && widget_layer_slot5 == 0u32.to_le_bytes()
+        && widget_layer_heap == heap_before;
+    if !widget_layer_guard_rejected {
+        return Err(format!(
                 "changed widget layer was not rejected cleanly: state={widget_layer_state:02x?}, slot5={widget_layer_slot5:02x?}, heap={widget_layer_heap:?}"
             )
             .into());
-        }
+    }
 
-        // Background descriptors have the same fixed-layer restoration
-        // contract and must pass the same first-use preflight.
-        qmp.stop()?;
-        debugger.write(background10, &[1])?;
-        qmp.resume()?;
-        inputs.knob(0, -1)?;
-        let background_layer_start = inputs.panel.snapshot().guest_ms;
-        wait_guest(
-            session,
-            background_layer_start,
-            500,
-            guest_timeout_ms,
-            wall_timeout_s,
-        )?;
-        qmp.stop()?;
-        let background_layer_state = qmp.read_memory(0, 0x8020_73c8, 4)?;
-        let background_layer_slot5 = qmp.read_memory(0, 0x8020_a59c + 20, 4)?;
-        let background_layer_heap = heap()?;
-        debugger.write(background10, &original_background_layers[0])?;
-        qmp.resume()?;
-        let background_layer_guard_rejected = background_layer_state == 0u32.to_le_bytes()
-            && background_layer_slot5 == 0u32.to_le_bytes()
-            && background_layer_heap == heap_before;
-        if !background_layer_guard_rejected {
-            return Err(format!(
+    // Background descriptors have the same fixed-layer restoration
+    // contract and must pass the same first-use preflight.
+    qmp.stop()?;
+    debugger.write(background10, &[1])?;
+    qmp.resume()?;
+    inputs.knob(0, -1)?;
+    let background_layer_start = inputs.panel.snapshot().guest_ms;
+    wait_guest(
+        session,
+        background_layer_start,
+        500,
+        guest_timeout_ms,
+        wall_timeout_s,
+    )?;
+    qmp.stop()?;
+    let background_layer_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
+    let background_layer_slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
+    let background_layer_heap = heap()?;
+    debugger.write(background10, &original_background_layers[0])?;
+    qmp.resume()?;
+    let background_layer_guard_rejected = background_layer_state == 0u32.to_le_bytes()
+        && background_layer_slot5 == 0u32.to_le_bytes()
+        && background_layer_heap == heap_before;
+    if !background_layer_guard_rejected {
+        return Err(format!(
                 "changed background layer was not rejected cleanly: state={background_layer_state:02x?}, slot5={background_layer_slot5:02x?}, heap={background_layer_heap:?}"
             )
             .into());
-        }
+    }
 
-        // Simulate the notification manager owning its semaphore during first
-        // use. The scene must not depend on that unrelated lock.
-        qmp.stop()?;
-        let semaphore_count = qmp.read_memory(0, notification_semaphore + 56, 4)?;
-        if semaphore_count != 1u32.to_le_bytes() {
-            qmp.resume()?;
-            return Err("notification semaphore was not available before contention check".into());
-        }
-        debugger.write(notification_semaphore + 56, &0u32.to_le_bytes())?;
-        // Stop at callback registration after the mixer-side scene preflight
-        // has passed. Change a borrowed descriptor before DisplayCycle2 can
-        // render so the callback-side preflight gets exercised deterministically.
-        const DISPLAY_CALLBACK_REGISTER: u32 = 0x8002_4ed0;
-        debugger.breakpoint(DISPLAY_CALLBACK_REGISTER, true)?;
+    // Simulate the notification manager owning its semaphore during first
+    // use. The scene must not depend on that unrelated lock.
+    qmp.stop()?;
+    let semaphore_count = qmp.read_memory(0, notification_semaphore + 56, 4)?;
+    if semaphore_count != 1u32.to_le_bytes() {
         qmp.resume()?;
-        inputs.knob(0, -1)?;
-        let registration_deadline = Instant::now() + Duration::from_secs(10);
-        while qmp.query_status()?.running {
-            session.poll()?;
-            if Instant::now() >= registration_deadline {
-                let _ = debugger.breakpoint(DISPLAY_CALLBACK_REGISTER, false);
-                let _ = qmp.resume();
-                return Err("first-use callback registration breakpoint timed out".into());
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-        let registration_pc = debugger.read_register(15)? & !1;
-        let callback_slot = debugger.read_register(0)?;
-        let callback_pointer = debugger.read_register(1)?;
-        if registration_pc != DISPLAY_CALLBACK_REGISTER
-            || callback_slot != 5
-            || callback_pointer & 1 == 0
-        {
-            let _ = debugger.breakpoint(DISPLAY_CALLBACK_REGISTER, false);
+        return Err("notification semaphore was not available before contention check".into());
+    }
+    debugger.write(notification_semaphore + 56, &0u32.to_le_bytes())?;
+    // Stop at callback registration after the mixer-side scene preflight
+    // has passed. Change a borrowed descriptor before DisplayCycle2 can
+    // render so the callback-side preflight gets exercised deterministically.
+    use firmware_api::l6max::gui_display_callback_register;
+    debugger.breakpoint(gui_display_callback_register, true)?;
+    qmp.resume()?;
+    inputs.knob(0, -1)?;
+    let registration_deadline = Instant::now() + Duration::from_secs(10);
+    while qmp.query_status()?.running {
+        session.poll()?;
+        if Instant::now() >= registration_deadline {
+            let _ = debugger.breakpoint(gui_display_callback_register, false);
             let _ = qmp.resume();
-            return Err(format!(
+            return Err("first-use callback registration breakpoint timed out".into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    let registration_pc = debugger.read_register(15)? & !1;
+    let callback_slot = debugger.read_register(0)?;
+    let callback_pointer = debugger.read_register(1)?;
+    if registration_pc != gui_display_callback_register
+        || callback_slot != 5
+        || callback_pointer & 1 == 0
+    {
+        let _ = debugger.breakpoint(gui_display_callback_register, false);
+        let _ = qmp.resume();
+        return Err(format!(
                 "unexpected display callback registration: pc={registration_pc:#010x}, slot={callback_slot}, callback={callback_pointer:#010x}"
             )
             .into());
-        }
-        let callback_entry = callback_pointer & !1;
-        debugger.breakpoint(callback_entry, true)?;
-        debugger.breakpoint(DISPLAY_CALLBACK_REGISTER, false)?;
-        debugger.write(alias_widget, &4u16.to_le_bytes())?;
-        qmp.resume()?;
-        let callback_deadline = Instant::now() + Duration::from_secs(10);
-        while qmp.query_status()?.running {
-            session.poll()?;
-            if Instant::now() >= callback_deadline {
-                let _ = debugger.breakpoint(callback_entry, false);
-                let _ = qmp.resume();
-                return Err("first DisplayCycle2 callback breakpoint timed out".into());
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-        let callback_pc = debugger.read_register(15)? & !1;
-        if callback_pc != callback_entry {
+    }
+    let callback_entry = callback_pointer & !1;
+    debugger.breakpoint(callback_entry, true)?;
+    debugger.breakpoint(gui_display_callback_register, false)?;
+    debugger.write(alias_widget, &4u16.to_le_bytes())?;
+    qmp.resume()?;
+    let callback_deadline = Instant::now() + Duration::from_secs(10);
+    while qmp.query_status()?.running {
+        session.poll()?;
+        if Instant::now() >= callback_deadline {
             let _ = debugger.breakpoint(callback_entry, false);
             let _ = qmp.resume();
-            return Err(format!(
+            return Err("first DisplayCycle2 callback breakpoint timed out".into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    let callback_pc = debugger.read_register(15)? & !1;
+    if callback_pc != callback_entry {
+        let _ = debugger.breakpoint(callback_entry, false);
+        let _ = qmp.resume();
+        return Err(format!(
                 "first-use race probe stopped at {callback_pc:#010x}, not callback {callback_entry:#010x}"
             )
             .into());
-        }
-        debugger.breakpoint(callback_entry, false)?;
-        qmp.resume()?;
-        let race_frame = capture(150, "window-scene-callback-preflight-race")?;
-        qmp.stop()?;
-        let race_state = qmp.read_memory(0, 0x8020_73c8, 4)?;
-        let race_slot5 = qmp.read_memory(0, 0x8020_a59c + 20, 4)?;
-        let callback_preflight_race_rejected = race_frame == baseline
-            && u16::from_le_bytes(race_state[..2].try_into().unwrap()) == 0x4b4e
-            && u32::from_le_bytes(race_slot5.clone().try_into().unwrap()) == callback_pointer
-            && qmp.read_memory(0, alias_widget, 1)? == [4]
-            && qmp.read_memory(0, widget7, 1)? == [1]
-            && qmp.read_memory(0, background10, 1)? == [0]
-            && qmp.read_memory(0, shared_resource_pointer, 512)? == original_shared_resource;
-        debugger.write(alias_widget, &original_alias_layer)?;
-        qmp.resume()?;
-        if !callback_preflight_race_rejected {
-            return Err(format!(
+    }
+    debugger.breakpoint(callback_entry, false)?;
+    qmp.resume()?;
+    let race_frame = capture(150, "window-scene-callback-preflight-race")?;
+    qmp.stop()?;
+    let race_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
+    let race_slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
+    let callback_preflight_race_rejected = race_frame == baseline
+        && u16::from_le_bytes(race_state[..2].try_into().unwrap()) == 0x4b4e
+        && u32::from_le_bytes(race_slot5.clone().try_into().unwrap()) == callback_pointer
+        && qmp.read_memory(0, alias_widget, 1)? == [4]
+        && qmp.read_memory(0, widget7, 1)? == [1]
+        && qmp.read_memory(0, background10, 1)? == [0]
+        && qmp.read_memory(0, shared_resource_pointer, 512)? == original_shared_resource;
+    debugger.write(alias_widget, &original_alias_layer)?;
+    qmp.resume()?;
+    if !callback_preflight_race_rejected {
+        return Err(format!(
                 "callback-side scene preflight failed to reject descriptor drift: state={race_state:02x?}, slot5={race_slot5:02x?}, frame_unchanged={} ",
                 race_frame == baseline
             )
             .into());
-        }
+    }
 
-        // Retry while the notification semaphore is still held. The scene
-        // should now pass its callback-side preflight and render without using
-        // the notification manager's lock.
-        inputs.knob(0, -1)?;
-        let contention_start = inputs.panel.snapshot().guest_ms;
-        wait_guest(
-            session,
-            contention_start,
-            500,
-            guest_timeout_ms,
-            wall_timeout_s,
-        )?;
-        qmp.stop()?;
-        let first_state = qmp.read_memory(0, 0x8020_73c8, 4)?;
-        let first_slot5 =
-            u32::from_le_bytes(qmp.read_memory(0, 0x8020_a59c + 20, 4)?.try_into().unwrap());
-        let heap_while_locked = heap()?;
-        let notification_lock_still_held =
-            qmp.read_memory(0, notification_semaphore + 56, 4)? == 0u32.to_le_bytes();
-        let dialog_without_notification_lock =
-            u16::from_le_bytes(first_state[..2].try_into().unwrap()) == 0x4b4e
-                && first_slot5 & 1 == 1
-                && qmp.read_memory(0, 0x8020_73c8 + 3, 1)? == u8::MAX.to_le_bytes()
-                && qmp.read_memory(0, widget7, 1)? == [4]
-                && qmp.read_memory(0, background10, 1)? == [4]
-                && notification_lock_still_held;
-        debugger.write(notification_semaphore + 56, &semaphore_count)?;
-        qmp.resume()?;
-        if !dialog_without_notification_lock
-            || heap_while_locked[2] != heap_before[2]
-            || heap_while_locked[3] != heap_before[3]
-        {
-            return Err(format!(
+    // Retry while the notification semaphore is still held. The scene
+    // should now pass its callback-side preflight and render without using
+    // the notification manager's lock.
+    inputs.knob(0, -1)?;
+    let contention_start = inputs.panel.snapshot().guest_ms;
+    wait_guest(
+        session,
+        contention_start,
+        500,
+        guest_timeout_ms,
+        wall_timeout_s,
+    )?;
+    qmp.stop()?;
+    let first_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
+    let first_slot5 = u32::from_le_bytes(
+        qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?
+            .try_into()
+            .unwrap(),
+    );
+    let heap_while_locked = heap()?;
+    let notification_lock_still_held =
+        qmp.read_memory(0, notification_semaphore + 56, 4)? == 0u32.to_le_bytes();
+    let dialog_without_notification_lock = u16::from_le_bytes(first_state[..2].try_into().unwrap())
+        == 0x4b4e
+        && first_slot5 & 1 == 1
+        && qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 3, 1)? == u8::MAX.to_le_bytes()
+        && qmp.read_memory(0, widget7, 1)? == [4]
+        && qmp.read_memory(0, background10, 1)? == [4]
+        && notification_lock_still_held;
+    debugger.write(notification_semaphore + 56, &semaphore_count)?;
+    qmp.resume()?;
+    if !dialog_without_notification_lock
+        || heap_while_locked[2] != heap_before[2]
+        || heap_while_locked[3] != heap_before[3]
+    {
+        return Err(format!(
                 "dialog first use failed: state={first_state:02x?}, slot5={first_slot5:#010x}, heap={heap_while_locked:?}, notification_lock_still_held={notification_lock_still_held}, widget_x=({}, {})",
                 u16::from_le_bytes([original_widget7[6], original_widget7[7]]),
                 u16::from_le_bytes([original_widget33[6], original_widget33[7]])
             )
             .into());
-        }
+    }
 
-        inputs.knob(0, -3)?;
-        let active = capture(500, "knob-dialog-active")?;
-        let active_callbacks = qmp.read_memory(0, 0x8020_a59c, 24)?;
-        let active_slot5 = u32::from_le_bytes(active_callbacks[20..24].try_into().unwrap());
-        if active_slot5 & 1 == 0
-            || u32::from_le_bytes(active_callbacks[0..4].try_into().unwrap()) != 0
-            || u32::from_le_bytes(active_callbacks[8..12].try_into().unwrap()) != 0
-        {
-            return Err(format!(
+    inputs.knob(0, -3)?;
+    let active = capture(500, "knob-dialog-active")?;
+    let active_callbacks = qmp.read_memory(0, l6max::gui_display_callback_table, 24)?;
+    let active_slot5 = u32::from_le_bytes(active_callbacks[20..24].try_into().unwrap());
+    if active_slot5 & 1 == 0
+        || u32::from_le_bytes(active_callbacks[0..4].try_into().unwrap()) != 0
+        || u32::from_le_bytes(active_callbacks[8..12].try_into().unwrap()) != 0
+    {
+        return Err(format!(
                 "first knob event did not claim only free callback slot 5; slots0/2/5={:#010x}/{:#010x}/{active_slot5:#010x}",
                 u32::from_le_bytes(active_callbacks[0..4].try_into().unwrap()),
                 u32::from_le_bytes(active_callbacks[8..12].try_into().unwrap()),
             )
             .into());
-        }
-        if active == baseline {
-            return Err("custom overlay did not change the LCD".into());
-        }
+    }
+    if active == baseline {
+        return Err("custom overlay did not change the LCD".into());
+    }
 
-        // Capture emulator frames while the web demo values move in both
-        // directions. The web animation plays these captures at 20 fps.
-        capture_demo("knob-dialog-demo-level-start")?;
-        let mut level_peak_reached = false;
-        for index in 0..70 {
-            let displayed = decode_text(text_table + 179 * 4)?;
-            let value = displayed
-                .strip_suffix('%')
-                .and_then(|value| value.parse::<u8>().ok())
-                .unwrap_or(0);
-            if value >= 69 {
-                level_peak_reached = true;
-                break;
-            }
-            inputs.knob(0, 1)?;
-            capture_demo(&format!("knob-dialog-demo-level-up-{index:02}"))?;
+    // Capture emulator frames while the web demo values move in both
+    // directions. The web animation plays these captures at 20 fps.
+    capture_demo("knob-dialog-demo-level-start")?;
+    let mut level_peak_reached = false;
+    for index in 0..70 {
+        let displayed = decode_text(text_table + 179 * 4)?;
+        let value = displayed
+            .strip_suffix('%')
+            .and_then(|value| value.parse::<u8>().ok())
+            .unwrap_or(0);
+        if value >= 69 {
+            level_peak_reached = true;
+            break;
         }
-        if !level_peak_reached {
-            return Err("demo level sweep did not reach 69%".into());
+        inputs.knob(0, 1)?;
+        capture_demo(&format!("knob-dialog-demo-level-up-{index:02}"))?;
+    }
+    if !level_peak_reached {
+        return Err("demo level sweep did not reach 69%".into());
+    }
+    capture(500, "knob-dialog-demo-level-peak")?;
+    // The displayed percentage is rounded from a 0..127 firmware value,
+    // so 60 encoder steps are not always enough to return to zero.
+    for index in 0..128 {
+        if decode_text(text_table + 179 * 4)? == "0%" {
+            break;
         }
-        capture(500, "knob-dialog-demo-level-peak")?;
-        // The displayed percentage is rounded from a 0..127 firmware value,
-        // so 60 encoder steps are not always enough to return to zero.
-        for index in 0..128 {
-            if decode_text(text_table + 179 * 4)? == "0%" {
-                break;
-            }
-            inputs.knob(0, -1)?;
-            capture_demo(&format!("knob-dialog-demo-level-down-{index:02}"))?;
-        }
-        if decode_text(text_table + 179 * 4)? != "0%" {
-            return Err("demo level sweep did not return to zero".into());
-        }
-        capture(500, "knob-dialog-demo-level-zero")?;
-
-        // Observe the producer and consumer task contexts directly. The knob
-        // hook runs from the mixer update path; slot 5 runs from DisplayCycle2.
-        // This determines whether the atomic mailbox can be replaced safely.
-        const CURRENT_TCB: u32 = 0x808a_3af0;
-        let knob_hook_entry = thumb_bl_target(
-            0x8003_6c74,
-            qmp.read_memory(0, 0x8003_6c74, 4)?
-                .try_into()
-                .map_err(|_| "patched mixer call is not four bytes")?,
-        )
-        .ok_or("patched mixer dispatcher call is not a Thumb BL")?;
-        let callback_probe_entry = active_slot5 & !1;
-        qmp.stop()?;
-        debugger.breakpoint(knob_hook_entry, true)?;
-        qmp.resume()?;
         inputs.knob(0, -1)?;
-        let task_probe_deadline = Instant::now() + Duration::from_secs(10);
-        while qmp.query_status()?.running {
-            session.poll()?;
-            if Instant::now() >= task_probe_deadline {
-                return Err("knob hook task-context breakpoint timed out".into());
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-        let hook_pc = debugger.read_register(15)? & !1;
-        if hook_pc != knob_hook_entry {
-            return Err(format!(
-                "task probe stopped at {hook_pc:#010x}, not knob hook {knob_hook_entry:#010x}"
-            )
-            .into());
-        }
-        let hook_task = u32::from_le_bytes(qmp.read_memory(0, CURRENT_TCB, 4)?.try_into().unwrap());
-        debugger.breakpoint(knob_hook_entry, false)?;
-        debugger.breakpoint(callback_probe_entry, true)?;
-        qmp.resume()?;
+        capture_demo(&format!("knob-dialog-demo-level-down-{index:02}"))?;
+    }
+    if decode_text(text_table + 179 * 4)? != "0%" {
+        return Err("demo level sweep did not return to zero".into());
+    }
+    capture(500, "knob-dialog-demo-level-zero")?;
 
-        let task_probe_deadline = Instant::now() + Duration::from_secs(10);
-        while qmp.query_status()?.running {
-            session.poll()?;
-            if Instant::now() >= task_probe_deadline {
-                let _ = debugger.breakpoint(callback_probe_entry, false);
-                let _ = qmp.resume();
-                return Err("DisplayCycle2 task-context breakpoint timed out".into());
-            }
-            thread::sleep(Duration::from_millis(5));
+    // Observe the producer and consumer task contexts directly. The knob
+    // hook runs from the mixer update path; slot 5 runs from DisplayCycle2.
+    // This determines whether the atomic mailbox can be replaced safely.
+    use firmware_api::l6max::pxCurrentTCB;
+    // knob-dialog's call-site hook into `mixer_apply_channel_parameter`
+    // (patches/knob-dialog).
+    const KNOB_CALL_SITE: u32 = 0x8003_6c74;
+    let knob_hook_entry = thumb_bl_target(
+        KNOB_CALL_SITE,
+        qmp.read_memory(0, KNOB_CALL_SITE, 4)?
+            .try_into()
+            .map_err(|_| "patched mixer call is not four bytes")?,
+    )
+    .ok_or("patched mixer dispatcher call is not a Thumb BL")?;
+    let callback_probe_entry = active_slot5 & !1;
+    qmp.stop()?;
+    debugger.breakpoint(knob_hook_entry, true)?;
+    qmp.resume()?;
+    inputs.knob(0, -1)?;
+    let task_probe_deadline = Instant::now() + Duration::from_secs(10);
+    while qmp.query_status()?.running {
+        session.poll()?;
+        if Instant::now() >= task_probe_deadline {
+            return Err("knob hook task-context breakpoint timed out".into());
         }
-        let callback_pc = debugger.read_register(15)? & !1;
-        if callback_pc != callback_probe_entry {
-            return Err(format!(
-                "task probe stopped at {callback_pc:#010x}, not DisplayCycle2 callback"
-            )
-            .into());
+        thread::sleep(Duration::from_millis(5));
+    }
+    let hook_pc = debugger.read_register(15)? & !1;
+    if hook_pc != knob_hook_entry {
+        return Err(format!(
+            "task probe stopped at {hook_pc:#010x}, not knob hook {knob_hook_entry:#010x}"
+        )
+        .into());
+    }
+    let hook_task = u32::from_le_bytes(qmp.read_memory(0, pxCurrentTCB, 4)?.try_into().unwrap());
+    debugger.breakpoint(knob_hook_entry, false)?;
+    debugger.breakpoint(callback_probe_entry, true)?;
+    qmp.resume()?;
+
+    let task_probe_deadline = Instant::now() + Duration::from_secs(10);
+    while qmp.query_status()?.running {
+        session.poll()?;
+        if Instant::now() >= task_probe_deadline {
+            let _ = debugger.breakpoint(callback_probe_entry, false);
+            let _ = qmp.resume();
+            return Err("DisplayCycle2 task-context breakpoint timed out".into());
         }
-        let callback_task =
-            u32::from_le_bytes(qmp.read_memory(0, CURRENT_TCB, 4)?.try_into().unwrap());
-        if hook_task == callback_task {
-            return Err(
+        thread::sleep(Duration::from_millis(5));
+    }
+    let callback_pc = debugger.read_register(15)? & !1;
+    if callback_pc != callback_probe_entry {
+        return Err(format!(
+            "task probe stopped at {callback_pc:#010x}, not DisplayCycle2 callback"
+        )
+        .into());
+    }
+    let callback_task =
+        u32::from_le_bytes(qmp.read_memory(0, pxCurrentTCB, 4)?.try_into().unwrap());
+    if hook_task == callback_task {
+        return Err(
                 "mixer hook and DisplayCycle2 callback unexpectedly share a task; re-evaluate the atomic mailbox"
                     .into(),
             );
-        }
-        debugger.breakpoint(callback_probe_entry, false)?;
-        qmp.resume()?;
-        capture(150, "window-scene-task-context-probe")?;
+    }
+    debugger.breakpoint(callback_probe_entry, false)?;
+    qmp.resume()?;
+    capture(150, "window-scene-task-context-probe")?;
 
-        if u32::from_le_bytes(qmp.read_memory(0, 0x80202610, 4)?.try_into().unwrap())
-            != u32::from_le_bytes(original_window.clone().try_into().unwrap())
-        {
-            return Err("custom overlay replaced the active firmware window".into());
-        }
-        if qmp.read_memory(0, widget7, 1)? != [4]
-            || qmp.read_memory(0, widget33, 1)? != [4]
-            || qmp.read_memory(0, background10, 1)? != [4]
-            || qmp.read_memory(0, background37, 1)? != [4]
-            || qmp.read_memory(0, background48, 1)? != [4]
-        {
-            return Err("custom overlay did not use compositor layer 4".into());
-        }
-        if qmp.read_memory(0, widget7 + 6, 2)? != 0u16.to_le_bytes()
-            || qmp.read_memory(0, widget33 + 6, 2)? != 0u16.to_le_bytes()
-        {
-            return Err("custom overlay widgets were not positioned at the left edge".into());
-        }
-        for widget in [widget7, widget33] {
-            let resource =
-                u16::from_le_bytes(qmp.read_memory(0, widget + 4, 2)?.try_into().unwrap());
-            if resource != 179 {
-                return Err(format!(
-                    "dialog widget did not use shared text resource 179: {resource}"
-                )
-                .into());
-            }
-        }
-        if u32::from_le_bytes(
-            qmp.read_memory(0, text_table + 179 * 4, 4)?
-                .try_into()
-                .unwrap(),
-        ) != shared_resource_pointer
-        {
-            return Err("dialog redirected the shared text-resource pointer".into());
-        }
-        let black_pixel = |x: usize, y: usize| {
-            let index = ((63 - y) / 8) * 128 + x;
-            active[index] & (1 << ((63 - y) % 8)) == 0
-        };
-        if ![(0, 0), (127, 0), (0, 63), (127, 63)]
-            .into_iter()
-            .all(|(x, y)| black_pixel(x, y))
-        {
-            return Err("stock bitmap 22 did not paint the overlay background black".into());
-        }
-        let state = 0x8020_73c8u32;
-        if u16::from_le_bytes(qmp.read_memory(0, state, 2)?.try_into().unwrap()) != 0x4b4e
-            || qmp.read_memory(0, 0x80207458, 4)? != original_bitmap
-        {
-            return Err("in-place state signature or stock bitmap-36 descriptor is invalid".into());
-        }
-        let heap_live = heap()?;
-        if heap_live[0] != heap_before[0]
-            || heap_live[2] != heap_before[2]
-            || heap_live[3] != heap_before[3]
-        {
-            return Err(format!(
-                "dialog state should not allocate heap: before={heap_before:?}, live={heap_live:?}"
-            )
-            .into());
-        }
-        let state_heap_bytes = heap_before[0]
-            .checked_sub(heap_live[0])
-            .ok_or("firmware heap free-byte count increased while allocating dialog state")?;
-        if state_heap_bytes != 0 {
-            return Err(format!(
-                "dialog state should not consume heap bytes, got {state_heap_bytes}"
-            )
-            .into());
-        }
-        let null_bitmap_background = background_pointer(47)?;
-        if u16::from_le_bytes(
-            qmp.read_memory(0, null_bitmap_background + 2, 2)?
-                .try_into()
-                .unwrap(),
-        ) != 0
-        {
-            return Err("background 47 no longer uses bitmap ID 0".into());
-        }
-        let before_null_bitmap_draw = capture(50, "window-scene-before-null-bitmap-probe")?;
-        // Call the draw routine from the display task, at the dialog's own
-        // callback entry. An arbitrary stop can land in the idle task or an
-        // exception handler, where the routine can block past the deadline.
-        qmp.stop()?;
-        debugger.breakpoint(active_slot5 & !1, true)?;
-        qmp.resume()?;
-        let display_task_deadline = Instant::now() + Duration::from_secs(15);
-        while qmp.query_status()?.running {
-            session.poll()?;
-            if Instant::now() >= display_task_deadline {
-                return Err("dialog callback breakpoint was not reached".into());
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-        debugger.breakpoint(active_slot5 & !1, false)?;
-        debugger.call_thumb(0x8000_5e70, &[47], Duration::from_secs(5))?;
-        qmp.resume()?;
-        let after_null_bitmap_draw = capture(100, "window-scene-after-null-bitmap-probe")?;
-        if before_null_bitmap_draw != after_null_bitmap_draw
-            || u16::from_le_bytes(qmp.read_memory(0, state, 2)?.try_into().unwrap()) != 0x4b4e
-            || qmp.read_memory(0, 0x80207458, 4)? != original_bitmap
-        {
+    if u32::from_le_bytes(
+        qmp.read_memory(0, l6max::current_window, 4)?
+            .try_into()
+            .unwrap(),
+    ) != u32::from_le_bytes(original_window.clone().try_into().unwrap())
+    {
+        return Err("custom overlay replaced the active firmware window".into());
+    }
+    if qmp.read_memory(0, widget7, 1)? != [4]
+        || qmp.read_memory(0, widget33, 1)? != [4]
+        || qmp.read_memory(0, background10, 1)? != [4]
+        || qmp.read_memory(0, background37, 1)? != [4]
+        || qmp.read_memory(0, background48, 1)? != [4]
+    {
+        return Err("custom overlay did not use compositor layer 4".into());
+    }
+    if qmp.read_memory(0, widget7 + 6, 2)? != 0u16.to_le_bytes()
+        || qmp.read_memory(0, widget33 + 6, 2)? != 0u16.to_le_bytes()
+    {
+        return Err("custom overlay widgets were not positioned at the left edge".into());
+    }
+    for widget in [widget7, widget33] {
+        let resource = u16::from_le_bytes(qmp.read_memory(0, widget + 4, 2)?.try_into().unwrap());
+        if resource != 179 {
             return Err(
-                "bitmap ID 0 did not safely short-circuit while holding the state handle".into(),
+                format!("dialog widget did not use shared text resource 179: {resource}").into(),
             );
         }
-        let value_text = decode_text(text_table + 179 * 4)?;
-        let raw = qmp.read_memory(0, 0x8045ff84 + 0x120, 1)?[0];
-        if !knob_display_matches(9, &expected_value(9, raw), &value_text) {
-            return Err(format!("custom window value mismatch: {value_text:?}").into());
+    }
+    if u32::from_le_bytes(
+        qmp.read_memory(0, text_table + 179 * 4, 4)?
+            .try_into()
+            .unwrap(),
+    ) != shared_resource_pointer
+    {
+        return Err("dialog redirected the shared text-resource pointer".into());
+    }
+    let black_pixel = |x: usize, y: usize| {
+        let index = ((63 - y) / 8) * 128 + x;
+        active[index] & (1 << ((63 - y) % 8)) == 0
+    };
+    if ![(0, 0), (127, 0), (0, 63), (127, 63)]
+        .into_iter()
+        .all(|(x, y)| black_pixel(x, y))
+    {
+        return Err("stock bitmap 22 did not paint the overlay background black".into());
+    }
+    let state = l6max::gui_bitmap_table_entry_0;
+    if u16::from_le_bytes(qmp.read_memory(0, state, 2)?.try_into().unwrap()) != 0x4b4e
+        || qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)? != original_bitmap
+    {
+        return Err("in-place state signature or stock bitmap-36 descriptor is invalid".into());
+    }
+    let heap_live = heap()?;
+    if heap_live[0] != heap_before[0]
+        || heap_live[2] != heap_before[2]
+        || heap_live[3] != heap_before[3]
+    {
+        return Err(format!(
+            "dialog state should not allocate heap: before={heap_before:?}, live={heap_live:?}"
+        )
+        .into());
+    }
+    let state_heap_bytes = heap_before[0]
+        .checked_sub(heap_live[0])
+        .ok_or("firmware heap free-byte count increased while allocating dialog state")?;
+    if state_heap_bytes != 0 {
+        return Err(
+            format!("dialog state should not consume heap bytes, got {state_heap_bytes}").into(),
+        );
+    }
+    let null_bitmap_background = background_pointer(47)?;
+    if u16::from_le_bytes(
+        qmp.read_memory(0, null_bitmap_background + 2, 2)?
+            .try_into()
+            .unwrap(),
+    ) != 0
+    {
+        return Err("background 47 no longer uses bitmap ID 0".into());
+    }
+    let before_null_bitmap_draw = capture(50, "window-scene-before-null-bitmap-probe")?;
+    // Call the draw routine from the display task, at the dialog's own
+    // callback entry. An arbitrary stop can land in the idle task or an
+    // exception handler, where the routine can block past the deadline.
+    qmp.stop()?;
+    debugger.breakpoint(active_slot5 & !1, true)?;
+    qmp.resume()?;
+    let display_task_deadline = Instant::now() + Duration::from_secs(15);
+    while qmp.query_status()?.running {
+        session.poll()?;
+        if Instant::now() >= display_task_deadline {
+            return Err("dialog callback breakpoint was not reached".into());
         }
-        let refreshed = capture(500, "window-scene-refreshed")?;
-        let pixel = |frame: &[u8; 1024], x: usize, y: usize| {
-            frame[((63 - y) / 8) * 128 + x] & (1 << ((63 - y) % 8)) != 0
-        };
-        // The value has intentionally changed during the level demonstration.
-        // Compare the rest of the LCD, including the title and black backing,
-        // to make sure normal recorder redraws did not replace the overlay.
-        let stable_overlay = (0..64).all(|y| {
-            (0..128).all(|x| {
-                (30..97).contains(&x) && (33..64).contains(&y)
-                    || pixel(&active, x, y) == pixel(&refreshed, x, y)
-            })
-        });
-        if !stable_overlay {
-            return Err(
-                "recorder redraw changed the custom overlay outside its value widget".into(),
-            );
-        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    debugger.breakpoint(active_slot5 & !1, false)?;
+    debugger.call_thumb(l6max::gui_draw_background, &[47], Duration::from_secs(5))?;
+    qmp.resume()?;
+    let after_null_bitmap_draw = capture(100, "window-scene-after-null-bitmap-probe")?;
+    if before_null_bitmap_draw != after_null_bitmap_draw
+        || u16::from_le_bytes(qmp.read_memory(0, state, 2)?.try_into().unwrap()) != 0x4b4e
+        || qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)? != original_bitmap
+    {
+        return Err(
+            "bitmap ID 0 did not safely short-circuit while holding the state handle".into(),
+        );
+    }
+    let value_text = decode_text(text_table + 179 * 4)?;
+    let raw = qmp.read_memory(0, l6max::mixer_channel_levels, 1)?[0];
+    if !knob_display_matches(9, &expected_value(9, raw), &value_text) {
+        return Err(format!("custom window value mismatch: {value_text:?}").into());
+    }
+    let refreshed = capture(500, "window-scene-refreshed")?;
+    let pixel = |frame: &[u8; 1024], x: usize, y: usize| {
+        frame[((63 - y) / 8) * 128 + x] & (1 << ((63 - y) % 8)) != 0
+    };
+    // The value has intentionally changed during the level demonstration.
+    // Compare the rest of the LCD, including the title and black backing,
+    // to make sure normal recorder redraws did not replace the overlay.
+    let stable_overlay = (0..64).all(|y| {
+        (0..128).all(|x| {
+            (30..97).contains(&x) && (33..64).contains(&y)
+                || pixel(&active, x, y) == pixel(&refreshed, x, y)
+        })
+    });
+    if !stable_overlay {
+        return Err("recorder redraw changed the custom overlay outside its value widget".into());
+    }
 
-        // Hold the notification semaphore while a second value is rendered.
-        // The patch's dedicated layer/widget resources and persistent bitmap
-        // descriptor must remain usable without taking this unrelated lock.
-        qmp.stop()?;
-        let semaphore_count = qmp.read_memory(0, notification_semaphore + 56, 4)?;
-        if semaphore_count != 1u32.to_le_bytes() {
-            qmp.resume()?;
-            return Err(
-                "notification semaphore was not available before callback contention check".into(),
-            );
-        }
-        debugger.write(notification_semaphore + 56, &0u32.to_le_bytes())?;
+    // Hold the notification semaphore while a second value is rendered.
+    // The patch's dedicated layer/widget resources and persistent bitmap
+    // descriptor must remain usable without taking this unrelated lock.
+    qmp.stop()?;
+    let semaphore_count = qmp.read_memory(0, notification_semaphore + 56, 4)?;
+    if semaphore_count != 1u32.to_le_bytes() {
         qmp.resume()?;
-        inputs.knob(0, -1)?;
-        let callback_busy_start = inputs.panel.snapshot().guest_ms;
-        wait_guest(
-            session,
-            callback_busy_start,
-            300,
-            guest_timeout_ms,
-            wall_timeout_s,
-        )?;
-        qmp.stop()?;
-        let pending_during_contention = qmp.read_memory(0, state + 3, 1)?;
-        let lock_held_during_render =
-            qmp.read_memory(0, notification_semaphore + 56, 4)? == 0u32.to_le_bytes();
-        let dialog_value_during_lock = decode_text(text_table + 179 * 4)?;
-        let raw_during_lock = qmp.read_memory(0, 0x8045ff84 + 0x120, 1)?[0];
-        debugger.write(notification_semaphore + 56, &semaphore_count)?;
-        qmp.resume()?;
-        if pending_during_contention != u8::MAX.to_le_bytes()
-            || !lock_held_during_render
-            || !knob_display_matches(
-                9,
-                &expected_value(9, raw_during_lock),
-                &dialog_value_during_lock,
-            )
-        {
-            return Err(format!(
+        return Err(
+            "notification semaphore was not available before callback contention check".into(),
+        );
+    }
+    debugger.write(notification_semaphore + 56, &0u32.to_le_bytes())?;
+    qmp.resume()?;
+    inputs.knob(0, -1)?;
+    let callback_busy_start = inputs.panel.snapshot().guest_ms;
+    wait_guest(
+        session,
+        callback_busy_start,
+        300,
+        guest_timeout_ms,
+        wall_timeout_s,
+    )?;
+    qmp.stop()?;
+    let pending_during_contention = qmp.read_memory(0, state + 3, 1)?;
+    let lock_held_during_render =
+        qmp.read_memory(0, notification_semaphore + 56, 4)? == 0u32.to_le_bytes();
+    let dialog_value_during_lock = decode_text(text_table + 179 * 4)?;
+    let raw_during_lock = qmp.read_memory(0, l6max::mixer_channel_levels, 1)?[0];
+    debugger.write(notification_semaphore + 56, &semaphore_count)?;
+    qmp.resume()?;
+    if pending_during_contention != u8::MAX.to_le_bytes()
+        || !lock_held_during_render
+        || !knob_display_matches(
+            9,
+            &expected_value(9, raw_during_lock),
+            &dialog_value_during_lock,
+        )
+    {
+        return Err(format!(
                 "dialog did not process the latest update while the notification semaphore was unavailable: pending={pending_during_contention:02x?}, value={dialog_value_during_lock:?}"
             )
             .into());
-        }
-        capture(500, "window-scene-after-callback-contention")?;
-        let pending_after_contention = qmp.read_memory(0, state + 3, 1)?;
-        if pending_after_contention != u8::MAX.to_le_bytes() {
-            return Err(format!(
+    }
+    capture(500, "window-scene-after-callback-contention")?;
+    let pending_after_contention = qmp.read_memory(0, state + 3, 1)?;
+    if pending_after_contention != u8::MAX.to_le_bytes() {
+        return Err(format!(
                 "display callback did not consume the pending update while the lock was held: pending={pending_after_contention:02x?}"
             )
             .into());
+    }
+    for (button, name) in [
+        (35, "level"),
+        (28, "high"),
+        (33, "freq"),
+        (38, "mid"),
+        (43, "low"),
+        (10, "aux1"),
+        (15, "aux2"),
+        (20, "efx"),
+        (25, "sub-mix"),
+        (30, "pan"),
+    ] {
+        let selection_applied = inputs.panel.snapshot().applied;
+        inputs.tap(button, 50)?;
+        wait_l6_input(
+            session,
+            || inputs.panel.snapshot().applied > selection_applied,
+            "knob-dialog parameter-selection input acknowledgement",
+        )?;
+        let selection = inputs.panel.snapshot().guest_ms;
+        wait_guest(session, selection, 300, guest_timeout_ms, wall_timeout_s)?;
+        let encoder_applied = inputs.panel.snapshot().applied;
+        inputs.knob(0, -1)?;
+        wait_l6_input(
+            session,
+            || inputs.panel.snapshot().applied > encoder_applied,
+            "knob-dialog parameter encoder acknowledgement",
+        )?;
+        capture(400, &format!("window-scene-{name}"))?;
+        let mode_heap = heap()?;
+        if mode_heap[2] != heap_live[2] || mode_heap[3] != heap_live[3] {
+            return Err(format!(
+                "mode {name} changed the persistent heap allocation: {mode_heap:?}"
+            )
+            .into());
         }
-        for (button, name) in [
-            (35, "level"),
-            (28, "high"),
-            (33, "freq"),
-            (38, "mid"),
-            (43, "low"),
-            (10, "aux1"),
-            (15, "aux2"),
-            (20, "efx"),
-            (25, "sub-mix"),
-            (30, "pan"),
-        ] {
-            let selection_applied = inputs.panel.snapshot().applied;
-            inputs.tap(button, 50)?;
-            wait_l6_input(
-                session,
-                || inputs.panel.snapshot().applied > selection_applied,
-                "knob-dialog parameter-selection input acknowledgement",
-            )?;
-            let selection = inputs.panel.snapshot().guest_ms;
-            wait_guest(session, selection, 300, guest_timeout_ms, wall_timeout_s)?;
-            let encoder_applied = inputs.panel.snapshot().applied;
-            inputs.knob(0, -1)?;
-            wait_l6_input(
-                session,
-                || inputs.panel.snapshot().applied > encoder_applied,
-                "knob-dialog parameter encoder acknowledgement",
-            )?;
-            capture(400, &format!("window-scene-{name}"))?;
-            let mode_heap = heap()?;
-            if mode_heap[2] != heap_live[2] || mode_heap[3] != heap_live[3] {
+    }
+    // The preceding mode walk ends on Pan with a verified live scene.
+    // Sweep from center through left 50% to right 50%, capturing at 20 fps.
+    capture_demo("knob-dialog-demo-pan-center")?;
+    if decode_text(text_table + 179 * 4)? != "CENTER" {
+        return Err("demo pan sweep did not start at center".into());
+    }
+    use firmware_api::l6max::mixer_first_channel_pan;
+    let pan_start = qmp.read_memory(0, mixer_first_channel_pan, 1)?[0];
+    for name in ["left", "right"] {
+        let mut reached_target = false;
+        for index in 0..100 {
+            let raw = qmp.read_memory(0, mixer_first_channel_pan, 1)?[0];
+            let displayed = decode_text(text_table + 179 * 4)?;
+            let target_reached = if name == "left" {
+                displayed
+                    .strip_prefix("L ")
+                    .and_then(|value| value.strip_suffix('%'))
+                    .and_then(|value| value.parse::<u8>().ok())
+                    .is_some_and(|value| value >= 48)
+            } else {
+                displayed
+                    .strip_prefix("R ")
+                    .and_then(|value| value.strip_suffix('%'))
+                    .and_then(|value| value.parse::<u8>().ok())
+                    .is_some_and(|value| value >= 48)
+            };
+            if target_reached {
+                reached_target = true;
+                break;
+            }
+            let target = if name == "left" { 32 } else { 95 };
+            inputs.knob(0, if raw < target { 1 } else { -1 })?;
+            capture_demo(&format!("knob-dialog-demo-pan-{name}-{index:02}"))?;
+        }
+        if !reached_target {
+            return Err(format!("demo pan sweep did not reach {name} 50%").into());
+        }
+        capture(500, &format!("knob-dialog-demo-pan-{name}-end"))?;
+    }
+    for _ in 0..100 {
+        let raw = qmp.read_memory(0, mixer_first_channel_pan, 1)?[0];
+        if raw == pan_start {
+            break;
+        }
+        inputs.knob(0, if raw < pan_start { 1 } else { -1 })?;
+        capture(50, "knob-dialog-demo-pan-reset")?;
+    }
+    inputs.tap(35, 50)?;
+    let channel_selection = inputs.panel.snapshot().guest_ms;
+    wait_guest(
+        session,
+        channel_selection,
+        300,
+        guest_timeout_ms,
+        wall_timeout_s,
+    )?;
+    let channel0_level = l6max::mixer_channel_levels;
+    let channel1_level = l6max::mixer_channel_levels + 1;
+    let channel0_raw = qmp.read_memory(0, channel0_level, 1)?[0];
+    let mut channel1_raw = qmp.read_memory(0, channel1_level, 1)?[0];
+    for delta in [-1, 1, -2, 2] {
+        inputs.knob(1, delta)?;
+        capture(250, "window-scene-channel-2-level")?;
+        channel1_raw = qmp.read_memory(0, channel1_level, 1)?[0];
+        if channel1_raw != channel0_raw {
+            break;
+        }
+    }
+    let channel1_display = decode_text(text_table + 179 * 4)?;
+    if channel1_raw == channel0_raw
+        || !knob_display_matches(9, &expected_value(9, channel1_raw), &channel1_display)
+    {
+        return Err(format!(
+                "channel-2 event did not display its own LEVEL value: channel0={channel0_raw}, channel1={channel1_raw}, displayed={channel1_display:?}"
+            )
+            .into());
+    }
+    for (tag, description) in [(0x0f, "invalid mode 15"), (0xf0, "invalid channel 15")] {
+        qmp.stop()?;
+        debugger.write(state + 3, &[tag])?;
+        qmp.resume()?;
+        let invalid_tag_start = inputs.panel.snapshot().guest_ms;
+        wait_guest(
+            session,
+            invalid_tag_start,
+            250,
+            guest_timeout_ms,
+            wall_timeout_s,
+        )?;
+        qmp.stop()?;
+        let discarded = qmp.read_memory(0, state + 3, 1)? == u8::MAX.to_le_bytes();
+        qmp.resume()?;
+        if !discarded {
+            return Err(format!("display callback did not safely discard {description}").into());
+        }
+    }
+    // An encoder turn reaches the mailbox through the panel MCU, its UART
+    // and the mixer, so a fixed delay can end before the dialog shows it.
+    // A late event is held while a stock notification is active and then
+    // changes the scene after expiry. Wait until the dialog has consumed
+    // the event and shows the new mixer value.
+    let settled_turn = |name: &str| -> Result<(), Box<dyn std::error::Error>> {
+        let before = qmp.read_memory(0, channel0_level, 1)?[0];
+        inputs.knob(0, if before == 0 { 1 } else { -1 })?;
+        let start = inputs.panel.snapshot().guest_ms;
+        loop {
+            capture(50, name)?;
+            let raw = qmp.read_memory(0, channel0_level, 1)?[0];
+            if raw != before
+                && qmp.read_memory(0, state + 3, 1)?[0] == u8::MAX
+                && knob_display_matches(
+                    9,
+                    &expected_value(9, raw),
+                    &decode_text(text_table + 179 * 4)?,
+                )
+            {
+                return Ok(());
+            }
+            if inputs.panel.snapshot().guest_ms.wrapping_sub(start) >= 2_000 {
                 return Err(format!(
-                    "mode {name} changed the persistent heap allocation: {mode_heap:?}"
+                    "channel-1 LEVEL turn was not displayed: before={before}, now={raw}"
                 )
                 .into());
             }
         }
-        // The preceding mode walk ends on Pan with a verified live scene.
-        // Sweep from center through left 50% to right 50%, capturing at 20 fps.
-        capture_demo("knob-dialog-demo-pan-center")?;
-        if decode_text(text_table + 179 * 4)? != "CENTER" {
-            return Err("demo pan sweep did not start at center".into());
-        }
-        const PAN_VALUE: u32 = 0x8045_ff84 + 8;
-        let pan_start = qmp.read_memory(0, PAN_VALUE, 1)?[0];
-        for name in ["left", "right"] {
-            let mut reached_target = false;
-            for index in 0..100 {
-                let raw = qmp.read_memory(0, PAN_VALUE, 1)?[0];
-                let displayed = decode_text(text_table + 179 * 4)?;
-                let target_reached = if name == "left" {
-                    displayed
-                        .strip_prefix("L ")
-                        .and_then(|value| value.strip_suffix('%'))
-                        .and_then(|value| value.parse::<u8>().ok())
-                        .is_some_and(|value| value >= 48)
-                } else {
-                    displayed
-                        .strip_prefix("R ")
-                        .and_then(|value| value.strip_suffix('%'))
-                        .and_then(|value| value.parse::<u8>().ok())
-                        .is_some_and(|value| value >= 48)
-                };
-                if target_reached {
-                    reached_target = true;
-                    break;
-                }
-                let target = if name == "left" { 32 } else { 95 };
-                inputs.knob(0, if raw < target { 1 } else { -1 })?;
-                capture_demo(&format!("knob-dialog-demo-pan-{name}-{index:02}"))?;
-            }
-            if !reached_target {
-                return Err(format!("demo pan sweep did not reach {name} 50%").into());
-            }
-            capture(500, &format!("knob-dialog-demo-pan-{name}-end"))?;
-        }
-        for _ in 0..100 {
-            let raw = qmp.read_memory(0, PAN_VALUE, 1)?[0];
-            if raw == pan_start {
-                break;
-            }
-            inputs.knob(0, if raw < pan_start { 1 } else { -1 })?;
-            capture(50, "knob-dialog-demo-pan-reset")?;
-        }
-        inputs.tap(35, 50)?;
-        let channel_selection = inputs.panel.snapshot().guest_ms;
-        wait_guest(
-            session,
-            channel_selection,
-            300,
-            guest_timeout_ms,
-            wall_timeout_s,
-        )?;
-        let channel0_level = 0x804600a4;
-        let channel1_level = 0x804600a5;
-        let channel0_raw = qmp.read_memory(0, channel0_level, 1)?[0];
-        let mut channel1_raw = qmp.read_memory(0, channel1_level, 1)?[0];
-        for delta in [-1, 1, -2, 2] {
-            inputs.knob(1, delta)?;
-            capture(250, "window-scene-channel-2-level")?;
-            channel1_raw = qmp.read_memory(0, channel1_level, 1)?[0];
-            if channel1_raw != channel0_raw {
-                break;
-            }
-        }
-        let channel1_display = decode_text(text_table + 179 * 4)?;
-        if channel1_raw == channel0_raw
-            || !knob_display_matches(9, &expected_value(9, channel1_raw), &channel1_display)
-        {
-            return Err(format!(
-                "channel-2 event did not display its own LEVEL value: channel0={channel0_raw}, channel1={channel1_raw}, displayed={channel1_display:?}"
-            )
-            .into());
-        }
-        for (tag, description) in [(0x0f, "invalid mode 15"), (0xf0, "invalid channel 15")] {
-            qmp.stop()?;
-            debugger.write(state + 3, &[tag])?;
-            qmp.resume()?;
-            let invalid_tag_start = inputs.panel.snapshot().guest_ms;
-            wait_guest(
-                session,
-                invalid_tag_start,
-                250,
-                guest_timeout_ms,
-                wall_timeout_s,
-            )?;
-            qmp.stop()?;
-            let discarded = qmp.read_memory(0, state + 3, 1)? == u8::MAX.to_le_bytes();
-            qmp.resume()?;
-            if !discarded {
-                return Err(
-                    format!("display callback did not safely discard {description}").into(),
-                );
-            }
-        }
-        // An encoder turn reaches the mailbox through the panel MCU, its UART
-        // and the mixer, so a fixed delay can end before the dialog shows it.
-        // A late event is held while a stock notification is active and then
-        // changes the scene after expiry. Wait until the dialog has consumed
-        // the event and shows the new mixer value.
-        let settled_turn = |name: &str| -> Result<(), Box<dyn std::error::Error>> {
-            let before = qmp.read_memory(0, channel0_level, 1)?[0];
-            inputs.knob(0, if before == 0 { 1 } else { -1 })?;
-            let start = inputs.panel.snapshot().guest_ms;
-            loop {
-                capture(50, name)?;
-                let raw = qmp.read_memory(0, channel0_level, 1)?[0];
-                if raw != before
-                    && qmp.read_memory(0, state + 3, 1)?[0] == u8::MAX
-                    && knob_display_matches(
-                        9,
-                        &expected_value(9, raw),
-                        &decode_text(text_table + 179 * 4)?,
-                    )
-                {
-                    return Ok(());
-                }
-                if inputs.panel.snapshot().guest_ms.wrapping_sub(start) >= 2_000 {
-                    return Err(format!(
-                        "channel-1 LEVEL turn was not displayed: before={before}, now={raw}"
-                    )
-                    .into());
-                }
-            }
-        };
-        settled_turn("window-scene-before-invalid-state-metadata")?;
-        qmp.stop()?;
-        let metadata = qmp.read_memory(0, state, 4)?;
-        let metadata_word = u32::from_le_bytes(metadata.clone().try_into().unwrap());
-        let invalid_metadata = metadata_word ^ 1;
-        debugger.write(state, &invalid_metadata.to_le_bytes())?;
-        qmp.resume()?;
-        let invalid_metadata_start = inputs.panel.snapshot().guest_ms;
-        wait_guest(
-            session,
-            invalid_metadata_start,
-            150,
-            guest_timeout_ms,
-            wall_timeout_s,
-        )?;
-        qmp.stop()?;
-        let invalid_metadata_rejected = qmp.read_memory(0, state, 4)?
-            == invalid_metadata.to_le_bytes()
-            && qmp.read_memory(0, 0x80207458, 4)? == original_bitmap
-            && [widget7, widget33, background10, background37, background48]
-                .into_iter()
-                .all(|descriptor| {
-                    qmp.read_memory(0, descriptor, 1)
-                        .is_ok_and(|layer| layer[0] == 4)
-                });
-        debugger.write(state, &metadata)?;
-        qmp.resume()?;
-        if !invalid_metadata_rejected {
-            return Err("invalid state signature changed an overlay descriptor".into());
-        }
-        settled_turn("window-scene-after-invalid-state-metadata")?;
-        let invalid_tag_discarded = true;
-        let lit_pixels = |y0: usize, y1: usize| {
-            (y0..y1)
-                .flat_map(|y| {
-                    (0..128).map(move |x| {
-                        let index = ((63 - y) / 8) * 128 + x;
-                        refreshed[index] & (1 << ((63 - y) % 8)) != 0
-                    })
+    };
+    settled_turn("window-scene-before-invalid-state-metadata")?;
+    qmp.stop()?;
+    let metadata = qmp.read_memory(0, state, 4)?;
+    let metadata_word = u32::from_le_bytes(metadata.clone().try_into().unwrap());
+    let invalid_metadata = metadata_word ^ 1;
+    debugger.write(state, &invalid_metadata.to_le_bytes())?;
+    qmp.resume()?;
+    let invalid_metadata_start = inputs.panel.snapshot().guest_ms;
+    wait_guest(
+        session,
+        invalid_metadata_start,
+        150,
+        guest_timeout_ms,
+        wall_timeout_s,
+    )?;
+    qmp.stop()?;
+    let invalid_metadata_rejected = qmp.read_memory(0, state, 4)? == invalid_metadata.to_le_bytes()
+        && qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)? == original_bitmap
+        && [widget7, widget33, background10, background37, background48]
+            .into_iter()
+            .all(|descriptor| {
+                qmp.read_memory(0, descriptor, 1)
+                    .is_ok_and(|layer| layer[0] == 4)
+            });
+    debugger.write(state, &metadata)?;
+    qmp.resume()?;
+    if !invalid_metadata_rejected {
+        return Err("invalid state signature changed an overlay descriptor".into());
+    }
+    settled_turn("window-scene-after-invalid-state-metadata")?;
+    let invalid_tag_discarded = true;
+    let lit_pixels = |y0: usize, y1: usize| {
+        (y0..y1)
+            .flat_map(|y| {
+                (0..128).map(move |x| {
+                    let index = ((63 - y) / 8) * 128 + x;
+                    refreshed[index] & (1 << ((63 - y) % 8)) != 0
                 })
-                .filter(|lit| *lit)
-                .count()
-        };
-        if lit_pixels(0, 17) < 10 || lit_pixels(30, 48) < 5 {
-            return Err("shared text resource did not render both dialog lines".into());
+            })
+            .filter(|lit| *lit)
+            .count()
+    };
+    if lit_pixels(0, 17) < 10 || lit_pixels(30, 48) < 5 {
+        return Err("shared text resource did not render both dialog lines".into());
+    }
+    let scene_text_before_notification = qmp.read_memory(0, shared_resource_pointer, 512)?;
+    // Exercise the stock notification renderer over the layer-4 scene.
+    // This calls the generic firmware API directly, without relying on
+    // the patch's removed notification hooks.
+    qmp.stop()?;
+    let callback_entry = active_slot5 & !1;
+    debugger.breakpoint(callback_entry, true)?;
+    qmp.resume()?;
+    let breakpoint_deadline = Instant::now() + Duration::from_secs(15);
+    while qmp.query_status()?.running {
+        session.poll()?;
+        if Instant::now() >= breakpoint_deadline {
+            return Err("dialog callback breakpoint was not reached".into());
         }
-        let scene_text_before_notification = qmp.read_memory(0, shared_resource_pointer, 512)?;
-        // Exercise the stock notification renderer over the layer-4 scene.
-        // This calls the generic firmware API directly, without relying on
-        // the patch's removed notification hooks.
-        qmp.stop()?;
-        let callback_entry = active_slot5 & !1;
-        debugger.breakpoint(callback_entry, true)?;
-        qmp.resume()?;
-        let breakpoint_deadline = Instant::now() + Duration::from_secs(15);
-        while qmp.query_status()?.running {
-            session.poll()?;
-            if Instant::now() >= breakpoint_deadline {
-                return Err("dialog callback breakpoint was not reached".into());
-            }
-            thread::sleep(Duration::from_millis(5));
+        thread::sleep(Duration::from_millis(5));
+    }
+    debugger.breakpoint(callback_entry, false)?;
+    // Message 4 uses the three-line notification background, bitmap 36.
+    debugger.register(0, 4)?;
+    debugger.register(15, l6max::gui_notification_show)?;
+    qmp.resume()?;
+    let notification_start = inputs.panel.snapshot().guest_ms;
+    let mut notification_frame = capture(100, "window-scene-stock-notification")?;
+    while notification_frame == refreshed {
+        let elapsed = inputs
+            .panel
+            .snapshot()
+            .guest_ms
+            .wrapping_sub(notification_start);
+        if elapsed >= 1_500 {
+            return Err("stock notification did not render its frame over the custom scene".into());
         }
-        debugger.breakpoint(callback_entry, false)?;
-        // Message 4 uses the three-line notification background, bitmap 36.
-        debugger.register(0, 4)?;
-        debugger.register(15, 0x8000_6660)?;
-        qmp.resume()?;
-        let notification_start = inputs.panel.snapshot().guest_ms;
-        let mut notification_frame = capture(100, "window-scene-stock-notification")?;
-        while notification_frame == refreshed {
-            let elapsed = inputs
-                .panel
-                .snapshot()
-                .guest_ms
-                .wrapping_sub(notification_start);
-            if elapsed >= 1_500 {
-                return Err(
-                    "stock notification did not render its frame over the custom scene".into(),
-                );
-            }
-            notification_frame = capture(100, "window-scene-stock-notification")?;
-        }
-        let callback_after_notification = qmp.read_memory(0, 0x8020a59c + 20, 4)?;
-        let resource_pointer_after_notification = qmp.read_memory(0, text_table + 179 * 4, 4)?;
-        let resource_after_notification = qmp.read_memory(0, shared_resource_pointer, 512)?;
-        if callback_after_notification != active_slot5.to_le_bytes()
-            || resource_pointer_after_notification != shared_resource_pointer.to_le_bytes()
-            || resource_after_notification != scene_text_before_notification
-        {
-            return Err(format!(
+        notification_frame = capture(100, "window-scene-stock-notification")?;
+    }
+    let callback_after_notification =
+        qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
+    let resource_pointer_after_notification = qmp.read_memory(0, text_table + 179 * 4, 4)?;
+    let resource_after_notification = qmp.read_memory(0, shared_resource_pointer, 512)?;
+    if callback_after_notification != active_slot5.to_le_bytes()
+        || resource_pointer_after_notification != shared_resource_pointer.to_le_bytes()
+        || resource_after_notification != scene_text_before_notification
+    {
+        return Err(format!(
                 "stock notification changed scene state: callback {callback_after_notification:02x?} vs {active_slot5:08x}, resource pointer {resource_pointer_after_notification:02x?} vs {shared_resource_pointer:08x}, resource modified={}",
                 resource_after_notification != scene_text_before_notification
             ).into());
+    }
+    // The dialog has its own inactivity timeout. Wait for the notification
+    // frame to clear instead of sleeping past that timeout as well.
+    let after_notification = loop {
+        let frame = capture(100, "window-scene-after-notification")?;
+        if frame != notification_frame {
+            break frame;
         }
-        // The dialog has its own inactivity timeout. Wait for the notification
-        // frame to clear instead of sleeping past that timeout as well.
-        let after_notification = loop {
-            let frame = capture(100, "window-scene-after-notification")?;
-            if frame != notification_frame {
-                break frame;
-            }
-            let elapsed = inputs
-                .panel
-                .snapshot()
-                .guest_ms
-                .wrapping_sub(notification_start);
-            if elapsed >= 5_000 {
-                return Err("stock notification did not clear after its timeout".into());
-            }
+        let elapsed = inputs
+            .panel
+            .snapshot()
+            .guest_ms
+            .wrapping_sub(notification_start);
+        if elapsed >= 5_000 {
+            return Err("stock notification did not clear after its timeout".into());
+        }
+    };
+    let callback_after_expiry = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
+    let resource_pointer_after_expiry = qmp.read_memory(0, text_table + 179 * 4, 4)?;
+    let resource_after_expiry = qmp.read_memory(0, shared_resource_pointer, 512)?;
+    if callback_after_expiry != active_slot5.to_le_bytes()
+        || resource_pointer_after_expiry != shared_resource_pointer.to_le_bytes()
+        || resource_after_expiry != scene_text_before_notification
+    {
+        let utf16 = |bytes: &[u8]| -> String {
+            bytes
+                .chunks(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .take_while(|unit| *unit != 0)
+                .take(24)
+                .map(|unit| char::from_u32(unit.into()).unwrap_or('?'))
+                .collect()
         };
-        let callback_after_expiry = qmp.read_memory(0, 0x8020a59c + 20, 4)?;
-        let resource_pointer_after_expiry = qmp.read_memory(0, text_table + 179 * 4, 4)?;
-        let resource_after_expiry = qmp.read_memory(0, shared_resource_pointer, 512)?;
-        if callback_after_expiry != active_slot5.to_le_bytes()
-            || resource_pointer_after_expiry != shared_resource_pointer.to_le_bytes()
-            || resource_after_expiry != scene_text_before_notification
-        {
-            let utf16 = |bytes: &[u8]| -> String {
-                bytes
-                    .chunks(2)
-                    .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-                    .take_while(|unit| *unit != 0)
-                    .take(24)
-                    .map(|unit| char::from_u32(unit.into()).unwrap_or('?'))
-                    .collect()
-            };
-            return Err(format!(
+        return Err(format!(
                 "stock notification expiry damaged or prematurely removed the custom scene: callback {callback_after_expiry:02x?} vs {active_slot5:08x}, resource pointer {resource_pointer_after_expiry:02x?} vs {shared_resource_pointer:08x}, resource {:?} vs {:?}, ticks {}, window {:02x?}, notification active {} busy {}, guest ms since notification {}",
                 utf16(&resource_after_expiry),
                 utf16(&scene_text_before_notification),
                 qmp.read_memory(0, state + 2, 1)?[0],
-                qmp.read_memory(0, 0x8020_2610, 4)?,
-                qmp.read_memory(0, 0x8020_a2b0, 1)?[0],
-                qmp.read_memory(0, 0x8020_a2c0, 1)?[0],
+                qmp.read_memory(0, l6max::current_window, 4)?,
+                qmp.read_memory(0, l6max::notification_active, 1)?[0],
+                qmp.read_memory(0, l6max::notification_busy, 1)?[0],
                 inputs.panel.snapshot().guest_ms.wrapping_sub(notification_start)
             ).into());
+    }
+    let timeout_start = inputs.panel.snapshot().guest_ms;
+    loop {
+        let ticks = qmp.read_memory(0, state + 2, 1)?[0];
+        if ticks == 0 {
+            break;
         }
-        let timeout_start = inputs.panel.snapshot().guest_ms;
-        loop {
-            let ticks = qmp.read_memory(0, state + 2, 1)?[0];
-            if ticks == 0 {
-                break;
-            }
-            let now = inputs.panel.snapshot().guest_ms;
-            // The guest countdown can land on its final tick while host-side
-            // QEMU work is contending with other parallel cases. Keep a full
-            // grace interval for that last tick before treating it as stuck.
-            if now.wrapping_sub(timeout_start) >= 10_000 {
-                return Err(format!(
+        let now = inputs.panel.snapshot().guest_ms;
+        // The guest countdown can land on its final tick while host-side
+        // QEMU work is contending with other parallel cases. Keep a full
+        // grace interval for that last tick before treating it as stuck.
+        if now.wrapping_sub(timeout_start) >= 10_000 {
+            return Err(format!(
                     "custom scene timeout did not finish after notification expiry; {ticks} ticks remain"
                 )
                 .into());
-            }
-            wait_guest(session, now, 100, guest_timeout_ms, wall_timeout_s)?;
         }
-        let timeout_cleared = capture(150, "knob-dialog-timeout-cleared")?;
-        if timeout_cleared == after_notification {
-            return Err("knob dialog timeout screenshot still shows the custom scene".into());
-        }
-        if timeout_cleared == notification_frame {
-            return Err("knob dialog timeout screenshot still shows the notification".into());
-        }
-        let restore_checks = [
-            (
-                "window",
-                qmp.read_memory(0, 0x80202610, 4)? == original_window,
-            ),
-            (
-                "state signature",
-                u16::from_le_bytes(qmp.read_memory(0, state, 2)?.try_into().unwrap()) == 0x4b4e,
-            ),
-            (
-                "bitmap table",
-                qmp.read_memory(0, 0x80207458, 4)? == original_bitmap,
-            ),
-            (
-                "bitmap descriptor",
-                qmp.read_memory(
-                    0,
-                    u32::from_le_bytes(original_bitmap.clone().try_into().unwrap()),
-                    8,
-                )? == original_bitmap_descriptor,
-            ),
-            (
-                "notification semaphore",
-                qmp.read_memory(0, 0x8020a2a0, 4)? == original_notification_semaphore,
-            ),
-            (
-                "text resource table",
-                qmp.read_memory(0, text_table + 229 * 4, 8)? == original_resources,
-            ),
-            (
-                "shared resource pointer",
-                qmp.read_memory(0, text_table + 179 * 4, 4)?
-                    == shared_resource_pointer.to_le_bytes(),
-            ),
-            (
-                "shared resource contents",
-                qmp.read_memory(0, shared_resource_pointer, 512)? == original_shared_resource,
-            ),
-            (
-                "text lengths",
-                qmp.read_memory(0, original_lengths_table + 229 * 2, 4)? == original_lengths,
-            ),
-            (
-                "widget 7",
-                qmp.read_memory(0, widget7, 16)? == original_widget7,
-            ),
-            (
-                "widget 33",
-                qmp.read_memory(0, widget33, 16)? == original_widget33,
-            ),
-            (
-                "background layer 10",
-                qmp.read_memory(0, background10, 1)? == original_background_layers[0],
-            ),
-            (
-                "background layer 37",
-                qmp.read_memory(0, background37, 1)? == original_background_layers[1],
-            ),
-            (
-                "background layer 48",
-                qmp.read_memory(0, background48, 1)? == original_background_layers[2],
-            ),
-            (
-                "display callback slot 5",
-                u32::from_le_bytes(qmp.read_memory(0, 0x8020_a59c + 20, 4)?.try_into().unwrap())
-                    == active_slot5,
-            ),
-        ];
-        let mismatches = restore_checks
-            .iter()
-            .filter_map(|(name, matches)| (!matches).then_some(*name))
-            .collect::<Vec<_>>();
-        if !mismatches.is_empty() {
-            return Err(format!(
-                "custom overlay did not restore borrowed resources or preserve stock bitmap 36: {mismatches:?}"
-            )
-            .into());
-        }
-        let heap_after = heap()?;
-        if heap_after[0] != heap_live[0]
-            || heap_after[2] != heap_live[2]
-            || heap_after[3] != heap_live[3]
-        {
-            return Err(format!(
-                "in-place scene state caused heap changes: live={heap_live:?}, after={heap_after:?}"
-            )
-            .into());
-        }
-        // Prove that the DisplayCycle2 callback restores borrowed global
-        // descriptors on navigation, rather than relying on expiry cleanup.
-        inputs.knob(0, -3)?;
-        capture(400, "window-scene-before-navigation")?;
-        inputs.main.tap(0, 120)?;
-        capture(500, "window-scene-navigation-returned")?;
-        let navigated_window = qmp.read_memory(0, 0x80202610, 4)?;
-        if navigated_window == original_window
-            || u16::from_le_bytes(qmp.read_memory(0, state, 2)?.try_into().unwrap()) != 0x4b4e
-            || qmp.read_memory(0, 0x80207458, 4)? != original_bitmap
-            || qmp.read_memory(
+        wait_guest(session, now, 100, guest_timeout_ms, wall_timeout_s)?;
+    }
+    let timeout_cleared = capture(150, "knob-dialog-timeout-cleared")?;
+    if timeout_cleared == after_notification {
+        return Err("knob dialog timeout screenshot still shows the custom scene".into());
+    }
+    if timeout_cleared == notification_frame {
+        return Err("knob dialog timeout screenshot still shows the notification".into());
+    }
+    let restore_checks = [
+        (
+            "window",
+            qmp.read_memory(0, l6max::current_window, 4)? == original_window,
+        ),
+        (
+            "state signature",
+            u16::from_le_bytes(qmp.read_memory(0, state, 2)?.try_into().unwrap()) == 0x4b4e,
+        ),
+        (
+            "bitmap table",
+            qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)? == original_bitmap,
+        ),
+        (
+            "bitmap descriptor",
+            qmp.read_memory(
                 0,
                 u32::from_le_bytes(original_bitmap.clone().try_into().unwrap()),
                 8,
-            )? != original_bitmap_descriptor
-            || qmp.read_memory(0, 0x8020a2a0, 4)? != original_notification_semaphore
-            || qmp.read_memory(0, shared_resource_pointer, 512)? != original_shared_resource
-            || qmp.read_memory(0, widget7, 16)? != original_widget7
-            || qmp.read_memory(0, widget33, 16)? != original_widget33
-            || qmp.read_memory(0, background10, 1)? != original_background_layers[0]
-            || qmp.read_memory(0, background37, 1)? != original_background_layers[1]
-            || qmp.read_memory(0, background48, 1)? != original_background_layers[2]
-            || u32::from_le_bytes(qmp.read_memory(0, 0x8020_a59c + 20, 4)?.try_into().unwrap())
-                != active_slot5
-        {
-            return Err(
-                "window-push cleanup did not restore the dialog's borrowed resources".into(),
-            );
-        }
-        return Ok(json!({
-            "overlay_layer": 4,
-            "black_background": true,
-            "notification_semaphore_not_required_for_first_use": true,
-            "callback_preflight_race_rejected": callback_preflight_race_rejected,
-            "notification_semaphore_not_required_for_refresh": true,
-            "stock_notification_overlap": true,
-            "stock_notification_expiry": true,
-            "bitmap_zero_guard_safe": true,
-            "timeout_return": true,
-            "window_change_restore": true,
-            "non_recorder_first_use_rejected": non_recorder_guard_passed,
-            "dialog_active_screenshot": "knob-dialog-active.png",
-            "dialog_timeout_screenshot": "knob-dialog-timeout-cleared.png",
-            "resource_restore": true,
-            "shared_resource_reuse": true,
-            "shared_resource_alias_rejected": true,
-            "scene_layer_collision_rejected": true,
-            "changed_widget_layer_rejected": widget_layer_guard_rejected,
-            "changed_background_layer_rejected": background_layer_guard_rejected,
-            "nonzero_channel_value_matches": true,
-            "invalid_mailbox_tag_discarded": invalid_tag_discarded,
-            "invalid_state_signature_rejected": invalid_metadata_rejected,
-            "stock_notification_bitmap_untouched": true,
-            "state_allocation_requested_bytes": 0,
-            "state_heap_bytes_consumed": state_heap_bytes,
-            "state_retained_for_boot": true,
-            "display_callback_slot": 5,
-            "display_callback_target": format!("{active_slot5:#010x}"),
-            "mixer_hook_task_control_block": format!("{hook_task:#010x}"),
-            "display_callback_task_control_block": format!("{callback_task:#010x}"),
-            "mixer_and_callback_share_task": hook_task == callback_task,
-            "display_callback_remains_registered": true
-        }));
-    }
-    let mut reports = 0u64;
-    for (mode, button, name) in [
-        (9, 35, "level"),
-        (0, 28, "high"),
-        (1, 33, "freq"),
-        (2, 38, "mid"),
-        (3, 43, "low"),
-        (4, 10, "aux1"),
-        (5, 15, "aux2"),
-        (6, 20, "efx"),
-        (7, 25, "sub-mix"),
-        (8, 30, "pan"),
-    ] {
-        inputs.tap(button, 50)?;
-        let pressed = inputs.panel.snapshot().guest_ms;
-        wait_guest(session, pressed, 500, guest_timeout_ms, wall_timeout_s)?;
-        let baseline = capture(150, &format!("{name}-before"))?;
-        let heap_before = heap()?;
-        inputs.knob(0, -3)?;
-        reports += 3;
-        let frame = capture(700, name)?;
-        if !frame.iter().any(|b| *b != 0) {
-            return Err(format!("{name}: empty display frame").into());
-        }
-        if qmp.read_memory(0, 0x8020a2c0, 1)?[0] != 1 {
-            return Err(format!("{name}: knob did not show firmware notification").into());
-        }
-        let heap_live = heap()?;
-        if heap_live[2] != heap_before[2] + 1 || heap_live[3] != heap_before[3] {
-            return Err(format!(
-                "{name}: popup heap allocation mismatch: before={heap_before:?}, live={heap_live:?}, window={:?}, bitmap={:?}",
-                qmp.read_memory(0, 0x80202610, 4)?,
-                qmp.read_memory(0, 0x80207458, 4)?
+            )? == original_bitmap_descriptor,
+        ),
+        (
+            "notification semaphore",
+            qmp.read_memory(0, l6max::notification_slot, 4)? == original_notification_semaphore,
+        ),
+        (
+            "text resource table",
+            qmp.read_memory(0, text_table + 229 * 4, 8)? == original_resources,
+        ),
+        (
+            "shared resource pointer",
+            qmp.read_memory(0, text_table + 179 * 4, 4)? == shared_resource_pointer.to_le_bytes(),
+        ),
+        (
+            "shared resource contents",
+            qmp.read_memory(0, shared_resource_pointer, 512)? == original_shared_resource,
+        ),
+        (
+            "text lengths",
+            qmp.read_memory(0, original_lengths_table + 229 * 2, 4)? == original_lengths,
+        ),
+        (
+            "widget 7",
+            qmp.read_memory(0, widget7, 16)? == original_widget7,
+        ),
+        (
+            "widget 33",
+            qmp.read_memory(0, widget33, 16)? == original_widget33,
+        ),
+        (
+            "background layer 10",
+            qmp.read_memory(0, background10, 1)? == original_background_layers[0],
+        ),
+        (
+            "background layer 37",
+            qmp.read_memory(0, background37, 1)? == original_background_layers[1],
+        ),
+        (
+            "background layer 48",
+            qmp.read_memory(0, background48, 1)? == original_background_layers[2],
+        ),
+        (
+            "display callback slot 5",
+            u32::from_le_bytes(
+                qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?
+                    .try_into()
+                    .unwrap(),
+            ) == active_slot5,
+        ),
+    ];
+    let mismatches = restore_checks
+        .iter()
+        .filter_map(|(name, matches)| (!matches).then_some(*name))
+        .collect::<Vec<_>>();
+    if !mismatches.is_empty() {
+        return Err(format!(
+                "custom overlay did not restore borrowed resources or preserve stock bitmap 36: {mismatches:?}"
             )
             .into());
-        }
-        let allocation = u32::from_le_bytes(qmp.read_memory(0, 0x80207458, 4)?.try_into().unwrap());
-        if !(0x808a4150..0x80921140).contains(&allocation) {
-            return Err(format!("{name}: popup state outside firmware heap").into());
-        }
-        let allocated_size =
-            u32::from_le_bytes(qmp.read_memory(0, allocation - 4, 4)?.try_into().unwrap());
-        if allocated_size & 0x80000000 == 0
-            || qmp.read_memory(0, allocation + 8, 4)? != 0x4b4e4f42u32.to_le_bytes()
-        {
-            return Err(format!("{name}: popup allocator ownership marker invalid").into());
-        }
-        if text_resource(0)? != name.to_uppercase() {
-            return Err(format!("{name}: wrong title").into());
-        }
-        let offset = [2, 5, 4, 6, 15, 16, 12, 9, 8, 0x120][mode as usize];
-        let raw = qmp.read_memory(0, 0x8045ff84 + offset, 1)?[0];
-        if !knob_display_matches(mode, &expected_value(mode, raw), &text_resource(1)?)
-            || !text_resource(2)?.is_empty()
-        {
-            return Err(format!("{name}: formatted value/channel line mismatch").into());
-        }
-        if qmp.read_memory(0, 0x8020099c, 2)? != 32u16.to_le_bytes() {
-            return Err(format!("{name}: value not vertically centered").into());
-        }
-        inputs.knob(0, 2)?;
-        reports += 2;
-        let changed = capture(500, &format!("{name}-changed"))?;
-        if frame == changed {
-            return Err(format!("{name}: value did not update").into());
-        }
-        let mut matched = false;
-        let mut last_observed = None;
-        for _ in 0..20 {
-            let raw = qmp.read_memory(0, 0x8045ff84 + offset, 1)?[0];
-            let expected = expected_value(mode, raw);
-            let displayed = text_resource(1)?;
-            last_observed = Some((raw, expected.clone(), displayed.clone()));
-            if knob_display_matches(mode, &expected, &displayed) {
-                matched = true;
-                break;
-            }
-            let tick = inputs.panel.snapshot().guest_ms;
-            wait_guest(session, tick, 50, guest_timeout_ms, wall_timeout_s)?;
-        }
-        if !matched {
-            let (raw, expected, displayed) = last_observed.unwrap();
-            return Err(format!(
-                "{name}: value did not settle to firmware state (raw={raw}, expected={expected:?}, displayed={displayed:?})"
-            )
-            .into());
-        }
-        let refreshed_heap = heap()?;
-        if refreshed_heap[2] != heap_live[2] {
-            return Err(format!("{name}: popup refresh allocated another block ({heap_live:?} -> {refreshed_heap:?})").into());
-        }
-        wait_knob_popup_expiry(session, guest_timeout_ms, wall_timeout_s)?;
-        let expired = capture(150, &format!("{name}-expired"))?;
-        for y in 9..16usize {
-            for x in 9..119usize {
-                let index = ((63 - y) / 8) * 128 + x;
-                let mask = 1 << ((63 - y) % 8);
-                if expired[index] & mask != baseline[index] & mask {
-                    return Err(
-                        format!("{name}: title left pixel at ({x},{y}) after expiry").into(),
-                    );
-                }
-            }
-        }
-        if qmp.read_memory(0, 0x802059b8, 12)? != original_resources
-            || qmp.read_memory(0, 0x80207458, 4)? != original_bitmap
-            || qmp.read_memory(0, 0x8020098c, 6)? != original_header
-            || qmp.read_memory(0, 0x8020099c, 2)? != original_value_y
-            || qmp.read_memory(0, 0x80200986, 2)? != original_polarity
-        {
-            return Err(format!("{name}: Done widget resources/layout were not restored").into());
-        }
-        let heap_after = heap()?;
-        if heap_after[3] != heap_before[3] + 1
-            || heap_after[0] != heap_before[0]
-            || qmp.read_memory(0, lengths_table + 229 * 2, 6)? != original_lengths
-        {
-            return Err(format!("{name}: popup leak or original capacities not restored").into());
-        }
-        for (address, bytes) in &original_text {
-            if qmp.read_memory(0, *address, bytes.len())? != *bytes {
-                return Err(format!("{name}: original Done text overwritten").into());
-            }
-        }
     }
-    inputs.tap(35, 50)?;
-    let pressed = inputs.panel.snapshot().guest_ms;
-    wait_guest(session, pressed, 150, guest_timeout_ms, wall_timeout_s)?;
-    inputs.knob(1, -1)?;
-    reports += 1;
-    capture(400, "channel-2-level")?;
-    if text_resource(0)? != "LEVEL" {
-        return Err("channel-2 encoder did not update through notification".into());
+    let heap_after = heap()?;
+    if heap_after[0] != heap_live[0]
+        || heap_after[2] != heap_live[2]
+        || heap_after[3] != heap_live[3]
+    {
+        return Err(format!(
+            "in-place scene state caused heap changes: live={heap_live:?}, after={heap_after:?}"
+        )
+        .into());
     }
-    inputs.tap(28, 50)?;
-    let pressed = inputs.panel.snapshot().guest_ms;
-    wait_guest(session, pressed, 150, guest_timeout_ms, wall_timeout_s)?;
-    inputs.knob(1, -1)?;
-    reports += 1;
-    capture(400, "channel-2-high")?;
-    if text_resource(0)? != "HIGH" {
-        return Err("blue-strip button did not pass through notification".into());
+    // Prove that the DisplayCycle2 callback restores borrowed global
+    // descriptors on navigation, rather than relying on expiry cleanup.
+    inputs.knob(0, -3)?;
+    capture(400, "window-scene-before-navigation")?;
+    inputs.main.tap(0, 120)?;
+    capture(500, "window-scene-navigation-returned")?;
+    let navigated_window = qmp.read_memory(0, l6max::current_window, 4)?;
+    if navigated_window == original_window
+        || u16::from_le_bytes(qmp.read_memory(0, state, 2)?.try_into().unwrap()) != 0x4b4e
+        || qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)? != original_bitmap
+        || qmp.read_memory(
+            0,
+            u32::from_le_bytes(original_bitmap.clone().try_into().unwrap()),
+            8,
+        )? != original_bitmap_descriptor
+        || qmp.read_memory(0, l6max::notification_slot, 4)? != original_notification_semaphore
+        || qmp.read_memory(0, shared_resource_pointer, 512)? != original_shared_resource
+        || qmp.read_memory(0, widget7, 16)? != original_widget7
+        || qmp.read_memory(0, widget33, 16)? != original_widget33
+        || qmp.read_memory(0, background10, 1)? != original_background_layers[0]
+        || qmp.read_memory(0, background37, 1)? != original_background_layers[1]
+        || qmp.read_memory(0, background48, 1)? != original_background_layers[2]
+        || u32::from_le_bytes(
+            qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?
+                .try_into()
+                .unwrap(),
+        ) != active_slot5
+    {
+        return Err("window-push cleanup did not restore the dialog's borrowed resources".into());
     }
-    wait_knob_popup_expiry(session, guest_timeout_ms, wall_timeout_s)?;
-    if qmp.read_memory(0, 0x802059b8, 12)? != original_resources {
-        return Err("final popup did not restore Done resources".into());
-    }
-    let actual = fs::read_to_string(options.logs.join("engine.trace"))?
-        .matches("l6 panel USART1 TX a1\n")
-        .count() as u64
-        - encoder_report_baseline;
-    if actual != reports {
-        return Err(format!("encoder report count {actual}, expected {reports}").into());
-    }
-    if before[0] == rings(inputs.panel.snapshot().indicators)[0] {
-        return Err("channel 1 ring did not change".into());
-    }
-    if qmp.read_memory(0, 0x841ff000, 4096)? != abandoned_page {
-        return Err("patch wrote abandoned RAM page".into());
-    }
-    Ok(
-        json!({"modes":10,"popup_updates":true,"guest_timed_expiry":true,"encoder_reports":actual,"heap_cleanup":true}),
-    )
+    return Ok(json!({
+        "overlay_layer": 4,
+        "black_background": true,
+        "notification_semaphore_not_required_for_first_use": true,
+        "callback_preflight_race_rejected": callback_preflight_race_rejected,
+        "notification_semaphore_not_required_for_refresh": true,
+        "stock_notification_overlap": true,
+        "stock_notification_expiry": true,
+        "bitmap_zero_guard_safe": true,
+        "timeout_return": true,
+        "window_change_restore": true,
+        "non_recorder_first_use_rejected": non_recorder_guard_passed,
+        "dialog_active_screenshot": "knob-dialog-active.png",
+        "dialog_timeout_screenshot": "knob-dialog-timeout-cleared.png",
+        "resource_restore": true,
+        "shared_resource_reuse": true,
+        "shared_resource_alias_rejected": true,
+        "scene_layer_collision_rejected": true,
+        "changed_widget_layer_rejected": widget_layer_guard_rejected,
+        "changed_background_layer_rejected": background_layer_guard_rejected,
+        "nonzero_channel_value_matches": true,
+        "invalid_mailbox_tag_discarded": invalid_tag_discarded,
+        "invalid_state_signature_rejected": invalid_metadata_rejected,
+        "stock_notification_bitmap_untouched": true,
+        "state_allocation_requested_bytes": 0,
+        "state_heap_bytes_consumed": state_heap_bytes,
+        "state_retained_for_boot": true,
+        "display_callback_slot": 5,
+        "display_callback_target": format!("{active_slot5:#010x}"),
+        "mixer_hook_task_control_block": format!("{hook_task:#010x}"),
+        "display_callback_task_control_block": format!("{callback_task:#010x}"),
+        "mixer_and_callback_share_task": hook_task == callback_task,
+        "display_callback_remains_registered": true
+    }));
 }
 
 fn knob_display_matches(mode: u32, expected: &str, displayed: &str) -> bool {
@@ -8038,58 +7672,6 @@ fn wait_guest(
     }
 }
 
-fn wait_knob_popup_expiry(
-    session: &Session,
-    guest_timeout_ms: u32,
-    wall_timeout_s: u64,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let qmp = &session.engine.management[0];
-    let start = session
-        .engine
-        .inputs
-        .as_ref()
-        .unwrap()
-        .panel
-        .snapshot()
-        .guest_ms;
-    let wall = Instant::now();
-    let mut previous_busy = false;
-    let mut previous_elapsed = 0u16;
-    let mut observed_busy_pause = false;
-    loop {
-        session.poll()?;
-        let state = qmp.read_memory(0, 0x8020a2c0, 10)?;
-        let busy = state[8] != 0;
-        let elapsed = u16::from_le_bytes([state[4], state[5]]);
-        if busy {
-            observed_busy_pause = true;
-            if previous_busy && elapsed != previous_elapsed {
-                return Err("busy overlay advanced popup timer".into());
-            }
-        }
-        previous_busy = busy;
-        previous_elapsed = elapsed;
-        if state[0] == 0 {
-            return Ok(());
-        }
-        let guest = session
-            .engine
-            .inputs
-            .as_ref()
-            .unwrap()
-            .panel
-            .snapshot()
-            .guest_ms
-            .wrapping_sub(start);
-        if guest > guest_timeout_ms || wall.elapsed() > Duration::from_secs(wall_timeout_s) {
-            return Err(
-                format!("popup did not expire; busy pause observed={observed_busy_pause}").into(),
-            );
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
-}
-
 fn run_l6_din_event_dispatch(
     session: &Session,
     options: &Options,
@@ -8100,19 +7682,26 @@ fn run_l6_din_event_dispatch(
     use l6max_diagnostics::gdb::Gdb;
     use std::io;
 
-    const IDLE: u32 = 0x80046d50;
-    const MAIN_TASK: u32 = 0x8006dd70;
-    const MAIN_WAIT_CALL: u32 = 0x8002c216;
-    const MAIN_WAIT_RETURN: u32 = 0x8002c21a;
-    const MAIN_STATE_RETURN: u32 = 0x8002c21e;
-    const MAIN_QUEUE_READER: u32 = 0x80020690;
-    const MAIN_WAIT_GIVE: u32 = 0x800763d8;
-    const DIN_EVENT_SUBMIT: u32 = 0x80020ca0;
-    const CLASS2_HANDLER: u32 = 0x8002c510;
-    const EQ_SETTER: u32 = 0x8003e408;
+    use firmware_api::l6::idle_loop;
+    use firmware_api::l6::main_class2_event_handler;
+    use firmware_api::l6::main_event_queue_reader;
+    use firmware_api::l6::main_event_submit;
+    use firmware_api::l6::main_state_return;
+    use firmware_api::l6::main_task;
+    use firmware_api::l6::main_wait_call;
+    use firmware_api::l6::main_wait_give;
+    use firmware_api::l6::main_wait_return;
+    use firmware_api::l6::mixer_set_eq;
     const CHANNEL_SETTERS: [u32; 9] = [
-        0x8003e408, 0x8003e340, 0x8003e408, 0x8003e408, 0x8003d860, 0x8003d860, 0x8003e0c8,
-        0x8003db10, 0x8003da58,
+        l6::mixer_set_eq,
+        l6::mixer_din_setter_1,
+        l6::mixer_set_eq,
+        l6::mixer_set_eq,
+        l6::mixer_din_setter_4,
+        l6::mixer_din_setter_4,
+        l6::mixer_din_setter_6,
+        l6::mixer_din_setter_7,
+        l6::mixer_din_setter_8,
     ];
     let qmp = &session.engine.management[0];
     let socket = options
@@ -8127,8 +7716,8 @@ fn run_l6_din_event_dispatch(
     );
     let read_state = || -> Result<(Vec<u8>, Vec<u8>), Box<dyn std::error::Error>> {
         Ok((
-            qmp.read_memory(0, 0x80440dca, 0x7e)?,
-            qmp.read_memory(0, 0x80440e9a, 6)?,
+            qmp.read_memory(0, l6::mixer_state, 0x7e)?,
+            qmp.read_memory(0, l6::mixer_state_tail, 6)?,
         ))
     };
     let changed_bytes = |before: &(Vec<u8>, Vec<u8>), after: &(Vec<u8>, Vec<u8>)| {
@@ -8144,18 +7733,18 @@ fn run_l6_din_event_dispatch(
         Ok(gdb.read_register(15)? & !1)
     };
 
-    gdb.breakpoint(MAIN_TASK, true)?;
+    gdb.breakpoint(main_task, true)?;
     tracing::info!(
         event = "l6_event_dispatch_stage",
         stage = "wait_main_task",
         "Waiting for L6 Main task entry"
     );
     gdb.continue_until_stop(Duration::from_secs(60))?;
-    if pc(&mut gdb)? != MAIN_TASK {
+    if pc(&mut gdb)? != main_task {
         return Err(io::Error::other("L6 Main task entry breakpoint was missed").into());
     }
-    gdb.breakpoint(MAIN_TASK, false)?;
-    gdb.breakpoint(MAIN_WAIT_CALL, true)?;
+    gdb.breakpoint(main_task, false)?;
+    gdb.breakpoint(main_wait_call, true)?;
     tracing::info!(
         event = "l6_event_dispatch_stage",
         stage = "wait_main_semaphore",
@@ -8174,20 +7763,20 @@ fn run_l6_din_event_dispatch(
         ))
         .into());
     }
-    if pc(&mut gdb)? != MAIN_WAIT_CALL || gdb.read_register(1)? != u32::MAX {
+    if pc(&mut gdb)? != main_wait_call || gdb.read_register(1)? != u32::MAX {
         return Err(io::Error::other("L6 Main did not enter its infinite semaphore wait").into());
     }
     let main_wait = gdb.read_register(0)?;
-    gdb.breakpoint(MAIN_WAIT_CALL, false)?;
-    gdb.breakpoint(MAIN_WAIT_RETURN, true)?;
-    gdb.breakpoint(IDLE, true)?;
+    gdb.breakpoint(main_wait_call, false)?;
+    gdb.breakpoint(main_wait_return, true)?;
+    gdb.breakpoint(idle_loop, true)?;
     tracing::info!(
         event = "l6_event_dispatch_stage",
         stage = "wait_main_block",
         "Waiting for Main to block before event injection"
     );
     gdb.continue_until_stop(Duration::from_secs(10))?;
-    if pc(&mut gdb)? != IDLE {
+    if pc(&mut gdb)? != idle_loop {
         return Err(io::Error::other("L6 Main did not block before DIN injection").into());
     }
     let before = read_state()?;
@@ -8203,10 +7792,10 @@ fn run_l6_din_event_dispatch(
     gdb.register(1, u32::from(group))?;
     gdb.register(2, u32::from(cc))?;
     gdb.register(3, u32::from(value))?;
-    gdb.register(14, IDLE | 1)?;
-    gdb.register(15, DIN_EVENT_SUBMIT)?;
+    gdb.register(14, idle_loop | 1)?;
+    gdb.register(15, main_event_submit)?;
     gdb.continue_until_stop(Duration::from_secs(10))?;
-    if pc(&mut gdb)? != IDLE {
+    if pc(&mut gdb)? != idle_loop {
         return Err(io::Error::other("L6 DIN event producer did not return to Idle").into());
     }
 
@@ -8214,22 +7803,22 @@ fn run_l6_din_event_dispatch(
     gdb.register(1, 0)?;
     gdb.register(2, 0)?;
     gdb.register(3, 0)?;
-    gdb.register(14, IDLE | 1)?;
-    gdb.register(15, MAIN_WAIT_GIVE)?;
+    gdb.register(14, idle_loop | 1)?;
+    gdb.register(15, main_wait_give)?;
     gdb.continue_until_stop(Duration::from_secs(10))?;
-    if pc(&mut gdb)? != MAIN_WAIT_RETURN {
+    if pc(&mut gdb)? != main_wait_return {
         return Err(io::Error::other("L6 Main did not wake from its state wait").into());
     }
-    gdb.breakpoint(MAIN_WAIT_RETURN, false)?;
-    gdb.breakpoint(MAIN_STATE_RETURN, true)?;
+    gdb.breakpoint(main_wait_return, false)?;
+    gdb.breakpoint(main_state_return, true)?;
     gdb.continue_until_stop(Duration::from_secs(10))?;
-    if pc(&mut gdb)? != MAIN_STATE_RETURN {
+    if pc(&mut gdb)? != main_state_return {
         return Err(io::Error::other("L6 Main state-selector return was missed").into());
     }
     let state = gdb.read_register(0)?;
-    gdb.breakpoint(MAIN_STATE_RETURN, false)?;
-    gdb.breakpoint(IDLE, false)?;
-    gdb.breakpoint(MAIN_QUEUE_READER, true)?;
+    gdb.breakpoint(main_state_return, false)?;
+    gdb.breakpoint(idle_loop, false)?;
+    gdb.breakpoint(main_event_queue_reader, true)?;
     tracing::info!(
         event = "l6_event_dispatch_stage",
         stage = "wait_main_queue_reader",
@@ -8238,11 +7827,11 @@ fn run_l6_din_event_dispatch(
     for _ in 0..8 {
         gdb.continue_until_stop(Duration::from_secs(30))?;
         let stopped = pc(&mut gdb)?;
-        if stopped == MAIN_QUEUE_READER {
+        if stopped == main_event_queue_reader {
             break;
         }
-        if stopped == IDLE {
-            gdb.breakpoint(IDLE, false)?;
+        if stopped == idle_loop {
+            gdb.breakpoint(idle_loop, false)?;
         } else {
             return Err(io::Error::other(format!(
                 "L6 Main initialization stopped at {stopped:#x}"
@@ -8250,11 +7839,11 @@ fn run_l6_din_event_dispatch(
             .into());
         }
     }
-    if pc(&mut gdb)? != MAIN_QUEUE_READER {
+    if pc(&mut gdb)? != main_event_queue_reader {
         return Err(io::Error::other("L6 Main did not reach its queue reader").into());
     }
-    gdb.breakpoint(MAIN_QUEUE_READER, false)?;
-    gdb.breakpoint(CLASS2_HANDLER, true)?;
+    gdb.breakpoint(main_event_queue_reader, false)?;
+    gdb.breakpoint(main_class2_event_handler, true)?;
     tracing::info!(
         event = "l6_event_dispatch_stage",
         stage = "wait_class2_handler",
@@ -8264,7 +7853,7 @@ fn run_l6_din_event_dispatch(
     for _ in 0..8 {
         gdb.continue_until_stop(Duration::from_secs(30))?;
         let stopped = pc(&mut gdb)?;
-        if stopped == CLASS2_HANDLER {
+        if stopped == main_class2_event_handler {
             let address = gdb.read_register(0)?;
             let bytes = qmp.read_memory(0, address, 20)?;
             let words = bytes
@@ -8275,23 +7864,23 @@ fn run_l6_din_event_dispatch(
                 observed_event = true;
                 break;
             }
-        } else if stopped != MAIN_QUEUE_READER {
+        } else if stopped != main_event_queue_reader {
             return Err(io::Error::other(format!("L6 event queue stopped at {stopped:#x}")).into());
         }
     }
     if !observed_event {
         return Err(io::Error::other("L6 Main did not dispatch the injected DIN event").into());
     }
-    gdb.breakpoint(CLASS2_HANDLER, false)?;
-    gdb.breakpoint(EQ_SETTER, true)?;
+    gdb.breakpoint(main_class2_event_handler, false)?;
+    gdb.breakpoint(mixer_set_eq, true)?;
     gdb.continue_until_stop(Duration::from_secs(10))?;
-    if pc(&mut gdb)? != EQ_SETTER {
+    if pc(&mut gdb)? != mixer_set_eq {
         return Err(io::Error::other("queued DIN CC did not reach the EQ setter").into());
     }
     let stack = gdb.read_register(13)?;
     let setter_value = u32::from_le_bytes(qmp.read_memory(0, stack, 4)?.try_into().unwrap());
-    gdb.breakpoint(EQ_SETTER, false)?;
-    gdb.breakpoint(IDLE, true)?;
+    gdb.breakpoint(mixer_set_eq, false)?;
+    gdb.breakpoint(idle_loop, true)?;
     gdb.continue_until_stop(Duration::from_secs(10))?;
     let after_event = read_state()?;
     let event_changed = changed_bytes(&before, &after_event);
@@ -8312,10 +7901,10 @@ fn run_l6_din_event_dispatch(
         gdb.register(1, index as u32)?;
         gdb.register(2, 1)?;
         gdb.register(3, 0)?;
-        gdb.register(14, IDLE | 1)?;
+        gdb.register(14, idle_loop | 1)?;
         gdb.register(15, setter)?;
         gdb.continue_until_stop(Duration::from_secs(10))?;
-        if pc(&mut gdb)? != IDLE {
+        if pc(&mut gdb)? != idle_loop {
             return Err(io::Error::other(format!(
                 "L6 setter for group {index} did not return to Idle"
             ))
@@ -8349,15 +7938,24 @@ fn run_l6_din_event_dispatch(
 fn callbacks(model: l6fw::Model) -> &'static [(u32, &'static str)] {
     match model {
         l6fw::Model::L6 => &[
-            (0x800335f8, "l6_sai1_rx_dma_callback"),
-            (0x800180f8, "l6_audio_input_block_semaphore_callback"),
-            (0x80012388, "l6_audio_staging_ring_producer"),
-            (0x80010698, "l6_audio_process_block_consumer"),
-            (0x8004fa98, "l6_dsp_stream_callback"),
+            (l6::sai1_rx_dma_callback, "l6_sai1_rx_dma_callback"),
+            (
+                l6::audio_input_block_semaphore_callback,
+                "l6_audio_input_block_semaphore_callback",
+            ),
+            (
+                l6::audio_staging_ring_producer,
+                "l6_audio_staging_ring_producer",
+            ),
+            (
+                l6::audio_process_block_consumer,
+                "l6_audio_process_block_consumer",
+            ),
+            (l6::dsp_stream_callback, "l6_dsp_stream_callback"),
         ],
         l6fw::Model::L6max => &[
-            (0x800149b0, "audio_ring_consumer"),
-            (0x80066180, "dsp_stream_callback"),
+            (l6max::audio_ring_consumer, "audio_ring_consumer"),
+            (l6max::dsp_stream_callback, "dsp_stream_callback"),
         ],
     }
 }
@@ -9077,7 +8675,7 @@ fn run_sound_pad_playback(
         .as_ref()
         .ok_or_else(|| std::io::Error::other("sound-pad-playback has no panel inputs"))?;
     let assignment_ready = if model == l6fw::Model::L6 {
-        let address = 0x8044_337f + u32::from(pad);
+        let address = l6::sound_pad_assignments + u32::from(pad);
         let start_guest = inputs.panel.snapshot().guest_ms;
         let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(30));
         loop {
@@ -9372,17 +8970,23 @@ fn run_l6_recorder_playback(
             "stopping QEMU before recorder breakpoint setup: {error}"
         ))
     })?;
-    debugger.breakpoint(0x8002_c9d8, true).map_err(|error| {
-        std::io::Error::other(format!(
-            "setting L6 system-event dispatcher breakpoint: {error}"
-        ))
-    })?;
-    debugger.breakpoint(0x8000_8a08, true).map_err(|error| {
-        std::io::Error::other(format!("setting L6 Play handler breakpoint: {error}"))
-    })?;
-    debugger.breakpoint(0x8004_b890, true).map_err(|error| {
-        std::io::Error::other(format!("setting L6 recorder callback breakpoint: {error}"))
-    })?;
+    debugger
+        .breakpoint(l6::system_event_dispatcher, true)
+        .map_err(|error| {
+            std::io::Error::other(format!(
+                "setting L6 system-event dispatcher breakpoint: {error}"
+            ))
+        })?;
+    debugger
+        .breakpoint(l6::rec_play_handler, true)
+        .map_err(|error| {
+            std::io::Error::other(format!("setting L6 Play handler breakpoint: {error}"))
+        })?;
+    debugger
+        .breakpoint(l6::rec_playback_callback, true)
+        .map_err(|error| {
+            std::io::Error::other(format!("setting L6 recorder callback breakpoint: {error}"))
+        })?;
     let start_guest_ms = inputs.panel.snapshot().guest_ms;
     let before_applied = inputs.main.snapshot().applied;
     inputs
@@ -9422,7 +9026,7 @@ fn run_l6_recorder_playback(
     let event_state = u32::from_le_bytes(event[0..4].try_into().unwrap());
     let event_class = u32::from_le_bytes(event[4..8].try_into().unwrap());
     let event_code = u32::from_le_bytes(event[8..12].try_into().unwrap());
-    if dispatcher_pc != 0x8002_c9d8 {
+    if dispatcher_pc != l6::system_event_dispatcher {
         return Err(std::io::Error::other(format!(
             "L6 Play event did not reach class-0 dispatcher (pc={dispatcher_pc:#010x}, event={event:02x?})"
         )).into());
@@ -9434,7 +9038,7 @@ fn run_l6_recorder_playback(
     }
     // A breakpoint left at the current PC would stop here again.
     debugger
-        .breakpoint(0x8002_c9d8, false)
+        .breakpoint(l6::system_event_dispatcher, false)
         .map_err(|error| std::io::Error::other(format!("clearing dispatcher: {error}")))?;
     debugger
         .continue_until_stop(Duration::from_secs(10))
@@ -9442,15 +9046,17 @@ fn run_l6_recorder_playback(
     let handler_pc = debugger.read_register(15).map_err(std::io::Error::other)? & !1;
     let handler_argument = debugger.read_register(0).map_err(std::io::Error::other)?;
     let mode = u32::from_le_bytes(
-        qmp.read_memory(0, 0x8057_8ebc, 4)
+        qmp.read_memory(0, l6::rec_mode, 4)
             .map_err(|error| std::io::Error::other(format!("reading L6 recorder mode: {error}")))?
             .try_into()
             .unwrap(),
     );
-    let selection_key = qmp.read_memory(0, 0x8061_01a8, 8).map_err(|error| {
-        std::io::Error::other(format!("reading selected L6 recording key: {error}"))
-    })?;
-    if handler_pc != 0x8000_8a08
+    let selection_key = qmp
+        .read_memory(0, l6::rec_selected_key, 8)
+        .map_err(|error| {
+            std::io::Error::other(format!("reading selected L6 recording key: {error}"))
+        })?;
+    if handler_pc != l6::rec_play_handler
         || handler_argument != 1
         || mode != 0
         || selection_key.iter().all(|byte| *byte == 0)
@@ -9461,7 +9067,7 @@ fn run_l6_recorder_playback(
         .into());
     }
     debugger
-        .breakpoint(0x8000_8a08, false)
+        .breakpoint(l6::rec_play_handler, false)
         .map_err(|error| std::io::Error::other(format!("clearing Play handler: {error}")))?;
     debugger
         .continue_until_stop(Duration::from_secs(10))
@@ -9469,14 +9075,15 @@ fn run_l6_recorder_playback(
             std::io::Error::other(format!("waiting for L6 recorder callback: {error}"))
         })?;
     let callback_pc = debugger.read_register(15).map_err(std::io::Error::other)? & !1;
-    if callback_pc != 0x8004_b890 {
+    if callback_pc != l6::rec_playback_callback {
         return Err(std::io::Error::other(format!(
-            "L6 recorder playback callback stopped at {callback_pc:#010x}, expected 0x8004b890"
+            "L6 recorder playback callback stopped at {callback_pc:#010x}, expected {:#010x}",
+            l6::rec_playback_callback
         ))
         .into());
     }
     debugger
-        .breakpoint(0x8004_b890, false)
+        .breakpoint(l6::rec_playback_callback, false)
         .map_err(std::io::Error::other)?;
     qmp.resume().map_err(|error| {
         std::io::Error::other(format!("resuming QEMU after L6 recorder callback: {error}"))
@@ -9888,14 +9495,14 @@ fn run_knob_dialog_popup(
     guest_timeout_ms: u32,
     wall_timeout_s: u64,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    const RECORDER_HOME: u32 = 0x8020_0408;
-    const CURRENT_WINDOW: u32 = 0x8020_2610;
-    const DIALOG_STATE: u32 = 0x8020_73c8;
+    use firmware_api::l6max::GUI_RECORDER_WINDOW;
+    use firmware_api::l6max::current_window;
+    const DIALOG_STATE: u32 = l6max::gui_bitmap_table_entry_0;
     const DIALOG_STATE_MAGIC: u16 = 0x4b4e;
-    const DISPLAY_CALLBACK_SLOT5: u32 = 0x8020_a59c + 20;
-    const TEXT_POINTERS: u32 = 0x8020_5118;
+    const DISPLAY_CALLBACK_SLOT5: u32 = l6max::gui_display_callback_table + 20;
+    use firmware_api::l6max::gui_text_pointers_by_language;
     const DIALOG_TEXT_ID: u32 = 179;
-    const CHANNEL1_LEVEL: u32 = 0x8045_ff84 + 0x120;
+    use firmware_api::l6max::mixer_channel_levels;
 
     if session.engine.model() != l6fw::Model::L6max {
         return Err("knob-dialog-popup requires L6max firmware".into());
@@ -9911,8 +9518,8 @@ fn run_knob_dialog_popup(
             qmp.read_memory(0, address, 4)?.try_into().unwrap(),
         ))
     };
-    let window = read_u32(CURRENT_WINDOW)?;
-    if window != RECORDER_HOME {
+    let window = read_u32(current_window)?;
+    if window != GUI_RECORDER_WINDOW {
         return Err(format!(
             "knob-dialog-popup needs the recorder screen, found window {window:#010x}"
         )
@@ -9946,7 +9553,7 @@ fn run_knob_dialog_popup(
     if after == before {
         return Err("Knob Dialog opened but the display did not change".into());
     }
-    let pointer = read_u32(read_u32(TEXT_POINTERS)? + DIALOG_TEXT_ID * 4)?;
+    let pointer = read_u32(read_u32(gui_text_pointers_by_language)? + DIALOG_TEXT_ID * 4)?;
     let units = qmp
         .read_memory(0, pointer, 48)?
         .chunks_exact(2)
@@ -9954,7 +9561,7 @@ fn run_knob_dialog_popup(
         .take_while(|c| *c != 0)
         .collect::<Vec<_>>();
     let displayed = String::from_utf16(&units)?;
-    let raw = qmp.read_memory(0, CHANNEL1_LEVEL, 1)?[0];
+    let raw = qmp.read_memory(0, mixer_channel_levels, 1)?[0];
     let expected = format!("{}%", (u32::from(raw) * 100 + 63) / 127);
     if displayed != expected {
         return Err(format!(
@@ -9985,15 +9592,15 @@ fn expect_menu(
     const NODE_TITLE: u32 = 0x0c;
     const NODE_CHILDREN: u32 = 0x10;
     const NODE_CHILD_COUNT: u32 = 0x14;
-    const TEXT_POINTERS: u32 = 0x8020_5118;
+    use firmware_api::l6max::gui_text_pointers_by_language;
     const MAX_CHILDREN: u16 = 64;
 
     let root = match menu {
-        "main" => 0x8020_256c,
-        "project" => 0x8020_1750,
-        "sound-pad" => 0x8020_17c8,
-        "mixer" => 0x8020_1728,
-        "system" => 0x8020_17f0,
+        "main" => l6max::MENU_NODE_MAIN,
+        "project" => l6max::MENU_NODE_PROJECT,
+        "sound-pad" => l6max::MENU_NODE_SOUND_PAD,
+        "mixer" => l6max::MENU_NODE_MIXER,
+        "system" => l6max::MENU_NODE_SYSTEM,
         _ => return Err(format!("unknown menu {menu:?}")),
     };
     let qmp = &session.engine.management[0];
@@ -10008,7 +9615,7 @@ fn expect_menu(
         Ok(u16::from_le_bytes(read(address, 2)?.try_into().unwrap()))
     };
     let text = |id: u16| -> Result<String, String> {
-        let pointer = read_u32(read_u32(TEXT_POINTERS)? + u32::from(id) * 4)?;
+        let pointer = read_u32(read_u32(gui_text_pointers_by_language)? + u32::from(id) * 4)?;
         if pointer == 0 {
             return Ok(String::new());
         }
@@ -10034,9 +9641,9 @@ fn expect_menu(
     };
     // Menu Loader adds its rows when the menu opens, so a press that did not
     // open it would otherwise look like missing rows.
-    const RECORDER_HOME: u32 = 0x8020_0408;
-    const CURRENT_WINDOW: u32 = 0x8020_2610;
-    if read_u32(CURRENT_WINDOW)? == RECORDER_HOME {
+    use firmware_api::l6max::GUI_RECORDER_WINDOW;
+    use firmware_api::l6max::current_window;
+    if read_u32(current_window)? == GUI_RECORDER_WINDOW {
         return Err("expect-menu: the menu is not open; the recorder screen is showing".into());
     }
     let mut node = root;

@@ -1700,6 +1700,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 
 [[package]]
+name = "firmware-api"
+version = "0.1.0"
+
+[[package]]
 name = "firmware-patch-compile"
 version = "0.1.0"
 dependencies = [
@@ -3623,6 +3627,7 @@ version = "0.1.0"
 dependencies = [
  "alsa",
  "coremidi",
+ "firmware-api",
  "firmware-patch-core",
  "firmware-patch-wasm",
  "l6fw",
@@ -3669,6 +3674,7 @@ dependencies = [
 name = "l6test"
 version = "0.1.0"
 dependencies = [
+ "firmware-api",
  "firmware-patch-core",
  "firmware-patch-wasm",
  "gif 0.14.2",
@@ -6524,6 +6530,7 @@ dependencies = [
  "aho-corasick",
  "alsa",
  "coremidi",
+ "firmware-api",
  "firmware-patch-core",
  "firmware-patch-wasm",
  "image",

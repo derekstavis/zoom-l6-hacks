@@ -371,7 +371,10 @@ def check_flexram_boundaries(qemu, image):
         gate = int(command("readl 0x400fc07c").split()[1], 16)
         assert not gate & 0xc0
         assert int(command("readl 0x400e802c").split()[1], 16) == 0
+        command("writel 0x400d8154 0x40000000")  # stop selected crystal
         command(f"writel 0x400fc07c {gate | 0xc0:#x}")
+        assert int(command("readl 0x400e802c").split()[1], 16) == 0
+        command("writel 0x400d8158 0x40000000")  # restore IPG root
         assert not int(command("readl 0x400e8024").split()[1], 16) & 8
         assert not int(command("readl 0x40384040").split()[1], 16) & 0x1f0000
         assert int(command("readl 0x400e802c").split()[1], 16) == 8

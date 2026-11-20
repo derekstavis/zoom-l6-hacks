@@ -95,8 +95,10 @@ in direct-address scans of the recovered ROM and first-stage boot image, though
 indirect accesses remain possible. The model also resets L6max DMAMUX
 channels, eDMA request enables, interrupt state and documented priority fields.
 The shared CCGR5 eDMA/DMAMUX gate starts off on the reconstructed boot path;
-modeled SAI and display DMA requests wait while gated and are rechecked when
-it opens. Register access while gated and bus timing are not modeled. The
+modeled SAI and display DMA requests wait while it or the IPG clock root is
+stopped and are rechecked when the clock resumes. Unknown root selections retain
+the last modeled CPU clock state. Register access while gated and bus timing are
+not modeled. The
 RT1060 manual marks transfer-descriptor reset contents unknown; QEMU retains
 its prior descriptor contents without asserting physical retention.
 The boot images' direct-address scans found no DMA setup, but indirect accesses

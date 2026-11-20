@@ -407,6 +407,7 @@ typedef struct L6ChipState {
     unsigned lpspi_rx_count;
     unsigned edma_log_count;
     uint32_t edma_erq;
+    bool edma_clock_running;
     bool audio_trace;
     unsigned audio_trace_sai_log_count;
     unsigned audio_trace_edma_log_count;
@@ -3183,8 +3184,7 @@ static void l6_edma_tcd_store(L6ChipState *s, unsigned channel,
  * behavior until its clock tree is independently audited. */
 static bool l6_edma_clock_enabled(L6ChipState *s)
 {
-    return s->profile != &L6MAX_PROFILE ||
-           (l6max_clock_register(s, 0x0fc07c) & 0xc0u) != 0;
+    return s->profile != &L6MAX_PROFILE || s->edma_clock_running;
 }
 
 /* A DMAMUX request services exactly one RT1041 32-bit-TCD minor loop. The
@@ -3754,6 +3754,26 @@ static bool l6_display_dma_transfer(L6ChipState *s)
     return true;
 }
 
+/* Recheck level requests only when the DMA clock starts, not on every
+ * divider write: a still-asserted FIFO request must not gain extra transfers. */
+static void l6max_refresh_edma_clock(L6ChipState *s)
+{
+    L6MaxBusClocks clocks = l6max_bus_clocks(s);
+    uint32_t ipg_hz = l6max_ipg_clock_hz(&clocks);
+    bool was_running = s->edma_clock_running;
+    bool root_running = ipg_hz == UINT32_MAX ? clock_get_hz(s->sysclk) != 0 :
+                                             ipg_hz != 0;
+    s->edma_clock_running = root_running &&
+        (l6max_clock_register(s, 0x0fc07c) & 0xc0u) != 0;
+    if (!was_running && s->edma_clock_running) {
+        l6_edma_service_active_sai(s);
+        uint32_t der = l6max_clock_register(s, 0x3a001c);
+        if ((der & 3) == 3 && (s->edma_erq & 0xc) == 0xc) {
+            l6_display_dma_transfer(s);
+        }
+    }
+}
+
 static void l6_lpspi_flash_tx_byte(L6ChipState *s, uint8_t byte)
 {
     if (!s->lpspi_flash_header_bytes ||
@@ -3846,6 +3866,7 @@ static void l6max_update_cpu_clock(L6ChipState *s)
     if (hz != UINT32_MAX) {
         clock_update_hz(s->sysclk, hz);
     }
+    l6max_refresh_edma_clock(s);
 }
 
 static void l6_mmio_write(void *opaque, hwaddr offset,
@@ -4430,14 +4451,8 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
         }
     }
     if (!s->panel && s->profile == &L6MAX_PROFILE &&
-        (offset & ~(hwaddr)3) == 0x0fc07c &&
-        !(previous_word & 0xc0u) && (word & 0xc0u)) {
-        /* Requests can already be asserted while the DMA clock is stopped. */
-        l6_edma_service_active_sai(s);
-        uint32_t der = l6max_clock_register(s, 0x3a001c);
-        if ((der & 3) == 3 && (s->edma_erq & 0xc) == 0xc) {
-            l6_display_dma_transfer(s);
-        }
+        (offset & ~(hwaddr)3) == 0x0fc07c) {
+        l6max_refresh_edma_clock(s);
     }
     hwaddr clock_word = offset & ~(hwaddr)3;
     hwaddr clock_alias = offset & ~(hwaddr)0xf;

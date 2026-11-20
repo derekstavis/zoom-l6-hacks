@@ -136,7 +136,9 @@ PFD outputs and output disable as gating those outputs. The modeled PLL2 and
 PLL3 PFD paths follow that description; physical switching has not been measured.
 The SAI block scheduler restarts its phase when the modeled sample rate
 changes, so it does not retain a deadline from the prior clock. This is a
-block-level approximation, not a model of individual clock edges.
+block-level approximation, not a model of individual clock edges. Aligned
+byte, halfword and word writes to the modeled SAI clock-control registers
+trigger the same rescheduling check.
 The IPG divider also supplies SAI1 when its bus-clock input is selected.
 SAI1 MCLK3 can use the internal SPDIF root, including its PLL source mux
 and dividers; the other SPDIF clock sources are not modeled. SysTick pauses if its

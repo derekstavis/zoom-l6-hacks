@@ -4526,9 +4526,11 @@ static void l6_mmio_write(void *opaque, hwaddr offset,
         l6max_update_cpu_clock(s);
     }
     if (!s->panel && s->profile == &L6MAX_PROFILE &&
-        ((sai && (sai_offset == L6_SAI_TCSR || sai_offset == L6_SAI_RCSR ||
-                  sai_offset == L6_SAI_TCR2 || sai_offset == L6_SAI_TCR4 ||
-                  sai_offset == L6_SAI_TCR5)) || clock_word == 0x0ac004 ||
+        ((sai && ((sai_offset & ~3u) == L6_SAI_TCSR ||
+                  (sai_offset & ~3u) == L6_SAI_RCSR ||
+                  (sai_offset & ~3u) == L6_SAI_TCR2 ||
+                  (sai_offset & ~3u) == L6_SAI_TCR4 ||
+                  (sai_offset & ~3u) == L6_SAI_TCR5)) || clock_word == 0x0ac004 ||
          (clock_word >= 0x0fc000 && clock_word <= 0x0fc084) ||
          (clock_word >= 0x0d8000 && clock_word <= 0x0d82cc))) {
         l6max_sai_clock_recheck(s);

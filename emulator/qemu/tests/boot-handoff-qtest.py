@@ -958,14 +958,14 @@ def check_flexram_boundaries(qemu, image):
         command("writel 0x400d8014 0x2000")
         command("clock_step 30000000")
         assert (int(command("readl 0x40384040").split()[1], 16) - before) & 31 == 16
-        command("writel 0x400d8018 0x10000")
-        command(f"writel 0x400fc01c {old_cscmr1:#x}")
-        # MSEL=0 selects the IPG bus clock; it must drive SAI FIFO progress.
-        command("writel 0x40384010 0x01000000")
-        command("clock_step 2000000")
+        # MSEL=0 selects faster IPG; a high-byte write must reschedule the
+        # still-pending slower PLL3 block without waiting for its deadline.
         before = fill_sai()
+        command("writeb 0x40384013 0x01")
         command("clock_step 500000")
         assert (int(command("readl 0x40384040").split()[1], 16) - before) & 31 == 16
+        command("writel 0x400d8018 0x10000")
+        command(f"writel 0x400fc01c {old_cscmr1:#x}")
         # MCLK3 selects the internal SPDIF root. Route PLL4 through /4 and
         # /2, giving the same 24.576 MHz root and 48 kHz frame cadence.
         old_cdcdr = int(command("readl 0x400fc030").split()[1], 16)

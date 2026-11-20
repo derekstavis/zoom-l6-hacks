@@ -4025,9 +4025,10 @@ impl State {
                         .find(|hook| Some(hook.address) == expected_function)
                         .ok_or("dynamic patch bundle has no hook record")?;
                     let root = sd_fixture_root(options).map_err(std::io::Error::other)?;
-                    let ordered_chain = root.join("sd-chain-first.BIN").is_file();
+                    let ordered_chain = root.join(crate::fixture_layout::CHAIN_FIRST).is_file();
                     let patch_report: Value = serde_json::from_slice(&fs::read(
-                        root.join("sd-patches-build/patch.json"),
+                        root.join(crate::fixture_layout::SD_BUNDLE_BUILD)
+                            .join(crate::fixture_layout::PATCH_REPORT),
                     )?)?;
                     let patch_for_size = |size: usize| {
                         patch_report["patches"]
@@ -4074,7 +4075,8 @@ impl State {
                         None
                     };
                     let loader_report: Value = serde_json::from_slice(&fs::read(
-                        root.join("patch-loader-firmware/patch.json"),
+                        root.join(crate::fixture_layout::LOADER_BUILD)
+                            .join(crate::fixture_layout::PATCH_REPORT),
                     )?)?;
                     let _loader_patch = loader_report["patches"]
                         .as_array()
@@ -5388,7 +5390,11 @@ fn sd_fixture_root(options: &Options) -> Result<&std::path::Path, String> {
     options
         .logs
         .ancestors()
-        .find(|dir| dir.join("sd-stock-firmware/main_firmware.bin").is_file())
+        .find(|dir| {
+            dir.join(crate::fixture_layout::SD_STOCK_FIRMWARE)
+                .join("main_firmware.bin")
+                .is_file()
+        })
         .ok_or_else(|| "missing generated SD fixture".into())
 }
 
@@ -5415,7 +5421,11 @@ fn effect_parameter_edit(
         .ok_or("L6max effect parameter editing requires GDB")?;
     let root = sd_fixture_root(options)?;
     let report: Value = serde_json::from_slice(
-        &fs::read(root.join("sd-patches-build/patch.json")).map_err(|error| error.to_string())?,
+        &fs::read(
+            root.join(crate::fixture_layout::SD_BUNDLE_BUILD)
+                .join(crate::fixture_layout::PATCH_REPORT),
+        )
+        .map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())?;
     let symbol_offset = composed_export_offset(&report, "DUAL_EFFECT_EDIT_APPLIED")
@@ -5633,7 +5643,11 @@ fn effect_replacement_state(
     }
     let root = sd_fixture_root(options)?;
     let report: Value = serde_json::from_slice(
-        &fs::read(root.join("sd-patches-build/patch.json")).map_err(|error| error.to_string())?,
+        &fs::read(
+            root.join(crate::fixture_layout::SD_BUNDLE_BUILD)
+                .join(crate::fixture_layout::PATCH_REPORT),
+        )
+        .map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())?;
     let symbols = composed_module_report(&report)
@@ -5867,21 +5881,28 @@ fn effect_replacement_state(
 fn sd_fixture_edits(options: &Options, main: &[u8], model: l6fw::Model) -> Result<SdEdits, String> {
     use sha2::{Digest, Sha256};
     let root = sd_fixture_root(options)?;
-    let stock =
-        fs::read(root.join("sd-stock-firmware/main_firmware.bin")).map_err(|e| e.to_string())?;
+    let stock = fs::read(
+        root.join(crate::fixture_layout::SD_STOCK_FIRMWARE)
+            .join("main_firmware.bin"),
+    )
+    .map_err(|e| e.to_string())?;
     let (patch_model, image_base) = match model {
         l6fw::Model::L6 => (firmware_patch_core::FirmwareModel::L6, 0x8000_1000u32),
         l6fw::Model::L6max => (firmware_patch_core::FirmwareModel::L6max, 0x8000_0000u32),
     };
     firmware_patch_core::verify_firmware_for(patch_model, &stock)?;
     let loader: Value = serde_json::from_slice(
-        &fs::read(root.join("patch-loader-firmware/patch.json")).map_err(|e| e.to_string())?,
+        &fs::read(
+            root.join(crate::fixture_layout::LOADER_BUILD)
+                .join(crate::fixture_layout::PATCH_REPORT),
+        )
+        .map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;
     if loader["patched_sha256"].as_str() != Some(format!("{:x}", Sha256::digest(main)).as_str()) {
         return Err("Patch loader image does not match its generated report".into());
     }
-    let patch_output = root.join("sd-patches-build");
+    let patch_output = root.join(crate::fixture_layout::SD_BUNDLE_BUILD);
     let patch_report_path = patch_output.join("patch.json");
     if !patch_report_path.exists() {
         return Ok((
@@ -6077,7 +6098,11 @@ fn sd_dynamic_handler_slot(
 ) -> Result<u32, String> {
     let root = sd_fixture_root(options)?;
     let report: Value = serde_json::from_slice(
-        &fs::read(root.join("patch-loader-firmware/patch.json")).map_err(|e| e.to_string())?,
+        &fs::read(
+            root.join(crate::fixture_layout::LOADER_BUILD)
+                .join(crate::fixture_layout::PATCH_REPORT),
+        )
+        .map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;
     let sites = report["patches"]

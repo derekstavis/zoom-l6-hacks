@@ -695,19 +695,11 @@ mod tests {
 
     #[test]
     fn every_generated_scenario_loads() {
-        let root = l6max_host::paths::repository_root().join("tests/smoke");
-        let dir = std::env::temp_dir().join(format!("l6-patch-matrix-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("scenarios")).unwrap();
-        for entry in ["states", "cards"] {
-            std::os::unix::fs::symlink(root.join(entry), dir.join(entry)).unwrap();
-        }
+        let scenarios = l6max_host::paths::repository_root().join("tests/smoke/scenarios");
         for case in generate().unwrap() {
-            let path = dir.join("scenarios").join(format!("{}.toml", case.id));
-            std::fs::write(&path, &case.scenario).unwrap();
-            smoke_core::Scenario::load(&path)
+            let path = scenarios.join(format!("{}.toml", case.id));
+            smoke_core::Scenario::from_text(&case.scenario, &path)
                 .unwrap_or_else(|error| panic!("{}: {error}\n{}", case.id, case.scenario));
         }
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

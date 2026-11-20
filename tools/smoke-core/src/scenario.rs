@@ -63,6 +63,9 @@ pub struct Scenario {
     /// and boot readiness does not wait out first-boot setup screens.
     #[serde(skip)]
     pub spec_state: bool,
+    /// The scenario file and every fragment it includes, in load order.
+    #[serde(skip)]
+    pub sources: Vec<PathBuf>,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1287,11 +1290,29 @@ impl Scenario {
     }
     pub fn load(path: &Path) -> Result<Self, String> {
         let path = fs::canonicalize(path).map_err(|e| e.to_string())?;
+        let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        Self::parse_at(&text, path)
+    }
+    /// Parse `text` as if it were the scenario file at `path`, which need not
+    /// exist: includes resolve beside it, within its directory. `sources`
+    /// starts with `path`.
+    pub fn from_text(text: &str, path: &Path) -> Result<Self, String> {
+        let directory = path.parent().ok_or("scenario path has no directory")?;
+        let name = path.file_name().ok_or("scenario path has no file name")?;
+        let directory = fs::canonicalize(directory).map_err(|e| e.to_string())?;
+        Self::parse_at(text, directory.join(name))
+    }
+    fn parse_at(text: &str, path: PathBuf) -> Result<Self, String> {
         let root = path.parent().unwrap();
-        let mut value: Self =
-            toml::from_str(&fs::read_to_string(&path).map_err(|e| e.to_string())?)
-                .map_err(|e| e.to_string())?;
-        value.step = expand_steps(value.step, root, root, &mut vec![path.clone()])?;
+        let mut value: Self = toml::from_str(text).map_err(|e| e.to_string())?;
+        value.sources.push(path.clone());
+        value.step = expand_steps(
+            value.step,
+            root,
+            root,
+            &mut vec![path.clone()],
+            &mut value.sources,
+        )?;
         value.validate()?;
         Ok(value)
     }
@@ -1338,6 +1359,7 @@ fn expand_steps(
     base: &Path,
     root: &Path,
     stack: &mut Vec<PathBuf>,
+    sources: &mut Vec<PathBuf>,
 ) -> Result<Vec<Step>, String> {
     let mut expanded = vec![];
     for step in steps {
@@ -1353,7 +1375,11 @@ fn expand_steps(
                 toml::from_str(&fs::read_to_string(&path).map_err(|e| e.to_string())?)
                     .map_err(|e| e.to_string())?;
             stack.push(path.clone());
-            let mut nested = expand_steps(fragment.step, path.parent().unwrap(), root, stack)?;
+            if !sources.contains(&path) {
+                sources.push(path.clone());
+            }
+            let mut nested =
+                expand_steps(fragment.step, path.parent().unwrap(), root, stack, sources)?;
             stack.pop();
             for child in &mut nested {
                 child.setup_input |= step.setup_input;

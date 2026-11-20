@@ -1,0 +1,3227 @@
+[
+  {
+    "case": "audio-path",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "devices",
+      "regression",
+      "full"
+    ],
+    "definition": "da73f529736b70dfaa01bf21477801664180ef5254f6feae2120f647d9a2b287"
+  },
+  {
+    "case": "audio-path",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "devices",
+      "regression",
+      "full"
+    ],
+    "definition": "8548e8dfa8bdad8a01f8cf9259a9082560a624b1ffa95cd6ef5155dc772335dc"
+  },
+  {
+    "case": "boot",
+    "model": "l6",
+    "backend": "gui",
+    "suites": [],
+    "definition": "9f5b39f0749413a4454bb8e325dbd641f2d589cf4dcdc9a791af7db55e8213db"
+  },
+  {
+    "case": "boot",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [],
+    "definition": "9f5b39f0749413a4454bb8e325dbd641f2d589cf4dcdc9a791af7db55e8213db"
+  },
+  {
+    "case": "boot",
+    "model": "l6max",
+    "backend": "gui",
+    "suites": [],
+    "definition": "31cbcfc93f9c872f4a160f3f59240f7a72171f5cb8f8d6b790f30e08374aa036"
+  },
+  {
+    "case": "boot",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [],
+    "definition": "31cbcfc93f9c872f4a160f3f59240f7a72171f5cb8f8d6b790f30e08374aa036"
+  },
+  {
+    "case": "button-reports",
+    "model": "l6max",
+    "backend": "gui",
+    "suites": [],
+    "definition": "c0966c53b079013572ae615152fcd553ceed3a5211fd90a85a5c0c365d175b7e"
+  },
+  {
+    "case": "button-reports",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [],
+    "definition": "c0966c53b079013572ae615152fcd553ceed3a5211fd90a85a5c0c365d175b7e"
+  },
+  {
+    "case": "buttons",
+    "model": "l6",
+    "backend": "gui",
+    "suites": [],
+    "definition": "c00fef00621d36666671f869fcde2b39cb3aa7050e023675feaf3d5421269b67"
+  },
+  {
+    "case": "buttons",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [],
+    "definition": "c00fef00621d36666671f869fcde2b39cb3aa7050e023675feaf3d5421269b67"
+  },
+  {
+    "case": "buttons",
+    "model": "l6max",
+    "backend": "gui",
+    "suites": [],
+    "definition": "1dc71e91c8c62f3f4bd6d296807f2379655b5eea03a88cf56b459c08ab6d864e"
+  },
+  {
+    "case": "buttons",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [],
+    "definition": "1dc71e91c8c62f3f4bd6d296807f2379655b5eea03a88cf56b459c08ab6d864e"
+  },
+  {
+    "case": "card-record",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "devices",
+      "full"
+    ],
+    "definition": "f57fe16997cfaa25c780d1af9891a66ec3570034ac15db466bd6f3903e5154f0"
+  },
+  {
+    "case": "card-record",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "devices",
+      "full"
+    ],
+    "definition": "3e78d56f7517238810c3b0770b28b35ebabf8690e06f63d3d4fa4fa7ab8ecd3b"
+  },
+  {
+    "case": "control",
+    "model": "l6max",
+    "backend": "gui",
+    "suites": [],
+    "definition": "54e3e8e428dfa25a1bdb5e0bdab641f2de52ef8bb6aacf92663b2271272e8885"
+  },
+  {
+    "case": "control",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [],
+    "definition": "54e3e8e428dfa25a1bdb5e0bdab641f2de52ef8bb6aacf92663b2271272e8885"
+  },
+  {
+    "case": "controls",
+    "model": "l6",
+    "backend": "gui",
+    "suites": [
+      "quick"
+    ],
+    "definition": "a9e19f9e67a378ec34f8bfdd8a0806e4f8a95c8157b1f1912b474b2f62420cd1"
+  },
+  {
+    "case": "controls",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "quick"
+    ],
+    "definition": "a9e19f9e67a378ec34f8bfdd8a0806e4f8a95c8157b1f1912b474b2f62420cd1"
+  },
+  {
+    "case": "controls",
+    "model": "l6max",
+    "backend": "gui",
+    "suites": [
+      "quick"
+    ],
+    "definition": "acfd663bc0d14c830ca8e7a34792ba398643e6e6a233f51dcf1de64f2b4e2efa"
+  },
+  {
+    "case": "controls",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "quick"
+    ],
+    "definition": "acfd663bc0d14c830ca8e7a34792ba398643e6e6a233f51dcf1de64f2b4e2efa"
+  },
+  {
+    "case": "dump-rom",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "62cfa46e361e93f654edce3fec5782f17e04aff759cd3255e9311c8ef9dae604"
+  },
+  {
+    "case": "editor-pad-assignments",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "ac0417a31a83a6b45405cb7de38de334cf60fe003cfdcab2a04135faee37b1f7"
+  },
+  {
+    "case": "editor-pad-assignments",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "d0e5f877cd37f08124a32a15b52ea5212e3cf0a51e1b2d9c082db83fba189a86"
+  },
+  {
+    "case": "encoder",
+    "model": "l6",
+    "backend": "gui",
+    "suites": [],
+    "definition": "0946371d03ba26f1f9b9886de3ed644af11832eaa1668a67e9d2175dba36ea39"
+  },
+  {
+    "case": "encoder",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [],
+    "definition": "0946371d03ba26f1f9b9886de3ed644af11832eaa1668a67e9d2175dba36ea39"
+  },
+  {
+    "case": "encoder",
+    "model": "l6max",
+    "backend": "gui",
+    "suites": [],
+    "definition": "b4902e0af0f9bab7aea75841cd36f3294904d882643757b4423d2e2b6f0a6e36"
+  },
+  {
+    "case": "encoder",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [],
+    "definition": "b4902e0af0f9bab7aea75841cd36f3294904d882643757b4423d2e2b6f0a6e36"
+  },
+  {
+    "case": "factory-protocol",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "fbc45d0d32d65fc4ba1969255bad78e99d53e3b261547ee9654e96b93b672615"
+  },
+  {
+    "case": "firmware-update",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "24a163d06b108e1788adb555a971b2d1c31f0a732d49761aae62cafe18e079f6"
+  },
+  {
+    "case": "firmware-update",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "f3e9017336bef984c7538afaa89091e34ab2706e22f0fb619f323b28555bba92"
+  },
+  {
+    "case": "gestures",
+    "model": "l6",
+    "backend": "gui",
+    "suites": [],
+    "definition": "daa5d5625395bbf9d7bd8523fd21ea1c3b0a0285fc1a30826da7965c942ec593"
+  },
+  {
+    "case": "gestures",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [],
+    "definition": "daa5d5625395bbf9d7bd8523fd21ea1c3b0a0285fc1a30826da7965c942ec593"
+  },
+  {
+    "case": "gestures",
+    "model": "l6max",
+    "backend": "gui",
+    "suites": [],
+    "definition": "b7b3ae9b9e030532382ab9f748ccdd16247d7c88de5129a07dbca7f1d8bd0e4b"
+  },
+  {
+    "case": "gestures",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [],
+    "definition": "b7b3ae9b9e030532382ab9f748ccdd16247d7c88de5129a07dbca7f1d8bd0e4b"
+  },
+  {
+    "case": "gui-bundle",
+    "model": "l6max",
+    "backend": "gui",
+    "suites": [
+      "full"
+    ],
+    "definition": "765dd8c9c3520af40dfbba7ddf5fbed7b7433b6b4506e298bebad2640e75d6d6"
+  },
+  {
+    "case": "gui-menu",
+    "model": "l6max",
+    "backend": "gui",
+    "suites": [
+      "full"
+    ],
+    "definition": "c9a47d1d33b6ffbd6c1d14d87829793365dc19dbe32789531620107e1f814612"
+  },
+  {
+    "case": "gui-power",
+    "model": "l6",
+    "backend": "gui",
+    "suites": [
+      "full"
+    ],
+    "definition": "d8407909eefd76cd8a33ee94e308e6084067cf264262ca29d78980228c4ecceb"
+  },
+  {
+    "case": "gui-power",
+    "model": "l6max",
+    "backend": "gui",
+    "suites": [
+      "full"
+    ],
+    "definition": "6876fccbf9592fbcedc3ad7946caebbb342d77be587d4e3302b0b995f6ae2c89"
+  },
+  {
+    "case": "host-midi",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "47de27493ea8507b125f029f90b41007e77cbdbec51a8be2528db180eaaa1468"
+  },
+  {
+    "case": "host-midi",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "af479edb4994e8296971ab976a5ef43656f9f73e86f907838264f1be866bc643"
+  },
+  {
+    "case": "host-midi-sync",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "bc4f9f43c063a1ba7e00649c1813ce45b7390bed694d65dd5dc1e143e64f7fac"
+  },
+  {
+    "case": "host-sd-midi-sync",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix",
+      "full"
+    ],
+    "definition": "657f741702adf1a1e0128f03beaed6759e68817b4cd0ab0e2a088b0af52b2b0a"
+  },
+  {
+    "case": "host-sd-midi-sync",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix",
+      "full"
+    ],
+    "definition": "9e1640914f2d5ced7ce9ed0eaa41df58b55f9282590becd931627a8a309e215d"
+  },
+  {
+    "case": "indicators",
+    "model": "l6",
+    "backend": "gui",
+    "suites": [],
+    "definition": "4995784228d4c2f9d93b2dc72e8235b59c0e880edd046d6bd34d007c577f521f"
+  },
+  {
+    "case": "indicators",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [],
+    "definition": "4995784228d4c2f9d93b2dc72e8235b59c0e880edd046d6bd34d007c577f521f"
+  },
+  {
+    "case": "indicators",
+    "model": "l6max",
+    "backend": "gui",
+    "suites": [],
+    "definition": "20a4a9132073fc122222b4233d2ace4a56a9d5296415b9544247bea13bf58484"
+  },
+  {
+    "case": "indicators",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [],
+    "definition": "20a4a9132073fc122222b4233d2ace4a56a9d5296415b9544247bea13bf58484"
+  },
+  {
+    "case": "knob-dialog",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "364a33db522a5037c4179b525dbf755007ec65c50c71b5d78ac38fa8103a8c8b"
+  },
+  {
+    "case": "l6-audio-input",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "8b7da17832aa6925abe4851674f232fc8796cdadc9fa05f3d4d39bedb571ccc4"
+  },
+  {
+    "case": "l6-audio-input-record",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "7d2a27d259bb06555f1d5483ceb58209c27b5b8042243b655069c2ebe0bb0170"
+  },
+  {
+    "case": "l6-din-sweep",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "2a1dc0dc65a1a5bed8a085e92cf443b1ca7a7517667fa8707fe01bea7ce5c1b1"
+  },
+  {
+    "case": "l6-din-usb-forwarding",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "133294455ddb3b230203ad2dbe2f760175430ce9ccf9bcb079299d58f6c7c47c"
+  },
+  {
+    "case": "l6-direct-midi-sync",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "6ed76af5ec8dc6c8ae4a9672424145e70af533ef27d71e4d4bbc18190cf45338"
+  },
+  {
+    "case": "l6-editor-pad-playback",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "33fc9a8dd4d8e324c28591ab6819cc58013d5d2a7b53bf0f2d7c4cfb17e94d59"
+  },
+  {
+    "case": "l6-eq-audio-update",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "regression",
+      "full"
+    ],
+    "definition": "3ac9f91adde2eacc715996fffa1b6cab1243b7d9bb23a5f8639b26a1e0a923ed"
+  },
+  {
+    "case": "l6-event-dispatch",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "63d070c0b3384a67b6ddfd6023ca102fbaf697d3d988fa01c4180372a03a37bf"
+  },
+  {
+    "case": "l6-input-sweep",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "regression",
+      "full"
+    ],
+    "definition": "131aa31ca779af408d640cab0f6876303c83f555547f96a606662ca852eeb4ff"
+  },
+  {
+    "case": "l6-installed-patch",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "cf3d30cca83f1cfa63f971f939d182bcc52d89d198f3d13dbd7013883c7f70ae"
+  },
+  {
+    "case": "l6-level-meter-pwm",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [],
+    "definition": "64df0ae68870ebe89663674ef5c27b3234a1d471e9509c6663993039ce179c79"
+  },
+  {
+    "case": "l6-main-gpio-events",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [],
+    "definition": "9a3458192c78c9b06696a6feb94feb96fc6777ad1c798d7300b880ae99cbfa8a"
+  },
+  {
+    "case": "l6-midi-sync",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "2b771e034cb46c4d76e4d733752090504dd0ea5342ece4f434d7999d9be1186b"
+  },
+  {
+    "case": "l6-panel-event-map",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "a5b9213028ca484a2562041532e118c466445556338f5d5ab498b73c968b6bb9"
+  },
+  {
+    "case": "l6-patch-heap",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "64e7c833e52c62d8b87e80621c36d1b8deead13092461e643ae75971e783f936"
+  },
+  {
+    "case": "l6-recorder-playback",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "d7086c901a11949133629097c392e5c3c3d000bffba60747ff7bd2e648212f49"
+  },
+  {
+    "case": "l6-recorder-record-stop",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [],
+    "definition": "acfde792ce14aba3dbc796c54db3f01a8a639060beaf4364c335dc0e6b6de61a"
+  },
+  {
+    "case": "l6-sound-pad-coreaudio",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [],
+    "definition": "b382f190fa0c3a287d56f9703977ae3c7d5b923b35a592b8ad28a45a54d3e8dd"
+  },
+  {
+    "case": "l6-sound-pad-playback",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "e98aed83df3308e3953293532489978a109d1d7de779e8e4f0840ad7233a3655"
+  },
+  {
+    "case": "l6-sound-pad-waveform",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [],
+    "definition": "e8b64a2aeff8f11f972271b17840116e2943ae865847edffbc1b74a4c3eab167"
+  },
+  {
+    "case": "l6-usb-startup",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [],
+    "definition": "ff86321e33de6e76dcda39b7513cdf405f118501a471a5781bab330870f652f4"
+  },
+  {
+    "case": "l6-volume-meter-playback",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [],
+    "definition": "60f0d2baa0ac1d0977f8a4372d4b9e59c3e66528041923da3a0f363cb2081863"
+  },
+  {
+    "case": "l6max-audio-input",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "d86dfa17cfe4de296b410390d85d90849261eabae317ecf2ac7fe0c3302aa445"
+  },
+  {
+    "case": "l6max-audio-input-record",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "b7d3921e1b758ffa70134f6f375c5ff65f0e44fbc7d914bbc2eecfa75318764f"
+  },
+  {
+    "case": "l6max-audio-input-transport",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "cec556718b3a8f8d0905b41f1a606b4cb26b15671fb9d91eff53f24bb3fa7d0d"
+  },
+  {
+    "case": "l6max-channel-signal-pwm",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full",
+      "panel"
+    ],
+    "definition": "6dd4b8bf1573bae286a6e7c1d32998e2effaa45f4a21bc2c4906f50b49355748"
+  },
+  {
+    "case": "l6max-din-mixer-control",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "02040c7f046806e98df98c4ab4bb6faa2b79d1a4bd159d6f20e89d2ada4b79b1"
+  },
+  {
+    "case": "l6max-din-mixer-control-patched",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [],
+    "definition": "3200c7db5331c4ea59c850bb712bed89b1d2e45924b7dcf020d11c82f91fbab1"
+  },
+  {
+    "case": "l6max-direct-midi-sync",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "2c57ab56292ec91c3d10f2e2f40cf7a6500ce6d10bbac9b489809282f1eb9306"
+  },
+  {
+    "case": "l6max-eq-audio-update",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "regression",
+      "full"
+    ],
+    "definition": "74bd152b10e832aa14ad1e9b3cd868a0e5f1c938b32a58413cc74b00b95e3784"
+  },
+  {
+    "case": "l6max-input-smoke",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "regression",
+      "full"
+    ],
+    "definition": "cf90121759c1c0242ba8d795974b510f48dc79bd51a32fec34012b3cb232993e"
+  },
+  {
+    "case": "l6max-installed-patch",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "a39093ffce10d7513509cc86805d2195672456d8b44c86c510d4ee5cb2f00d53"
+  },
+  {
+    "case": "l6max-patch-heap",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "e9dde22ef3004048d8cca2d576db9ebfcbc17b89e6690f83444a773cc0e5c3ec"
+  },
+  {
+    "case": "l6max-recorder-playback",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "9c36a2e56a809e2e9f942f1e1778f342f976e6b5626106d19e7f1cb617573149"
+  },
+  {
+    "case": "l6max-sound-pad-coreaudio",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [],
+    "definition": "620e8f795f6598e989265de28f968121529254342de9d7eaa0bf2299dff46ba3"
+  },
+  {
+    "case": "l6max-sound-pad-playback",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "50a1dfe0a5ddadca97317702f7f654afc7e5e91dac205e957cdaf41b9026d9ad"
+  },
+  {
+    "case": "l6max-sound-pad-waveform",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [],
+    "definition": "9331fab39abd1ae649f9ff085d6e4b26fa15f85d2e87354e766ff8c52be792e3"
+  },
+  {
+    "case": "l6max-switches-during-playback",
+    "model": "l6max",
+    "backend": "gui",
+    "suites": [],
+    "definition": "838508a35a23ebf9afcc73041f6a3964f47c0d4854e524f35381799483f8a7de"
+  },
+  {
+    "case": "l6max-tap-handler",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "quick",
+      "full"
+    ],
+    "definition": "85de5b4b2570ee7a8e3b058694bbeb5fad650c9ca48fb62d7b62c64199cb8b85"
+  },
+  {
+    "case": "l6max-ui-pad-assignments",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "cfc4c6105a0ab6322cb7b9790f9dc6ab1bb16daa5db8475b8cab3dd6351b06cb"
+  },
+  {
+    "case": "l6max-volume-meter-sweep",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [],
+    "definition": "cc47b039b500f4202f3c252abb0a6fb861e2565148f5f42c8c0cef6d66afb480"
+  },
+  {
+    "case": "mute",
+    "model": "l6",
+    "backend": "gui",
+    "suites": [],
+    "definition": "327299226b02215bd6dac190d23d540003281b37b8c23ea65d56ce247130e12a"
+  },
+  {
+    "case": "mute",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [],
+    "definition": "327299226b02215bd6dac190d23d540003281b37b8c23ea65d56ce247130e12a"
+  },
+  {
+    "case": "mute",
+    "model": "l6max",
+    "backend": "gui",
+    "suites": [],
+    "definition": "7d1f6e85d3cd888910edec4013dee3d7ca85b65d74cdcc38979caf99d00728c0"
+  },
+  {
+    "case": "mute",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [],
+    "definition": "7d1f6e85d3cd888910edec4013dee3d7ca85b65d74cdcc38979caf99d00728c0"
+  },
+  {
+    "case": "panel",
+    "model": "l6",
+    "backend": "gui",
+    "suites": [
+      "regression",
+      "full",
+      "panel"
+    ],
+    "definition": "9f47ea70ed6b8458a2b2eed057a2e024be5ae05416baea99abdbe6e1773ee2ca"
+  },
+  {
+    "case": "panel",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "regression",
+      "full",
+      "panel"
+    ],
+    "definition": "9f47ea70ed6b8458a2b2eed057a2e024be5ae05416baea99abdbe6e1773ee2ca"
+  },
+  {
+    "case": "panel",
+    "model": "l6max",
+    "backend": "gui",
+    "suites": [
+      "regression",
+      "full",
+      "panel"
+    ],
+    "definition": "662ef42cb30560c221bd58623be48c2e8bc98cdcc1600718b1306ed5cb626192"
+  },
+  {
+    "case": "panel",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "regression",
+      "full",
+      "panel"
+    ],
+    "definition": "662ef42cb30560c221bd58623be48c2e8bc98cdcc1600718b1306ed5cb626192"
+  },
+  {
+    "case": "patch-loader-only",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix"
+    ],
+    "definition": "00eac77c4caec9ceb7b4546e3669318eb2ee761cbd0c9c1b7888f5d6ab8b56bd"
+  },
+  {
+    "case": "patched-update",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "8d06aae143d3ce0fca94852764a466fc9c318333f8c5e8330717cf0db554dd67"
+  },
+  {
+    "case": "patched-update",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "8d06aae143d3ce0fca94852764a466fc9c318333f8c5e8330717cf0db554dd67"
+  },
+  {
+    "case": "patches-l6_hosted-sd_midi-sync",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "723d0ef06ecfea932a9d3fb714c74458a6e5a750e8fe2771360020a47c4eab41"
+  },
+  {
+    "case": "patches-l6_installed_midi-sync",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "dfb712403e1584689fb9c4dd9a0350dcfd365325902d292745391219b589e58d"
+  },
+  {
+    "case": "patches-l6_midi-sync.fw",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "abaa85d146030884a999e833cd70b1f6f6418ef8d53646d008b589da57ea65f5"
+  },
+  {
+    "case": "patches-l6_midi-sync.sd",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "7f7fbb30d5f1f921e2510b7d8f1624bcbf16d4bd3b2ef65b5c334fd02acd1340"
+  },
+  {
+    "case": "patches-l6_update_midi-sync",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "21ed5f077af43cd67f6e825d85d1a3fe13d33ba6561f39f5ce1e2c4971278ada"
+  },
+  {
+    "case": "patches-l6max_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "b29f6d36d4b8c09e36def5ef391e44ce9052270fcc29a6ecce0e4b408a404c21"
+  },
+  {
+    "case": "patches-l6max_hosted-sd_knob-dialog",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "10540dc9ea08a48bf962dfc9ebad4233e5f231655f9c5466a7ee4208ecaaaec8"
+  },
+  {
+    "case": "patches-l6max_hosted-sd_midi-sync",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "9f36cc437c8906810c45c89efc79745ed55c07c3889f5218d18081c04b72c9aa"
+  },
+  {
+    "case": "patches-l6max_installed_din-mixer-control",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "97cba9591b3e238c576ed324d560ffa87bdd746826ca5a4bda0bd710ed755e5b"
+  },
+  {
+    "case": "patches-l6max_installed_knob-dialog",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "e92d36c54a7a15583db12e3de1f612b8dfff07764915bca5e14b73991ef991ed"
+  },
+  {
+    "case": "patches-l6max_installed_midi-sync",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "9c6603e744c5fafd13e14ab7f1d8ecc9dc85df5b44267c4fbb8377455b7bcac0"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "cb96550eb8df36b634ba40abe760583de262e126ce22463d8b24fed6c43ca890"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.fw_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "9c20fc084c1e736dc863e84216055cd46b9da1a2e5ec2693ef414e0ba90a87ed"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.fw_midi-sync.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "5268925baf179f187af150065bf63ca6aeca45547a137eb2d1c01dc31a37adeb"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.fw_midi-sync.fw_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "924fd83ed6c44e0434f0fee53f323532feadc45776f3ad26c1aaf00f8b56447e"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.fw_midi-sync.sd",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "8ca30e6265816cbe9821a859a8a9b31d68efb12ecfbcde9d8ff4e3114e6a7261"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.fw_midi-sync.sd_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "01694fd6d951a538f9b5fab46e946e48e27f3a02eb1358ff501eceda72238cf6"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "101826d69bf41c6ec8523026f91d53ede8cf8e647e2a888a9b6fa622438bcd90"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "ffd33e2f5c4a8b1d8f1128e9d76448a6aa709635f22042e808964582c7768e04"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_room.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "8056612a8485ef41de934e9e4506f4693c1ede9fa1b905868df62c745c20e9b0"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_room.plateau_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "a3f0fab0b16999b72f1d01b3854420a72029c9c2ec0ddbc763983ee44fc1e006"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_room.plateau_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "ae08b0e0afe9e74a3e3fc8fd54302ce212a7acdc9437fcb8b92125a6388aa62b"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_room.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "aa4d5c67e62d7df8d118cc2c7443eaaf0454af96bf9acdfed6b55171eb504ffa"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_room.velvet_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "eaf919c21db6a93a8dbbc4666c0be5ce52aebdf0c020b73b0447ba3e953a6c19"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_room.velvet_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "5d9352927a2205e27ee13243536d4ada9aa1841d860d5ce89ae28c692c795a7f"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "e473ce99c3cd60fa077531f970258c3e3d7957dcbe524f7c4d99edf0688227c2"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "e42ad0e654fd81e045c0e5d430885d5297feefe992f694dad83e5e67c66771c1"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "b1ca98fd0126f9f1928375689291c631e73f3f8b7d36e8fa79a26c9d2af016fd"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "5b78bfad9a77df9ddae56758ef5390ba4de1f765280c737931d95b9fba60453f"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "c25565b9a9ab8ef2eb793500db7861ace4543452d6f93a07f2d482b9f39b2c43"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "a24f2da1d0e58c22159c2d3be00860bd6293e0fedef99c8d1985d5bb15ccb0c2"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "0772d38bbc6b4ca4c1b417492d6920464f006b71851fe2f70fa2c92bf86d607b"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "d196abf858b225630d31cd28a3783a0845efb2504da02dc20e64edca8ada8ff4"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "863884e4270adc70707d6974574a42a5dbfb3b599ff2b32ad6d6a305e0c3588a"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "4e7af5ef94fc592e0ea02659d9ca94c367e45d5f1eb0eb4710c947ab61e14502"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "8ecd2a1f8f7428b8c805091939b79a1cb4b6b6cec739b73132075133903cf44b"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "eab7d0d31385513288492d7e9c592dafa0213d5644933a49ff9e011c91ec4bcc"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_room.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "bc97fae0eb253a8b8b9b05af05839bf374e109e24daf884bc4d8846ac254418d"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_room.plateau_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "c3908b15e3157bfd82cc328265fc397610b8384da9aa59da52cda2f72d953ae0"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_room.plateau_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "bc799433b6adb1fcc7afeea04b22895519627a6548ce3997b327173ee12f6bab"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_room.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "88b2d612fd3b51c0493e5da8c95735e2511791925a3ece5b619d7e0d2d043da5"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_room.velvet_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "3beac210d0bd42ceb06b188ab6cb660b589f97cfc205100bc3c36923414299e6"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_room.velvet_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "9f509e361af8b7ad61a5839cc4392ead914f6a70b46520770629f80a2f647b32"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "7e2d759be4ef914c70d1698e4359756eaec10381c98758def3f5b10c92567aa7"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "cf7eac70971e13117229a5db58838aa35ab6440da8a20ffadd3a1a3784c1444b"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "dff09b8c22959e3f7cc005c8120d5b15a7b70369a517ff0daf98ece3d3746514"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "d8a0337b7e0ec60fd1a58f9a4d0b69fd881016454d091daca12cdde32e17ece5"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "db98c9cc856224bf0beb1b6ea422a8679dce7976858f167b3715293c1861bf47"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "626b3090360aa4edc74c52d82179ce461be926a4a74f779577e25835ba1e1d77"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "f2018962cd4bf49dd43bc39b2cd527ec995d42136d771b8a73511b33aab5581d"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "88674e15ce2a3df4b84bfa02c3f566eda98006f5b471e62feda69bc5d8cc4700"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "773cd9e6e1174ed3412d7eb23619b21e2fefa33f189bc95e09606e4489a369e8"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "61a29c7a23b92073daa1382bc70c060c455cc2833d43fa400f2abcddc1b97f10"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "a5a61874222738c6c1373b454984eb1f9ce38d2046c4885e1eaa5347a88316e3"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "93edc03a383bcad1f55acbe2059b02ec9fb4b167311672e39e374a296f8eb022"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_room.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "537b258411c6d5d306451de60eed7e5a55cbeff8728fce939cf517d50e307cfe"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_room.plateau_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "256aa85ff12b9982ea131599e8426df0af7fc713146fb12638171f7b4d5bd0d9"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_room.plateau_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "b2b79938f1abf95b600a8dbb482630426a124690530aab305805bd6ff6a8d2ef"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_room.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "54bacfdcd9c08a0280bef3ec4b06d6a72a5329815edbb06444de550673dd4077"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_room.velvet_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "f6361e14ef5b4b3e8a27e930895654d1d429b5b7ade443760aafeb172330d7f7"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_room.velvet_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "117060312cdba77d201ef31316cceec558a83ed47df2a1ccf6196551d546197f"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "672f644d00911bb42b6d0bae7834adb3b6f91000eaf8c361e96a8df8e918c51f"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "67aeffe35b2122eaa55ebea7433f252a29a8d17f40e3c6bfb14b60a292e3650e"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_room.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "e0b71ae589d88af404fd99e8614a260f6d183b04a0de4ebb72e2663292e6b68f"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_room.plateau_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "d1ad5049ff45cb54f3a52cfc882b504e958cd38cd4be1adb0d8942210d76d798"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_room.plateau_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "7f9be012ba0a9d782cc0b178d26fcfbb25b303e9320b472695891d9ff4eb6b91"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_room.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "2bcd0f27fae39aaa78e44a5eb10cca05db7dd4d944effff0ed81705c488fc1cd"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_room.velvet_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "dad7681b5461fc11b0005428953f2c0e9c9cd515960267381e52afea640d0fce"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_room.velvet_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "470e8f47c726af4864f3acce4f3e7a74534ea98d46ebab5a6131671faa660a33"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "570fd4730d0573cc16ee46571b85b1db583c4620298747fe185c1e710e85e3b4"
+  },
+  {
+    "case": "patches-l6max_knob-dialog.sd_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "73eea31157880bf59c68155c44f8cb63c3f88447b0752e0231a3b766dc0d2d61"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "c48fea91dd1ae9254528993fbcf5f44b7b0b6e4208c1fa9ac34414430ba4fe70"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "40ec68752e1dabd7c8629c04aa872dc59cbc9d8b0cd843634d421281375024fc"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "d5dcc083655a6a2f487cacfdeeee55ec0fa9adcda92515566bc63d5684272357"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "b88c203f55d055df7ea70573cd784a6d036e920ef97b718b401410822deee7e3"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "ce0bfcd7f2ee4b3e94c6b9a680ba53fd055617220fc8322357a045dd36c7edc2"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.fw_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "3508a0fd7682aed5c85ae90348aeaaf18de2951697c1c95a38eab9203085b098"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.fw_midi-sync.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "a6bd0f18616bc9185f68dfa41bb0999849a01defb137642ae64da50bd9255e04"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.fw_midi-sync.fw_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "cbb0982bce40c16efd5056f329c613183b7be36cc8c462732ecb69e729995a5b"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.fw_midi-sync.sd",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "0d03337a662b995aa11adbe5d1286fbbc98a3a5540e4aa1d66d49647e3a65a79"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.fw_midi-sync.sd_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "4921851a1770df6051df228beff87fc31d7f41e027b82085f5407b103390ee17"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "96480301504e0253d0c7cc0696044e56bd78d7689d50294800208ffe911fc9e4"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "b6aa4a0f45b6e6f4855a60320ee196b321b958556a155c7d9d029c50d6489458"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_room.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "8c888b7148c3a4f36f52897c831e983cbb83a4614665b41f45d9bf0de3dee681"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_room.plateau_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "01593e5affb644d56aa5c95852205c9dec604390b7c00dce7c6ea8470e86648e"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_room.plateau_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "f202b52ecdf472f057f7cc049e226ce3333c8e0321ffea6b0694dfb693f590fc"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_room.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "6084345d4b2bbddc7f3dfa206ce8b502f885ce098c31a77548a6b825b284e653"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_room.velvet_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "af4c525a869becd4e65b62e08e6269da6d55981e9e5798117369adc8f25aeb5b"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_room.velvet_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "5a0e761714a67c23a66fba9cebbd567b1a74673b436f1ff894f31a70e610afc4"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "06e1703d312991ce8ac65e99b953814f114787cbacbcbbe7b5bed98be61f51e1"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "a6b4ad4d13cfc210ac26261bd91221948aa0e0390da87f178eff2fee92aaf1e3"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "0f599ac8109177396fc9669d58c447d609865e5da84615c84522e95e5eaae380"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "439a16c2d81b213076a77cce4e862636a7e3c6896a809b9c6f4d2ad67dbf7f31"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "6b4b31a81620de6a6db4d016870ed9119ded751cc9937540464aff97c5352eb0"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "880dd8dfe934e62f97fedd5c6a1b0ee3cf06f427e57dc76110baf56947a96b83"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "f92bb2d6c9a0cd3bcb1b3ef445bd3cfedb1ca3edcf1d0c5f417d9345f3ea7ab9"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "f36c3a97e1c07c8c0e563e9b679120824b04f11ef956008232b932e60ab4d598"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "e83c2cd3b7735132018b3b78c723ded8bbcc993a993553e728ad6dda9d7f0435"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "76f70dbf1d6069a452fcc555092921d636b4a8e5b1e33085e525d9f993537956"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "2de0081c8530d46a60a7821fa74ebdf32008bd9d4c9276d6a7af94a7a2f8bd72"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "0fb01f53461bab4c5aa217fe97c455e56924bcd851a65a0c015cf8688f7eb30a"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_room.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "74267695da764c9cd611ff7c2b0dddaa62b3219022e763ab0573cefd942429cc"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_room.plateau_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "af2b50c37ce5246c9bb74647e7fc0d55182bb150071230a63cacd44e8512e51e"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_room.plateau_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "741d21bbb3469a0c0fc7d55234c887424de6ebb329431019378e07d63fea3db5"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_room.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "1cec240cdde2c01f3b8f6d1503e71ba6abd2ed96d9dfcd447d3cc2159adc0624"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_room.velvet_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "51c15a67eb54746fafe5bd081600bbff9f626905ca5ebaba423d1ba3a7f1a25d"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_room.velvet_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "e614834a146e6b728766875bfc8b43ede19909da9f61feadcb561e0ac20dc837"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "389b84fec1c9f30d4df2d32aa21caa6a15fa409e647959dea37afcc9e59fa872"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "3f63bc6eda164917642674c157744c426170ae6cecfea3596f1e61b742dd47df"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "75ad06b0952d50d442c6539039545069a4fb5bc76eea5fbdb1de2f0ea1cd9dda"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "f05715248ba491f2f56cf50744112bef231b2c17d9963e07d0cff8749e0724ad"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "d45ecd4bda8a69868106a1d354e31c0bb202f7ce2a2d700b4d80767c6c3ef9c0"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "bdb5d077ce9ce10880c3be7172962223b72712cc98350c4e5ae14ffa283df87b"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "dead25669173b51036a2f887e9a019cccfc57c144c00688ece56a71f002c22c1"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "0ce966a2767c624bceb9a8848d8e3d5db433e0a0a99d6b9e31cce53d8e2fb7ef"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "ae4460694a765a31f361a5c3cb450d2ba7421e418456d32e4fac6bf9ccce9e5e"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "245a98ea2abff98d7b6bf66b859375a02199e3ef84833f5128dd4b2521a01892"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "85e0957bfc8422419959ac818eaa5e2347b062124f7e3a806a6aff21ddf1c307"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "5b0dd73dc40da2fb06fd55dd1b2bdba8025ac7c31b527752a492302a747cb146"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_room.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "5e3265f8f51c9cb5b93189fdb30d675ff9293666c31057eec1944374c1dd7cfe"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_room.plateau_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "cfc7d0e603bb13e97e740b5ab85cbbfc94990c5b373827bd49038bf894a2c289"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_room.plateau_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "0de2f2996c7551daa5a2416a970ac6ce68735efaa9e3ff4b28d889fd5dffb8bc"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_room.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "2daeda4dcc723b55377c59e18254ea3e9cfeef634af2f13100f62d7f0b49c3ae"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_room.velvet_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "1270ec00c779488724751e86d37a4c4b5518552af107a9a5d6a120ab1f296c79"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_room.velvet_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "89096b456c009e960b93b9858dafd839867a3be9f04b0d8c1a79bb067ec72280"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "3681861be1fced13afb17b5ffe4bd9adeef83458c27267270b78e63fd168d185"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "aaba42896a863812fcab2a85c1566b664938f1f991e65d1ebf3591dfa8e8533c"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_room.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "9bf9ae92c396badc21c2e0bcf952c90be899b5e94228000d731c0cabdc19dd48"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_room.plateau_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "aae7184ec7b786257d818d4e4de9abc1cb932410de4580978f1fdf41a0c15e46"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_room.plateau_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "6727ed19174db8d6d9d774441c67af9f61793ce3596bf41d97fd9d89344aa9db"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_room.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "11b1e6717394b0f665222c03d86dbaa29950d9bc525b767d683496774b69868b"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_room.velvet_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "493bc1929da1288fef387886735b4eca51215e73aaca4bcdec6f48468845efbc"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_room.velvet_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "9b0f4d8f65de15b1df82cfbaa8561a2099c2ddcf338c45301d4e4c44732d98aa"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "9d853a8c890758df966f81ea62cd91cdb24bec9ff7de0e1ce06fa81421cc50c1"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "8c1d308353bd0665caefc2b4070b9e655349fa6753f2262313e9583e13efb546"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_midi-sync.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "17599feaa41f13c031e27a7656ab8ef3010f31276865492ba8fd94dc5f89ed2b"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_midi-sync.fw_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "90c70e5d8948fc5cd62c861960a476eb55547bb7eff4193fa665d5c28138c93a"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_midi-sync.sd",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "64df2494458edd625bd08061dfbaa2bc4cb1f77d5e61613c0db4d8245e31d33b"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_dump-rom.fw_midi-sync.sd_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "6e76d75402e0e9a38da9886c80f5cf5070e168b81581eac82b4b67c59e0ce467"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "0efb2a1ddeb2578aedb10583602c9e8128b7ced07aea5a3df09ac15da9f7ae48"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.fw_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "320292ae27022ae661c71122675ac127f8e0b916dcdd00608e99a5f457755154"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.fw_midi-sync.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "c10e4cd7776c0d9aa37abdbcf07366001ba834c65d337c74f818093e8366e907"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.fw_midi-sync.fw_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "4304f934298de1e1ebea34866cd063bce938470d317ef4837babf6902d62556e"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.fw_midi-sync.sd",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "5991767074fe82e3a38972633d037564f09a37ca1ddf197234fe559d10535aaf"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.fw_midi-sync.sd_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "df838e7165ec768be21583b82151e1c1ac7fd5235753f4865496850792fa6f5f"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "c2d953e8e32260ef62a562ac5a68cd297b3cf0a9d0420efe54617867421bee0d"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "11533af1421e1e0e7b2721d7fa1d3c61c0b3f5a9caf1830a69bcadc19cc42711"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_room.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "0aa9b959f31d5dfefed57b988a8aea7bc3c9ea9480517361aa2aae20564243c5"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_room.plateau_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "940107b628cf93c803ac40c2d18f3b9c11ec5a9386d5109d6b12d0e86c35965d"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_room.plateau_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "d7729b715d654cccab7b24b5150ea0f691754d58341ab9212718a918c3cf19c8"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_room.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "7e246a5730f3e1fa924d69330116f394ce818f85384adf9aa0cca9fd4a828dae"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_room.velvet_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "e598183d2c6523d7f299c00a91c1842b91c1fe48ea71b99a15744f84cf69c1b2"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_room.velvet_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "1201443a934f34a9abd5af61b9ea40021d044f8a24b27ff118e7bb71d2708f3d"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "82bc14430853d3adac3354d6c27cf464e06cb24b4e28153afe3e5eb0b362cbc8"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "7834870b62c1df4f649afdbe6773e483fa3ca5c531b9dbb426031dc91880a669"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "765399cdfb9ca978c264a20bdeb82d623f9836021660f9cb61b9a45dbd2af480"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "e452e5f7a614da5d669a527ba8d347cb491f648748b34d78b30abf41d61d8436"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "22af12936785623aa2c39983aa589cc7607a6982eb1db87fda9b38718e996a15"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "13f95c6c08bc0adf005e6b00b98db2f2d9bab352740d55227478e5c3c157611b"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "4bc4356c5c7c67d121cfa1d698fe7b33080b3789cb9bb5a20c7a29625c4fa0bb"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "9cefdc3f360b2670ce26657dea8973822ed544b704ecfb00999c3897bfb35856"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "625aad678467d28277823971287d34d9417ab571821d4973c49d187a6f3a75a3"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "8a66e668a7a8290abf21a6967ab77ba4748d0fe06c126baf45e31d047467a047"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "77c39609429513e392468acdf6247447a9db8fcb87e55957b004e70d05fdd2a3"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "649011c0501db888447f5f7aa99318e4fc6131d03d036d34cf7da02b910e27c9"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_room.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "7aedcdf0f315483aea195572632a97a9a2f830c07ccb1d8917290829facd7fa2"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_room.plateau_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "74413d3cc7475dd3662476e3832e05f8d8fc60a42a0728b4e96755757458283f"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_room.plateau_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "00ccff1a072632a95b1814c503c9c861647ebdf2eb7083ae2a55b2e7c79998b4"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_room.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "bac137fb187827196e460912dadcad889184d14cb403a50606718c9ccfb94ada"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_room.velvet_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "2cdfddaea75b7372895130f10dae1bdbc7b1282451baf940cb56f8fe05435757"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_room.velvet_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "f01278e0802c254517eaf5d6cf2ad92f88ff01e0d1ef5341715e8eb471821527"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "fa1e711691cb2437bcb28b820f0aa684759fbef3b396f8a955cdf5aad4ec48cb"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "a741b279c5ba28cfd1929926dba3d79499fd5f98137b86d5c4e72722635792d5"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "1dcb48cb2f6e3a322a3715e193f7cc2fc03dfa233251eda76a9c3a9028217d3b"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "7e6d797f56f1881104210a2809e739cae520222094af77fec20e1a024561b9de"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "7b27b8f8ac8058608972d3c8a2e592825dab5ec01a2300857472dec0b1fe1498"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "c58e5533e7f1c274bdfb21b0e85aeff6ed87623ed59fc33c7548c9c0dc210329"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "49f663dc9fa5ee6159212a91420382e3813ff7cfdcff246eed0a2b9daa45e72d"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "ea75992419f923d3eff2877a183980caf80a9e36ef680d539fc4a927eef808ab"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "598c54a020110df405afcc222da9fe11cab98d66c159c79073065d35a7f20325"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "d30d51e944435a63a971491fe0a9025c7f6ffcbe6d3c9b0eba451c9610c35632"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "9d801cadd7fe8cd61f1a40ced6ba851b6daa664dd27d1c450b5ed18020ee17b5"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "dba80314e8acfd459e8cd4d65508abee258c3a99fde67d8933b4339f7940e153"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_room.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "34265333f1b1a32fac3f0b302ba8dc66421364e7d00e243cef61022de66549cd"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_room.plateau_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "bc85ef6fb78af13b8941a0865e71f91b235cbd45f788aee3afa006853c32b42d"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_room.plateau_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "f5ab25b6e69ef23fd56f4a73ed7c6695c9cb17e1c54d9ed523ec0e6e5677d8fe"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_room.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "821996b7770bd21f4150f01bde19db14c72c7b6f3a214ee9132476a1d6fa8fba"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_room.velvet_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "5e9d7a1a97c891d37a6dd922580cb5d7ff237465043fcf011c32060800d070e5"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_room.velvet_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "e7b73f581935140ecaf652cf8d7f2d805109ae190ae99155b0615e38f5d23cca"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "e98350e01e0b8d4c64646b9c1df61263e7c5a8f4c18db116e03c603b057bbbf8"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "b19b03a8b3bb89d98ef07bbdaf47c87e10ea7ea8cbc8e3df70b5a603cdb6f669"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_room.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "665a4777dd8ed4da6ea5ce2887185d5421efe55455d890783ba0237de4ed984b"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_room.plateau_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "8b01cf59a8015a0f2e5ed43c781fbf8fc1cba985ccb0056ff9aa95f404b336b9"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_room.plateau_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "6034ee7e2dcd1782f8e477bd579d896a76c78cfbab65d4e4a8ff474ad06f41a4"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_room.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "56df65174a4a0c3471f8972c61906ce2a1e5fcd523b794b44f0fa2b7c2b9cb08"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_room.velvet_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "2147c4e07d9fb2827ec4490ae2319a110e11f980fe365202b3f54096048656ef"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_room.velvet_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "ec3a8491a8d1c469353bde2a5a407fe19c1b2e42fd6815923758f2a8aa268e98"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_spring.plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "f82aed13829377b0eb402a30bf9a154f03b572c0c8fb08c3829e0b076571f280"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_spring.velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "5231c25ad054e1734fa7125fd36b9ba8358c37cbc1b3fda3b0750e175713df41"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_midi-sync.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "7e3975bc22e56e8ffbde9b88d1fa77f290a2085551f2ffb2e375f2a80a85222f"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_midi-sync.fw_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "f9812ccd6678ac9e66c7dc9a6d897932ac283d735449bed7e8b270f752ffe070"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_midi-sync.sd",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "ff3ce2fd653f3c480690cf655361acefcce5c4737aac9970a57e8dfc177e2f38"
+  },
+  {
+    "case": "patches-l6max_menu-loader.fw_midi-sync.sd_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "5d3035316be41057ef7519d3073872d4d2dfbd40cbe18bbcea1a2c89ed0578e2"
+  },
+  {
+    "case": "patches-l6max_midi-sync.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "59722a384f9d81aa9eca7a4d008de47adfd62215f603a88ae65f5bc1d9018629"
+  },
+  {
+    "case": "patches-l6max_midi-sync.fw_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "4a41a076762b75d182e10405a4f00b5a63b8075d6e631fa3a84be7004057f08c"
+  },
+  {
+    "case": "patches-l6max_midi-sync.sd",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "1e3e6886fb192672e4a58a0395f5b632123a8735732bc5d419317e5a825fb93b"
+  },
+  {
+    "case": "patches-l6max_midi-sync.sd_din-mixer-control.fw",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "8d52ab370237948ff5b67a37eab5b4d2fa8bb68cb1f578bb7e580f4b4744b4c4"
+  },
+  {
+    "case": "patches-l6max_update_din-mixer-control",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "c5e23bc5f5fc415d0a83718edc60e443f428e70be327938c34c77935b31fddfb"
+  },
+  {
+    "case": "patches-l6max_update_knob-dialog",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "b7a5dcaaf2385d96261652ccee80a090e9b7281d18cd301b73c4e0d7ed1f4ac2"
+  },
+  {
+    "case": "patches-l6max_update_midi-sync",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "patches"
+    ],
+    "definition": "a07bfcd8b5c33636ba6d2f1b30a8c118c024bfb3e89e7c4522df59b68340887a"
+  },
+  {
+    "case": "persistence",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "lifecycle",
+      "full"
+    ],
+    "definition": "0ad73b95a5294c3c9c1d1086bd5ba8a30ac1d462e89475a3d4d6484b2e2f135f"
+  },
+  {
+    "case": "power",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "lifecycle",
+      "full"
+    ],
+    "definition": "80566398eeaef427dddcc7bad476f1924b05b3a08128f94fd393d9f18457a064"
+  },
+  {
+    "case": "power",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "lifecycle",
+      "full"
+    ],
+    "definition": "3a9993494a8323bce5f0a125f9f5b7e0a78046ec9e7692bf970ffac8512e6097"
+  },
+  {
+    "case": "ring-pwm",
+    "model": "l6",
+    "backend": "gui",
+    "suites": [
+      "regression",
+      "full",
+      "panel"
+    ],
+    "definition": "fd3884c166064fbf111fb0c396e97aaf6c652697f1e8aae989444f4dc57eaacf"
+  },
+  {
+    "case": "ring-pwm",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "regression",
+      "full",
+      "panel"
+    ],
+    "definition": "fd3884c166064fbf111fb0c396e97aaf6c652697f1e8aae989444f4dc57eaacf"
+  },
+  {
+    "case": "ring-pwm",
+    "model": "l6max",
+    "backend": "gui",
+    "suites": [
+      "regression",
+      "full",
+      "panel"
+    ],
+    "definition": "61530828885e358241679e4e3217eec1c01457c802ed1c2f76e5e55f2704ef33"
+  },
+  {
+    "case": "ring-pwm",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "regression",
+      "full",
+      "panel"
+    ],
+    "definition": "61530828885e358241679e4e3217eec1c01457c802ed1c2f76e5e55f2704ef33"
+  },
+  {
+    "case": "sd-all-patches",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix"
+    ],
+    "definition": "9f77e24c88713021f1738600bf2a082b07b641a3300f13551e8d6740a2d91fc9"
+  },
+  {
+    "case": "sd-din-mixer-control",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix"
+    ],
+    "definition": "f0e64ff87caf24a4da0c4927451ca873d2194c6ee38fb1f3a88487048afd4c94"
+  },
+  {
+    "case": "sd-effect-assignment-plateau-plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix",
+      "effect-replacement-matrix"
+    ],
+    "definition": "1d2848290517cfd024e8b527fd197270253737003af6e235a46eac8bf8cd6b84"
+  },
+  {
+    "case": "sd-effect-assignment-plateau-velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix",
+      "effect-replacement-matrix"
+    ],
+    "definition": "4a443d62b69528e60792c65e818e575e28360c46b7894858191d824823f85bd9"
+  },
+  {
+    "case": "sd-effect-assignment-spring-plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix",
+      "effect-replacement-matrix"
+    ],
+    "definition": "3ea528446596677deb401df50f1a467b7e3dd9fab0d9c34a239981ff915a615b"
+  },
+  {
+    "case": "sd-effect-assignment-spring-velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix",
+      "effect-replacement-matrix"
+    ],
+    "definition": "ce25b14b57beee031af1d9c7c5ea475eeec818e2298c623a6cb81c8cd374300b"
+  },
+  {
+    "case": "sd-effect-assignment-velvet-plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix",
+      "effect-replacement-matrix"
+    ],
+    "definition": "c4437f465287e83e6c2ce7b925117b60382b9c858356ebd52b1011730204966d"
+  },
+  {
+    "case": "sd-effect-assignment-velvet-velvet",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix",
+      "effect-replacement-matrix"
+    ],
+    "definition": "34530e2b02474eda49b89012363ff35701774d09e6652d0c9d2a5718c384d306"
+  },
+  {
+    "case": "sd-effect-editor-mode-restore",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix",
+      "effect-replacement-matrix"
+    ],
+    "definition": "756e7bcad5e0617f2a87778a0eb9c322b542332cf365b2a265b3df8411b16337"
+  },
+  {
+    "case": "sd-effect-replacement-map",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix",
+      "effect-replacement-matrix"
+    ],
+    "definition": "67ebc1e732f4363282ecbd082108551547c9c5fe08f99e9763819ec6aee5f17d"
+  },
+  {
+    "case": "sd-effect-replacement-plateau",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix",
+      "effect-replacement-matrix"
+    ],
+    "definition": "f3d14decbea14f13b6e78de3f1fa9a280ab82eb18acd84409f222529ecf3a25b"
+  },
+  {
+    "case": "sd-effect-velvet-ring-scale",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix",
+      "effect-replacement-matrix"
+    ],
+    "definition": "81d29938e61dbed338d606d3d4c40bd9118e3e00865216fb8a2e75f10f20861c"
+  },
+  {
+    "case": "sd-hook-chain",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix"
+    ],
+    "definition": "40f0e0e1d59cc8caeecce2b76e7487aa7fa4f9372297f624bfefa9a1b7e220ee"
+  },
+  {
+    "case": "sd-knob-dialog",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix"
+    ],
+    "definition": "9c6ba4fffe4594ad4089b340d981977f5bcd48ca0c05919296e4bae622e34c5f"
+  },
+  {
+    "case": "sd-knob-dialog-dynamic",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix"
+    ],
+    "definition": "75e93d977ba39f2e93a804faeff9b3e44553ed2f0982cf11ae48ec7440b44265"
+  },
+  {
+    "case": "sd-knob-midi",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix"
+    ],
+    "definition": "b2a684804bceaef2d5181aa42c556748a7b94b66a46fdf6309f43d0f6fd5b113"
+  },
+  {
+    "case": "sd-knob-midi-sync-dynamic",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix"
+    ],
+    "definition": "773a1118c4f5c75d6e25e1e599341be83e5a01a3ed9a66ee83f64bb1f52d008d"
+  },
+  {
+    "case": "sd-l6max-midi-sync",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix"
+    ],
+    "definition": "a35641f8c65ff2b2fc7fb4bd7faa8e2afe9295ec465484bb7a59ab9b867798eb"
+  },
+  {
+    "case": "sd-menu-loader",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix"
+    ],
+    "definition": "2df862182da71815800c766e6aea1548b42a25034ac82ab1ddfc9cca30e15c03"
+  },
+  {
+    "case": "sd-midi-absent",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [],
+    "definition": "9325b91bf47c97ab5d7e46ca8836d24aaaeae649fa3e08b6adbe24dd79091168"
+  },
+  {
+    "case": "sd-midi-absent",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [],
+    "definition": "48b82c665c3792b2d1fa60a30668723e38cde72f435c3f363e3292e0635e22dd"
+  },
+  {
+    "case": "sd-midi-corrupt",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [],
+    "definition": "4f4f8a460c8bdea5848be0a3b04defa6fc594ff88865aeda17e03a14451e5b16"
+  },
+  {
+    "case": "sd-midi-corrupt",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [],
+    "definition": "fabb784d803518217f673df02ec027df5a8799ac647d71ad32d85b1b094c6c0e"
+  },
+  {
+    "case": "sd-midi-corrupt-sibling",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [],
+    "definition": "8ead24ed541ead2376f87834a95235edf29aefafeea06a0dda526d35546dce94"
+  },
+  {
+    "case": "sd-midi-sync",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix"
+    ],
+    "definition": "56b9992eb2b755e7401cfddae91171aebce3881e8926c020745add8ac266e9a4"
+  },
+  {
+    "case": "sd-midi-sync",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix"
+    ],
+    "definition": "3c6b8c145309cdc9fb660b8fb5386fa4444a436ccc20ac3a1b6e9bf2315c8c4d"
+  },
+  {
+    "case": "sd-midi-volatile",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [],
+    "definition": "45b62d8ed854756c80b018f8e3591bd6adfd97a5fa7020fa257c0e7c3a71a760"
+  },
+  {
+    "case": "sd-midi-volatile",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [],
+    "definition": "11805606b9b74feda67b10c2a63b80417ab1289d1f240591ff80ce9e91bf8c94"
+  },
+  {
+    "case": "sd-mixed-static",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix"
+    ],
+    "definition": "be04ba5c682f1c91d52d673388880da2a79a4e244958914ac3d9bb67a86700d1"
+  },
+  {
+    "case": "sd-static-all",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix"
+    ],
+    "definition": "2242108ca0e26696be56b4d32e7416220b4069f1c1b636c56e0232c6dd4e8be7"
+  },
+  {
+    "case": "sd-warm-reset",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [],
+    "definition": "61e8b7eba58296e6265d70e13ac6e9ef371580a40199cfc17d460b15c682ef84"
+  },
+  {
+    "case": "sd-warm-reset",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [],
+    "definition": "124ef992203f8ca72b18cbb7b9fe04c4e93f5b2d51012829ee2c81963dc50df1"
+  },
+  {
+    "case": "state-spec",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "lifecycle",
+      "full"
+    ],
+    "definition": "6271bfbf6834d93c12d979621151d1e06531a2fcbf7f0cd55e31c2950e466107"
+  },
+  {
+    "case": "storage",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "devices",
+      "full"
+    ],
+    "definition": "872d076d1ba9bdc3f04f6edbb4d67b33af2dec831c51b6782c7a863e45b30828"
+  },
+  {
+    "case": "storage",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "devices",
+      "full"
+    ],
+    "definition": "c8e5315523910f61a19a06826cc8c9e0b61b2008473d962a30335034cec27deb"
+  },
+  {
+    "case": "storage-empty",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "devices",
+      "full"
+    ],
+    "definition": "4ed714f19403d20de05dc60f68c1022073b2c60f28d8d5a0ebbc4cf3fa256d8b"
+  },
+  {
+    "case": "storage-empty",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "devices",
+      "full"
+    ],
+    "definition": "b5b46f5b95e95a3fba326d564f7459ea1d097e341622763f71d8298b21512a8b"
+  },
+  {
+    "case": "switches",
+    "model": "l6max",
+    "backend": "gui",
+    "suites": [],
+    "definition": "ed7c4a39a36cdf1deac357e25f3fd1f518c30b38de56c1e4216ee8b89b395c89"
+  },
+  {
+    "case": "switches",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [],
+    "definition": "ed7c4a39a36cdf1deac357e25f3fd1f518c30b38de56c1e4216ee8b89b395c89"
+  },
+  {
+    "case": "ui-input-l6",
+    "model": "l6",
+    "backend": "gui",
+    "suites": [
+      "full"
+    ],
+    "definition": "adec2801917133753eba845d40b6c4e61fdc84dfca9b11ed07da71136cb5fdfb"
+  },
+  {
+    "case": "ui-input-l6",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "adec2801917133753eba845d40b6c4e61fdc84dfca9b11ed07da71136cb5fdfb"
+  },
+  {
+    "case": "ui-input-l6-gui",
+    "model": "l6",
+    "backend": "gui",
+    "suites": [
+      "full"
+    ],
+    "definition": "632c44e924d26298613e53f779871832a283e017e2b34c9e64218e4dd365ad2e"
+  },
+  {
+    "case": "usb",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "devices",
+      "full"
+    ],
+    "definition": "b480aae48f26963a28b3a0270d8b58aa10b72e254f72810825100b94dcf450f2"
+  },
+  {
+    "case": "usb",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "devices",
+      "full"
+    ],
+    "definition": "d83a5c028501f4caa04ddcc091ef87a37e4674a789123d515a421c74578a97db"
+  },
+  {
+    "case": "usb-storage",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "devices",
+      "full"
+    ],
+    "definition": "2776ba8b602f831ce6af196d38216212eddd9554fdc9b65e880135c4558f4ce8"
+  },
+  {
+    "case": "wasm-patch",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "2108f8a321397c4d7d37587dc79df8bae4e2011734566b5513736bc28cabd543"
+  },
+  {
+    "case": "wasm-patch",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "2bb391f8647301b0a9732f9470d9e2961c0cbfc37f77ac5c9ffa2ac7e65cd048"
+  }
+]

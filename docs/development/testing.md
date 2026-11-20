@@ -6,18 +6,24 @@ This guide covers executable checks for the emulator and its tools.
 ## One entry point
 
 ```sh
-cargo run --offline --locked -p l6test -- list
+cargo l6test list
 cp config.example.toml config.toml
 # Edit config.toml: set the paths to your stock L6 and L6max update packages.
-cargo run --offline --locked -p l6test -- check --config config.toml
-cargo run --offline --locked -p l6test -- run --suite quick --backend both
+cargo l6test check --config config.toml
+cargo l6test run --suite quick --backend both
 ```
+
+`cargo l6test` is an alias for `cargo run --offline --locked -p l6test --`,
+defined in `.cargo/config.toml`; the longer form works the same.
 
 `check` validates the configuration and checks shared memory without launching
 firmware. `run` builds selected binaries once, including QEMU unless `--no-build` is
-given, freezes copies of those executables and the scenario files for the run, starts
-each case with fresh state and card, and supervises every process group. A supplied
-output directory must not exist. Paths in the local file are relative to that file.
+given, copies those executables into the run so their hashes identify what ran, starts
+each case with fresh state and card, and supervises every process group. Cases read
+their scenarios from `tests/smoke` in place; only generated scenarios are written,
+into the run's `generated/` directory. Run suites from a worktree that does not change
+during the run. A supplied output directory must not exist. Paths in the local file
+are relative to that file.
 
 Each scenario declares what it runs from, so the local file only supplies firmware:
 
@@ -131,7 +137,7 @@ grant sandbox permissions; the calling environment must provide them.
 
 | Selection | Coverage |
 | --- | --- |
-| `--suite quick` | Shared boot, channel-1 scroll, channel-2 vertical drag and horizontal reversal, then mute feedback in one boot per model/backend |
+| `--suite quick` | The shared `controls` scenario on both models (boot, then channel-1 scroll, channel-2 drag and reversal, and mute feedback in one boot per model/backend), plus the L6max TAP handler |
 | `--case boot` | Shared sweep/readiness gate only |
 | `--case encoder` | Isolated channel-1 encoder output and exact firmware report count |
 | `--case mute` | Isolated channel-1 mute feedback |
@@ -186,8 +192,14 @@ recorder, so the driver skips them and records `execution_spec_state` in `inputs
 The printed artifact directory contains:
 
 - `report.json` and, for completed suites, `summary.md`: matrix and outcome.
-- `manifest.json`: source revision, dirty diff/untracked hashes, board/patch
-  hashes, driver binary and pinned QEMU identity.
+  See [Report](#report) below.
+- `manifest.json`: source revision, dirty diff/untracked hashes, scenario,
+  generated-scenario and board/patch hashes, driver binary and pinned QEMU
+  identity.
+- `generated/`: the generated scenarios this run wrote, such as the `patches`
+  suite's.
+- `cache/`: fixtures built once for the run and copied into each case. See
+  [Fixture cache](#fixture-cache).
 - Per-case `inputs.json` and `invocation.json`: selected fixture content hashes,
   execution options, executable hash, exact arguments and declared environment.
 - `scenario.json`: shared assertions, failed step, last state and bounded events.
@@ -202,9 +214,10 @@ completed actions. L6 compares only its six physical rings.
 Default artifact directories are short paths under `/tmp` so Unix socket paths
 fit platform limits. Retain useful runs outside temporary storage before cleanup.
 `--output /short/new/path` selects a retained location. Completed cases are written
-incrementally. Exit 0 means PASS or explicitly matched XFAIL, 1 means FAIL or
-XPASS, and 2 means BLOCKED. Read the outcome rather than inferring a clean pass
-from exit 0. Keep a baseline with XFAIL labeled as incomplete.
+incrementally. Exit 0 means PASS, explicitly matched XFAIL, or FLAKY
+without `--strict`; 1 means FAIL or XPASS (or FLAKY with `--strict`); 2 means
+BLOCKED. Read the outcome rather than inferring a clean pass from exit 0. Keep a
+baseline with XFAIL labeled as incomplete.
 
 Expected failures are optional catalog entries on a case, matching an exact
 case/model/step and error substring, with a reason. A different failure remains
@@ -214,6 +227,68 @@ failure is hidden by a checked-in expected-failure rule.
 The process supervisor bounds wall time, stops descendant processes on failure,
 interruption or completion, and leaves the system mouse untouched. Scenario
 waits and button timing use guest time, with independent wall-clock ceilings.
+
+### Report
+
+`report.json` (schema 2) has the run `outcome`, `counts` per outcome, fixture
+`cache` statistics and one result per case, model and backend. Each result
+keeps the schema 1 fields (`case`, `model`, `backend`, `outcome`, `detail`,
+`artifacts`) and adds:
+
+| Field | Meaning |
+| --- | --- |
+| `phase` | Where the case stopped: `preflight`, `fixture` or `execute` |
+| `duration_s`, `timings` | Wall seconds in total, building fixtures and executing |
+| `identity` | Hashes of what the case ran on: QEMU, the runner executable, the firmware package and unpacked firmware, the card, the state and audio input |
+| `attempts` | Every attempt, when the case was retried |
+
+Outcomes:
+
+| Outcome | Meaning |
+| --- | --- |
+| PASS | Ran and passed |
+| FAIL | Its fixture failed to build, a firmware guard on an image our tools built did not match, or it ran and failed |
+| XFAIL, XPASS | Failed as expected; passed despite an expected failure |
+| BLOCKED | Did not run, or its result is not valid: missing configuration or `--app`, unsupported backend, the configured package is for another model, a firmware guard on the configured stock image did not match, the run was interrupted, or QEMU or the executable changed during the case |
+| FLAKY | Failed, then passed on a retry. Never counted as a pass |
+
+A broken patch build, or a patched image that no longer matches its guard,
+is a FAIL in the `fixture` phase, not BLOCKED. Before a case runs, the driver
+also checks that its fixture holds every file the scenario reads from the case
+directory (`smoke_core::fixture_layout`); a missing one is a fixture FAIL.
+
+### Selecting and rerunning cases
+
+- `--case` takes comma-separated ids or globs: `--case 'patches-l6max_*'`.
+- `--shard I/N` runs the I-th of N parts. A case's shard depends only on its
+  case, model and backend, so N machines can split a suite and each run
+  `--jobs 1`.
+- `--rerun RUN` reruns the results of an earlier run (its directory or
+  `report.json`) that were FAIL, XPASS, BLOCKED or FLAKY. `--only PASS,FAIL`
+  names other outcomes.
+- `--retries N` reruns a case that failed while executing up to N more times.
+  Each attempt keeps its artifacts (`<case>.attempt-2/`, ...). A failure followed
+  by a pass is FLAKY, listed separately in `summary.md`. `--strict` makes a
+  FLAKY case fail the run. BLOCKED cases and fixture failures are not retried.
+  A failure followed by anything but a pass stays FAIL, so a later attempt
+  never hides an earlier failure.
+- A `--case` pattern that matches no case is an error.
+
+### Fixture cache
+
+Within a run, each distinct `l6patch` build, browser-patched package, unpacked
+package, state and card image is built once under `cache/` and copied into
+every case that uses it; stock firmware is booted read-only from the shared
+unpack. When the run directory's volume clones files (APFS), copies cost no
+data; otherwise card images are built per case. Keys name every input of a
+build except repository sources, which a run assumes do not change while it
+runs. The cache lives only as long as its run. `summary.md` lists hits and
+builds per kind.
+
+`--fixtures-only` builds every selected case's fixture and records its
+identity without booting a guest; results are PASS in the `fixture` phase. `--no-cache` builds every fixture per case. Comparing the
+identities of a cached and an uncached `--fixtures-only` run shows the cache
+does not change what cases boot.
 
 ## Scenario format and extension
 
@@ -289,6 +364,23 @@ It does not establish behavior on physical hardware. The smaller C tests in
 `emulator/qemu/tests/panel-gpio.c` and `panel-timer.c` cover shared register
 logic independently of QEMU.
 
+### Case matrix
+
+`cargo l6test list --format json` prints every case, model and backend the
+catalog can run, sorted, with suite membership and a `definition` digest of
+what the case runs: its scenario and fragment contents, behavioral catalog
+fields, and state and card spec contents. The digest does not depend on where
+files live, so moving files keeps it. `tools/l6test/snapshots/cases.json` holds the reviewed copy, and
+`cargo test -p l6test` fails when the catalog no longer matches it. A change
+that adds, removes or moves cases, or changes a generated scenario, must update
+it deliberately:
+
+```sh
+L6TEST_UPDATE_SNAPSHOT=1 cargo test --offline --locked -p l6test case_matrix
+```
+
+Review the diff of `cases.json` with the change.
+
 ## Input, display, and LEDs
 
 Use the shared `panel`, `l6-input-sweep`, and `l6max-input-smoke` scenarios.
@@ -338,7 +430,9 @@ writes each case's scenario into the run's `spec/scenarios/`, and
 
 A new placeable patch fails generation until it has a check in
 `tools/l6test/src/patch_matrix.rs`. `l6test list` shows the case count,
-which grows with each placeable patch. Run one case at a time: the heaviest
+which grows with each placeable patch. Adding, removing or changing a
+generated case changes the reviewed case matrix in
+`tools/l6test/snapshots/cases.json`; see [Case matrix](#case-matrix). Run one case at a time: the heaviest
 takes under two minutes, and the suite takes hours:
 
 ```sh
@@ -390,8 +484,8 @@ cargo run --offline --locked -p l6test -- run --config config.toml \
 
 Use firmware revisions accepted by the tests' hash guards. A guard mismatch is
 BLOCKED coverage, not a passing test. Read `report.json` and distinguish PASS,
-FAIL and BLOCKED totals; if a timing-sensitive failure passes on retry, retain
-both results and identify it as flaky.
+FAIL and BLOCKED totals. Retry timing-sensitive failures with `--retries` or
+`--rerun`: a failure that passes on retry is FLAKY, and both attempts are kept.
 
 ## Power, storage, and USB
 

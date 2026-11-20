@@ -26,11 +26,19 @@ A dump needs about 69 MiB free. Existing files with these names are replaced.
   version at `0x4fffc`. The [storage map](../../docs/emulator/storage.md#main-nor-map)
   covers the rest of the NOR.
 - **Memory ranges:** they cover what the firmware uses, rounded up to the
-  sizes an i.MX RT10xx part can map. The L6max processor is not identified,
-  so some of each range may not exist.
-- **Manifest:** it records the CPUID, MPU and i.MX RT10xx identification
-  registers, then one line per file with its base, length and either `ok` or
-  the address ranges that could not be read.
+  sizes an i.MX RT10xx part can map. The available identification points to
+  the RT106x family, but some of each range may not exist.
+- **Manifest:** it records CPUID, CCR, MPU type/control and selected region,
+  cache identification, ITCMCR, DTCMCR, IOMUXC GPR14/16/17 and SoC
+  identification/boot-mode registers, then one
+  line per file with its base, length and either `ok` or unreadable ranges.
+  These register values are sampled individually while MAIN is running;
+  they are not a snapshot of bootloader handoff. A zero read is not by
+  itself proof that a register is implemented or that memory is accessible.
+  `MPU_RNR_BEFORE` and `MPU_RNR_AFTER` bracket the RBAR/RASR read, and
+  `CSSELR_BEFORE` and `CSSELR_AFTER` bracket CCSIDR. If either pair differs,
+  its associated values cannot be attributed to a single selected region or
+  cache. The patch does not change either selector.
 - **Checking the NOR dump:** the manifest's `NOR CHECKSUM` line should match
   the CHECKSUM on the firmware version screen. The firmware computes that
   value at startup: the low 16 bits of the byte sum of NOR
@@ -67,6 +75,7 @@ The menu item is also unavailable while the recorder records or plays.
 - **Emulator:** the `dump-rom` smoke case runs a dump. It then checks that
   `L6MAX_NOR.BIN` equals the emulator's NOR byte for byte, and that every
   file has its full size.
-- **Hardware:** not tested. In particular, it is unknown which parts of the
-  memory ranges read as unmapped on the real processor. The manifest records
-  that.
+- **Hardware:** the earlier dump patch was used to obtain a physical dump;
+  the additional register captures have not yet been tested on hardware.
+  Unreadable ranges describe the running configuration at the time of the
+  dump and do not by themselves establish physical memory capacity.

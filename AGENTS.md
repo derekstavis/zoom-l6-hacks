@@ -18,10 +18,12 @@ smallest set of cases that covers the change (`--case`, globs, `--rerun`). Run
 about two hours) once at the top of a stack, and fix what it finds in the PR
 that owns the cause. Run one suite at a time; the default `--jobs` is intended.
 
-When changing patch payloads, hook metadata, dependencies, composition logic or
-the browser patch builder, regenerate the committed browser templates with
-`firmware-patch-wasm-prebuild` using supported unpacked L6max and L6 firmware.
-Do not hand-edit generated templates. Run `wasm-patch` for both models and the
+When changing anything under `patches/` (including `patches/api`), the patch
+tools, `Cargo.toml` or `Cargo.lock`, regenerate the committed browser templates
+and web SD modules with both `firmware-patch-wasm-prebuild` and
+`tools/build-web-loadable-patches.sh`, using supported unpacked L6max and L6
+firmware; `cargo test -p firmware-patch-wasm-prebuild` fails while either is
+stale. Do not hand-edit generated files. Run `wasm-patch` for both models and the
 `sd-matrix` suite to check browser/native parity and SD loading. See
 `docs/development/testing.md#firmware-patch` for commands and interpretation.
 
@@ -49,9 +51,11 @@ in the diff, then rerun without the flag before committing.
 
 Use the reference manual for peripheral behavior. Preserve compatibility
 exceptions with explicit model scope and evidence. Scope compatibility
-behavior to the corresponding firmware revision. Declare each firmware address
-once, per model and revision, in `patches/api/`; host tools and tests use it
-through `firmware-api` (`l6::name`, `l6max::name`) instead of literals.
+behavior to the corresponding firmware revision. Declare each new firmware
+address once, per model and revision, in `patches/api/`, and use it from host
+tools and tests through `firmware-api` (`l6::name`, `l6max::name`) instead of a
+literal. Scenario files and `l6dbg` still contain literal addresses; move one
+to a declaration when you touch it.
 
 A source commit or QEMU version string does not identify a QEMU executable.
 The driver pins external QEMU binaries and explicitly marks their source as

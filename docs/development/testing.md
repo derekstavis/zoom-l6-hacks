@@ -515,18 +515,22 @@ firmware. Use `knob-dialog`, `patched-update`,
 `firmware-update`, and `wasm-patch` as appropriate. `l6-patch-heap` and
 `l6max-patch-heap` check heap headroom with every patch for the model applied.
 
-Patch composition changes can leave the committed browser templates stale.
-Whenever a payload, hook registration, dependency, composition/compiler rule or
-loader template input changes, regenerate templates from supported unpacked
-stock firmware for both models:
+The committed browser templates and the SD modules the web page and emulator
+serve are generated, and their manifests record a fingerprint of the sources
+that produced them: everything under `patches/` except `tests/`, the patch tool
+crates, `Cargo.toml` and `Cargo.lock`. A change to any of these, including a new
+`patches/api` declaration or an unrelated dependency, makes them stale, and
+`cargo test -p firmware-patch-wasm-prebuild` fails until both are regenerated
+from supported unpacked stock firmware for both models:
 
 ```sh
 cargo run --offline --locked -p firmware-patch-wasm-prebuild -- \
   /path/to/unpacked-l6max /path/to/unpacked-l6
+tools/build-web-loadable-patches.sh /path/to/unpacked-l6max /path/to/unpacked-l6
 ```
 
 Review the generated changes under `tools/firmware-patch-wasm/templates/` and
-commit them with the source change. Do not edit the generated `.bin` or `.json`
+`web/public/loadable-patches/` and commit them with the source change. Do not edit the generated `.bin` or `.json`
 files by hand. Run the browser/native parity case for both models and the SD
 loading matrix:
 

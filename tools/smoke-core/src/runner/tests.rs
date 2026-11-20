@@ -1,0 +1,828 @@
+use super::*;
+static NEXT_TEMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+fn sample(guest_ms: u32) -> Observation {
+    Observation {
+        data: PanelData {
+            powered: true,
+            ..Default::default()
+        },
+        main: InputStatus {
+            connected: true,
+            ..Default::default()
+        },
+        panel: InputStatus {
+            connected: true,
+            guest_ms,
+            ..Default::default()
+        },
+        reports: 0,
+        traces: BTreeMap::new(),
+    }
+}
+fn test_runner(steps: &str) -> Runner {
+    let scenario =
+        Scenario::parse(&format!("version=1\nname='unit'\nmodels=['l6']\n{steps}")).unwrap();
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    Runner::new(
+        scenario,
+        Model::L6,
+        std::env::temp_dir().join(format!(
+            "smoke-unit-{}-{stamp}-{}",
+            std::process::id(),
+            NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        )),
+    )
+    .unwrap()
+}
+
+#[test]
+fn direct_usb_midi_cable_is_configurable_and_range_checked() {
+    let default = Scenario::parse(
+        "version=1\nname='midi'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='direct-usb-midi-round-trip'\n",
+    )
+    .unwrap();
+    assert!(matches!(
+        default.step[0].action,
+        Action::DirectUsbMidiRoundTrip {
+            cable: 1,
+            expect_ring_change: true
+        }
+    ));
+
+    let ignored_cable = Scenario::parse(
+        "version=1\nname='midi'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='direct-usb-midi-round-trip'\ncable=5\nexpect_ring_change=false\n",
+    )
+    .unwrap();
+    assert!(matches!(
+        ignored_cable.step[0].action,
+        Action::DirectUsbMidiRoundTrip {
+            cable: 5,
+            expect_ring_change: false
+        }
+    ));
+    assert!(Scenario::parse(
+        "version=1\nname='midi'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='direct-usb-midi-round-trip'\ncable=16\n",
+    )
+    .is_err());
+}
+#[test]
+fn output_alone_cannot_pass_before_the_command_acknowledgement() {
+    let mut runner = test_runner(
+        "[[step]]\naction='encoder'\nchannel=1\nsteps=12\n[[step]]\naction='expect-ring'\nchannel=1\nmask=31\nchanged=true\nonly=true\n",
+    );
+    let now = Instant::now();
+    assert!(matches!(
+        runner.advance(sample(0), now).unwrap(),
+        Progress::Dispatch(_)
+    ));
+    let mut feedback = sample(100);
+    for &(row, column) in l6max_host::indicators::RING_PINS[0].iter().take(5) {
+        feedback.data.indicators[row] |= 1 << (column ^ 7);
+    }
+    feedback.reports = 12;
+    feedback.panel.sent = 1;
+    assert!(matches!(
+        runner.advance(feedback.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    feedback.panel.applied = 1;
+    assert!(matches!(
+        runner.advance(feedback.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    feedback.panel.guest_ms = 1100;
+    assert!(matches!(
+        runner.advance(feedback, now).unwrap(),
+        Progress::Complete
+    ));
+    assert!(runner.logs.join("scenario.json").is_file());
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+#[test]
+fn gui_power_scenario_can_cross_shutdown_and_verify_startup_key_reports() {
+    let mut runner = test_runner(
+        "[[step]]\naction='press'\ncontrol='power'\n[[step]]\naction='expect-powered'\npowered=false\n[[step]]\naction='press'\ncontrol='rec-record'\n[[step]]\naction='press'\ncontrol='power'\n[[step]]\naction='expect-startup-report'\ncontrol='rec-record'\n",
+    );
+    let mut data = PanelData {
+        powered: true,
+        ..Default::default()
+    };
+    assert!(matches!(
+        runner.tick_without_input(data).unwrap(),
+        Progress::Dispatch(Command::Press { target: 53 })
+    ));
+
+    data.powered = false;
+    assert!(matches!(
+        runner.tick_without_input(data).unwrap(),
+        Progress::Dispatch(Command::Press { target: 24 })
+    ));
+    data.switches[24] = true;
+    assert!(matches!(
+        runner.tick_without_input(data).unwrap(),
+        Progress::Dispatch(Command::Press { target: 53 })
+    ));
+
+    runner.guest_restarted(&runner.logs.clone());
+    let [press, release] = trace::button_packets(Model::L6, "rec-record").unwrap();
+    fs::write(
+        runner.logs.join("engine.trace"),
+        format!("{press}{release}"),
+    )
+    .unwrap();
+    data.powered = true;
+    assert!(matches!(
+        runner.tick_without_input(data).unwrap(),
+        Progress::Complete
+    ));
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+#[test]
+fn gui_power_hold_can_finish_when_shutdown_prevents_release_acknowledgement() {
+    let mut runner = test_runner(
+        "[[step]]\naction='hold'\ncontrol='power'\nduration_ms=4000\n[[step]]\naction='expect-powered'\npowered=false\n",
+    );
+    let now = Instant::now();
+    assert!(matches!(
+        runner.advance(sample(0), now).unwrap(),
+        Progress::Dispatch(Command::HoldDown {
+            target: 53,
+            duration_ms: 4000
+        })
+    ));
+    let mut release = sample(4000);
+    release.main.sent = 1;
+    release.main.applied = 1;
+    assert!(matches!(
+        runner.advance(release.clone(), now).unwrap(),
+        Progress::Dispatch(Command::Release { target: 53 })
+    ));
+    release.data.powered = false;
+    release.main.powered_off = true;
+    release.panel.powered_off = true;
+    assert!(matches!(
+        runner.advance(release, now).unwrap(),
+        Progress::Complete
+    ));
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+#[test]
+fn guest_time_and_wall_deadlines_are_independent() {
+    let mut runner = test_runner("[[step]]\naction='delay'\nguest_ms=1000\nwall_timeout_s=2\n");
+    let now = Instant::now();
+    assert!(matches!(
+        runner.advance(sample(500), now).unwrap(),
+        Progress::Waiting
+    ));
+    assert!(matches!(
+        runner
+            .advance(sample(1499), now + Duration::from_millis(1900))
+            .unwrap(),
+        Progress::Waiting
+    ));
+    assert!(matches!(
+        runner
+            .advance(sample(1500), now + Duration::from_millis(1901))
+            .unwrap(),
+        Progress::Complete
+    ));
+    fs::remove_dir_all(&runner.logs).unwrap();
+    let mut stalled = test_runner("[[step]]\naction='delay'\nguest_ms=1000\nwall_timeout_s=2\n");
+    stalled.advance(sample(0), now).unwrap();
+    assert!(
+        stalled
+            .advance(sample(0), now + Duration::from_secs(3))
+            .unwrap_err()
+            .contains("timed out")
+    );
+    fs::remove_dir_all(&stalled.logs).unwrap();
+}
+#[test]
+fn duplicate_reports_and_unrelated_ring_changes_are_failures() {
+    for unrelated in [false, true] {
+        let mut runner = test_runner(
+            "[[step]]\naction='encoder'\nchannel=1\nsteps=12\n[[step]]\naction='expect-ring'\nchannel=1\nmask=31\nonly=true\n",
+        );
+        let now = Instant::now();
+        runner.advance(sample(0), now).unwrap();
+        let mut feedback = sample(100);
+        feedback.panel.sent = 1;
+        feedback.panel.applied = 1;
+        feedback.reports = if unrelated { 12 } else { 13 };
+        if unrelated {
+            let (row, column) = l6max_host::indicators::RING_PINS[1][0];
+            feedback.data.indicators[row] |= 1 << (column ^ 7);
+        }
+        assert!(runner.advance(feedback, now).is_err());
+        fs::remove_dir_all(&runner.logs).unwrap();
+    }
+}
+#[test]
+fn explicit_up_is_acked_with_applied_not_the_automatic_tap_release_counter() {
+    let mut runner = test_runner("[[step]]\naction='press'\ncontrol='channel.1.mute'\n");
+    let now = Instant::now();
+    assert!(matches!(
+        runner.advance(sample(0), now).unwrap(),
+        Progress::Dispatch(_)
+    ));
+    let mut ack = sample(100);
+    ack.panel.sent = 2;
+    ack.panel.applied = 1;
+    assert!(matches!(
+        runner.advance(ack.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    ack.panel.applied = 2;
+    assert_eq!(ack.panel.released, 0);
+    assert!(matches!(
+        runner.advance(ack, now).unwrap(),
+        Progress::Complete
+    ));
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+#[test]
+fn scene_save_holds_until_the_lamp_changes_then_checks_both_panel_edges() {
+    let mut runner = test_runner("[[step]]\naction='save-scene'\nscene=1\n");
+    let now = Instant::now();
+    assert!(matches!(
+        runner.advance(sample(0), now).unwrap(),
+        Progress::Dispatch(Command::HoldDown {
+            target: 15,
+            duration_ms: 50
+        })
+    ));
+
+    let [press, release] = trace::button_packets(Model::L6, "scene-a").unwrap();
+    let mut held = sample(100);
+    held.panel.sent = 1;
+    held.panel.applied = 1;
+    held.traces.insert(press, 1);
+    held.data.indicators[2] |= 1 << 11;
+    assert!(matches!(
+        runner.advance(held.clone(), now).unwrap(),
+        Progress::Dispatch(Command::Release { target: 15 })
+    ));
+
+    held.panel.sent = 2;
+    held.panel.applied = 2;
+    held.traces.insert(release, 1);
+    assert!(matches!(
+        runner.advance(held, now).unwrap(),
+        Progress::Complete
+    ));
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+#[test]
+fn l6_button_lamps_in_unused_generic_ring_slots_are_not_other_encoders() {
+    let mut runner = test_runner(
+        "[[step]]\naction='encoder'\nchannel=1\nsteps=12\n[[step]]\naction='expect-ring'\nchannel=1\nmask=31\nonly=true\n",
+    );
+    let now = Instant::now();
+    runner.advance(sample(0), now).unwrap();
+    let mut obs = sample(100);
+    obs.panel.sent = 1;
+    obs.panel.applied = 1;
+    obs.reports = 12;
+    for &(row, column) in l6max_host::indicators::RING_PINS[0].iter().take(5) {
+        obs.data.indicators[row] |= 1 << (column ^ 7);
+    }
+    let (row, column) = l6max_host::indicators::RING_PINS[6][7];
+    obs.data.indicators[row] |= 1 << (column ^ 7);
+    assert!(matches!(
+        runner.advance(obs.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    obs.panel.guest_ms = 1100;
+    assert!(matches!(
+        runner.advance(obs, now).unwrap(),
+        Progress::Complete
+    ));
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+#[test]
+fn restored_mixer_values_must_cover_all_visible_channels_and_light_the_mode_lamp() {
+    let mut runner = test_runner("[[step]]\naction='wait'\nuntil='mixer-ready'\n");
+    let now = Instant::now();
+    let mut obs = sample(0);
+    let (row, column) = l6max_host::indicators::RING_PINS[0][0];
+    obs.data.indicators[row] |= 1 << (column ^ 7);
+    runner.advance(obs.clone(), now).unwrap();
+    obs.panel.guest_ms = 1000;
+    assert!(matches!(
+        runner.advance(obs.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    for pins in l6max_host::indicators::RING_PINS.iter().take(6) {
+        let (row, column) = pins[0];
+        obs.data.indicators[row] |= 1 << (column ^ 7);
+    }
+    obs.panel.guest_ms = 2000;
+    assert!(matches!(
+        runner.advance(obs.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    obs.data.indicators[4] |= 1 << 8;
+    obs.panel.guest_ms = 2050;
+    assert!(matches!(
+        runner.advance(obs, now).unwrap(),
+        Progress::Complete
+    ));
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+#[test]
+fn parser_rejects_typos_and_unavailable_model_controls() {
+    let prefix = "version=1\nname='test'\nmodels=['l6']\n";
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}[[step]]\naction='press'\ncontrol='recorder.down'\n"
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}[[step]]\naction='encoder'\nchannel=8\nsteps=12\n"
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}[[step]]\naction='wait'\nuntil='boot-ready'\ntypo=true\n"
+        ))
+        .is_err()
+    );
+    assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='save-scene'\nscene=1\n")).is_ok());
+    assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='save-scene'\nscene=4\n")).is_err());
+    let l6max = prefix.replace("['l6']", "['l6max']");
+    assert!(Scenario::parse(&format!("{l6max}[[step]]\naction='save-scene'\nscene=1\n")).is_err());
+}
+
+#[test]
+fn usb_sysex_scenario_requires_complete_messages_and_accepts_reply_prefixes() {
+    let valid = Scenario::parse(
+        "version=1\nname='sysex'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='usb-descriptors'\n[[step]]\naction='usb-sysex'\nrequests=[{bytes=[240,126,127,6,1,247],expect_prefix=[240,126,127,6,2],reject_prefixes=[[240,82]]}]\n",
+    )
+    .unwrap();
+    assert!(matches!(valid.step[1].action, Action::UsbSysex { .. }));
+    let invalid = Scenario::parse(
+        "version=1\nname='sysex'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='usb-sysex'\nrequests=[{bytes=[240,1,2]}]\n",
+    );
+    assert!(invalid.unwrap_err().contains("complete F0..F7"));
+    let invalid_reject = Scenario::parse(
+        "version=1\nname='sysex'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='usb-sysex'\nrequests=[{bytes=[240,1,247],reject_prefixes=[[]]}]\n",
+    );
+    assert!(
+        invalid_reject
+            .unwrap_err()
+            .contains("reject_prefixes must not contain empty prefixes")
+    );
+    let invalid_timeout = Scenario::parse(
+        "version=1\nname='sysex'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='usb-sysex'\nguest_timeout_ms=100\nrequests=[{bytes=[240,1,247],reply_timeout_ms=101}]\n",
+    );
+    assert!(
+        invalid_timeout
+            .unwrap_err()
+            .contains("reply_timeout_ms must be positive and fit")
+    );
+}
+#[test]
+fn editor_pad_assignment_requires_prior_usb_midi_enumeration() {
+    let prefix = "version=1\nname='pads'\nmodels=['l6max']\nbackends=['headless']\n";
+    let without_usb = Scenario::parse(&format!(
+        "{prefix}[[step]]\naction='editor-pad-assignments'\n"
+    ));
+    assert!(
+        without_usb
+            .unwrap_err()
+            .contains("requires a preceding usb-descriptors step")
+    );
+    let with_usb = Scenario::parse(&format!(
+        "{prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n"
+    ));
+    assert!(with_usb.is_ok());
+    let playback = Scenario::parse(&format!(
+        "{prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n[[step]]\naction='editor-pad-playback'\npad=3\n"
+    ));
+    assert!(playback.is_err(), "Editor SysEx playback is L6-only");
+    let l6_prefix = prefix.replace("l6max", "l6");
+    let playback = Scenario::parse(&format!(
+        "{l6_prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n[[step]]\naction='editor-pad-playback'\npad=3\n"
+    ));
+    assert!(playback.is_ok());
+    let invalid_pad = Scenario::parse(&format!(
+        "{l6_prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n[[step]]\naction='editor-pad-playback'\npad=4\n"
+    ));
+    assert!(invalid_pad.unwrap_err().contains("pad must be 0..3"));
+    let ui_playback = Scenario::parse(&format!(
+        "{prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='l6max-ui-pad-assignment'\npad=2\n"
+    ));
+    assert!(ui_playback.is_ok());
+    let wrong_model = prefix.replace("l6max", "l6");
+    let wrong_model = Scenario::parse(&format!(
+        "{wrong_model}[[step]]\naction='usb-descriptors'\n[[step]]\naction='l6max-ui-pad-assignment'\npad=2\n"
+    ));
+    assert!(wrong_model.unwrap_err().contains("scoped to L6max"));
+}
+#[test]
+fn sound_pad_playback_supports_editor_or_saved_assignment() {
+    let prefix = "version=1\nname='pad-playback'\nmodels=['l6']\nbackends=['headless']\n";
+    let action = "[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n[[step]]\naction='sound-pad-playback'\npad=0\ntarget=49\n";
+    assert!(Scenario::parse(&format!("{prefix}{action}")).is_ok());
+    let l6max = prefix.replace("models=['l6']", "models=['l6max']");
+    assert!(Scenario::parse(&format!("{l6max}{action}")).is_ok());
+    let without_assignment = Scenario::parse(&format!(
+        "{prefix}[[step]]\naction='sound-pad-playback'\npad=0\ntarget=49\n"
+    ));
+    assert!(
+        without_assignment
+            .unwrap_err()
+            .contains("preceding editor-pad-assignments")
+    );
+    let saved_state = Scenario::parse(&format!(
+        "{prefix}[[step]]\naction='sound-pad-playback'\npad=0\ntarget=49\nassignment='saved-state'\nplayback_window_ms=30000\nrequire_pad_led_change=false\n"
+    ));
+    assert!(saved_state.is_ok());
+    let invalid_target = Scenario::parse(&format!(
+        "{prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n[[step]]\naction='sound-pad-playback'\npad=0\ntarget=53\n"
+    ));
+    assert!(
+        invalid_target
+            .unwrap_err()
+            .contains("target must match pad")
+    );
+    let mismatched_target = Scenario::parse(&format!(
+        "{prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n[[step]]\naction='sound-pad-playback'\npad=1\ntarget=49\n"
+    ));
+    assert!(
+        mismatched_target
+            .unwrap_err()
+            .contains("target must match pad")
+    );
+}
+
+#[test]
+fn l6_recorder_playback_is_scoped_to_the_verified_play_gpio() {
+    let prefix = "version=1\nname='recorder-playback'\nmodels=['l6']\nbackends=['headless']\n";
+    let scenario = format!("{prefix}[[step]]\naction='l6-recorder-playback'\ntarget=4\n");
+    assert!(Scenario::parse(&scenario).is_ok());
+    assert!(
+        Scenario::parse(&scenario.replace("target=4", "target=5"))
+            .unwrap_err()
+            .contains("MAIN target 4")
+    );
+    assert!(
+        Scenario::parse(&scenario.replace("models=['l6']", "models=['l6max']"))
+            .unwrap_err()
+            .contains("scoped to L6")
+    );
+}
+#[test]
+fn l6max_recorder_playback_is_scoped_to_l6max_and_its_gpio() {
+    let prefix = "version=1
+name='recorder-playback'
+models=['l6max']
+backends=['headless']
+";
+    let scenario = format!(
+        "{prefix}[[step]]
+action='l6max-recorder-playback'
+target=4
+"
+    );
+    assert!(Scenario::parse(&scenario).is_ok());
+    assert!(Scenario::parse(&scenario.replace("target=4", "target=5")).is_err());
+    assert!(Scenario::parse(&scenario.replace("models=['l6max']", "models=['l6']")).is_err());
+}
+#[test]
+fn unsupported_schema_and_zero_timeouts_fail_before_boot() {
+    let text =
+        "version=1\nname='test'\nmodels=['l6max']\n[[step]]\naction='wait'\nuntil='boot-ready'\n";
+    assert!(Scenario::parse(text).is_ok());
+    assert!(Scenario::parse(&text.replace("version=1", "version=2")).is_err());
+    assert!(Scenario::parse(&format!("{text}wall_timeout_s=0\n")).is_err());
+}
+#[test]
+fn l6_main_gpio_event_scenario_rejects_wrong_model_and_mapping() {
+    let base = "version=1\nname='gpio'\nmodels=['l6']\nbackends=['headless']\n[[step]]\naction='l6-main-gpio-event'\ntarget=48\nevent=25\n";
+    assert!(Scenario::parse(base).is_ok());
+    assert!(Scenario::parse(&base.replace("models=['l6']", "models=['l6max']")).is_err());
+    assert!(Scenario::parse(&base.replace("event=25", "event=26")).is_err());
+    assert!(Scenario::parse(&base.replace("target=48", "target=53")).is_err());
+}
+#[test]
+fn l6_usb_startup_requires_first_step_and_l6_scope() {
+    let base = "version=1
+name='usb'
+models=['l6']
+backends=['headless']
+[[step]]
+action='l6-usb-startup'
+";
+    assert!(Scenario::parse(base).is_ok());
+    assert!(Scenario::parse(&base.replace("models=['l6']", "models=['l6max']")).is_err());
+    let late = base.replace(
+        "[[step]]
+action='l6-usb-startup'",
+        "[[step]]
+action='delay'
+guest_ms=1
+[[step]]
+action='l6-usb-startup'",
+    );
+    assert!(Scenario::parse(&late).is_err());
+}
+#[test]
+fn l6_din_sweep_is_scoped_to_l6() {
+    let base = "version=1
+name='din-sweep'
+models=['l6']
+backends=['headless']
+[[step]]
+action='l6-din-sweep'
+";
+    assert!(Scenario::parse(base).is_ok());
+    assert!(Scenario::parse(&base.replace("models=['l6']", "models=['l6max']")).is_err());
+}
+#[test]
+fn every_checked_in_scenario_loads_after_composition() {
+    // Case files live under `tests/emulator/cases` and each patch's
+    // `tests/emulator/cases`; those with only a `[case]` table have no
+    // scenario of their own.
+    fn case_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        for path in fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()) {
+            if path.is_dir() {
+                case_files(&path, out);
+            } else if path.extension().is_some_and(|e| e == "toml") {
+                out.push(path);
+            }
+        }
+    }
+    let root = l6max_host::paths::repository_root();
+    let mut paths = Vec::new();
+    case_files(&root.join("tests/emulator/cases"), &mut paths);
+    for patch in fs::read_dir(root.join("patches")).unwrap() {
+        let cases = patch.unwrap().path().join("tests/emulator/cases");
+        if cases.is_dir() {
+            case_files(&cases, &mut paths);
+        }
+    }
+    assert!(paths.len() > 80);
+    for path in paths {
+        let table: toml::Table = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        if table.keys().all(|key| key == "case") {
+            continue;
+        }
+        let scenario = Scenario::load(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        assert!(
+            !scenario
+                .step
+                .iter()
+                .any(|s| matches!(s.action, Action::Include { .. }))
+        );
+        for model in &scenario.models {
+            let mut runner = test_runner("[[step]]\naction='delay'\nguest_ms=1\n");
+            let temp = runner.logs.clone();
+            runner = Runner::new(scenario.clone(), *model, temp)
+                .unwrap_or_else(|e| panic!("{} / {model}: {e}", path.display()));
+            fs::remove_dir_all(runner.logs).unwrap();
+        }
+    }
+}
+/// A directory under the repository's ignored `target/`, as an absolute
+/// path and as the root-relative path includes name it by.
+fn include_test_dir(name: &str) -> (PathBuf, String) {
+    let rel = format!(
+        "target/smoke-core-include-tests/{name}-{}",
+        std::process::id()
+    );
+    let dir = l6max_host::paths::repository_root().join(&rel);
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    (dir, rel)
+}
+#[test]
+fn includes_are_confined_cycle_checked_and_preserve_model_scope() {
+    let (dir, rel) = include_test_dir("scope");
+    fs::write(
+        dir.join("fragment.toml"),
+        "[[step]]\naction='delay'\nguest_ms=2\n",
+    )
+    .unwrap();
+    let prefix = format!(
+        "version=1\nname='include'\nmodels=['l6','l6max']\n[[step]]\nmodels=['l6max']\naction='include'\npath='{rel}/fragment.toml'\n"
+    );
+    fs::write(dir.join("test.toml"), &prefix).unwrap();
+    let loaded = Scenario::load(&dir.join("test.toml")).unwrap();
+    assert_eq!(loaded.step[0].models, [Model::L6max]);
+    // A generated scenario composes the same way from its text alone.
+    assert_eq!(Scenario::from_text(&prefix).unwrap().step.len(), 1);
+    fs::write(
+        dir.join("fragment.toml"),
+        format!("[[step]]\naction='include'\npath='{rel}/fragment.toml'\n"),
+    )
+    .unwrap();
+    assert!(
+        Scenario::load(&dir.join("test.toml"))
+            .unwrap_err()
+            .contains("cycle")
+    );
+    for path in [
+        format!("{rel}/../outside.toml"),
+        "fragment.toml/..".into(),
+        dir.join("fragment.toml").display().to_string(),
+    ] {
+        let text = prefix.replace(&format!("{rel}/fragment.toml"), &path);
+        assert!(
+            Scenario::from_text(&text)
+                .unwrap_err()
+                .contains("relative to the repository root"),
+            "{path}"
+        );
+    }
+    fs::remove_dir_all(&dir).unwrap();
+}
+#[test]
+fn l6max_tap_tempo_lamp_does_not_block_panel_settling() {
+    let mut rows = [0x28, 0x1000, 0x40002, 0x8000, 0x110, 4, 1, 0];
+    let blinking = {
+        let mut r = rows;
+        r[1] ^= 0x20000;
+        r
+    };
+    assert_eq!(
+        settling_rows(Model::L6max, rows),
+        settling_rows(Model::L6max, blinking)
+    );
+    assert_ne!(
+        settling_rows(Model::L6, rows),
+        settling_rows(Model::L6, blinking)
+    );
+    rows[1] ^= 0x10000;
+    assert_ne!(
+        settling_rows(Model::L6max, rows),
+        settling_rows(Model::L6max, blinking)
+    );
+}
+#[test]
+fn setup_input_propagates_through_includes_and_is_dropped_for_spec_state() {
+    let (dir, rel) = include_test_dir("setup");
+    fs::write(
+        dir.join("fragment.toml"),
+        "[[step]]\naction='delay'\nguest_ms=2\n[[step]]\naction='delay'\nguest_ms=3\n",
+    )
+    .unwrap();
+    let text = format!(
+        "version=1\nname='setup'\nmodels=['l6max']\n[[step]]\nsetup_input=true\naction='include'\npath='{rel}/fragment.toml'\n[[step]]\naction='delay'\nguest_ms=4\n"
+    );
+    let loaded = Scenario::from_text(&text).unwrap();
+    assert_eq!(
+        loaded
+            .step
+            .iter()
+            .map(|s| s.setup_input)
+            .collect::<Vec<_>>(),
+        [true, true, false]
+    );
+    let kept = loaded.without_setup_input();
+    assert_eq!(kept.step.len(), 1);
+    assert!(matches!(kept.step[0].action, Action::Delay { guest_ms: 4 }));
+    fs::remove_dir_all(&dir).unwrap();
+}
+#[test]
+fn unsupported_operations_and_switch_semantics_fail_before_boot() {
+    let prefix = "version=1\nname='invalid'\nmodels=['l6max']\n";
+    for step in [
+        "action='usb-descriptors'",
+        "action='press'\ncontrol='ch5-pad-switch'",
+        "action='switch'\ncontrol='channel.1.mute'\nenabled=true",
+        "action='expect-ring'\nchannel=1\nmask=1024",
+        "action='expect-ring'\nchannel=1\nchanged=true\nsettle_ms=0",
+        "action='checkpoint'\nname='../escape'",
+        "action='expect-display'\ncheckpoint='missing'\nchanged=true",
+    ] {
+        assert!(
+            Scenario::parse(&format!("{prefix}[[step]]\n{step}\n")).is_err(),
+            "{step}"
+        );
+    }
+}
+
+#[test]
+fn typed_input_sweep_allows_only_its_verified_rejections() {
+    let now = Instant::now();
+    let mut runner = test_runner("backends=['headless']\n[[step]]\naction='l6-input-sweep'\n");
+    runner.device_finished(json!({"expected_rejections":{"main":2,"panel":2}}));
+    let mut obs = sample(0);
+    obs.main.rejected = 2;
+    obs.panel.rejected = 2;
+    assert!(matches!(
+        runner.advance(obs, now).unwrap(),
+        Progress::Complete
+    ));
+    fs::remove_dir_all(&runner.logs).unwrap();
+
+    let mut runner = test_runner("backends=['headless']\n[[step]]\naction='l6-input-sweep'\n");
+    runner.device_finished(json!({"expected_rejections":{"main":2,"panel":2}}));
+    let mut obs = sample(0);
+    obs.main.rejected = 3;
+    obs.panel.rejected = 2;
+    assert!(runner.advance(obs, now).is_err());
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+#[test]
+fn wire_edges_wait_for_release_and_reject_duplicate_edges() {
+    let text = "version=1\nname='edges'\nmodels=['l6max']\n[[step]]\naction='press'\ncontrol='scene-a'\n[[step]]\naction='expect-button-report'\ncontrol='scene-a'\n";
+    for duplicate in [false, true] {
+        let mut runner = test_runner("[[step]]\naction='delay'\nguest_ms=1\n");
+        runner.scenario = Scenario::parse(text).unwrap();
+        runner.model = Model::L6max;
+        let now = Instant::now();
+        runner.advance(sample(0), now).unwrap();
+        let mut obs = sample(100);
+        obs.panel.sent = 2;
+        obs.panel.applied = 2;
+        let [on, off] = trace::button_packets(Model::L6max, "scene-a").unwrap();
+        obs.traces.insert(on, if duplicate { 2 } else { 1 });
+        if duplicate {
+            assert!(runner.advance(obs, now).unwrap_err().contains("duplicate"));
+        } else {
+            assert!(matches!(
+                runner.advance(obs.clone(), now).unwrap(),
+                Progress::Waiting
+            ));
+            obs.traces.insert(off, 1);
+            obs.panel.guest_ms = 1200;
+            assert!(matches!(
+                runner.advance(obs, now).unwrap(),
+                Progress::Complete
+            ));
+        }
+        fs::remove_dir_all(&runner.logs).unwrap();
+    }
+}
+#[test]
+fn late_ring_feedback_resets_the_declared_quiet_window() {
+    let mut runner = test_runner(
+        "[[step]]\naction='encoder'\nchannel=1\nsteps=12\n[[step]]\naction='expect-ring'\nchannel=1\nchanged=true\nonly=true\nsettle_ms=3000\n",
+    );
+    let now = Instant::now();
+    runner.advance(sample(0), now).unwrap();
+    let mut obs = sample(100);
+    obs.panel.sent = 1;
+    obs.panel.applied = 1;
+    obs.reports = 12;
+    let (row, col) = l6max_host::indicators::RING_PINS[0][0];
+    obs.data.indicators[row] |= 1 << (col ^ 7);
+    runner.advance(obs.clone(), now).unwrap();
+    obs.panel.guest_ms = 1100;
+    assert!(matches!(
+        runner.advance(obs.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    let (row, col) = l6max_host::indicators::RING_PINS[0][1];
+    obs.data.indicators[row] |= 1 << (col ^ 7);
+    obs.panel.guest_ms = 2000;
+    runner.advance(obs.clone(), now).unwrap();
+    obs.panel.guest_ms = 4999;
+    assert!(matches!(
+        runner.advance(obs.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    obs.panel.guest_ms = 5000;
+    assert!(matches!(
+        runner.advance(obs, now).unwrap(),
+        Progress::Complete
+    ));
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+#[test]
+fn unexpected_power_loss_fails_but_explicit_restart_accepts_shutdown() {
+    let now = Instant::now();
+    for restart in [false, true] {
+        let mut runner = test_runner(if restart {
+            "backends=['headless']\n[[step]]\naction='restart'\n"
+        } else {
+            "[[step]]\naction='delay'\nguest_ms=1000\n"
+        });
+        if restart {
+            let mut skipped = runner.scenario.step[0].clone();
+            skipped.models = vec![Model::L6max];
+            skipped.action = Action::Delay { guest_ms: 1 };
+            runner.scenario.step.insert(0, skipped);
+        }
+        let mut obs = sample(0);
+        obs.data.powered = false;
+        let result = runner.advance(obs, now);
+        if restart {
+            assert!(matches!(
+                result.unwrap(),
+                Progress::Device(devices::Operation::Restart)
+            ));
+        } else {
+            assert!(result.is_err());
+        }
+        fs::remove_dir_all(&runner.logs).unwrap();
+    }
+}

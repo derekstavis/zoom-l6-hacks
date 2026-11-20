@@ -212,6 +212,7 @@ def check_flexram_boundaries(qemu, image):
         }
         for address in masks:
             command(f"writel {address:#x} 0xffffffff")
+        command("writel 0x400ac038 0xffffffff")
         for address in (0x400fc070, 0x400fc078):
             command(f"writel {address:#x} 0")
         command("writel 0x400fc06c 0x00007000")
@@ -321,6 +322,7 @@ def check_flexram_boundaries(qemu, image):
         assert int(command("readl 0x80000100").split()[1], 16) == 0
         registers = qmp_execute("human-monitor-command", {"command-line": "info registers"})
         assert "R13=20200000" in registers, registers
+        assert int(command("readl 0x400ac038").split()[1], 16) == 0x00860000
         for address, expected in masks.items():
             assert int(command(f"readl {address:#x}").split()[1], 16) == expected
         assert int(command("readl 0x400fc070").split()[1], 16) == 0x0c000030
@@ -392,7 +394,8 @@ def main():
         0x402f0014: 0x8200001b, 0x402f0040: 0xf31,
         0x402f0044: 0x00664b22, 0x402f0048: 0x0009090b,
         0x402f004c: 0x08070a01, 0x400a8000: 5,
-        0x400ac040: 0x00200007, 0x400ac044: 0x5555ea95,
+        0x400ac038: 0x00860000, 0x400ac040: 0x00200007,
+        0x400ac044: 0x5555ea95,
         0x400fc068: 0xc0000fff, 0x400fc06c: 0xfc0ccc00,
         0x400fc070: 0xfc3f303f, 0x400fc074: 0xffffff30,
         0x400fc078: 0xffffffff, 0x400fc07c: 0xf0033ff3,
@@ -416,7 +419,7 @@ def main():
     check_main_stack_entry(qemu, stock)
     check_main_stack_entry(qemu, patched)
     check_flexram_boundaries(qemu, stock)
-    check(qemu, l6, {0x401f8204: 0, 0x402f0010: 0})
+    check(qemu, l6, {0x400ac038: 0, 0x401f8204: 0, 0x402f0010: 0})
 
 
 if __name__ == "__main__":

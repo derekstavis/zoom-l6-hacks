@@ -4356,6 +4356,12 @@ static void l6max_seed_boot_handoff(L6ChipState *s)
     g_hash_table_insert(s->registers,
         GUINT_TO_POINTER((0x0d8010 >> 2) + 1),
         GUINT_TO_POINTER(0x00003040u));
+    /* Entry writes GPR14=0x00860000. Its upper bits are reserved in the
+     * RT1060 manual; generic GPR storage retains the written value, but
+     * reserved-bit readback on the physical MCU has not been established. */
+    g_hash_table_insert(s->registers,
+        GUINT_TO_POINTER((0x0ac038 >> 2) + 1),
+        GUINT_TO_POINTER(0x00860000u));
     /* First-stage entry selects the software FlexRAM partition: one 32 KiB
      * ITCM bank, four DTCM banks and eleven OCRAM banks. GPR16's other
      * fields are inherited; its reset value supplies the initial VTOR. */

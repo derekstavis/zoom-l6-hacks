@@ -68,6 +68,11 @@ model pad electrical characteristics or reroute pins dynamically. SDRAM
 timing and refresh register values are seeded from the bootloader's nominal
 clock and parameters, but refresh and SDRAM commands are not modeled.
 
+First-stage entry also writes `0x00860000` to IOMUX GPR14, clearing its
+documented comparator fields. The emulator stores the written value; the
+upper bits are reserved in the RT1060 manual, and their physical readback has
+not been measured.
+
 The bootloader's entry code selects FlexRAM configuration `0x5555ea95`: one
 32 KiB bank for ITCM, four for DTCM and eleven for OCRAM. With the RT1060's
 separate 512 KiB OCRAM, the L6max direct boot exposes 32 KiB ITCM, 128 KiB

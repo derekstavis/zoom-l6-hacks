@@ -102,12 +102,8 @@ mod tests {
 
 /// The address `name` is declared at in `patches/api` for `model`.
 pub fn symbol(model: l6fw::Model, name: &str) -> Option<u32> {
-    let table = match model {
-        l6fw::Model::L6 => firmware_api::l6::SYMBOLS,
-        l6fw::Model::L6max => firmware_api::l6max::SYMBOLS,
-    };
-    table
-        .binary_search_by(|(declared, _)| declared.cmp(&name))
-        .ok()
-        .map(|index| table[index].1)
+    match model {
+        l6fw::Model::L6 => firmware_api::l6::symbol(name),
+        l6fw::Model::L6max => firmware_api::l6max::symbol(name),
+    }
 }

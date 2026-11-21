@@ -224,14 +224,6 @@ impl QmpClient {
     }
 }
 
-impl Drop for QmpClient {
-    fn drop(&mut self) {
-        if let Ok(management) = self.management.lock() {
-            let _ = management.inner().get_ref_write().shutdown(Shutdown::Both);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,6 +275,27 @@ mod tests {
         client.resume().unwrap();
         assert_eq!(client.drain_events().len(), 1);
         client.quit().unwrap();
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn dropping_a_clone_keeps_the_connection_usable() {
+        let (client, mut peer) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || {
+            let mut reader = BufReader::new(peer.try_clone().unwrap());
+            greeting(&mut peer);
+            expect_command(&mut reader, "qmp_capabilities");
+            peer.write_all(b"{\"return\":{}}\r\n").unwrap();
+            expect_command(&mut reader, "query-status");
+            peer.write_all(
+                b"{\"return\":{\"running\":true,\"singlestep\":false,\"status\":\"running\"}}\r\n",
+            )
+            .unwrap();
+        });
+        let client = QmpClient::connect(client).unwrap();
+        let clone = client.clone();
+        drop(clone);
+        assert!(client.query_status().unwrap().running);
         server.join().unwrap();
     }
 

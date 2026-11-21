@@ -57,6 +57,16 @@ bounded directory scan to choose the next filename instead of retaining a large
 filename array on the task stack. It streams each file independently and skips
 corrupt or unsupported candidates.
 
+Every module is read and relocated before any is hooked in, so the loader can
+compare the packages each one names in its identity record. A package in two
+single-package modules loads once, from the newest version; equal versions
+keep the first in filename order. A package shared with a module that carries
+more than one package has no safe choice, so no module carrying it loads. That
+is the case when a `PATCHES` folder from an earlier download is merged with a
+new one instead of replaced: both effect bundles carry efx-loader. The
+`sd-duplicate-module`, `sd-older-module` and `sd-duplicate-bundle` cases cover
+the three outcomes.
+
 The loader has dynamic dispatch stubs for the catalog sites marked dynamic in
 the model-specific function catalog, and its registry holds one record per
 such site. A module's hook links live at the start of the module's own

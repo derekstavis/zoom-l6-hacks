@@ -972,6 +972,255 @@ pub mod dynamic {
     }
 }
 
+/// Which SD modules to load when several carry the same package.
+///
+/// Every module names its packages in its identity record (`patchrt`'s
+/// `PatchInfo`). A package in two single-package modules loads once, from
+/// the newest version; equal versions keep the first in load order. A package
+/// shared with a multi-package module has no safe choice, so no module
+/// carrying it loads.
+pub mod identity {
+    /// `patchrt::PatchRecord`: ASCII, NUL-padded.
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct PackageRecord {
+        pub name: [u8; 32],
+        pub version: [u8; 16],
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Decision {
+        Load,
+        /// A newer or earlier copy of its only package loads instead.
+        Superseded,
+        /// It shares a package with another module, and one of them
+        /// carries more than one package.
+        Conflict,
+    }
+
+    /// `major.minor.patch`, NUL-padded.
+    pub fn version(text: &[u8]) -> Option<(u32, u32, u32)> {
+        let len = text
+            .iter()
+            .position(|&byte| byte == 0)
+            .unwrap_or(text.len());
+        let mut parts = [0u32; 3];
+        let mut index = 0;
+        let mut digits = 0;
+        for &byte in &text[..len] {
+            match byte {
+                b'0'..=b'9' => {
+                    parts[index] = parts[index]
+                        .checked_mul(10)?
+                        .checked_add(u32::from(byte - b'0'))?;
+                    digits += 1;
+                }
+                b'.' if digits > 0 && index < 2 => {
+                    index += 1;
+                    digits = 0;
+                }
+                _ => return None,
+            }
+        }
+        (index == 2 && digits > 0).then_some((parts[0], parts[1], parts[2]))
+    }
+
+    /// Decide every module at once. `modules[i]` is module `i`'s packages, in
+    /// load order; `decisions` must be as long as `modules`.
+    pub fn resolve(modules: &[&[PackageRecord]], decisions: &mut [Decision]) {
+        for decision in decisions.iter_mut() {
+            *decision = Decision::Load;
+        }
+        for (index, packages) in modules.iter().enumerate() {
+            for package in packages.iter() {
+                let carries = |other: &&[PackageRecord]| {
+                    other.iter().any(|record| record.name == package.name)
+                };
+                let holders = modules.iter().filter(|other| carries(other)).count();
+                if holders < 2 {
+                    continue;
+                }
+                let bundled = modules
+                    .iter()
+                    .filter(|other| carries(other))
+                    .any(|other| other.len() > 1);
+                // The first holder decides for the whole group.
+                if modules.iter().position(|other| carries(&other)) != Some(index) {
+                    continue;
+                }
+                let newest = if bundled {
+                    None
+                } else {
+                    modules
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, other)| carries(other))
+                        .try_fold(None::<(usize, (u32, u32, u32))>, |best, (holder, other)| {
+                            let found = version(&other[0].version)?;
+                            Some(match best {
+                                Some((_, newest)) if newest >= found => best,
+                                _ => Some((holder, found)),
+                            })
+                        })
+                        .flatten()
+                };
+                for (holder, other) in modules.iter().enumerate() {
+                    if !carries(other) {
+                        continue;
+                    }
+                    decisions[holder] = match newest {
+                        Some((keep, _)) if keep == holder => decisions[holder],
+                        Some(_) if decisions[holder] != Decision::Conflict => Decision::Superseded,
+                        _ => Decision::Conflict,
+                    };
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    extern crate std;
+    use std::{vec, vec::Vec};
+
+    use super::identity::{Decision, PackageRecord, resolve, version};
+
+    fn record(name: &str, version: &str) -> PackageRecord {
+        let mut record = PackageRecord {
+            name: [0; 32],
+            version: [0; 16],
+        };
+        record.name[..name.len()].copy_from_slice(name.as_bytes());
+        record.version[..version.len()].copy_from_slice(version.as_bytes());
+        record
+    }
+
+    fn decide(modules: &[&[PackageRecord]]) -> Vec<Decision> {
+        let mut decisions = vec![Decision::Load; modules.len()];
+        resolve(modules, &mut decisions);
+        decisions
+    }
+
+    #[test]
+    fn versions_parse_as_three_numbers() {
+        assert_eq!(version(b"1.0.1\0\0"), Some((1, 0, 1)));
+        assert_eq!(version(b"10.20.300"), Some((10, 20, 300)));
+        for bad in [
+            &b""[..],
+            b"1.0",
+            b"1..0",
+            b"1.0.0.0",
+            b"1.0.x",
+            b".1.0",
+            b"1.0.",
+        ] {
+            assert_eq!(version(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn distinct_packages_all_load() {
+        let knob = [record("knob-dialog", "1.0.0")];
+        let midi = [record("midi-sync", "1.0.0")];
+        let effects = [record("efx-loader", "1.0.1"), record("efx-velvet", "1.0.1")];
+        assert_eq!(decide(&[&knob, &midi, &effects]), [Decision::Load; 3]);
+    }
+
+    #[test]
+    fn the_newest_single_package_module_loads() {
+        let old = [record("knob-dialog", "1.0.0")];
+        let new = [record("knob-dialog", "1.2.0")];
+        let middle = [record("knob-dialog", "1.1.9")];
+        let other = [record("midi-sync", "1.0.0")];
+        assert_eq!(
+            decide(&[&old, &new, &other, &middle]),
+            [
+                Decision::Superseded,
+                Decision::Load,
+                Decision::Load,
+                Decision::Superseded
+            ]
+        );
+        // Numeric, not textual: 1.10.0 is newer than 1.9.0.
+        let nine = [record("knob-dialog", "1.9.0")];
+        let ten = [record("knob-dialog", "1.10.0")];
+        assert_eq!(
+            decide(&[&ten, &nine]),
+            [Decision::Load, Decision::Superseded]
+        );
+    }
+
+    #[test]
+    fn equal_versions_keep_the_first_in_load_order() {
+        let first = [record("knob-dialog", "1.0.0")];
+        let second = [record("knob-dialog", "1.0.0")];
+        assert_eq!(
+            decide(&[&first, &second]),
+            [Decision::Load, Decision::Superseded]
+        );
+    }
+
+    #[test]
+    fn an_unreadable_version_has_no_safe_choice() {
+        let good = [record("knob-dialog", "1.0.0")];
+        let bad = [record("knob-dialog", "dev")];
+        assert_eq!(
+            decide(&[&good, &bad]),
+            [Decision::Conflict, Decision::Conflict]
+        );
+    }
+
+    #[test]
+    fn a_package_shared_with_a_bundle_loads_from_neither() {
+        let knob = [record("knob-dialog", "1.0.0")];
+        let effects = [
+            record("efx-loader", "1.0.1"),
+            record("knob-dialog", "1.0.0"),
+            record("efx-velvet", "1.0.1"),
+        ];
+        let midi = [record("midi-sync", "1.0.0")];
+        assert_eq!(
+            decide(&[&knob, &effects, &midi]),
+            [Decision::Conflict, Decision::Conflict, Decision::Load]
+        );
+        // Two versions of the same bundle, as an unreplaced PATCHES folder leaves.
+        let old_effects = [
+            record("efx-loader", "1.0.0"),
+            record("knob-dialog", "1.0.0"),
+            record("efx-velvet", "1.0.0"),
+        ];
+        assert_eq!(
+            decide(&[&old_effects, &effects]),
+            [Decision::Conflict, Decision::Conflict]
+        );
+    }
+
+    #[test]
+    fn a_conflict_outranks_a_newer_version() {
+        // Each package is decided on its own: knob-dialog's newest single
+        // module loads, while midi-sync is shared with a bundle.
+        let old = [record("knob-dialog", "1.0.0")];
+        let new = [record("knob-dialog", "1.1.0")];
+        let bundle = [
+            record("midi-sync", "1.0.0"),
+            record("din-mixer-control", "1.0.0"),
+        ];
+        let midi = [record("midi-sync", "1.0.1")];
+        assert_eq!(
+            decide(&[&old, &new, &bundle, &midi]),
+            [
+                Decision::Superseded,
+                Decision::Load,
+                Decision::Conflict,
+                Decision::Conflict
+            ]
+        );
+        // Modules without identity records never conflict.
+        assert_eq!(decide(&[&[], &[], &old]), [Decision::Load; 3]);
+    }
+}
+
 #[cfg(test)]
 mod dynamic_stream_tests {
     extern crate std;

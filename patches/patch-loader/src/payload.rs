@@ -422,12 +422,47 @@ unsafe fn discard(block: *mut u8, loaded_base: usize, memory_len: usize) {
     }
 }
 
-/// Load one compact version-1 module directly into its final allocation:
-/// its hook links first, then its code and state. Hook registrations stay
-/// local until the streaming CRC, relocations and every site check pass. The
-/// complete module's hook set is published under one interrupt-masked
-/// registry update.
-unsafe fn load_dynamic<R: core_loader::bundle::Reader>(reader: &mut R, order: u32) -> bool {
+/// A module read into its final allocation whose hooks are not yet published.
+#[derive(Clone, Copy)]
+struct Staged {
+    block: *mut u8,
+    loaded_base: usize,
+    memory_len: usize,
+    hook_count: usize,
+}
+
+impl Staged {
+    /// The packages in the module's identity record, or none when it has no
+    /// readable record.
+    unsafe fn packages(&self) -> &'static [core_loader::identity::PackageRecord] {
+        use core_loader::identity::PackageRecord;
+        let base = self.loaded_base;
+        let end = base + self.memory_len;
+        if self.memory_len < 12
+            || unsafe { ptr::read(base as *const u32) } != patch_api::PATCH_INFO_MAGIC
+            || unsafe { ptr::read((base + 4) as *const u16) } != patch_api::PATCH_INFO_LAYOUT
+        {
+            return &[];
+        }
+        let count = usize::from(unsafe { ptr::read((base + 6) as *const u16) });
+        let records = unsafe { ptr::read((base + 8) as *const u32) } as usize;
+        let len = count * core::mem::size_of::<PackageRecord>();
+        if records < base || records.checked_add(len).is_none_or(|records_end| records_end > end) {
+            return &[];
+        }
+        unsafe { slice::from_raw_parts(records as *const PackageRecord, count) }
+    }
+
+    unsafe fn discard(&self) {
+        unsafe { discard(self.block, self.loaded_base, self.memory_len) };
+    }
+}
+
+/// Read one compact version-1 module directly into its final allocation:
+/// its hook links first, then its code and state. Nothing is published:
+/// hook registrations stay local until `publish`, after the streaming CRC,
+/// relocations and every site check pass.
+unsafe fn stage<R: core_loader::bundle::Reader>(reader: &mut R, order: u32) -> Option<Staged> {
     use core_loader::dynamic::{Hook, HookLink, LINK_LEN};
     let pending = match core_loader::dynamic::read_header(
         reader,
@@ -436,13 +471,13 @@ unsafe fn load_dynamic<R: core_loader::bundle::Reader>(reader: &mut R, order: u3
         core_loader::dynamic::MAX_RELOCATIONS_PER_MODULE,
     ) {
         Ok(header) => header,
-        Err(_) => return false,
+        Err(_) => return None,
     };
     let hook_count = pending.header.hook_count;
     let memory_len = pending.header.memory_len;
     // The load order and record index share the link's order word.
     if hook_count > 0xffff || order > 0xffff {
-        return false;
+        return None;
     }
     let links_len = hook_count * LINK_LEN;
     let block = unsafe { alloc(links_len + memory_len) };
@@ -450,7 +485,7 @@ unsafe fn load_dynamic<R: core_loader::bundle::Reader>(reader: &mut R, order: u3
         if !block.is_null() {
             unsafe { free(block) };
         }
-        return false;
+        return None;
     }
     let links = block as *mut HookLink;
     let loaded_base = block as usize + links_len;
@@ -462,7 +497,7 @@ unsafe fn load_dynamic<R: core_loader::bundle::Reader>(reader: &mut R, order: u3
             .is_err()
         {
             unsafe { discard(block, loaded_base, memory_len) };
-            return false;
+            return None;
         }
     }
     // Turn each record into its link, last first, so no unread record is
@@ -475,7 +510,7 @@ unsafe fn load_dynamic<R: core_loader::bundle::Reader>(reader: &mut R, order: u3
             .position(|site| site.address == hook.address);
         let Some(site) = site.filter(|_| hook.next_slot_offset != u32::MAX) else {
             unsafe { discard(block, loaded_base, memory_len) };
-            return false;
+            return None;
         };
         unsafe {
             ptr::write(
@@ -491,6 +526,26 @@ unsafe fn load_dynamic<R: core_loader::bundle::Reader>(reader: &mut R, order: u3
             );
         }
     }
+    Some(Staged {
+        block,
+        loaded_base,
+        memory_len,
+        hook_count,
+    })
+}
+
+/// Publish a staged module's complete hook set under one interrupt-masked
+/// registry update.
+unsafe fn publish(module: Staged) -> bool {
+    use core_loader::dynamic::{HookLink, LINK_LEN};
+    let Staged {
+        block,
+        loaded_base,
+        memory_len,
+        hook_count,
+    } = module;
+    let links_len = hook_count * LINK_LEN;
+    let links = block as *mut HookLink;
     unsafe {
         clean_cache(block as usize, links_len + memory_len);
         synchronize_instructions();
@@ -552,10 +607,15 @@ unsafe fn load_dynamic<R: core_loader::bundle::Reader>(reader: &mut R, order: u3
     true
 }
 
-/// Enumerate the patch directory, loading each supported BIN independently.
-/// Invalid or unsupported files are skipped so another candidate can load.
+/// Enumerate the patch directory and stage each supported BIN independently;
+/// invalid or unsupported files are skipped so another candidate can load.
+/// Then publish the staged modules in load order, except those whose packages
+/// duplicate another module's (see `core_loader::identity`).
 unsafe fn load_patch_files() -> bool {
-    let mut loaded_any = false;
+    use core_loader::identity::{Decision, PackageRecord, resolve};
+    const CAPACITY: usize = core_loader::registry::MAX_MODULES as usize;
+    let mut staged = [None::<Staged>; CAPACITY];
+    let mut staged_count = 0;
     let mut last_name = [0; SEARCH_NAME_CAPACITY];
     let mut last_len = 0;
     let mut path = [0u16; SEARCH_NAME_CAPACITY + 12];
@@ -569,15 +629,36 @@ unsafe fn load_patch_files() -> bool {
         if make_patch_path(&selected[..selected_len], &mut path).is_some() {
             let mut handle = 0;
             if unsafe { open(&mut handle, path.as_ptr()) } == 0 {
-                let loaded = unsafe { load_dynamic(&mut FirmwareReader(handle), order as u32) };
+                let module = unsafe { stage(&mut FirmwareReader(handle), order as u32) };
                 unsafe { close(handle) };
-                loaded_any |= loaded;
+                if let Some(module) = module {
+                    staged[staged_count] = Some(module);
+                    staged_count += 1;
+                }
             }
         }
         for (slot, byte) in last_name.iter_mut().zip(&selected[..selected_len]) {
             *slot = *byte;
         }
         last_len = selected_len;
+        if staged_count == CAPACITY {
+            break;
+        }
+    }
+    let mut packages: [&[PackageRecord]; CAPACITY] = [&[]; CAPACITY];
+    for (slot, module) in packages.iter_mut().zip(&staged[..staged_count]) {
+        *slot = unsafe { module.unwrap().packages() };
+    }
+    let mut decisions = [Decision::Load; CAPACITY];
+    resolve(&packages[..staged_count], &mut decisions[..staged_count]);
+    let mut loaded_any = false;
+    for (module, decision) in staged[..staged_count].iter().zip(decisions) {
+        let module = module.unwrap();
+        if decision == Decision::Load {
+            loaded_any |= unsafe { publish(module) };
+        } else {
+            unsafe { module.discard() };
+        }
     }
     loaded_any
 }

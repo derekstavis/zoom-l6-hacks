@@ -3,9 +3,9 @@
   "model": "L6",
   "module_base": "0x800c0000",
   "name": "patch-loader",
-  "patch_info_offset": 5280,
+  "patch_info_offset": 7156,
   "payload_file": "patch-loader-L6-000-800b6af0.bin",
-  "payload_length": 5668,
+  "payload_length": 7180,
   "reserve_end": "0x800c8000",
   "sites": [
     {
@@ -14,7 +14,7 @@
       "guard_sha256": "0360cab6934417a2ec4e6d8e81a452db698d5fc5f0965ae39b13d02391dc2132",
       "length": 4,
       "link": false,
-      "target_offset": 88
+      "target_offset": 4580
     },
     {
       "address": "0x8005fc98",
@@ -22,7 +22,7 @@
       "guard_sha256": "cfa045938b57940b57930f97cd7cdf3e1a8c3b1ddb72c2609b95b97c1b1921ed",
       "length": 4,
       "link": false,
-      "target_offset": 124
+      "target_offset": 4616
     },
     {
       "address": "0x8002f490",
@@ -38,17 +38,17 @@
     {
       "firmware_address": "0x8005fc98",
       "length": 4,
-      "payload_offset": 64
+      "payload_offset": 4556
     },
     {
       "firmware_address": "0x8002f490",
       "length": 4,
-      "payload_offset": 76
+      "payload_offset": 4568
     },
     {
       "firmware_address": "0x80067a84",
       "length": 4,
-      "payload_offset": 104
+      "payload_offset": 4596
     }
   ]
 }

@@ -1,5 +1,5 @@
 {
-  "generator_source_sha256": "e9220f2f326b17989990caffa7f302d7420d4dbc490d30d788af32f8b7640b1c",
+  "generator_source_sha256": "d5b1b555a92f5d97f8bd56c6c0afb54f7490051d69a21fa7b5d14f872b6e20de",
   "l6_source_firmware_sha256": "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799",
   "loaders": [
     {
@@ -80,26 +80,26 @@
       "name": "din-mixer-control"
     },
     {
-      "base": "0x8010a4e0",
-      "metadata_file": "din-mixer-control-8010a4e0.json",
+      "base": "0x8010aa20",
+      "metadata_file": "din-mixer-control-8010aa20.json",
       "model": "L6max",
       "name": "din-mixer-control"
     },
     {
-      "base": "0x8010a8d0",
-      "metadata_file": "din-mixer-control-8010a8d0.json",
+      "base": "0x8010ae10",
+      "metadata_file": "din-mixer-control-8010ae10.json",
       "model": "L6max",
       "name": "din-mixer-control"
     },
     {
-      "base": "0x8010b1b0",
-      "metadata_file": "din-mixer-control-8010b1b0.json",
+      "base": "0x8010b6f0",
+      "metadata_file": "din-mixer-control-8010b6f0.json",
       "model": "L6max",
       "name": "din-mixer-control"
     },
     {
-      "base": "0x8010b5a0",
-      "metadata_file": "din-mixer-control-8010b5a0.json",
+      "base": "0x8010bae0",
+      "metadata_file": "din-mixer-control-8010bae0.json",
       "model": "L6max",
       "name": "din-mixer-control"
     },
@@ -110,8 +110,8 @@
       "name": "knob-dialog"
     },
     {
-      "base": "0x8010a4e0",
-      "metadata_file": "knob-dialog-8010a4e0.json",
+      "base": "0x8010aa20",
+      "metadata_file": "knob-dialog-8010aa20.json",
       "model": "L6max",
       "name": "knob-dialog"
     },
@@ -128,14 +128,14 @@
       "name": "midi-sync"
     },
     {
-      "base": "0x8010a4e0",
-      "metadata_file": "midi-sync-8010a4e0.json",
+      "base": "0x8010aa20",
+      "metadata_file": "midi-sync-8010aa20.json",
       "model": "L6max",
       "name": "midi-sync"
     },
     {
-      "base": "0x8010b1b0",
-      "metadata_file": "midi-sync-8010b1b0.json",
+      "base": "0x8010b6f0",
+      "metadata_file": "midi-sync-8010b6f0.json",
       "model": "L6max",
       "name": "midi-sync"
     },
@@ -146,8 +146,8 @@
       "name": "midi-sync"
     },
     {
-      "base": "0x800b8120",
-      "metadata_file": "midi-sync-l6-loader-800b8120.json",
+      "base": "0x800b8700",
+      "metadata_file": "midi-sync-l6-loader-800b8700.json",
       "model": "L6",
       "name": "midi-sync"
     }

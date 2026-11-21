@@ -2869,6 +2869,24 @@
     "definition": "7d05d695075086eb1b1630c2ef691195350a59dd224e83b7d85e59ef911c13fe"
   },
   {
+    "case": "sd-duplicate-bundle",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix"
+    ],
+    "definition": "b906761e235c5c90049b81db444fb7d86a03337c9de5dddebdcf714a5ad14ef9"
+  },
+  {
+    "case": "sd-duplicate-module",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix"
+    ],
+    "definition": "54d3d76f165706fd250d742d7ad90bf069794f7ba45357d88e3f07f823d6bb40"
+  },
+  {
     "case": "sd-effect-editor-mode-restore",
     "model": "l6max",
     "backend": "headless",
@@ -3046,6 +3064,15 @@
       "sd-matrix"
     ],
     "definition": "5bf0f20db04afb03a1a17232378350740c1b5a21b8b92290e6161b267f7abe04"
+  },
+  {
+    "case": "sd-older-module",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "sd-matrix"
+    ],
+    "definition": "6842e22c5d3fe10c10295566f8b60b6b1d53bf9141d0bbb30cd58e99f55a27e5"
   },
   {
     "case": "sd-static-all",

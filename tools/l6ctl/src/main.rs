@@ -16,8 +16,13 @@ fn request(socket: &PathBuf, message: Value) -> Result<Value, String> {
             socket.display()
         )
     })?;
+    let timeout = if message.get("command").and_then(Value::as_str) == Some("rtos") {
+        30
+    } else {
+        3
+    };
     stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+        .set_read_timeout(Some(std::time::Duration::from_secs(timeout)))
         .map_err(|error| error.to_string())?;
     writeln!(stream, "{message}").map_err(|error| error.to_string())?;
     let mut reply = String::new();
@@ -69,11 +74,33 @@ fn run() -> Result<(), String> {
     let command = args.first().map(String::as_str).unwrap_or("help");
     if matches!(command, "help" | "--help" | "-h") {
         println!(
-            "Usage: l6ctl [--socket PATH] info\n       l6ctl [--socket PATH] button NAME|TARGET [--hold-ms MS]\n       l6ctl [--socket PATH] down NAME|TARGET DURATION_MS\n       l6ctl [--socket PATH] up NAME|TARGET\n       l6ctl [--socket PATH] encoder CHANNEL STEPS\n       l6ctl [--socket PATH] analog CHANNEL STEPS\n       l6ctl [--socket PATH] set-analog CHANNEL VALUE\n\nConnects to a running emulator started with --control-socket PATH. Button names use the semantic names documented by l6test; numeric targets 0..53 are also accepted. Encoder channels are one-based. Analog channels are 1..5."
+            "Usage: l6ctl [--socket PATH] info\n       l6ctl [--socket PATH] rtos heap|tasks|scheduler|objects|all [--pretty]\n       l6ctl [--socket PATH] button NAME|TARGET [--hold-ms MS]\n       l6ctl [--socket PATH] down NAME|TARGET DURATION_MS\n       l6ctl [--socket PATH] up NAME|TARGET\n       l6ctl [--socket PATH] encoder CHANNEL STEPS\n       l6ctl [--socket PATH] analog CHANNEL STEPS\n       l6ctl [--socket PATH] set-analog CHANNEL VALUE\n\nConnects to a running emulator started with --control-socket PATH. Button names use the semantic names documented by l6test; numeric targets 0..53 are also accepted. Encoder channels are one-based. Analog channels are 1..5."
         );
         return Ok(());
     }
     let socket = socket.ok_or("provide --socket PATH or set L6_CONTROL_SOCKET")?;
+    if command == "rtos" {
+        let kind = args
+            .get(1)
+            .map(String::as_str)
+            .ok_or("Usage: l6ctl rtos heap|tasks|scheduler|objects|all [--pretty]")?;
+        if !["heap", "tasks", "scheduler", "objects", "all"].contains(&kind)
+            || !(args.len() == 2 || (args.len() == 3 && args[2] == "--pretty"))
+        {
+            return Err("Usage: l6ctl rtos heap|tasks|scheduler|objects|all [--pretty]".into());
+        }
+        let result = request(&socket, json!({"command":"rtos","kind":kind}))?;
+        println!(
+            "{}",
+            if args.len() == 3 {
+                serde_json::to_string_pretty(&result)
+            } else {
+                serde_json::to_string(&result)
+            }
+            .map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
     if command == "info" {
         println!(
             "{}",
@@ -154,8 +181,54 @@ fn run() -> Result<(), String> {
 }
 
 fn main() {
+    let mut arguments = env::args().skip(1);
+    let mut rtos = false;
+    while let Some(arg) = arguments.next() {
+        if arg == "--socket" {
+            arguments.next();
+        } else {
+            rtos = arg == "rtos";
+            break;
+        }
+    }
     if let Err(error) = run() {
-        eprintln!("l6ctl: {error}");
+        if rtos {
+            eprintln!("{}", json!({"schema":1,"error":error}));
+        } else {
+            eprintln!("l6ctl: {error}");
+        }
         std::process::exit(2);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{os::unix::net::UnixListener, thread};
+
+    #[test]
+    fn rtos_request_preserves_json_and_reports_server_error() {
+        let path = std::env::temp_dir().join(format!("l6ctl-test-{}.sock", std::process::id()));
+        let listener = UnixListener::bind(&path).unwrap();
+        let server = thread::spawn(move || {
+            for success in [true, false] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut line = String::new();
+                BufReader::new(&stream).read_line(&mut line).unwrap();
+                let message: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(message, json!({"command":"rtos","kind":"tasks"}));
+                let response = if success {
+                    json!({"ok":true,"result":{"schema":1,"kind":"tasks"}})
+                } else {
+                    json!({"ok":false,"error":"unsupported firmware"})
+                };
+                writeln!(stream, "{response}").unwrap();
+            }
+        });
+        let message = json!({"command":"rtos","kind":"tasks"});
+        assert_eq!(request(&path, message.clone()).unwrap()["schema"], 1);
+        assert_eq!(request(&path, message).unwrap_err(), "unsupported firmware");
+        server.join().unwrap();
+        std::fs::remove_file(path).unwrap();
     }
 }

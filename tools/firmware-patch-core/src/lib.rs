@@ -215,8 +215,10 @@ pub fn resolve_effect_replacements(
     resolve_patch_dependencies(&requested)
 }
 
-/// Versioned filename for a composed effect-replacement map. Stock slots are
-/// written explicitly so each supported mapping has a unique SD asset name.
+/// Versioned filename for a composed effect-replacement map. Every member,
+/// the efx-loader router included, is named with its version, so a change to
+/// any of them gives a new file. Stock slots are written explicitly so each
+/// supported mapping has a unique SD asset name.
 pub fn effect_replacement_file_name(replacements: &[(String, String)]) -> Result<String, String> {
     let requested = effect_replacement_packages(replacements, patch_catalog())?;
     if requested.is_empty() {
@@ -239,8 +241,12 @@ pub fn effect_replacement_file_name(replacements: &[(String, String)]) -> Result
             .map(|(_, id)| id.as_str())
             .unwrap_or("stock")
     };
+    let router = patch_package(EFFECT_REPLACEMENT_ROUTER_PACKAGE)
+        .ok_or("missing effect replacement router package")?;
     Ok(format!(
-        "efx-loader-{}-room-{}-spring-{}.bin",
+        "{}-{}-{}-room-{}-spring-{}.bin",
+        router.name,
+        router.version,
         package_names,
         assignment("room"),
         assignment("spring")
@@ -643,7 +649,7 @@ mod tests {
         );
         assert_eq!(
             effect_replacement_file_name(&[("room".into(), "velvet".into())]).unwrap(),
-            "efx-loader-knob-dialog-1.0.0-efx-velvet-1.0.0-room-velvet-spring-stock.bin"
+            "efx-loader-1.0.1-knob-dialog-1.0.0-efx-velvet-1.0.1-room-velvet-spring-stock.bin"
         );
     }
 

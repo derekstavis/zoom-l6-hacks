@@ -12,7 +12,7 @@ import {
   EFFECT_REPLACEMENTS,
   LOADABLE_PATCHES,
   PATCHES,
-  effectReplacementFileName,
+  effectReplacementFile,
   patchDependencies,
 } from '@/lib/patches'
 
@@ -285,11 +285,10 @@ export default function App() {
         }),
       )
       if (hasEffectReplacements && model === 'L6max') {
-        const fileName = effectReplacementFileName(effectReplacements)
-        const response = await fetch(
-          `${import.meta.env.BASE_URL}loadable-patches/${model}/${fileName}`,
-        )
+        const file = await effectReplacementFile(import.meta.env.BASE_URL, effectReplacements)
+        const response = await fetch(`${import.meta.env.BASE_URL}loadable-patches/${file}`)
         if (!response.ok) throw new Error("Couldn't load the selected effect replacements.")
+        const fileName = file.split('/').pop()
         entries.push([`PATCHES/50-${fileName}`, new Uint8Array(await response.arrayBuffer())])
       }
       const files: Record<string, Uint8Array> = Object.fromEntries(entries)

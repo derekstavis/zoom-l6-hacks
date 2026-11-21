@@ -9,6 +9,13 @@ const TASK_COUNT: u32 = 0x8020ab40;
 const CURRENT_TCB: u32 = 0x808a3af0;
 const CREATE_TASK: u32 = 0x80091360;
 const CREATE_HASH: &str = "05215841341ae4fb9ffbbfb43250cea8f3149427f4ba5abd048cfb4dd5d22ec9";
+const DELAY_TASK: u32 = 0x80084e90;
+const DELAY_HASH: &str = "eb976fe0ec661701842cb3f7bfde2fe23b1f173d16cfbe6b08c730dfd6f071ce";
+const QUEUE_CREATE: u32 = 0x800909c0;
+const QUEUE_HASH: &str = "53e5aeb59bdbec2225c9b6d5a692d578a7c992bd68aba55034397e27250ef0dc";
+const TASK_CHANGE: u32 = 0x8020ab38;
+const TICK_TASK: u32 = 0x80091a20;
+const TICK_HASH: &str = "b16ed9b761ad29feb71b01d07d53be5c1da56e467692d2e31424f4653227cd64";
 
 #[derive(Clone, Debug)]
 pub struct HeapBlock {
@@ -29,6 +36,9 @@ pub struct Task {
     pub tcb: u32,
     pub priority: u32,
     pub base_priority: u32,
+    pub creation_number: u32,
+    pub mutexes_held: u32,
+    pub event_list: Option<u32>,
     pub stack_start: u32,
     pub stack_size: u32,
     pub stack_remaining: u32,
@@ -42,13 +52,19 @@ pub struct SchedulerSnapshot {
     pub ticks: u32,
     pub pending_ticks: u32,
     pub current_tcb: u32,
+    pub yield_pending: bool,
+    pub tick_overflows: u32,
+    pub next_wake: Option<u32>,
+    pub critical_nesting: u32,
 }
 pub fn scheduler(q: &QmpClient, model: Model) -> Result<SchedulerSnapshot, String> {
     guard(q, model)?;
-    if format!("{:x}", Sha256::digest(read(q, CREATE_TASK, 64)?)) != CREATE_HASH {
+    if format!("{:x}", Sha256::digest(read(q, CREATE_TASK, 64)?)) != CREATE_HASH
+        || format!("{:x}", Sha256::digest(read(q, TICK_TASK, 64)?)) != TICK_HASH
+    {
         return Err("Scheduler layout is unsupported for this firmware".into());
     }
-    let b = read(q, TASK_COUNT, 0x28)?;
+    let b = read(q, TASK_COUNT, 0x2c)?;
     let task_count = u32_at(&b, 0)?;
     if task_count > 256 {
         return Err("scheduler is not ready".into());
@@ -60,11 +76,85 @@ pub fn scheduler(q: &QmpClient, model: Model) -> Result<SchedulerSnapshot, Strin
         ticks: u32_at(&b, 12)?,
         pending_ticks: u32_at(&b, 0x24)?,
         current_tcb: u32_at(&read(q, CURRENT_TCB, 4)?, 0)?,
+        yield_pending: u32_at(&b, 0x18)? != 0,
+        tick_overflows: u32_at(&b, 0x28)?,
+        next_wake: match u32_at(&b, 0x20)? {
+            u32::MAX => None,
+            value => Some(value),
+        },
+        critical_nesting: u32_at(&read(q, 0x80207634, 4)?, 0)?,
     })
 }
 #[derive(Clone, Debug)]
 pub struct TasksSnapshot {
     pub tasks: Vec<Task>,
+}
+#[derive(Clone, Debug)]
+pub struct Object {
+    pub name: &'static str,
+    pub address: u32,
+    pub count: u32,
+    pub capacity: u32,
+    pub send_waiters: u32,
+    pub receive_waiters: u32,
+}
+pub fn objects(q: &QmpClient, model: Model) -> Result<Vec<Object>, String> {
+    let before = guard(q, model)?;
+    if format!("{:x}", Sha256::digest(read(q, QUEUE_CREATE, 64)?)) != QUEUE_HASH {
+        return Err("Object layout is unsupported for this firmware".into());
+    }
+    let root = 0x8020a2a0;
+    let address = u32_at(&read(q, root, 4)?, 0)?;
+    if address == 0 {
+        return Ok(Vec::new());
+    }
+    if address < START + 8
+        || address.checked_add(0x50).is_none_or(|end| end > END)
+        || address % 8 != 0
+    {
+        return Err("Notification semaphore is not ready".into());
+    }
+    let header = read(q, address - 8, 8)?;
+    let flags = u32_at(&header, 4)?;
+    let size = flags & 0x7fff_ffff;
+    if flags >> 31 == 0
+        || size < 0x58
+        || address
+            .checked_sub(8)
+            .and_then(|a| a.checked_add(size))
+            .is_none_or(|end| end > END)
+    {
+        return Err("Notification semaphore allocation is inconsistent; retrying".into());
+    }
+    let b = read(q, address, 0x50)?;
+    let again = read(q, address, 0x50)?;
+    if b != again || u32_at(&read(q, root, 4)?, 0)? != address || before != heap::read(q, model)? {
+        return Err("Object changed while sampling; retrying".into());
+    }
+    Ok(vec![decode_notification(address, &b)?])
+}
+fn decode_notification(address: u32, b: &[u8]) -> Result<Object, String> {
+    let count = u32_at(b, 0x38)?;
+    let capacity = u32_at(b, 0x3c)?;
+    let send_waiters = u32_at(b, 0x10)?;
+    let receive_waiters = u32_at(b, 0x24)?;
+    if capacity != 1
+        || count > capacity
+        || u32_at(b, 0x40)? != 0
+        || b.get(0x4c) != Some(&2)
+        || send_waiters > 256
+        || receive_waiters > 256
+    {
+        return Err("Notification semaphore layout is inconsistent; retrying".into());
+    }
+    Ok(Object {
+        name: "Notification semaphore",
+        address,
+        count,
+        capacity,
+        send_waiters,
+        receive_waiters,
+    })
 }
 fn u32_at(b: &[u8], offset: usize) -> Result<u32, String> {
     let b = b.get(offset..offset + 4).ok_or("short memory read")?;
@@ -157,6 +247,10 @@ pub fn tasks(q: &QmpClient, model: Model) -> Result<TasksSnapshot, String> {
     if format!("{:x}", Sha256::digest(read(q, CREATE_TASK, 64)?)) != CREATE_HASH {
         return Err("Task layout is unsupported for this firmware".into());
     }
+    if format!("{:x}", Sha256::digest(read(q, DELAY_TASK, 64)?)) != DELAY_HASH {
+        return Err("Task wait layout is unsupported for this firmware".into());
+    }
+    let change = u32_at(&read(q, TASK_CHANGE, 4)?, 0)?;
     let count = u32_at(&read(q, TASK_COUNT, 4)?, 0)?;
     if count > 256 {
         return Err("scheduler is not ready".into());
@@ -165,7 +259,7 @@ pub fn tasks(q: &QmpClient, model: Model) -> Result<TasksSnapshot, String> {
     let after = heap::read(q, model)?;
     let count_after = u32_at(&read(q, TASK_COUNT, 4)?, 0)?;
     let current_after = u32_at(&read(q, CURRENT_TCB, 4)?, 0)?;
-    if before != after || count != count_after {
+    if before != after || count != count_after || change != u32_at(&read(q, TASK_CHANGE, 4)?, 0)? {
         return Err("tasks changed while sampling; retrying".into());
     }
     decode_tasks(&memory, count, current_after)
@@ -229,6 +323,32 @@ fn decode_tasks(memory: &[u8], expected: u32, current: u32) -> Result<TasksSnaps
             .take_while(|b| **b == 0xa5)
             .count() as u32;
         let container = u32_at(memory, t + 0x14)?;
+        let event = u32_at(memory, t + 0x28)?;
+        let word_at = |address: u32| {
+            address
+                .checked_sub(START)
+                .and_then(|offset| u32_at(memory, offset as usize).ok())
+        };
+        let item = tcb + 0x18;
+        let event_valid = event != 0
+            && blocks.iter().any(|(p, size, allocated)| {
+                *allocated
+                    && event >= START + *p as u32 + 8
+                    && event
+                        .checked_add(20)
+                        .is_some_and(|end| end <= START + (*p + *size) as u32)
+            })
+            && word_at(event).is_some_and(|count| (1..=256).contains(&count))
+            && u32_at(memory, t + 0x1c)
+                .ok()
+                .and_then(|next| next.checked_add(8))
+                .and_then(word_at)
+                == Some(item)
+            && u32_at(memory, t + 0x20)
+                .ok()
+                .and_then(|prev| prev.checked_add(4))
+                .and_then(word_at)
+                == Some(item);
         let state = if current == tcb {
             "Current"
         } else if (0x808a3af4..0x808a3d74).contains(&container)
@@ -236,9 +356,17 @@ fn decode_tasks(memory: &[u8], expected: u32, current: u32) -> Result<TasksSnaps
         {
             "Ready"
         } else if container == 0x8020aea8 || container == 0x8020aebc {
-            "Delayed"
+            if event_valid {
+                "Timed wait"
+            } else {
+                "Delay / wait"
+            }
         } else if container == 0x8020ab80 {
-            "Waiting"
+            if event_valid {
+                "Blocked"
+            } else {
+                "Wait / susp."
+            }
         } else {
             "Other"
         };
@@ -252,6 +380,9 @@ fn decode_tasks(memory: &[u8], expected: u32, current: u32) -> Result<TasksSnaps
             tcb,
             priority: u32_at(memory, t + 0x2c)?,
             base_priority: u32_at(memory, t + 0x70)?,
+            creation_number: u32_at(memory, t + 0x68)?,
+            mutexes_held: u32_at(memory, t + 0x74)?,
+            event_list: event_valid.then_some(event),
             stack_start: stack,
             stack_size,
             stack_remaining: free,
@@ -273,6 +404,20 @@ mod tests {
     use super::*;
     fn put(mem: &mut [u8], offset: usize, word: u32) {
         mem[offset..offset + 4].copy_from_slice(&word.to_le_bytes());
+    }
+    #[test]
+    fn notification_requires_the_known_semaphore_shape() {
+        let mut mem = [0u8; 0x50];
+        put(&mut mem, 0x38, 1);
+        put(&mut mem, 0x3c, 1);
+        mem[0x4c] = 2;
+        assert_eq!(decode_notification(START + 8, &mem).unwrap().count, 1);
+        put(&mut mem, 0x38, 2);
+        assert!(decode_notification(START + 8, &mem).is_err());
+        put(&mut mem, 0x38, 1);
+        mem[0x4c] = 0;
+        assert!(decode_notification(START + 8, &mem).is_err());
+        assert!(decode_notification(START + 8, &mem[..16]).is_err());
     }
     #[test]
     fn task_snapshot_finds_stack_and_rejects_mismatched_count() {
@@ -306,5 +451,33 @@ mod tests {
         assert_eq!(snapshot.tasks[0].state, "Current");
         assert_eq!(snapshot.tasks[0].base_priority, 12);
         assert!(decode_tasks(&mem, 2, tcb).is_err());
+
+        // A task on an indefinite wait list can be identified as blocked only
+        // when its event item and the allocated list link back to each other.
+        put(&mut mem, free + 4, 0x8000_0080);
+        let rest = free + 0x80;
+        let rest_size = (mem.len() - rest) as u32;
+        put(&mut mem, rest + 4, rest_size);
+        let list = START + free as u32 + 8;
+        let sentinel = list + 8;
+        let item = tcb + 0x18;
+        put(&mut mem, free + 8, 1);
+        put(&mut mem, free + 8 + 12, item);
+        put(&mut mem, free + 8 + 16, item);
+        put(&mut mem, t + 0x14, 0x8020ab80);
+        put(&mut mem, t + 0x28, list);
+        put(&mut mem, t + 0x1c, sentinel);
+        put(&mut mem, t + 0x20, sentinel);
+        assert_eq!(decode_tasks(&mem, 1, 0).unwrap().tasks[0].state, "Blocked");
+        put(&mut mem, t + 0x14, 0x8020aea8);
+        assert_eq!(
+            decode_tasks(&mem, 1, 0).unwrap().tasks[0].state,
+            "Timed wait"
+        );
+        put(&mut mem, free + 8 + 16, 0);
+        assert_eq!(
+            decode_tasks(&mem, 1, 0).unwrap().tasks[0].state,
+            "Delay / wait"
+        );
     }
 }

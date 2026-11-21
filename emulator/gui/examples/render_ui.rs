@@ -291,7 +291,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(if audio { 520.0 } else { PATCHES_HEIGHT });
     let debug = matches!(
         option(&args, "--window"),
-        Some("debug-heap" | "debug-tasks" | "debug-scheduler")
+        Some("debug-heap" | "debug-tasks" | "debug-scheduler" | "debug-objects")
     );
     let handle = if debug {
         open_debug_window(

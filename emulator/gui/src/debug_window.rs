@@ -16,6 +16,7 @@ enum Tab {
     Heap,
     Tasks,
     Scheduler,
+    Objects,
 }
 pub struct DebugWindow {
     panel: Entity<NativePanel>,
@@ -23,12 +24,14 @@ pub struct DebugWindow {
     heap: Option<HeapSnapshot>,
     tasks: Option<TasksSnapshot>,
     scheduler: Option<SchedulerSnapshot>,
+    objects: Option<Vec<freertos::Object>>,
     error: Option<String>,
     refreshing: bool,
     connection: Option<l6max_host::qmp::QmpClient>,
     heap_table: Entity<TableState<DebugTable>>,
     tasks_table: Entity<TableState<DebugTable>>,
     scheduler_table: Entity<TableState<DebugTable>>,
+    objects_table: Entity<TableState<DebugTable>>,
 }
 impl DebugWindow {
     #[cfg(feature = "headless-screenshots")]
@@ -93,10 +96,13 @@ impl DebugWindow {
         .enumerate()
         .map(|(i, name)| Task {
             name: (*name).into(),
-            state: if i == 1 { "Current" } else { "Waiting" }.into(),
+            state: if i == 1 { "Current" } else { "Blocked" }.into(),
             tcb: 0x808ad2d0 + i as u32 * 0x1100,
             priority: if i == 6 { 0 } else { 14 },
             base_priority: if i == 6 { 0 } else { 14 },
+            creation_number: i as u32 + 1,
+            mutexes_held: 0,
+            event_list: None,
             stack_start: 0x808a52c0 + i as u32 * 0x1000,
             stack_size: if i == 0 { 32768 } else { 4096 },
             stack_remaining: match i {
@@ -117,16 +123,32 @@ impl DebugWindow {
             ticks: 123456,
             pending_ticks: 0,
             current_tcb: 0x808ad2d0,
+            yield_pending: false,
+            tick_overflows: 0,
+            next_wake: Some(123500),
+            critical_nesting: 0,
         };
         let scheduler_table = new_table(DebugRows::Scheduler(scheduler.clone()), window, cx);
+        let objects = vec![freertos::Object {
+            name: "Notification semaphore",
+            address: 0x808cb608,
+            count: 1,
+            capacity: 1,
+            send_waiters: 0,
+            receive_waiters: 0,
+        }];
+        let objects_table = new_table(DebugRows::Objects(objects.clone()), window, cx);
         Self {
             panel,
             heap_table,
             tasks_table,
             scheduler_table,
+            objects_table,
+            objects: Some(objects),
             tab: match kind {
                 "debug-tasks" => Tab::Tasks,
                 "debug-scheduler" => Tab::Scheduler,
+                "debug-objects" => Tab::Objects,
                 _ => Tab::Heap,
             },
             heap: Some(heap),
@@ -148,10 +170,15 @@ impl DebugWindow {
                 ticks: 0,
                 pending_ticks: 0,
                 current_tcb: 0,
+                yield_pending: false,
+                tick_overflows: 0,
+                next_wake: None,
+                critical_nesting: 0,
             }),
             window,
             cx,
         );
+        let objects_table = new_table(DebugRows::Objects(Vec::new()), window, cx);
         cx.spawn(async move |this, cx| {
             loop {
                 let selected = this.update(cx, |view, cx| {
@@ -171,6 +198,7 @@ impl DebugWindow {
                         view.heap = None;
                         view.tasks = None;
                         view.scheduler = None;
+                        view.objects = None;
                         view.error = None;
                         view.connection = qmp.clone();
                         cx.notify();
@@ -193,6 +221,7 @@ impl DebugWindow {
                             Tab::Scheduler => {
                                 freertos::scheduler(&qmp, model).map(Snapshot::Scheduler)
                             }
+                            Tab::Objects => freertos::objects(&qmp, model).map(Snapshot::Objects),
                         }
                     })
                     .await
@@ -244,6 +273,16 @@ impl DebugWindow {
                                     view.scheduler = Some(scheduler);
                                     view.error = None;
                                 }
+                                Ok(Snapshot::Objects(objects)) => {
+                                    view.objects_table.update(cx, |table, cx| {
+                                        table
+                                            .delegate_mut()
+                                            .set_rows(DebugRows::Objects(objects.clone()));
+                                        cx.notify();
+                                    });
+                                    view.objects = Some(objects);
+                                    view.error = None;
+                                }
                                 Err(error) => view.error = Some(error),
                             }
                             cx.notify();
@@ -263,6 +302,8 @@ impl DebugWindow {
             heap_table,
             tasks_table,
             scheduler_table,
+            objects_table,
+            objects: None,
             heap: None,
             tasks: None,
             scheduler: None,
@@ -276,6 +317,7 @@ enum Snapshot {
     Heap(HeapSnapshot),
     Tasks(TasksSnapshot),
     Scheduler(SchedulerSnapshot),
+    Objects(Vec<freertos::Object>),
 }
 fn bytes(value: u32) -> String {
     format!("{:.1} KiB", value as f64 / 1024.0)
@@ -285,6 +327,7 @@ enum DebugRows {
     Heap(Vec<freertos::HeapBlock>),
     Tasks(Vec<freertos::Task>),
     Scheduler(SchedulerSnapshot),
+    Objects(Vec<freertos::Object>),
 }
 struct DebugTable {
     rows: DebugRows,
@@ -297,6 +340,7 @@ impl DebugTable {
             DebugRows::Heap(_) => col >= 2,
             DebugRows::Tasks(_) => col >= 2,
             DebugRows::Scheduler(_) => col == 1,
+            DebugRows::Objects(_) => col >= 1,
         }
     }
     fn set_rows(&mut self, rows: DebugRows) {
@@ -329,6 +373,8 @@ impl DebugTable {
                     2 => a.priority.cmp(&b.priority),
                     3 => a.stack_size.cmp(&b.stack_size),
                     4 => a.stack_remaining.cmp(&b.stack_remaining),
+                    5 => (a.stack_remaining as u64 * b.stack_size as u64)
+                        .cmp(&(b.stack_remaining as u64 * a.stack_size as u64)),
                     _ => a.stack_start.cmp(&b.stack_start),
                 };
                 (if direction == ColumnSort::Descending {
@@ -340,12 +386,45 @@ impl DebugTable {
                 .then(a.tcb.cmp(&b.tcb))
             }),
             DebugRows::Scheduler(_) => {}
+            DebugRows::Objects(rows) => rows.sort_by(|a, b| {
+                let (col, direction) = sort.unwrap_or((0, ColumnSort::Ascending));
+                let order = match col {
+                    1 => a.count.cmp(&b.count),
+                    2 => a.capacity.cmp(&b.capacity),
+                    3 => a.send_waiters.cmp(&b.send_waiters),
+                    4 => a.receive_waiters.cmp(&b.receive_waiters),
+                    5 => a.address.cmp(&b.address),
+                    _ => a.name.cmp(b.name),
+                };
+                (if direction == ColumnSort::Descending {
+                    order.reverse()
+                } else {
+                    order
+                })
+                .then(a.address.cmp(&b.address))
+            }),
         }
     }
     fn labels(&self) -> &'static [&'static str] {
         match self.rows {
             DebugRows::Heap(_) => &["State", "Owner", "Block size", "Block address"],
-            DebugRows::Tasks(_) => &["Task", "State", "Priority", "Stack", "Free", "Stack base"],
+            DebugRows::Tasks(_) => &[
+                "Task",
+                "State",
+                "Priority",
+                "Stack",
+                "Free",
+                "Free %",
+                "Stack base",
+            ],
+            DebugRows::Objects(_) => &[
+                "Object",
+                "Count",
+                "Capacity",
+                "Send wait",
+                "Recv wait",
+                "Address",
+            ],
             DebugRows::Scheduler(_) => &["Property", "Value"],
         }
     }
@@ -378,7 +457,22 @@ impl DebugTable {
                     }
                     3 => bytes(t.stack_size),
                     4 => bytes(t.stack_remaining),
+                    5 => format!(
+                        "{}%",
+                        (t.stack_remaining as u64 * 100) / (t.stack_size as u64).max(1)
+                    ),
                     _ => format!("0x{:08x}", t.stack_start),
+                }
+            }
+            DebugRows::Objects(rows) => {
+                let o = &rows[row];
+                match col {
+                    0 => o.name.into(),
+                    1 => o.count.to_string(),
+                    2 => o.capacity.to_string(),
+                    3 => o.send_waiters.to_string(),
+                    4 => o.receive_waiters.to_string(),
+                    _ => format!("0x{:08x}", o.address),
                 }
             }
             DebugRows::Scheduler(s) => {
@@ -396,6 +490,20 @@ impl DebugTable {
                     ("Pending ticks", s.pending_ticks.to_string()),
                     ("Suspension depth", s.suspended.to_string()),
                     ("Current TCB", format!("0x{:08x}", s.current_tcb)),
+                    (
+                        "Yield pending",
+                        if s.yield_pending {
+                            "Yes".into()
+                        } else {
+                            "No".into()
+                        },
+                    ),
+                    ("Tick overflows", s.tick_overflows.to_string()),
+                    (
+                        "Next wake tick",
+                        s.next_wake.map_or("None".into(), |v| v.to_string()),
+                    ),
+                    ("Critical nesting", s.critical_nesting.to_string()),
                 ];
                 if col == 0 {
                     rows[row].0.into()
@@ -432,20 +540,23 @@ impl TableDelegate for DebugTable {
         match &self.rows {
             DebugRows::Heap(r) => r.len(),
             DebugRows::Tasks(r) => r.len(),
-            DebugRows::Scheduler(_) => 6,
+            DebugRows::Scheduler(_) => 10,
+            DebugRows::Objects(r) => r.len(),
         }
     }
     fn column(&self, col: usize, _: &gpui::App) -> Column {
         let weight = match self.rows {
             DebugRows::Tasks(_) if col == 0 => 1.8,
-            DebugRows::Tasks(_) if col == 5 => 1.5,
+            DebugRows::Tasks(_) if col == 6 => 2.0,
+            DebugRows::Objects(_) if col == 0 => 2.2,
+            DebugRows::Objects(_) if col == 5 => 1.5,
             _ => 1.,
         };
         let count = self.labels().len() as f32
-            + if matches!(self.rows, DebugRows::Tasks(_)) {
-                1.3
-            } else {
-                0.
+            + match self.rows {
+                DebugRows::Tasks(_) => 1.8,
+                DebugRows::Objects(_) => 1.7,
+                _ => 0.,
             };
         let column = Column::new(format!("column-{col}"), self.labels()[col])
             .width(gpui::px((self.width / count * weight).max(70.)));
@@ -489,6 +600,27 @@ impl TableDelegate for DebugTable {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
+        if let DebugRows::Tasks(rows) = &self.rows
+            && col == 0
+        {
+            let task = &rows[row];
+            let details = format!(
+                "TCB: 0x{:08x} · creation: {} · mutexes held: {} · event list: {}",
+                task.tcb,
+                task.creation_number,
+                task.mutexes_held,
+                task.event_list
+                    .map_or("unknown".into(), |v| format!("0x{v:08x}"))
+            );
+            return div()
+                .id(("task-details", row))
+                .text_color(cx.theme().foreground)
+                .child(self.cell(row, col))
+                .tooltip(move |window, cx| {
+                    gpui_component::tooltip::Tooltip::new(details.clone()).build(window, cx)
+                })
+                .into_any_element();
+        }
         let color = match &self.rows {
             DebugRows::Heap(rows) if col == 0 && !rows[row].allocated => cx.theme().success,
             DebugRows::Tasks(rows) if col == 1 => match rows[row].state.as_str() {
@@ -497,13 +629,13 @@ impl TableDelegate for DebugTable {
                 _ => cx.theme().muted_foreground,
             },
             DebugRows::Tasks(rows)
-                if col == 4
+                if (col == 4 || col == 5)
                     && rows[row].stack_remaining.saturating_mul(10) < rows[row].stack_size =>
             {
                 cx.theme().danger
             }
             DebugRows::Tasks(rows)
-                if col == 4
+                if (col == 4 || col == 5)
                     && rows[row].stack_remaining.saturating_mul(4) < rows[row].stack_size =>
             {
                 cx.theme().warning
@@ -513,22 +645,45 @@ impl TableDelegate for DebugTable {
         let cell = div().text_color(color).child(self.cell(row, col));
         if self.numeric_column(col) {
             if matches!(self.rows, DebugRows::Scheduler(_)) && row == 0 {
-                cell
+                cell.into_any_element()
             } else {
                 cell.font_family(cx.theme().mono_font_family.clone())
+                    .into_any_element()
             }
         } else {
-            cell
+            cell.into_any_element()
         }
     }
     fn cell_label(&self, row: usize, col: usize, _: &gpui::App) -> Option<gpui::SharedString> {
+        if let DebugRows::Tasks(rows) = &self.rows
+            && col == 0
+        {
+            let task = &rows[row];
+            return Some(
+                format!(
+                    "{}, TCB 0x{:08x}, creation {}, mutexes held {}, event list {}",
+                    self.cell(row, col),
+                    task.tcb,
+                    task.creation_number,
+                    task.mutexes_held,
+                    task.event_list
+                        .map_or("unknown".into(), |v| format!("0x{v:08x}"))
+                )
+                .into(),
+            );
+        }
         Some(self.cell(row, col).into())
     }
 }
 impl Render for DebugWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let width = (f32::from(window.viewport_size().width) - 32.0).max(0.0);
-        for table in [&self.heap_table, &self.tasks_table, &self.scheduler_table] {
+        for table in [
+            &self.heap_table,
+            &self.tasks_table,
+            &self.scheduler_table,
+            &self.objects_table,
+        ] {
             if (table.read(cx).delegate().width - width).abs() > 0.5 {
                 table.update(cx, |table, cx| {
                     table.delegate_mut().width = width;
@@ -562,12 +717,20 @@ impl Render for DebugWindow {
                                 .accessibility_label("Heap blocks"),
                         ),
                     );
+                    let free_blocks = heap.blocks.iter().filter(|b| !b.allocated).count();
+                    let fragmentation = if c.free == 0 {
+                        "—".to_owned()
+                    } else {
+                        format!("{}%", (c.free - largest) as u64 * 100 / c.free as u64)
+                    };
                     format!(
-                        "{} free · {} min · {} max block · {} total · {} alloc / {} frees",
+                        "{} free · {} min · {} max block · {} free block{} · {} fragmented · {} alloc / {} frees",
                         bytes(c.free),
                         bytes(c.minimum_ever_free),
                         bytes(largest),
-                        bytes(c.size),
+                        free_blocks,
+                        if free_blocks == 1 { "" } else { "s" },
+                        fragmentation,
                         c.allocations,
                         c.frees
                     )
@@ -586,7 +749,20 @@ impl Render for DebugWindow {
                                 .accessibility_label("FreeRTOS tasks"),
                         ),
                     );
-                    format!("{} tasks · stack free is an estimate", tasks.tasks.len())
+                    let lowest = tasks.tasks.iter().min_by_key(|t| {
+                        (t.stack_remaining as u64 * 10000) / (t.stack_size as u64).max(1)
+                    });
+                    lowest.map_or_else(
+                        || "0 tasks".into(),
+                        |t| {
+                            format!(
+                                "{} tasks · lowest: {} {}% · stack free is an estimate",
+                                tasks.tasks.len(),
+                                t.name,
+                                (t.stack_remaining as u64 * 100) / (t.stack_size as u64).max(1)
+                            )
+                        },
+                    )
                 } else {
                     body = body.child("Waiting for a task sample…");
                     "Tasks".into()
@@ -608,6 +784,26 @@ impl Render for DebugWindow {
                     "Scheduler".into()
                 }
             }
+            Tab::Objects => {
+                if let Some(objects) = &self.objects {
+                    body = body.child(
+                        div().flex_1().min_h_0().child(
+                            DataTable::new(&self.objects_table)
+                                .small()
+                                .bordered(false)
+                                .accessibility_label("Known FreeRTOS objects"),
+                        ),
+                    );
+                    format!(
+                        "{} known object{} · partial list",
+                        objects.len(),
+                        if objects.len() == 1 { "" } else { "s" }
+                    )
+                } else {
+                    body = body.child("Waiting for an object sample…");
+                    "Objects".into()
+                }
+            }
         };
         let tabs = TabBar::new("freertos-tabs")
             .underline()
@@ -615,15 +811,18 @@ impl Render for DebugWindow {
                 Tab::Heap => 0,
                 Tab::Tasks => 1,
                 Tab::Scheduler => 2,
+                Tab::Objects => 3,
             })
             .child(KitTab::new().label("Heap"))
             .child(KitTab::new().label("Tasks"))
             .child(KitTab::new().label("Scheduler"))
+            .child(KitTab::new().label("Objects"))
             .on_click(cx.listener(|this, index: &usize, _, cx| {
                 this.tab = match index {
                     0 => Tab::Heap,
                     1 => Tab::Tasks,
-                    _ => Tab::Scheduler,
+                    2 => Tab::Scheduler,
+                    _ => Tab::Objects,
                 };
                 this.error = None;
                 cx.notify();
@@ -647,7 +846,7 @@ impl Render for DebugWindow {
                 }
                 (Tab::Heap, 0, Some(_)) => cx.theme().success,
                 (Tab::Heap, 2, Some(_)) => cx.theme().info,
-                (Tab::Tasks | Tab::Scheduler, 0, _) => cx.theme().info,
+                (Tab::Tasks | Tab::Scheduler | Tab::Objects, 0, _) => cx.theme().info,
                 _ => cx.theme().muted_foreground,
             };
             summary_content = summary_content.child(div().text_color(color).child(part.to_owned()));
@@ -720,5 +919,31 @@ mod sort_tests {
         table.sort = Some((2, ColumnSort::Ascending));
         table.apply_sort();
         assert_eq!(table.cell(0, 2), "0.1 KiB");
+    }
+    #[test]
+    fn free_percentage_sorts_by_ratio_not_byte_count() {
+        let task = |name: &str, stack_size, stack_remaining| freertos::Task {
+            name: name.into(),
+            state: "Blocked".into(),
+            tcb: 0,
+            priority: 1,
+            base_priority: 1,
+            creation_number: 1,
+            mutexes_held: 0,
+            event_list: None,
+            stack_start: 0,
+            stack_size,
+            stack_remaining,
+            current: false,
+        };
+        let mut table = DebugTable {
+            rows: DebugRows::Tasks(vec![task("large", 1000, 100), task("small", 100, 20)]),
+            sort: Some((5, ColumnSort::Ascending)),
+            width: 760.,
+        };
+        table.apply_sort();
+        assert_eq!(table.cell(0, 0), "large");
+        assert_eq!(table.cell(0, 5), "10%");
+        assert_eq!(table.cell(1, 5), "20%");
     }
 }

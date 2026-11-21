@@ -223,7 +223,7 @@
     "suites": [
       "full"
     ],
-    "definition": "17e428c3b1ef02913da38a2d93c25ad5f4920b438d5fcc63b5e09ea3d8171ad5"
+    "definition": "d7c70bb479004249a06e282f6298c9914f1f3f82675ef461783afd79b59d97d3"
   },
   {
     "case": "firmware-update",
@@ -416,7 +416,7 @@
     "suites": [
       "full"
     ],
-    "definition": "5f8b4b95f44592ac2956c74c52f7fe2f27939fbaa22cd97543f1845fbd1fa7b7"
+    "definition": "0e30fca29292454ea4050711db24e773eabb8c071e85ded9c39dd00b375a58ae"
   },
   {
     "case": "l6-din-sweep",
@@ -462,7 +462,7 @@
       "regression",
       "full"
     ],
-    "definition": "e4416c536be96a6f53546fa360e6a0f191afb3c0590240091e78f352e415579b"
+    "definition": "1abb824f4d9eebc79d5ca16fa957545a13397975f8e5695c3a797db69d2cd0ee"
   },
   {
     "case": "l6-event-dispatch",
@@ -540,14 +540,14 @@
     "suites": [
       "full"
     ],
-    "definition": "ab6f442dcf437f4e73abe81c521a423a9a102bf00d73ac4c76b1078bb0943529"
+    "definition": "70850e17e58c3019b819d148aa0d4a9e30c0cbde737dcc41a5e880b8e864eb57"
   },
   {
     "case": "l6-recorder-record-stop",
     "model": "l6",
     "backend": "headless",
     "suites": [],
-    "definition": "4476644d3d5420fffe490a5f28ec50d6617af195e70c1380942fc863324f39f0"
+    "definition": "436232ded72a234400c2abefcbc84989afb056a20ac2936034cd5bf8dac298d3"
   },
   {
     "case": "l6-sound-pad-coreaudio",
@@ -575,7 +575,7 @@
     "model": "l6",
     "backend": "headless",
     "suites": [],
-    "definition": "4bf2843beffc200d8e10d5133ccd81158517e7ec24c88f5c41ffac3777520af5"
+    "definition": "2855a336accc9c19c221a19af8ca37d8d875e4d10c712186e3d22de861ed0632"
   },
   {
     "case": "l6max-audio-input",
@@ -647,7 +647,7 @@
       "regression",
       "full"
     ],
-    "definition": "befd1b79f0a6c8f58e2c36db6b23be6389391e34e3a88a2e031df254c852a38e"
+    "definition": "182c9ab07a8d0d42d59cdd92c66ccfdf5ceefd834c6ec223ef8e620da722cfcd"
   },
   {
     "case": "l6max-input-smoke",
@@ -731,7 +731,7 @@
     "model": "l6max",
     "backend": "headless",
     "suites": [],
-    "definition": "1ef56d3393ceb949434c20083d3b79bb04e1bde04dde53f8731746e5d2f1a7d9"
+    "definition": "a33064ee7610104e028a9c360c3230a9bd64bdbb6008817a12b6db9e56f6ffc6"
   },
   {
     "case": "mute",
@@ -3096,7 +3096,7 @@
       "lifecycle",
       "full"
     ],
-    "definition": "7afc18c03d1f05a389129a4d62467a8af9046d88f4d86e105eead9443f647335"
+    "definition": "1494f7ef85c53668c6b216efc6832325a39c7530d5bb9f24b98dd82c810c1c5b"
   },
   {
     "case": "storage",

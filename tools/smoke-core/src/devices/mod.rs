@@ -124,6 +124,7 @@ pub enum Operation {
         target: u32,
     },
     ExpectMemory {
+        symbol: String,
         address: u32,
         bytes: Vec<u8>,
     },

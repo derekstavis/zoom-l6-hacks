@@ -268,5 +268,13 @@ mod tests {
         )
         .unwrap_err();
         assert!(gui.contains("usb-descriptors requires backends"), "{gui}");
+        let undeclared = Scenario::from_text(
+            "version=1\nname='t'\nmodels=['l6','l6max']\nbackends=['headless']\n[[step]]\naction='expect-memory'\nsymbol='system_mode'\nbytes=[0]\n",
+        )
+        .unwrap_err();
+        assert!(
+            undeclared.contains("system_mode is not declared in patches/api/l6"),
+            "{undeclared}"
+        );
     }
 }

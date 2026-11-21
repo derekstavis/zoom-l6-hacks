@@ -59,4 +59,6 @@ firmware_symbols! {
 firmware_variables! {
     pub midi_message_length: u16, at 0x805e_5d4a;
     pub midi_message_buffer: u8, at 0x8089_8938;
+    /// The SysEx session state, shared by the editor and factory sessions.
+    pub midi_sysex_session_state: u8, at 0x805d_ca98;
 }

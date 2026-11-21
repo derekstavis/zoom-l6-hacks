@@ -273,7 +273,8 @@ pub enum Action {
         target: u32,
     },
     ExpectMemory {
-        address: u32,
+        /// A name declared in `patches/api` for the model the step runs on.
+        symbol: String,
         bytes: Vec<u8>,
     },
     ExpectSdPatch {

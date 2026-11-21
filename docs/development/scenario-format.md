@@ -108,7 +108,7 @@ card-reader mode), stays unmarked.
 | `analog` | `channel`, `steps`, optional `gesture` | Move a one-based analog control by signed steps |
 | `expect-analog` | `channel`, `value` | Check a control's analog value |
 | `expect-powered` | `powered` | Check the current power state |
-| `expect-memory` | `address`, `bytes` | Compare MAIN memory bytes |
+| `expect-memory` | `symbol`, `bytes` | Compare MAIN memory at `symbol`, a name declared in `patches/api` for each model the step runs on; an undeclared name fails when the scenario loads |
 | `expect-heap` | `minimum_free` | Require the FreeRTOS heap's lowest free byte count since boot to be at least `minimum_free`, which must fit the heap. Runs on patched images; see [heap headroom](../../patches/README.md#heap-headroom) |
 | `panel-event` | `target`, `column`, `row`, `event` | Inject a panel-controller event for focused event-path scenarios |
 

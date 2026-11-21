@@ -58,7 +58,7 @@ guest_ms = 500
 
 [[step]]
 action = "expect-memory"
-address = 0x806293c6
+symbol = "rec_record_lamp"
 bytes = [16, 0, 0, 0]
 
 [[step]]
@@ -77,7 +77,7 @@ guest_ms = 500
 
 [[step]]
 action = "expect-memory"
-address = 0x806293c6
+symbol = "rec_record_lamp"
 bytes = [0, 0, 0, 0]
 
 [[step]]

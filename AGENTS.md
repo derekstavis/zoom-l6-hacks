@@ -54,8 +54,8 @@ exceptions with explicit model scope and evidence. Scope compatibility
 behavior to the corresponding firmware revision. Declare each new firmware
 address once, per model and revision, in `patches/api/`, and use it from host
 tools and tests through `firmware-api` (`l6::name`, `l6max::name`) instead of a
-literal. Scenario files and `l6dbg` still contain literal addresses; move one
-to a declaration when you touch it.
+literal; scenario files name them with `symbol`. `l6dbg` still contains literal
+addresses; move one to a declaration when you touch it.
 
 A source commit or QEMU version string does not identify a QEMU executable.
 The driver pins external QEMU binaries and explicitly marks their source as

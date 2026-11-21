@@ -99,3 +99,11 @@ mod tests {
         fs::remove_dir_all(&case).unwrap();
     }
 }
+
+/// The address `name` is declared at in `patches/api` for `model`.
+pub fn symbol(model: l6fw::Model, name: &str) -> Option<u32> {
+    match model {
+        l6fw::Model::L6 => firmware_api::l6::symbol(name),
+        l6fw::Model::L6max => firmware_api::l6max::symbol(name),
+    }
+}

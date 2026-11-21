@@ -63,15 +63,19 @@ impl State {
                 }
                 Ok(json!({"startup_mode":"recorder"}))
             }
-            Operation::ExpectMemory { address, bytes } => {
+            Operation::ExpectMemory {
+                symbol,
+                address,
+                bytes,
+            } => {
                 let actual = session.engine.management[0].read_memory(0, address, bytes.len())?;
                 if actual != bytes {
                     return Err(format!(
-                        "memory at {address:#010x} is {actual:02x?}, expected {bytes:02x?}"
+                        "{symbol} ({address:#010x}) is {actual:02x?}, expected {bytes:02x?}"
                     )
                     .into());
                 }
-                Ok(json!({"address":format!("{address:#010x}"),"bytes":actual}))
+                Ok(json!({"symbol":symbol,"address":format!("{address:#010x}"),"bytes":actual}))
             }
             Operation::EffectParameterEdit { encoder, steps } => {
                 Ok(effect_parameter_edit(options, session, encoder, steps)

@@ -1,6 +1,7 @@
 //! Read-only, revision-guarded FreeRTOS diagnostics for L6max 1.10.
 use crate::{heap, qmp::QmpClient};
 use l6fw::Model;
+use patch_abi::registry;
 use sha2::{Digest, Sha256};
 
 const START: u32 = 0x808a4148;
@@ -111,6 +112,71 @@ fn decode_blocks(memory: &[u8]) -> Result<Vec<HeapBlock>, String> {
     }
     Ok(blocks)
 }
+
+// The registry contains module ranges, not patch names or later allocations.
+fn label_patch_modules(memory: &[u8], blocks: &mut [HeapBlock], root: u32) {
+    let Some(registry_index) = blocks
+        .iter()
+        .position(|b| b.allocated && b.address.checked_add(8) == Some(root))
+    else {
+        return;
+    };
+    let Some(offset) = root.checked_sub(START).map(|n| n as usize) else {
+        return;
+    };
+    let Some(registry_end) = blocks[registry_index]
+        .address
+        .checked_add(blocks[registry_index].size)
+    else {
+        return;
+    };
+    let Some(table_end) = root.checked_add(
+        registry::MODULE_TABLE_OFFSET + registry::MAX_MODULES * registry::MODULE_TABLE_ENTRY_LEN,
+    ) else {
+        return;
+    };
+    if table_end > registry_end || u32_at(memory, offset).ok() != Some(registry::MAGIC) {
+        return;
+    }
+    let Some(count) = u32_at(memory, offset + registry::MODULE_COUNT_OFFSET as usize)
+        .ok()
+        .filter(|n| *n <= registry::MAX_MODULES)
+    else {
+        return;
+    };
+    let mut modules = Vec::new();
+    for index in 0..count {
+        let entry = offset
+            + (registry::MODULE_TABLE_OFFSET + index * registry::MODULE_TABLE_ENTRY_LEN) as usize;
+        let (Ok(base), Ok(len)) = (u32_at(memory, entry), u32_at(memory, entry + 4)) else {
+            return;
+        };
+        let Some(end) = base.checked_add(len).filter(|_| len > 0) else {
+            return;
+        };
+        let Some(block_index) = blocks.iter().position(|b| {
+            b.allocated
+                && base >= b.address + 8
+                && b.address
+                    .checked_add(b.size)
+                    .is_some_and(|limit| end <= limit)
+        }) else {
+            return;
+        };
+        if block_index == registry_index || modules.contains(&block_index) {
+            return;
+        }
+        modules.push(block_index);
+    }
+    if blocks[registry_index].owner.is_none() {
+        blocks[registry_index].owner = Some("Patch loader · registry".into());
+    }
+    for (index, block_index) in modules.into_iter().enumerate() {
+        if blocks[block_index].owner.is_none() {
+            blocks[block_index].owner = Some(format!("SD patch module #{}", index + 1));
+        }
+    }
+}
 pub fn heap(q: &QmpClient, model: Model) -> Result<HeapSnapshot, String> {
     let before = guard(q, model)?;
     let memory = read_arena(q)?;
@@ -146,6 +212,9 @@ pub fn heap(q: &QmpClient, model: Model) -> Result<HeapSnapshot, String> {
                 }
             }
         }
+    }
+    if let Ok(root) = read(q, registry::L6MAX_POINTER, 4).and_then(|b| u32_at(&b, 0)) {
+        label_patch_modules(&memory, &mut blocks, root);
     }
     Ok(HeapSnapshot {
         counters: after,
@@ -273,6 +342,29 @@ mod tests {
     use super::*;
     fn put(mem: &mut [u8], offset: usize, word: u32) {
         mem[offset..offset + 4].copy_from_slice(&word.to_le_bytes());
+    }
+    #[test]
+    fn patch_registry_labels_only_valid_module_allocations() {
+        let mut mem = vec![0u8; (END - START) as usize];
+        put(&mut mem, 4, 0x8000_0108);
+        put(&mut mem, 0x10c, 0x8000_0100);
+        let free = 0x208;
+        let free_size = (mem.len() - free) as u32;
+        put(&mut mem, free + 4, free_size);
+        let root = START + 8;
+        put(&mut mem, 8, registry::MAGIC);
+        put(&mut mem, 8 + registry::MODULE_COUNT_OFFSET as usize, 1);
+        let entry = 8 + registry::MODULE_TABLE_OFFSET as usize;
+        put(&mut mem, entry, START + 0x120);
+        put(&mut mem, entry + 4, 0x20);
+        let mut blocks = decode_blocks(&mem).unwrap();
+        label_patch_modules(&mem, &mut blocks, root);
+        assert_eq!(blocks[0].owner.as_deref(), Some("Patch loader · registry"));
+        assert_eq!(blocks[1].owner.as_deref(), Some("SD patch module #1"));
+        let mut invalid = decode_blocks(&mem).unwrap();
+        put(&mut mem, entry + 4, 0xffff_ffff);
+        label_patch_modules(&mem, &mut invalid, root);
+        assert!(invalid.iter().all(|b| b.owner.is_none()));
     }
     #[test]
     fn task_snapshot_finds_stack_and_rejects_mismatched_count() {

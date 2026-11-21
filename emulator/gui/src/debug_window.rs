@@ -272,7 +272,12 @@ impl Render for DebugWindow {
                                 .child(table_cell(format!("0x{:08x}", b.address)))
                                 .child(table_cell(state).text_color(color))
                                 .child(table_cell(bytes(b.size)))
-                                .child(table_cell(b.owner.as_deref().unwrap_or("—").to_owned())),
+                                .child(table_cell(
+                                    b.owner
+                                        .as_deref()
+                                        .unwrap_or(if b.allocated { "Unknown" } else { "—" })
+                                        .to_owned(),
+                                )),
                         );
                     }
                     let header = TableHeader::new().child(
@@ -402,10 +407,17 @@ impl Render for DebugWindow {
                         );
                     }
                     body = body.child(
-                        Table::new()
-                            .small()
-                            .accessibility_label("FreeRTOS scheduler")
-                            .child(table_rows),
+                        div()
+                            .id("scheduler-table")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scrollbar()
+                            .child(
+                                Table::new()
+                                    .small()
+                                    .accessibility_label("FreeRTOS scheduler")
+                                    .child(table_rows),
+                            ),
                     );
                     format!("{} tasks · {} ticks", s.task_count, s.ticks)
                 } else {

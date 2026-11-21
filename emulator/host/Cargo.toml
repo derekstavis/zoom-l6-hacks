@@ -7,6 +7,7 @@ license.workspace = true
 
 [build-dependencies]
 l6fw.workspace = true
+patch-abi.workspace = true
 patch-core.workspace = true
 
 [dependencies]
@@ -14,6 +15,7 @@ firmware-api.workspace = true
 tracing-subscriber.workspace = true
 tracing.workspace = true
 l6fw.workspace = true
+patch-abi.workspace = true
 patch-core.workspace = true
 patch-wasm.workspace = true
 qemu-build.workspace = true

@@ -3595,6 +3595,7 @@ dependencies = [
  "l6fw",
  "libc",
  "memmap2",
+ "patch-abi",
  "patch-core",
  "patch-wasm",
  "qapi",

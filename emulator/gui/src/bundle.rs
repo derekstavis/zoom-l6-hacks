@@ -89,7 +89,7 @@ impl Bundle {
         let bytes = fs::read(&package).map_err(|e| e.to_string())?;
         let model = l6fw::model_from_package(&bytes)?;
         let previous = self.data.join("devices").join(hash.trim());
-        let current = self.data.join("devices").join(config::model_name(model));
+        let current = self.data.join("devices").join(model.name());
         if previous.is_dir() && !current.exists() {
             fs::rename(previous, current).map_err(|e| e.to_string())?;
         }
@@ -118,7 +118,7 @@ impl Bundle {
         let main =
             fs::read(options.firmware_dir.join("main_firmware.bin")).map_err(|e| e.to_string())?;
         let model = l6fw::model_from_main(&main)?;
-        options.state_dir = Some(self.devices.join(config::model_name(model)));
+        options.state_dir = Some(self.devices.join(model.name()));
         options.logs = self.data.join("logs").join(hash);
         options.sd_image = None;
         options.no_sd = false;

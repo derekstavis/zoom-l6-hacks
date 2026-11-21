@@ -412,6 +412,7 @@ image; it needs neither firmware nor an SD card:
 
 ```sh
 python3 emulator/qemu/tests/panel-qtest.py emulator/qemu/build-source/build/qemu-system-arm
+python3 emulator/qemu/tests/main-copy-qtest.py emulator/qemu/build-source/build/qemu-system-arm
 ```
 
 It exercises both panel profiles, flash boundaries and existing 64 KiB saved
@@ -419,6 +420,12 @@ flash, plus GPIO and timer registers, pending interrupts and timer overflows.
 It does not establish behavior on physical hardware. The smaller C tests in
 `emulator/qemu/tests/panel-gpio.c` and `panel-timer.c` cover shared register
 logic independently of QEMU.
+
+The MAIN-copy check uses synthetic disposable images to exercise the L6max
+package-slot boundary, writable SDRAM, reset recopy and old-state reset; it
+also checks the unchanged L6 mapping and rejection of unknown corrupt state.
+It does not establish physical update acceptance or safe runtime use of the
+entire package slot.
 
 ### Case matrix
 

@@ -29,9 +29,9 @@ room=velvet` assigns a custom effect to a stock effect slot. Both write a
 `--format json` prints the catalog the website build reads.
 Without `--patch`, the defaults are `knob-dialog` for L6max and `midi-sync` for
 L6. Repeat `--patch` to combine compatible patches. L6 currently supports only
-`midi-sync`. The output directory must not exist. A requested update version
-is exactly four digits; without one the tool selects the version appropriate
-to the chosen patch combination. `l6fw repack` preserves the payload checksum
+`midi-sync`. The output directory must not exist. Every patched package
+carries `l6fw::PATCHED_VERSION` (`0115`); `--version` overrides it with exactly
+four digits. `l6fw repack` preserves the payload checksum
 by default; explicitly request `--recompute-checksum` after payload edits.
 
 The tool checks package model and revision guards before writing. Read the

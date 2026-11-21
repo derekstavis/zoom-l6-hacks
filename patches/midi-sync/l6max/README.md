@@ -62,16 +62,16 @@ the repository root, unpack each local package and build the matching profile:
 ```sh
 rustup target add thumbv7em-none-eabihf
 cargo run -p l6fw -- unpack /path/to/L6max.bin unpacked-l6max
-cargo run -p l6patch -- firmware unpacked-l6max firmware-midi-sync-v113 --patch midi-sync
+cargo run -p l6patch -- firmware unpacked-l6max firmware-midi-sync --patch midi-sync
 # The separate L6 hook and payload are selected from its MAIN reset vector.
 cargo run -p l6fw -- unpack /path/to/L6.BIN unpacked-l6
 cargo run -p l6patch -- firmware unpacked-l6 firmware-midi-sync-l6 --patch midi-sync
 # Both patches in one image:
-cargo run -p l6patch -- firmware unpacked-l6max firmware-knob-midi-v113 --patch knob-dialog --patch midi-sync
+cargo run -p l6patch -- firmware unpacked-l6max firmware-knob-midi --patch knob-dialog --patch midi-sync
 ```
 
-The default version marker is `0113` for anything but a knob-dialog-only build
-(which keeps `0112`); `--version FOUR_DIGITS` overrides it. The output
+Patched packages carry version `0115`, whatever patches they hold;
+`--version FOUR_DIGITS` overrides it. The output
 directory must be new. Without Homebrew LLVM the builder uses the Rust toolchain's own `rust-lld`,
 `llvm-nm` and `llvm-objcopy` (`llvm-tools` component). `L6_LD_LLD`,
 `L6_LLVM_NM` and `L6_LLVM_OBJCOPY` override each tool.
@@ -160,7 +160,7 @@ numbers this yields.
 ```sh
 cargo test -p l6patch
 python3 -m pip install unicorn
-python3 patches/midi-sync/l6max/tests/cpu_sim.py firmware-midi-sync-v113/main_firmware.bin
+python3 patches/midi-sync/l6max/tests/cpu_sim.py firmware-midi-sync/main_firmware.bin
 cargo run -p l6test -- run --config config.toml --case host-midi-sync --model l6max
 cargo run -p l6test -- run --config config.toml --case l6max-direct-midi-sync --model l6max
 python3 patches/midi-sync/l6/tests/cpu_sim.py firmware-midi-sync-l6/main_firmware.bin

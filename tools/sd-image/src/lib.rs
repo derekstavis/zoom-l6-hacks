@@ -540,11 +540,11 @@ mod tests {
         package[0x1a3200..0x1a3204].copy_from_slice(&0x20220000u32.to_le_bytes());
         package[0x1a3204..0x1a3208].copy_from_slice(&0x08000009u32.to_le_bytes());
         package[0x1a31f8..0x1a31fc].copy_from_slice(&0x40u32.to_le_bytes());
-        package[0x1a31fc..0x1a3200].copy_from_slice(b"0110");
-        package[0x1a71fc..0x1a7200].copy_from_slice(b"0100");
+        package[0x1a31fc..0x1a3200].copy_from_slice(&l6fw::STOCK_VERSION);
+        package[0x1a71fc..0x1a7200].copy_from_slice(&l6fw::STOCK_PANEL_VERSION);
         package[0x1a71f8..0x1a71fc].copy_from_slice(&0x40u32.to_le_bytes());
         package[0x1a81f8..0x1a81fc].copy_from_slice(&0x40u32.to_le_bytes());
-        package[0x1a81fc..0x1a8200].copy_from_slice(b"0110");
+        package[0x1a81fc..0x1a8200].copy_from_slice(&l6fw::STOCK_VERSION);
         let sum = package[0x200..]
             .iter()
             .fold(0u32, |sum, byte| sum.wrapping_add(u32::from(*byte)));

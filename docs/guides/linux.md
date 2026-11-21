@@ -115,7 +115,7 @@ distributions (`sudo usermod -aG audio "$USER"`, then log in again).
 ## Checks
 
 ```sh
-cargo run -p l6patch -- firmware unpacked firmware-knob-midi-v113 --patch knob-dialog --patch midi-sync
+cargo run -p l6patch -- firmware unpacked firmware-knob-midi --patch knob-dialog --patch midi-sync
 cargo run --offline --locked -p l6test -- run --case knob-dialog --model l6max --config config.toml
 ```
 

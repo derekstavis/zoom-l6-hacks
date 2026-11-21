@@ -1112,9 +1112,9 @@ impl State {
                 if session.engine.model() != l6fw::Model::L6max {
                     return Err("settings layout currently supports L6max 1.10 only".into());
                 }
-                if panel.get(0x3ffc..0x4000) != Some(b"0100")
-                    || nor.get(0x1f7ffc..0x1f8000) != Some(b"0110")
-                    || nor.get(0x1f6ffc..0x1f7000) != Some(b"0100")
+                if panel.get(0x3ffc..0x4000) != Some(&l6fw::STOCK_PANEL_VERSION)
+                    || nor.get(0x1f7ffc..0x1f8000) != Some(&l6fw::STOCK_VERSION)
+                    || nor.get(0x1f6ffc..0x1f7000) != Some(&l6fw::STOCK_PANEL_VERSION)
                 {
                     return Err("persisted firmware version records do not match".into());
                 }

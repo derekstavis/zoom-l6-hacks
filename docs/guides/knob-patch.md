@@ -7,9 +7,10 @@ The title follows the selected blue button. EQ uses table-backed dB and
 frequency values; level/sends use control percentages; pan uses CENTER or
 L/R position. The original mixer change runs immediately, before presentation.
 
-Current builds report development version **1.12** (`0112`). The executable
-payload is unchanged from the corrected payload exercised on an L6max.
-Version 1.12 is a local patch marker, not an official manufacturer release.
+Patched builds report version **1.15** (`0115`), like every patched package.
+The executable payload is unchanged from the corrected payload exercised on an
+L6max. Version 1.15 marks a patched package, not an official manufacturer
+release.
 
 ## Build
 
@@ -20,20 +21,20 @@ present, otherwise the toolchain's `rust-lld` (no other install needed; see the
 
 ```sh
 rustup target add thumbv7em-none-eabihf
-cargo run -p l6patch -- firmware unpacked firmware-knob-dialog-recorder-fix-v112
+cargo run -p l6patch -- firmware unpacked firmware-knob-dialog-recorder-fix
 ```
 
 The builder validates the original main SHA-256 and displaced hook regions,
 compiles the payload, and repacks with a regenerated checksum. The output
 directory must be new. Its `L6max.bin` is the update package; its extracted
 components can also run directly in the emulator. `patch.json` records hashes,
-placement, hooks, and the version marker. `--version FOUR_DIGITS`
-explicitly overrides the default marker.
+placement, hooks, and the version. `--version FOUR_DIGITS` overrides the
+version for experiments.
 
 ## Run the patched images directly
 
 ```sh
-cargo run -p l6max-gui -- /path/to/qemu-system-arm --firmware-dir firmware-knob-dialog-recorder-fix-v112 --volatile --no-sd
+cargo run -p l6max-gui -- /path/to/qemu-system-arm --firmware-dir firmware-knob-dialog-recorder-fix --volatile --no-sd
 ```
 
 Complete first-boot setup, select a blue-strip setting, and turn a channel
@@ -44,7 +45,7 @@ encoder. This starts patched images directly and does not exercise installation.
 Use a new SD image and an isolated persistent device:
 
 ```sh
-cargo run -p l6fs -- card demo emulator/state/knob-update-card.img --firmware-package firmware-knob-dialog-recorder-fix-v112/L6max.bin
+cargo run -p l6fs -- card demo emulator/state/knob-update-card.img --firmware-package firmware-knob-dialog-recorder-fix/L6max.bin
 cargo run -p l6max-gui -- /path/to/qemu-system-arm --firmware-dir unpacked --state-dir emulator/state/knob-update-device --sd-image emulator/state/knob-update-card.img
 ```
 

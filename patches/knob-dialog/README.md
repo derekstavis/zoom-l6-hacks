@@ -58,8 +58,8 @@ pinned Rust toolchain with `thumbv7em-none-eabihf` installed. Homebrew LLVM at
 
 ```sh
 rustup target add thumbv7em-none-eabihf
-cargo run --offline -p l6patch -- firmware unpacked firmware-knob-dialog-recorder-fix-v112 --version 0112
-cargo run --offline -p l6max-gui -- --qemu /path/to/qemu-system-arm --firmware-dir firmware-knob-dialog-recorder-fix-v112 --volatile
+cargo run --offline -p l6patch -- firmware unpacked firmware-knob-dialog-recorder-fix
+cargo run --offline -p l6max-gui -- --qemu /path/to/qemu-system-arm --firmware-dir firmware-knob-dialog-recorder-fix --volatile
 ```
 
 The output directory must be new. Input files are never changed. The output
@@ -91,19 +91,18 @@ semaphore-free design has passed the focused emulator scenario. An earlier
 notification-backed version was exercised on an L6max; this revision has not
 been hardware-tested.
 
-The default patch version is `0112` (1.12), a local development marker that
-triggers the startup update prompt over stock 1.10. Use
-`--version FOUR_DIGITS` to override it; `0110` retains the stock marker
-and uses the manual **System → Firmware → Firmware Update** menu:
+Every patched package carries version `0115` (1.15), which triggers the
+startup update prompt over stock 1.10. `--version FOUR_DIGITS` overrides it;
+`0110` keeps the stock version and installs through the manual **System →
+Firmware → Firmware Update** menu:
 
 ```sh
-cargo run --offline -p l6patch -- firmware unpacked firmware-knob-dialog-recorder-fix-v112 --version 0112
-cargo run --offline -p l6fs -- card demo emulator/state/sd-card-knob-synchronized.img --firmware-package firmware-knob-dialog-recorder-fix-v112/L6max.bin
+cargo run --offline -p l6patch -- firmware unpacked firmware-knob-dialog-recorder-fix
+cargo run --offline -p l6fs -- card demo emulator/state/sd-card-knob-synchronized.img --firmware-package firmware-knob-dialog-recorder-fix/L6max.bin
 cargo run --offline -p l6max-gui -- --state-dir emulator/state/knob-synchronized-demo --sd-image emulator/state/sd-card-knob-synchronized.img
 ```
 
-`0112` identifies this local experiment as 1.12; it is not an official ZOOM
-release. The default firmware directory remains original, so a fresh state
+1.15 marks a patched package; it is not an official ZOOM release. The default firmware directory remains original, so a fresh state
 starts unpatched and installs the patch through SD. Select **Execute**, hold
 Power for about 3.5 seconds and release, wait for a blank display, then click
 Power again. Complete Date/Time setup if prompted and turn a channel knob.
@@ -112,7 +111,7 @@ Existing card images and build directories are never overwritten.
 To repack manually after editing compatible components:
 
 ```sh
-cargo run --offline -p l6fw -- repack firmware-knob-dialog-recorder-fix-v112 /path/to/L6max.bin --recompute-checksum
+cargo run --offline -p l6fw -- repack firmware-knob-dialog-recorder-fix /path/to/L6max.bin --recompute-checksum
 ```
 
 The repacker permits the main image to grow only within its existing slot;

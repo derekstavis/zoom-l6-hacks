@@ -18,12 +18,6 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use wasm_bindgen::prelude::*;
 
-/// Update-version marker for packages without the Patch loader. Loader-enabled
-/// packages use marker 0115 (registry layout 2) so the device can distinguish that layout from
-/// ordinary feature-only updates. Both are distinct from the native CLI's
-/// dev-build markers (0112/0113).
-const UPDATE_VERSION: &str = "0111";
-
 struct Window {
     payload_offset: usize,
     firmware_address: u32,
@@ -371,7 +365,6 @@ pub fn apply_patches_with_loader(
     let mut hook_ranges: Vec<(u32, usize, Option<String>)> = Vec::new();
     let mut continuation_tails = std::collections::BTreeMap::<u32, (usize, usize, String)>::new();
     let mut loader_dispatch_targets = std::collections::BTreeMap::<u32, u32>::new();
-    let mut output_version = UPDATE_VERSION;
     let mut loader_reserve = None;
     // Identity records of every static payload, in placement order.
     let mut identities = Vec::new();
@@ -444,7 +437,6 @@ pub fn apply_patches_with_loader(
         }));
         base = (payload_end + 15) & !15;
         loader_reserve = Some((unit.module_base, unit.reserve_end));
-        output_version = "0115";
     }
     for &name in &ordered {
         let unit = find_unit(name, model, base)?;
@@ -579,7 +571,7 @@ pub fn apply_patches_with_loader(
     );
     let mut trailer = segments["main_trailer.bin"].clone();
     let mut footer = segments["package_footer.bin"].clone();
-    write_image_length_and_version(&mut trailer, &mut footer, new_length, output_version);
+    write_image_length_and_version(&mut trailer, &mut footer, new_length, l6fw::PATCHED_VERSION);
     segments.insert("main_trailer.bin".into(), trailer);
     segments.insert("package_footer.bin".into(), footer);
     for (segment_name, start, end) in l6fw::layout_for(
@@ -611,7 +603,7 @@ pub fn apply_patches_with_loader(
         "patches": applied_report,
         "hooks": diagnostic_hooks,
         "update_sha256": format!("{:x}", Sha256::digest(&packed)),
-        "version": output_version,
+        "version": std::str::from_utf8(&l6fw::PATCHED_VERSION).unwrap(),
         "usage": "Patched in your browser from your own upload. Verified in emulation only; physical bootloader acceptance is unverified.",
     });
     Ok((packed, report))

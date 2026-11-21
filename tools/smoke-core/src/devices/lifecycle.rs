@@ -113,7 +113,7 @@ pub fn run_wasm_patch(options: &Options) -> Result<(), String> {
             &options.firmware_dir,
             &native_out,
             selected,
-            Some("0111"),
+            None,
             l6patch::BuildMode::Firmware,
         )
         .map_err(|error| format!("native patch build failed for {selected:?}: {error}"))?;
@@ -504,7 +504,7 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
         };
         if target_package.is_none() {
             for offset in [0x1a31fc, 0x1a81fc] {
-                package[offset..offset + 4].copy_from_slice(b"0111");
+                package[offset..offset + 4].copy_from_slice(&l6fw::PATCHED_VERSION);
             }
             package[0x1a71fc..0x1a7200].copy_from_slice(b"0101");
             package[0x21c..0x220].copy_from_slice(&0x13579bdfu32.to_le_bytes());
@@ -516,11 +516,8 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
         } else if valid {
             l6max_host::package::check_layout(&package).map_err(|e| e.to_string())?;
             l6max_host::update_bootloader::validate(&package).map_err(|e| e.to_string())?;
-            if package[0x1a31fc..0x1a3200].iter().cmp(b"0110".iter()) != std::cmp::Ordering::Greater
-            {
-                return Err(
-                    "patched L6max update package must carry a version newer than 1.10".into(),
-                );
+            if package[0x1a31fc..0x1a3200] != l6fw::PATCHED_VERSION {
+                return Err("patched L6max update package must carry the patched version".into());
             }
         } else {
             package[0x1fc] ^= 1;

@@ -545,12 +545,12 @@ pub fn write_image_length_and_version(
     trailer: &mut [u8],
     footer: &mut [u8],
     length: u32,
-    version: &str,
+    version: [u8; 4],
 ) {
     trailer[..4].copy_from_slice(&length.to_le_bytes());
-    trailer[4..8].copy_from_slice(version.as_bytes());
+    trailer[4..8].copy_from_slice(&version);
     footer[0x38..0x3c].copy_from_slice(&length.to_le_bytes());
-    footer[0x3c..0x40].copy_from_slice(version.as_bytes());
+    footer[0x3c..0x40].copy_from_slice(&version);
 }
 
 #[cfg(test)]

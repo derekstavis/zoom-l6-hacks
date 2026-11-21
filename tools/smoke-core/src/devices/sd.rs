@@ -7,12 +7,12 @@ pub(super) type SdEdits = (
     u32,
     Vec<u8>,
     Option<u32>,
-    Vec<patch_loader_core::bundle::Relocation>,
-    Vec<patch_loader_core::dynamic::Hook>,
+    Vec<patch_abi::bundle::Relocation>,
+    Vec<patch_abi::dynamic::Hook>,
     Vec<(
         Vec<u8>,
-        Vec<patch_loader_core::bundle::Relocation>,
-        Vec<patch_loader_core::dynamic::Hook>,
+        Vec<patch_abi::bundle::Relocation>,
+        Vec<patch_abi::dynamic::Hook>,
     )>,
 );
 pub(super) fn sd_fixture_root(options: &Options) -> Result<&std::path::Path, String> {
@@ -79,20 +79,16 @@ pub(super) fn effect_parameter_edit(
         ));
     }
     let registry = u32::from_le_bytes(
-        qmp.read_memory(0, patch_loader_core::registry::L6MAX_POINTER as u32, 4)
+        qmp.read_memory(0, patch_abi::registry::L6MAX_POINTER as u32, 4)
             .map_err(|error| error.to_string())?
             .try_into()
             .unwrap(),
     );
     let module_base = u32::from_le_bytes(
-        qmp.read_memory(
-            0,
-            registry + patch_loader_core::registry::MODULE_PTR_OFFSET,
-            4,
-        )
-        .map_err(|error| error.to_string())?
-        .try_into()
-        .unwrap(),
+        qmp.read_memory(0, registry + patch_abi::registry::MODULE_PTR_OFFSET, 4)
+            .map_err(|error| error.to_string())?
+            .try_into()
+            .unwrap(),
     );
     if module_base == 0 {
         return Err("Effect replacement module is not loaded".into());
@@ -292,20 +288,16 @@ pub(super) fn effect_replacement_state(
     };
     let qmp = &session.engine.management[0];
     let registry = u32::from_le_bytes(
-        qmp.read_memory(0, patch_loader_core::registry::L6MAX_POINTER as u32, 4)
+        qmp.read_memory(0, patch_abi::registry::L6MAX_POINTER as u32, 4)
             .map_err(|error| error.to_string())?
             .try_into()
             .unwrap(),
     );
     let module_base = u32::from_le_bytes(
-        qmp.read_memory(
-            0,
-            registry + patch_loader_core::registry::MODULE_PTR_OFFSET,
-            4,
-        )
-        .map_err(|error| error.to_string())?
-        .try_into()
-        .unwrap(),
+        qmp.read_memory(0, registry + patch_abi::registry::MODULE_PTR_OFFSET, 4)
+            .map_err(|error| error.to_string())?
+            .try_into()
+            .unwrap(),
     );
     if module_base == 0 {
         return Err("effect replacement module is not loaded".into());
@@ -557,75 +549,21 @@ pub(super) fn sd_fixture_edits(
             Vec<(u32, Vec<u8>, u32)>,
             Vec<u8>,
             Option<u32>,
-            Vec<patch_loader_core::bundle::Relocation>,
-            Vec<patch_loader_core::dynamic::Hook>,
+            Vec<patch_abi::bundle::Relocation>,
+            Vec<patch_abi::dynamic::Hook>,
         ),
         String,
     > {
-        if bytes.len() < patch_loader_core::dynamic::HEADER_LEN_V1 || &bytes[..4] != b"L6SB" {
-            return Err("invalid SD patch file or CRC".into());
-        }
-        let version = u16::from_le_bytes(bytes[4..6].try_into().unwrap());
-        let header_len = patch_loader_core::dynamic::HEADER_LEN_V1;
-        if version != patch_loader_core::dynamic::FORMAT_VERSION
-            || bytes.len() < header_len
-            || u16::from_le_bytes(bytes[6..8].try_into().unwrap())
-                != patch_loader_core::dynamic::LOADER_ABI
-            || patch_loader_core::dynamic::checksum(bytes)
-                != Some(u32::from_le_bytes(bytes[24..28].try_into().unwrap()))
-        {
-            return Err("invalid SD patch file or CRC".into());
-        }
-        let code_len = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
-        let memory_len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
-        let hook_count = u16::from_le_bytes(bytes[16..18].try_into().unwrap()) as usize;
-        let relocation_count = u16::from_le_bytes(bytes[18..20].try_into().unwrap()) as usize;
-        let expected_len = header_len
-            .checked_add(code_len)
-            .and_then(|n| {
-                n.checked_add(hook_count.checked_mul(patch_loader_core::dynamic::HOOK_RECORD_LEN)?)
-            })
-            .and_then(|n| n.checked_add(relocation_count.checked_mul(12)?))
-            .ok_or("SD patch size overflow")?;
-        if expected_len != bytes.len()
-            || code_len > memory_len
-            || memory_len > 0x60000
-            || hook_count > patch_loader_core::dynamic::MAX_HOOKS_PER_MODULE
-            || relocation_count > 256
-        {
-            return Err("invalid SD patch lengths or counts".into());
-        }
-        struct Reader<'a>(&'a [u8]);
-        impl patch_loader_core::bundle::Reader for Reader<'_> {
-            type Error = ();
-            fn read(&mut self, out: &mut [u8]) -> Result<usize, Self::Error> {
-                let count = out.len().min(self.0.len());
-                out[..count].copy_from_slice(&self.0[..count]);
-                self.0 = &self.0[count..];
-                Ok(count)
-            }
-        }
-        let mut reader = Reader(bytes);
-        let pending = patch_loader_core::dynamic::read_header(
-            &mut reader,
-            0x60000,
-            patch_loader_core::dynamic::MAX_HOOKS_PER_MODULE,
-            256,
-        )
-        .map_err(|e| format!("invalid SD patch header: {e:?}"))?;
-        let mut payload = vec![0; memory_len];
-        let mut hooks = vec![patch_loader_core::dynamic::Hook::default(); hook_count];
-        let _header = patch_loader_core::dynamic::read_body(
-            &mut reader,
-            pending,
-            &mut payload,
-            &mut hooks,
-            0,
-            0,
-        )
-        .map_err(|e| format!("invalid SD patch body: {e:?}"))?;
+        let patch_abi::dynamic::Module {
+            mut code,
+            memory_len,
+            hooks,
+            relocations,
+        } = patch_abi::dynamic::Module::decode(bytes)
+            .map_err(|e| format!("invalid SD patch file: {e:?}"))?;
+        code.resize(memory_len, 0);
         let module_hooks = hooks.clone();
-        let mut edits = Vec::with_capacity(hook_count);
+        let mut edits = Vec::with_capacity(hooks.len());
         for hook in hooks {
             let offset = hook
                 .address
@@ -638,23 +576,7 @@ pub(super) fn sd_fixture_edits(
                 .to_vec();
             edits.push((hook.address, original, hook.entry_offset));
         }
-        let mut relocations = Vec::with_capacity(relocation_count);
-        let reloc_start =
-            header_len + code_len + hook_count * patch_loader_core::dynamic::HOOK_RECORD_LEN;
-        for bytes in bytes[reloc_start..].chunks_exact(12) {
-            let kind = u32::from_le_bytes(bytes[..4].try_into().unwrap());
-            let first = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
-            let second = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
-            relocations.push(match kind {
-                1 => patch_loader_core::bundle::Relocation::Abs32 { offset: first },
-                2 => patch_loader_core::bundle::Relocation::ThumbMov32 {
-                    low_offset: first,
-                    high_offset: second,
-                },
-                _ => return Err("invalid relocation kind".into()),
-            });
-        }
-        Ok((edits, payload, None, relocations, module_hooks))
+        Ok((edits, code, None, relocations, module_hooks))
     }
     let mut all_edits = Vec::new();
     let mut all_hooks = Vec::new();
@@ -702,7 +624,7 @@ pub(super) fn sd_registry_if_allocated(
     qmp: &l6max_host::qmp::QmpClient,
     model: l6fw::Model,
 ) -> Result<Option<u32>, Box<dyn std::error::Error>> {
-    use patch_loader_core::registry;
+    use patch_abi::registry;
     let (pointer, stock) = match model {
         l6fw::Model::L6 => (registry::L6_POINTER, registry::L6_POINTER_STOCK),
         l6fw::Model::L6max => (registry::L6MAX_POINTER, registry::L6MAX_POINTER_STOCK),
@@ -750,7 +672,7 @@ pub(super) fn sd_dynamic_handler_slot(
         .ok_or_else(|| format!("function {function_address:#010x} has no SD dispatch slot"))?;
     let index = u32::try_from(index).map_err(|e| e.to_string())?;
     registry
-        .checked_add(patch_loader_core::registry::site_offset(index))
+        .checked_add(patch_abi::registry::site_offset(index))
         .ok_or_else(|| "dynamic handler slot address overflow".into())
 }
 
@@ -761,8 +683,8 @@ pub(super) fn sd_site_chain(
     record: u32,
 ) -> Result<
     (
-        patch_loader_core::dynamic::SiteChain,
-        Vec<patch_loader_core::dynamic::HookLink>,
+        patch_abi::dynamic::SiteChain,
+        Vec<patch_abi::dynamic::HookLink>,
     ),
     Box<dyn std::error::Error>,
 > {
@@ -774,7 +696,7 @@ pub(super) fn sd_site_chain(
             .collect())
     };
     let value = words(record, 4)?;
-    let chain = patch_loader_core::dynamic::SiteChain {
+    let chain = patch_abi::dynamic::SiteChain {
         handler: value[0],
         first: value[1],
         last: value[2],
@@ -791,7 +713,7 @@ pub(super) fn sd_site_chain(
             .into());
         }
         let value = words(next, 6)?;
-        links.push(patch_loader_core::dynamic::HookLink {
+        links.push(patch_abi::dynamic::HookLink {
             entry: value[0],
             next_slot: value[1],
             order: value[2],

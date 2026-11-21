@@ -15,7 +15,7 @@ l6fw.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 sha2.workspace = true
-patch-loader-core = { path = "../patch-loader-core" }
+patch-abi = { path = "../patch-abi" }
 
 [lints]
 workspace = true

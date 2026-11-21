@@ -15,7 +15,7 @@ firmware-api.workspace = true
 l6patch = { path = "../l6patch" }
 firmware-patch-core.workspace = true
 firmware-patch-wasm.workspace = true
-patch-loader-core = { path = "../patch-loader-core" }
+patch-abi = { path = "../patch-abi" }
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 toml = "0.8.23"

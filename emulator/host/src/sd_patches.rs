@@ -1,5 +1,5 @@
 //! Patches the Patch loader reads from the SD card. The modules are the ones the
-//! web patcher hosts; the `patch-loader-core` tests check them against the loader.
+//! web patcher hosts; the `patch-abi` tests check them against the loader.
 use std::{collections::BTreeMap, path::Path};
 
 /// The card folder the loader scans.

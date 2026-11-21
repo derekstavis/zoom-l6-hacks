@@ -1,33 +1,9 @@
 //! The web patcher hosts prebuilt SD patch modules. They are generated with
 //! `l6patch prebuilt`, which needs stock firmware, so CI
 //! cannot rebuild them; it can check that the current loader accepts them.
-use patch_loader_core::bundle::{ReadError, Reader};
-use patch_loader_core::dynamic::{self, Hook};
+use patch_abi::dynamic::{self, Module};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path};
-
-/// Limits the resident loader passes to `read_header` (`patches/patch-loader`).
-const MODULE_CAPACITY: usize = 0x60000;
-const MAX_RELOCATIONS: usize = 256;
-
-struct Slice<'a>(&'a [u8]);
-
-impl Reader for Slice<'_> {
-    type Error = ();
-    fn read(&mut self, destination: &mut [u8]) -> Result<usize, Self::Error> {
-        let count = destination.len().min(self.0.len());
-        destination[..count].copy_from_slice(&self.0[..count]);
-        self.0 = &self.0[count..];
-        Ok(count)
-    }
-    fn finish(&mut self) -> Result<(), ReadError> {
-        if self.0.is_empty() {
-            Ok(())
-        } else {
-            Err(ReadError::Invalid)
-        }
-    }
-}
 
 #[test]
 fn hosted_modules_load_with_the_current_loader() {
@@ -57,18 +33,13 @@ fn hosted_modules_load_with_the_current_loader() {
             "{file}: manifest loader ABI"
         );
 
-        let mut reader = Slice(&bytes);
-        let pending = dynamic::read_header(
-            &mut reader,
-            MODULE_CAPACITY,
-            dynamic::MAX_HOOKS_PER_MODULE,
-            MAX_RELOCATIONS,
-        )
-        .unwrap_or_else(|error| panic!("{file}: loader rejects header: {error:?}"));
-        let mut code = vec![0; pending.header.memory_len];
-        let mut hooks = [Hook::default(); dynamic::MAX_HOOKS_PER_MODULE];
-        dynamic::read_body(&mut reader, pending, &mut code, &mut hooks, 0, 0x2000_0000)
-            .unwrap_or_else(|error| panic!("{file}: loader rejects body: {error:?}"));
+        let decoded = Module::decode(&bytes)
+            .unwrap_or_else(|error| panic!("{file}: loader rejects it: {error:?}"));
+        assert_eq!(
+            decoded.encode().as_deref(),
+            Ok(&bytes[..]),
+            "{file}: the writer encodes it differently"
+        );
     }
 
     // Every hosted module is listed, so none can be served unchecked.

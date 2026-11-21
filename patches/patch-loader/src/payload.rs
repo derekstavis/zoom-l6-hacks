@@ -7,7 +7,7 @@ pub mod patch_api;
 use core::{arch::asm, ptr, slice};
 use patch_api::{function_call_post_hook, function_offset_hook};
 #[allow(dead_code, unused_attributes)]
-#[path = "../../../tools/patch-loader-core/src/lib.rs"]
+#[path = "../../../tools/patch-abi/src/lib.rs"]
 mod core_loader;
 
 #[cfg(not(sd_l6))]
@@ -26,9 +26,6 @@ const REGISTRY_POINTER: usize = core_loader::registry::L6_POINTER as usize;
 const REGISTRY_STOCK: u32 = core_loader::registry::L6MAX_POINTER_STOCK;
 #[cfg(sd_l6)]
 const REGISTRY_STOCK: u32 = core_loader::registry::L6_POINTER_STOCK;
-// Cap a single code + zero-filled state allocation at 384 KiB. Larger modules
-// are rejected before allocating from the shared FreeRTOS heap.
-const MODULE_CAPACITY: usize = 0x60000;
 /// Dynamic dispatch sites in this loader's hook catalog. The registry holds
 /// one record per site, so no set of SD modules can outgrow it.
 const SITES: usize = {
@@ -466,7 +463,7 @@ unsafe fn stage<R: core_loader::bundle::Reader>(reader: &mut R, order: u32) -> O
     use core_loader::dynamic::{Hook, HookLink, LINK_LEN};
     let pending = match core_loader::dynamic::read_header(
         reader,
-        MODULE_CAPACITY,
+        core_loader::dynamic::MAX_MEMORY_LEN,
         core_loader::dynamic::MAX_HOOKS_PER_MODULE,
         core_loader::dynamic::MAX_RELOCATIONS_PER_MODULE,
     ) {

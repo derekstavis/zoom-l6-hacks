@@ -1,29 +1,30 @@
-//! Export of guarded runtime modules with per-hook entry offsets.
-use firmware_patch_compile::Relocation;
+//! Fixed-address SD patch bundles, as `l6patch --experimental-patch-bundle`
+//! writes them.
+use alloc::vec::Vec;
 use sha2::{Digest, Sha256};
 
 /// Encode complete guarded hook regions followed by the linked payload.
 /// The caller must first apply the existing revision and hook guards.
-pub fn build(
+pub fn encode(
     stock: &[u8],
     patched: &[u8],
     base: u32,
     payload_base: u32,
     init: u32,
     regions: &[(u32, usize)],
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, &'static str> {
     let payload_offset = payload_base
         .checked_sub(base)
         .ok_or("payload before image")? as usize;
     if patched.len() < stock.len() || payload_offset < stock.len() || payload_offset > patched.len()
     {
-        return Err("invalid payload placement".into());
+        return Err("invalid payload placement");
     }
     if patched[stock.len()..payload_offset]
         .iter()
         .any(|&b| b != 0xff)
     {
-        return Err("non-erased bytes before payload".into());
+        return Err("non-erased bytes before payload");
     }
     let mut records = Vec::new();
     let mut ordered = regions.to_vec();
@@ -34,10 +35,10 @@ pub fn build(
         let start = address.checked_sub(base).ok_or("hook precedes image")? as usize;
         let end = start.checked_add(len).ok_or("hook range overflow")?;
         if len == 0 || start < previous_end || end > stock.len() {
-            return Err("invalid or overlapping guarded hook region".into());
+            return Err("invalid or overlapping guarded hook region");
         }
         if stock[previous_end..start] != patched[previous_end..start] {
-            return Err("firmware change is outside guarded hook regions".into());
+            return Err("firmware change is outside guarded hook regions");
         }
         let offset = u32::try_from(start).map_err(|_| "offset too large")?;
         let len = u32::try_from(len).map_err(|_| "record too large")?;
@@ -48,7 +49,7 @@ pub fn build(
         previous_end = end;
     }
     if stock[previous_end..] != patched[previous_end..stock.len()] {
-        return Err("firmware change is outside guarded hook regions".into());
+        return Err("firmware change is outside guarded hook regions");
     }
     let payload = &patched[payload_offset..];
     let mut output = Vec::new();
@@ -72,30 +73,29 @@ pub fn build(
     output.extend_from_slice(&init.to_le_bytes());
     output.extend_from_slice(&records);
     output.extend_from_slice(payload);
-    let checksum = patch_loader_core::bundle::checksum(&output).ok_or("short header")?;
+    let checksum = super::checksum(&output).ok_or("short header")?;
     output[60..64].copy_from_slice(&checksum.to_le_bytes());
     Ok(output)
 }
 
-/// Build a writable-RAM module bundle. Each record stores a guarded stock hook
-/// region and the linked payload entry offset in its replacement field; the
-/// installed persistent loader publishes that entry through its RAM dispatch
-/// table instead of writing firmware flash.
-#[allow(dead_code)]
-pub fn build_dynamic(
+/// Format 6: each record stores a guarded stock hook region and the linked
+/// payload entry offset in its replacement field. No tool writes it; the
+/// reader still accepts it, so the tests write one to cover that path.
+#[cfg(test)]
+fn encode_relocatable(
     stock: &[u8],
     base: u32,
     payload_base: u32,
     payload: &[u8],
     init_offset: u32,
     handlers: &[(u32, Vec<u8>, u32)],
-    relocations: &[Relocation],
-) -> Result<Vec<u8>, String> {
+    relocations: &[super::Relocation],
+) -> Result<Vec<u8>, &'static str> {
     if payload.is_empty()
         || init_offset & 1 != 0
         || (init_offset != 0 && init_offset as usize >= payload.len())
     {
-        return Err("invalid dynamic module payload or initializer".into());
+        return Err("invalid dynamic module payload or initializer");
     }
     let mut ordered = handlers.to_vec();
     ordered.sort_unstable_by_key(|item| item.0);
@@ -114,7 +114,7 @@ pub fn build_dynamic(
             || stock[start..end] != original
             || entry_offset as usize >= payload.len()
         {
-            return Err("invalid, overlapping or unguarded dynamic hook".into());
+            return Err("invalid, overlapping or unguarded dynamic hook");
         }
         records.extend_from_slice(&(start as u32).to_le_bytes());
         records.extend_from_slice(&(original.len() as u32).to_le_bytes());
@@ -127,13 +127,7 @@ pub fn build_dynamic(
     let mut relocation_table = Vec::with_capacity(relocations.len() * 12);
     let mut relocation_sites = Vec::with_capacity(relocations.len() * 2);
     for relocation in relocations {
-        let (kind, first, second) = match relocation {
-            Relocation::Abs32 { offset } => (1u32, *offset, 0u32),
-            Relocation::ThumbMov32 {
-                low_offset,
-                high_offset,
-            } => (2u32, *low_offset, *high_offset),
-        };
+        let [kind, first, second] = relocation.record();
         let sites = if kind == 1 {
             [(first, 4), (0, 0)]
         } else {
@@ -144,12 +138,12 @@ pub fn build_dynamic(
                 .checked_add(width)
                 .ok_or("relocation range overflow")?;
             if end > payload_len || offset & 1 != 0 {
-                return Err("relocation outside payload or misaligned".into());
+                return Err("relocation outside payload or misaligned");
             }
             relocation_sites.push((offset, end));
         }
         if kind == 2 && first.abs_diff(second) > 16 {
-            return Err("distant MOVW/MOVT relocation pair".into());
+            return Err("distant MOVW/MOVT relocation pair");
         }
         relocation_table.extend_from_slice(&kind.to_le_bytes());
         relocation_table.extend_from_slice(&first.to_le_bytes());
@@ -160,7 +154,7 @@ pub fn build_dynamic(
         .windows(2)
         .any(|pair| pair[0].1 > pair[1].0)
     {
-        return Err("overlapping relocations".into());
+        return Err("overlapping relocations");
     }
     let mut output = Vec::new();
     output.extend_from_slice(b"L6SB");
@@ -181,108 +175,22 @@ pub fn build_dynamic(
     output.extend_from_slice(&records);
     output.extend_from_slice(&relocation_table);
     output.extend_from_slice(payload);
-    let checksum = patch_loader_core::bundle::checksum(&output).ok_or("short header")?;
+    let checksum = super::checksum(&output).ok_or("short header")?;
     output[60..64].copy_from_slice(&checksum.to_le_bytes());
-    Ok(output)
-}
-
-/// Encode one dynamic module with a streamed code image and a larger writable
-/// allocation. Bytes between `code_len` and `memory_len` are zeroed by the
-/// loader and are not stored in the SD file.
-pub fn build_dynamic_v1(
-    payload: &[u8],
-    memory_len: usize,
-    hooks: &[(u32, u32, u32)],
-    relocations: &[Relocation],
-) -> Result<Vec<u8>, String> {
-    if payload.is_empty()
-        || memory_len < payload.len()
-        || memory_len > u32::MAX as usize
-        || hooks.len() > u16::MAX as usize
-        || relocations.len() > u16::MAX as usize
-    {
-        return Err("invalid dynamic module header values".into());
-    }
-    let mut ordered_hooks = hooks.to_vec();
-    // Stable order is significant when one composed module has several
-    // handlers for the same function. Their records form one hook chain.
-    ordered_hooks.sort_by_key(|entry| entry.0);
-    if ordered_hooks.iter().any(|(address, offset, next_offset)| {
-        address & 1 != 0
-            || offset & 1 != 0
-            || *offset as usize >= payload.len()
-            || (*next_offset != u32::MAX
-                && (next_offset & 3 != 0 || *next_offset as usize + 4 > payload.len()))
-    }) {
-        return Err("invalid function-entry hook".into());
-    }
-
-    let mut relocation_table = Vec::with_capacity(relocations.len() * 12);
-    for relocation in relocations {
-        let (kind, first, second) = match relocation {
-            Relocation::Abs32 { offset } => (1u32, *offset, 0u32),
-            Relocation::ThumbMov32 {
-                low_offset,
-                high_offset,
-            } => (2u32, *low_offset, *high_offset),
-        };
-        let offsets = if kind == 1 {
-            [Some(first), None]
-        } else {
-            [Some(first), Some(second)]
-        };
-        for offset in offsets.into_iter().flatten() {
-            if offset & 1 != 0 || offset as usize + 4 > payload.len() {
-                return Err("relocation outside or misaligned in patch code".into());
-            }
-        }
-        if kind == 2 && (second <= first || second - first > 16) {
-            return Err("invalid Thumb MOVW/MOVT relocation pair".into());
-        }
-        relocation_table.extend_from_slice(&kind.to_le_bytes());
-        relocation_table.extend_from_slice(&first.to_le_bytes());
-        relocation_table.extend_from_slice(&second.to_le_bytes());
-    }
-
-    let mut output = Vec::with_capacity(
-        patch_loader_core::dynamic::HEADER_LEN_V1
-            + payload.len()
-            + hooks.len() * 12
-            + relocations.len() * 12,
-    );
-    output.extend_from_slice(b"L6SB");
-    output.extend_from_slice(&patch_loader_core::dynamic::FORMAT_VERSION.to_le_bytes());
-    output.extend_from_slice(&patch_loader_core::dynamic::LOADER_ABI.to_le_bytes());
-    output.extend_from_slice(
-        &u32::try_from(payload.len())
-            .map_err(|_| "dynamic module too large")?
-            .to_le_bytes(),
-    );
-    output.extend_from_slice(&(memory_len as u32).to_le_bytes());
-    output.extend_from_slice(&(hooks.len() as u16).to_le_bytes());
-    output.extend_from_slice(&(relocations.len() as u16).to_le_bytes());
-    output.extend_from_slice(&0u32.to_le_bytes()); // reserved
-    output.extend_from_slice(&[0; 4]);
-    output.extend_from_slice(payload);
-    for (address, entry_offset, next_offset) in ordered_hooks {
-        output.extend_from_slice(&address.to_le_bytes());
-        output.extend_from_slice(&entry_offset.to_le_bytes());
-        output.extend_from_slice(&next_offset.to_le_bytes());
-    }
-    output.extend_from_slice(&relocation_table);
-    let checksum = patch_loader_core::dynamic::checksum(&output).ok_or("short v1 file")?;
-    output[24..28].copy_from_slice(&checksum.to_le_bytes());
     Ok(output)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bundle::Relocation;
+    use std::vec::Vec;
+
     #[test]
     fn exports_guarded_edits_and_fixed_address_payload() {
         let stock = [1, 2, 3, 4];
         let patched = [1, 7, 3, 8, 0xff, 0xff, 9, 10];
-        let bundle = build(
+        let bundle = encode(
             &stock,
             &patched,
             0x1000,
@@ -309,118 +217,16 @@ mod tests {
     }
     #[test]
     fn rejects_non_erased_gap() {
-        assert!(build(&[1], &[1, 0, 2], 0x1000, 0x1002, 0, &[]).is_err());
-    }
-
-    #[test]
-    fn emits_v1_module_with_address_hooks() {
-        let payload = [0x00, 0xbf, 0x70, 0x47, 0, 0, 0, 0];
-        let file = build_dynamic_v1(&payload, 0x48000, &[(0x8000_1000, 0, 4)], &[]).unwrap();
-        assert_eq!(file.len(), 28 + payload.len() + 12);
-        assert_eq!(&file[..4], b"L6SB");
-        assert_eq!(u16::from_le_bytes(file[4..6].try_into().unwrap()), 1);
-        assert_eq!(u16::from_le_bytes(file[6..8].try_into().unwrap()), 1);
-        assert_eq!(u32::from_le_bytes(file[8..12].try_into().unwrap()), 8);
-        assert_eq!(
-            u32::from_le_bytes(file[12..16].try_into().unwrap()),
-            0x48000
-        );
-        assert_eq!(u16::from_le_bytes(file[16..18].try_into().unwrap()), 1);
-        assert_eq!(u16::from_le_bytes(file[18..20].try_into().unwrap()), 0);
-        assert_eq!(&file[28..36], &payload);
-        assert_eq!(
-            u32::from_le_bytes(file[36..40].try_into().unwrap()),
-            0x8000_1000
-        );
-        assert_eq!(
-            patch_loader_core::dynamic::checksum(&file),
-            Some(u32::from_le_bytes(file[24..28].try_into().unwrap()))
-        );
-        let mut corrupt = file;
-        corrupt[25] ^= 1;
-        assert_ne!(
-            patch_loader_core::dynamic::checksum(&corrupt),
-            Some(u32::from_le_bytes(corrupt[24..28].try_into().unwrap()))
-        );
-    }
-
-    #[test]
-    fn emits_v1_multi_site_hook_records() {
-        let payload = [
-            0x00, 0xbf, 0x70, 0x47, 0, 0, 0, 0, 0, 0xbf, 0x70, 0x47, 0, 0, 0, 0,
-        ];
-        let hooks = [(0x8000_1000, 0, 4), (0x8000_2000, 8, 12)];
-        let file = build_dynamic_v1(&payload, 0x48000, &hooks, &[]).unwrap();
-        assert_eq!(u16::from_le_bytes(file[16..18].try_into().unwrap()), 2);
-        assert_eq!(file.len(), 28 + payload.len() + hooks.len() * 12);
-        assert_eq!(
-            u32::from_le_bytes(
-                file[28 + payload.len()..32 + payload.len()]
-                    .try_into()
-                    .unwrap()
-            ),
-            0x8000_1000
-        );
-        assert_eq!(
-            u32::from_le_bytes(
-                file[40 + payload.len()..44 + payload.len()]
-                    .try_into()
-                    .unwrap()
-            ),
-            0x8000_2000
-        );
-    }
-
-    #[test]
-    fn preserves_composed_handler_order_for_same_function() {
-        let payload = [0u8; 16];
-        let hooks = [(0x8000_1000, 8, 12), (0x8000_1000, 0, 4)];
-        let file = build_dynamic_v1(&payload, payload.len(), &hooks, &[]).unwrap();
-        let first = patch_loader_core::dynamic::HEADER_LEN_V1 + payload.len();
-        let second = first + patch_loader_core::dynamic::HOOK_RECORD_LEN;
-
-        assert_eq!(
-            u32::from_le_bytes(file[first..first + 4].try_into().unwrap()),
-            0x8000_1000
-        );
-        assert_eq!(
-            u32::from_le_bytes(file[first + 4..first + 8].try_into().unwrap()),
-            8
-        );
-        assert_eq!(
-            u32::from_le_bytes(file[second + 4..second + 8].try_into().unwrap()),
-            0
-        );
-    }
-
-    #[test]
-    fn emits_v1_state_length_without_storing_zero_fill() {
-        let payload = [0x00, 0xbf, 0x70, 0x47];
-        let file = build_dynamic_v1(&payload, 0x48000, &[(0x8000_1000, 0, 0)], &[]).unwrap();
-        assert_eq!(file.len(), 28 + payload.len() + 12);
-        assert_eq!(
-            u16::from_le_bytes(file[4..6].try_into().unwrap()),
-            patch_loader_core::dynamic::FORMAT_VERSION
-        );
-        assert_eq!(u32::from_le_bytes(file[8..12].try_into().unwrap()), 4);
-        assert_eq!(
-            u32::from_le_bytes(file[12..16].try_into().unwrap()),
-            0x48000
-        );
-        assert_eq!(&file[28..32], &payload);
-        assert_eq!(
-            patch_loader_core::dynamic::checksum(&file),
-            Some(u32::from_le_bytes(file[24..28].try_into().unwrap()))
-        );
+        assert!(encode(&[1], &[1, 0, 2], 0x1000, 0x1002, 0, &[]).is_err());
     }
 
     #[test]
     fn rejects_uncovered_changes_and_overlapping_guards() {
         let stock = [1, 2, 3, 4];
         let patched = [1, 7, 3, 8, 0xff, 0xff, 9, 10];
-        assert!(build(&stock, &patched, 0x1000, 0x1006, 0, &[(0x1000, 2)]).is_err());
+        assert!(encode(&stock, &patched, 0x1000, 0x1006, 0, &[(0x1000, 2)]).is_err());
         assert!(
-            build(
+            encode(
                 &stock,
                 &patched,
                 0x1000,
@@ -430,12 +236,12 @@ mod tests {
             )
             .is_err()
         );
-        assert!(build(&stock, &patched, 0x1000, 0x1006, 0, &[(0x0fff, 4)]).is_err());
+        assert!(encode(&stock, &patched, 0x1000, 0x1006, 0, &[(0x0fff, 4)]).is_err());
     }
 
     #[test]
     fn v6_bundle_carries_and_applies_module_relocations() {
-        use patch_loader_core::bundle::{self, Policy, Relocation as ParsedRelocation};
+        use crate::bundle::{self, Policy};
 
         let stock = [0u8; 16];
         let mut payload = Vec::new();
@@ -449,7 +255,8 @@ mod tests {
                 high_offset: 8,
             },
         ];
-        let file = build_dynamic(&stock, 0x1000, 0x2000, &payload, 0, &[], &relocations).unwrap();
+        let file =
+            encode_relocatable(&stock, 0x1000, 0x2000, &payload, 0, &[], &relocations).unwrap();
         let policy = Policy {
             firmware_sha256: Sha256::digest(stock).into(),
             image_base: 0x1000,
@@ -471,7 +278,7 @@ mod tests {
         assert_eq!(&loaded[..4], &0x3004u32.to_le_bytes());
         assert_eq!(
             bundle.relocations().next(),
-            Some(ParsedRelocation::Abs32 { offset: 0 })
+            Some(Relocation::Abs32 { offset: 0 })
         );
         assert_eq!(&loaded[4..8], &[0x43, 0xf2, 0x08, 0x00]);
         assert_eq!(&loaded[8..12], &[0xc0, 0xf2, 0x00, 0x00]);
@@ -479,10 +286,10 @@ mod tests {
 
     #[test]
     fn consumer_validates_guards_and_reconstructs_image() {
-        use patch_loader_core::bundle::{self, Error, Policy};
+        use crate::bundle::{self, Error, Policy};
         let stock = [1, 2, 3, 4];
         let patched = [1, 7, 3, 8, 0xff, 0xff, 9, 10];
-        let mut file = build(
+        let mut file = encode(
             &stock,
             &patched,
             0x1000,
@@ -528,7 +335,7 @@ mod tests {
 
     #[test]
     fn sequential_reader_handles_short_reads_and_rejects_damage() {
-        use patch_loader_core::bundle::{self, Error, Policy, ReadError, Reader};
+        use crate::bundle::{self, Error, Policy, ReadError, Reader};
         struct Chunks<'a>(&'a [u8]);
         impl Reader for Chunks<'_> {
             type Error = ();
@@ -541,7 +348,7 @@ mod tests {
         }
         let stock = [1, 2, 3, 4];
         let patched = [1, 7, 3, 4, 0xff, 0xff, 9, 10];
-        let mut file = build(&stock, &patched, 0x1000, 0x1006, 0x1006, &[(0x1000, 2)]).unwrap();
+        let mut file = encode(&stock, &patched, 0x1000, 0x1006, 0x1006, &[(0x1000, 2)]).unwrap();
         let policy = Policy {
             firmware_sha256: Sha256::digest(stock).into(),
             image_base: 0x1000,

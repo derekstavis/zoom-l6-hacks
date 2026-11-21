@@ -4,6 +4,7 @@
 //! that stays native-only) and the browser-based WASM patcher (which applies
 //! payloads precompiled ahead of time). Every function here only moves bytes
 //! around in memory; none of it touches the filesystem or shells out.
+use l6fw::Model;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
@@ -106,40 +107,33 @@ pub fn patch_package(name: &str) -> Option<&'static PatchPackage> {
     patch_catalog().iter().find(|package| package.name == name)
 }
 
-fn model_name(model: FirmwareModel) -> &'static str {
-    match model {
-        FirmwareModel::L6 => "L6",
-        FirmwareModel::L6max => "L6max",
-    }
-}
-
-pub fn supports_firmware_patch(name: &str, model: FirmwareModel) -> bool {
+pub fn supports_firmware_patch(name: &str, model: Model) -> bool {
     patch_package(name).is_some_and(|package| {
         package.kind == "patch"
             && package
                 .firmware_models
                 .iter()
-                .any(|value| value == model_name(model))
+                .any(|value| value == model.label())
     })
 }
 
-pub fn supports_sd_patch(name: &str, model: FirmwareModel) -> bool {
+pub fn supports_sd_patch(name: &str, model: Model) -> bool {
     patch_package(name).is_some_and(|package| {
         package.kind == "patch"
             && package
                 .sd_card_models
                 .iter()
-                .any(|value| value == model_name(model))
+                .any(|value| value == model.label())
     })
 }
 
-pub fn supports_wasm_patch(name: &str, model: FirmwareModel) -> bool {
+pub fn supports_wasm_patch(name: &str, model: Model) -> bool {
     patch_package(name).is_some_and(|package| {
         package.kind == "patch"
             && package
                 .wasm_models
                 .iter()
-                .any(|value| value == model_name(model))
+                .any(|value| value == model.label())
     })
 }
 
@@ -315,37 +309,6 @@ pub fn composed_patch_file_name(requested: &[String]) -> Result<String, String> 
             .join("-")
     ))
 }
-pub const FIRST_PAYLOAD: u32 = 0x80108000;
-pub const SLOT_END: u32 = 0x801a2ff8;
-/// SHA-256 of the supported stock L6max MAIN firmware image (1.10).
-pub const EXPECTED_FIRMWARE_SHA256: &str =
-    "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461";
-/// SHA-256 of the supported stock L6 MAIN firmware image (1.10).
-pub const L6_EXPECTED_FIRMWARE_SHA256: &str =
-    "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799";
-pub const L6_MAIN_BASE: u32 = 0x80001000;
-/// End of the observed L6 MAIN slot, immediately before its trailer area.
-pub const L6_SLOT_END: u32 = 0x80285ff8;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FirmwareModel {
-    L6,
-    L6max,
-}
-
-/// The L6 payload starts immediately after its exact supported MAIN image,
-/// aligned for Thumb payload placement. Its large erased package padding
-/// supplies the bytes consumed when the MAIN segment grows.
-pub fn first_payload_for(model: FirmwareModel, main_length: usize) -> u32 {
-    match model {
-        FirmwareModel::L6 => {
-            let end = L6_MAIN_BASE + main_length as u32;
-            (end + 15) & !15
-        }
-        FirmwareModel::L6max => FIRST_PAYLOAD,
-    }
-}
-
 /// Encodes a Thumb-2 BL (`link: true`) or B.W (`link: false`) branch from `from` to `to`.
 pub fn branch(from: u32, to: u32, link: bool) -> [u8; 4] {
     let displacement = to.wrapping_sub(from + 4);
@@ -366,15 +329,13 @@ pub fn branch(from: u32, to: u32, link: bool) -> [u8; 4] {
 }
 
 /// Detects the model from the MAIN reset vector.
-pub fn detect_firmware_model(firmware: &[u8]) -> Result<FirmwareModel, String> {
+pub fn detect_firmware_model(firmware: &[u8]) -> Result<Model, String> {
     let reset_vector = firmware
         .get(4..8)
         .ok_or("firmware is too short to contain a reset vector")?;
-    match u32::from_le_bytes(reset_vector.try_into().unwrap()) {
-        0x80001415 => Ok(FirmwareModel::L6),
-        0x80000415 => Ok(FirmwareModel::L6max),
-        value => Err(format!("unsupported firmware reset vector: {value:#010x}")),
-    }
+    let value = u32::from_le_bytes(reset_vector.try_into().unwrap());
+    Model::from_stock_reset_vector(value)
+        .ok_or_else(|| format!("unsupported firmware reset vector: {value:#010x}"))
 }
 
 /// Confirms `firmware` is byte-identical to the supported stock image for its
@@ -385,11 +346,13 @@ pub fn verify_firmware(firmware: &[u8]) -> Result<(), String> {
     verify_firmware_for(detect_firmware_model(firmware)?, firmware)
 }
 
-pub fn verify_firmware_for(model: FirmwareModel, firmware: &[u8]) -> Result<(), String> {
+pub fn verify_firmware_for(model: Model, firmware: &[u8]) -> Result<(), String> {
     let digest = format!("{:x}", Sha256::digest(firmware));
-    let (expected, reset_vector, min_len) = match model {
-        FirmwareModel::L6 => (L6_EXPECTED_FIRMWARE_SHA256, 0x80001415u32, 8),
-        FirmwareModel::L6max => (EXPECTED_FIRMWARE_SHA256, 0x80000415u32, 0x410),
+    let expected = model.stock_main_sha256();
+    let reset_vector = model.stock_reset_vector();
+    let min_len = match model {
+        Model::L6 => 8,
+        Model::L6max => 0x410,
     };
     if digest != expected {
         return Err(format!(
@@ -402,13 +365,13 @@ pub fn verify_firmware_for(model: FirmwareModel, firmware: &[u8]) -> Result<(), 
     if u32::from_le_bytes(firmware[4..8].try_into().unwrap()) != reset_vector {
         return Err("firmware does not match the expected reset vector".into());
     }
-    if model == FirmwareModel::L6 {
+    if model == Model::L6 {
         return Ok(());
     }
     if firmware[0x40c..0x410] != 0x8007eea9u32.to_le_bytes() {
         return Err("firmware does not match the expected reset support vector".into());
     }
-    if firmware.len() > 0x108000 {
+    if firmware.len() > (model.first_payload(firmware.len()) - model.main_base()) as usize {
         return Err("payload would overwrite original firmware".into());
     }
     Ok(())
@@ -449,27 +412,8 @@ pub struct AppliedPatch {
 /// and call-site edits. `original_length` is the firmware's length before any
 /// patch in this run was applied; `padding` is the untouched
 /// `padding_before_secondary.bin` content read before any patch grew the
-/// image. Mirrors `l6patch`'s per-patch loop exactly, minus compiling.
-pub fn apply_patch(
-    firmware: &mut Vec<u8>,
-    original_length: usize,
-    base: u32,
-    payload: &[u8],
-    edits: &PatchEdits,
-    padding: &[u8],
-) -> Result<AppliedPatch, String> {
-    apply_patch_with_map(
-        firmware,
-        original_length,
-        base,
-        payload,
-        edits,
-        padding,
-        0x80000000,
-        SLOT_END,
-    )
-}
-
+/// image. `firmware_base` is where MAIN loads and nothing may reach
+/// `slot_end`. Mirrors `l6patch`'s per-patch loop exactly, minus compiling.
 pub fn apply_patch_with_map(
     firmware: &mut Vec<u8>,
     original_length: usize,
@@ -557,6 +501,8 @@ pub fn write_image_length_and_version(
 mod tests {
     use super::*;
 
+    const FIRST_PAYLOAD: u32 = 0x8010_8000;
+
     fn effect_package(name: &str, id: &str) -> PatchPackage {
         PatchPackage {
             name: name.into(),
@@ -613,9 +559,9 @@ mod tests {
         assert_eq!(knob.version, "1.0.0");
         assert_eq!(knob.title, "Show knob values on display");
         assert_eq!(knob.author, "derekstavis");
-        assert!(supports_firmware_patch("knob-dialog", FirmwareModel::L6max));
-        assert!(!supports_firmware_patch("knob-dialog", FirmwareModel::L6));
-        assert!(supports_sd_patch("midi-sync", FirmwareModel::L6));
+        assert!(supports_firmware_patch("knob-dialog", Model::L6max));
+        assert!(!supports_firmware_patch("knob-dialog", Model::L6));
+        assert!(supports_sd_patch("midi-sync", Model::L6));
         assert!(patch_package("patch-loader").is_some_and(|package| package.kind == "loader"));
         for (package_name, effect_id) in [("efx-plateau", "plateau"), ("efx-velvet", "velvet")] {
             let package = patch_package(package_name).unwrap();
@@ -733,18 +679,13 @@ mod tests {
 
     #[test]
     fn generic_firmware_verification_detects_both_models_from_reset_vector() {
-        for (reset_vector, expected) in [
-            (0x80001415u32, FirmwareModel::L6),
-            (0x80000415u32, FirmwareModel::L6max),
-        ] {
+        for (reset_vector, expected) in [(0x80001415u32, Model::L6), (0x80000415u32, Model::L6max)]
+        {
             let mut firmware = vec![0; 8];
             firmware[4..8].copy_from_slice(&reset_vector.to_le_bytes());
             assert_eq!(detect_firmware_model(&firmware), Ok(expected));
             let error = verify_firmware(&firmware).unwrap_err();
-            let expected_digest = match expected {
-                FirmwareModel::L6 => L6_EXPECTED_FIRMWARE_SHA256,
-                FirmwareModel::L6max => EXPECTED_FIRMWARE_SHA256,
-            };
+            let expected_digest = expected.stock_main_sha256();
             assert!(error.contains(expected_digest), "{error}");
         }
     }
@@ -773,7 +714,7 @@ mod tests {
 
     #[test]
     fn apply_patch_grows_firmware_and_writes_a_hook_branch() {
-        // Just under FIRST_PAYLOAD's offset (0x108000), so growth is small.
+        // Just under the first payload's offset (0x108000), so growth is small.
         let mut firmware = vec![0u8; 0x107ff0];
         let original_length = firmware.len();
         let padding = vec![0xffu8; 0x10000];
@@ -783,13 +724,15 @@ mod tests {
             length: 6,
         }]);
         let payload = vec![0xaa; 16];
-        let applied = apply_patch(
+        let applied = apply_patch_with_map(
             &mut firmware,
             original_length,
             FIRST_PAYLOAD,
             &payload,
             &edits,
             &padding,
+            Model::L6max.main_base(),
+            Model::L6max.slot_end(),
         )
         .unwrap();
         assert_eq!(applied.base, FIRST_PAYLOAD);
@@ -806,11 +749,8 @@ mod tests {
     fn l6_payload_and_hook_offsets_use_the_l6_loaded_base() {
         let mut firmware = vec![0u8; 0x20];
         let padding = vec![0xff; 0x100];
-        assert_eq!(
-            first_payload_for(FirmwareModel::L6max, 0x1081e8),
-            FIRST_PAYLOAD
-        );
-        let base = first_payload_for(FirmwareModel::L6, firmware.len());
+        assert_eq!(Model::L6max.first_payload(0x1081e8), FIRST_PAYLOAD);
+        let base = Model::L6.first_payload(firmware.len());
         assert_eq!(base, 0x80001020);
         let target = base;
         let edits = PatchEdits::new(vec![HookEdit {
@@ -826,8 +766,8 @@ mod tests {
             &payload,
             &edits,
             &padding,
-            L6_MAIN_BASE,
-            L6_SLOT_END,
+            Model::L6.main_base(),
+            Model::L6.slot_end(),
         )
         .unwrap();
         assert_eq!(applied.base, base);
@@ -845,13 +785,15 @@ mod tests {
         let edits = PatchEdits::new(Vec::new());
         let payload = vec![0xaa; 16];
         assert!(
-            apply_patch(
+            apply_patch_with_map(
                 &mut firmware,
                 original_length,
                 FIRST_PAYLOAD,
                 &payload,
                 &edits,
-                &padding
+                &padding,
+                Model::L6max.main_base(),
+                Model::L6max.slot_end(),
             )
             .is_err()
         );

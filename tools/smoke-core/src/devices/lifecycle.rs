@@ -82,10 +82,7 @@ pub fn run_wasm_patch(options: &Options) -> Result<(), String> {
     }
     let wasm_model = firmware_patch_wasm::detect_firmware_model(&stock)
         .map_err(|error| format!("WASM firmware model detection failed: {error:?}"))?;
-    let expected_wasm_model = match model {
-        l6fw::Model::L6 => "L6",
-        l6fw::Model::L6max => "L6max",
-    };
+    let expected_wasm_model = model.label();
     if wasm_model != expected_wasm_model {
         return Err(format!(
             "WASM detected {wasm_model}, expected {expected_wasm_model}"
@@ -117,11 +114,8 @@ pub fn run_wasm_patch(options: &Options) -> Result<(), String> {
             l6patch::BuildMode::Firmware,
         )
         .map_err(|error| format!("native patch build failed for {selected:?}: {error}"))?;
-        let filename = match model {
-            l6fw::Model::L6 => "L6.BIN",
-            l6fw::Model::L6max => "L6max.bin",
-        };
-        let native = fs::read(native_out.join(filename)).map_err(|error| error.to_string())?;
+        let native = fs::read(native_out.join(model.package_file_name()))
+            .map_err(|error| error.to_string())?;
         let (wasm, report) = firmware_patch_wasm::apply_patches(&stock, selected)
             .map_err(|message| format!("WASM patching failed for {selected:?}: {message}"))?;
         if wasm != native {

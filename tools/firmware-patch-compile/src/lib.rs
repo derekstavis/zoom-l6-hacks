@@ -396,7 +396,7 @@ pub fn compile_sd_relocatable_composed(
     }
     let mut source_text = String::from("#![no_std]\n#![no_main]\n#[path = \"");
     let firmware = fs::read(source.join("main_firmware.bin"))?;
-    let model_dir = if firmware.get(4..8) == Some(&0x8000_1415u32.to_le_bytes()) {
+    let model_dir = if stock_model(&firmware) == Some(l6fw::Model::L6) {
         "l6"
     } else {
         "l6max"
@@ -920,7 +920,7 @@ fn compile_payload_pass(
     } else {
         root.join("linker/link.ld")
     };
-    let firmware_is_l6 = firmware.get(4..8) == Some(&0x8000_1415u32.to_le_bytes());
+    let firmware_is_l6 = stock_model(&firmware) == Some(l6fw::Model::L6);
     // Resolve rustc before changing into the extracted firmware directory.
     // Rustup selects toolchains from the current directory, and that directory
     // does not contain this workspace's rust-toolchain.toml.
@@ -1037,11 +1037,9 @@ fn generate_continuations_from_metadata(
     generate_dynamic_sites: bool,
     validate_guards: bool,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let main_base = match firmware.get(4..8) {
-        Some(bytes) if bytes == 0x8000_0415u32.to_le_bytes() => 0x8000_0000u32,
-        Some(bytes) if bytes == 0x8000_1415u32.to_le_bytes() => 0x8000_1000u32,
-        _ => return Err("unsupported firmware reset vector for continuation generation".into()),
-    };
+    let main_base = stock_model(firmware)
+        .ok_or("unsupported firmware reset vector for continuation generation")?
+        .main_base();
     let mut needed = std::collections::BTreeSet::new();
     let mut call_groups =
         std::collections::BTreeMap::<String, Vec<(bool, u32, String, usize)>>::new();
@@ -2146,4 +2144,10 @@ mod tests {
             Some("knob-dialog")
         );
     }
+}
+
+/// The model whose stock reset vector `firmware` starts with.
+fn stock_model(firmware: &[u8]) -> Option<l6fw::Model> {
+    let reset_vector = u32::from_le_bytes(firmware.get(4..8)?.try_into().ok()?);
+    l6fw::Model::from_stock_reset_vector(reset_vector)
 }

@@ -9,8 +9,8 @@ use firmware_patch_compile::{
     function_hook_sites, hook_registrations, symbol,
 };
 use firmware_patch_core::{
-    FirmwareModel, HookEdit, L6_MAIN_BASE, L6_SLOT_END, PatchEdits, apply_patch_with_map, branch,
-    first_payload_for, verify_firmware_for, write_image_length_and_version,
+    HookEdit, PatchEdits, apply_patch_with_map, branch, verify_firmware_for,
+    write_image_length_and_version,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -32,11 +32,6 @@ module for PATCHES/ on the card. `prebuilt` regenerates the committed browser
 templates and SD modules from the config.toml [firmware] packages; --check
 only compares them with the current sources. `l6patch STOCK_DIR OUTPUT_DIR`
 is `l6patch firmware`.";
-
-const SD_MODULE_BASE: u32 = 0x8011_0000;
-const SD_MODULE_END: u32 = 0x8011_8000;
-const L6_SD_MODULE_BASE: u32 = 0x800c_0000;
-const L6_SD_MODULE_END: u32 = 0x800c_8000;
 
 struct Options {
     source: PathBuf,
@@ -512,14 +507,9 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let stock_firmware = firmware.clone();
     let original_length = firmware.len();
     let model = l6fw::model_from_main(&firmware)?;
-    let (patch_model, firmware_base, slot_end) = match model {
-        l6fw::Model::L6 => (FirmwareModel::L6, L6_MAIN_BASE, L6_SLOT_END),
-        l6fw::Model::L6max => (FirmwareModel::L6max, 0x80000000, 0x801a2ff8),
-    };
-    let (module_base, module_end) = match model {
-        l6fw::Model::L6 => (L6_SD_MODULE_BASE, L6_SD_MODULE_END),
-        l6fw::Model::L6max => (SD_MODULE_BASE, SD_MODULE_END),
-    };
+    let (firmware_base, slot_end) = (model.main_base(), model.slot_end());
+    let modules = model.sd_module_region();
+    let (module_base, module_end) = (modules.start, modules.end);
     let patches = options.patches.unwrap_or_else(|| match model {
         _ if options.experimental_patch_loader || options.experimental_sd_bundle => vec![],
         l6fw::Model::L6 => vec!["midi-sync".to_owned()],
@@ -527,17 +517,13 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     });
     let selected_supported = |name: &str| {
         if options.experimental_sd_bundle {
-            firmware_patch_core::supports_sd_patch(name, patch_model)
+            firmware_patch_core::supports_sd_patch(name, model)
         } else {
-            firmware_patch_core::supports_firmware_patch(name, patch_model)
+            firmware_patch_core::supports_firmware_patch(name, model)
         }
     };
     if let Some(name) = patches.iter().find(|name| !selected_supported(name)) {
-        let model_name = if model == l6fw::Model::L6 {
-            "L6"
-        } else {
-            "L6max"
-        };
+        let model_name = model.label();
         let install_kind = if options.experimental_sd_bundle {
             "SD card"
         } else {
@@ -552,7 +538,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         Some(version) => parse_version(&version)?,
         None => l6fw::PATCHED_VERSION,
     };
-    verify_firmware_for(patch_model, &firmware)?;
+    verify_firmware_for(model, &firmware)?;
     let digest = format!("{:x}", Sha256::digest(&firmware));
     // Validate every hook region before compiling or modifying the output image.
     let roots = patches
@@ -561,22 +547,14 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             let patch_root = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../patches")
                 .join(name);
-            let model_root = patch_root.join(if patch_model == FirmwareModel::L6 {
-                "l6"
-            } else {
-                "l6max"
-            });
+            let model_root = patch_root.join(model.name());
             let patch_root = if model_root.join("src/payload.rs").is_file() {
                 model_root
             } else {
                 patch_root
             };
             if !patch_root.join("src/payload.rs").is_file() {
-                let model_name = if patch_model == FirmwareModel::L6 {
-                    "L6"
-                } else {
-                    "L6max"
-                };
+                let model_name = model.label();
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
                     format!("patch `{name}` has no {model_name} implementation"),
@@ -616,10 +594,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         if registrations.is_empty() {
             return Err("dynamic bundle has no hook registrations".into());
         }
-        let firmware_base = match model {
-            l6fw::Model::L6 => 0x8000_1000,
-            l6fw::Model::L6max => 0x8000_0000,
-        };
+        let firmware_base = model.main_base();
         let image = fs::read(source.join("main_firmware.bin"))?;
         let mut handlers = Vec::with_capacity(registrations.len());
         let mut pass_through = Vec::with_capacity(registrations.len());
@@ -749,7 +724,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let mut end = if options.experimental_sd_bundle {
         module_base
     } else {
-        first_payload_for(patch_model, original_length)
+        model.first_payload(original_length)
     };
     let initial_payload = end;
     let mut applied = Vec::new();
@@ -1095,10 +1070,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         output.join("manifest.json"),
         serde_json::to_string_pretty(&manifest)?,
     )?;
-    let (update_name, trailer_offset) = match model {
-        l6fw::Model::L6 => ("L6.BIN", 0x2851f8usize),
-        l6fw::Model::L6max => ("L6max.bin", 0x1a31f8usize),
-    };
+    let (update_name, trailer_offset) = (model.package_file_name(), model.main_trailer_offset());
     let update = output.join(update_name);
     l6fw::repack(&output, &update, true)?;
     let packed = fs::read(&update)?;
@@ -1108,7 +1080,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         return Err("repacked package model changed unexpectedly".into());
     }
     let version_range = trailer_offset + 4..trailer_offset + 8;
-    let report = serde_json::json!({"model":if model == l6fw::Model::L6 {"L6"} else {"L6max"},"source_sha256":digest,"patched_sha256":format!("{:x}",Sha256::digest(&firmware)),"image_length":firmware.len(),"payload_address":format!("{initial_payload:#x}"),"patches":applied,"update_package":update_name,"update_sha256":format!("{:x}",Sha256::digest(&packed)),"version":String::from_utf8_lossy(&packed[version_range]),"usage":"Repacked update for emulator validation; physical bootloader acceptance unverified"});
+    let report = serde_json::json!({"model":model.label(),"source_sha256":digest,"patched_sha256":format!("{:x}",Sha256::digest(&firmware)),"image_length":firmware.len(),"payload_address":format!("{initial_payload:#x}"),"patches":applied,"update_package":update_name,"update_sha256":format!("{:x}",Sha256::digest(&packed)),"version":String::from_utf8_lossy(&packed[version_range]),"usage":"Repacked update for emulator validation; physical bootloader acceptance unverified"});
     fs::write(
         output.join("patch.json"),
         serde_json::to_string_pretty(&report)?,

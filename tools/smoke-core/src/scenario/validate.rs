@@ -55,10 +55,7 @@ impl Scenario {
                 return Err("unknown SD patch name".into());
             }
             for model in &value.models {
-                let firmware_model = match model {
-                    Model::L6 => firmware_patch_core::FirmwareModel::L6,
-                    Model::L6max => firmware_patch_core::FirmwareModel::L6max,
-                };
+                let firmware_model = *model;
                 if let Some(name) = patches
                     .iter()
                     .find(|name| !firmware_patch_core::supports_sd_patch(name, firmware_model))
@@ -67,9 +64,7 @@ impl Scenario {
                         "patch {name} does not support SD loading on {model}"
                     ));
                 }
-                if !value.effect_replacements.is_empty()
-                    && firmware_model != firmware_patch_core::FirmwareModel::L6max
-                {
+                if !value.effect_replacements.is_empty() && firmware_model != Model::L6max {
                     return Err("effect_replacements are currently supported on L6max only".into());
                 }
             }

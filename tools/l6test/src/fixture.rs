@@ -272,11 +272,7 @@ pub(crate) fn prepare_sd_patch(
         dir.join(layout::FIRMWARE_REPORT),
     )
     .map_err(|e| e.to_string())?;
-    fixture.firmware_package = Some(loader.join(if fixture.model == Model::L6 {
-        "L6.BIN"
-    } else {
-        "L6max.bin"
-    }));
+    fixture.firmware_package = Some(loader.join(fixture.model.package_file_name()));
     fixture.patches.clear();
     if !patches.is_empty() || !fixture.effect_replacements.is_empty() {
         let bundle = dir.join(layout::SD_BUNDLE_BUILD);
@@ -309,11 +305,7 @@ pub(crate) fn fixture_options(
             .firmware_package
             .as_ref()
             .ok_or("patches require firmware_package")?;
-        let firmware_model = if fixture.model == Model::L6 {
-            firmware_patch_core::FirmwareModel::L6
-        } else {
-            firmware_patch_core::FirmwareModel::L6max
-        };
+        let firmware_model = fixture.model;
         // The browser patcher builds what it supports, as the website does.
         // Other firmware patches are built with l6patch.
         let (patched_package, report) = if fixture
@@ -344,12 +336,7 @@ pub(crate) fn fixture_options(
                 &fs::read(build.join("patch.json")).map_err(|e| e.to_string())?,
             )
             .map_err(|e| e.to_string())?;
-            let name = if fixture.model == Model::L6 {
-                "L6.BIN"
-            } else {
-                "L6max.bin"
-            };
-            (build.join(name), report)
+            (build.join(fixture.model.package_file_name()), report)
         };
         fs::write(
             dir.join(layout::FIRMWARE_REPORT),

@@ -45,7 +45,7 @@ pub struct Suites {
 }
 
 impl Suites {
-    fn load(root: &Path) -> Result<Self, String> {
+    pub(crate) fn load(root: &Path) -> Result<Self, String> {
         let path = root.join(SUITES_FILE);
         let file: SuitesFile =
             toml::from_str(&fs::read_to_string(&path).map_err(|e| format!("{SUITES_FILE}: {e}"))?)
@@ -85,7 +85,7 @@ impl Suites {
 /// A patch's emulator tests, from its directory.
 pub const PATCH_SPEC: &str = "tests/emulator";
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExpectedFailure {
     pub model: Model,
@@ -94,10 +94,11 @@ pub struct ExpectedFailure {
     pub reason: String,
 }
 
-/// A case file's `[case]` table.
-#[derive(Deserialize)]
+/// A case file's `[case]` table: how the test driver runs the file's
+/// scenario, or another case's.
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct Header {
+pub(crate) struct Header {
     /// Another case's scenario, for a file without one of its own.
     scenario: Option<PathBuf>,
     /// The models of a case without a scenario of its own; otherwise the

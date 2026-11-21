@@ -107,3 +107,17 @@ pub fn symbol(model: l6fw::Model, name: &str) -> Option<u32> {
         l6fw::Model::L6max => firmware_api::l6max::symbol(name),
     }
 }
+
+/// The schema of a symbol name: one declared for either model.
+pub fn symbol_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let mut names: Vec<_> = firmware_api::l6::symbols()
+        .chain(firmware_api::l6max::symbols())
+        .map(|symbol| symbol.name)
+        .collect();
+    names.sort();
+    names.dedup();
+    schemars::json_schema!({
+        "type": "string",
+        "enum": names,
+    })
+}

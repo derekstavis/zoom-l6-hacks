@@ -5,7 +5,12 @@ edition.workspace = true
 publish.workspace = true
 license.workspace = true
 
+[features]
+# JSON Schema for `Model`, for tools that generate scenario schemas.
+schemars = ["dep:schemars"]
+
 [dependencies]
+schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

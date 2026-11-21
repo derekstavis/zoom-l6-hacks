@@ -3,7 +3,7 @@ use crate::{BlockDevice, Volume};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, schemars::JsonSchema, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SoundPad {
     pub pad: u8,
@@ -13,7 +13,7 @@ pub struct SoundPad {
     #[serde(default = "default_level")]
     pub level: u8,
 }
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, schemars::JsonSchema, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PlayMode {
     #[default]

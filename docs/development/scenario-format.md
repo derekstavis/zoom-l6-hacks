@@ -3,8 +3,9 @@
 A scenario is a strict TOML sequence, executed by one `smoke-core::Runner` on
 both adapters. Unknown actions, misspelled fields, unsupported controls,
 model/channel mismatches, unsupported versions and zero timeouts are errors
-before boot. Channels are one-based. Electrical IDs and firmware addresses
-belong in Rust model mappings, not scenario files.
+before boot. Channels are one-based. Electrical IDs belong in Rust model
+mappings, and a scenario names a firmware address only by its `patches/api`
+symbol.
 
 ```toml
 version = 1
@@ -211,12 +212,31 @@ A fragment contains only `[[step]]` entries. Parent include model scope is
 intersected with child scopes. Use fragments for shared setup or control groups;
 there are no arbitrary shell commands, expressions or loop constructs.
 
+## Editor support
+
+[Tombi](https://tombi-toml.github.io/tombi/) is the supported TOML tooling for
+case and fragment files. `tombi.toml` applies the JSON Schemas in
+`tests/emulator/schemas/`, generated from the Rust types that parse these files.
+Through Tombi's language server, in an editor or an agent's LSP client, they
+give completion, documentation and errors while a file is written: actions,
+fields, `expect-memory` symbols and suite names. `uvx tombi lint <files>` reports
+the same errors from the command line.
+
+The Rust loader is the authority, and Tombi only gives earlier feedback.
+`cargo l6test list` loads and validates every case and fragment without
+firmware. It also checks what the schema cannot: per-model symbol scope, step
+order, includes and file references.
+
+Run `cargo l6test schema` after changing a scenario, step or `[case]` type, or
+declaring a symbol or suite; `cargo test -p l6test` fails while the committed
+schemas are stale.
+
 ## Extending the driver
 
 Add a scenario and catalog entry for sequences using existing operations. Add
 complex USB, MIDI, storage or debugger assertions as typed Rust operations with
 focused tests. Avoid arbitrary shell commands, embedded expressions, loops or
-firmware-memory addressing in TOML.
+raw firmware addresses in TOML.
 
 A catalog case has either a scenario path or a supervised GUI executable. A case with
 `needs_configuration` and no scenario runs the packaged GUI from `--app`, which keeps

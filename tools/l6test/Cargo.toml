@@ -6,6 +6,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+schemars.workspace = true
 firmware-api.workspace = true
 qemu-build = { path = "../qemu-build" }
 sd-image.workspace = true

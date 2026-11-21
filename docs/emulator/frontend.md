@@ -357,8 +357,5 @@ worst-case stack headroom. The Tasks tab colors estimated free stack amber
 below 25% and red below 10%; these are visual cues, not safety guarantees.
 The status bar applies the same visual thresholds to current free heap as a
 proportion of the arena; they do not guarantee allocation success. Task stacks
-and task control blocks are labeled when their structures can be verified. The
-SD patch loader's registry and loaded module blocks are labeled when their
-recorded ranges match heap allocations. A module may contain several patches;
-the registry does not identify individual patches or their later allocations.
-Other allocation owners are unknown.
+and task control blocks are labeled when their structures can be verified;
+other allocation owners are unknown.

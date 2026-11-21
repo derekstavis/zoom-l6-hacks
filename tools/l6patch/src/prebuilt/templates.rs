@@ -1,5 +1,5 @@
-//! Local-only maintainer tool. Never run in CI, which has no access to the
-//! real Zoom firmware (by design — see the repo's firmware-handling policy).
+//! Browser templates for `l6patch prebuilt`. Runs locally only: CI has no
+//! access to the real Zoom firmware, by design.
 //!
 //! Produces the static templates the browser-based patcher ships: for each
 //! non-empty subset of `firmware_patch_core::WASM_PATCHES`, and for each
@@ -30,17 +30,15 @@ use firmware_patch_compile::{
     hook_registrations, hook_windows, symbol,
 };
 use firmware_patch_core::{
-    EXPECTED_FIRMWARE_SHA256, FIRST_PAYLOAD, FirmwareModel, L6_EXPECTED_FIRMWARE_SHA256,
-    L6_MAIN_BASE, WASM_PATCHES, first_payload_for, verify_firmware_for,
+    FIRST_PAYLOAD, FirmwareModel, L6_MAIN_BASE, WASM_PATCHES, first_payload_for,
+    verify_firmware_for,
 };
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
-
-mod fingerprint;
 
 #[derive(Clone)]
 struct HookRow {
@@ -556,50 +554,24 @@ struct Unit {
     patch_info_offset: u32,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.as_slice() == ["--source-fingerprint"] {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .canonicalize()?;
-        println!("{}", fingerprint::source_fingerprint(&root)?);
-        return Ok(());
-    }
-    let mut args = args.into_iter();
-    let usage = "Usage: firmware-patch-wasm-prebuild L6MAX_UNPACKED_FIRMWARE_DIR L6_UNPACKED_FIRMWARE_DIR | L6MAX_UNPACKED_FIRMWARE_DIR --l6max-only";
-    let source = PathBuf::from(args.next().ok_or(usage)?).canonicalize()?;
-    let l6_arg = args.next().ok_or(usage)?;
-    let l6max_only = l6_arg == "--l6max-only";
-    let l6_source = if l6max_only {
-        None
-    } else {
-        Some(PathBuf::from(l6_arg).canonicalize()?)
-    };
-    if args.next().is_some() {
-        return Err(usage.into());
-    }
+/// Regenerate `firmware-patch-wasm/templates` from unpacked stock firmware
+/// for both models, and stamp the manifest with `fingerprint`.
+pub(crate) fn generate(
+    l6max_source: &Path,
+    l6_source: &Path,
+    fingerprint: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let source = l6max_source.canonicalize()?;
+    let l6_source = l6_source.canonicalize()?;
     let firmware = fs::read(source.join("main_firmware.bin"))?;
     let digest = format!("{:x}", Sha256::digest(&firmware));
-    if digest != EXPECTED_FIRMWARE_SHA256 {
-        return Err(format!(
-            "unsupported main firmware SHA-256: expected {EXPECTED_FIRMWARE_SHA256}, got {digest}"
-        )
-        .into());
-    }
     verify_firmware_for(FirmwareModel::L6max, &firmware)?;
-    let l6_firmware = if let Some(l6_source) = &l6_source {
-        let firmware = fs::read(l6_source.join("main_firmware.bin"))?;
-        verify_firmware_for(FirmwareModel::L6, &firmware)?;
-        Some(firmware)
-    } else {
-        None
-    };
+    let l6_firmware = fs::read(l6_source.join("main_firmware.bin"))?;
+    verify_firmware_for(FirmwareModel::L6, &l6_firmware)?;
 
     let patches_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../patches");
-    let scratch = std::env::temp_dir().join(format!(
-        "firmware-patch-wasm-prebuild-{}",
-        std::process::id()
-    ));
+    let scratch =
+        std::env::temp_dir().join(format!("l6patch-prebuilt-templates-{}", std::process::id()));
     fs::create_dir_all(&scratch)?;
     let output_scratch = scratch.join("compile-out");
     fs::create_dir_all(&output_scratch)?;
@@ -806,32 +778,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let templates_dir =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../firmware-patch-wasm/templates");
     fs::create_dir_all(&templates_dir)?;
-    let previous_manifest: Option<serde_json::Value> = if l6max_only {
-        Some(serde_json::from_slice(&fs::read(
-            templates_dir.join("manifest.json"),
-        )?)?)
-    } else {
-        None
-    };
-    let mut preserved_l6_files = HashSet::new();
-    if let Some(manifest) = &previous_manifest {
-        for entry in manifest["units"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .chain(manifest["loaders"].as_array().into_iter().flatten())
-            .filter(|entry| entry["model"] == "L6")
-        {
-            if let Some(metadata_file) = entry["metadata_file"].as_str() {
-                preserved_l6_files.insert(metadata_file.to_owned());
-                let metadata: serde_json::Value =
-                    serde_json::from_slice(&fs::read(templates_dir.join(metadata_file))?)?;
-                if let Some(payload_file) = metadata["payload_file"].as_str() {
-                    preserved_l6_files.insert(payload_file.to_owned());
-                }
-            }
-        }
-    }
     for entry in fs::read_dir(&templates_dir)? {
         let entry = entry?;
         let path = entry.path();
@@ -839,23 +785,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .extension()
             .is_some_and(|ext| ext == "bin" || ext == "json")
         {
-            let filename = entry.file_name().to_string_lossy().into_owned();
-            if !preserved_l6_files.contains(&filename) {
-                fs::remove_file(path)?;
-            }
+            fs::remove_file(path)?;
         }
     }
 
     let mut unit_list = units.into_values().collect::<Vec<_>>();
     unit_list.sort_by_key(|unit| (unit.name, unit.base));
-    let mut manifest_units = previous_manifest
-        .as_ref()
-        .and_then(|manifest| manifest["units"].as_array())
-        .into_iter()
-        .flatten()
-        .filter(|unit| unit["model"] == "L6")
-        .cloned()
-        .collect::<Vec<_>>();
+    let mut manifest_units = Vec::new();
     for unit in &unit_list {
         let stem = format!("{}-{:08x}", unit.name, unit.base);
         fs::write(templates_dir.join(format!("{stem}.bin")), &unit.template)?;
@@ -912,7 +848,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Build the supported L6 profiles at the addresses selected by the native
     // CLI, then zero only firmware-derived continuation windows in browser templates.
-    if let (Some(l6_source), Some(l6_firmware)) = (l6_source.as_deref(), l6_firmware.as_deref()) {
+    {
+        let (l6_source, l6_firmware) = (l6_source.as_path(), l6_firmware.as_slice());
         let l6_root = patches_dir.join("midi-sync/l6").canonicalize()?;
         let l6_rows = compile_hook_rows(
             &l6_source,
@@ -1106,14 +1043,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }));
     }
 
-    let mut loader_manifest = previous_manifest
-        .as_ref()
-        .and_then(|manifest| manifest["loaders"].as_array())
-        .into_iter()
-        .flatten()
-        .filter(|loader| loader["model"] == "L6")
-        .cloned()
-        .collect::<Vec<_>>();
+    let mut loader_manifest = Vec::new();
     let mut loader_profiles = Vec::new();
     for mask in 0u8..(1 << WASM_PATCHES.len()) {
         let selected: Vec<&'static str> = WASM_PATCHES
@@ -1131,7 +1061,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             FIRST_PAYLOAD,
         ));
     }
-    if let (Some(l6_source), Some(l6_firmware)) = (l6_source.as_deref(), l6_firmware.as_deref()) {
+    {
+        let (l6_source, l6_firmware) = (l6_source.as_path(), l6_firmware.as_slice());
         let l6_base = first_payload_for(FirmwareModel::L6, l6_firmware.len());
         for mask in 0u8..2 {
             let selected = if mask == 0 { vec![] } else { vec!["midi-sync"] };
@@ -1184,18 +1115,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let loader_template_count = loader_manifest.len();
-    let l6_digest = previous_manifest
-        .as_ref()
-        .and_then(|manifest| manifest["l6_source_firmware_sha256"].as_str())
-        .unwrap_or(L6_EXPECTED_FIRMWARE_SHA256);
+    let l6_digest = format!("{:x}", Sha256::digest(&l6_firmware));
     fs::write(
         templates_dir.join("manifest.json"),
         serde_json::to_string_pretty(&serde_json::json!({
             "source_firmware_sha256": digest,
             "l6_source_firmware_sha256": l6_digest,
-            "generator_source_sha256": fingerprint::source_fingerprint(
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize()?.as_path()
-            )?,
+            "generator_source_sha256": fingerprint,
             "units": manifest_units,
             "loaders": loader_manifest,
         }))?,

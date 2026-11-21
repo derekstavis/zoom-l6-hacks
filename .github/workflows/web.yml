@@ -7,6 +7,8 @@ on:
       - web/**
       - tools/firmware-patch-wasm/**
       - tools/firmware-patch-core/**
+      - tools/l6patch/**
+      - .cargo/config.toml
       - tools/l6fw/**
       - Cargo.lock
       - .github/workflows/web.yml

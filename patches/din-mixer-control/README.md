@@ -65,9 +65,9 @@ From the repository root, with an unpacked package:
 
 ```sh
 rustup target add thumbv7em-none-eabihf
-cargo run -p l6patch -- unpacked firmware-din-mixer-control-v113 --patch din-mixer-control
+cargo run -p l6patch -- firmware unpacked firmware-din-mixer-control-v113 --patch din-mixer-control
 # All three patches in one image:
-cargo run -p l6patch -- unpacked firmware-full-v113 \
+cargo run -p l6patch -- firmware unpacked firmware-full-v113 \
   --patch knob-dialog --patch midi-sync --patch din-mixer-control
 ```
 
@@ -90,7 +90,7 @@ treated identically whether or not `midi-sync` is present.
 ## Validation
 
 ```sh
-cargo run -p l6patch -- unpacked firmware-din-mixer-control-v113 --patch din-mixer-control
+cargo run -p l6patch -- firmware unpacked firmware-din-mixer-control-v113 --patch din-mixer-control
 cargo run --offline --locked -p l6test -- run --config config.toml \
   --case l6max-din-mixer-control-patched --model l6max
 cargo run --offline --locked -p l6test -- run --config config.toml \

@@ -1,5 +1,5 @@
 //! Embeds every precomputed, Zoom-byte-free template from `templates/`
-//! (produced by `firmware-patch-wasm-prebuild`) directly into the compiled
+//! (produced by `l6patch prebuilt`) directly into the compiled
 //! binary, as (name, payload bytes, metadata JSON text) triples.
 use std::{env, fs, path::Path};
 

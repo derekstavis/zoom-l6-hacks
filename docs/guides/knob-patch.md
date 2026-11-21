@@ -20,14 +20,14 @@ present, otherwise the toolchain's `rust-lld` (no other install needed; see the
 
 ```sh
 rustup target add thumbv7em-none-eabihf
-cargo run -p l6patch -- unpacked firmware-knob-dialog-recorder-fix-v112
+cargo run -p l6patch -- firmware unpacked firmware-knob-dialog-recorder-fix-v112
 ```
 
 The builder validates the original main SHA-256 and displaced hook regions,
 compiles the payload, and repacks with a regenerated checksum. The output
 directory must be new. Its `L6max.bin` is the update package; its extracted
 components can also run directly in the emulator. `patch.json` records hashes,
-placement, hooks, and the version marker. `--update-version FOUR_DIGITS`
+placement, hooks, and the version marker. `--version FOUR_DIGITS`
 explicitly overrides the default marker.
 
 ## Run the patched images directly

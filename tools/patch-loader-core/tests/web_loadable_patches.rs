@@ -1,5 +1,5 @@
 //! The web patcher hosts prebuilt SD patch modules. They are generated with
-//! `tools/build-web-loadable-patches.sh`, which needs stock firmware, so CI
+//! `l6patch prebuilt`, which needs stock firmware, so CI
 //! cannot rebuild them; it can check that the current loader accepts them.
 use patch_loader_core::bundle::{ReadError, Reader};
 use patch_loader_core::dynamic::{self, Hook};

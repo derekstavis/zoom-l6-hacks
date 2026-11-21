@@ -1,5 +1,5 @@
 //! Applies precompiled, Zoom-byte-free patch templates (see
-//! `firmware-patch-wasm-prebuild`, embedded at build time from `templates/`)
+//! `l6patch prebuilt`, embedded at build time from `templates/`)
 //! to a user-uploaded Zoom update package, entirely in memory. Compiles for
 //! `wasm32-unknown-unknown` (the browser) and for the host (native tests,
 //! which check this crate's output against the native `l6patch` CLI's

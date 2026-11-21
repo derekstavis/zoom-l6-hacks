@@ -1738,16 +1738,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "firmware-patch-wasm-prebuild"
-version = "0.1.0"
-dependencies = [
- "firmware-patch-compile",
- "firmware-patch-core",
- "serde_json",
- "sha2 0.10.9",
-]
-
-[[package]]
 name = "fixedbitset"
 version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

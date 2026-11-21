@@ -1,4 +1,7 @@
-//! Reproducible, revision-guarded firmware experiment. Never edits its input.
+//! The patch tool: builds patched firmware and SD modules from stock
+//! firmware, lists the patch catalog, and regenerates the prebuilt files.
+//! Never edits its input.
+pub mod prebuilt;
 mod sd_bundle;
 use firmware_patch_compile::{
     FunctionHookSiteMetadata, HookRegistration, compile, compile_l6_patch_loader, compile_sd,
@@ -14,8 +17,21 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-const USAGE: &str = "Usage: l6patch INPUT_UNPACKED_DIR OUTPUT_DIR [--patch NAME]... [--effect-replacement SLOT=ID]... [--update-version FOUR_DIGITS] [--experimental-patch-bundle | --experimental-patch-loader] [--experimental-qemu-module-arena]\n\
-Patch names come from patches/<name>/package.toml. Repeat --patch to select multiple patches; dependencies are included automatically. Effect replacement assignments build one composed SD module. The Patch loader is experimental and unqualified.";
+const USAGE: &str = "\
+Usage:
+  l6patch firmware STOCK_DIR OUTPUT_DIR [--patch NAME]... [--version DIGITS] [--loader [--qemu-module-arena]]
+  l6patch module STOCK_DIR OUTPUT_DIR [--patch NAME]... [--effect SLOT=ID]...
+  l6patch catalog [--model l6|l6max] [--format text|json]
+  l6patch prebuilt [--config PATH | --l6max DIR --l6 DIR] [--check]
+
+STOCK_DIR is an unpacked stock update package (`l6fw unpack`). Patch names come
+from patches/<name>/package.toml; dependencies are included automatically.
+`firmware` builds an update package with the patches applied, and with --loader
+also installs the experimental Patch loader. `module` builds one composed SD
+module for PATCHES/ on the card. `prebuilt` regenerates the committed browser
+templates and SD modules from the config.toml [firmware] packages; --check
+only compares them with the current sources. `l6patch STOCK_DIR OUTPUT_DIR`
+is `l6patch firmware`.";
 
 const SD_MODULE_BASE: u32 = 0x8011_0000;
 const SD_MODULE_END: u32 = 0x8011_8000;
@@ -33,8 +49,10 @@ struct Options {
     experimental_patch_loader: bool,
     experimental_qemu_module_arena: bool,
 }
-fn parse_args() -> Result<Options, Box<dyn std::error::Error>> {
-    let mut args = std::env::args().skip(1);
+/// The original flag form, `l6patch STOCK_DIR OUTPUT_DIR [--experimental-*]`.
+fn parse_legacy(
+    mut args: impl Iterator<Item = String>,
+) -> Result<Options, Box<dyn std::error::Error>> {
     let (Some(source), Some(output)) = (args.next(), args.next()) else {
         return Err(USAGE.into());
     };
@@ -359,7 +377,150 @@ fn merge_effect_replacement_packages(
 
 /// Run the command-line interface using process arguments.
 pub fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
-    run_options(parse_args()?)
+    let mut args = std::env::args().skip(1).peekable();
+    match args.peek().map(String::as_str) {
+        Some("firmware") | Some("module") => {
+            let command = args.next().unwrap();
+            build(parse_build(&command, args)?)
+        }
+        Some("catalog") => {
+            args.next();
+            catalog(args)
+        }
+        Some("prebuilt") => {
+            args.next();
+            prebuilt(args)
+        }
+        Some("-h" | "--help") | None => {
+            println!("{USAGE}");
+            Ok(())
+        }
+        Some(_) => run_options(parse_legacy(args)?),
+    }
+}
+
+fn parse_build(
+    command: &str,
+    mut args: impl Iterator<Item = String>,
+) -> Result<BuildRequest, Box<dyn std::error::Error>> {
+    let (Some(source), Some(output)) = (args.next(), args.next()) else {
+        return Err(USAGE.into());
+    };
+    let module = command == "module";
+    let mut request = BuildRequest {
+        source: PathBuf::from(source),
+        output: PathBuf::from(output),
+        patches: Vec::new(),
+        effect_replacements: Vec::new(),
+        version: None,
+        mode: if module {
+            BuildMode::SdBundle
+        } else {
+            BuildMode::Firmware
+        },
+        experimental_qemu_module_arena: false,
+    };
+    while let Some(flag) = args.next() {
+        let mut value = || args.next().ok_or_else(|| format!("{flag} needs a value"));
+        match flag.as_str() {
+            "--patch" => request.patches.push(value()?),
+            "--effect" if module => {
+                let value = value()?;
+                let (slot, id) = value
+                    .split_once('=')
+                    .filter(|(slot, id)| !slot.is_empty() && !id.is_empty())
+                    .ok_or("--effect takes SLOT=ID")?;
+                request
+                    .effect_replacements
+                    .push((slot.to_owned(), id.to_owned()));
+            }
+            "--version" if !module => request.version = Some(value()?),
+            "--loader" if !module => request.mode = BuildMode::PatchLoader,
+            "--qemu-module-arena" if !module => request.experimental_qemu_module_arena = true,
+            _ => return Err(format!("unknown {command} option {flag}\n\n{USAGE}").into()),
+        }
+    }
+    Ok(request)
+}
+
+fn catalog(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut model = None;
+    let mut json = false;
+    while let Some(flag) = args.next() {
+        match (flag.as_str(), args.next().as_deref()) {
+            ("--model", Some("l6")) => model = Some("L6"),
+            ("--model", Some("l6max")) => model = Some("L6max"),
+            ("--format", Some("json")) => json = true,
+            ("--format", Some("text")) => json = false,
+            _ => return Err(USAGE.into()),
+        }
+    }
+    let packages = firmware_patch_core::patch_catalog()
+        .iter()
+        .filter(|package| model.is_none_or(|model| package.models.iter().any(|m| m == model)));
+    if json {
+        match model {
+            // The website build reads the unfiltered catalog as generated.
+            None => print!("{}", firmware_patch_core::PATCH_CATALOG_JSON),
+            Some(_) => println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &serde_json::json!({"packages": packages.collect::<Vec<_>>()})
+                )?
+            ),
+        }
+        return Ok(());
+    }
+    for package in packages {
+        let mut delivery = Vec::new();
+        if !package.firmware_models.is_empty() {
+            delivery.push(format!("firmware {}", package.firmware_models.join(",")));
+        }
+        if !package.sd_card_models.is_empty() {
+            delivery.push(format!("module {}", package.sd_card_models.join(",")));
+        }
+        println!(
+            "{:<20} {:<8} {:<8} {}",
+            package.name,
+            package.version,
+            package.kind,
+            delivery.join("; ")
+        );
+    }
+    Ok(())
+}
+
+fn prebuilt(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut config = None;
+    let (mut l6max, mut l6) = (None, None);
+    let mut check = false;
+    while let Some(flag) = args.next() {
+        let mut value = || {
+            args.next()
+                .map(PathBuf::from)
+                .ok_or_else(|| format!("{flag} needs a path"))
+        };
+        match flag.as_str() {
+            "--config" => config = Some(value()?),
+            "--l6max" => l6max = Some(value()?),
+            "--l6" => l6 = Some(value()?),
+            "--check" => check = true,
+            _ => return Err(format!("unknown prebuilt option {flag}\n\n{USAGE}").into()),
+        }
+    }
+    if check {
+        prebuilt::check()?;
+        println!("The prebuilt files match the current sources.");
+        return Ok(());
+    }
+    let stock = match (config, l6max, l6) {
+        (None, Some(l6max), Some(l6)) => prebuilt::Stock::Unpacked { l6max, l6 },
+        (config, None, None) => prebuilt::Stock::Config(
+            config.unwrap_or_else(|| prebuilt::repository().join("config.toml")),
+        ),
+        _ => return Err("pass --config, or both --l6max and --l6".into()),
+    };
+    prebuilt::generate(stock)
 }
 
 fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {

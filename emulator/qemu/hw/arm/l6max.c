@@ -4447,11 +4447,49 @@ static void l6_prepare_nor(L6ChipState *s, const char *kernel)
     l6_load_nor_segment(s, directory, "main_trailer.bin", 0x1f2ff8, 8);
     l6_load_nor_segment(s, directory, "secondary_firmware.bin", 0x1f3000, 0x3ff8);
     l6_load_nor_segment(s, directory, "secondary_trailer.bin", 0x1f6ff8, 8);
-    /* Installed application version is a boot-data record, separate from
-     * the update trailer. Its initial value comes from the supplied package. */
-    memcpy(s->nor_flash + 0x1f7ffc, s->nor_flash + 0x1f2ffc, 4);
+    if (s->profile == &L6MAX_PROFILE) {
+        /* The package footer becomes the installed boot-data record. */
+        l6_load_nor_segment(s, directory, "package_footer.bin", 0x1f7fc0, 0x40);
+        uint32_t length = ldl_le_p(s->nor_flash + 0x1f7ff8);
+        if (length < 8 || length > 0x1a2ff8 || length != s->flash_payload_size) {
+            error_setg(&error_fatal, "L6max package has an invalid MAIN length footer");
+        }
+    } else {
+        /* Preserve the existing L6 installed-version seed. */
+        memcpy(s->nor_flash + 0x1f7ffc, s->nor_flash + 0x1f2ffc, 4);
+    }
     uint8_t *persistent = l6_persistent_bytes("main-nor.bin", s->nor_flash, 0x200000);
     if (persistent) {
+        if (s->profile == &L6MAX_PROFILE) {
+            uint32_t length = ldl_le_p(persistent + 0x1f7ff8);
+            if (length < 8 || length > 0x1a2ff8) {
+                /* Earlier emulator seeds left the whole boot-data footer
+                 * erased apart from the four-byte installed version. Only
+                 * reset that known old format; reject other corrupt state. */
+                bool old_state = true;
+                for (unsigned i = 0x1f7fc0; i < 0x1f7ffc; i++) {
+                    if (persistent[i] != 0xff) {
+                        old_state = false;
+                        break;
+                    }
+                }
+                uint32_t trailer_length = ldl_le_p(persistent + 0x1f2ff8);
+                old_state = old_state && trailer_length >= 8 &&
+                            trailer_length <= 0x1a2ff8;
+                for (unsigned i = 0; i < 4; i++) {
+                    old_state = old_state &&
+                        persistent[0x1f7ffc + i] >= '0' &&
+                        persistent[0x1f7ffc + i] <= '9' &&
+                        persistent[0x1f2ffc + i] >= '0' &&
+                        persistent[0x1f2ffc + i] <= '9';
+                }
+                if (!old_state) {
+                    error_setg(&error_fatal, "invalid L6max installed MAIN length in device state");
+                }
+                memcpy(persistent, s->nor_flash, 0x200000);
+                l6_storage_flush(persistent, 0x200000);
+            }
+        }
         g_free(s->nor_flash);
         s->nor_flash = persistent;
     }
@@ -5151,12 +5189,10 @@ static void l6_main_reset(MachineState *machine, ResetType type)
 
     if (type != RESET_TYPE_SNAPSHOT_LOAD && s->profile == &L6MAX_PROFILE) {
         /* Bootloader 1.00 reads the installed length from the boot-data
-         * footer. If older emulator state lacks a valid footer, preserve the
-         * previous emulator's complete MAIN-slot copy rather than trusting a
-         * potentially stale package trailer. */
+         * footer. Invalid lengths are rejected rather than guessed. */
         uint32_t length = ldl_le_p(s->nor_flash + 0x1f7ff8);
         if (length < 8 || length > 0x1a2ff8) {
-            length = 0x1a2ff8;
+            error_setg(&error_fatal, "invalid L6max installed MAIN length on reset");
         }
         /* Reset reads the vector table after this bounded copy. */
         if (address_space_write(&address_space_memory, 0x80000000,

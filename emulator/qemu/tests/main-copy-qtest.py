@@ -5,9 +5,11 @@ Usage: main-copy-qtest.py /path/to/qemu-system-arm
 No physical-device capacity or update acceptance is inferred by this test.
 """
 import json
+import hashlib
 import os
 from pathlib import Path
 import select
+import shutil
 import socket
 import struct
 import subprocess
@@ -19,7 +21,7 @@ NOR_MAIN = 0x50000
 BASE = 0x80000000
 
 
-def run(qemu, directory, model):
+def run(qemu, directory, model, legacy=False):
     image = bytearray(b"\xff" * (SLOT if model == "l6max" else 0x2000))
     reset = 0x80000415 if model == "l6max" else 0x80001415
     struct.pack_into("<II", image, 0, 0x20230000, reset)
@@ -31,12 +33,19 @@ def run(qemu, directory, model):
     (directory / "secondary_firmware.bin").write_bytes(b"\xff")
     (directory / "secondary_trailer.bin").write_bytes(struct.pack("<I4s", 1, b"0100"))
     (directory / "resource_region.bin").write_bytes(b"\xff")
+    footer = bytearray(b"\xff" * 0x40)
+    struct.pack_into("<I4s", footer, 0x38, len(image), b"0110")
+    (directory / "package_footer.bin").write_bytes(footer)
     state = directory / "state"
     state.mkdir()
     nor = bytearray(b"\xff" * 0x200000)
     nor[NOR_MAIN:NOR_MAIN + len(image)] = image
     struct.pack_into("<I4s", nor, 0x1f2ff8, len(image), b"0110")
     struct.pack_into("<I4s", nor, 0x1f7ff8, len(image), b"0110")
+    nor[0x1f9000] = 0x42  # a saved setting, reset only for old state
+    if legacy:
+        nor[0x1f7fc0:0x1f7ffc] = b"\xff" * 0x3c
+        struct.pack_into("<I", nor, NOR_MAIN + 0x100, 0x01020304)
     nor_path = state / "main-nor.bin"
     nor_path.write_bytes(nor)
 
@@ -84,6 +93,11 @@ def run(qemu, directory, model):
         assert "QMP" in json.loads(qmp.readline())
         qmp_execute("qmp_capabilities")
         if model == "l6max":
+            # Old emulator NOR is wiped and reseeded; current NOR is retained.
+            assert nor_path.read_bytes()[0x1f9000] == (0xff if legacy else 0x42)
+            if legacy:
+                assert command(f"readl {BASE + 0x100:#x}") == 0xffffffff
+                assert struct.unpack_from("<I", nor_path.read_bytes(), 0x1f7ff8)[0] == SLOT
             # A maximum-length image includes its final four bytes, while the
             # following four bytes belong outside the package MAIN slot.
             assert command(f"readl {BASE + SLOT - 4:#x}") == 0x12345678
@@ -104,23 +118,22 @@ def run(qemu, directory, model):
             assert command(f"readl {BASE + 0x100:#x}") == 0x55667788
             assert command(f"readl {BASE + 0x1000:#x}") == 0xa1b2c3d4
 
-            # Older state without a valid footer uses the full slot, even if
-            # the package trailer contains a valid but stale shorter length.
-            write_nor(0x1f7ff8, 0xffffffff)
+            # The package trailer does not override the installed footer.
             write_nor(0x1f2ff8, 0x1100)
             write_nor(NOR_MAIN + 0x10fc, 0x11223344)
             write_nor(NOR_MAIN + 0x1100, 0x31415926)
             command(f"writel {BASE + 0x1100:#x} 0xabcdef01")
             qmp_execute("system_reset")
-            assert command(f"readl {BASE + 0x10fc:#x}") == 0x11223344
-            assert command(f"readl {BASE + 0x1100:#x}") == 0x31415926
-            assert command(f"readl {BASE + SLOT - 4:#x}") == 0x10203040
+            assert command(f"readl {BASE + 0x10fc:#x}") == 0xffffffff
+            assert command(f"readl {BASE + 0x1100:#x}") == 0xabcdef01
 
-            # Both lengths invalid: compatibility fallback is bounded to the
-            # MAIN slot, excluding the fixed trailer immediately following it.
-            write_nor(0x1f2ff8, 0xffffffff)
+            # A valid full-slot footer copies through the last MAIN word but
+            # excludes the fixed trailer immediately following the slot.
+            write_nor(0x1f7ff8, SLOT)
             command(f"writel {BASE + SLOT:#x} 0xabcdef01")
             qmp_execute("system_reset")
+            assert command(f"readl {BASE + 0x10fc:#x}") == 0x11223344
+            assert command(f"readl {BASE + 0x1100:#x}") == 0x31415926
             assert command(f"readl {BASE + SLOT - 4:#x}") == 0x10203040
             assert command(f"readl {BASE + SLOT:#x}") == 0xabcdef01
         else:
@@ -130,7 +143,7 @@ def run(qemu, directory, model):
             assert command("readl 0x80001004") == reset
             qmp_execute("system_reset")
             assert command("readl 0x80001004") == reset
-        print(f"{model}: MAIN copy/reset bounds passed")
+        print(f"{model}{' legacy state' if legacy else ''}: MAIN copy/reset bounds passed")
     finally:
         qmp.close()
         host.close()
@@ -139,10 +152,10 @@ def run(qemu, directory, model):
 
 
 with tempfile.TemporaryDirectory(prefix="l6-main-copy-") as temporary:
-    for model in ("l6max", "l6"):
-        directory = Path(temporary) / model
+    for model, legacy in (("l6max", False), ("l6max", True), ("l6", False)):
+        directory = Path(temporary) / (model + ("-legacy" if legacy else ""))
         directory.mkdir()
-        run(sys.argv[1], directory, model)
+        run(sys.argv[1], directory, model, legacy)
 
     # Refuse an image that extends even one byte into the fixed trailer.
     oversized = Path(temporary) / "oversized"
@@ -162,3 +175,29 @@ with tempfile.TemporaryDirectory(prefix="l6-main-copy-") as temporary:
     )
     assert result.returncode != 0 and "cannot load NOR segment" in result.stderr
     print("l6max: oversized MAIN rejected")
+
+    # An invalid length with a non-legacy footer is corrupt/unknown, not
+    # identified old emulator state. Refuse it without erasing the NOR.
+    corrupt = Path(temporary) / "corrupt"
+    corrupt.mkdir()
+    for name in ("main_firmware.bin", "main_trailer.bin", "package_footer.bin",
+                 "secondary_firmware.bin", "secondary_trailer.bin"):
+        shutil.copyfile(Path(temporary) / "l6max" / name, corrupt / name)
+    corrupt_state = corrupt / "state"
+    corrupt_state.mkdir()
+    nor_path = corrupt_state / "main-nor.bin"
+    nor = bytearray((Path(temporary) / "l6max" / "state" / "main-nor.bin").read_bytes())
+    nor[0x1f7fc0] = 0x42
+    struct.pack_into("<I", nor, 0x1f7ff8, 0xffffffff)
+    nor_path.write_bytes(nor)
+    before = hashlib.sha256(nor).digest()
+    env["L6_STATE_DIR"] = str(corrupt_state)
+    result = subprocess.run(
+        [sys.argv[1], "-M", "l6max-main", "-kernel", str(corrupt / "main_firmware.bin"),
+         "-accel", "qtest", "-display", "none"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, timeout=10, env=env,
+    )
+    assert result.returncode != 0 and "invalid L6max installed MAIN length" in result.stderr
+    assert hashlib.sha256(nor_path.read_bytes()).digest() == before
+    print("l6max: unknown invalid state rejected without erasure")

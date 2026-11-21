@@ -29,7 +29,8 @@ the parent path supplied by the user.
 
 QEMU exclusively locks each file for its lifetime and rejects an existing
 file of the wrong size. Missing files are seeded from the supplied firmware
-and modeled peripheral defaults. Existing files retain their contents: changing
+and modeled peripheral defaults. Existing files retain their contents except
+for the obsolete L6max NOR format described below: changing
 `--firmware-dir` does not reinstall firmware in an existing device.
 Selecting firmware patches is the exception: before QEMU opens the file, the
 engine writes the resulting MAIN image, its trailer and the package footer to the
@@ -97,10 +98,14 @@ the captured ROM and bootloader transferred to a synthetic `0x1a2ff8`-byte
 MAIN and copied a marker at its last word; this tests the modeled copy path,
 not physical update acceptance or safe use of the entire image. The emulator's L6max direct boot
 copies that many bytes from current emulated NOR into writable SDRAM on reset.
-For older emulated state without a valid installed length it copies the entire
-bounded slot, as the emulator did previously. This fallback is emulator
-compatibility behavior; L6 and other L6max firmware or bootloader revisions
-are not covered by the L6max 1.10 measurements above.
+New L6max emulator state includes the package footer and installed image length.
+Older emulator-created MAIN NOR files have an erased footer apart from their
+four-byte version. When such a file has no valid installed length, the emulator
+resets that MAIN NOR to the selected firmware before boot, including its saved
+settings; the SD card is separate. An invalid length with a non-legacy footer
+is rejected rather than erased. A valid installed length controls every copy;
+there is no package-trailer or full-slot fallback. L6 and other L6max firmware
+or bootloader revisions are not covered by the 1.10 measurements above.
 
 The error record `FW UPDT ERR\0` starts at `0x1ff008`. The application consumes
 and erases these handoff records during startup. See the

@@ -422,9 +422,10 @@ It does not establish behavior on physical hardware. The smaller C tests in
 logic independently of QEMU.
 
 The MAIN-copy check uses synthetic disposable images to exercise the L6max
-package-slot boundary, writable SDRAM, reset recopy and compatibility fallbacks;
-it also checks the unchanged L6 mapping. It does not establish physical update
-acceptance or safe runtime use of the entire package slot.
+package-slot boundary, writable SDRAM, reset recopy and old-state reset; it
+also checks the unchanged L6 mapping and rejection of unknown corrupt state.
+It does not establish physical update acceptance or safe runtime use of the
+entire package slot.
 
 ### Case matrix
 

@@ -465,13 +465,13 @@ pub(crate) fn fixture_options(
                 if hook_count != 1 || version != patch_loader_core::dynamic::FORMAT_VERSION {
                     return Err("ordered-chain fixture expects one dynamic hook".into());
                 }
-                let mut pass_through_module = original.clone();
+                // A second package, so the loader chains both copies rather than
+                // keeping one of two identical packages.
+                let mut pass_through_module = with_identity(&original, Some("chain-first"), None)?;
                 let entry_offset = header_len + code_len + 4;
                 pass_through_module[entry_offset..entry_offset + 4]
                     .copy_from_slice(&pass_through.to_le_bytes());
-                let checksum = patch_loader_core::dynamic::checksum(&pass_through_module)
-                    .ok_or("invalid dynamic fixture checksum")?;
-                pass_through_module[24..28].copy_from_slice(&checksum.to_le_bytes());
+                reseal(&mut pass_through_module)?;
                 let first_path = dir.join(layout::CHAIN_FIRST);
                 let second_path = dir.join("sd-chain-second.BIN");
                 fs::write(&first_path, pass_through_module).map_err(|e| e.to_string())?;
@@ -484,6 +484,31 @@ pub(crate) fn fixture_options(
                 card.file.push(sd_image::spec::File {
                     path: "PATCHES/2-FIRST.BIN".into(),
                     content: sd_image::spec::Content::Copy(first_path),
+                });
+            } else if let Some(copy) = match fixture.sd_bundle_mode.as_deref() {
+                // A second, identical file of the same module; it loads once.
+                Some("duplicate-module") => Some(("PATCHES/99-COPY.BIN", None)),
+                // An older version that loads first; the newer one wins.
+                Some("older-module") => Some(("PATCHES/01-OLD.BIN", Some("0.0.1"))),
+                // A multi-package module twice: neither copy loads.
+                Some("duplicate-bundle") => Some(("PATCHES/99-COPY.BIN", None)),
+                _ => None,
+            } {
+                let (path, version) = copy;
+                let first = files.first().ok_or("empty SD patch directory")?;
+                let original = fs::read(first.path()).map_err(|e| e.to_string())?;
+                let bytes = if version.is_some() {
+                    let mut older = with_identity(&original, None, version)?;
+                    reseal(&mut older)?;
+                    older
+                } else {
+                    original
+                };
+                let copied = dir.join("sd-duplicate.BIN");
+                fs::write(&copied, bytes).map_err(|e| e.to_string())?;
+                card.file.push(sd_image::spec::File {
+                    path: path.into(),
+                    content: sd_image::spec::Content::Copy(copied),
                 });
             } else if fixture.sd_bundle_mode.as_deref() == Some("corrupt-first") {
                 let first = files.first().ok_or("empty SD patch directory")?;
@@ -938,4 +963,47 @@ mod tests {
         );
         fs::remove_dir_all(dir).unwrap();
     }
+}
+
+/// A dynamic module whose first package record names `name` and `version`
+/// instead. The module's identity record is at the start of its code; it
+/// points at the records by their offset in the module.
+fn with_identity(
+    module: &[u8],
+    name: Option<&str>,
+    version: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let code = patch_loader_core::dynamic::HEADER_LEN_V1;
+    let word = |offset: usize| {
+        module
+            .get(offset..offset + 4)
+            .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+            .ok_or("SD module too short for its identity record")
+    };
+    if word(code)? != 0x4950_364c {
+        return Err("SD module has no identity record".into());
+    }
+    let record = code + word(code + 8)? as usize;
+    let mut module = module.to_vec();
+    for (field, offset, len) in [(name, 0, 32), (version, 32, 16)] {
+        if let Some(text) = field {
+            if text.len() >= len {
+                return Err(format!("identity text {text} is too long"));
+            }
+            let target = module
+                .get_mut(record + offset..record + offset + len)
+                .ok_or("SD module identity record is outside the file")?;
+            target.fill(0);
+            target[..text.len()].copy_from_slice(text.as_bytes());
+        }
+    }
+    Ok(module)
+}
+
+/// Recompute a dynamic module's checksum after editing it.
+fn reseal(module: &mut [u8]) -> Result<(), String> {
+    let checksum =
+        patch_loader_core::dynamic::checksum(module).ok_or("invalid dynamic fixture checksum")?;
+    module[24..28].copy_from_slice(&checksum.to_le_bytes());
+    Ok(())
 }

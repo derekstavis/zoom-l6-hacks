@@ -1,17 +1,17 @@
 {
-  "base": "0x800b8120",
+  "base": "0x800b8700",
   "hooks": [
     {
       "address": "0x8002f490",
       "length": 4,
       "symbol": "midi_in_hook",
-      "target": "0x800b8144"
+      "target": "0x800b8724"
     }
   ],
   "model": "L6",
   "name": "midi-sync",
   "patch_info_offset": 300,
-  "payload_file": "midi-sync-l6-loader-800b8120.bin",
+  "payload_file": "midi-sync-l6-loader-800b8700.bin",
   "payload_length": 324,
   "window_byte_total": 4,
   "windows": [

@@ -17,6 +17,9 @@ impl Scenario {
                 "corrupt-first",
                 "ordered-chain",
                 "composed-module",
+                "duplicate-module",
+                "older-module",
+                "duplicate-bundle",
             ]
             .contains(&mode.as_str())
                 || value.sd_patches.is_none()

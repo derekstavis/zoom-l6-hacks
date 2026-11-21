@@ -62,6 +62,9 @@ stack headroom. Task state labels are machine-readable and ambiguous waits stay
 ambiguous. Scheduler data includes tick and suspension information. The Objects
 response always has `complete: false`: currently it contains only the verified
 notification semaphore, if present. It is not an inventory of all queues.
+Task `state` is one of `current`, `ready`, `blocked`, `blocked_timed`,
+`delayed_or_waiting`, `waiting_or_suspended`, or `other`; a null
+`event_list_address` means no event-list link was validated in that sample.
 
 Only the requested category is collected. Heap and Tasks read the full heap
 arena and are heavier than Scheduler or Objects; scripts should avoid rapid

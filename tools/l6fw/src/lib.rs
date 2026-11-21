@@ -45,6 +45,10 @@ impl Model {
         }
     }
 
+    pub fn from_name(name: &str) -> Option<Model> {
+        Model::ALL.into_iter().find(|model| model.name() == name)
+    }
+
     pub fn from_label(label: &str) -> Option<Model> {
         Model::ALL.into_iter().find(|model| model.label() == label)
     }
@@ -567,6 +571,7 @@ mod tests {
         assert_eq!(Model::L6.first_payload(0x21), 0x8000_1030);
         for model in Model::ALL {
             assert_eq!(Model::from_label(model.label()), Some(model));
+            assert_eq!(Model::from_name(model.name()), Some(model));
             assert_eq!(
                 Model::from_stock_reset_vector(model.stock_reset_vector()),
                 Some(model)

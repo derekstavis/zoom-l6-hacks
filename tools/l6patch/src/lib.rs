@@ -423,8 +423,9 @@ fn catalog(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::er
     let mut json = false;
     while let Some(flag) = args.next() {
         match (flag.as_str(), args.next().as_deref()) {
-            ("--model", Some("l6")) => model = Some("L6"),
-            ("--model", Some("l6max")) => model = Some("L6max"),
+            ("--model", Some(name)) => {
+                model = Some(l6fw::Model::from_name(name).ok_or(USAGE)?.label())
+            }
             ("--format", Some("json")) => json = true,
             ("--format", Some("text")) => json = false,
             _ => return Err(USAGE.into()),
@@ -703,7 +704,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         let report = serde_json::json!({
             "version": patch_loader_core::dynamic::FORMAT_VERSION,
             "loader_abi": patch_loader_core::dynamic::LOADER_ABI,
-            "model": if model == l6fw::Model::L6 { "L6" } else { "L6max" },
+            "model": model.label(),
             "source_sha256": digest,
             "patches": [report_patch],
         });

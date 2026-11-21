@@ -4,5 +4,7 @@ rustflags = ["-Zthreads=8"]
 [alias]
 # The suite driver: `cargo l6test list`, `cargo l6test run --suite quick`.
 l6test = "run --offline --locked -p l6test --"
+# The running-emulator control tool.
+l6ctl = "run --offline --locked -p l6ctl --"
 # The patch tool: `cargo l6patch catalog`, `cargo l6patch prebuilt`.
 l6patch = "run --offline --locked -p l6patch --"

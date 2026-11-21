@@ -1,6 +1,7 @@
 # `l6ctl`
 
-`l6ctl` sends input commands to an already running emulator. Start the emulator
+`cargo l6ctl` is the offline, locked alias for `cargo run --offline --locked -p
+l6ctl --`. It sends commands to an already running emulator. Start the emulator
 with an explicit socket path:
 
 ```sh
@@ -17,7 +18,7 @@ cargo run -p l6ctl -- --socket /tmp/l6-control.sock up play
 cargo run -p l6ctl -- --socket /tmp/l6-control.sock encoder 1 -2
 cargo run -p l6ctl -- --socket /tmp/l6-control.sock analog 1 3
 cargo run -p l6ctl -- --socket /tmp/l6-control.sock set-analog 1 512
-cargo run -p l6ctl -- --socket /tmp/l6-control.sock rtos tasks --pretty
+cargo l6ctl --socket /tmp/l6-control.sock rtos tasks --pretty
 ```
 
 `--socket PATH` can be omitted when `L6_CONTROL_SOCKET` is set. The socket is

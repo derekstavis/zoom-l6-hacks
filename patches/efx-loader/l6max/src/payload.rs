@@ -30,7 +30,9 @@ use firmware_bindings::{
 #[cfg(not(sd_composed))]
 mod hook_catalog;
 #[path = "math.rs"]
-mod math;
+pub mod math;
+#[path = "controls.rs"]
+pub mod controls;
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -138,18 +140,20 @@ fn ring_pattern_row(position_q16: u32) -> u32 {
     (position_q16.saturating_add(0x8000) >> 16).min(44)
 }
 
+/// The number of encoder parameters the effect in `slot` exposes.
+fn parameter_count(slot: u32) -> usize {
+    effect_replacement_config::controls(slot).map_or(0, |controls| controls.parameters.len())
+}
+
 fn refresh_parameter_positions(slot: u32) {
-    let count = effect_replacement_config::parameter_count(slot);
+    let count = parameter_count(slot);
     for encoder in 0..8 {
         let position = if encoder < count {
-            unsafe {
-                effect_replacement_config::parameter_position(
-                    slot,
-                    EFFECT_STATE as *mut u8,
-                    encoder,
-                )
-            }
-            .unwrap_or(0)
+            effect_replacement_config::controls(slot)
+                .and_then(|controls| unsafe {
+                    controls.ring_position(EFFECT_STATE as *mut u8, encoder)
+                })
+                .unwrap_or(0)
         } else {
             0
         };
@@ -164,7 +168,7 @@ unsafe fn apply_parameter_ring(ring: u32, position: u32) {
 }
 
 unsafe fn draw_parameter_rings(slot: u32) {
-    let count = effect_replacement_config::parameter_count(slot);
+    let count = parameter_count(slot);
     for ring in 0..8 {
         let position = if ring < count {
             ring_pattern_row(PARAMETER_RING_POSITIONS[ring].load(Ordering::Acquire))
@@ -198,7 +202,9 @@ unsafe fn set_tap_edit_indicator(enabled: bool) {
 
 unsafe fn set_parameter_edit_mode(slot: u32, enabled: bool) {
     DUAL_EFFECT_PARAMETER_EDIT_MODE.store(u32::from(enabled), Ordering::Release);
-    unsafe { effect_replacement_config::show_editor_state(slot, enabled) };
+    if let Some(controls) = effect_replacement_config::controls(slot) {
+        controls.show_editor_state(enabled);
+    }
     if enabled {
         unsafe { set_tap_edit_indicator(true) };
         unsafe { draw_parameter_rings(slot) };
@@ -357,7 +363,7 @@ pub unsafe fn effect_replacements_encoder_event(
     value: u32,
 ) {
     let slot = unsafe { mixer_get_efx_type(0) };
-    let count = effect_replacement_config::parameter_count(slot);
+    let count = parameter_count(slot);
     if unsafe { current_window.read() } != RECORDER_WINDOW
         || DUAL_EFFECT_PARAMETER_EDIT_MODE.load(Ordering::Acquire) == 0
         || DUAL_EFFECT_PROCESSOR_TYPE.load(Ordering::Acquire) != slot
@@ -384,14 +390,9 @@ pub unsafe fn effect_replacements_encoder_event(
         DUAL_EFFECT_EDIT_DROPPED.fetch_add(1, Ordering::Relaxed);
     } else if preview_gate {
         let ring = (channel & 0x7) as usize;
-        if let Some(position) = unsafe {
-            effect_replacement_config::preview_parameter_position(
-                slot,
-                EFFECT_STATE as *mut u8,
-                ring,
-                step as i32,
-            )
-        } {
+        if let Some(position) = effect_replacement_config::controls(slot).and_then(|controls| unsafe {
+            controls.preview_ring_position(EFFECT_STATE as *mut u8, ring, step as i32)
+        }) {
             PARAMETER_RING_POSITIONS[ring].store(position, Ordering::Release);
             unsafe { apply_parameter_ring(ring as u32, ring_pattern_row(position)) };
         }
@@ -467,7 +468,7 @@ pub unsafe fn effect_replacements_ring_refresh(ring: u32, pattern: u32, value: u
         STOCK_RING_VALUES[ring as usize].store(value, Ordering::Relaxed);
         STOCK_RING_VALID.fetch_or(1 << ring, Ordering::Release);
     }
-    if ring < effect_replacement_config::parameter_count(unsafe { mixer_get_efx_type(0) }) as u32
+    if ring < parameter_count(unsafe { mixer_get_efx_type(0) }) as u32
         && DUAL_EFFECT_PARAMETER_EDIT_MODE.load(Ordering::Acquire) != 0
     {
         let position = ring_pattern_row(PARAMETER_RING_POSITIONS[ring as usize].load(Ordering::Acquire));
@@ -623,14 +624,9 @@ fn process_control_event(slot: u32) {
     }
     let encoder = ((event >> 1) & 0x7) as usize;
     let delta = ((event >> 8) as u16 as i16) as i32;
-    if let Some(position) = unsafe {
-        effect_replacement_config::edit_parameter(
-            slot,
-            EFFECT_STATE as *mut u8,
-            encoder,
-            delta,
-        )
-    } {
+    if let Some(position) = effect_replacement_config::controls(slot)
+        .and_then(|controls| unsafe { controls.edit(EFFECT_STATE as *mut u8, encoder, delta) })
+    {
         PARAMETER_RING_POSITIONS[encoder].store(position, Ordering::Release);
         DUAL_EFFECT_EDIT_APPLIED.fetch_add(1, Ordering::Relaxed);
     }

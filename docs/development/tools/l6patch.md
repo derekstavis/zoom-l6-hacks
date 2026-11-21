@@ -6,7 +6,7 @@ regenerates the prebuilt files. It never edits its input.
 
 ```sh
 cargo l6patch firmware STOCK_DIR OUTPUT_DIR [--patch NAME]... [--version DIGITS]
-cargo l6patch firmware STOCK_DIR OUTPUT_DIR --loader [--patch NAME]... [--qemu-module-arena]
+cargo l6patch firmware STOCK_DIR OUTPUT_DIR --loader [--patch NAME]...
 cargo l6patch module STOCK_DIR OUTPUT_DIR [--patch NAME]... [--effect SLOT=ID]...
 cargo l6patch catalog [--model l6|l6max] [--format text|json]
 cargo l6patch prebuilt [--config PATH | --l6max DIR --l6 DIR] [--check]

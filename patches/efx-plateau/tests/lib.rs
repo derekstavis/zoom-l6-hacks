@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-#[path = "../l6max/src/math.rs"]
+#[path = "../../efx-loader/l6max/src/math.rs"]
 mod math;
 #[path = "../l6max/src/plateau.rs"]
 mod plateau;

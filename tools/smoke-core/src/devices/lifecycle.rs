@@ -59,7 +59,6 @@ pub(super) fn build_native_patch(
         effect_replacements: Vec::new(),
         version: version.map(str::to_owned),
         mode,
-        experimental_qemu_module_arena: false,
     })
     .map_err(|error| error.to_string())
 }

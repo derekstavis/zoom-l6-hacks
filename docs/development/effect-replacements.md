@@ -78,10 +78,11 @@ selected slot, stock processing continues.
 Every effect module provides `EFFECT_STATE_BYTES`, `initialize_effect`, and
 `process_sample`. The optional `controls` entries add a small module interface:
 
-- `encoder-parameters` requires `PARAMETER_COUNT`,
-  `parameter_ring_position`, `edit_parameter`, and `show_editor_state`.
-  `edit_parameter` receives a zero-based encoder and a relative step count, then
-  returns the new ring position when it accepts the edit.
+- `encoder-parameters` requires `CONTROLS`, an
+  `efx_loader::controls::Effect`: a table of the effect's parameters (title,
+  step, range, unit, ring range, or toggle labels) and functions to read and
+  apply one. efx-loader steps and clamps each encoder turn, shows the value in
+  the Knob Dialog, remembers it across effect changes and draws the rings.
 - `tap-tempo` requires `tap_tempo`, called from the effect's audio callback.
 
 `tap_action = "toggle-editor"` routes TAP to the shared editor and requires

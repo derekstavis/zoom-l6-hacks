@@ -107,36 +107,25 @@ export const EFFECT_REPLACEMENTS: EffectReplacementInfo[] = catalog.packages
     })),
   )
 
-export function effectReplacementFileName(replacements: Record<string, string>) {
-  const selectedIds = [...new Set(Object.values(replacements).filter(Boolean))]
-  const effectPackages = selectedIds
-    .map((id) => EFFECT_REPLACEMENTS.find((effect) => effect.id === id))
-    .filter((effect): effect is EffectReplacementInfo => effect !== undefined)
-    .map((effect) => effect.packageId)
-  const packages = new Map(catalog.packages.map((pkg) => [pkg.name, pkg]))
-  const closure = new Set<string>()
-  const include = (name: string) => {
-    if (closure.has(name)) return
-    closure.add(name)
-    packages.get(name)?.requires.forEach((dependency) => include(dependency.name))
+/**
+ * The hosted bundle for a room/spring assignment, as a path under
+ * `public/loadable-patches/`. `l6patch prebuilt` names the bundles and lists
+ * every one in the manifest, so the site never rebuilds those names.
+ */
+export async function effectReplacementFile(
+  baseUrl: string,
+  replacements: Record<string, string>,
+): Promise<string> {
+  const response = await fetch(`${baseUrl}loadable-patches/manifest.json`)
+  if (!response.ok) throw new Error("Couldn't load the SD module list.")
+  const manifest = (await response.json()) as {
+    effect_replacements: { room: string; spring: string; file: string }[]
   }
-  include('efx-loader')
-  effectPackages.forEach(include)
-  const remaining = new Set(closure)
-  const ordered: string[] = []
-  while (remaining.size > 0) {
-    const next = [...remaining]
-      .filter((name) => packages.get(name)?.requires.every((dependency) => !remaining.has(dependency.name)))
-      .sort((a, b) => (packages.get(a)?.order ?? 0) - (packages.get(b)?.order ?? 0) || a.localeCompare(b))[0]
-    if (!next) break
-    remaining.delete(next)
-    ordered.push(next)
-  }
-  const packagePart = ordered
-    .filter((name) => name !== 'efx-loader')
-    .map((name) => `${name}-${packages.get(name)?.version ?? '0.0.0'}`)
-    .join('-')
   const room = replacements.room || 'stock'
   const spring = replacements.spring || 'stock'
-  return `efx-loader-${packagePart}-room-${room}-spring-${spring}.bin`
+  const entry = manifest.effect_replacements.find(
+    (bundle) => bundle.room === room && bundle.spring === spring,
+  )
+  if (!entry) throw new Error(`No effect bundle for room ${room} and spring ${spring}.`)
+  return entry.file
 }

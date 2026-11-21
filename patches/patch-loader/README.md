@@ -119,7 +119,6 @@ Registry layout 2 (magic `L6R2`):
 | `12` | Module count, then up to sixteen `(base, memory length)` pairs in load order, so tools and other patches can find each module |
 | `160` | The most recently loaded module's base and length |
 | `168` | Number of dispatch sites |
-| `172` | The emulator module arena's next address |
 | `0x100` | One 16-byte record per dispatch site: handler, first link, last link, link count |
 
 A dispatch stub loads its site's handler, the record's first word, with a

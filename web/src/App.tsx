@@ -12,7 +12,7 @@ import {
   EFFECT_REPLACEMENTS,
   LOADABLE_PATCHES,
   PATCHES,
-  effectReplacementFileName,
+  effectReplacementFile,
   patchDependencies,
 } from '@/lib/patches'
 
@@ -285,11 +285,10 @@ export default function App() {
         }),
       )
       if (hasEffectReplacements && model === 'L6max') {
-        const fileName = effectReplacementFileName(effectReplacements)
-        const response = await fetch(
-          `${import.meta.env.BASE_URL}loadable-patches/${model}/${fileName}`,
-        )
+        const file = await effectReplacementFile(import.meta.env.BASE_URL, effectReplacements)
+        const response = await fetch(`${import.meta.env.BASE_URL}loadable-patches/${file}`)
         if (!response.ok) throw new Error("Couldn't load the selected effect replacements.")
+        const fileName = file.split('/').pop()
         entries.push([`PATCHES/50-${fileName}`, new Uint8Array(await response.arrayBuffer())])
       }
       const files: Record<string, Uint8Array> = Object.fromEntries(entries)
@@ -694,6 +693,11 @@ export default function App() {
             {model && (
               <p className="text-sm leading-relaxed">
                 Unzip the file from step 3 into the main folder of your SD card, then follow the steps below. It contains the firmware update{installPatchLoader && <> and a <code>PATCHES</code> folder with your SD card patches</>}.
+              </p>
+            )}
+            {model && installPatchLoader && (
+              <p className="text-sm leading-relaxed">
+                If the card already has a <code>PATCHES</code> folder, delete it first so the new one replaces it. Patches left over from an earlier download can conflict with the new ones, and the mixer then skips them.
               </p>
             )}
             {model === null ? (

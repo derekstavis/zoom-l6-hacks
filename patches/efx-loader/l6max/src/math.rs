@@ -77,13 +77,16 @@ pub fn sqrt(x: f32) -> f32 {
 /// Accurate to within 0.001 across all angles.
 #[inline(always)]
 pub fn sin(mut x: f32) -> f32 {
-    // Reducing with repeated subtraction can run indefinitely for infinity or
-    // for large floats where subtracting TWO_PI no longer changes the value.
-    if !x.is_finite() {
+    // From 2^24 on, an f32 cannot represent a phase within one radian, and
+    // non-finite inputs have none.
+    if !(abs(x) < 16_777_216.0) {
         return 0.0;
     }
     if x > PI || x < -PI {
-        x %= TWO_PI;
+        // `x % TWO_PI` without `fmodf`, which would add about 900 bytes of
+        // libm and 64-bit division to every module. The two agree exactly
+        // below 4π; beyond that an f32 phase has lost its precision anyway.
+        x -= TWO_PI * ((x / TWO_PI) as i32) as f32;
         if x > PI {
             x -= TWO_PI;
         } else if x < -PI {

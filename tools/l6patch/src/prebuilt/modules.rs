@@ -150,7 +150,6 @@ fn build(
         effect_replacements,
         version: None,
         mode: BuildMode::SdBundle,
-        experimental_qemu_module_arena: false,
     })?;
     let report: Value = serde_json::from_slice(&fs::read(output.join("patch.json"))?)?;
     let file = report["patches"][0]["file"]

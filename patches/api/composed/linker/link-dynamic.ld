@@ -16,7 +16,6 @@ SECTIONS {
     . = ALIGN(4);
     __module_data_end = .;
   }
-  .patch_hooks : { KEEP(*(.patch_hooks)) }
   .module_bss (NOLOAD) : {
     . = ALIGN(4);
     __module_bss_start = .;
@@ -24,5 +23,8 @@ SECTIONS {
     *(COMMON)
     __module_memory_end = .;
   }
+  /* Hook metadata for the build tools only: after the module's memory, so
+     the loader never allocates it. */
+  .patch_hooks : { KEEP(*(.patch_hooks)) }
   /DISCARD/ : { *(.ARM.exidx*) *(.ARM.extab*) *(.comment*) }
 }

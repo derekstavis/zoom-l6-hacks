@@ -85,13 +85,6 @@ impl Drop for ControlServer {
     }
 }
 
-fn model_name(model: Model) -> &'static str {
-    match model {
-        Model::L6 => "l6",
-        Model::L6max => "l6max",
-    }
-}
-
 fn number(request: &Value, key: &str) -> Result<u64, String> {
     request
         .get(key)
@@ -117,7 +110,7 @@ fn execute(request: &Value, inputs: &InputHub, model: Model) -> Result<Value, St
             let main = inputs.main.snapshot();
             let panel = inputs.panel.snapshot();
             Ok(json!({
-                "model": model_name(model),
+                "model": model.name(),
                 "guest_ms": panel.guest_ms,
                 "powered_off": main.powered_off,
                 "main_indicators": main.indicators,
@@ -165,7 +158,7 @@ fn execute(request: &Value, inputs: &InputHub, model: Model) -> Result<Value, St
             if channel == 0 || channel > count {
                 return Err(format!(
                     "encoder channel must be 1..{count} for {}",
-                    model_name(model)
+                    model.name()
                 ));
             }
             let steps = signed(request, "steps")?;

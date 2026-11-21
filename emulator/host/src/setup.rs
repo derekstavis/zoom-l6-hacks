@@ -23,16 +23,13 @@ pub fn existing_qemu() -> Option<PathBuf> {
 }
 
 fn model_state_path(state: &Path, model: l6fw::Model) -> PathBuf {
-    state.join("models").join(crate::config::model_name(model))
+    state.join("models").join(model.name())
 }
 
 /// The state directory for one model, so its NOR, panel flash, RTC and SD selection
 /// cannot cross over. A device already installed directly in `state` stays there.
 pub fn separate_model_state(state: &Path, model: l6fw::Model) -> std::io::Result<PathBuf> {
-    if state
-        .file_name()
-        .is_some_and(|name| name == crate::config::model_name(model))
-    {
+    if state.file_name().is_some_and(|name| name == model.name()) {
         return Ok(state.to_path_buf());
     }
     let model_state = model_state_path(state, model);

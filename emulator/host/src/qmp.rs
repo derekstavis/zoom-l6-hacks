@@ -5,7 +5,7 @@ use std::{
     io::{self, BufRead, BufReader, Read},
     net::Shutdown,
     os::unix::net::UnixStream,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -39,8 +39,9 @@ impl Read for DeadlineReader {
 
 type Management = Qmp<Stream<BufReader<DeadlineReader>, UnixStream>>;
 
+#[derive(Clone)]
 pub struct QmpClient {
-    management: Mutex<Management>,
+    management: Arc<Mutex<Management>>,
 }
 
 impl QmpClient {
@@ -64,8 +65,13 @@ impl QmpClient {
         }
         management.handshake().map_err(io::Error::from)?;
         Ok(Self {
-            management: Mutex::new(management),
+            management: Arc::new(Mutex::new(management)),
         })
+    }
+
+    /// Whether two handles refer to the same QEMU management connection.
+    pub fn same_connection(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.management, &other.management)
     }
 
     fn execute<C: Command>(&self, command: &C) -> io::Result<C::Ok> {

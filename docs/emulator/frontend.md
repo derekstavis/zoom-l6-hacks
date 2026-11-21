@@ -336,3 +336,26 @@ limits. For offscreen panel images, see [`l6test capture gui`](../development/to
 - QEMU's Rust crates are internal Meson device APIs rather than a complete
   system embedding interface. The board model remains C; the UI, lifecycle,
   protocol, diagnostics, and package tool are Rust.
+
+## FreeRTOS diagnostics
+
+The **Debug → FreeRTOS** window reads the running MAIN CPU's memory through
+QEMU's management connection. It does not call firmware code or allocate guest
+heap. Heap shows allocated and free blocks and allocator counters; Tasks shows
+task priority, stack range and estimated remaining stack; Scheduler shows the current task
+pointer and scheduler counters. The play/pause control pauses diagnostic
+refresh only. The guest keeps running, and only the selected tab is sampled.
+
+Detailed decoding is currently limited to L6max MAIN 1.10, including patches
+that retain the guarded allocator and task-creation code. Other models or
+unrecognized revisions report that the layout is unsupported. Samples are
+collected while the guest runs, so counters and allocation structures can
+change during a read. Inconsistent heap/task samples are rejected and retried;
+the last successful view may be older than the latest attempt. Task state and
+stack-fill estimates are observations, not guarantees of current execution or
+worst-case stack headroom. The Tasks tab colors estimated free stack amber
+below 25% and red below 10%; these are visual cues, not safety guarantees.
+The status bar applies the same visual thresholds to current free heap as a
+proportion of the arena; they do not guarantee allocation success. Task stacks
+and task control blocks are labeled when their structures can be verified;
+other allocation owners are unknown.

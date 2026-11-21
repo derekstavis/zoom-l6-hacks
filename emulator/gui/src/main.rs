@@ -929,7 +929,7 @@ impl NativePanel {
                 },
                 |window, cx| {
                     window.set_window_title("FreeRTOS");
-                    let debug = cx.new(|cx| debug_window::DebugWindow::new(view, cx));
+                    let debug = cx.new(|cx| debug_window::DebugWindow::new(view, window, cx));
                     cx.new(|cx| Root::new(debug, window, cx))
                 },
             );

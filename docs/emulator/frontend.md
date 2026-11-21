@@ -345,6 +345,8 @@ heap. Heap shows allocated and free blocks and allocator counters; Tasks shows
 task priority, stack range and estimated remaining stack; Scheduler shows the current task
 pointer and scheduler counters. The play/pause control pauses diagnostic
 refresh only. The guest keeps running, and only the selected tab is sampled.
+Use the Heap and Tasks column sort controls to order the current sample; the
+selected ordering is retained as new samples arrive.
 
 Detailed decoding is currently limited to L6max MAIN 1.10, including patches
 that retain the guarded allocator and task-creation code. Other models or

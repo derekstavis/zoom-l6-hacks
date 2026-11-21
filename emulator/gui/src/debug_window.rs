@@ -4,10 +4,9 @@ use gpui::{Context, Entity, Render, Window, div, prelude::*};
 use gpui_component::{
     ActiveTheme, Sizable,
     button::{Button, ButtonVariants},
-    scroll::ScrollableElement,
     status_bar::StatusBar,
     tab::{Tab as KitTab, TabBar},
-    table::{Table, TableBody, TableCell, TableHead, TableHeader, TableRow},
+    table::{Column, ColumnSort, DataTable, TableDelegate, TableState},
 };
 use l6max_host::freertos::{self, HeapSnapshot, SchedulerSnapshot, TasksSnapshot};
 use std::time::Duration;
@@ -27,10 +26,18 @@ pub struct DebugWindow {
     error: Option<String>,
     refreshing: bool,
     connection: Option<l6max_host::qmp::QmpClient>,
+    heap_table: Entity<TableState<DebugTable>>,
+    tasks_table: Entity<TableState<DebugTable>>,
+    scheduler_table: Entity<TableState<DebugTable>>,
 }
 impl DebugWindow {
     #[cfg(feature = "headless-screenshots")]
-    pub fn preview(panel: Entity<NativePanel>, kind: &str) -> Self {
+    pub fn preview(
+        panel: Entity<NativePanel>,
+        kind: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         use l6max_host::freertos::{HeapBlock, Task};
         let heap = HeapSnapshot {
             counters: l6max_host::heap::Heap {
@@ -73,7 +80,7 @@ impl DebugWindow {
                 },
             ],
         };
-        let tasks_data = [
+        let tasks_data: Vec<freertos::Task> = [
             "Main",
             "AudioProcess",
             "AudioEfxQFunc",
@@ -101,8 +108,22 @@ impl DebugWindow {
             current: i == 1,
         })
         .collect();
+        let heap_table = new_table(DebugRows::Heap(heap.blocks.clone()), window, cx);
+        let tasks_table = new_table(DebugRows::Tasks(tasks_data.clone()), window, cx);
+        let scheduler = SchedulerSnapshot {
+            task_count: 43,
+            running: true,
+            suspended: 0,
+            ticks: 123456,
+            pending_ticks: 0,
+            current_tcb: 0x808ad2d0,
+        };
+        let scheduler_table = new_table(DebugRows::Scheduler(scheduler.clone()), window, cx);
         Self {
             panel,
+            heap_table,
+            tasks_table,
+            scheduler_table,
             tab: match kind {
                 "debug-tasks" => Tab::Tasks,
                 "debug-scheduler" => Tab::Scheduler,
@@ -110,20 +131,27 @@ impl DebugWindow {
             },
             heap: Some(heap),
             tasks: Some(TasksSnapshot { tasks: tasks_data }),
-            scheduler: Some(SchedulerSnapshot {
-                task_count: 43,
-                running: true,
-                suspended: 0,
-                ticks: 123456,
-                pending_ticks: 0,
-                current_tcb: 0x808ad2d0,
-            }),
+            scheduler: Some(scheduler),
             error: None,
             refreshing: true,
             connection: None,
         }
     }
-    pub fn new(panel: Entity<NativePanel>, cx: &mut Context<Self>) -> Self {
+    pub fn new(panel: Entity<NativePanel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let heap_table = new_table(DebugRows::Heap(Vec::new()), window, cx);
+        let tasks_table = new_table(DebugRows::Tasks(Vec::new()), window, cx);
+        let scheduler_table = new_table(
+            DebugRows::Scheduler(SchedulerSnapshot {
+                task_count: 0,
+                running: false,
+                suspended: 0,
+                ticks: 0,
+                pending_ticks: 0,
+                current_tcb: 0,
+            }),
+            window,
+            cx,
+        );
         cx.spawn(async move |this, cx| {
             loop {
                 let selected = this.update(cx, |view, cx| {
@@ -187,14 +215,32 @@ impl DebugWindow {
                         if view.tab == tab && view.refreshing && same_guest {
                             match result {
                                 Ok(Snapshot::Heap(heap)) => {
+                                    view.heap_table.update(cx, |table, cx| {
+                                        table
+                                            .delegate_mut()
+                                            .set_rows(DebugRows::Heap(heap.blocks.clone()));
+                                        cx.notify();
+                                    });
                                     view.heap = Some(heap);
                                     view.error = None;
                                 }
                                 Ok(Snapshot::Tasks(tasks)) => {
+                                    view.tasks_table.update(cx, |table, cx| {
+                                        table
+                                            .delegate_mut()
+                                            .set_rows(DebugRows::Tasks(tasks.tasks.clone()));
+                                        cx.notify();
+                                    });
                                     view.tasks = Some(tasks);
                                     view.error = None;
                                 }
                                 Ok(Snapshot::Scheduler(scheduler)) => {
+                                    view.scheduler_table.update(cx, |table, cx| {
+                                        table
+                                            .delegate_mut()
+                                            .set_rows(DebugRows::Scheduler(scheduler.clone()));
+                                        cx.notify();
+                                    });
                                     view.scheduler = Some(scheduler);
                                     view.error = None;
                                 }
@@ -214,6 +260,9 @@ impl DebugWindow {
         Self {
             panel,
             tab: Tab::Heap,
+            heap_table,
+            tasks_table,
+            scheduler_table,
             heap: None,
             tasks: None,
             scheduler: None,
@@ -231,16 +280,257 @@ enum Snapshot {
 fn bytes(value: u32) -> String {
     format!("{:.1} KiB", value as f64 / 1024.0)
 }
-fn head(label: &'static str, cx: &gpui::App) -> TableHead {
-    TableHead::new()
-        .text_color(cx.theme().muted_foreground)
-        .child(label)
+#[derive(Clone)]
+enum DebugRows {
+    Heap(Vec<freertos::HeapBlock>),
+    Tasks(Vec<freertos::Task>),
+    Scheduler(SchedulerSnapshot),
 }
-fn table_cell(text: impl Into<gpui::SharedString>) -> TableCell {
-    TableCell::new().child(text.into())
+struct DebugTable {
+    rows: DebugRows,
+    sort: Option<(usize, ColumnSort)>,
+    width: f32,
+}
+impl DebugTable {
+    fn numeric_column(&self, col: usize) -> bool {
+        match self.rows {
+            DebugRows::Heap(_) => matches!(col, 0 | 2),
+            DebugRows::Tasks(_) => col >= 2,
+            DebugRows::Scheduler(_) => col == 1,
+        }
+    }
+    fn set_rows(&mut self, rows: DebugRows) {
+        self.rows = rows;
+        self.apply_sort();
+    }
+    fn apply_sort(&mut self) {
+        let sort = self.sort;
+        match &mut self.rows {
+            DebugRows::Heap(rows) => rows.sort_by(|a, b| {
+                let (column, direction) = sort.unwrap_or((0, ColumnSort::Ascending));
+                let order = match column {
+                    1 => a.allocated.cmp(&b.allocated),
+                    2 => a.size.cmp(&b.size),
+                    3 => a.owner.cmp(&b.owner),
+                    _ => a.address.cmp(&b.address),
+                };
+                (if direction == ColumnSort::Descending {
+                    order.reverse()
+                } else {
+                    order
+                })
+                .then(a.address.cmp(&b.address))
+            }),
+            DebugRows::Tasks(rows) => rows.sort_by(|a, b| {
+                let (column, direction) = sort.unwrap_or((2, ColumnSort::Descending));
+                let order = match column {
+                    0 => a.name.cmp(&b.name),
+                    1 => a.state.cmp(&b.state),
+                    2 => a.priority.cmp(&b.priority),
+                    3 => a.stack_size.cmp(&b.stack_size),
+                    4 => a.stack_remaining.cmp(&b.stack_remaining),
+                    _ => a.stack_start.cmp(&b.stack_start),
+                };
+                (if direction == ColumnSort::Descending {
+                    order.reverse()
+                } else {
+                    order
+                })
+                .then(a.name.cmp(&b.name))
+                .then(a.tcb.cmp(&b.tcb))
+            }),
+            DebugRows::Scheduler(_) => {}
+        }
+    }
+    fn labels(&self) -> &'static [&'static str] {
+        match self.rows {
+            DebugRows::Heap(_) => &["Block address", "State", "Block size", "Owner"],
+            DebugRows::Tasks(_) => &["Task", "State", "Priority", "Stack", "Free", "Stack base"],
+            DebugRows::Scheduler(_) => &["Property", "Value"],
+        }
+    }
+    fn cell(&self, row: usize, col: usize) -> String {
+        match &self.rows {
+            DebugRows::Heap(rows) => {
+                let b = &rows[row];
+                match col {
+                    0 => format!("0x{:08x}", b.address),
+                    1 => if b.allocated { "Allocated" } else { "Free" }.into(),
+                    2 => bytes(b.size),
+                    _ => b
+                        .owner
+                        .as_deref()
+                        .unwrap_or(if b.allocated { "Unknown" } else { "—" })
+                        .into(),
+                }
+            }
+            DebugRows::Tasks(rows) => {
+                let t = &rows[row];
+                match col {
+                    0 => format!("{}{}", t.name, if t.current { "  •" } else { "" }),
+                    1 => t.state.clone(),
+                    2 => {
+                        if t.priority == t.base_priority {
+                            t.priority.to_string()
+                        } else {
+                            format!("{} / {}", t.priority, t.base_priority)
+                        }
+                    }
+                    3 => bytes(t.stack_size),
+                    4 => bytes(t.stack_remaining),
+                    _ => format!("0x{:08x}", t.stack_start),
+                }
+            }
+            DebugRows::Scheduler(s) => {
+                let rows = [
+                    (
+                        "State",
+                        if s.running {
+                            "Running".into()
+                        } else {
+                            "Not started".into()
+                        },
+                    ),
+                    ("Tasks", s.task_count.to_string()),
+                    ("Ticks", s.ticks.to_string()),
+                    ("Pending ticks", s.pending_ticks.to_string()),
+                    ("Suspension depth", s.suspended.to_string()),
+                    ("Current TCB", format!("0x{:08x}", s.current_tcb)),
+                ];
+                if col == 0 {
+                    rows[row].0.into()
+                } else {
+                    rows[row].1.clone()
+                }
+            }
+        }
+    }
+}
+fn new_table(
+    rows: DebugRows,
+    window: &mut Window,
+    cx: &mut Context<DebugWindow>,
+) -> Entity<TableState<DebugTable>> {
+    let mut delegate = DebugTable {
+        rows,
+        sort: None,
+        width: (f32::from(window.viewport_size().width) - 32.0).max(0.0),
+    };
+    delegate.apply_sort();
+    cx.new(|cx| {
+        TableState::new(delegate, window, cx)
+            .col_movable(false)
+            .col_resizable(false)
+            .row_selectable(false)
+    })
+}
+impl TableDelegate for DebugTable {
+    fn columns_count(&self, _: &gpui::App) -> usize {
+        self.labels().len()
+    }
+    fn rows_count(&self, _: &gpui::App) -> usize {
+        match &self.rows {
+            DebugRows::Heap(r) => r.len(),
+            DebugRows::Tasks(r) => r.len(),
+            DebugRows::Scheduler(_) => 6,
+        }
+    }
+    fn column(&self, col: usize, _: &gpui::App) -> Column {
+        let weight = match self.rows {
+            DebugRows::Tasks(_) if col == 0 => 2.,
+            _ => 1.,
+        };
+        let count = self.labels().len() as f32
+            + if matches!(self.rows, DebugRows::Tasks(_)) {
+                1.
+            } else {
+                0.
+            };
+        let column = Column::new(format!("column-{col}"), self.labels()[col])
+            .width(gpui::px((self.width / count * weight).max(70.)));
+        let column = if self.numeric_column(col) {
+            column.text_right()
+        } else {
+            column
+        };
+        if matches!(self.rows, DebugRows::Scheduler(_)) {
+            column
+        } else {
+            column.sort(
+                if let Some((i, sort)) = self.sort
+                    && i == col
+                {
+                    sort
+                } else {
+                    ColumnSort::Default
+                },
+            )
+        }
+    }
+    fn perform_sort(
+        &mut self,
+        col: usize,
+        sort: ColumnSort,
+        _: &mut Window,
+        _: &mut Context<TableState<Self>>,
+    ) {
+        self.sort = if sort == ColumnSort::Default {
+            None
+        } else {
+            Some((col, sort))
+        };
+        self.apply_sort();
+    }
+    fn render_td(
+        &mut self,
+        row: usize,
+        col: usize,
+        _: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement {
+        let color = match &self.rows {
+            DebugRows::Heap(rows) if col == 1 && !rows[row].allocated => cx.theme().success,
+            DebugRows::Tasks(rows) if col == 1 => match rows[row].state.as_str() {
+                "Current" => cx.theme().success,
+                "Ready" => cx.theme().info,
+                _ => cx.theme().muted_foreground,
+            },
+            DebugRows::Tasks(rows)
+                if col == 4
+                    && rows[row].stack_remaining.saturating_mul(10) < rows[row].stack_size =>
+            {
+                cx.theme().danger
+            }
+            DebugRows::Tasks(rows)
+                if col == 4
+                    && rows[row].stack_remaining.saturating_mul(4) < rows[row].stack_size =>
+            {
+                cx.theme().warning
+            }
+            _ => cx.theme().foreground,
+        };
+        let cell = div().w_full().text_color(color).child(self.cell(row, col));
+        if self.numeric_column(col) {
+            cell.text_right()
+        } else {
+            cell
+        }
+    }
+    fn cell_label(&self, row: usize, col: usize, _: &gpui::App) -> Option<gpui::SharedString> {
+        Some(self.cell(row, col).into())
+    }
 }
 impl Render for DebugWindow {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let width = (f32::from(window.viewport_size().width) - 32.0).max(0.0);
+        for table in [&self.heap_table, &self.tasks_table, &self.scheduler_table] {
+            if (table.read(cx).delegate().width - width).abs() > 0.5 {
+                table.update(cx, |table, cx| {
+                    table.delegate_mut().width = width;
+                    table.refresh(cx);
+                });
+            }
+        }
         let mut body = div().flex_1().min_h_0().flex().flex_col().gap_3();
         if let Some(error) = &self.error {
             body = body.child(gpui_component::alert::Alert::error(
@@ -259,47 +549,13 @@ impl Render for DebugWindow {
                         .map(|b| b.size)
                         .max()
                         .unwrap_or(0);
-                    let mut rows = TableBody::new();
-                    for b in &heap.blocks {
-                        let state = if b.allocated { "Allocated" } else { "Free" };
-                        let color = if b.allocated {
-                            cx.theme().foreground
-                        } else {
-                            cx.theme().success
-                        };
-                        rows = rows.child(
-                            TableRow::new()
-                                .child(table_cell(format!("0x{:08x}", b.address)))
-                                .child(table_cell(state).text_color(color))
-                                .child(table_cell(bytes(b.size)))
-                                .child(table_cell(
-                                    b.owner
-                                        .as_deref()
-                                        .unwrap_or(if b.allocated { "Unknown" } else { "—" })
-                                        .to_owned(),
-                                )),
-                        );
-                    }
-                    let header = TableHeader::new().child(
-                        TableRow::new()
-                            .child(head("Block address", cx))
-                            .child(head("State", cx))
-                            .child(head("Block size", cx))
-                            .child(head("Owner", cx)),
-                    );
                     body = body.child(
-                        div()
-                            .id("heap-blocks")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scrollbar()
-                            .child(
-                                Table::new()
-                                    .small()
-                                    .accessibility_label("Heap blocks")
-                                    .child(header)
-                                    .child(rows),
-                            ),
+                        div().flex_1().min_h_0().child(
+                            DataTable::new(&self.heap_table)
+                                .small()
+                                .bordered(false)
+                                .accessibility_label("Heap blocks"),
+                        ),
                     );
                     format!(
                         "{} free · {} min · {} max block · {} total · {} alloc / {} frees",
@@ -317,63 +573,13 @@ impl Render for DebugWindow {
             }
             Tab::Tasks => {
                 if let Some(tasks) = &self.tasks {
-                    let mut rows = TableBody::new();
-                    for t in &tasks.tasks {
-                        let state_color = match t.state.as_str() {
-                            "Current" => cx.theme().success,
-                            "Ready" => cx.theme().info,
-                            _ => cx.theme().muted_foreground,
-                        };
-                        let stack_color = if t.stack_remaining.saturating_mul(10) < t.stack_size {
-                            cx.theme().danger
-                        } else if t.stack_remaining.saturating_mul(4) < t.stack_size {
-                            cx.theme().warning
-                        } else {
-                            cx.theme().foreground
-                        };
-                        rows = rows.child(
-                            TableRow::new()
-                                .child(
-                                    table_cell(format!(
-                                        "{}{}",
-                                        t.name,
-                                        if t.current { "  •" } else { "" }
-                                    ))
-                                    .col_span(2),
-                                )
-                                .child(table_cell(t.state.clone()).text_color(state_color))
-                                .child(table_cell(if t.priority == t.base_priority {
-                                    t.priority.to_string()
-                                } else {
-                                    format!("{} / {}", t.priority, t.base_priority)
-                                }))
-                                .child(table_cell(bytes(t.stack_size)))
-                                .child(table_cell(bytes(t.stack_remaining)).text_color(stack_color))
-                                .child(table_cell(format!("0x{:08x}", t.stack_start))),
-                        );
-                    }
-                    let header = TableHeader::new().child(
-                        TableRow::new()
-                            .child(head("Task", cx).col_span(2))
-                            .child(head("State", cx))
-                            .child(head("Priority", cx))
-                            .child(head("Stack", cx))
-                            .child(head("Free", cx))
-                            .child(head("Stack base", cx)),
-                    );
                     body = body.child(
-                        div()
-                            .id("tasks-table")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scrollbar()
-                            .child(
-                                Table::new()
-                                    .small()
-                                    .accessibility_label("FreeRTOS tasks")
-                                    .child(header)
-                                    .child(rows),
-                            ),
+                        div().flex_1().min_h_0().child(
+                            DataTable::new(&self.tasks_table)
+                                .small()
+                                .bordered(false)
+                                .accessibility_label("FreeRTOS tasks"),
+                        ),
                     );
                     format!("{} tasks · stack free is an estimate", tasks.tasks.len())
                 } else {
@@ -383,41 +589,13 @@ impl Render for DebugWindow {
             }
             Tab::Scheduler => {
                 if let Some(s) = &self.scheduler {
-                    let rows = [
-                        (
-                            "State",
-                            if s.running {
-                                "Running".into()
-                            } else {
-                                "Not started".into()
-                            },
-                        ),
-                        ("Tasks", s.task_count.to_string()),
-                        ("Ticks", s.ticks.to_string()),
-                        ("Pending ticks", s.pending_ticks.to_string()),
-                        ("Suspension depth", s.suspended.to_string()),
-                        ("Current TCB", format!("0x{:08x}", s.current_tcb)),
-                    ];
-                    let mut table_rows = TableBody::new();
-                    for (label, value) in rows {
-                        table_rows = table_rows.child(
-                            TableRow::new()
-                                .child(table_cell(label))
-                                .child(table_cell(value)),
-                        );
-                    }
                     body = body.child(
-                        div()
-                            .id("scheduler-table")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scrollbar()
-                            .child(
-                                Table::new()
-                                    .small()
-                                    .accessibility_label("FreeRTOS scheduler")
-                                    .child(table_rows),
-                            ),
+                        div().flex_1().min_h_0().child(
+                            DataTable::new(&self.scheduler_table)
+                                .small()
+                                .bordered(false)
+                                .accessibility_label("FreeRTOS scheduler"),
+                        ),
                     );
                     format!("{} tasks · {} ticks", s.task_count, s.ticks)
                 } else {
@@ -501,5 +679,41 @@ impl Render for DebugWindow {
             .child(div().flex_shrink_0().child(tabs))
             .child(body)
             .child(StatusBar::new().left(summary_content).right(toggle))
+    }
+}
+
+#[cfg(test)]
+mod sort_tests {
+    use super::*;
+    #[test]
+    fn heap_sort_survives_new_snapshots_and_uses_numeric_sizes() {
+        let blocks = || {
+            vec![
+                freertos::HeapBlock {
+                    address: 8,
+                    size: 128,
+                    allocated: true,
+                    owner: None,
+                },
+                freertos::HeapBlock {
+                    address: 16,
+                    size: 2048,
+                    allocated: false,
+                    owner: None,
+                },
+            ]
+        };
+        let mut table = DebugTable {
+            rows: DebugRows::Heap(blocks()),
+            sort: Some((2, ColumnSort::Descending)),
+            width: 760.0,
+        };
+        table.set_rows(DebugRows::Heap(blocks()));
+        assert_eq!(table.cell(0, 2), "2.0 KiB");
+        table.set_rows(DebugRows::Heap(blocks()));
+        assert_eq!(table.cell(0, 2), "2.0 KiB");
+        table.sort = Some((2, ColumnSort::Ascending));
+        table.apply_sort();
+        assert_eq!(table.cell(0, 2), "0.1 KiB");
     }
 }

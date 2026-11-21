@@ -212,7 +212,7 @@ fn open_debug_window(
         app.open_window(size(px(width), px(600.)), move |window, cx: &mut App| {
             components::theme::init(cx);
             let panel = cx.new(|_| panel);
-            let view = cx.new(|_| debug_window::DebugWindow::preview(panel, &kind));
+            let view = cx.new(|cx| debug_window::DebugWindow::preview(panel, &kind, window, cx));
             cx.new(|cx| gpui_component::Root::new(view, window, cx))
         })?;
     Ok(handle.into())

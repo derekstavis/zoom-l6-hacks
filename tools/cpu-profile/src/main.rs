@@ -160,8 +160,9 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> {
         let mut sampled_pcs = [String::new(), String::new()];
         let mut sampled_exceptions = [None, None];
         for (cpu, counts) in pcs.iter_mut().enumerate() {
-            let regs = engine.management[0]
-                .registers(cpu as i64)
+            // MAIN and panel are separate QEMU processes, each with CPU 0.
+            let regs = engine.management[cpu]
+                .registers(0)
                 .map_err(|e| e.to_string())?;
             let pc = regs
                 .split_whitespace()

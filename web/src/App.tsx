@@ -695,6 +695,11 @@ export default function App() {
                 Unzip the file from step 3 into the main folder of your SD card, then follow the steps below. It contains the firmware update{installPatchLoader && <> and a <code>PATCHES</code> folder with your SD card patches</>}.
               </p>
             )}
+            {model && installPatchLoader && (
+              <p className="text-sm leading-relaxed">
+                If the card already has a <code>PATCHES</code> folder, delete it first so the new one replaces it. Patches left over from an earlier download can conflict with the new ones, and the mixer then skips them.
+              </p>
+            )}
             {model === null ? (
               <p className="text-muted-foreground text-sm">Upload your firmware above to see the instructions for your mixer.</p>
             ) : model === 'L6' ? (

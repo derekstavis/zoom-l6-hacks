@@ -294,7 +294,7 @@ struct DebugTable {
 impl DebugTable {
     fn numeric_column(&self, col: usize) -> bool {
         match self.rows {
-            DebugRows::Heap(_) => matches!(col, 0 | 2),
+            DebugRows::Heap(_) => col >= 2,
             DebugRows::Tasks(_) => col >= 2,
             DebugRows::Scheduler(_) => col == 1,
         }
@@ -307,11 +307,11 @@ impl DebugTable {
         let sort = self.sort;
         match &mut self.rows {
             DebugRows::Heap(rows) => rows.sort_by(|a, b| {
-                let (column, direction) = sort.unwrap_or((0, ColumnSort::Ascending));
+                let (column, direction) = sort.unwrap_or((3, ColumnSort::Ascending));
                 let order = match column {
-                    1 => a.allocated.cmp(&b.allocated),
+                    0 => a.allocated.cmp(&b.allocated),
+                    1 => a.owner.cmp(&b.owner),
                     2 => a.size.cmp(&b.size),
-                    3 => a.owner.cmp(&b.owner),
                     _ => a.address.cmp(&b.address),
                 };
                 (if direction == ColumnSort::Descending {
@@ -344,7 +344,7 @@ impl DebugTable {
     }
     fn labels(&self) -> &'static [&'static str] {
         match self.rows {
-            DebugRows::Heap(_) => &["Block address", "State", "Block size", "Owner"],
+            DebugRows::Heap(_) => &["State", "Owner", "Block size", "Block address"],
             DebugRows::Tasks(_) => &["Task", "State", "Priority", "Stack", "Free", "Stack base"],
             DebugRows::Scheduler(_) => &["Property", "Value"],
         }
@@ -354,14 +354,14 @@ impl DebugTable {
             DebugRows::Heap(rows) => {
                 let b = &rows[row];
                 match col {
-                    0 => format!("0x{:08x}", b.address),
-                    1 => if b.allocated { "Allocated" } else { "Free" }.into(),
-                    2 => bytes(b.size),
-                    _ => b
+                    0 => if b.allocated { "Allocated" } else { "Free" }.into(),
+                    1 => b
                         .owner
                         .as_deref()
                         .unwrap_or(if b.allocated { "Unknown" } else { "—" })
                         .into(),
+                    2 => bytes(b.size),
+                    _ => format!("0x{:08x}", b.address),
                 }
             }
             DebugRows::Tasks(rows) => {
@@ -437,12 +437,13 @@ impl TableDelegate for DebugTable {
     }
     fn column(&self, col: usize, _: &gpui::App) -> Column {
         let weight = match self.rows {
-            DebugRows::Tasks(_) if col == 0 => 2.,
+            DebugRows::Tasks(_) if col == 0 => 1.8,
+            DebugRows::Tasks(_) if col == 5 => 1.5,
             _ => 1.,
         };
         let count = self.labels().len() as f32
             + if matches!(self.rows, DebugRows::Tasks(_)) {
-                1.
+                1.3
             } else {
                 0.
             };
@@ -489,7 +490,7 @@ impl TableDelegate for DebugTable {
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         let color = match &self.rows {
-            DebugRows::Heap(rows) if col == 1 && !rows[row].allocated => cx.theme().success,
+            DebugRows::Heap(rows) if col == 0 && !rows[row].allocated => cx.theme().success,
             DebugRows::Tasks(rows) if col == 1 => match rows[row].state.as_str() {
                 "Current" => cx.theme().success,
                 "Ready" => cx.theme().info,
@@ -509,9 +510,13 @@ impl TableDelegate for DebugTable {
             }
             _ => cx.theme().foreground,
         };
-        let cell = div().w_full().text_color(color).child(self.cell(row, col));
+        let cell = div().text_color(color).child(self.cell(row, col));
         if self.numeric_column(col) {
-            cell.text_right()
+            if matches!(self.rows, DebugRows::Scheduler(_)) && row == 0 {
+                cell
+            } else {
+                cell.font_family(cx.theme().mono_font_family.clone())
+            }
         } else {
             cell
         }

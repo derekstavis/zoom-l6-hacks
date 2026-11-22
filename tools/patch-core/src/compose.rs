@@ -35,18 +35,26 @@ pub struct Unit {
     pub identity: u32,
 }
 
-/// The Patch loader, already placed in the image.
-#[derive(Clone, Debug, Default)]
+/// One of the Patch loader's hooks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoaderHook {
+    pub address: u32,
+    pub target: u32,
+    /// Bytes the branch to `target` displaces.
+    pub length: usize,
+    /// A dispatch site, where SD modules attach at runtime. A static patch
+    /// may take over a static hook only at the same address and length.
+    pub dispatch: bool,
+}
+
+/// The Patch loader, placed before every static payload.
+#[derive(Clone, Debug)]
 pub struct Loader {
+    pub base: u32,
+    pub payload: Vec<u8>,
+    pub hooks: Vec<LoaderHook>,
     /// The loader's identity record.
     pub identity: u32,
-    /// The loader's handler for each site it hooks, with the Thumb bit. A
-    /// patch hooking the same site takes the site over and continues into
-    /// the loader's handler.
-    pub targets: BTreeMap<u32, u32>,
-    /// Ranges the loader's own hooks displace. A patch may hook one only at
-    /// the same address and length.
-    pub ranges: Vec<(u32, usize)>,
     /// Start of the SD module region that static payloads must not reach.
     pub module_base: u32,
     /// End of the reserved region the image grows to.
@@ -74,18 +82,61 @@ pub struct Placed {
     pub installed: Vec<usize>,
 }
 
-/// Chain shared hooks, place every unit in order, link the identity ring and,
-/// with a loader, grow the image to its reserve.
+/// Place the loader, if any, chain shared hooks, place every unit in order,
+/// link the identity ring and, with a loader, grow the image to its reserve.
 pub fn compose(
     image: Image<'_>,
-    mut units: Vec<Unit>,
     loader: Option<&Loader>,
+    mut units: Vec<Unit>,
 ) -> Result<Vec<Placed>, String> {
-    let targets = loader.map(|loader| &loader.targets);
-    chain(&mut units, targets)?;
+    // A patch hooking one of the loader's sites continues into the loader.
+    let mut targets = BTreeMap::new();
+    let mut loader_ranges = Vec::new();
+    if let Some(loader) = loader {
+        let overlap = |a: &LoaderHook, b: &LoaderHook| {
+            a.address < b.address + b.length as u32 && b.address < a.address + a.length as u32
+        };
+        for (index, hook) in loader.hooks.iter().enumerate() {
+            if loader.hooks[..index]
+                .iter()
+                .any(|prior| overlap(prior, hook))
+            {
+                return Err(format!(
+                    "Patch loader hook at {:#x} overlaps another of its hooks",
+                    hook.address
+                ));
+            }
+            targets.insert(hook.address, hook.target | 1);
+            if !hook.dispatch {
+                loader_ranges.push((hook.address, hook.length));
+            }
+        }
+        let edits = PatchEdits::new(
+            loader
+                .hooks
+                .iter()
+                .map(|hook| HookEdit {
+                    address: hook.address,
+                    target: hook.target,
+                    length: hook.length,
+                })
+                .collect(),
+        );
+        apply_patch_with_map(
+            image.firmware,
+            image.original_length,
+            loader.base,
+            &loader.payload,
+            &edits,
+            image.padding,
+            image.firmware_base,
+            loader.module_base,
+        )
+        .map_err(|error| format!("Patch loader: {error}"))?;
+    }
+    chain(&mut units, loader.map(|_| &targets))?;
 
-    let mut claimed: Vec<(u32, usize)> = loader.map_or_else(Vec::new, |l| l.ranges.clone());
-    let loader_ranges = claimed.clone();
+    let mut claimed = loader_ranges.clone();
     let mut installed_sites = BTreeSet::new();
     let mut placed = Vec::with_capacity(units.len());
     for unit in &units {
@@ -256,22 +307,28 @@ mod tests {
         let mut firmware = vec![0; 0x80];
         let padding = vec![0xff; 0x200];
         let loader = Loader {
-            identity: BASE + 0x20,
-            targets: BTreeMap::from([(BASE + 0x10, BASE + 0x31)]),
-            ranges: vec![(BASE + 0x10, 4)],
+            base: BASE + 0x80,
+            payload: vec![0; 32],
+            hooks: vec![LoaderHook {
+                address: BASE + 0x10,
+                target: BASE + 0x90,
+                length: 4,
+                dispatch: false,
+            }],
+            identity: BASE + 0x88,
             module_base: BASE + 0x200,
             reserve_end: BASE + 0x220,
         };
         let units = vec![
             unit(
                 "first",
-                BASE + 0x80,
-                vec![hook(BASE + 0x10, BASE + 0x80, Some(4))],
+                BASE + 0xa0,
+                vec![hook(BASE + 0x10, BASE + 0xa0, Some(4))],
             ),
             unit(
                 "second",
-                BASE + 0xa0,
-                vec![hook(BASE + 0x10, BASE + 0xa0, Some(4))],
+                BASE + 0xc0,
+                vec![hook(BASE + 0x10, BASE + 0xc0, Some(4))],
             ),
         ];
         let image = Image {
@@ -281,19 +338,20 @@ mod tests {
             firmware_base: BASE,
             slot_end: BASE + 0x1000,
         };
-        let placed = compose(image, units, Some(&loader)).unwrap();
+        let placed = compose(image, Some(&loader), units).unwrap();
         assert_eq!(placed[0].installed, [0]);
         assert!(placed[1].installed.is_empty());
+        // The first patch takes the loader's site over.
         assert_eq!(
             &firmware[0x10..0x14],
-            &crate::branch(BASE + 0x10, BASE + 0x80, false)
+            &crate::branch(BASE + 0x10, BASE + 0xa0, false)
         );
-        assert_eq!(word(&firmware, BASE + 0x84), BASE + 0xa1);
-        assert_eq!(word(&firmware, BASE + 0xa4), BASE + 0x31);
+        assert_eq!(word(&firmware, BASE + 0xa4), BASE + 0xc1);
+        assert_eq!(word(&firmware, BASE + 0xc4), BASE + 0x91);
         // The identity ring runs loader, first, second.
-        assert_eq!(word(&firmware, BASE + 0x34), BASE + 0x88);
         assert_eq!(word(&firmware, BASE + 0x9c), BASE + 0xa8);
-        assert_eq!(word(&firmware, BASE + 0xbc), BASE + 0x20);
+        assert_eq!(word(&firmware, BASE + 0xbc), BASE + 0xc8);
+        assert_eq!(word(&firmware, BASE + 0xdc), BASE + 0x88);
         assert_eq!(firmware.len(), 0x220);
     }
 
@@ -309,7 +367,7 @@ mod tests {
                 firmware_base: BASE,
                 slot_end: BASE + 0x1000,
             };
-            compose(image, units, None)
+            compose(image, None, units)
         };
         let shared = |slot| {
             vec![

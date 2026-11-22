@@ -29,63 +29,7 @@ from patches/<name>/package.toml; dependencies are included automatically.
 also installs the experimental Patch loader. `module` builds one composed SD
 module for PATCHES/ on the card. `prebuilt` regenerates the committed browser
 templates and SD modules from the config.toml [firmware] packages; --check
-only compares them with the current sources. `l6patch STOCK_DIR OUTPUT_DIR`
-is `l6patch firmware`.";
-
-/// The original flag form, `l6patch STOCK_DIR OUTPUT_DIR [--experimental-*]`.
-fn parse_legacy(
-    mut args: impl Iterator<Item = String>,
-) -> Result<BuildRequest, Box<dyn std::error::Error>> {
-    let (Some(source), Some(output)) = (args.next(), args.next()) else {
-        return Err(USAGE.into());
-    };
-    let mut requested = Vec::new();
-    let mut effect_replacements = Vec::new();
-    let mut version = None;
-    let mut mode = BuildMode::Firmware;
-    while let Some(flag) = args.next() {
-        let flag_mode = match flag.as_str() {
-            "--experimental-patch-bundle" => Some(BuildMode::Module),
-            "--experimental-patch-loader" => Some(BuildMode::PatchLoader),
-            _ => None,
-        };
-        if let Some(flag_mode) = flag_mode {
-            if mode != BuildMode::Firmware && mode != flag_mode {
-                return Err("build the loader and SD bundle in separate output directories".into());
-            }
-            mode = flag_mode;
-            continue;
-        }
-        let value = args.next().ok_or(USAGE)?;
-        match flag.as_str() {
-            "--patch" => {
-                requested.push(value);
-            }
-            "--effect-replacement" => {
-                let (slot, id) = value
-                    .split_once('=')
-                    .ok_or("effect replacement must be SLOT=ID")?;
-                if slot.is_empty() || id.is_empty() {
-                    return Err("effect replacement must be SLOT=ID".into());
-                }
-                effect_replacements.push((slot.to_owned(), id.to_owned()));
-            }
-            "--update-version" => version = Some(value),
-            _ => return Err(USAGE.into()),
-        }
-    }
-    if let Some(version) = &version {
-        parse_version(version)?;
-    }
-    Ok(BuildRequest {
-        source: PathBuf::from(source),
-        output: PathBuf::from(output),
-        patches: requested,
-        effect_replacements,
-        version,
-        mode,
-    })
-}
+only compares them with the current sources.";
 
 #[derive(Debug)]
 struct ResolvedHook {
@@ -277,7 +221,7 @@ pub fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
             println!("{USAGE}");
             Ok(())
         }
-        Some(_) => build(parse_legacy(args)?),
+        Some(other) => Err(format!("unknown command `{other}`\n\n{USAGE}").into()),
     }
 }
 

@@ -450,6 +450,40 @@ pub(super) fn run_l6_update(options: &Options, main_image: &[u8]) -> Result<(), 
     Ok(())
 }
 
+fn update_patch_names(report: &Value) -> Result<Vec<&str>, String> {
+    let patches = report["patches"]
+        .as_array()
+        .filter(|patches| !patches.is_empty())
+        .ok_or("patched update report is missing its patches array or contains no patches")?;
+    patches
+        .iter()
+        .map(|patch| {
+            patch["name"]
+                .as_str()
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| "patched update report contains a patch without a name".into())
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod update_report_tests {
+    use super::*;
+
+    #[test]
+    fn extracts_patch_names_and_rejects_invalid_reports() {
+        let report = json!({"patches": [{"name": "knob-dialog"}, {"name": "midi-sync"}]});
+        assert_eq!(
+            update_patch_names(&report).unwrap(),
+            ["knob-dialog", "midi-sync"]
+        );
+        assert!(update_patch_names(&json!({"patches": ["knob-dialog"]})).is_err());
+        assert!(update_patch_names(&json!({"patches": [{}]})).is_err());
+        assert!(update_patch_names(&json!({})).is_err());
+        assert!(update_patch_names(&json!({"patches": []})).is_err());
+    }
+}
+
 pub(super) fn update_checksum(package: &[u8]) -> u32 {
     package[0x200..0x1a8200]
         .iter()
@@ -695,12 +729,7 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
                     .map_err(|e| e.to_string())?,
                 )
                 .map_err(|e| e.to_string())?;
-                let patches: Vec<String> = report["patches"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|patch| patch.as_str().map(str::to_owned))
-                    .collect();
+                let patches = update_patch_names(&report)?;
                 let mut state = State::default();
                 let mut run = |operation: Operation, patch: &str| {
                     state
@@ -710,10 +739,10 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
                             format!("installed L6max {patch} behavior failed: {error}")
                         })
                 };
-                if patches.iter().any(|patch| patch == "knob-dialog") {
+                if patches.contains(&"knob-dialog") {
                     run(Operation::KnobDialog, "knob-dialog")?;
                 }
-                if let Some(patch) = patches.iter().find(|patch| *patch == "midi-sync") {
+                if let Some(patch) = patches.iter().find(|patch| **patch == "midi-sync") {
                     run(
                         Operation::DirectUsbMidiRoundTrip {
                             cable: 1,

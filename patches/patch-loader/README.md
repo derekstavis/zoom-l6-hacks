@@ -25,9 +25,11 @@ allocates its small state on first use. `din-mixer-control` uses an
 instruction-offset hook and remains static-only. The loader itself is installed
 through the ordinary firmware update.
 
-A file can register any number of hooks on the catalog's dynamic sites; only
-free memory limits them. Multiple files can hook the same function; their handlers are linked in numeric
-filename-prefix order. The dynamic knob-dialog emulator case loads two ordered
+A module can register up to 1,024 hooks on the catalog's dynamic sites,
+subject to its other format limits and available heap. The loader scans at most
+64 patch files and stages at most 16 valid modules before resolving duplicates.
+Multiple modules can hook the same function; their handlers are linked in
+numeric filename-prefix order. The dynamic knob-dialog emulator case loads two ordered
 modules for the same callee and exercises the recorder guard, dialog rendering,
 timeout, cleanup, and task context.
 
@@ -70,8 +72,8 @@ the three outcomes.
 The loader has dynamic dispatch stubs for the catalog sites marked dynamic in
 the model-specific function catalog, and its registry holds one record per
 such site. A module's hook links live at the start of the module's own
-allocation, so the number of modules and handlers on a site is limited only
-by free memory. Adding a site needs a new loader, because each site needs its
+allocation, so handlers on a site share the module and heap limits above;
+there is no separate fixed per-site handler array. Adding a site needs a new loader, because each site needs its
 dispatch stub in firmware. Each module carries a
 `next` function-pointer slot. The loader connects modules in filename order and
 preserves hook-record order within each module before pointing the tail at the
@@ -109,11 +111,12 @@ and published in one root word. Dispatch stubs run at firmware function entries
 before any patch code, so they need that root at a fixed address:
 
 - **L6max:** `0x80205130`, the language 6 entry of the firmware's per-language
-  text pointer table. Only language 0 has text and every reader of the table
-  indexes it with `gui_current_language`, which always returns 0, so the
-  firmware never reads this entry. It is initialized `.data`, so every reset
+  text pointer table. Only language 0 has text; the reviewed table readers
+  index it with `gui_current_language`, which returns 0 in the supported
+  firmware. Unresolved indirect accesses are not excluded. It is initialized `.data`, so every reset
   restores its stock value `0x802069e4`.
-- **L6:** `0x801f0000`, RAM below `.data` that the firmware never references.
+- **L6:** `0x801f0000`, RAM below `.data` with no references found in the
+  reviewed literal and `movw`/`movt` scan. Indirect accesses are not excluded.
   Its stock value is 0, and the loader's reset hook restores it.
 
 Until the loader publishes a registry, the root holds its stock value, which

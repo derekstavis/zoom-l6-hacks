@@ -89,8 +89,11 @@ payload. The builder also requires consumed package padding to be erased.
 These are bounds for the supported package layout, not a guarantee that a
 maximum-sized image is safe at runtime or accepted by the physical updater. The
 L6 package has a different layout and load address; do not apply this bound
-to L6. Its package slot alone does not establish how much L6 MAIN can safely
-grow in the device's installed NOR or runtime memory.
+to its package. The L6 builder's package-layout limit is `0x284ff8` bytes,
+but the current emulator's 2 MiB MAIN NOR model accepts at most `0x1a2ff8`
+bytes of MAIN. A larger package can therefore pass the builder's slot check
+but be rejected by the emulator. Neither limit establishes safe physical L6
+growth; the installed layout and runtime space need separate investigation.
 
 ```text
 L6max 1.10 MAIN address space (not to scale; ranges are half-open)

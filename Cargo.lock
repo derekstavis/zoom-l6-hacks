@@ -3525,6 +3525,7 @@ name = "l6dbg"
 version = "0.1.0"
 dependencies = [
  "coremidi",
+ "firmware-api",
  "image",
  "l6fw",
  "l6max-diagnostics",

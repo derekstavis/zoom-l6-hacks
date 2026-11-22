@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 l6max-host.workspace = true
 l6fw.workspace = true
+firmware-api.workspace = true
 l6max-diagnostics.workspace = true
 libc.workspace = true
 image.workspace = true

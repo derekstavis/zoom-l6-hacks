@@ -27,6 +27,7 @@ mod imp {
     use coremidi::{
         Client, Destination, Destinations, InputPort, OutputPort, PacketBuffer, Source,
     };
+    use firmware_api::l6;
     use l6max_diagnostics::gdb::Gdb;
     use l6max_host::{
         engine::Options,
@@ -132,18 +133,18 @@ mod imp {
     fn l6_mixer_snapshot(guest: &Headless) -> Result<L6MixerSnapshot, String> {
         Ok((
             guest.engine.management[0]
-                .read_memory(0, 0x80440dca, 0x7e)
+                .read_memory(0, l6::mixer_state, 0x7e)
                 .map_err(|error| format!("cannot snapshot L6 channel mixer state: {error}"))?,
             guest.engine.management[0]
-                .read_memory(0, 0x80440e9a, 6)
+                .read_memory(0, l6::mixer_state_tail, 6)
                 .map_err(|error| format!("cannot snapshot L6 LEVEL state: {error}"))?,
         ))
     }
 
     fn l6_mixer_changes(before: &L6MixerSnapshot, after: &L6MixerSnapshot) -> Vec<(u32, u8, u8)> {
         [
-            (0x80440dca, &before.0, &after.0),
-            (0x80440e9a, &before.1, &after.1),
+            (l6::mixer_state, &before.0, &after.0),
+            (l6::mixer_state_tail, &before.1, &after.1),
         ]
         .into_iter()
         .flat_map(|(base, before, after)| {
@@ -272,10 +273,10 @@ mod imp {
         ) = if trace_din_dispatch {
             let mut debugger = Gdb::connect(&gdb_socket).map_err(|e| e.to_string())?;
             debugger
-                .breakpoint(0x8002f490, true)
+                .breakpoint(l6::midi_in, true)
                 .map_err(|e| e.to_string())?;
             debugger
-                .breakpoint(0x80020ca0, true)
+                .breakpoint(l6::main_event_submit, true)
                 .map_err(|e| e.to_string())?;
             debugger
                 .breakpoint(0x80020360, true)
@@ -287,7 +288,7 @@ mod imp {
                 .breakpoint(0x80020548, true)
                 .map_err(|e| e.to_string())?;
             debugger
-                .breakpoint(0x80020690, true)
+                .breakpoint(l6::main_event_queue_reader, true)
                 .map_err(|e| e.to_string())?;
             debugger
                 .breakpoint(0x800344e0, true)
@@ -296,14 +297,14 @@ mod imp {
                 .breakpoint(0x80034530, true)
                 .map_err(|e| e.to_string())?;
             debugger
-                .breakpoint(0x8006dd70, true)
+                .breakpoint(l6::main_task, true)
                 .map_err(|e| e.to_string())?;
             for address in L6_MAIN_INIT_ADDRESSES {
                 debugger
                     .breakpoint(address, true)
                     .map_err(|e| e.to_string())?;
             }
-            for address in [0x8003d790, 0x8003e0c8, 0x8003e408] {
+            for address in [l6::mixer_setter, l6::mixer_din_setter_6, l6::mixer_set_eq] {
                 debugger
                     .breakpoint(address, true)
                     .map_err(|e| e.to_string())?;
@@ -346,13 +347,15 @@ mod imp {
                     };
                     let address = pc & !1;
                     let counter = match address {
-                        0x8002f490 => Some(&worker_handler_hits),
-                        0x80020ca0 => Some(&worker_state_dispatch_hits),
+                        l6::midi_in => Some(&worker_handler_hits),
+                        l6::main_event_submit => Some(&worker_state_dispatch_hits),
                         0x80020360 | 0x80020438 | 0x80020548 => Some(&worker_queue_receiver_hits),
-                        0x80020690 => Some(&worker_event_queue_reader_hits),
+                        l6::main_event_queue_reader => Some(&worker_event_queue_reader_hits),
                         0x800344e0 | 0x80034530 => Some(&worker_event_fallback_hits),
-                        0x8006dd70 => Some(&worker_main_task_entry_hits),
-                        0x8003d790 | 0x8003e0c8 | 0x8003e408 => Some(&worker_candidate_setter_hits),
+                        l6::main_task => Some(&worker_main_task_entry_hits),
+                        l6::mixer_setter | l6::mixer_din_setter_6 | l6::mixer_set_eq => {
+                            Some(&worker_candidate_setter_hits)
+                        }
                         _ => None,
                     };
                     if let Some(index) = L6_MAIN_INIT_ADDRESSES
@@ -373,7 +376,7 @@ mod imp {
                         continue;
                     };
                     counter.fetch_add(1, Ordering::Relaxed);
-                    if address == 0x80020ca0 {
+                    if address == l6::main_event_submit {
                         let Ok(r0) = debugger.read_register(0) else {
                             break;
                         };
@@ -574,7 +577,7 @@ mod imp {
                 }
             }
             let event_queue_count_before = guest.engine.management[0]
-                .read_memory(0, 0x806b2f20, 4)
+                .read_memory(0, l6::main_event_queue_pending, 4)
                 .map_err(|error| format!("cannot read L6 event queue count: {error}"))?;
             let event_queue_count_before = u32::from_le_bytes(
                 event_queue_count_before
@@ -685,7 +688,7 @@ mod imp {
                     ));
                 }
                 let event_queue_count_after = guest.engine.management[0]
-                    .read_memory(0, 0x806b2f20, 4)
+                    .read_memory(0, l6::main_event_queue_pending, 4)
                     .map_err(|error| format!("cannot read L6 event queue count: {error}"))?;
                 let event_queue_count_after = u32::from_le_bytes(
                     event_queue_count_after
@@ -796,13 +799,13 @@ mod imp {
                 return Err("L6 stock DIN CC sweep did not change the mixer indicator ring".into());
             }
             let din_ring = guest.engine.management[0]
-                .read_memory(0, 0x8062e5a8, expected_bytes)
+                .read_memory(0, l6::midi_din_ring, expected_bytes)
                 .map_err(|error| format!("cannot read L6 DIN byte ring: {error}"))?;
             let din_ring_state = guest.engine.management[0]
-                .read_memory(0, 0x8062eda8, 0x20)
+                .read_memory(0, l6::midi_din_ring_state, 0x20)
                 .map_err(|error| format!("cannot read L6 DIN ring state: {error}"))?;
             let dispatch_map = guest.engine.management[0]
-                .read_memory(0, 0x80629bb8, 128)
+                .read_memory(0, l6::midi_cc_dispatch_map, 128)
                 .map_err(|error| format!("cannot read L6 MIDI dispatch map: {error}"))?;
             let expected_ring = (0..=127u8)
                 .flat_map(|cc| [0xb0, cc, 0x7f])

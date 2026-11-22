@@ -678,7 +678,26 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
             }
             if target_package.is_some() {
                 drop(restarted);
+                let report: Value = serde_json::from_slice(
+                    &fs::read(
+                        options
+                            .update_package
+                            .as_ref()
+                            .unwrap()
+                            .with_extension("json"),
+                    )
+                    .map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
+                let patches = update_patch_names(&report)?;
                 let mut verify = local.clone();
+                // MIDI verification needs the guest's USB class startup path.
+                // Attach before boot, as in the dedicated USB scenarios.
+                if patches.contains(&"midi-sync") {
+                    verify.usb_enabled = false;
+                    verify.midi_enabled = false;
+                    verify.usb_cable_at_start = true;
+                }
                 verify.sd_image = None;
                 verify.no_sd = true;
                 verify.update_bootloader = false;
@@ -718,18 +737,6 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
                 // installed-patch cases check the same browser-built image
                 // in full; din-mixer-control needs a DIN port and Mixer
                 // Control via MIDI, which this boot does not set up.
-                let report: Value = serde_json::from_slice(
-                    &fs::read(
-                        options
-                            .update_package
-                            .as_ref()
-                            .unwrap()
-                            .with_extension("json"),
-                    )
-                    .map_err(|e| e.to_string())?,
-                )
-                .map_err(|e| e.to_string())?;
-                let patches = update_patch_names(&report)?;
                 let mut state = State::default();
                 let mut run = |operation: Operation, patch: &str| {
                     state

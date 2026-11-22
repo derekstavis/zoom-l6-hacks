@@ -4,7 +4,7 @@ models = ["l6max"]
 backends = ["headless"]
 patches = ["knob-dialog", "midi-sync", "din-mixer-control"]
 
-# Every public L6max patch at once, through knob popups, a recorded take and
+# The three patches listed above, through knob popups, a recorded take and
 # its playback. The heap's lowest point must leave 128 KiB free.
 
 [case]

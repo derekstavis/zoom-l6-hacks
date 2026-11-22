@@ -450,6 +450,40 @@ pub(super) fn run_l6_update(options: &Options, main_image: &[u8]) -> Result<(), 
     Ok(())
 }
 
+fn update_patch_names(report: &Value) -> Result<Vec<&str>, String> {
+    let patches = report["patches"]
+        .as_array()
+        .filter(|patches| !patches.is_empty())
+        .ok_or("patched update report is missing its patches array or contains no patches")?;
+    patches
+        .iter()
+        .map(|patch| {
+            patch["name"]
+                .as_str()
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| "patched update report contains a patch without a name".into())
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod update_report_tests {
+    use super::*;
+
+    #[test]
+    fn extracts_patch_names_and_rejects_invalid_reports() {
+        let report = json!({"patches": [{"name": "knob-dialog"}, {"name": "midi-sync"}]});
+        assert_eq!(
+            update_patch_names(&report).unwrap(),
+            ["knob-dialog", "midi-sync"]
+        );
+        assert!(update_patch_names(&json!({"patches": ["knob-dialog"]})).is_err());
+        assert!(update_patch_names(&json!({"patches": [{}]})).is_err());
+        assert!(update_patch_names(&json!({})).is_err());
+        assert!(update_patch_names(&json!({"patches": []})).is_err());
+    }
+}
+
 pub(super) fn update_checksum(package: &[u8]) -> u32 {
     package[0x200..0x1a8200]
         .iter()
@@ -644,7 +678,26 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
             }
             if target_package.is_some() {
                 drop(restarted);
+                let report: Value = serde_json::from_slice(
+                    &fs::read(
+                        options
+                            .update_package
+                            .as_ref()
+                            .unwrap()
+                            .with_extension("json"),
+                    )
+                    .map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
+                let patches = update_patch_names(&report)?;
                 let mut verify = local.clone();
+                // MIDI verification needs the guest's USB class startup path.
+                // Attach before boot, as in the dedicated USB scenarios.
+                if patches.contains(&"midi-sync") {
+                    verify.usb_enabled = false;
+                    verify.midi_enabled = false;
+                    verify.usb_cable_at_start = true;
+                }
                 verify.sd_image = None;
                 verify.no_sd = true;
                 verify.update_bootloader = false;
@@ -680,27 +733,28 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
                     }
                     thread::sleep(Duration::from_millis(5));
                 }
+                if patches.contains(&"midi-sync") {
+                    // This scenario owns a fresh, unconfigured device. Clear
+                    // the two first-run prompts before expecting USB MIDI,
+                    // matching the host-midi scenario's L6max setup sequence.
+                    let inputs = session
+                        .engine
+                        .inputs
+                        .as_ref()
+                        .ok_or("post-update MIDI check requires inputs")?;
+                    for settle_ms in [2_000, 5_000] {
+                        inputs.tap(3, 50).map_err(|error| error.to_string())?;
+                        wait_guest_duration(
+                            &session,
+                            settle_ms,
+                            Instant::now() + Duration::from_secs(120),
+                        )?;
+                    }
+                }
                 // Check the behavior of each patch the update installs. The
                 // installed-patch cases check the same browser-built image
                 // in full; din-mixer-control needs a DIN port and Mixer
                 // Control via MIDI, which this boot does not set up.
-                let report: Value = serde_json::from_slice(
-                    &fs::read(
-                        options
-                            .update_package
-                            .as_ref()
-                            .unwrap()
-                            .with_extension("json"),
-                    )
-                    .map_err(|e| e.to_string())?,
-                )
-                .map_err(|e| e.to_string())?;
-                let patches: Vec<String> = report["patches"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|patch| patch.as_str().map(str::to_owned))
-                    .collect();
                 let mut state = State::default();
                 let mut run = |operation: Operation, patch: &str| {
                     state
@@ -710,10 +764,17 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
                             format!("installed L6max {patch} behavior failed: {error}")
                         })
                 };
-                if patches.iter().any(|patch| patch == "knob-dialog") {
+                if patches.contains(&"knob-dialog") {
                     run(Operation::KnobDialog, "knob-dialog")?;
                 }
-                if let Some(patch) = patches.iter().find(|patch| *patch == "midi-sync") {
+                if let Some(patch) = patches.iter().find(|patch| **patch == "midi-sync") {
+                    let usb = session
+                        .engine
+                        .usb
+                        .as_ref()
+                        .ok_or("USB host unavailable for post-update MIDI check")?;
+                    wait_usb_controller(&session, usb, 180_000, 300)
+                        .map_err(|error| format!("post-update USB controller: {error}"))?;
                     run(
                         Operation::DirectUsbMidiRoundTrip {
                             cable: 1,

@@ -833,6 +833,15 @@
     "definition": "7f2bc5f0fbd1be97d52d1f49a38acb4d98e62c34a48eafeef9106eb51b0798da"
   },
   {
+    "case": "patched-update-knob-midi",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "926e3755ea7840e316a5888f56691762b794f0d989237154e2a41d80682b1992"
+  },
+  {
     "case": "patches-l6_hosted-sd_midi-sync",
     "model": "l6",
     "backend": "headless",

@@ -64,8 +64,7 @@ impl MainNor {
 
     /// Seed a device from an unpacked firmware directory exactly as QEMU's
     /// first persistent boot does: erased flash, MAIN image and trailer,
-    /// packaged panel image and trailer, and the installed-version record
-    /// copied from the MAIN trailer.
+    /// packaged panel image and trailer, and model-specific installed footer.
     pub fn seed(firmware_dir: &Path) -> Result<Self, String> {
         let mut bytes = vec![0xff; MAIN_NOR_SIZE];
         let segments = [
@@ -74,11 +73,27 @@ impl MainNor {
             ("secondary_firmware.bin", PANEL_IMAGE, PANEL_IMAGE_CAPACITY),
             ("secondary_trailer.bin", PANEL_TRAILER, 8),
         ];
+        let mut main_length = 0;
         for (name, offset, capacity) in segments {
             let segment = read_segment(firmware_dir, name, capacity)?;
+            if name == "main_firmware.bin" {
+                main_length = segment.len();
+            }
             bytes[offset..offset + segment.len()].copy_from_slice(&segment);
         }
-        bytes.copy_within(MAIN_TRAILER + 4..MAIN_TRAILER + 8, SYSTEM_VERSION);
+        if l6fw::model_from_main_nor(&bytes)? == Model::L6max {
+            let footer = read_segment(firmware_dir, "package_footer.bin", 0x40)?;
+            if footer.len() != 0x40 {
+                return Err("L6max package footer must contain 64 bytes".into());
+            }
+            let length = u32::from_le_bytes(footer[0x38..0x3c].try_into().unwrap()) as usize;
+            if length < 8 || length > MAIN_IMAGE_CAPACITY || length != main_length {
+                return Err("L6max package footer has an invalid MAIN length".into());
+            }
+            bytes[0x1f7fc0..0x1f8000].copy_from_slice(&footer);
+        } else {
+            bytes.copy_within(MAIN_TRAILER + 4..MAIN_TRAILER + 8, SYSTEM_VERSION);
+        }
         let nor = Self { bytes };
         nor.model()?;
         Ok(nor)
@@ -151,6 +166,7 @@ pub fn seed_resource(firmware_dir: &Path) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn blank() -> MainNor {
         MainNor::from_bytes(vec![0xff; MAIN_NOR_SIZE]).unwrap()
@@ -164,5 +180,43 @@ mod tests {
         assert_eq!(nor.update_marker(), UpdateMarker::Pending);
         nor.bytes[UPDATE_MARKER + 8..UPDATE_MARKER + 20].copy_from_slice(b"FW UPDT ERR\0");
         assert_eq!(nor.update_marker(), UpdateMarker::Failed);
+    }
+
+    #[test]
+    fn seed_sets_l6max_installed_footer_without_changing_l6() {
+        let root = std::env::temp_dir().join(format!(
+            "l6nor-seed-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        for (model, reset) in [(Model::L6max, 0x80000415u32), (Model::L6, 0x80001415)] {
+            let mut main = Vec::new();
+            main.extend_from_slice(&0x20230000u32.to_le_bytes());
+            main.extend_from_slice(&reset.to_le_bytes());
+            fs::write(root.join("main_firmware.bin"), &main).unwrap();
+            fs::write(root.join("main_trailer.bin"), b"\x08\0\0\x000110").unwrap();
+            fs::write(root.join("secondary_firmware.bin"), [0xff]).unwrap();
+            fs::write(root.join("secondary_trailer.bin"), b"\x01\0\0\x000100").unwrap();
+            let mut footer = [0xff; 0x40];
+            footer[..4].copy_from_slice(b"TEST");
+            footer[0x38..0x3c].copy_from_slice(&8u32.to_le_bytes());
+            footer[0x3c..].copy_from_slice(b"0110");
+            fs::write(root.join("package_footer.bin"), footer).unwrap();
+            let nor = MainNor::seed(&root).unwrap();
+            if model == Model::L6max {
+                assert_eq!(&nor.bytes()[0x1f7fc0..0x1f8000], &footer);
+                footer[0x38..0x3c].copy_from_slice(&9u32.to_le_bytes());
+                fs::write(root.join("package_footer.bin"), footer).unwrap();
+                assert!(MainNor::seed(&root).is_err());
+            } else {
+                assert!(nor.bytes()[0x1f7fc0..0x1f7ffc].iter().all(|b| *b == 0xff));
+                assert_eq!(&nor.bytes()[0x1f7ffc..0x1f8000], b"0110");
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 }

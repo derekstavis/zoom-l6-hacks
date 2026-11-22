@@ -412,6 +412,7 @@ image; it needs neither firmware nor an SD card:
 
 ```sh
 python3 emulator/qemu/tests/panel-qtest.py emulator/qemu/build-source/build/qemu-system-arm
+python3 emulator/qemu/tests/main-copy-qtest.py emulator/qemu/build-source/build/qemu-system-arm
 ```
 
 It exercises both panel profiles, flash boundaries and existing 64 KiB saved
@@ -419,6 +420,12 @@ flash, plus GPIO and timer registers, pending interrupts and timer overflows.
 It does not establish behavior on physical hardware. The smaller C tests in
 `emulator/qemu/tests/panel-gpio.c` and `panel-timer.c` cover shared register
 logic independently of QEMU.
+
+The MAIN-copy check uses synthetic disposable images to exercise the L6max
+package-slot boundary, writable SDRAM, reset recopy and old-state reset; it
+also checks the unchanged L6 mapping and rejection of unknown corrupt state.
+It does not establish physical update acceptance or safe runtime use of the
+entire package slot.
 
 ### Case matrix
 
@@ -513,7 +520,8 @@ cargo run --offline --locked -p l6test -- run --config config.toml \
 Patch, factory, and update cases need explicit local configuration and matching
 firmware. Use `knob-dialog`, `patched-update`,
 `firmware-update`, and `wasm-patch` as appropriate. `l6-patch-heap` and
-`l6max-patch-heap` check heap headroom with every patch for the model applied.
+`l6max-patch-heap` check heap headroom for the patch selections declared in
+each case; they do not cover every available patch or SD-loaded module.
 
 The committed browser templates and the SD modules the web page and emulator
 serve are generated, and their manifests record a fingerprint of the sources

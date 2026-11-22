@@ -13,9 +13,7 @@ cargo l6patch prebuilt [--config PATH | --l6max DIR --l6 DIR] [--check]
 ```
 
 `cargo l6patch` runs the workspace build offline and locked; outside a
-prepared checkout, use `cargo run -p l6patch -- …`. `l6patch STOCK_DIR
-OUTPUT_DIR` is `l6patch firmware`, and still accepts the earlier
-`--experimental-*` flags.
+prepared checkout, use `cargo run -p l6patch -- …`.
 
 ## Firmware and SD modules
 

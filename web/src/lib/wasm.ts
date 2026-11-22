@@ -1,10 +1,10 @@
-// `src/wasm/generated/` is built from `tools/firmware-patch-wasm` by
+// `src/wasm/generated/` is built from `tools/patch-wasm` by
 // `npm run wasm:build` (also run automatically before `dev`/`build`); it is
 // not committed. See web/README.md.
 import init, {
   applyPatches as applyPatchesWasm,
   detectModel as detectFirmwareModelWasm,
-} from '../wasm/generated/firmware_patch_wasm.js'
+} from '../wasm/generated/patch_wasm.js'
 
 let ready: Promise<void> | null = null
 

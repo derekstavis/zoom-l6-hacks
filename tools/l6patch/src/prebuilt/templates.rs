@@ -541,7 +541,7 @@ struct Unit {
     patch_info_offset: u32,
 }
 
-/// Regenerate `firmware-patch-wasm/templates` from unpacked stock firmware
+/// Regenerate `patch-wasm/templates` from unpacked stock firmware
 /// for both models, and stamp the manifest with `fingerprint`.
 pub(crate) fn generate(
     l6max_source: &Path,
@@ -764,8 +764,7 @@ pub(crate) fn generate(
         "expected standard build units"
     );
 
-    let templates_dir =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../firmware-patch-wasm/templates");
+    let templates_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../patch-wasm/templates");
     fs::create_dir_all(&templates_dir)?;
     for entry in fs::read_dir(&templates_dir)? {
         let entry = entry?;

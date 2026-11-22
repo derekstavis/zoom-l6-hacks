@@ -86,7 +86,7 @@ fn stock_package(options: &Options, stock: &Path, model: l6fw::Model) -> Result<
 /// The patches that apply to the selected firmware.
 pub fn available(options: &Options, model: l6fw::Model) -> Result<Vec<&'static str>, String> {
     let package = stock_package(options, &options.firmware_dir, model)?;
-    firmware_patch_wasm::available_patches(&package)
+    patch_wasm::available_patches(&package)
 }
 
 /// Check that a selection can apply, before stopping a running guest for it.
@@ -114,7 +114,7 @@ pub fn check(
     }
     let package = stock_package(options, &options.firmware_dir, model)?;
     let names: Vec<&str> = selected.iter().map(String::as_str).collect();
-    firmware_patch_wasm::apply_patches_with_loader(
+    patch_wasm::apply_patches_with_loader(
         &package,
         &names,
         !sd_selected.is_empty() || !effect_replacements.is_empty(),
@@ -189,8 +189,8 @@ pub fn prepare(
     let package = stock_package(options, stock, model)?;
     let names: Vec<&str> = selected.iter().map(String::as_str).collect();
     let loader = !sd_selected.is_empty() || !effect_replacements.is_empty();
-    let (patched, _) = firmware_patch_wasm::apply_patches_with_loader(&package, &names, loader)
-        .map_err(|e| {
+    let (patched, _) =
+        patch_wasm::apply_patches_with_loader(&package, &names, loader).map_err(|e| {
             let mut all = selected.clone();
             if loader {
                 all.push("the SD Patch loader".into());

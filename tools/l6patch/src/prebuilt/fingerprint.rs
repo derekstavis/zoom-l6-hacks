@@ -17,7 +17,7 @@ use std::{
 
 /// The manifests that record the fingerprint, relative to the repository.
 pub(crate) const MANIFESTS: [&str; 2] = [
-    "tools/firmware-patch-wasm/templates/manifest.json",
+    "tools/patch-wasm/templates/manifest.json",
     "web/public/loadable-patches/manifest.json",
 ];
 

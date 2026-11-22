@@ -80,7 +80,7 @@ pub fn run_wasm_patch(options: &Options) -> Result<(), String> {
             "repacked firmware package does not detect as {label}"
         ));
     }
-    let wasm_model = firmware_patch_wasm::detect_firmware_model(&stock)
+    let wasm_model = patch_wasm::detect_firmware_model(&stock)
         .map_err(|error| format!("WASM firmware model detection failed: {error:?}"))?;
     let expected_wasm_model = model.label();
     if wasm_model != expected_wasm_model {
@@ -116,7 +116,7 @@ pub fn run_wasm_patch(options: &Options) -> Result<(), String> {
         .map_err(|error| format!("native patch build failed for {selected:?}: {error}"))?;
         let native = fs::read(native_out.join(model.package_file_name()))
             .map_err(|error| error.to_string())?;
-        let (wasm, report) = firmware_patch_wasm::apply_patches(&stock, selected)
+        let (wasm, report) = patch_wasm::apply_patches(&stock, selected)
             .map_err(|message| format!("WASM patching failed for {selected:?}: {message}"))?;
         if wasm != native {
             return Err(format!(
@@ -155,8 +155,7 @@ pub fn run_wasm_patch(options: &Options) -> Result<(), String> {
                 None,
                 l6patch::BuildMode::PatchLoader,
             );
-            let wasm_result =
-                firmware_patch_wasm::apply_patches_with_loader(&stock, &selected, true);
+            let wasm_result = patch_wasm::apply_patches_with_loader(&stock, &selected, true);
             let native = match native_result {
                 Ok(()) => {
                     fs::read(native_out.join("L6max.bin")).map_err(|error| error.to_string())?
@@ -225,7 +224,7 @@ pub fn run_wasm_patch(options: &Options) -> Result<(), String> {
 
     if model == l6fw::Model::L6 {
         for unsupported in ["knob-dialog", "din-mixer-control"] {
-            match firmware_patch_wasm::apply_patches(&stock, &[unsupported]) {
+            match patch_wasm::apply_patches(&stock, &[unsupported]) {
                 Err(message) if message.contains("is not available for L6 in the browser") => {}
                 Err(message) => {
                     return Err(format!(

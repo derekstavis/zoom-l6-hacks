@@ -99,9 +99,9 @@ fn compile_hook_rows(
             let continuation_slot_offset = chain_site
                 .as_ref()
                 .map(|site| {
-                    let slot = continuation_handler.as_ref().map_or_else(
-                        || format!("static_next_{site}_slot"),
-                        |handler| format!("static_next_{site}_{handler}_slot"),
+                    let slot = firmware_patch_compile::continuation_slot_symbol(
+                        site,
+                        continuation_handler.as_deref(),
                     );
                     symbol(&symbols, &slot)
                 })

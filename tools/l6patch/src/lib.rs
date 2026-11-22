@@ -3,11 +3,15 @@
 //! Never edits its input.
 pub mod prebuilt;
 use firmware_patch_compile::{
-    FunctionHookSiteMetadata, HookRegistration, compile, compile_l6_patch_loader, compile_sd,
+    FunctionHookSiteMetadata, HookRegistration, compile, compile_l6_patch_loader,
     compile_sd_relocatable_composed, compile_with_continuations, decode_thumb_bl_target,
     function_hook_sites, hook_registrations, symbol,
 };
-use patch_core::{HookEdit, PatchEdits, apply_patch_with_map, branch, verify_firmware_for};
+use patch_core::{
+    HookEdit, PatchEdits, apply_patch_with_map, branch,
+    compose::{Continuation, Image, Loader, Unit, UnitHook, compose},
+    verify_firmware_for,
+};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
@@ -105,15 +109,6 @@ struct ResolvedHook {
     guard_sha256: String,
     continuation_site: Option<String>,
     continuation_handler: Option<String>,
-}
-
-struct CompiledPatch {
-    name: String,
-    base: u32,
-    payload: Vec<u8>,
-    symbols: String,
-    registrations: Vec<HookRegistration>,
-    hooks: Vec<ResolvedHook>,
 }
 
 fn resolve_compiled_hooks(
@@ -644,23 +639,18 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         println!("Wrote one composed module under {}", patch_dir.display());
         return Ok(());
     }
-    let mut claimed: Vec<(u32, usize)> = Vec::new();
-    let mut loader_dispatch_targets = std::collections::BTreeMap::<u32, u32>::new();
-    let mut loader_hook_targets = std::collections::BTreeMap::<u32, u32>::new();
     fs::create_dir_all(&options.output)?;
     let output = options.output.canonicalize()?;
     let padding = fs::read(source.join("padding_before_secondary.bin"))?;
     // Payloads are placed back to back, each aligned to 16 bytes.
-    let mut end = if options.experimental_sd_bundle {
-        module_base
-    } else {
-        model.first_payload(original_length)
-    };
+    let mut end = model.first_payload(original_length);
     let initial_payload = end;
     let mut applied = Vec::new();
-    // Identity records of every static payload, in placement order.
-    let mut static_identities = Vec::new();
+    let mut loader = None;
     if options.experimental_patch_loader {
+        let mut claimed: Vec<(u32, usize)> = Vec::new();
+        let mut loader_dispatch_targets = std::collections::BTreeMap::<u32, u32>::new();
+        let mut loader_hook_targets = std::collections::BTreeMap::<u32, u32>::new();
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../patches/patch-loader")
             .canonicalize()?;
@@ -669,7 +659,6 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         } else {
             compile_with_continuations(&source, &root, &[], &output, "patch-loader", end)?
         };
-        static_identities.push(symbol(&symbols, firmware_patch_compile::PATCH_INFO_SYMBOL)?);
         let catalog = function_hook_sites(&output.join("patch-loader.payload.elf"))?;
         let registrations = hook_registrations(&symbols)?;
         let hooks = resolve_compiled_hooks(
@@ -756,15 +745,22 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         applied.push(serde_json::json!({"name":"patch-loader", "payload_address":format!("{end:#x}"), "payload_length":payload.len(), "hooks":installed_hooks, "original_midi_in":format!("{:#x}", symbol(&symbols, "original_midi_in")?)}));
         applied.push(serde_json::json!({"name":"dynamic-dispatch", "sites":dispatch_sites}));
         end = placed.next_base;
+        // A patch on a dispatch site continues into the dispatcher.
+        let mut targets = loader_hook_targets;
+        targets.extend(loader_dispatch_targets);
+        loader = Some(Loader {
+            identity: symbol(&symbols, firmware_patch_compile::PATCH_INFO_SYMBOL)?,
+            targets,
+            ranges: claimed,
+            module_base,
+            reserve_end: module_end,
+        });
     }
-    let mut compiled_patches = Vec::new();
-    let mut compile_base = end;
+    let mut units = Vec::new();
+    let mut compiled = Vec::new();
+    let mut base = end;
     for (name, root) in patches.iter().zip(&roots) {
-        let (payload, symbols) = if options.experimental_sd_bundle {
-            compile_sd(&source, root, &output, name, compile_base)?
-        } else {
-            compile(&source, root, &output, name, compile_base)?
-        };
+        let (payload, symbols) = compile(&source, root, &output, name, base)?;
         let sites = function_hook_sites(&output.join(format!("{name}.payload.elf")))?;
         let registrations = hook_registrations(&symbols)?;
         let hooks = resolve_compiled_hooks(
@@ -774,169 +770,65 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             &sites,
             &registrations,
         )?;
-        compile_base = (compile_base + payload.len() as u32 + 15) & !15;
-        compiled_patches.push(CompiledPatch {
-            name: name.clone(),
-            base: compile_base - ((payload.len() as u32 + 15) & !15),
-            payload,
-            symbols,
-            registrations,
-            hooks,
-        });
-    }
-
-    // Compatible entry/call hooks are one chain. Each patch's continuation
-    // slot points at the next patch, with the last one retaining stock code.
-    let mut hook_owners = std::collections::BTreeMap::<u32, (usize, usize, Option<String>)>::new();
-    for patch_index in 0..compiled_patches.len() {
-        let patch_hooks = compiled_patches[patch_index].hooks.len();
-        for hook_index in 0..patch_hooks {
-            let (address, length, target, symbol_name, continuation_site) = {
-                let hook = &compiled_patches[patch_index].hooks[hook_index];
-                (
-                    hook.address,
-                    hook.length,
-                    hook.target,
-                    hook.symbol.clone(),
-                    hook.continuation_site.clone(),
-                )
-            };
-            if let Some((first_patch, first_hook, site)) = hook_owners.get(&address).cloned() {
-                let first = &compiled_patches[first_patch].hooks[first_hook];
-                if first.length != length
-                    || site.is_none()
-                    || continuation_site.as_ref() != site.as_ref()
-                {
-                    return Err(format!(
-                        "incompatible hooks overlap at {:#x}: {}",
-                        address, symbol_name
-                    )
-                    .into());
-                }
-                let slot_name = first
-                    .continuation_handler
+        let unit_hooks = hooks
+            .iter()
+            .map(|hook| {
+                let continuation = hook
+                    .continuation_site
                     .as_ref()
-                    .map(|handler| {
-                        format!("static_next_{}_{}_slot", site.as_ref().unwrap(), handler)
+                    .map(|site| -> Result<_, Box<dyn std::error::Error>> {
+                        let slot = symbol(
+                            &symbols,
+                            &firmware_patch_compile::continuation_slot_symbol(
+                                site,
+                                hook.continuation_handler.as_deref(),
+                            ),
+                        )?;
+                        let slot = slot
+                            .checked_sub(base)
+                            .ok_or("continuation slot precedes its payload")?;
+                        Ok(Continuation {
+                            site: site.clone(),
+                            slot: slot as usize,
+                        })
                     })
-                    .unwrap_or_else(|| format!("static_next_{}_slot", site.as_ref().unwrap()));
-                let slot = symbol(&compiled_patches[first_patch].symbols, &slot_name)?;
-                let slot_offset = usize::try_from(
-                    slot.checked_sub(compiled_patches[first_patch].base)
-                        .ok_or("chain slot precedes payload")?,
-                )?;
-                let next_target = target | 1;
-                compiled_patches[first_patch].payload[slot_offset..slot_offset + 4]
-                    .copy_from_slice(&next_target.to_le_bytes());
-                // The first patch's continuation now leads to this patch; for
-                // a longer chain, redirect this patch's own continuation next.
-                hook_owners.insert(address, (patch_index, hook_index, site));
-            } else {
-                hook_owners.insert(address, (patch_index, hook_index, continuation_site));
-            }
-            let is_last_in_chain =
-                hook_owners
-                    .get(&address)
-                    .is_some_and(|(owner_patch, owner_hook, _)| {
-                        *owner_patch == patch_index && *owner_hook == hook_index
-                    });
-            let continuation_target = loader_dispatch_targets
-                .get(&address)
-                .or_else(|| loader_hook_targets.get(&address))
-                .copied();
-            if is_last_in_chain
-                && let (Some(site), Some(dispatch)) = (
-                    compiled_patches[patch_index].hooks[hook_index]
-                        .continuation_site
-                        .clone(),
-                    continuation_target,
-                )
-            {
-                let handler = compiled_patches[patch_index].hooks[hook_index]
-                    .continuation_handler
-                    .as_ref();
-                let slot_name = handler.map_or_else(
-                    || format!("static_next_{site}_slot"),
-                    |handler| format!("static_next_{site}_{handler}_slot"),
-                );
-                let slot = symbol(&compiled_patches[patch_index].symbols, &slot_name)?;
-                let slot_offset = usize::try_from(
-                    slot.checked_sub(compiled_patches[patch_index].base)
-                        .ok_or("chain slot precedes payload")?,
-                )?;
-                compiled_patches[patch_index].payload[slot_offset..slot_offset + 4]
-                    .copy_from_slice(&dispatch.to_le_bytes());
-            }
-        }
-    }
-
-    if !options.experimental_sd_bundle {
-        for patch in &compiled_patches {
-            static_identities.push(symbol(
-                &patch.symbols,
-                firmware_patch_compile::PATCH_INFO_SYMBOL,
-            )?);
-        }
-    }
-    let mut installed_hook_sites = std::collections::BTreeSet::new();
-    for patch in compiled_patches {
-        let name = patch.name;
-        let base = patch.base;
-        let payload = patch.payload;
-        let registrations = patch.registrations;
-        let hooks = patch.hooks;
-        let mut unique = std::collections::BTreeSet::new();
-        let mut edits_vec = Vec::new();
-        let mut installed_hooks = Vec::new();
-        for hook in &hooks {
-            if !unique.insert(hook.address) {
-                continue;
-            }
-            if installed_hook_sites.contains(&hook.address) {
-                continue;
-            }
-            let prior = claimed.iter().find(|&&(address, length)| {
-                hook.address < address + length as u32
-                    && address < hook.address + hook.length as u32
-            });
-            let loader_chain = prior.is_some_and(|&(address, length)| {
-                address == hook.address
-                    && length == hook.length
-                    && loader_hook_targets.contains_key(&hook.address)
-            });
-            if prior.is_some() && !loader_chain {
-                return Err(format!("hook overlaps another patch: {}", hook.symbol).into());
-            }
-            if prior.is_none() {
-                claimed.push((hook.address, hook.length));
-            }
-            installed_hook_sites.insert(hook.address);
-            edits_vec.push(HookEdit {
-                address: hook.address,
-                target: hook.target,
-                length: hook.length,
-            });
-            installed_hooks.push(hook);
-        }
-        let edits = PatchEdits::new(edits_vec);
-        let applied_patch = apply_patch_with_map(
-            &mut firmware,
-            original_length,
+                    .transpose()?;
+                Ok(UnitHook {
+                    address: hook.address,
+                    target: hook.target,
+                    length: hook.length,
+                    continuation,
+                })
+            })
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+        let next = (base + payload.len() as u32 + 15) & !15;
+        units.push(Unit {
+            name: name.clone(),
             base,
-            &payload,
-            &edits,
-            &padding,
-            firmware_base,
-            slot_end,
-        )?;
-        end = applied_patch.next_base;
-        if options.experimental_patch_loader && end > module_base {
-            return Err("installed patch payloads overlap the SD module region".into());
-        }
-        let mut applied_hooks = Vec::new();
-        for (hook_edit, hook) in edits.hooks.iter().zip(installed_hooks) {
-            applied_hooks.push(serde_json::json!({"address":hook.address,"symbol":hook.symbol,"target":hook_edit.target,"displaced_length":hook.length,"displaced_sha256":hook.guard_sha256}));
-        }
+            payload,
+            hooks: unit_hooks,
+            identity: symbol(&symbols, firmware_patch_compile::PATCH_INFO_SYMBOL)?,
+        });
+        compiled.push((registrations, hooks));
+        base = next;
+    }
+    let image = Image {
+        firmware: &mut firmware,
+        original_length,
+        padding: &padding,
+        firmware_base,
+        slot_end,
+    };
+    let placed = compose(image, units, loader.as_ref())?;
+    for ((name, placed), (registrations, hooks)) in patches.iter().zip(placed).zip(compiled) {
+        let applied_hooks = placed
+            .installed
+            .iter()
+            .map(|&index| {
+                let hook = &hooks[index];
+                serde_json::json!({"address":hook.address,"symbol":hook.symbol,"target":hook.target,"displaced_length":hook.length,"displaced_sha256":hook.guard_sha256})
+            })
+            .collect::<Vec<_>>();
         let call_site_hooks = registrations
             .iter()
             .filter_map(|registration| match registration {
@@ -945,33 +837,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        applied.push(serde_json::json!({"name":name,"payload_address":format!("{base:#x}"),"payload_length":applied_patch.payload_len,"hooks":applied_hooks,"call_site_hooks":call_site_hooks}));
-    }
-    // Link the static identity records into a ring so menu-loader can list
-    // every installed payload starting from its own record.
-    patch_core::link_identity_ring(&mut firmware, firmware_base, &static_identities)?;
-    if options.experimental_patch_loader {
-        let reserved_end = (module_end - firmware_base) as usize;
-        let consumed = reserved_end - original_length;
-        if consumed > padding.len() || padding[..consumed].iter().any(|&byte| byte != 0xff) {
-            return Err("SD module reserve overlaps non-erased package data".into());
-        }
-        firmware.resize(reserved_end, 0xff);
-    }
-    if options.experimental_sd_bundle {
-        let regions = claimed.clone();
-        let bundle = patch_abi::bundle::encode(
-            &stock_firmware,
-            &firmware,
-            firmware_base,
-            module_base,
-            0,
-            &regions,
-        )?;
-        if bundle.len() > 16 * 1024 {
-            return Err("experimental SD bundle exceeds the loader's 16 KiB limit".into());
-        }
-        fs::write(output.join("experimental-patch-bundle.bin"), bundle)?;
+        applied.push(serde_json::json!({"name":name,"payload_address":format!("{:#x}", placed.base),"payload_length":placed.payload_len,"hooks":applied_hooks,"call_site_hooks":call_site_hooks}));
     }
     // The output holds the unpacked patched package and the package itself.
     let (mut manifest, mut segments) = l6fw::read_unpacked(&source)?;

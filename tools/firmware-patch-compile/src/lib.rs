@@ -317,28 +317,6 @@ pub fn compile_sentinel_with_continuations(
     )
 }
 
-/// Compile a payload with its optional SD-specific initialization entry.
-pub fn compile_sd(
-    source: &Path,
-    root: &Path,
-    output: &Path,
-    name: &str,
-    base: u32,
-) -> Result<(Vec<u8>, String), Box<dyn std::error::Error>> {
-    compile_inner(
-        source,
-        root,
-        output,
-        name,
-        base,
-        Some("sd_dynamic"),
-        false,
-        false,
-        true,
-        &[],
-    )
-}
-
 /// Compile an SD module and retain the small set of absolute relocations whose
 /// targets are within the module. The relocation records are extracted from
 /// the linked ELF; the flat image remains the same compact static codegen.
@@ -681,6 +659,15 @@ pub const MENU_ITEM_LEN: u32 = 36;
 pub const MENU_ITEMS_SYMBOL_PREFIX: &str = "__l6_menu_items_";
 /// Symbol of the identity record in every payload.
 pub const PATCH_INFO_SYMBOL: &str = "__l6_patch_info";
+
+/// Symbol of the word a static hook continues through: the next handler on
+/// the site, or the stock code. Call hooks have no handler name.
+pub fn continuation_slot_symbol(site: &str, handler: Option<&str>) -> String {
+    match handler {
+        Some(handler) => format!("static_next_{site}_{handler}_slot"),
+        None => format!("static_next_{site}_slot"),
+    }
+}
 pub use patch_core::PATCH_INFO_NEXT_OFFSET;
 
 fn rust_string(text: &str) -> String {
@@ -1140,7 +1127,7 @@ fn generate_continuations_from_metadata(
                 value => return Err(format!("unsupported continuation strategy {value}").into()),
             }
         } else {
-            let slot = format!("static_next_{name}_slot");
+            let slot = continuation_slot_symbol(name, None);
             let stock = format!("static_stock_{name}");
             assembly.push_str(&format!(
                 ".section .text.continuation_{name}, \"ax\"\n.global {original}\n.thumb_func\n{original}:\n    ldr.w r12, {slot}\n    bx r12\n.align 2\n.global {slot}\n{slot}:\n    .word {stock}\n.thumb_func\n{stock}:\n"
@@ -1202,7 +1189,7 @@ fn generate_continuations_from_metadata(
                 ".section .text.continuation_{site_name}_{handler_name}, \"ax\"\n.global {original}\n.thumb_func\n{original}:\n    ldr.w r12, {slot}\n    bx r12\n.align 2\n.global {slot}\n{slot}:\n    .word 0\n"
             ));
         } else {
-            let slot = format!("static_next_{site_name}_{handler_name}_slot");
+            let slot = continuation_slot_symbol(site_name, Some(handler_name));
             let target = if generate_dynamic_sites {
                 format!("original_{site_name}")
             } else {

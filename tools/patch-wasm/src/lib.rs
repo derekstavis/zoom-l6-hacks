@@ -11,8 +11,8 @@ include!(concat!(env!("OUT_DIR"), "/templates_generated.rs"));
 
 use l6fw::Model;
 use patch_core::{
-    Delivery, HookEdit, Plan, WASM_PATCHES, branch,
-    compose::{self, Continuation, Image, Loader, UnitHook, compose},
+    Delivery, HookEdit, Plan, WASM_PATCHES,
+    compose::{self, Continuation, Image, Loader, LoaderHook, UnitHook, compose},
     supports_wasm_patch, verify_firmware_for,
 };
 use serde_json::Value;
@@ -48,7 +48,6 @@ struct LoaderSite {
     length: usize,
     guard_sha256: String,
     target_offset: u32,
-    link: bool,
     /// A dynamic dispatch site rather than one of the loader's static hooks.
     dynamic_dispatch: bool,
 }
@@ -213,9 +212,6 @@ fn parse_loader(payload: &[u8], metadata_json: &str) -> Result<LoaderUnit, Strin
                     .as_u64()
                     .ok_or("loader site missing target offset")?
                     as u32,
-                link: s["link"]
-                    .as_bool()
-                    .ok_or("loader site missing branch kind")?,
                 dynamic_dispatch: s["dynamic_dispatch"].as_bool().unwrap_or(false),
             })
         })
@@ -327,7 +323,6 @@ pub fn apply_patches_with_loader(
     if install_patch_loader {
         let loader_base = base;
         let unit = find_loader(model, loader_base, &ordered)?;
-        let mut loader_dispatch_targets = std::collections::BTreeMap::<u32, u32>::new();
         let mut payload = unit.template.clone();
         for window in &unit.windows {
             let offset = window
@@ -366,25 +361,20 @@ pub fn apply_patches_with_loader(
         let payload_end = loader_base
             .checked_add(payload.len() as u32)
             .ok_or("loader payload address overflow")?;
-        if payload_end > unit.module_base {
-            return Err("Patch loader payload overlaps its reserved module region".into());
-        }
-        let payload_offset = loader_base
-            .checked_sub(firmware_base)
-            .ok_or("loader payload precedes image")? as usize;
-        firmware.resize(payload_offset, 0xff);
-        firmware.extend_from_slice(&payload);
-        for site in &unit.sites {
-            let offset = (site.address - firmware_base) as usize;
-            let target = loader_base
-                .checked_add(site.target_offset)
-                .ok_or("loader branch target overflow")?;
-            loader_dispatch_targets.insert(site.address, target | 1);
-            firmware[offset..offset + 4].copy_from_slice(&branch(site.address, target, site.link));
-            for chunk in firmware[offset + 4..offset + site.length].chunks_exact_mut(2) {
-                chunk.copy_from_slice(&0xbf00u16.to_le_bytes());
-            }
-        }
+        let hooks = unit
+            .sites
+            .iter()
+            .map(|site| {
+                Ok(LoaderHook {
+                    address: site.address,
+                    target: loader_base
+                        .checked_add(site.target_offset)
+                        .ok_or("loader branch target overflow")?,
+                    length: site.length,
+                    dispatch: site.dynamic_dispatch,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         applied_report.push(serde_json::json!({
             "name": "patch-loader",
             "payload_address": format!("{loader_base:#x}"),
@@ -393,14 +383,10 @@ pub fn apply_patches_with_loader(
         }));
         base = (payload_end + 15) & !15;
         loader = Some(Loader {
+            base: loader_base,
+            payload,
+            hooks,
             identity: loader_base + unit.patch_info_offset,
-            targets: loader_dispatch_targets,
-            ranges: unit
-                .sites
-                .iter()
-                .filter(|site| !site.dynamic_dispatch)
-                .map(|site| (site.address, site.length))
-                .collect(),
             module_base: unit.module_base,
             reserve_end: unit.reserve_end,
         });
@@ -448,7 +434,7 @@ pub fn apply_patches_with_loader(
         firmware_base,
         slot_end,
     };
-    for (name, placed) in ordered.iter().zip(compose(image, units, loader.as_ref())?) {
+    for (name, placed) in ordered.iter().zip(compose(image, loader.as_ref(), units)?) {
         applied_report.push(serde_json::json!({
             "name": name,
             "payload_address": format!("{:#x}", placed.base),

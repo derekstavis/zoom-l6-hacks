@@ -8,8 +8,7 @@ use patch_compile::{
     function_hook_sites, hook_registrations, symbol,
 };
 use patch_core::{
-    HookEdit, PatchEdits, apply_patch_with_map, branch,
-    compose::{Continuation, Image, Loader, Unit, UnitHook, compose},
+    compose::{Continuation, Image, Loader, LoaderHook, Unit, UnitHook, compose},
     verify_firmware_for,
 };
 use sha2::{Digest, Sha256};
@@ -621,9 +620,6 @@ pub fn build(options: BuildRequest) -> Result<(), Box<dyn std::error::Error>> {
     let mut applied = Vec::new();
     let mut loader = None;
     if options.mode == BuildMode::PatchLoader {
-        let mut claimed: Vec<(u32, usize)> = Vec::new();
-        let mut loader_dispatch_targets = std::collections::BTreeMap::<u32, u32>::new();
-        let mut loader_hook_targets = std::collections::BTreeMap::<u32, u32>::new();
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../patches/patch-loader")
             .canonicalize()?;
@@ -641,41 +637,6 @@ pub fn build(options: BuildRequest) -> Result<(), Box<dyn std::error::Error>> {
             &catalog,
             &registrations,
         )?;
-        for hook in &hooks {
-            loader_hook_targets.insert(hook.address, hook.target | 1);
-            let overlap = claimed.iter().find(|&&(address, length)| {
-                hook.address < address + length as u32
-                    && address < hook.address + hook.length as u32
-            });
-            if let Some(&(address, length)) = overlap
-                && !(address == hook.address
-                    && length == hook.length
-                    && loader_hook_targets.contains_key(&hook.address))
-            {
-                return Err(format!("loader hook overlaps another patch: {}", hook.symbol).into());
-            }
-            claimed.push((hook.address, hook.length));
-        }
-        let edits = PatchEdits::new(
-            hooks
-                .iter()
-                .map(|hook| HookEdit {
-                    address: hook.address,
-                    target: hook.target,
-                    length: hook.length,
-                })
-                .collect(),
-        );
-        let placed = apply_patch_with_map(
-            &mut firmware,
-            original_length,
-            end,
-            &payload,
-            &edits,
-            &padding,
-            firmware_base,
-            module_base,
-        )?;
         let installed_hooks = hooks
             .iter()
             .map(|hook| {
@@ -688,11 +649,17 @@ pub fn build(options: BuildRequest) -> Result<(), Box<dyn std::error::Error>> {
                 })
             })
             .collect::<Vec<_>>();
+        let mut loader_hooks = hooks
+            .iter()
+            .map(|hook| LoaderHook {
+                address: hook.address,
+                target: hook.target,
+                length: hook.length,
+                dispatch: false,
+            })
+            .collect::<Vec<_>>();
         let mut dispatch_sites = Vec::new();
-        for site in &catalog {
-            if !site.dynamic_dispatch {
-                continue;
-            }
+        for site in catalog.iter().filter(|site| site.dynamic_dispatch) {
             let address = site.address;
             let length = usize::from(site.displaced_len);
             let offset = usize::try_from(
@@ -707,24 +674,24 @@ pub fn build(options: BuildRequest) -> Result<(), Box<dyn std::error::Error>> {
                 return Err(format!("function hook guard failed: {}", site.name).into());
             }
             let dispatch = symbol(&symbols, &format!("dispatch_{}", site.name))?;
-            loader_dispatch_targets.insert(address, dispatch | 1);
             let fallback = symbol(&symbols, &format!("original_{}", site.name))?;
-            firmware[offset..offset + 4].copy_from_slice(&branch(address, dispatch, false));
-            for chunk in firmware[offset + 4..offset + length].chunks_exact_mut(2) {
-                chunk.copy_from_slice(&0xbf00u16.to_le_bytes());
-            }
+            loader_hooks.push(LoaderHook {
+                address,
+                target: dispatch,
+                length,
+                dispatch: true,
+            });
             dispatch_sites.push(serde_json::json!({"address":address,"target":dispatch,"fallback":fallback,"length":length,"function":site.name}));
         }
         applied.push(serde_json::json!({"name":"patch-loader", "payload_address":format!("{end:#x}"), "payload_length":payload.len(), "hooks":installed_hooks, "original_midi_in":format!("{:#x}", symbol(&symbols, "original_midi_in")?)}));
         applied.push(serde_json::json!({"name":"dynamic-dispatch", "sites":dispatch_sites}));
-        end = placed.next_base;
-        // A patch on a dispatch site continues into the dispatcher.
-        let mut targets = loader_hook_targets;
-        targets.extend(loader_dispatch_targets);
+        let loader_base = end;
+        end = (end + payload.len() as u32 + 15) & !15;
         loader = Some(Loader {
+            base: loader_base,
+            payload,
+            hooks: loader_hooks,
             identity: symbol(&symbols, patch_compile::PATCH_INFO_SYMBOL)?,
-            targets,
-            ranges: claimed,
             module_base,
             reserve_end: module_end,
         });
@@ -792,7 +759,7 @@ pub fn build(options: BuildRequest) -> Result<(), Box<dyn std::error::Error>> {
         firmware_base,
         slot_end,
     };
-    let placed = compose(image, units, loader.as_ref())?;
+    let placed = compose(image, loader.as_ref(), units)?;
     for ((name, placed), (registrations, hooks)) in patches.iter().zip(placed).zip(compiled) {
         let applied_hooks = placed
             .installed

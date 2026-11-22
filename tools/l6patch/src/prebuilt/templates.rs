@@ -253,7 +253,6 @@ fn loader_site(
     address: u32,
     length: usize,
     target_name: &str,
-    link: bool,
     symbols: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let start = usize::try_from(
@@ -274,7 +273,6 @@ fn loader_site(
         "length": length,
         "guard_sha256": format!("{:x}", Sha256::digest(guard)),
         "target_offset": target_offset,
-        "link": link,
         "dynamic_dispatch": false,
     }))
 }
@@ -448,7 +446,6 @@ fn build_loader_template(
             window.address,
             window.length,
             &window.target_symbol,
-            false,
             &symbols,
         )?);
     }
@@ -464,7 +461,6 @@ fn build_loader_template(
             site.address,
             usize::from(site.displaced_len),
             &dispatcher,
-            false,
             &symbols,
         )?;
         dispatch["dynamic_dispatch"] = serde_json::json!(true);

@@ -7,7 +7,6 @@ license.workspace = true
 
 [build-dependencies]
 l6fw.workspace = true
-patch-abi.workspace = true
 patch-core.workspace = true
 
 [dependencies]

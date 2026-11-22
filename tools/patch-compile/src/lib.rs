@@ -1,9 +1,7 @@
 //! Native-only: compiles one patch's `payload.rs` to a flat ARM Thumb binary
-//! via `rustc --target=thumbv7em-none-eabihf` + `lld` + `llvm-objcopy`. Shared
-//! by the `l6patch` CLI and the WASM-template prebuild tool, so both
-//! ever compile a payload through exactly this one code path — the whole
-//! premise of shipping precompiled templates depends on this being the same
-//! compile every time, not two paths that could silently drift apart.
+//! via `rustc --target=thumbv7em-none-eabihf` + `lld` + `llvm-objcopy`.
+//! `l6patch` builds firmware, SD modules and the browser templates through
+//! this one path, so the precompiled templates match a native build.
 //!
 //! Never built for `wasm32-unknown-unknown`: it shells out to `rustc`/`lld`/
 //! `llvm-objcopy`, which don't exist in a browser.
@@ -27,7 +25,7 @@ const HOMEBREW_NM: &str = "/opt/homebrew/opt/llvm/bin/llvm-nm";
 const HOMEBREW_OBJCOPY: &str = "/opt/homebrew/opt/llvm/bin/llvm-objcopy";
 const HOMEBREW_READELF: &str = "/opt/homebrew/opt/llvm/bin/llvm-readelf";
 
-pub use patch_abi::bundle::Relocation;
+pub use patch_abi::relocation::Relocation;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FunctionHookSiteMetadata {

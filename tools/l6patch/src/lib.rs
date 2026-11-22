@@ -2,7 +2,7 @@
 //! firmware, lists the patch catalog, and regenerates the prebuilt files.
 //! Never edits its input.
 pub mod prebuilt;
-use firmware_patch_compile::{
+use patch_compile::{
     FunctionHookSiteMetadata, HookRegistration, compile, compile_l6_patch_loader,
     compile_sd_relocatable_composed, compile_with_continuations, decode_thumb_bl_target,
     function_hook_sites, hook_registrations, symbol,
@@ -33,36 +33,28 @@ templates and SD modules from the config.toml [firmware] packages; --check
 only compares them with the current sources. `l6patch STOCK_DIR OUTPUT_DIR`
 is `l6patch firmware`.";
 
-struct Options {
-    source: PathBuf,
-    output: PathBuf,
-    /// The patches asked for; a plain firmware build with none gets the
-    /// model's default.
-    patches: Vec<String>,
-    effect_replacements: Vec<(String, String)>,
-    version: Option<String>,
-    experimental_sd_bundle: bool,
-    experimental_patch_loader: bool,
-}
 /// The original flag form, `l6patch STOCK_DIR OUTPUT_DIR [--experimental-*]`.
 fn parse_legacy(
     mut args: impl Iterator<Item = String>,
-) -> Result<Options, Box<dyn std::error::Error>> {
+) -> Result<BuildRequest, Box<dyn std::error::Error>> {
     let (Some(source), Some(output)) = (args.next(), args.next()) else {
         return Err(USAGE.into());
     };
     let mut requested = Vec::new();
     let mut effect_replacements = Vec::new();
     let mut version = None;
-    let mut experimental_sd_bundle = false;
-    let mut experimental_patch_loader = false;
+    let mut mode = BuildMode::Firmware;
     while let Some(flag) = args.next() {
-        if flag == "--experimental-patch-bundle" {
-            experimental_sd_bundle = true;
-            continue;
-        }
-        if flag == "--experimental-patch-loader" {
-            experimental_patch_loader = true;
+        let flag_mode = match flag.as_str() {
+            "--experimental-patch-bundle" => Some(BuildMode::Module),
+            "--experimental-patch-loader" => Some(BuildMode::PatchLoader),
+            _ => None,
+        };
+        if let Some(flag_mode) = flag_mode {
+            if mode != BuildMode::Firmware && mode != flag_mode {
+                return Err("build the loader and SD bundle in separate output directories".into());
+            }
+            mode = flag_mode;
             continue;
         }
         let value = args.next().ok_or(USAGE)?;
@@ -86,17 +78,13 @@ fn parse_legacy(
     if let Some(version) = &version {
         parse_version(version)?;
     }
-    if experimental_sd_bundle && experimental_patch_loader {
-        return Err("build the loader and SD bundle in separate output directories".into());
-    }
-    Ok(Options {
+    Ok(BuildRequest {
         source: PathBuf::from(source),
         output: PathBuf::from(output),
         patches: requested,
         effect_replacements,
         version,
-        experimental_sd_bundle,
-        experimental_patch_loader,
+        mode,
     })
 }
 
@@ -251,13 +239,12 @@ fn resolve_compiled_hooks(
     }
     Ok(hooks)
 }
-// `compile()` and `symbol()` now live in `firmware-patch-compile`, shared
-// with the WASM-template prebuild tool so both compile payloads identically.
 /// Build target selected for a patch package.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuildMode {
     Firmware,
-    SdBundle,
+    /// One composed SD module.
+    Module,
     PatchLoader,
 }
 
@@ -269,19 +256,6 @@ pub struct BuildRequest {
     pub effect_replacements: Vec<(String, String)>,
     pub version: Option<String>,
     pub mode: BuildMode,
-}
-
-/// Build firmware or SD patch artifacts directly, without spawning the CLI.
-pub fn build(request: BuildRequest) -> Result<(), Box<dyn std::error::Error>> {
-    run_options(Options {
-        source: request.source,
-        output: request.output,
-        patches: request.patches,
-        effect_replacements: request.effect_replacements,
-        version: request.version,
-        experimental_sd_bundle: request.mode == BuildMode::SdBundle,
-        experimental_patch_loader: request.mode == BuildMode::PatchLoader,
-    })
 }
 
 /// Run the command-line interface using process arguments.
@@ -304,7 +278,7 @@ pub fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
             println!("{USAGE}");
             Ok(())
         }
-        Some(_) => run_options(parse_legacy(args)?),
+        Some(_) => build(parse_legacy(args)?),
     }
 }
 
@@ -323,7 +297,7 @@ fn parse_build(
         effect_replacements: Vec::new(),
         version: None,
         mode: if module {
-            BuildMode::SdBundle
+            BuildMode::Module
         } else {
             BuildMode::Firmware
         },
@@ -440,7 +414,8 @@ fn prebuilt(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::e
     prebuilt::generate(stock)
 }
 
-fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
+/// Build firmware or SD patch artifacts directly, without spawning the CLI.
+pub fn build(options: BuildRequest) -> Result<(), Box<dyn std::error::Error>> {
     let source = options.source.canonicalize()?;
     if options.output.exists() {
         return Err("output must be a new directory".into());
@@ -452,14 +427,12 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let (firmware_base, slot_end) = (model.main_base(), model.slot_end());
     let modules = model.sd_module_region();
     let (module_base, module_end) = (modules.start, modules.end);
-    let delivery = if options.experimental_sd_bundle {
+    let delivery = if options.mode == BuildMode::Module {
         patch_core::Delivery::SdCard
     } else {
         patch_core::Delivery::Firmware
     };
-    let default_build = options.patches.is_empty()
-        && !options.experimental_patch_loader
-        && !options.experimental_sd_bundle;
+    let default_build = options.patches.is_empty() && options.mode == BuildMode::Firmware;
     let requested = match model {
         l6fw::Model::L6 if default_build => vec!["midi-sync".to_owned()],
         l6fw::Model::L6max if default_build => vec!["knob-dialog".to_owned()],
@@ -496,7 +469,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             patch_root.canonicalize()
         })
         .collect::<Result<Vec<_>, _>>()?;
-    if options.experimental_sd_bundle {
+    if options.mode == BuildMode::Module {
         fs::create_dir_all(&options.output)?;
         let output = options.output.canonicalize()?;
         let patch_dir = output.join("PATCHES");
@@ -647,7 +620,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let initial_payload = end;
     let mut applied = Vec::new();
     let mut loader = None;
-    if options.experimental_patch_loader {
+    if options.mode == BuildMode::PatchLoader {
         let mut claimed: Vec<(u32, usize)> = Vec::new();
         let mut loader_dispatch_targets = std::collections::BTreeMap::<u32, u32>::new();
         let mut loader_hook_targets = std::collections::BTreeMap::<u32, u32>::new();
@@ -749,7 +722,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         let mut targets = loader_hook_targets;
         targets.extend(loader_dispatch_targets);
         loader = Some(Loader {
-            identity: symbol(&symbols, firmware_patch_compile::PATCH_INFO_SYMBOL)?,
+            identity: symbol(&symbols, patch_compile::PATCH_INFO_SYMBOL)?,
             targets,
             ranges: claimed,
             module_base,
@@ -779,7 +752,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
                     .map(|site| -> Result<_, Box<dyn std::error::Error>> {
                         let slot = symbol(
                             &symbols,
-                            &firmware_patch_compile::continuation_slot_symbol(
+                            &patch_compile::continuation_slot_symbol(
                                 site,
                                 hook.continuation_handler.as_deref(),
                             ),
@@ -807,7 +780,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             base,
             payload,
             hooks: unit_hooks,
-            identity: symbol(&symbols, firmware_patch_compile::PATCH_INFO_SYMBOL)?,
+            identity: symbol(&symbols, patch_compile::PATCH_INFO_SYMBOL)?,
         });
         compiled.push((registrations, hooks));
         base = next;

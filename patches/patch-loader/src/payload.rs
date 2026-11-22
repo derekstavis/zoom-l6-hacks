@@ -353,7 +353,7 @@ unsafe fn find_next_patch(
 }
 
 struct FirmwareReader(u32);
-impl core_loader::bundle::Reader for FirmwareReader {
+impl core_loader::dynamic::Reader for FirmwareReader {
     type Error = ();
     fn read(&mut self, destination: &mut [u8]) -> Result<usize, ()> {
         let mut actual = 0;
@@ -371,12 +371,12 @@ impl core_loader::bundle::Reader for FirmwareReader {
         Ok(actual as usize)
     }
 
-    fn finish(&mut self) -> Result<(), core_loader::bundle::ReadError> {
+    fn finish(&mut self) -> Result<(), core_loader::dynamic::ReadError> {
         let mut byte = 0;
         let mut actual = 0;
         let _status = unsafe { read(self.0, &mut byte, 1, &mut actual) };
         if actual != 0 {
-            Err(core_loader::bundle::ReadError::Invalid)
+            Err(core_loader::dynamic::ReadError::Invalid)
         } else {
             // FatFs reports EOF as an error status with an unchanged byte
             // count. The declared file body and CRC have already been read.
@@ -459,7 +459,7 @@ impl Staged {
 /// its hook links first, then its code and state. Nothing is published:
 /// hook registrations stay local until `publish`, after the streaming CRC,
 /// relocations and every site check pass.
-unsafe fn stage<R: core_loader::bundle::Reader>(reader: &mut R, order: u32) -> Option<Staged> {
+unsafe fn stage<R: core_loader::dynamic::Reader>(reader: &mut R, order: u32) -> Option<Staged> {
     use core_loader::dynamic::{Hook, HookLink, LINK_LEN};
     let pending = match core_loader::dynamic::read_header(
         reader,

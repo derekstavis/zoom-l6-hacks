@@ -1,7 +1,7 @@
 #![no_std]
 //! The binary interface between the patch tools and the resident Patch loader:
-//! the registry the loader publishes, the SD module and bundle file formats,
-//! and the duplicate-package rule. The loader includes this file directly, so
+//! the registry the loader publishes, the SD module format, load-time
+//! relocation and the duplicate-package rule. The loader includes this file directly, so
 //! everything outside the `alloc` feature parses without allocating. With
 //! `alloc`, the host tools also get the matching writers.
 #[cfg(feature = "alloc")]
@@ -97,354 +97,13 @@ pub mod registry {
     }
 }
 
-/// Experimental fixed-address bundles emitted by `l6patch`.
-///
-/// Validation only: publishing edits to a live firmware image requires a
-/// platform-specific synchronization and cache protocol that is not yet known.
-pub mod bundle {
-    const HEADER: usize = 68;
-    const RELOCATABLE_HEADER: usize = 72;
-    const RELOCATION_RECORD: usize = 12;
-
-    /// CRC-32/ISO-HDLC, excluding the stored checksum word at bytes 60..64.
-    /// Detects accidental corruption; it does not authenticate a bundle.
-    pub fn checksum(file: &[u8]) -> Option<u32> {
-        if file.len() < HEADER || (word(file, 4) == 6 && file.len() < RELOCATABLE_HEADER) {
-            return None;
-        }
-        let mut crc = !0u32;
-        for &byte in file[..60].iter().chain(file[64..].iter()) {
-            crc ^= u32::from(byte);
-            for _ in 0..8 {
-                crc = (crc >> 1) ^ (0xedb8_8320 & 0u32.wrapping_sub(crc & 1));
-            }
-        }
-        Some(!crc)
-    }
-
+/// Load-time fixups for a module linked at one address and loaded at another.
+pub mod relocation {
+    /// A relocation record that does not fit the image or its target.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub enum Error {
-        Truncated,
-        Invalid,
-        Incompatible,
-        GuardMismatch,
-        TooLarge,
-        Relocation,
-    }
+    pub struct Error;
 
-    /// A sequential SD file reader. A zero-byte read denotes end of file.
-    pub trait Reader {
-        type Error;
-        fn read(&mut self, destination: &mut [u8]) -> Result<usize, Self::Error>;
-
-        /// Confirm there are no bytes after the declared body. Readers whose
-        /// underlying API reports EOF as an error can override this method.
-        fn finish(&mut self) -> Result<(), ReadError> {
-            let mut trailing = [0u8; 1];
-            match self.read(&mut trailing) {
-                Ok(0) => Ok(()),
-                Ok(_) => Err(ReadError::Invalid),
-                Err(_) => Err(ReadError::Io),
-            }
-        }
-    }
-
-    #[derive(Debug, PartialEq, Eq)]
-    pub enum ReadError {
-        Io,
-        Truncated,
-        Invalid,
-        TooLarge,
-    }
-
-    fn read_exact<R: Reader>(reader: &mut R, mut dst: &mut [u8]) -> Result<(), ReadError> {
-        while !dst.is_empty() {
-            let count = reader.read(dst).map_err(|_| ReadError::Io)?;
-            if count == 0 {
-                return Err(ReadError::Truncated);
-            }
-            if count > dst.len() {
-                return Err(ReadError::Invalid);
-            }
-            dst = &mut dst[count..];
-        }
-        Ok(())
-    }
-
-    /// Read a bounded bundle into caller-owned memory. Nothing is activated;
-    /// pass the returned slice to `validate` before using any edits or code.
-    pub fn read_bundle<'a, R: Reader>(
-        reader: &mut R,
-        buffer: &'a mut [u8],
-        max_payload: usize,
-        max_records: u32,
-        max_relocations: u32,
-    ) -> Result<&'a [u8], ReadError> {
-        if buffer.len() < HEADER {
-            return Err(ReadError::TooLarge);
-        }
-        read_exact(reader, &mut buffer[..HEADER])?;
-        let version = word(buffer, 4);
-        if &buffer[..4] != b"L6SB" || !matches!(version, 4 | 5 | 6) {
-            return Err(ReadError::Invalid);
-        }
-        let header_len = if version == 6 {
-            let end = RELOCATABLE_HEADER;
-            let bytes = buffer.get_mut(HEADER..end).ok_or(ReadError::TooLarge)?;
-            read_exact(reader, bytes)?;
-            end
-        } else {
-            HEADER
-        };
-        let payload_len = word(buffer, 20) as usize;
-        let count = word(buffer, 24);
-        let relocation_count = if version == 6 { word(buffer, 68) } else { 0 };
-        if payload_len > max_payload || count > max_records || relocation_count > max_relocations {
-            return Err(ReadError::TooLarge);
-        }
-        let mut pos = header_len;
-        for _ in 0..count {
-            let end = pos.checked_add(8).ok_or(ReadError::TooLarge)?;
-            let bytes = buffer.get_mut(pos..end).ok_or(ReadError::TooLarge)?;
-            read_exact(reader, bytes)?;
-            let len = word(buffer, pos + 4) as usize;
-            pos = end;
-            let end = pos
-                .checked_add(len.checked_mul(2).ok_or(ReadError::TooLarge)?)
-                .ok_or(ReadError::TooLarge)?;
-            let bytes = buffer.get_mut(pos..end).ok_or(ReadError::TooLarge)?;
-            read_exact(reader, bytes)?;
-            pos = end;
-        }
-        let relocation_bytes = (relocation_count as usize)
-            .checked_mul(RELOCATION_RECORD)
-            .ok_or(ReadError::TooLarge)?;
-        let end = pos
-            .checked_add(relocation_bytes)
-            .ok_or(ReadError::TooLarge)?;
-        let bytes = buffer.get_mut(pos..end).ok_or(ReadError::TooLarge)?;
-        read_exact(reader, bytes)?;
-        pos = end;
-        let end = pos.checked_add(payload_len).ok_or(ReadError::TooLarge)?;
-        let bytes = buffer.get_mut(pos..end).ok_or(ReadError::TooLarge)?;
-        read_exact(reader, bytes)?;
-        Ok(&buffer[..end])
-    }
-
-    pub struct Policy {
-        pub firmware_sha256: [u8; 32],
-        pub image_base: u32,
-        pub image_len: usize,
-        pub payload_base: u32,
-        pub max_payload: usize,
-        pub max_records: u32,
-        pub max_relocations: u32,
-        /// Dynamic bundles validate source hook bytes against the local patch
-        /// catalog during construction; the installed image contains dispatch
-        /// stubs at those addresses, so runtime validation skips this compare.
-        pub compare_guards: bool,
-    }
-
-    pub struct Validated<'a> {
-        records: &'a [u8],
-        relocations: &'a [u8],
-        payload: &'a [u8],
-        count: u32,
-        relocation_count: u32,
-        init: Option<u32>,
-        version: u32,
-    }
-
-    fn word(data: &[u8], offset: usize) -> u32 {
-        u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap())
-    }
-
-    /// Checks all bounds, ordered non-overlapping edits and current bytes.
-    /// `firmware` may include unrelated persistent loader changes; each edit
-    /// must still match its own stock bytes. The policy identity is trusted
-    /// metadata supplied by a revision-guarded installer, not a runtime hash.
-    pub fn validate<'a>(
-        file: &'a [u8],
-        firmware: &[u8],
-        policy: &Policy,
-    ) -> Result<Validated<'a>, Error> {
-        if file.len() < HEADER {
-            return Err(Error::Truncated);
-        }
-        let version = word(file, 4);
-        if &file[..4] != b"L6SB" || !matches!(version, 4 | 5 | 6) {
-            return Err(Error::Invalid);
-        }
-        if checksum(file) != Some(word(file, 60)) {
-            return Err(Error::Invalid);
-        }
-        let image_len = word(file, 12) as usize;
-        let payload_len = word(file, 20) as usize;
-        let count = word(file, 24);
-        let init = word(file, 64);
-        let relocation_count = if version == 6 {
-            if file.len() < RELOCATABLE_HEADER {
-                return Err(Error::Truncated);
-            }
-            word(file, 68)
-        } else {
-            0
-        };
-        if word(file, 8) != policy.image_base
-            || image_len != policy.image_len
-            || word(file, 16) != policy.payload_base
-            || file[28..60] != policy.firmware_sha256
-            || firmware.len() < image_len
-        {
-            return Err(Error::Incompatible);
-        }
-        if payload_len > policy.max_payload
-            || count > policy.max_records
-            || relocation_count > policy.max_relocations
-        {
-            return Err(Error::TooLarge);
-        }
-        if init != 0 {
-            let len = u32::try_from(payload_len).map_err(|_| Error::TooLarge)?;
-            let valid = if version == 4 {
-                let end = policy
-                    .payload_base
-                    .checked_add(len)
-                    .ok_or(Error::TooLarge)?;
-                init >= policy.payload_base && init < end
-            } else {
-                init < len
-            };
-            if init & 1 != 0 || !valid {
-                return Err(Error::Invalid);
-            }
-        }
-        let header_len = if version == 6 {
-            RELOCATABLE_HEADER
-        } else {
-            HEADER
-        };
-        let mut pos = header_len;
-        let mut last_end = 0usize;
-        for _ in 0..count {
-            let end_header = pos.checked_add(8).ok_or(Error::Invalid)?;
-            if end_header > file.len() {
-                return Err(Error::Truncated);
-            }
-            let offset = word(file, pos) as usize;
-            let len = word(file, pos + 4) as usize;
-            let end = offset.checked_add(len).ok_or(Error::Invalid)?;
-            let end_record = end_header
-                .checked_add(len.checked_mul(2).ok_or(Error::Invalid)?)
-                .ok_or(Error::Invalid)?;
-            if len == 0 || offset < last_end || end > image_len {
-                return Err(Error::Invalid);
-            }
-            if end_record > file.len() {
-                return Err(Error::Truncated);
-            }
-            if version >= 5 {
-                let replacement_len = end_header + len;
-                if len < 4 {
-                    return Err(Error::Invalid);
-                }
-                let entry = word(file, replacement_len);
-                if entry & 1 != 0 || entry as usize >= payload_len {
-                    return Err(Error::Invalid);
-                }
-            }
-            if policy.compare_guards && firmware[offset..end] != file[end_header..end_header + len]
-            {
-                return Err(Error::GuardMismatch);
-            }
-            last_end = end;
-            pos = end_record;
-        }
-        let relocation_start = pos;
-        let relocation_len = (relocation_count as usize)
-            .checked_mul(RELOCATION_RECORD)
-            .ok_or(Error::TooLarge)?;
-        let relocation_end = relocation_start
-            .checked_add(relocation_len)
-            .ok_or(Error::TooLarge)?;
-        if relocation_end > file.len() {
-            return Err(Error::Truncated);
-        }
-        let payload_end = relocation_end
-            .checked_add(payload_len)
-            .ok_or(Error::Invalid)?;
-        if payload_end != file.len() {
-            return Err(Error::Invalid);
-        }
-        let payload = &file[relocation_end..payload_end];
-        let mut last_relocation_end = 0usize;
-        for index in 0..relocation_count as usize {
-            let record = relocation_start + index * RELOCATION_RECORD;
-            let kind = word(file, record);
-            let first = word(file, record + 4) as usize;
-            let second = word(file, record + 8) as usize;
-            let (start, end) = match kind {
-                1 => {
-                    if second != 0 {
-                        return Err(Error::Invalid);
-                    }
-                    (first, first.checked_add(4).ok_or(Error::Invalid)?)
-                }
-                2 => {
-                    if second <= first
-                        || first.checked_add(4).is_none_or(|low_end| low_end > second)
-                    {
-                        return Err(Error::Invalid);
-                    }
-                    (first, second.checked_add(4).ok_or(Error::Invalid)?)
-                }
-                _ => return Err(Error::Invalid),
-            };
-            if start & 1 != 0
-                || end > payload_len
-                || start < last_relocation_end
-                || (kind == 2 && second - first > 16)
-            {
-                return Err(Error::Invalid);
-            }
-            last_relocation_end = end;
-        }
-        Ok(Validated {
-            records: &file[header_len..relocation_start],
-            relocations: &file[relocation_start..relocation_end],
-            payload,
-            count,
-            relocation_count,
-            init: if init == 0 { None } else { Some(init) },
-            version,
-        })
-    }
-
-    impl<'a> Validated<'a> {
-        pub fn payload(&self) -> &'a [u8] {
-            self.payload
-        }
-        pub fn init(&self) -> Option<u32> {
-            self.init
-        }
-        pub fn version(&self) -> u32 {
-            self.version
-        }
-        pub fn relocations(&self) -> Relocations<'a> {
-            Relocations {
-                bytes: self.relocations,
-                remaining: self.relocation_count,
-            }
-        }
-        pub fn edits(&self) -> Edits<'a> {
-            Edits {
-                bytes: self.records,
-                remaining: self.count,
-            }
-        }
-    }
-
-    /// Apply the bundle's load bias to module-internal absolute references.
+    /// Apply a module's load bias to module-internal absolute references.
     /// The file image remains unchanged, so callers may use it as the source
     /// while relocating the newly allocated copy in place.
     pub fn relocate<I: Iterator<Item = Relocation>>(
@@ -466,29 +125,27 @@ pub mod bundle {
         memory_len: usize,
     ) -> Result<(), Error> {
         if memory_len < image.len() {
-            return Err(Error::Relocation);
+            return Err(Error);
         }
         let linked_end = linked_base
-            .checked_add(u32::try_from(memory_len).map_err(|_| Error::Relocation)?)
-            .ok_or(Error::Relocation)?;
+            .checked_add(u32::try_from(memory_len).map_err(|_| Error)?)
+            .ok_or(Error)?;
         let delta = i64::from(loaded_base) - i64::from(linked_base);
         for relocation in relocations {
             match relocation {
                 Relocation::Abs32 { offset } => {
-                    let end = offset.checked_add(4).ok_or(Error::Relocation)?;
+                    let end = offset.checked_add(4).ok_or(Error)?;
                     // A fixed-size view: `copy_from_slice` would take a
                     // caller location that stays in the loader.
                     let bytes: &mut [u8; 4] = image
                         .get_mut(offset..end)
                         .and_then(|bytes| bytes.try_into().ok())
-                        .ok_or(Error::Relocation)?;
+                        .ok_or(Error)?;
                     let target = u32::from_le_bytes(*bytes);
                     if !(linked_base..=linked_end).contains(&(target & !1)) {
-                        return Err(Error::Relocation);
+                        return Err(Error);
                     }
-                    let relocated = (i64::from(target) + delta)
-                        .try_into()
-                        .map_err(|_| Error::Relocation)?;
+                    let relocated = (i64::from(target) + delta).try_into().map_err(|_| Error)?;
                     *bytes = u32::to_le_bytes(relocated);
                 }
                 Relocation::ThumbMov32 {
@@ -498,15 +155,14 @@ pub mod bundle {
                     let (low_reg, low) = read_thumb_mov(image, low_offset, 0xf240)?;
                     let (high_reg, high) = read_thumb_mov(image, high_offset, 0xf2c0)?;
                     if low_reg != high_reg {
-                        return Err(Error::Relocation);
+                        return Err(Error);
                     }
                     let target = (u32::from(high) << 16) | u32::from(low);
                     if !(linked_base..=linked_end).contains(&(target & !1)) {
-                        return Err(Error::Relocation);
+                        return Err(Error);
                     }
-                    let relocated: u32 = (i64::from(target) + delta)
-                        .try_into()
-                        .map_err(|_| Error::Relocation)?;
+                    let relocated: u32 =
+                        (i64::from(target) + delta).try_into().map_err(|_| Error)?;
                     write_thumb_mov(image, low_offset, 0xf240, low_reg, relocated as u16)?;
                     write_thumb_mov(
                         image,
@@ -522,12 +178,12 @@ pub mod bundle {
     }
 
     fn read_thumb_mov(image: &[u8], offset: usize, opcode: u16) -> Result<(u8, u16), Error> {
-        let end = offset.checked_add(4).ok_or(Error::Relocation)?;
-        let instruction = image.get(offset..end).ok_or(Error::Relocation)?;
+        let end = offset.checked_add(4).ok_or(Error)?;
+        let instruction = image.get(offset..end).ok_or(Error)?;
         let first = u16::from_le_bytes(instruction[..2].try_into().unwrap());
         let second = u16::from_le_bytes(instruction[2..].try_into().unwrap());
         if first & 0xfbf0 != opcode {
-            return Err(Error::Relocation);
+            return Err(Error);
         }
         let immediate = ((first & 0x000f) << 12)
             | ((first & 0x0400) << 1)
@@ -543,17 +199,17 @@ pub mod bundle {
         register: u8,
         immediate: u16,
     ) -> Result<(), Error> {
-        let end = offset.checked_add(4).ok_or(Error::Relocation)?;
+        let end = offset.checked_add(4).ok_or(Error)?;
         // A fixed-size view: `copy_from_slice` would take a caller location
         // that stays in the loader.
         let instruction: &mut [u8; 4] = image
             .get_mut(offset..end)
             .and_then(|bytes| bytes.try_into().ok())
-            .ok_or(Error::Relocation)?;
+            .ok_or(Error)?;
         let first = u16::from_le_bytes([instruction[0], instruction[1]]);
         let second = u16::from_le_bytes([instruction[2], instruction[3]]);
         if first & 0xfbf0 != opcode || ((second >> 8) & 0xf) as u8 != register {
-            return Err(Error::Relocation);
+            return Err(Error);
         }
         let first = (first & !0x040f) | ((immediate >> 12) & 0xf) | ((immediate >> 1) & 0x0400);
         let second = (second & !0x70ff) | ((immediate << 4) & 0x7000) | (immediate & 0x00ff);
@@ -589,6 +245,42 @@ pub mod bundle {
             }
         }
     }
+}
+
+/// Compact, one-patch-per-file dynamic module stream (format version 1).
+///
+/// The fixed version-1 header is 28 bytes. Code starts immediately after it,
+/// followed by fixed 12-byte hook records and 12-byte relocation records.
+/// The CRC covers the complete file except the checksum word itself. No whole-file staging buffer
+/// is needed: code is read into its final allocation and metadata is processed
+/// one bounded record at a time.
+pub mod dynamic {
+    use super::relocation::{self, Relocation};
+
+    /// A sequential SD file reader. A zero-byte read denotes end of file.
+    pub trait Reader {
+        type Error;
+        fn read(&mut self, destination: &mut [u8]) -> Result<usize, Self::Error>;
+
+        /// Confirm there are no bytes after the declared body. Readers whose
+        /// underlying API reports EOF as an error can override this method.
+        fn finish(&mut self) -> Result<(), ReadError> {
+            let mut trailing = [0u8; 1];
+            match self.read(&mut trailing) {
+                Ok(0) => Ok(()),
+                Ok(_) => Err(ReadError::Invalid),
+                Err(_) => Err(ReadError::Io),
+            }
+        }
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub enum ReadError {
+        Io,
+        Truncated,
+        Invalid,
+        TooLarge,
+    }
 
     /// Reads a file already in memory.
     impl Reader for &[u8] {
@@ -600,77 +292,6 @@ pub mod bundle {
             Ok(count)
         }
     }
-
-    #[cfg(feature = "alloc")]
-    mod encode;
-    #[cfg(feature = "alloc")]
-    pub use encode::encode;
-
-    pub struct Relocations<'a> {
-        bytes: &'a [u8],
-        remaining: u32,
-    }
-    impl Iterator for Relocations<'_> {
-        type Item = Relocation;
-        fn next(&mut self) -> Option<Self::Item> {
-            if self.remaining == 0 {
-                return None;
-            }
-            let kind = word(self.bytes, 0);
-            let first = word(self.bytes, 4) as usize;
-            let second = word(self.bytes, 8) as usize;
-            self.bytes = &self.bytes[RELOCATION_RECORD..];
-            self.remaining -= 1;
-            Some(match kind {
-                1 => Relocation::Abs32 { offset: first },
-                2 => Relocation::ThumbMov32 {
-                    low_offset: first,
-                    high_offset: second,
-                },
-                _ => unreachable!("relocations are validated before iteration"),
-            })
-        }
-    }
-
-    pub struct Edit<'a> {
-        pub offset: usize,
-        pub original: &'a [u8],
-        pub replacement: &'a [u8],
-    }
-    pub struct Edits<'a> {
-        bytes: &'a [u8],
-        remaining: u32,
-    }
-    impl<'a> Iterator for Edits<'a> {
-        type Item = Edit<'a>;
-        fn next(&mut self) -> Option<Self::Item> {
-            if self.remaining == 0 {
-                return None;
-            }
-            let offset = word(self.bytes, 0) as usize;
-            let len = word(self.bytes, 4) as usize;
-            let original = &self.bytes[8..8 + len];
-            let replacement = &self.bytes[8 + len..8 + 2 * len];
-            self.bytes = &self.bytes[8 + 2 * len..];
-            self.remaining -= 1;
-            Some(Edit {
-                offset,
-                original,
-                replacement,
-            })
-        }
-    }
-}
-
-/// Compact, one-patch-per-file dynamic module stream (format version 1).
-///
-/// The fixed version-1 header is 28 bytes. Code starts immediately after it,
-/// followed by fixed 12-byte hook records and 12-byte relocation records.
-/// The CRC covers the complete file except the checksum word itself. No whole-file staging buffer
-/// is needed: code is read into its final allocation and metadata is processed
-/// one bounded record at a time.
-pub mod dynamic {
-    use super::bundle::{self, ReadError, Reader, Relocation};
 
     pub const HEADER_LEN_V1: usize = 28;
     pub const FORMAT_VERSION: u16 = 1;
@@ -991,7 +612,7 @@ pub mod dynamic {
                 },
                 _ => return Err(Error::Relocation),
             };
-            bundle::relocate_with_memory(
+            relocation::relocate_with_memory(
                 &mut code[..header.code_len],
                 core::iter::once(relocation),
                 linked_base,
@@ -1270,8 +891,8 @@ mod identity_tests {
 #[cfg(test)]
 mod dynamic_stream_tests {
     extern crate std;
-    use super::bundle::{ReadError, Reader};
     use super::dynamic::{self, Hook};
+    use super::dynamic::{ReadError, Reader};
     use std::vec::Vec;
 
     struct Chunks<'a> {

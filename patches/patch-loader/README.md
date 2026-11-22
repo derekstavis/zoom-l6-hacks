@@ -183,4 +183,4 @@ reset hooks clear published handlers while external RAM stays present.
 two ordered files at the same callee. Physical-device behavior remains
 unverified.
 Host-side checks are
-`cargo test --offline --locked -p firmware-patch-compile -p l6patch -p patch-abi -p l6test -p smoke-core`.
+`cargo test --offline --locked -p patch-compile -p l6patch -p patch-abi -p l6test -p smoke-core`.

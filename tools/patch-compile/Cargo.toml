@@ -1,5 +1,5 @@
 [package]
-name = "firmware-patch-compile"
+name = "patch-compile"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

@@ -7,11 +7,11 @@ pub(super) type SdEdits = (
     u32,
     Vec<u8>,
     Option<u32>,
-    Vec<patch_abi::bundle::Relocation>,
+    Vec<patch_abi::relocation::Relocation>,
     Vec<patch_abi::dynamic::Hook>,
     Vec<(
         Vec<u8>,
-        Vec<patch_abi::bundle::Relocation>,
+        Vec<patch_abi::relocation::Relocation>,
         Vec<patch_abi::dynamic::Hook>,
     )>,
 );
@@ -549,7 +549,7 @@ pub(super) fn sd_fixture_edits(
             Vec<(u32, Vec<u8>, u32)>,
             Vec<u8>,
             Option<u32>,
-            Vec<patch_abi::bundle::Relocation>,
+            Vec<patch_abi::relocation::Relocation>,
             Vec<patch_abi::dynamic::Hook>,
         ),
         String,

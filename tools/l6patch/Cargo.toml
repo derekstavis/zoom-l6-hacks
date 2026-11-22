@@ -9,7 +9,7 @@ license.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
-firmware-patch-compile.workspace = true
+patch-compile.workspace = true
 patch-core.workspace = true
 l6fw.workspace = true
 serde_json.workspace = true

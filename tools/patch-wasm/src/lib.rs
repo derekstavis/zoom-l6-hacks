@@ -12,7 +12,7 @@ include!(concat!(env!("OUT_DIR"), "/templates_generated.rs"));
 use l6fw::Model;
 use patch_core::{
     Delivery, HookEdit, PatchEdits, Plan, WASM_PATCHES, apply_patch_with_map, branch,
-    supports_wasm_patch, verify_firmware_for, write_image_length_and_version,
+    supports_wasm_patch, verify_firmware_for,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -519,44 +519,20 @@ pub fn apply_patches_with_loader(
         firmware.resize(reserve_offset, 0xff);
     }
 
-    let new_length = firmware.len() as u32;
-    let consumed = firmware.len() - original_length;
-    segments.insert("main_firmware.bin".into(), firmware.clone());
-    segments.insert(
-        "padding_before_secondary.bin".into(),
-        padding[consumed..].to_vec(),
-    );
-    let mut trailer = segments["main_trailer.bin"].clone();
-    let mut footer = segments["package_footer.bin"].clone();
-    write_image_length_and_version(&mut trailer, &mut footer, new_length, l6fw::PATCHED_VERSION);
-    segments.insert("main_trailer.bin".into(), trailer);
-    segments.insert("package_footer.bin".into(), footer);
-    for (segment_name, start, end) in l6fw::layout_for(
-        match model {
-            Model::L6 => l6fw::Model::L6,
-            Model::L6max => l6fw::Model::L6max,
-        },
-        new_length as usize,
-    ) {
-        if let Some(index) = manifest["segments"]
-            .as_array()
-            .and_then(|array| array.iter().position(|entry| entry["file"] == segment_name))
-        {
-            manifest["segments"][index]["offset"] = serde_json::json!(start);
-            manifest["segments"][index]["size"] = serde_json::json!(end - start);
-        }
-    }
-    let packed = l6fw::repack_bytes(&manifest, &segments, true)?;
-    if model == Model::L6max {
-        l6fw::update::validate(&packed).map_err(|e| e.to_string())?;
-    } else if l6fw::model_from_package(&packed)? != l6fw::Model::L6 {
-        return Err("patched package model changed unexpectedly".into());
-    }
+    let patched_sha256 = format!("{:x}", Sha256::digest(&firmware));
+    let image_length = firmware.len();
+    l6fw::replace_main(
+        &mut manifest,
+        &mut segments,
+        firmware,
+        l6fw::PATCHED_VERSION,
+    )?;
+    let packed = l6fw::repack_modified(&manifest, &segments)?;
 
     let report = serde_json::json!({
-        "patched_sha256": format!("{:x}", Sha256::digest(&firmware)),
+        "patched_sha256": patched_sha256,
         "model": model.label(),
-        "image_length": firmware.len(),
+        "image_length": image_length,
         "patches": applied_report,
         "hooks": diagnostic_hooks,
         "update_sha256": format!("{:x}", Sha256::digest(&packed)),

@@ -7,10 +7,7 @@ use firmware_patch_compile::{
     compile_sd_relocatable_composed, compile_with_continuations, decode_thumb_bl_target,
     function_hook_sites, hook_registrations, symbol,
 };
-use patch_core::{
-    HookEdit, PatchEdits, apply_patch_with_map, branch, verify_firmware_for,
-    write_image_length_and_version,
-};
+use patch_core::{HookEdit, PatchEdits, apply_patch_with_map, branch, verify_firmware_for};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
@@ -961,7 +958,6 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         }
         firmware.resize(reserved_end, 0xff);
     }
-    let consumed = firmware.len() - original_length;
     if options.experimental_sd_bundle {
         let regions = claimed.clone();
         let bundle = patch_abi::bundle::encode(
@@ -977,41 +973,19 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         }
         fs::write(output.join("experimental-patch-bundle.bin"), bundle)?;
     }
-    // Preserve the fixed package slots, consuming only erased main padding.
-    for entry in fs::read_dir(&source)? {
-        let entry = entry?;
-        if entry.file_type()?.is_file() {
-            fs::copy(entry.path(), output.join(entry.file_name()))?;
-        }
+    // The output holds the unpacked patched package and the package itself.
+    let (mut manifest, mut segments) = l6fw::read_unpacked(&source)?;
+    l6fw::replace_main(&mut manifest, &mut segments, firmware.clone(), version)?;
+    for (name, bytes) in &segments {
+        fs::write(output.join(name), bytes)?;
     }
-    fs::write(output.join("main_firmware.bin"), &firmware)?;
-    fs::write(
-        output.join("padding_before_secondary.bin"),
-        &padding[consumed..],
-    )?;
-    let mut trailer = fs::read(output.join("main_trailer.bin"))?;
-    let mut footer = fs::read(output.join("package_footer.bin"))?;
-    write_image_length_and_version(&mut trailer, &mut footer, firmware.len() as u32, version);
-    fs::write(output.join("main_trailer.bin"), trailer)?;
-    fs::write(output.join("package_footer.bin"), footer)?;
-    let mut manifest: serde_json::Value =
-        serde_json::from_slice(&fs::read(output.join("manifest.json"))?)?;
-    manifest["segments"][2]["size"] = serde_json::json!(firmware.len());
-    manifest["segments"][3]["offset"] = serde_json::json!(0x200 + firmware.len());
-    manifest["segments"][3]["size"] = serde_json::json!(padding.len() - consumed);
     fs::write(
         output.join("manifest.json"),
         serde_json::to_string_pretty(&manifest)?,
     )?;
+    let packed = l6fw::repack_modified(&manifest, &segments)?;
     let (update_name, trailer_offset) = (model.package_file_name(), model.main_trailer_offset());
-    let update = output.join(update_name);
-    l6fw::repack(&output, &update, true)?;
-    let packed = fs::read(&update)?;
-    if model == l6fw::Model::L6max {
-        l6fw::update::validate(&packed)?;
-    } else if l6fw::model_from_package(&packed)? != l6fw::Model::L6 {
-        return Err("repacked package model changed unexpectedly".into());
-    }
+    fs::write(output.join(update_name), &packed)?;
     let version_range = trailer_offset + 4..trailer_offset + 8;
     let report = serde_json::json!({"model":model.label(),"source_sha256":digest,"patched_sha256":format!("{:x}",Sha256::digest(&firmware)),"image_length":firmware.len(),"payload_address":format!("{initial_payload:#x}"),"patches":applied,"update_package":update_name,"update_sha256":format!("{:x}",Sha256::digest(&packed)),"version":String::from_utf8_lossy(&packed[version_range]),"usage":"Repacked update for emulator validation; physical bootloader acceptance unverified"});
     fs::write(

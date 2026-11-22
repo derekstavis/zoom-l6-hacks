@@ -11,6 +11,7 @@ use std::sync::OnceLock;
 include!(concat!(env!("OUT_DIR"), "/generated_catalog.rs"));
 
 pub mod catalog;
+pub mod compose;
 pub mod plan;
 pub use catalog::{
     EFFECT_REPLACEMENT_ROUTER_PACKAGE, EffectControl, EffectLink, EffectPackage, PackageKind,

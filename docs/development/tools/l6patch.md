@@ -42,6 +42,13 @@ hook macros. See the [Rust patch payload API guide](../patch-api.md) for the
 function attributes and shared hook catalog used by the static builder and the
 Patch loader.
 
+`l6patch` compiles each payload and the browser patcher fills a template, but
+both hand the results to `patch_core::compose`. It chains hooks that share a
+site in patch order, ending in the Patch loader's handler when there is one;
+places each payload; links the identity ring; and grows the image to the
+loader's reserve. `l6fw::replace_main` then writes the longer MAIN into the
+package. The two patchers therefore build the same image from the same patches.
+
 ## Prebuilt files
 
 The browser patcher's templates (`tools/patch-wasm/templates/`) and the

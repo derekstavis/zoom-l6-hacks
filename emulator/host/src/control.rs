@@ -173,7 +173,7 @@ fn rtos_sample(
         }
     };
     Ok(
-        json!({"schema":1,"kind":kind,"model":model_name(model),"panel_guest_ms":inputs.panel.snapshot().guest_ms,
+        json!({"schema":1,"kind":kind,"model":model.name(),"panel_guest_ms":inputs.panel.snapshot().guest_ms,
         "atomic":false,"revision_guard":"l6max_1_10_kernel_routines","data":data}),
     )
 }
@@ -197,7 +197,7 @@ fn execute(
             let sample = |kind| rtos_sample(kind, inputs, model, qmp);
             if kind == "all" {
                 Ok(
-                    json!({"schema":1,"kind":"all","model":model_name(model),"atomic":false,
+                    json!({"schema":1,"kind":"all","model":model.name(),"atomic":false,
                     "heap":sample("heap")?,"tasks":sample("tasks")?,"scheduler":sample("scheduler")?,"objects":sample("objects")?}),
                 )
             } else {

@@ -1,5 +1,11 @@
 #![no_std]
-//! Allocation-free parsing for experimental SD patch bundles.
+//! The binary interface between the patch tools and the resident Patch loader:
+//! the registry the loader publishes, the SD module and bundle file formats,
+//! and the duplicate-package rule. The loader includes this file directly, so
+//! everything outside the `alloc` feature parses without allocating. With
+//! `alloc`, the host tools also get the matching writers.
+#[cfg(feature = "alloc")]
+extern crate alloc;
 #[cfg(test)]
 extern crate std;
 
@@ -557,6 +563,9 @@ pub mod bundle {
         Ok(())
     }
 
+    /// Load-time fixups for addresses that refer back into a linked patch
+    /// image. PC-relative calls and references need no fixup when the
+    /// complete image moves.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum Relocation {
         Abs32 {
@@ -567,6 +576,35 @@ pub mod bundle {
             high_offset: usize,
         },
     }
+
+    impl Relocation {
+        /// The `(kind, first, second)` words of the relocation's file record.
+        pub fn record(&self) -> [u32; 3] {
+            match *self {
+                Relocation::Abs32 { offset } => [1, offset as u32, 0],
+                Relocation::ThumbMov32 {
+                    low_offset,
+                    high_offset,
+                } => [2, low_offset as u32, high_offset as u32],
+            }
+        }
+    }
+
+    /// Reads a file already in memory.
+    impl Reader for &[u8] {
+        type Error = ();
+        fn read(&mut self, destination: &mut [u8]) -> Result<usize, ()> {
+            let count = destination.len().min(self.len());
+            destination[..count].copy_from_slice(&self[..count]);
+            *self = &self[count..];
+            Ok(count)
+        }
+    }
+
+    #[cfg(feature = "alloc")]
+    mod encode;
+    #[cfg(feature = "alloc")]
+    pub use encode::encode;
 
     pub struct Relocations<'a> {
         bytes: &'a [u8],
@@ -646,6 +684,14 @@ pub mod dynamic {
     /// Maximum relocation records accepted in one patch file. The builder
     /// refuses larger modules, because the loader would reject them.
     pub const MAX_RELOCATIONS_PER_MODULE: usize = 256;
+    /// The largest code plus zero-filled state the loader allocates for one
+    /// module from the shared FreeRTOS heap.
+    pub const MAX_MEMORY_LEN: usize = 0x60000;
+
+    #[cfg(feature = "alloc")]
+    mod module;
+    #[cfg(feature = "alloc")]
+    pub use module::Module;
 
     /// One installed hook. The loader places a module's links at the start of
     /// the module's allocation, ahead of its code, so a link lives exactly as

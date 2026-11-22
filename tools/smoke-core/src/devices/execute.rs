@@ -429,13 +429,13 @@ impl State {
                             // The first copy names its own package, so its
                             // code is the fixture file's, not the bundle's.
                             let file = fs::read(root.join(crate::fixture_layout::CHAIN_FIRST))?;
-                            let start = patch_loader_core::dynamic::HEADER_LEN_V1;
+                            let start = patch_abi::dynamic::HEADER_LEN_V1;
                             expected = file
                                 .get(start..start + expected.len())
                                 .ok_or("ordered-chain fixture is shorter than its module")?
                                 .to_vec();
                         }
-                        patch_loader_core::bundle::relocate(
+                        patch_abi::bundle::relocate(
                             &mut expected,
                             module_relocations.clone().into_iter(),
                             link_base,
@@ -484,7 +484,7 @@ impl State {
                     {
                         let mutable_symbol_ranges = mutable_ranges_for_size(latest_payload.len());
                         let mut expected = latest_payload.clone();
-                        patch_loader_core::bundle::relocate(
+                        patch_abi::bundle::relocate(
                             &mut expected,
                             latest_relocations.clone().into_iter(),
                             link_base,

@@ -136,6 +136,12 @@ A dispatch stub loads its site's handler, the record's first word, with a
 entry, its module's continuation slot, its load order, its module and the next
 link on the same site. A loader built with layout 1 must be reinstalled;
 menu-loader and SD modules find only a layout 2 registry.
+
+The registry root and layout, the SD module format and the duplicate-package
+rule are defined once in `tools/patch-abi`. The loader and menu-loader include
+it directly; `l6patch` and the test tools use it as a crate, with the module
+writer next to the reader.
+
 Functions must be added to the catalog and loader dispatch before dynamic
 modules can use them.
 
@@ -177,4 +183,4 @@ reset hooks clear published handlers while external RAM stays present.
 two ordered files at the same callee. Physical-device behavior remains
 unverified.
 Host-side checks are
-`cargo test --offline --locked -p firmware-patch-compile -p l6patch -p patch-loader-core -p l6test -p smoke-core`.
+`cargo test --offline --locked -p firmware-patch-compile -p l6patch -p patch-abi -p l6test -p smoke-core`.

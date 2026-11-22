@@ -9,7 +9,7 @@ license.workspace = true
 firmware-patch-core.workspace = true
 l6fw.workspace = true
 patch-hook-macros = { path = "../patch-hook-macros" }
-patch-loader-core = { path = "../patch-loader-core" }
+patch-abi = { path = "../patch-abi" }
 sha2.workspace = true
 
 [lints]

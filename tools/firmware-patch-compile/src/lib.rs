@@ -27,13 +27,7 @@ const HOMEBREW_NM: &str = "/opt/homebrew/opt/llvm/bin/llvm-nm";
 const HOMEBREW_OBJCOPY: &str = "/opt/homebrew/opt/llvm/bin/llvm-objcopy";
 const HOMEBREW_READELF: &str = "/opt/homebrew/opt/llvm/bin/llvm-readelf";
 
-/// Load-time fixups for addresses that refer back into a linked patch image.
-/// PC-relative calls and references need no fixup when the complete image moves.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Relocation {
-    Abs32 { offset: u32 },
-    ThumbMov32 { low_offset: u32, high_offset: u32 },
-}
+pub use patch_abi::bundle::Relocation;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FunctionHookSiteMetadata {
@@ -1237,7 +1231,7 @@ fn generate_continuations_from_metadata(
     // continuation slot; the stub only selects the current chain head or stock
     // continuation, and restores r0 and r1 before branching.
     if generate_dynamic_sites && !dynamic {
-        use patch_loader_core::registry;
+        use patch_abi::registry;
         let pointer = registry::pointer_for_main_base(main_base);
         let mut dynamic_index = 0usize;
         for site in sites.iter().filter(|site| site.dynamic_dispatch) {
@@ -1794,7 +1788,9 @@ fn parse_relocations(
                 {
                     return Err("ABS32 relocation outside payload".into());
                 }
-                records.push(Relocation::Abs32 { offset: relative });
+                records.push(Relocation::Abs32 {
+                    offset: relative as usize,
+                });
             }
             "R_ARM_THM_MOVW_ABS_NC" => movw.push((relative, symbol_value, symbol)),
             "R_ARM_THM_MOVT_ABS" => movt.push((relative, symbol_value, symbol)),
@@ -1825,8 +1821,8 @@ fn parse_relocations(
             return Err("MOVT relocation outside payload".into());
         }
         records.push(Relocation::ThumbMov32 {
-            low_offset,
-            high_offset: *high_offset,
+            low_offset: low_offset as usize,
+            high_offset: *high_offset as usize,
         });
         movt.remove(index);
     }

@@ -2,7 +2,6 @@
 //! firmware, lists the patch catalog, and regenerates the prebuilt files.
 //! Never edits its input.
 pub mod prebuilt;
-mod sd_bundle;
 use firmware_patch_compile::{
     FunctionHookSiteMetadata, HookRegistration, compile, compile_l6_patch_loader, compile_sd,
     compile_sd_relocatable_composed, compile_with_continuations, decode_thumb_bl_target,
@@ -659,23 +658,22 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
                 &format!("original_{}_{}", site.name, continuation_handler),
             )?);
         }
-        if handlers.len() > patch_loader_core::dynamic::MAX_HOOKS_PER_MODULE {
-            return Err(format!(
-                "composed module has {} hooks; loader limit is {}",
-                handlers.len(),
-                patch_loader_core::dynamic::MAX_HOOKS_PER_MODULE
-            )
-            .into());
-        }
-        if relocations.len() > patch_loader_core::dynamic::MAX_RELOCATIONS_PER_MODULE {
-            return Err(format!(
-                "composed module has {} relocations; loader limit is {}",
-                relocations.len(),
-                patch_loader_core::dynamic::MAX_RELOCATIONS_PER_MODULE
-            )
-            .into());
-        }
-        let file = sd_bundle::build_dynamic_v1(&module, memory_len, &handlers, &relocations)?;
+        let sd_module = patch_abi::dynamic::Module {
+            code: module,
+            memory_len,
+            hooks: handlers
+                .iter()
+                .map(
+                    |&(address, entry_offset, next_slot_offset)| patch_abi::dynamic::Hook {
+                        address,
+                        entry_offset,
+                        next_slot_offset,
+                    },
+                )
+                .collect(),
+            relocations,
+        };
+        let file = sd_module.encode()?;
         let filename = if options.effect_replacements.is_empty() {
             firmware_patch_core::composed_patch_file_name(&options.requested_patches)?
         } else {
@@ -687,9 +685,9 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             "members": patches,
             "effect_replacements": options.effect_replacements.iter().map(|(slot, id)| (slot, id)).collect::<std::collections::BTreeMap<_, _>>(),
             "file": format!("PATCHES/{filename}"),
-            "payload_length": module.len(),
+            "payload_length": sd_module.code.len(),
             "memory_length": memory_len,
-            "relocation_count": relocations.len(),
+            "relocation_count": sd_module.relocations.len(),
             "exports": exported_symbol_offsets(&symbols),
             "writable_data": {
                 "offset": symbol(&symbols, "__module_data_start")?,
@@ -702,8 +700,8 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             "file_length": file.len(),
         });
         let report = serde_json::json!({
-            "version": patch_loader_core::dynamic::FORMAT_VERSION,
-            "loader_abi": patch_loader_core::dynamic::LOADER_ABI,
+            "version": patch_abi::dynamic::FORMAT_VERSION,
+            "loader_abi": patch_abi::dynamic::LOADER_ABI,
             "model": model.label(),
             "source_sha256": digest,
             "patches": [report_patch],
@@ -1032,7 +1030,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let consumed = firmware.len() - original_length;
     if options.experimental_sd_bundle {
         let regions = claimed.clone();
-        let bundle = sd_bundle::build(
+        let bundle = patch_abi::bundle::encode(
             &stock_firmware,
             &firmware,
             firmware_base,

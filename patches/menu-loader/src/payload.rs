@@ -37,14 +37,11 @@ const MAX_MENU_ITEMS: u32 = 64;
 const DATA_START: usize = 0x8020_0000;
 const DATA_END: usize = 0x8020_a100;
 
-/// Patch loader registry, layout 2 (see `patch-loader-core`).
-const REGISTRY_ROOT: usize = 0x8020_5130;
-const REGISTRY_ROOT_STOCK: u32 = 0x8020_69e4;
-const REGISTRY_MAGIC: u32 = 0x4c36_5232;
-const REGISTRY_MODULE_COUNT: usize = 12;
-const REGISTRY_MODULE_TABLE: usize = 16;
-const REGISTRY_MODULE_ENTRY: usize = 8;
-const REGISTRY_MAX_MODULES: u32 = 16;
+/// The Patch loader's registry, which records the SD modules it loaded.
+#[allow(dead_code, unused_attributes)]
+#[path = "../../../tools/patch-abi/src/lib.rs"]
+mod patch_abi;
+use patch_abi::registry;
 
 /// Stock menus that patches can extend, indexed by `menu_parent`.
 const PARENTS: [u32; 5] = [
@@ -296,16 +293,15 @@ unsafe fn add_static_payloads(state: *mut State) {
 /// SD modules the loader recorded since the last call.
 unsafe fn add_sd_modules(state: *mut State) {
     unsafe {
-        let registry = read(REGISTRY_ROOT as *const u32);
-        if registry == REGISTRY_ROOT_STOCK || read(registry as *const u32) != REGISTRY_MAGIC {
+        let root = read(registry::L6MAX_POINTER as *const u32);
+        if root == registry::L6MAX_POINTER_STOCK || read(root as *const u32) != registry::MAGIC {
             return;
         }
-        let registry = registry as usize;
-        let count =
-            read((registry + REGISTRY_MODULE_COUNT) as *const u32).min(REGISTRY_MAX_MODULES);
+        let word = |offset: u32| (root + offset) as usize;
+        let count = read(word(registry::MODULE_COUNT_OFFSET) as *const u32).min(registry::MAX_MODULES);
         let seen = read(addr_of!((*state).sd_seen));
         for index in seen..count {
-            let entry = registry + REGISTRY_MODULE_TABLE + index as usize * REGISTRY_MODULE_ENTRY;
+            let entry = word(registry::MODULE_TABLE_OFFSET + index * registry::MODULE_TABLE_ENTRY_LEN);
             let base = read(entry as *const u32) as *const PatchInfo;
             if valid_info(base) {
                 add_payload(state, base, true);

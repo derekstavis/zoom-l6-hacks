@@ -68,7 +68,7 @@ application executes at `0x80000000`; its installed NOR region starts at
 | `0x1f2ff8–0x1f2fff` | Main length and four ASCII version digits | Package trailer |
 | `0x1f3000–0x1f6ff7` | Packaged panel application and padding | Main's panel-programming reads |
 | `0x1f6ff8–0x1f6fff` | Panel length and four ASCII version digits | Package trailer and version reader |
-| `0x1f7000–0x1f7fff` | Boot-data region; installed app version at `0x1f7ffc` | Version reader `0x8005dfe0`; remaining fields unclassified |
+| `0x1f7000–0x1f7fff` | Boot-data region; installed MAIN length at `0x1f7ff8` and version at `0x1f7ffc` | Recovered L6max 1.00 bootloader and physical dump |
 | `0x1f8000–0x1f8fff` | Dual ADC calibration sector | Reader `0x80026400` reads 48 bytes |
 | `0x1f9000–0x1fafff` | Settings bank A | Settings loader and observed erase/program traffic |
 | `0x1fb000–0x1fbfff` | Unclassified | No verified assignment |
@@ -87,7 +87,30 @@ bytes remain between that address and the slot end. Alignment, other patches,
 and any reserved loader space reduce the space available for a particular
 payload. The builder also requires consumed package padding to be erased.
 These are bounds for the supported package layout, not a guarantee that a
-maximum-sized image is safe at runtime or accepted by the physical updater.
+maximum-sized image is safe at runtime or accepted by the physical updater. The
+L6 package has a different layout and load address; do not apply this bound
+to L6. Its package slot alone does not establish how much L6 MAIN can safely
+grow in the device's installed NOR or runtime memory.
+
+```text
+L6max 1.10 MAIN address space (not to scale; ranges are half-open)
+0x80000000  stock MAIN in SDRAM, copied from NOR 0x050000
+0x80107fe8  stock MAIN ends
+0x80108000  static patch payloads start
+0x80110000  loader's SD-module reserve starts, when included
+0x80118000  loader's reserve ends; physical captured patched image ends
+0x801a2ff8  package MAIN slot ends; safe use not established
+0x80200000  firmware data and BSS region
+0x808a4148  first FreeRTOS heap block, including task stacks
+0x80921140  heap end sentinel
+```
+
+The package's static payload area is separate from the FreeRTOS heap. SD
+modules are heap allocations even though the loader also reserves image space.
+The arena addresses and an observed patched heap walk come from L6max 1.10;
+free bytes and task stack locations vary with workload and allocation order.
+Neither a successful 64 MiB SDRAM dump nor these addresses establish physical
+RAM capacity or absence of aliasing.
 
 In one physical L6max dump, a patched `0x118000`-byte MAIN image was present
 both in NOR at `0x50000` and in SDRAM at `0x80000000`, with `0x118000` in
@@ -97,7 +120,7 @@ uses the installed length when copying MAIN. In an experimental emulated run,
 the captured ROM and bootloader transferred to a synthetic `0x1a2ff8`-byte
 MAIN and copied a marker at its last word; this tests the modeled copy path,
 not physical update acceptance or safe use of the entire image. The emulator's L6max direct boot
-copies that many bytes from current emulated NOR into writable SDRAM on reset.
+copies the installed length from current emulated NOR into writable SDRAM on reset.
 New L6max emulator state includes the package footer and installed image length.
 Older emulator-created MAIN NOR files have an erased footer apart from their
 four-byte version. When such a file has no valid installed length, the emulator

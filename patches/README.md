@@ -57,6 +57,11 @@ firmware revision.
 
 ## Heap headroom
 
+Static firmware space and dynamic heap are separate budgets. The L6max
+1.10 package layout and limits are described in [MAIN growth](../docs/emulator/storage.md#l6max-110-main-growth);
+SD-loaded modules and their registry allocate from the firmware heap. Neither
+package padding nor an emulator run proves safe physical RAM usage.
+
 Both 1.10 MAIN images run a FreeRTOS heap_4 allocator: 511,984 usable bytes on
 L6 and 511,992 on L6max. Emulator observations, from a setup-complete state:
 
@@ -67,8 +72,8 @@ L6 and 511,992 on L6max. Emulator observations, from a setup-complete state:
 | L6 | midi-sync with encoder turns, recording and playback (`l6-patch-heap`) | 163,104 | 163,104 | 205 | 3 |
 | L6max | Stock: idle, recording a take, playing it back | 160,008 | 160,008 | 197 | 0 |
 | L6max | Stock after switching to the USB card reader | 157,568 | 157,568 | — | — |
-| L6max | All three patches: idle, recording, playback | 159,960 | 159,960 | 198 | 0 |
-| L6max | All three patches with knob popups, recording and playback (`l6max-patch-heap`) | 159,960 | 158,160 | 199 | 1 |
+| L6max | knob-dialog, midi-sync and din-mixer-control: idle, recording, playback | 159,960 | 159,960 | 198 | 0 |
+| L6max | Those three patches with knob popups, recording and playback (`l6max-patch-heap`) | 159,960 | 158,160 | 199 | 1 |
 
 L6 allocates and frees one block each when recording starts and when playback
 starts; L6max allocates only at start-up in these runs. A patch that allocates
@@ -81,9 +86,11 @@ the patch is busy:
   them at idle, while recording and during playback; add `--patch NAME` to
   measure a patch.
 - `l6test`'s `expect-heap` step fails a scenario whose lowest point falls below
-  `minimum_free`. The `l6-patch-heap` and `l6max-patch-heap` cases run every
-  patch for their model together and require 128 KiB to stay free; extend
-  them, or add a case, for a patch that allocates.
+  `minimum_free`. The `l6-patch-heap` case runs midi-sync; `l6max-patch-heap`
+  runs knob-dialog, midi-sync and din-mixer-control. Both require 128 KiB to
+  stay free. Other patches and SD-loaded modules need their own measurements.
+- The Debug window and `cargo l6ctl rtos heap|tasks` inspect live heap blocks
+  and estimated task-stack headroom on supported L6 and L6max 1.10 images.
 
 Both read the counters only after checking that the model's `pvPortMalloc` and
 `vPortFree` match their 1.10 code in guest memory (L6 `0x8006de78` and

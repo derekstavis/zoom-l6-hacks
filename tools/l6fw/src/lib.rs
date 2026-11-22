@@ -202,16 +202,9 @@ fn segments_for(profile: Profile, main_length: usize) -> Vec<(&'static str, usiz
     }
 }
 
-/// The package's segment layout for a given main-image length — offsets are
+/// The package's segment layout for a given main-image length: offsets are
 /// fixed, only `main_firmware.bin`'s end (and everything after it, up to the
-/// trailer) shifts. Exposed so callers that resize `main_firmware.bin`
-/// in-memory (rather than through `unpack`/`repack`'s own files) can recompute
-/// a manifest's `size`/`offset` fields for the two affected segments.
-pub fn layout(main_length: usize) -> [(&'static str, usize, usize); 10] {
-    let v = segments_for(L6MAX, main_length);
-    v.try_into().expect("L6max has ten package segments")
-}
-
+/// trailer) shifts.
 pub fn layout_for(model: Model, main_length: usize) -> Vec<(&'static str, usize, usize)> {
     segments_for(profile(model), main_length)
 }
@@ -559,6 +552,96 @@ pub fn repack_bytes(
     )?;
     Ok(assembled)
 }
+
+/// Segment name to bytes, as `unpack_bytes` returns them.
+pub type Segments = std::collections::BTreeMap<String, Vec<u8>>;
+
+/// Read a directory `unpack` wrote: its manifest and every segment it lists.
+pub fn read_unpacked(dir: &Path) -> Result<(Value, Segments), String> {
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(dir.join("manifest.json")).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    let mut segments = Segments::new();
+    for entry in manifest["segments"]
+        .as_array()
+        .ok_or("manifest has no segment list")?
+    {
+        let name = entry["file"]
+            .as_str()
+            .ok_or("manifest segment has no file")?;
+        let bytes = fs::read(dir.join(name)).map_err(|e| format!("{name}: {e}"))?;
+        segments.insert(name.to_owned(), bytes);
+    }
+    Ok((manifest, segments))
+}
+
+/// Replace MAIN with `main`, which may only grow into the erased padding
+/// that follows it, and give the package `version`. The padding, the MAIN
+/// trailer, the package footer and the manifest follow the new length.
+pub fn replace_main(
+    manifest: &mut Value,
+    segments: &mut Segments,
+    main: Vec<u8>,
+    version: [u8; 4],
+) -> Result<(), String> {
+    let model = profile_for_manifest(manifest)?.model;
+    let segment = |segments: &Segments, name: &str| {
+        segments
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("package has no {name} segment"))
+    };
+    let original_length = segment(segments, "main_firmware.bin")?.len();
+    let padding = segment(segments, "padding_before_secondary.bin")?;
+    let grown = main
+        .len()
+        .checked_sub(original_length)
+        .ok_or("the patched MAIN image is shorter than the stock one")?;
+    if grown > padding.len() || padding[..grown].iter().any(|&byte| byte != 0xff) {
+        return Err("the patched MAIN image overlaps non-erased package data".into());
+    }
+    let length = u32::try_from(main.len()).map_err(|_| "MAIN image too long")?;
+    let mut trailer = segment(segments, "main_trailer.bin")?;
+    let mut footer = segment(segments, "package_footer.bin")?;
+    if trailer.len() < 8 || footer.len() < 0x40 {
+        return Err("short MAIN trailer or package footer".into());
+    }
+    trailer[..4].copy_from_slice(&length.to_le_bytes());
+    trailer[4..8].copy_from_slice(&version);
+    footer[0x38..0x3c].copy_from_slice(&length.to_le_bytes());
+    footer[0x3c..0x40].copy_from_slice(&version);
+    segments.insert("main_firmware.bin".into(), main);
+    segments.insert(
+        "padding_before_secondary.bin".into(),
+        padding[grown..].to_vec(),
+    );
+    segments.insert("main_trailer.bin".into(), trailer);
+    segments.insert("package_footer.bin".into(), footer);
+    let entries = manifest["segments"]
+        .as_array_mut()
+        .ok_or("manifest has no segment list")?;
+    for (name, start, end) in layout_for(model, length as usize) {
+        if let Some(entry) = entries.iter_mut().find(|entry| entry["file"] == name) {
+            entry["offset"] = json!(start);
+            entry["size"] = json!(end - start);
+        }
+    }
+    Ok(())
+}
+
+/// Assemble a modified package, regenerating the MAIN checksum, and check
+/// that the result is still a package for the same model.
+pub fn repack_modified(manifest: &Value, segments: &Segments) -> Result<Vec<u8>, String> {
+    let model = profile_for_manifest(manifest)?.model;
+    let packed = repack_bytes(manifest, segments, true)?;
+    if model == Model::L6max {
+        update::validate(&packed).map_err(|e| e.to_string())?;
+    } else if model_from_package(&packed)? != model {
+        return Err("the repacked package's model changed".into());
+    }
+    Ok(packed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -661,37 +744,29 @@ mod tests {
     }
 
     #[test]
-    fn l6max_resized_main_still_repackages_for_patch_callers() {
-        let original = fixture(Model::L6max, 0x40);
-        let (mut manifest, mut parts) = unpack_bytes(&original).unwrap();
-        let grown = 0x50;
-        parts
-            .get_mut("main_firmware.bin")
-            .unwrap()
-            .extend_from_slice(&[0xaa; 16]);
-        for (name, start, end) in layout(grown) {
-            let index = manifest["segments"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .position(|e| e["file"] == name)
-                .unwrap();
-            manifest["segments"][index]["offset"] = json!(start);
-            manifest["segments"][index]["size"] = json!(end - start);
+    fn a_longer_main_moves_the_padding_trailer_and_footer() {
+        for model in Model::ALL {
+            let original = fixture(model, 0x40);
+            let (manifest, segments) = unpack_bytes(&original).unwrap();
+            let mut main = segments["main_firmware.bin"].clone();
+            main.extend_from_slice(&[0xaa; 16]);
+            let replace = |main: Vec<u8>| {
+                let (mut manifest, mut segments) = (manifest.clone(), segments.clone());
+                replace_main(&mut manifest, &mut segments, main, PATCHED_VERSION)
+                    .map(|()| repack_bytes(&manifest, &segments, true).unwrap())
+            };
+            let assembled = replace(main.clone()).unwrap();
+            let trailer = profile(model).main_trailer;
+            assert_eq!(u32le(&assembled, trailer), 0x50);
+            assert_eq!(&assembled[trailer + 4..trailer + 8], &PATCHED_VERSION);
+            check_layout(&assembled).unwrap();
+            assert!(replace(main[..0x30].to_vec()).is_err());
+            let mut padding = segments.clone();
+            padding.get_mut("padding_before_secondary.bin").unwrap()[4] = 0;
+            assert!(
+                replace_main(&mut manifest.clone(), &mut padding, main, PATCHED_VERSION).is_err()
+            );
         }
-        parts.insert(
-            "padding_before_secondary.bin".into(),
-            parts["padding_before_secondary.bin"][16..].to_vec(),
-        );
-        let mut trailer = parts["main_trailer.bin"].clone();
-        trailer[..4].copy_from_slice(&(grown as u32).to_le_bytes());
-        parts.insert("main_trailer.bin".into(), trailer);
-        let mut footer = parts["package_footer.bin"].clone();
-        footer[0x38..0x3c].copy_from_slice(&(grown as u32).to_le_bytes());
-        parts.insert("package_footer.bin".into(), footer);
-        let assembled = repack_bytes(&manifest, &parts, true).unwrap();
-        assert_eq!(u32le(&assembled, L6MAX.main_trailer) as usize, grown);
-        check_layout(&assembled).unwrap();
     }
 
     #[test]

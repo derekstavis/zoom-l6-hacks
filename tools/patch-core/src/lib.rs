@@ -207,9 +207,6 @@ pub fn apply_patch_with_map(
     })
 }
 
-/// Writes the new main image length and update-version marker into a copy of
-/// `main_trailer.bin` (8 bytes: little-endian length, then 4 ASCII digits)
-/// and `package_footer.bin` (same two fields at its own fixed offsets).
 /// Offset of `patchrt::PatchInfo::next` within a payload's identity record.
 pub const PATCH_INFO_NEXT_OFFSET: u32 = 20;
 
@@ -238,18 +235,6 @@ pub fn link_identity_ring(
         word.copy_from_slice(&next.to_le_bytes());
     }
     Ok(())
-}
-
-pub fn write_image_length_and_version(
-    trailer: &mut [u8],
-    footer: &mut [u8],
-    length: u32,
-    version: [u8; 4],
-) {
-    trailer[..4].copy_from_slice(&length.to_le_bytes());
-    trailer[4..8].copy_from_slice(&version);
-    footer[0x38..0x3c].copy_from_slice(&length.to_le_bytes());
-    footer[0x3c..0x40].copy_from_slice(&version);
 }
 
 #[cfg(test)]

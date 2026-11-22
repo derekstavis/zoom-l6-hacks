@@ -10,7 +10,11 @@ includes and specs are written from the repository root. Use Tombi's language
 server (or `uvx tombi lint`) for fast feedback while editing case and fragment
 files; `cargo l6test list` is the authoritative check and needs no firmware.
 For focused runtime observations outside qualification, use
-`docs/development/diagnostics.md` and the `l6dbg` tool documentation.
+`docs/development/diagnostics.md`: `cargo l6ctl` inspects an already running
+emulator started with `--control-socket`, while `l6dbg` starts a disposable
+guest for scripted observations. Use `cargo l6ctl rtos` for the running guest's
+guarded FreeRTOS snapshots; see `docs/development/tools/l6ctl.md` for the JSON
+schema, supported revisions and live-sampling limits.
 Local firmware package and audio paths belong in ignored `config.toml`; never commit
 firmware, SD cards, saved flash, generated analysis artifacts or runtime logs.
 

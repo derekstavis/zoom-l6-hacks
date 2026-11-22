@@ -749,6 +749,7 @@ impl Engine {
                 path,
                 engine.inputs.as_ref().unwrap().clone(),
                 model,
+                engine.management[0].clone(),
             )?);
         }
         // The DIN MIDI bridge is always running, draining the UART socket so

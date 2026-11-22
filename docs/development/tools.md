@@ -9,7 +9,7 @@ options. Run commands from the repository root unless that page says otherwise.
 | --- | --- | --- |
 | `l6test` | Qualified scenarios, suites, GUI probes, and L6max screen GIF capture | [l6test](tools/l6test.md) |
 | `l6dbg` | TOML observations and focused input, MIDI, UART-startup, and popup probes | [l6dbg](tools/l6dbg.md) |
-| `l6ctl` | Control a running emulator through its local Unix socket | [l6ctl](tools/l6ctl.md) |
+| `l6ctl` | Control a running emulator and read FreeRTOS snapshots through its local Unix socket | [l6ctl](tools/l6ctl.md) |
 | `l6fs` | Create SD images and access SD files through USB storage | [l6fs](tools/l6fs.md) |
 | `l6fw` | Inspect, unpack and rebuild firmware packages | [l6fw](tools/l6fw.md) |
 | `l6nor` | Inspect and edit MAIN NOR, settings banks, panel RTC and state specs | [l6nor](tools/l6nor.md) |

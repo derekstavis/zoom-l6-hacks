@@ -11,6 +11,29 @@ matches the question. Keep firmware, state, SD cards, and generated logs local.
 Use a fresh `--state-dir` or `--volatile` for experiments that may change guest
 state, and choose a new output directory for every run.
 
+## Inspect a running emulator
+
+Start the GUI or headless host with an explicit local socket, then use
+`cargo l6ctl` from another process. An existing emulator started without this
+option cannot be attached through `l6ctl`.
+
+```sh
+cargo run --offline --locked -p l6max-gui -- --control-socket /tmp/l6-control.sock
+cargo l6ctl --socket /tmp/l6-control.sock info
+cargo l6ctl --socket /tmp/l6-control.sock rtos tasks --pretty
+```
+
+`l6ctl rtos` reads Heap, Tasks, Scheduler or known Objects from that guest as
+JSON. It uses the same read-only, revision-guarded decoder as the Debug window,
+without guest calls or guest heap allocation. Reads happen while the guest runs:
+they are not atomic, the Objects list is partial, and stack headroom is an
+estimate. Details, error behavior and schema are in the
+[`l6ctl` reference](tools/l6ctl.md#freertos-snapshots).
+
+Use `l6ctl` when investigating the user's current session. Use `l6dbg` below
+when a fresh guest and a recorded sequence are needed; it does not attach to
+an existing emulator. Neither observation alone qualifies a test case.
+
 ## TOML observation recipes
 
 The `l6dbg` recipe runner starts a headless emulator and performs ordered

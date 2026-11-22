@@ -16,6 +16,9 @@ mod audio_window;
 #[path = "../src/components/mod.rs"]
 mod components;
 #[allow(dead_code)]
+#[path = "../src/debug_window.rs"]
+mod debug_window;
+#[allow(dead_code)]
 #[path = "../src/headless_screenshot.rs"]
 mod headless_screenshot;
 #[allow(dead_code)]
@@ -51,6 +54,7 @@ fn notice_view(text: gpui::SharedString, error: bool) -> gpui::Div {
 }
 
 struct NativePanel {
+    _qemu: Option<l6max_host::engine::Engine>,
     model: l6fw::Model,
     options: Options,
     patch_error: Option<String>,
@@ -157,6 +161,7 @@ fn open_audio_window(
     audio_patch.insert(4, "Snare.wav".into());
     audio_patch.insert(7, "Room microphones.wav".into());
     let panel = NativePanel {
+        _qemu: None,
         model,
         options,
         patch_error: None,
@@ -180,6 +185,37 @@ fn open_audio_window(
         },
     )?;
     Ok(audio_window.into())
+}
+
+fn open_debug_window(
+    app: &mut HeadlessAppContext,
+    model: l6fw::Model,
+    kind: String,
+    width: f32,
+) -> Result<AnyWindowHandle, Box<dyn std::error::Error>> {
+    let options =
+        Options::parse_args(["--no-auto-setup", "--no-sd"].map(std::ffi::OsString::from))?;
+    let panel = NativePanel {
+        _qemu: None,
+        model,
+        options,
+        patch_error: None,
+        audio_patch: Default::default(),
+        audio_conversion: None,
+        audio_error: None,
+        audio_length_ms: 0,
+        audio_position_ms: 0,
+        audio_playing: false,
+        controls: None,
+    };
+    let handle: WindowHandle<gpui_component::Root> =
+        app.open_window(size(px(width), px(600.)), move |window, cx: &mut App| {
+            components::theme::init(cx);
+            let panel = cx.new(|_| panel);
+            let view = cx.new(|cx| debug_window::DebugWindow::preview(panel, &kind, window, cx));
+            cx.new(|cx| gpui_component::Root::new(view, window, cx))
+        })?;
+    Ok(handle.into())
 }
 
 fn open_patches_window(
@@ -253,7 +289,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(str::parse::<f32>)
         .transpose()?
         .unwrap_or(if audio { 520.0 } else { PATCHES_HEIGHT });
-    let handle = if audio {
+    let debug = matches!(
+        option(&args, "--window"),
+        Some("debug-heap" | "debug-tasks" | "debug-scheduler" | "debug-objects")
+    );
+    let handle = if debug {
+        open_debug_window(
+            &mut app,
+            model,
+            option(&args, "--window").unwrap_or("debug-heap").to_owned(),
+            option(&args, "--width")
+                .map(str::parse::<f32>)
+                .transpose()?
+                .unwrap_or(760.),
+        )?
+    } else if audio {
         open_audio_window(&mut app, model, height)?
     } else {
         open_patches_window(&mut app, height, &args, status, available, selection)?
@@ -265,7 +315,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Saved {}x{} {} window to {output}",
         image.width(),
         image.height(),
-        if audio {
+        if debug {
+            "FreeRTOS"
+        } else if audio {
             "channels and playback"
         } else {
             "patches"

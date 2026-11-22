@@ -5,7 +5,7 @@ use std::{
     io::{self, BufRead, BufReader, Read},
     net::Shutdown,
     os::unix::net::UnixStream,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -39,8 +39,9 @@ impl Read for DeadlineReader {
 
 type Management = Qmp<Stream<BufReader<DeadlineReader>, UnixStream>>;
 
+#[derive(Clone)]
 pub struct QmpClient {
-    management: Mutex<Management>,
+    management: Arc<Mutex<Management>>,
 }
 
 impl QmpClient {
@@ -64,8 +65,13 @@ impl QmpClient {
         }
         management.handshake().map_err(io::Error::from)?;
         Ok(Self {
-            management: Mutex::new(management),
+            management: Arc::new(Mutex::new(management)),
         })
+    }
+
+    /// Whether two handles refer to the same QEMU management connection.
+    pub fn same_connection(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.management, &other.management)
     }
 
     fn execute<C: Command>(&self, command: &C) -> io::Result<C::Ok> {
@@ -218,14 +224,6 @@ impl QmpClient {
     }
 }
 
-impl Drop for QmpClient {
-    fn drop(&mut self) {
-        if let Ok(management) = self.management.lock() {
-            let _ = management.inner().get_ref_write().shutdown(Shutdown::Both);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,6 +275,27 @@ mod tests {
         client.resume().unwrap();
         assert_eq!(client.drain_events().len(), 1);
         client.quit().unwrap();
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn dropping_a_clone_keeps_the_connection_usable() {
+        let (client, mut peer) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || {
+            let mut reader = BufReader::new(peer.try_clone().unwrap());
+            greeting(&mut peer);
+            expect_command(&mut reader, "qmp_capabilities");
+            peer.write_all(b"{\"return\":{}}\r\n").unwrap();
+            expect_command(&mut reader, "query-status");
+            peer.write_all(
+                b"{\"return\":{\"running\":true,\"singlestep\":false,\"status\":\"running\"}}\r\n",
+            )
+            .unwrap();
+        });
+        let client = QmpClient::connect(client).unwrap();
+        let clone = client.clone();
+        drop(clone);
+        assert!(client.query_status().unwrap().running);
         server.join().unwrap();
     }
 

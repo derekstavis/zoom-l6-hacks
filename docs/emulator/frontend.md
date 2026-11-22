@@ -336,3 +336,38 @@ limits. For offscreen panel images, see [`l6test capture gui`](../development/to
 - QEMU's Rust crates are internal Meson device APIs rather than a complete
   system embedding interface. The board model remains C; the UI, lifecycle,
   protocol, diagnostics, and package tool are Rust.
+
+## FreeRTOS diagnostics
+
+The **Debug → FreeRTOS** window reads the running MAIN CPU's memory through
+QEMU's management connection. It does not call firmware code or allocate guest
+heap. Heap shows allocated and free blocks and allocator counters; Tasks shows
+task priority, stack range and estimated remaining stack; Scheduler shows the current task
+pointer and scheduler counters. Objects shows the validated notification semaphore;
+it is a partial list, not an inventory of all FreeRTOS objects. The play/pause control pauses diagnostic
+refresh only. The guest keeps running, and only the selected tab is sampled.
+Use the Heap and Tasks column sort controls to order the current sample; the
+selected ordering is retained as new samples arrive. Hover a task name to see
+its TCB, creation sequence, mutex count, and validated event-list address.
+
+Detailed decoding is currently limited to L6max MAIN 1.10, including patches
+that retain the guarded allocator and task-creation code. Other models or
+unrecognized revisions report that the layout is unsupported. Samples are
+collected while the guest runs, so counters and allocation structures can
+change during a read. Inconsistent heap/task samples are rejected and retried;
+the last successful view may be older than the latest attempt. Task state and
+stack-fill estimates are observations, not guarantees of current execution or
+worst-case stack headroom. The Tasks tab colors estimated free stack amber
+below 25% and red below 10%; these are visual cues, not safety guarantees.
+The status bar applies the same visual thresholds to current free heap as a
+proportion of the arena; they do not guarantee allocation success. Task stacks
+and task control blocks are labeled when their structures can be verified;
+other allocation owners are unknown.
+
+The task states distinguish a validated event-list wait from an ambiguous
+delay or suspension. A running guest can change list links during sampling, so
+an unvalidated link is shown conservatively; no object name is inferred from
+the event-list pointer. Fragmentation is the percentage of currently free block
+bytes outside the largest free block, including allocator headers; it is not
+defined when there is no free memory. Next wake is a raw tick value, not a
+duration. The current task and scheduler values can change between reads.

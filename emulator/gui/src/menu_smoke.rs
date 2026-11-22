@@ -275,8 +275,21 @@ impl MenuSmoke {
             }
             32 if panel.options.sd_image.is_some() && panel.ejected_card.is_none() => {
                 println!("PASS: Eject SD Card and Insert SD Card swap in the File menu");
-                Self::validate_menu("Audio Input")?;
+                Self::validate_menu("Debug")?;
                 self.deadline = Instant::now() + Duration::from_secs(120);
+                self.stage = 40;
+            }
+            40 => {
+                Self::click("Debug", "FreeRTOS…")?;
+                self.stage = 41;
+            }
+            41 if panel.debug_window.is_some() => {
+                let debug = panel.debug_window.take().unwrap();
+                debug
+                    .update(cx, |_, window, _| window.remove_window())
+                    .map_err(|e| e.to_string())?;
+                println!("PASS: Debug menu opens the FreeRTOS window");
+                Self::validate_menu("Audio Input")?;
                 self.stage = 22;
             }
             22 => {

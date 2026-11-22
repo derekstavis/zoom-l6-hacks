@@ -3,6 +3,7 @@ mod bundle;
 mod bundle_smoke;
 mod components;
 mod configuration;
+mod debug_window;
 #[cfg(feature = "headless-screenshots")]
 mod headless_screenshot;
 mod knob_input;
@@ -127,6 +128,7 @@ actions!(
         InsertSdCard,
         OpenPatchesWindow,
         OpenAudioWindow,
+        OpenDebugWindow,
         PlayAudioInputs,
         PauseAudioInputs,
         StopAudioInputs,
@@ -188,6 +190,7 @@ fn app_menus(state: MenuState) -> Vec<Menu> {
             MenuItem::action("Rewind", RewindAudioInputs),
         ]),
         Menu::new("Connections").items([usb, midi]),
+        Menu::new("Debug").items([MenuItem::action("FreeRTOS…", OpenDebugWindow)]),
     ]
 }
 
@@ -324,6 +327,7 @@ struct NativePanel {
     window_model: l6fw::Model,
     window_settling_frames: u8,
     audio_window: Option<gpui::WindowHandle<Root>>,
+    debug_window: Option<gpui::WindowHandle<Root>>,
     patches_window: Option<gpui::WindowHandle<Root>>,
     root_window: Option<gpui::WindowHandle<Root>>,
     /// The card taken out with Eject SD Card, which Insert SD Card puts back.
@@ -899,6 +903,40 @@ impl NativePanel {
                 Ok(window) => panel.audio_window = Some(window),
                 Err(error) => {
                     panel.report(format!("Could not open the audio window: {error}"), true);
+                    cx.notify();
+                }
+            });
+        });
+    }
+
+    fn open_debug_window(&mut self, cx: &mut Context<Self>) {
+        if self.debug_window.is_some_and(|window| {
+            window
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+        }) {
+            return;
+        }
+        let panel = cx.entity();
+        cx.defer(move |cx| {
+            let bounds = Bounds::centered(None, size(px(760.0), px(600.0)), cx);
+            let view = panel.clone();
+            let window = cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    is_resizable: true,
+                    ..Default::default()
+                },
+                |window, cx| {
+                    window.set_window_title("FreeRTOS");
+                    let debug = cx.new(|cx| debug_window::DebugWindow::new(view, window, cx));
+                    cx.new(|cx| Root::new(debug, window, cx))
+                },
+            );
+            panel.update(cx, |panel, cx| match window {
+                Ok(window) => panel.debug_window = Some(window),
+                Err(error) => {
+                    panel.report(format!("Could not open FreeRTOS window: {error}"), true);
                     cx.notify();
                 }
             });
@@ -1767,6 +1805,7 @@ fn main() {
             window_model: model,
             window_settling_frames: 0,
             audio_window: None,
+            debug_window: None,
             patches_window: None,
             root_window: None,
             ejected_card: None,
@@ -1855,6 +1894,10 @@ fn main() {
                 panel.patch_error = None;
                 panel.open_patches_window(cx)
             });
+        });
+        let action_view = view.clone();
+        cx.on_action(move |_: &OpenDebugWindow, cx| {
+            defer_panel_update(cx, &action_view, |panel, cx| panel.open_debug_window(cx));
         });
         let action_view = view.clone();
         cx.on_action(move |_: &OpenAudioWindow, cx| {

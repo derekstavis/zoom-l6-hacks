@@ -750,6 +750,22 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
                     run(Operation::KnobDialog, "knob-dialog")?;
                 }
                 if let Some(patch) = patches.iter().find(|patch| **patch == "midi-sync") {
+                    // This scenario owns a fresh, unconfigured device. Clear
+                    // the two first-run prompts before expecting USB MIDI,
+                    // matching the host-midi scenario's L6max setup sequence.
+                    let inputs = session
+                        .engine
+                        .inputs
+                        .as_ref()
+                        .ok_or("post-update MIDI check requires inputs")?;
+                    for settle_ms in [2_000, 5_000] {
+                        inputs.tap(3, 50).map_err(|error| error.to_string())?;
+                        wait_guest_duration(
+                            &session,
+                            settle_ms,
+                            Instant::now() + Duration::from_secs(120),
+                        )?;
+                    }
                     let usb = session
                         .engine
                         .usb

@@ -180,7 +180,7 @@ pub(crate) fn wasm_patch(
         fs::create_dir_all(out).map_err(|e| e.to_string())?;
         let bytes = fs::read(package).map_err(|e| e.to_string())?;
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
-        let (patched, report) = firmware_patch_wasm::apply_patches(&bytes, &names)?;
+        let (patched, report) = patch_wasm::apply_patches(&bytes, &names)?;
         fs::write(out.join("patched.bin"), patched).map_err(|e| e.to_string())?;
         fs::write(
             out.join("report.json"),

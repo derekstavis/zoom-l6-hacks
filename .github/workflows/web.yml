@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - web/**
-      - tools/firmware-patch-wasm/**
+      - tools/patch-wasm/**
       - tools/patch-core/**
       - tools/l6patch/**
       - .cargo/config.toml

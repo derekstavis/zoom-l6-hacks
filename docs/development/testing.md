@@ -527,7 +527,7 @@ are regenerated from the stock packages in `config.toml`:
 cargo l6patch prebuilt
 ```
 
-Review the generated changes under `tools/firmware-patch-wasm/templates/` and
+Review the generated changes under `tools/patch-wasm/templates/` and
 `web/public/loadable-patches/` and commit them with the source change. Do not edit the generated `.bin` or `.json`
 files by hand. Run the browser/native parity case for both models and the SD
 loading matrix:

@@ -1718,17 +1718,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "firmware-patch-wasm"
-version = "0.1.0"
-dependencies = [
- "l6fw",
- "patch-core",
- "serde_json",
- "sha2 0.10.9",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "fixedbitset"
 version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3614,11 +3603,11 @@ dependencies = [
  "alsa",
  "coremidi",
  "firmware-api",
- "firmware-patch-wasm",
  "l6fw",
  "libc",
  "memmap2",
  "patch-core",
+ "patch-wasm",
  "qapi",
  "qemu-build",
  "sd-image",
@@ -3661,7 +3650,6 @@ name = "l6test"
 version = "0.1.0"
 dependencies = [
  "firmware-api",
- "firmware-patch-wasm",
  "gif 0.14.2",
  "image",
  "l6fw",
@@ -3671,6 +3659,7 @@ dependencies = [
  "libc",
  "patch-abi",
  "patch-core",
+ "patch-wasm",
  "qemu-build",
  "schemars",
  "sd-image",
@@ -4874,6 +4863,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "patch-wasm"
+version = "0.1.0"
+dependencies = [
+ "l6fw",
+ "patch-core",
+ "serde_json",
+ "sha2 0.10.9",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -6530,7 +6530,6 @@ dependencies = [
  "alsa",
  "coremidi",
  "firmware-api",
- "firmware-patch-wasm",
  "image",
  "l6fw",
  "l6max-diagnostics",
@@ -6539,6 +6538,7 @@ dependencies = [
  "libc",
  "patch-abi",
  "patch-core",
+ "patch-wasm",
  "schemars",
  "sd-image",
  "serde",

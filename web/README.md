@@ -2,7 +2,7 @@
 
 A static site that detects an uploaded L6 or L6max firmware package and applies
 compatible firmware patches from [`../patches`](../patches) entirely client-side, via
-WebAssembly. No server, no upload — see [`../tools/firmware-patch-wasm`](../tools/firmware-patch-wasm)
+WebAssembly. No server, no upload — see [`../tools/patch-wasm`](../tools/patch-wasm)
 for how that's possible without ever shipping any of Zoom's firmware.
 
 ## Development
@@ -13,7 +13,7 @@ npm run dev
 ```
 
 `predev`/`prebuild` run `npm run wasm:build` automatically, which compiles
-[`firmware-patch-wasm`](../tools/firmware-patch-wasm) to `wasm32-unknown-unknown`
+[`patch-wasm`](../tools/patch-wasm) to `wasm32-unknown-unknown`
 and runs `wasm-bindgen` to generate `src/wasm/generated/` — not committed,
 since it's a build artifact of already-committed Rust source, not source
 itself. Requires the `wasm32-unknown-unknown` Rust target and a `wasm-bindgen`

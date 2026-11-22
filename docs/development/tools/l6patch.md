@@ -44,7 +44,7 @@ Patch loader.
 
 ## Prebuilt files
 
-The browser patcher's templates (`tools/firmware-patch-wasm/templates/`) and the
+The browser patcher's templates (`tools/patch-wasm/templates/`) and the
 SD modules the website and the emulator serve (`web/public/loadable-patches/`)
 are committed, generated files. `cargo l6patch prebuilt` regenerates both from
 the stock packages in `config.toml` `[firmware]`, which it unpacks itself; pass

@@ -1,21 +1,82 @@
 //! Read-only, revision-guarded FreeRTOS diagnostics for L6max 1.10.
 use crate::{heap, qmp::QmpClient};
+use firmware_api::l6max;
 use l6fw::Model;
 use sha2::{Digest, Sha256};
 
-const START: u32 = 0x808a4148;
-const END: u32 = 0x80921140;
-const TASK_COUNT: u32 = 0x8020ab40;
-const CURRENT_TCB: u32 = 0x808a3af0;
-const CREATE_TASK: u32 = 0x80091360;
-const CREATE_HASH: &str = "05215841341ae4fb9ffbbfb43250cea8f3149427f4ba5abd048cfb4dd5d22ec9";
-const DELAY_TASK: u32 = 0x80084e90;
-const DELAY_HASH: &str = "eb976fe0ec661701842cb3f7bfde2fe23b1f173d16cfbe6b08c730dfd6f071ce";
-const QUEUE_CREATE: u32 = 0x800909c0;
-const QUEUE_HASH: &str = "53e5aeb59bdbec2225c9b6d5a692d578a7c992bd68aba55034397e27250ef0dc";
-const TASK_CHANGE: u32 = 0x8020ab38;
-const TICK_TASK: u32 = 0x80091a20;
-const TICK_HASH: &str = "b16ed9b761ad29feb71b01d07d53be5c1da56e467692d2e31424f4653227cd64";
+/// Where one firmware revision keeps its kernel state, and the kernel
+/// routines whose first 64 bytes must match before that state is trusted.
+struct Kernel {
+    revision_guard: &'static str,
+    /// The heap arena: its first block header and its end-marker block.
+    heap: (u32, u32),
+    /// `uxCurrentNumberOfTasks`, followed by the scheduler globals.
+    task_count: u32,
+    /// `uxTaskNumber`, which changes whenever a task is created or deleted.
+    task_change: u32,
+    current_tcb: u32,
+    ready_lists: u32,
+    delayed_lists: [u32; 2],
+    suspended_list: u32,
+    critical_nesting: u32,
+    create_task: (u32, &'static str),
+    delay_task: (u32, &'static str),
+    tick: (u32, &'static str),
+    /// The counting-semaphore constructor and the variable holding the one
+    /// object this module decodes, the notification semaphore.
+    notification: Option<((u32, &'static str), u32)>,
+}
+
+const L6MAX: Kernel = Kernel {
+    revision_guard: "l6max_1_10_kernel_routines",
+    heap: (l6max::heap_first_block, l6max::heap_end_block),
+    task_count: l6max::uxCurrentNumberOfTasks,
+    task_change: l6max::uxTaskNumber,
+    current_tcb: l6max::pxCurrentTCB,
+    ready_lists: l6max::pxReadyTasksLists,
+    delayed_lists: [l6max::xDelayedTaskList1, l6max::xDelayedTaskList2],
+    suspended_list: l6max::xSuspendedTaskList,
+    critical_nesting: l6max::uxCriticalNesting,
+    create_task: (
+        l6max::xTaskCreate,
+        "05215841341ae4fb9ffbbfb43250cea8f3149427f4ba5abd048cfb4dd5d22ec9",
+    ),
+    delay_task: (
+        l6max::prvAddCurrentTaskToDelayedList,
+        "eb976fe0ec661701842cb3f7bfde2fe23b1f173d16cfbe6b08c730dfd6f071ce",
+    ),
+    tick: (
+        l6max::xTaskIncrementTick,
+        "b16ed9b761ad29feb71b01d07d53be5c1da56e467692d2e31424f4653227cd64",
+    ),
+    notification: Some((
+        (
+            l6max::xQueueCreateCountingSemaphore,
+            "53e5aeb59bdbec2225c9b6d5a692d578a7c992bd68aba55034397e27250ef0dc",
+        ),
+        l6max::notification_slot,
+    )),
+};
+
+/// Kernel priorities; each has one 20-byte ready list.
+const PRIORITIES: u32 = 32;
+const LIST_LEN: u32 = 20;
+
+fn kernel(model: Model) -> Result<&'static Kernel, String> {
+    match model {
+        Model::L6max => Ok(&L6MAX),
+        Model::L6 => Err("FreeRTOS details are supported for L6max 1.10 only".into()),
+    }
+}
+
+/// The revision guard a snapshot of `model` reports.
+pub fn revision_guard(model: Model) -> Result<&'static str, String> {
+    Ok(kernel(model)?.revision_guard)
+}
+
+fn matches(q: &QmpClient, (address, hash): (u32, &str)) -> Result<bool, String> {
+    Ok(format!("{:x}", Sha256::digest(read(q, address, 64)?)) == hash)
+}
 
 #[derive(Clone, Debug)]
 pub struct HeapBlock {
@@ -58,13 +119,11 @@ pub struct SchedulerSnapshot {
     pub critical_nesting: u32,
 }
 pub fn scheduler(q: &QmpClient, model: Model) -> Result<SchedulerSnapshot, String> {
-    guard(q, model)?;
-    if format!("{:x}", Sha256::digest(read(q, CREATE_TASK, 64)?)) != CREATE_HASH
-        || format!("{:x}", Sha256::digest(read(q, TICK_TASK, 64)?)) != TICK_HASH
-    {
+    let (_, k) = guard(q, model)?;
+    if !matches(q, k.create_task)? || !matches(q, k.tick)? {
         return Err("Scheduler layout is unsupported for this firmware".into());
     }
-    let b = read(q, TASK_COUNT, 0x2c)?;
+    let b = read(q, k.task_count, 0x2c)?;
     let task_count = u32_at(&b, 0)?;
     if task_count > 256 {
         return Err("scheduler is not ready".into());
@@ -75,14 +134,14 @@ pub fn scheduler(q: &QmpClient, model: Model) -> Result<SchedulerSnapshot, Strin
         suspended: u32_at(&b, 8)?,
         ticks: u32_at(&b, 12)?,
         pending_ticks: u32_at(&b, 0x24)?,
-        current_tcb: u32_at(&read(q, CURRENT_TCB, 4)?, 0)?,
+        current_tcb: u32_at(&read(q, k.current_tcb, 4)?, 0)?,
         yield_pending: u32_at(&b, 0x18)? != 0,
         tick_overflows: u32_at(&b, 0x28)?,
         next_wake: match u32_at(&b, 0x20)? {
             u32::MAX => None,
             value => Some(value),
         },
-        critical_nesting: u32_at(&read(q, 0x80207634, 4)?, 0)?,
+        critical_nesting: u32_at(&read(q, k.critical_nesting, 4)?, 0)?,
     })
 }
 #[derive(Clone, Debug)]
@@ -99,17 +158,20 @@ pub struct Object {
     pub receive_waiters: u32,
 }
 pub fn objects(q: &QmpClient, model: Model) -> Result<Vec<Object>, String> {
-    let before = guard(q, model)?;
-    if format!("{:x}", Sha256::digest(read(q, QUEUE_CREATE, 64)?)) != QUEUE_HASH {
+    let (before, k) = guard(q, model)?;
+    let Some((create, root)) = k.notification else {
+        return Ok(Vec::new());
+    };
+    if !matches(q, create)? {
         return Err("Object layout is unsupported for this firmware".into());
     }
-    let root = 0x8020a2a0;
+    let (start, end) = k.heap;
     let address = u32_at(&read(q, root, 4)?, 0)?;
     if address == 0 {
         return Ok(Vec::new());
     }
-    if address < START + 8
-        || address.checked_add(0x50).is_none_or(|end| end > END)
+    if address < start + 8
+        || address.checked_add(0x50).is_none_or(|limit| limit > end)
         || address % 8 != 0
     {
         return Err("Notification semaphore is not ready".into());
@@ -122,7 +184,7 @@ pub fn objects(q: &QmpClient, model: Model) -> Result<Vec<Object>, String> {
         || address
             .checked_sub(8)
             .and_then(|a| a.checked_add(size))
-            .is_none_or(|end| end > END)
+            .is_none_or(|limit| limit > end)
     {
         return Err("Notification semaphore allocation is inconsistent; retrying".into());
     }
@@ -163,24 +225,22 @@ fn u32_at(b: &[u8], offset: usize) -> Result<u32, String> {
 fn read(q: &QmpClient, addr: u32, len: usize) -> Result<Vec<u8>, String> {
     q.read_memory(0, addr, len).map_err(|e| e.to_string())
 }
-fn guard(q: &QmpClient, model: Model) -> Result<heap::Heap, String> {
-    if model != Model::L6max {
-        return Err("FreeRTOS details are supported for L6max 1.10 only".into());
-    }
-    heap::read(q, model)
+fn guard(q: &QmpClient, model: Model) -> Result<(heap::Heap, &'static Kernel), String> {
+    let k = kernel(model)?;
+    Ok((heap::read(q, model)?, k))
 }
-fn read_arena(q: &QmpClient) -> Result<Vec<u8>, String> {
-    let mut memory = Vec::with_capacity((END - START) as usize);
-    let mut at = START;
-    while at < END {
-        let n = ((END - at) as usize).min(4096);
+fn read_arena(q: &QmpClient, (start, end): (u32, u32)) -> Result<Vec<u8>, String> {
+    let mut memory = Vec::with_capacity((end - start) as usize);
+    let mut at = start;
+    while at < end {
+        let n = ((end - at) as usize).min(4096);
         memory.extend(read(q, at, n)?);
         at += n as u32;
     }
     Ok(memory)
 }
-fn decode_blocks(memory: &[u8]) -> Result<Vec<HeapBlock>, String> {
-    if memory.len() != (END - START) as usize {
+fn decode_blocks(memory: &[u8], (start, end): (u32, u32)) -> Result<Vec<HeapBlock>, String> {
+    if memory.len() != (end - start) as usize {
         return Err("short heap snapshot".into());
     }
     let mut pos = 0usize;
@@ -192,7 +252,7 @@ fn decode_blocks(memory: &[u8]) -> Result<Vec<HeapBlock>, String> {
             return Err("heap changed while sampling; retrying".into());
         }
         blocks.push(HeapBlock {
-            address: START + pos as u32,
+            address: start + pos as u32,
             size: size as u32,
             allocated: flags >> 31 != 0,
             owner: None,
@@ -202,13 +262,13 @@ fn decode_blocks(memory: &[u8]) -> Result<Vec<HeapBlock>, String> {
     Ok(blocks)
 }
 pub fn heap(q: &QmpClient, model: Model) -> Result<HeapSnapshot, String> {
-    let before = guard(q, model)?;
-    let memory = read_arena(q)?;
+    let (before, k) = guard(q, model)?;
+    let memory = read_arena(q, k.heap)?;
     let after = heap::read(q, model)?;
     if before != after {
         return Err("heap changed while sampling; retrying".into());
     }
-    let mut blocks = decode_blocks(&memory)?;
+    let mut blocks = decode_blocks(&memory, k.heap)?;
     if blocks
         .iter()
         .filter(|b| !b.allocated)
@@ -219,11 +279,11 @@ pub fn heap(q: &QmpClient, model: Model) -> Result<HeapSnapshot, String> {
         return Err("heap free blocks disagree with counters; retrying".into());
     }
     // Ownership is inferred only for stacks and TCBs that pass all task checks.
-    if format!("{:x}", Sha256::digest(read(q, CREATE_TASK, 64)?)) == CREATE_HASH {
-        let count = u32_at(&read(q, TASK_COUNT, 4)?, 0)?;
-        let current = u32_at(&read(q, CURRENT_TCB, 4)?, 0)?;
+    if matches(q, k.create_task)? {
+        let count = u32_at(&read(q, k.task_count, 4)?, 0)?;
+        let current = u32_at(&read(q, k.current_tcb, 4)?, 0)?;
         if count <= 256
-            && let Ok(snapshot) = decode_tasks(&memory, count, current)
+            && let Ok(snapshot) = decode_tasks(&memory, k, count, current)
         {
             for task in snapshot.tasks {
                 for block in &mut blocks {
@@ -243,29 +303,36 @@ pub fn heap(q: &QmpClient, model: Model) -> Result<HeapSnapshot, String> {
     })
 }
 pub fn tasks(q: &QmpClient, model: Model) -> Result<TasksSnapshot, String> {
-    let before = guard(q, model)?;
-    if format!("{:x}", Sha256::digest(read(q, CREATE_TASK, 64)?)) != CREATE_HASH {
+    let (before, k) = guard(q, model)?;
+    if !matches(q, k.create_task)? {
         return Err("Task layout is unsupported for this firmware".into());
     }
-    if format!("{:x}", Sha256::digest(read(q, DELAY_TASK, 64)?)) != DELAY_HASH {
+    if !matches(q, k.delay_task)? {
         return Err("Task wait layout is unsupported for this firmware".into());
     }
-    let change = u32_at(&read(q, TASK_CHANGE, 4)?, 0)?;
-    let count = u32_at(&read(q, TASK_COUNT, 4)?, 0)?;
+    let change = u32_at(&read(q, k.task_change, 4)?, 0)?;
+    let count = u32_at(&read(q, k.task_count, 4)?, 0)?;
     if count > 256 {
         return Err("scheduler is not ready".into());
     }
-    let memory = read_arena(q)?;
+    let memory = read_arena(q, k.heap)?;
     let after = heap::read(q, model)?;
-    let count_after = u32_at(&read(q, TASK_COUNT, 4)?, 0)?;
-    let current_after = u32_at(&read(q, CURRENT_TCB, 4)?, 0)?;
-    if before != after || count != count_after || change != u32_at(&read(q, TASK_CHANGE, 4)?, 0)? {
+    let count_after = u32_at(&read(q, k.task_count, 4)?, 0)?;
+    let current_after = u32_at(&read(q, k.current_tcb, 4)?, 0)?;
+    if before != after || count != count_after || change != u32_at(&read(q, k.task_change, 4)?, 0)?
+    {
         return Err("tasks changed while sampling; retrying".into());
     }
-    decode_tasks(&memory, count, current_after)
+    decode_tasks(&memory, k, count, current_after)
 }
-fn decode_tasks(memory: &[u8], expected: u32, current: u32) -> Result<TasksSnapshot, String> {
-    if memory.len() != (END - START) as usize {
+fn decode_tasks(
+    memory: &[u8],
+    k: &Kernel,
+    expected: u32,
+    current: u32,
+) -> Result<TasksSnapshot, String> {
+    let (start, end) = k.heap;
+    if memory.len() != (end - start) as usize {
         return Err("short heap snapshot".into());
     }
     let mut pos = 0usize;
@@ -285,14 +352,14 @@ fn decode_tasks(memory: &[u8], expected: u32, current: u32) -> Result<TasksSnaps
             continue;
         }
         let t = pos + 8;
-        let tcb = START + t as u32;
+        let tcb = start + t as u32;
         let stack = u32_at(memory, t + 0x30)?;
         let top = u32_at(memory, t + 0x64)?;
         if u32_at(memory, t + 0x10)? != tcb
             || u32_at(memory, t + 0x24)? != tcb
-            || !(START..END).contains(&stack)
+            || !(start..end).contains(&stack)
             || top < stack
-            || top >= END
+            || top >= end
         {
             continue;
         }
@@ -304,7 +371,7 @@ fn decode_tasks(memory: &[u8], expected: u32, current: u32) -> Result<TasksSnaps
         if !name_bytes[..name_end].iter().all(|c| (32..127).contains(c)) {
             continue;
         }
-        let stack_offset = (stack - START) as usize;
+        let stack_offset = (stack - start) as usize;
         let Some(&(_, block_size, true)) = blocks.iter().find(|(p, _, _)| *p + 8 == stack_offset)
         else {
             continue;
@@ -313,7 +380,9 @@ fn decode_tasks(memory: &[u8], expected: u32, current: u32) -> Result<TasksSnaps
             continue;
         }
         let stack_size = (block_size - 16) as u32;
-        if stack.checked_add(stack_size).is_none_or(|end| end > END)
+        if stack
+            .checked_add(stack_size)
+            .is_none_or(|limit| limit > end)
             || top != stack + stack_size - 8
         {
             continue;
@@ -326,17 +395,17 @@ fn decode_tasks(memory: &[u8], expected: u32, current: u32) -> Result<TasksSnaps
         let event = u32_at(memory, t + 0x28)?;
         let word_at = |address: u32| {
             address
-                .checked_sub(START)
+                .checked_sub(start)
                 .and_then(|offset| u32_at(memory, offset as usize).ok())
         };
         let item = tcb + 0x18;
         let event_valid = event != 0
             && blocks.iter().any(|(p, size, allocated)| {
                 *allocated
-                    && event >= START + *p as u32 + 8
+                    && event >= start + *p as u32 + 8
                     && event
                         .checked_add(20)
-                        .is_some_and(|end| end <= START + (*p + *size) as u32)
+                        .is_some_and(|limit| limit <= start + (*p + *size) as u32)
             })
             && word_at(event).is_some_and(|count| (1..=256).contains(&count))
             && u32_at(memory, t + 0x1c)
@@ -351,17 +420,17 @@ fn decode_tasks(memory: &[u8], expected: u32, current: u32) -> Result<TasksSnaps
                 == Some(item);
         let state = if current == tcb {
             "Current"
-        } else if (0x808a3af4..0x808a3d74).contains(&container)
-            && (container - 0x808a3af4) % 20 == 0
+        } else if (k.ready_lists..k.ready_lists + PRIORITIES * LIST_LEN).contains(&container)
+            && (container - k.ready_lists) % LIST_LEN == 0
         {
             "Ready"
-        } else if container == 0x8020aea8 || container == 0x8020aebc {
+        } else if k.delayed_lists.contains(&container) {
             if event_valid {
                 "Timed wait"
             } else {
                 "Delay / wait"
             }
-        } else if container == 0x8020ab80 {
+        } else if container == k.suspended_list {
             if event_valid {
                 "Blocked"
             } else {
@@ -411,25 +480,28 @@ mod tests {
         put(&mut mem, 0x38, 1);
         put(&mut mem, 0x3c, 1);
         mem[0x4c] = 2;
-        assert_eq!(decode_notification(START + 8, &mem).unwrap().count, 1);
+        assert_eq!(
+            decode_notification(L6MAX.heap.0 + 8, &mem).unwrap().count,
+            1
+        );
         put(&mut mem, 0x38, 2);
-        assert!(decode_notification(START + 8, &mem).is_err());
+        assert!(decode_notification(L6MAX.heap.0 + 8, &mem).is_err());
         put(&mut mem, 0x38, 1);
         mem[0x4c] = 0;
-        assert!(decode_notification(START + 8, &mem).is_err());
-        assert!(decode_notification(START + 8, &mem[..16]).is_err());
+        assert!(decode_notification(L6MAX.heap.0 + 8, &mem).is_err());
+        assert!(decode_notification(L6MAX.heap.0 + 8, &mem[..16]).is_err());
     }
     #[test]
     fn task_snapshot_finds_stack_and_rejects_mismatched_count() {
-        let mut mem = vec![0u8; (END - START) as usize];
+        let mut mem = vec![0u8; (L6MAX.heap.1 - L6MAX.heap.0) as usize];
         put(&mut mem, 4, 0x8000_1010);
         mem[8..8 + 4096].fill(0xa5);
         mem[8 + 2048] = 0;
         let block = 0x1010usize;
         put(&mut mem, block + 4, 0x8000_00a0);
         let t = block + 8;
-        let tcb = START + t as u32;
-        let stack = START + 8;
+        let tcb = L6MAX.heap.0 + t as u32;
+        let stack = L6MAX.heap.0 + 8;
         put(&mut mem, t + 0x10, tcb);
         put(&mut mem, t + 0x24, tcb);
         put(&mut mem, t + 0x30, stack);
@@ -440,17 +512,17 @@ mod tests {
         let free = block + 0xa0;
         let free_size = (mem.len() - free) as u32;
         put(&mut mem, free + 4, free_size);
-        let blocks = decode_blocks(&mem).unwrap();
+        let blocks = decode_blocks(&mem, L6MAX.heap).unwrap();
         assert_eq!(blocks.len(), 3);
         assert!(blocks[0].allocated && blocks[1].allocated);
         assert!(!blocks[2].allocated);
-        let snapshot = decode_tasks(&mem, 1, tcb).unwrap();
+        let snapshot = decode_tasks(&mem, &L6MAX, 1, tcb).unwrap();
         assert_eq!(snapshot.tasks[0].name, "Audio");
         assert_eq!(snapshot.tasks[0].stack_remaining, 2048);
         assert_eq!(snapshot.tasks[0].stack_size, 4096);
         assert_eq!(snapshot.tasks[0].state, "Current");
         assert_eq!(snapshot.tasks[0].base_priority, 12);
-        assert!(decode_tasks(&mem, 2, tcb).is_err());
+        assert!(decode_tasks(&mem, &L6MAX, 2, tcb).is_err());
 
         // A task on an indefinite wait list can be identified as blocked only
         // when its event item and the allocated list link back to each other.
@@ -458,25 +530,28 @@ mod tests {
         let rest = free + 0x80;
         let rest_size = (mem.len() - rest) as u32;
         put(&mut mem, rest + 4, rest_size);
-        let list = START + free as u32 + 8;
+        let list = L6MAX.heap.0 + free as u32 + 8;
         let sentinel = list + 8;
         let item = tcb + 0x18;
         put(&mut mem, free + 8, 1);
         put(&mut mem, free + 8 + 12, item);
         put(&mut mem, free + 8 + 16, item);
-        put(&mut mem, t + 0x14, 0x8020ab80);
+        put(&mut mem, t + 0x14, L6MAX.suspended_list);
         put(&mut mem, t + 0x28, list);
         put(&mut mem, t + 0x1c, sentinel);
         put(&mut mem, t + 0x20, sentinel);
-        assert_eq!(decode_tasks(&mem, 1, 0).unwrap().tasks[0].state, "Blocked");
-        put(&mut mem, t + 0x14, 0x8020aea8);
         assert_eq!(
-            decode_tasks(&mem, 1, 0).unwrap().tasks[0].state,
+            decode_tasks(&mem, &L6MAX, 1, 0).unwrap().tasks[0].state,
+            "Blocked"
+        );
+        put(&mut mem, t + 0x14, L6MAX.delayed_lists[0]);
+        assert_eq!(
+            decode_tasks(&mem, &L6MAX, 1, 0).unwrap().tasks[0].state,
             "Timed wait"
         );
         put(&mut mem, free + 8 + 16, 0);
         assert_eq!(
-            decode_tasks(&mem, 1, 0).unwrap().tasks[0].state,
+            decode_tasks(&mem, &L6MAX, 1, 0).unwrap().tasks[0].state,
             "Delay / wait"
         );
     }

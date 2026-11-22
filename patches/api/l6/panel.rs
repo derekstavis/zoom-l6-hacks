@@ -26,6 +26,8 @@ firmware_variables! {
     /// The three-byte panel report being dispatched.
     pub panel_report: u8, at 0x808c_b54d;
     /// One byte per sound pad.
+    /// Per-pad assignment pending flags, one byte per pad; the worker clears
+    /// each when it finishes.
     pub sound_pad_assignments: u8, at 0x8044_337f;
 }
 

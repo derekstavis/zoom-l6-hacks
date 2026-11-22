@@ -59,3 +59,23 @@ firmware_variables! {
     pub mut xNumberOfSuccessfulAllocations: u32, at 0x8020_ab24;
     pub mut xNumberOfSuccessfulFrees: u32, at 0x8020_ab28;
 }
+
+firmware_functions! {
+    pub unsafe fn vTaskPrioritySet(task: *mut u8, priority: u32) at 0x8008_ea50;
+    pub unsafe fn xQueueReceive(queue: *mut u8, item: *mut u8, ticks_to_wait: u32) -> i32, at 0x8009_0e08;
+}
+
+firmware_symbols! {
+    /// Blocking queue receive that decrements `queue_items_in_flight`.
+    pub fw_queue_receive at 0x8005_f588;
+    /// Blocking queue send that increments `queue_items_in_flight`.
+    pub fw_queue_send at 0x8005_f5d8;
+    /// Creates a task: entry, name, stack depth in words, parameter,
+    /// priority and handle slot.
+    pub fw_task_create at 0x8005_f660;
+}
+
+firmware_variables! {
+    /// Items sent through `fw_queue_send` and not yet received.
+    pub queue_items_in_flight: u32, at 0x8066_5ea0;
+}

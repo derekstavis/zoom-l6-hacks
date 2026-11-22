@@ -27,19 +27,23 @@ pub fn run(args: Vec<OsString>) -> Result<(), Box<dyn std::error::Error>> {
             q.read_memory(0, address, 4)?.try_into().unwrap(),
         ))
     };
-    let original_bitmap = word(0x80207458)?;
+    let original_bitmap = word(l6max::gui_bitmap_table_entry_0 + 36 * 4)?;
     h.tap(35, 50, 150)?;
     inputs.encoder(0, -1)?;
     h.wait(350)?;
     let snapshot = || -> Result<serde_json::Value, Box<dyn std::error::Error>> {
         Ok(serde_json::json!({
-  "bitmap":word(0x80207458)?,"busy":q.read_memory(0,l6max::notification_active,1)?[0],
+  "bitmap":word(l6max::gui_bitmap_table_entry_0 + 36 * 4)?,"busy":q.read_memory(0,l6max::notification_active,1)?[0],
   "notification_active":q.read_memory(0,l6max::notification_busy,1)?[0],
   "elapsed":u16::from_le_bytes(q.read_memory(0,l6max::notification_timer,2)?.try_into().unwrap()),
-  "recorder_state_a":word(0x8020a9f0)?,"recorder_state_b":word(0x8020a9f4)?}))
+  "recorder_state_a":word(l6max::rec_command_running)?,"recorder_state_b":word(0x8020a9f4)?}))
     };
     let before = snapshot()?;
-    assert_ne!(word(0x80207458)?, original_bitmap, "no initial popup");
+    assert_ne!(
+        word(l6max::gui_bitmap_table_entry_0 + 36 * 4)?,
+        original_bitmap,
+        "no initial popup"
+    );
     assert_eq!(before["busy"], 0);
     q.stop()?;
     let mut g = gdb::Gdb::connect(&socket)?;
@@ -57,7 +61,7 @@ pub fn run(args: Vec<OsString>) -> Result<(), Box<dyn std::error::Error>> {
     // One callback invocation is replaced before its prologue. LR and the task
     // stack remain intact. No dirty flag or recorder state is fabricated.
     g.register(0, 0)?;
-    g.register(15, 0x8004da20)?;
+    g.register(15, l6max::rec_gui_refresh_tick)?;
     q.resume()?;
     h.wait(300)?;
     let after = snapshot()?;

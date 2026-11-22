@@ -84,3 +84,9 @@ pub const GUI_UPDATE_DIALOG_WINDOW: u32 = 0x8020_03b4;
 pub const GUI_UPDATE_PROGRESS_WINDOW: u32 = 0x8020_029c;
 /// Read-only descriptor bitmap-table entry 36 points to.
 pub const GUI_BITMAP_36_DESCRIPTOR: u32 = 0x800c_b964;
+
+firmware_symbols! {
+    /// 50 twelve-byte notification records: three text resource IDs at +2,
+    /// a tick count at +8 and flags at +10.
+    pub gui_notification_table at 0x8020_2c0c;
+}

@@ -126,10 +126,10 @@ fn refresh_heap_ranges_are_bounded_aligned_and_disjoint() {
     assert!(!valid(snapshot, snapshot));
     assert!(!valid(snapshot + len - 8, snapshot));
     assert!(!valid(snapshot + len + 1, snapshot));
-    assert!(!valid(0x808a4140, snapshot));
-    assert!(valid(0x80921140 - len, snapshot));
-    assert!(!valid(0x80921148 - len, snapshot));
-    assert!(!valid(0x80921148, snapshot));
+    assert!(!valid(heap_range::FIRST_PAYLOAD - 16, snapshot));
+    assert!(valid(heap_range::END - len, snapshot));
+    assert!(!valid(heap_range::END + 8 - len, snapshot));
+    assert!(!valid(heap_range::END + 8, snapshot));
     assert!(!valid(snapshot + len, 0));
     assert!(!valid(usize::MAX - 7, snapshot));
     assert!(!valid(snapshot + len, usize::MAX - 7));
@@ -139,13 +139,13 @@ fn refresh_heap_ranges_are_bounded_aligned_and_disjoint() {
 fn snapshot_heap_range_rejects_headers_sentinel_and_overflow() {
     use heap_range::valid_heap_allocation as valid;
     let len = boundary_pause::CAPTURE_BYTES;
-    assert!(valid(0x808a4150, len));
-    assert!(valid(0x80921140 - len, len));
-    assert!(!valid(0x808a4148, len));
-    assert!(!valid(0x808a4151, len));
-    assert!(!valid(0x80921148 - len, len));
+    assert!(valid(heap_range::FIRST_PAYLOAD, len));
+    assert!(valid(heap_range::END - len, len));
+    assert!(!valid(heap_range::FIRST_PAYLOAD - 8, len));
+    assert!(!valid(heap_range::FIRST_PAYLOAD + 1, len));
+    assert!(!valid(heap_range::END + 8 - len, len));
     assert!(!valid(usize::MAX - 7, len));
-    assert!(!valid(0x808a4150, 0));
+    assert!(!valid(heap_range::FIRST_PAYLOAD, 0));
 }
 
 #[test]

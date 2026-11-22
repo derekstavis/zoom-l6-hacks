@@ -364,7 +364,7 @@ fn verify_audio_trace(model: l6fw::Model, logs: &Path) -> Result<(), String> {
         let (Some(tx_ms), Some(rx_ms)) = (tx_enabled, rx_enabled) else {
             return Err(format!(
                 "{} SAI at {base:#010x} did not enable TX/RX FIFO DMA requests; run with L6_AUDIO_TRACE=1",
-                model_name(model)
+                model.label()
             ));
         };
         latest_enable_ms = latest_enable_ms.max(tx_ms).max(rx_ms);
@@ -391,7 +391,7 @@ fn verify_audio_trace(model: l6fw::Model, logs: &Path) -> Result<(), String> {
             {
                 return Err(format!(
                     "{} SAI at {base:#010x} had no post-enable {direction} FIFO traffic",
-                    model_name(model)
+                    model.label()
                 ));
             }
             let tcd_address = 0x400e_9000 + channel * 0x20;
@@ -401,23 +401,16 @@ fn verify_audio_trace(model: l6fw::Model, logs: &Path) -> Result<(), String> {
             {
                 return Err(format!(
                     "{} SAI {direction} at {base:#010x} had no eDMA channel {channel} TCD activity",
-                    model_name(model)
+                    model.label()
                 ));
             }
         }
     }
     println!(
         "{} clocked audio smoke passed: every configured SAI TX/RX FIFO and its mapped eDMA channel were active.",
-        model_name(model)
+        model.label()
     );
     Ok(())
-}
-
-fn model_name(model: l6fw::Model) -> &'static str {
-    match model {
-        l6fw::Model::L6 => "L6",
-        l6fw::Model::L6max => "L6max",
-    }
 }
 
 fn audio_post_play_settle() -> Result<Duration, String> {

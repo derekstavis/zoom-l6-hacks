@@ -20,7 +20,7 @@ impl BootReadiness {
         }
     }
     pub fn observe(&mut self, model: Model, guest_ms: u32, rows: [u32; 8]) -> bool {
-        let count = if model == Model::L6 { 6 } else { 8 };
+        let count = model.channels();
         let current = rings(rows);
         if current[..count].iter().all(|mask| *mask == 0x1ff) {
             self.all_lit_seen = true;

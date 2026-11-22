@@ -45,6 +45,15 @@ impl Model {
         }
     }
 
+    /// Mixer channels, each with a gain encoder and a ring: six on L6,
+    /// eight on L6max.
+    pub const fn channels(self) -> usize {
+        match self {
+            Model::L6 => 6,
+            Model::L6max => 8,
+        }
+    }
+
     pub fn from_name(name: &str) -> Option<Model> {
         Model::ALL.into_iter().find(|model| model.name() == name)
     }

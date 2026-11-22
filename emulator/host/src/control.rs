@@ -252,7 +252,7 @@ fn execute(
         }
         "encoder" => {
             let channel = number(request, "channel")?;
-            let count = if model == Model::L6 { 6 } else { 8 };
+            let count = model.channels() as u64;
             if channel == 0 || channel > count {
                 return Err(format!(
                     "encoder channel must be 1..{count} for {}",

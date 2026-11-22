@@ -531,9 +531,7 @@ impl Scenario {
             | Action::ExpectMute { channel } = &step.action
             {
                 for model in &value.models {
-                    if step.applies_to(*model)
-                        && !(1..=if *model == Model::L6 { 6 } else { 8 }).contains(channel)
-                    {
+                    if step.applies_to(*model) && !(1..=model.channels()).contains(channel) {
                         return Err(format!("channel {channel} is not available on {model}"));
                     }
                 }

@@ -23,7 +23,7 @@ use std::{
 #[serde(deny_unknown_fields)]
 struct Recipe {
     version: u32,
-    model: String,
+    model: l6fw::Model,
     main_sha256: Option<String>,
     #[serde(default = "wall_limit")]
     wall_timeout_s: u64,
@@ -144,7 +144,6 @@ impl Recipe {
     fn parse(text: &str) -> Result<Self, String> {
         let mut recipe: Self = toml::from_str(&text).map_err(|e| e.to_string())?;
         if recipe.version != 1
-            || !["l6", "l6max"].contains(&recipe.model.as_str())
             || recipe.step.is_empty()
             || recipe.step.len() > 2000
             || recipe.wall_timeout_s == 0
@@ -155,10 +154,7 @@ impl Recipe {
                     .into(),
             );
         }
-        let model = match recipe.model.as_str() {
-            "l6" => l6fw::Model::L6,
-            _ => l6fw::Model::L6max,
-        };
+        let model = recipe.model;
         for step in &mut recipe.step {
             if let Step::Press {
                 target, control, ..
@@ -177,7 +173,7 @@ impl Recipe {
         let mut names = BTreeSet::new();
         let mut held_targets = BTreeSet::new();
         for step in &recipe.step {
-            validate_input(step, &recipe.model, &mut held_targets)?;
+            validate_input(step, model, &mut held_targets)?;
             if let Step::Snapshot { name }
             | Step::Memory { name, .. }
             | Step::MemoryWrite { name, .. }
@@ -301,7 +297,7 @@ impl Recipe {
         Ok(recipe)
     }
 }
-fn validate_input(step: &Step, model: &str, held: &mut BTreeSet<u32>) -> Result<(), String> {
+fn validate_input(step: &Step, model: l6fw::Model, held: &mut BTreeSet<u32>) -> Result<(), String> {
     match step {
         Step::Wait { guest_ms } if *guest_ms == 0 || *guest_ms > 600_000 => {
             Err("wait must be 1..600000 guest milliseconds".into())
@@ -328,7 +324,7 @@ fn validate_input(step: &Step, model: &str, held: &mut BTreeSet<u32>) -> Result<
         } => validate_button(held, *target, *pressed),
         Step::Encoder { channel, steps }
             if *channel == 0
-                || *channel > if model == "l6" { 6 } else { 8 }
+                || *channel as usize > model.channels()
                 || *steps == 0
                 || steps.unsigned_abs() > 1000 =>
         {
@@ -511,11 +507,7 @@ fn run(recipe_path: &Path, options: Options) -> Result<Value, String> {
     let recipe = Recipe::load(recipe_path)?;
     let main = main_image(&options)?;
     let firmware_model = l6fw::model_from_main(&main)?;
-    let actual_model = match firmware_model {
-        l6fw::Model::L6 => "l6",
-        l6fw::Model::L6max => "l6max",
-    };
-    if actual_model != recipe.model {
+    if firmware_model != recipe.model {
         return Err("recipe model differs from firmware".into());
     }
     if let Some(expected) = &recipe.main_sha256 {
@@ -653,7 +645,7 @@ fn run(recipe_path: &Path, options: Options) -> Result<Value, String> {
                     } else {
                         None
                     };
-                    let visible = if actual_model == "l6" { 6 } else { 8 };
+                    let visible = firmware_model.channels();
                     json!({"action":"snapshot","name":name,"indicators":status.indicators,"main_gpio":inputs.main.snapshot().main_gpio,"indicator_levels":status.indicator_levels,"ring_levels":&l6max_host::indicators::ring_levels(status.indicator_levels)[..visible],"rings":&rings(status.indicators)[..visible],"display_available":display_available,"display_ascii":format!("{name}.txt"),"display_raw":display_raw})
                 }
                 Step::Memory {
@@ -807,7 +799,7 @@ fn run(recipe_path: &Path, options: Options) -> Result<Value, String> {
         }
         Ok(())
     })();
-    let report = json!({"schema":1,"model":actual_model,"main_sha256":format!("{:x}", Sha256::digest(&main)),"recipe":recipe_path,"outcome":if outcome.is_ok() { "complete" } else { "error" },"failed_step":if outcome.is_err() { Some(events.len() + 1) } else { None },"error":outcome.as_ref().err(),"events":events});
+    let report = json!({"schema":1,"model":firmware_model.name(),"main_sha256":format!("{:x}", Sha256::digest(&main)),"recipe":recipe_path,"outcome":if outcome.is_ok() { "complete" } else { "error" },"failed_step":if outcome.is_err() { Some(events.len() + 1) } else { None },"error":outcome.as_ref().err(),"events":events});
     fs::write(
         options.logs.join("diagnostic.json"),
         serde_json::to_vec_pretty(&report).map_err(|e| e.to_string())?,

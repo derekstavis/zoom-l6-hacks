@@ -134,8 +134,8 @@ Registry layout 2 (magic `L6R2`):
 A dispatch stub loads its site's handler, the record's first word, with a
 12-bit offset, which allows up to 240 sites. Each link records the handler's
 entry, its module's continuation slot, its load order, its module and the next
-link on the same site. Loader packages built with this layout use update
-version marker `0115`; a layout 1 loader (`0114`) must be reinstalled.
+link on the same site. A loader built with layout 1 must be reinstalled;
+menu-loader and SD modules find only a layout 2 registry.
 Functions must be added to the catalog and loader dispatch before dynamic
 modules can use them.
 

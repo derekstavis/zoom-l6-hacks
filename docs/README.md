@@ -57,7 +57,7 @@ companion tools:
 - [Linux](guides/linux.md): packages, build, ALSA MIDI ports, and verified scope.
 - [L6 and L6max compatibility](guides/model-compatibility.md): model detection, simulator coverage, and current patch/update limits.
 - [Firmware packages](guides/firmware-packages.md): supported input, extraction, lossless repacking, and checksum regeneration.
-- [Knob value patch](guides/knob-patch.md): build, run, and validate version 1.12.
+- [Knob value patch](guides/knob-patch.md): build, run, and validate the patch.
 - [MIDI state sync patch](guides/midi-sync-patch.md): request model-specific mixer state over MIDI.
 
 ## Reading behavior claims

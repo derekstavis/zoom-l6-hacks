@@ -2,6 +2,16 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fs, io::Write, path::Path};
 
+/// The MAIN version stock packages carry (1.10), in the MAIN trailer and the
+/// package footer.
+pub const STOCK_VERSION: [u8; 4] = *b"0110";
+/// The panel version stock packages carry (1.00).
+pub const STOCK_PANEL_VERSION: [u8; 4] = *b"0100";
+/// The MAIN version every patched package carries (1.15), whatever patches
+/// it holds. The mixer only shows the version and offers a newer one at
+/// startup; menu-loader lists the installed patches and their versions.
+pub const PATCHED_VERSION: [u8; 4] = *b"0115";
+
 const L6MAX_FORMAT: &str = "l6max-observed-v1";
 const L6_FORMAT: &str = "l6-observed-v1";
 
@@ -503,9 +513,9 @@ mod tests {
         }
         data[0x68..0x6c].copy_from_slice(b"BOOT");
         data[0x74..0x78].copy_from_slice(b"MAIN");
-        data[p.main_trailer + 4..p.main_trailer + 8].copy_from_slice(b"0110");
-        data[p.panel_trailer + 4..p.panel_trailer + 8].copy_from_slice(b"0100");
-        data[p.total_size - 4..].copy_from_slice(b"0110");
+        data[p.main_trailer + 4..p.main_trailer + 8].copy_from_slice(&STOCK_VERSION);
+        data[p.panel_trailer + 4..p.panel_trailer + 8].copy_from_slice(&STOCK_PANEL_VERSION);
+        data[p.total_size - 4..].copy_from_slice(&STOCK_VERSION);
         if model == Model::L6 {
             data[p.panel_trailer + 8..p.panel_trailer + 16].copy_from_slice(b"RESOURCE");
         }

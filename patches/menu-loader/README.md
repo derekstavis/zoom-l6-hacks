@@ -16,8 +16,8 @@ midi-sync 1.0.0 (SD)
 
 The rows are read-only. Long titles scroll when selected, as stock rows do.
 Patches loaded from the card appear the next time the menu opens. SD patches
-need the [Patch loader](../patch-loader/README.md) with registry layout 2
-(update marker `0115`); without it, Patches lists the firmware patches only.
+need the [Patch loader](../patch-loader/README.md) with registry layout 2;
+without it, Patches lists the firmware patches only.
 
 ## Adding menu items from a patch
 

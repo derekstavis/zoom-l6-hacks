@@ -93,11 +93,8 @@ fn parse_legacy(
     } else {
         Some(resolve_patch_dependencies(&requested)?)
     };
-    if version
-        .as_ref()
-        .is_some_and(|version| version.len() != 4 || !version.bytes().all(|b| b.is_ascii_digit()))
-    {
-        return Err("update version must be exactly four ASCII digits, e.g. 0112".into());
+    if let Some(version) = &version {
+        parse_version(version)?;
     }
     if experimental_sd_bundle && experimental_patch_loader {
         return Err("build the loader and SD bundle in separate output directories".into());
@@ -551,20 +548,10 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         )
         .into());
     }
-    // The original knob-only build keeps its published marker; anything else is newer.
-    let version = options.version.unwrap_or_else(|| {
-        if options.experimental_patch_loader {
-            "0115"
-        } else if patches == ["knob-dialog"] {
-            "0112"
-        } else {
-            "0113"
-        }
-        .into()
-    });
-    if version.len() != 4 || !version.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err("update version must be exactly four ASCII digits, e.g. 0112".into());
-    }
+    let version = match options.version {
+        Some(version) => parse_version(&version)?,
+        None => l6fw::PATCHED_VERSION,
+    };
     verify_firmware_for(patch_model, &firmware)?;
     let digest = format!("{:x}", Sha256::digest(&firmware));
     // Validate every hook region before compiling or modifying the output image.
@@ -1096,7 +1083,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let mut trailer = fs::read(output.join("main_trailer.bin"))?;
     let mut footer = fs::read(output.join("package_footer.bin"))?;
-    write_image_length_and_version(&mut trailer, &mut footer, firmware.len() as u32, &version);
+    write_image_length_and_version(&mut trailer, &mut footer, firmware.len() as u32, version);
     fs::write(output.join("main_trailer.bin"), trailer)?;
     fs::write(output.join("package_footer.bin"), footer)?;
     let mut manifest: serde_json::Value =
@@ -1192,3 +1179,13 @@ mod parameters;
 #[cfg(test)]
 #[path = "../../../patches/midi-sync/common/sync_request.rs"]
 mod sync_request;
+
+/// An override of the patched version: four ASCII digits, e.g. 0115.
+fn parse_version(version: &str) -> Result<[u8; 4], Box<dyn std::error::Error>> {
+    version
+        .as_bytes()
+        .try_into()
+        .ok()
+        .filter(|digits: &[u8; 4]| digits.iter().all(u8::is_ascii_digit))
+        .ok_or_else(|| "update version must be exactly four ASCII digits, e.g. 0115".into())
+}

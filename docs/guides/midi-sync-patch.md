@@ -5,8 +5,8 @@
 Lets a MIDI controller ask an L6 or L6max for model-specific mixer state, so
 motorized faders and encoder rings can match it. Live changes already reach the
 controller through the stock Control Change output; this adds the initial and
-on-demand state request. Version marker `0113` is a local experiment, not an
-official ZOOM release.
+on-demand state request. Patched packages report version 1.15 (`0115`), which
+is not an official ZOOM release.
 
 **Status:** the L6max payload is CPU-simulated and confirmed live in QEMU,
 alone and combined with `knob-dialog` + `din-mixer-control`. An L6-specific
@@ -54,11 +54,11 @@ Follow [getting started](../getting-started.md) for the toolchain, then:
 
 ```sh
 rustup target add thumbv7em-none-eabihf
-cargo run -p l6patch -- firmware unpacked firmware-midi-sync-v113 --patch midi-sync
-cargo run -p l6patch -- firmware unpacked firmware-knob-midi-v113 --patch knob-dialog --patch midi-sync
+cargo run -p l6patch -- firmware unpacked firmware-midi-sync --patch midi-sync
+cargo run -p l6patch -- firmware unpacked firmware-knob-midi --patch knob-dialog --patch midi-sync
 cargo run -p l6fw -- unpack /path/to/L6.BIN unpacked-l6
-cargo run -p l6patch -- firmware unpacked-l6 firmware-midi-sync-l6-v113 --patch midi-sync
-python3 patches/midi-sync/l6/tests/cpu_sim.py firmware-midi-sync-l6-v113/main_firmware.bin
+cargo run -p l6patch -- firmware unpacked-l6 firmware-midi-sync-l6 --patch midi-sync
+python3 patches/midi-sync/l6/tests/cpu_sim.py firmware-midi-sync-l6/main_firmware.bin
 cargo run --offline --locked -p l6test -- run --config config.toml \
   --case l6-midi-sync --model l6
 ```
@@ -77,8 +77,8 @@ beyond `rustup` installing the pinned toolchain. `L6_LD_LLD`, `L6_LLVM_NM` and
 ```sh
 cargo test -p l6patch
 python3 -m pip install unicorn
-python3 patches/midi-sync/l6max/tests/cpu_sim.py firmware-midi-sync-v113/main_firmware.bin
-python3 patches/midi-sync/l6/tests/cpu_sim.py firmware-midi-sync-l6-v113/main_firmware.bin
+python3 patches/midi-sync/l6max/tests/cpu_sim.py firmware-midi-sync/main_firmware.bin
+python3 patches/midi-sync/l6/tests/cpu_sim.py firmware-midi-sync-l6/main_firmware.bin
 cargo run --offline --locked -p l6test -- run --config config.toml \
   --case l6-midi-sync --model l6
 cargo run --offline --locked -p l6test -- run --config config.toml \

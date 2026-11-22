@@ -99,7 +99,7 @@ cargo run -p l6max-host -- --volatile --seconds 10
 | [Getting started](docs/getting-started.md) | Build and run the emulator |
 | [Firmware packages](docs/guides/firmware-packages.md) | Unpack, repack, supported revisions, checksums |
 | [L6/L6max compatibility](docs/guides/model-compatibility.md) | Automatic model selection, simulator support, patch/update limits |
-| [Knob value patch](docs/guides/knob-patch.md) | Build and try the 1.12 patch |
+| [Knob value patch](docs/guides/knob-patch.md) | Build and try the knob value patch |
 | [MIDI state sync patch](docs/guides/midi-sync-patch.md) | Let MIDI controllers request the full mixer state |
 | [Firmware behavior](docs/firmware/README.md) | Chip roles, patch contracts, updates, MIDI protocols |
 | [Architecture](docs/emulator/architecture.md) | Host, GUI, QEMU, and tool boundaries |

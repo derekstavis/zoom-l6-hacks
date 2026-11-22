@@ -1145,7 +1145,7 @@ fn run_l6max_recorder_playback_probe(
                                 .map_err(|error| error.to_string())?[0],
                         );
                         play_notification_active_before = Some(
-                            qmp.read_memory(0, l6max::notification_busy, 1)
+                            qmp.read_memory(0, l6max::notification_active, 1)
                                 .map_err(|error| error.to_string())?[0],
                         );
                         break;

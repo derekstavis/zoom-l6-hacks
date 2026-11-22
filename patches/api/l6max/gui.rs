@@ -36,11 +36,19 @@ firmware_functions! {
 firmware_variables! {
     pub mut notification_slot: u32, at 0x8020_a2a0;
     pub current_window: u32, at 0x8020_2610;
-    pub notification_active: u8, at 0x8020_a2b0;
-    pub notification_busy: u8, at 0x8020_a2c0;
+    /// 1 while a notification shows; `gui_notification_is_active` returns it.
+    pub notification_active: u8, at 0x8020_a2c0;
+    /// 1 while the busy overlay shows. The notification routines never
+    /// touch it.
+    pub notification_busy: u8, at 0x8020_a2b0;
+    /// Five queued notification message IDs.
+    pub notification_queue: [i16; 5], at 0x8020_a2a4;
+    /// The queue slot the next notification is written to.
+    pub notification_queue_write: u8, at 0x8020_a2c1;
     pub notification_pause: u8, at 0x8020_a2c8;
     pub mut notification_timer: u16, at 0x8020_a2c4;
-    pub current_notification_message: u8, at 0x8020_a2c2;
+    /// The queue slot of the showing or next notification.
+    pub notification_queue_read: u8, at 0x8020_a2c2;
     pub mut gui_notification_header_y: u16, at 0x8020_098c;
     pub mut gui_notification_header_polarity: u16, at 0x8020_0986;
     pub mut gui_notification_header_font: u16, at 0x8020_0990;

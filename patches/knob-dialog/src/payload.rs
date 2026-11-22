@@ -589,7 +589,7 @@ pub unsafe extern "C" fn knob_dialog_display_tick() {
             }
             return;
         }
-        if notification_active.read() == 0 && notification_busy.read() == 0 {
+        if notification_busy.read() == 0 && notification_active.read() == 0 {
             #[cfg(sd_dynamic_module)]
             if let Some((title, value)) = take_external_text() {
                 if (*pointer).ticks == 0 && !scene_is_available_for_first_draw() {
@@ -699,8 +699,8 @@ unsafe fn present(channel: u32, mode: u32) {
         let pointer = state();
         if pointer.is_null()
             || current != GUI_RECORDER_WINDOW
-            || notification_active.read() != 0
             || notification_busy.read() != 0
+            || notification_active.read() != 0
         {
             return;
         }

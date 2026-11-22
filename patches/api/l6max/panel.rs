@@ -39,3 +39,10 @@ firmware_variables! {
 
 /// Key-reader table mapping panel targets to keys.
 pub const PANEL_KEY_TABLE: u32 = 0x800c_48c4;
+
+firmware_variables! {
+    /// The four sound-pad lamps, LED records 0x1b-0x1e: a value byte and a
+    /// mode byte each, as SoundPadLed stores them through
+    /// `l6max_panel_led_value_store`.
+    pub sound_pad_lamps: [u16; 4], at 0x805d_b31e;
+}

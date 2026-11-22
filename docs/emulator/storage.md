@@ -92,8 +92,12 @@ L6 package has a different layout and load address; do not apply this bound
 to its package. The L6 builder's package-layout limit is `0x284ff8` bytes,
 but the current emulator's 2 MiB MAIN NOR model accepts at most `0x1a2ff8`
 bytes of MAIN. A larger package can therefore pass the builder's slot check
-but be rejected by the emulator. Neither limit establishes safe physical L6
-growth; the installed layout and runtime space need separate investigation.
+but be rejected by the emulator. L6 startup also initializes `.data` beginning
+at `0x801f5400`, `0x1f4400` bytes above its MAIN load base, and the SD loader
+uses the root word at `0x801f0000`. The package slot extends past both.
+Neither the package bound nor the emulator's smaller bound establishes safe
+physical L6 growth; the installed layout and runtime space need separate
+investigation.
 
 ```text
 L6max 1.10 MAIN address space (not to scale; ranges are half-open)

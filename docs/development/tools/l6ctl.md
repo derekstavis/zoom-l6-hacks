@@ -50,9 +50,11 @@ reading. Errors are JSON on stderr and exit nonzero.
 Each single-category snapshot has `schema: 1`, `kind`, `model`,
 `panel_guest_ms`, `atomic: false`, `revision_guard`, and a category-specific
 `data` object. `panel_guest_ms` is the panel clock sampled after the read, not
-an exact timestamp for every value. The guard
-identifies checked L6max 1.10 kernel routines; it is not a whole-image hash.
-Other models and unsupported or changing layouts return an error. A guest may
+an exact timestamp for every value. The guard,
+`l6_1_10_kernel_routines` or `l6max_1_10_kernel_routines`, identifies the checked
+kernel routines of that model's 1.10 MAIN; it is not a whole-image hash.
+Unsupported or changing layouts return an error. L6 has no screen, so its
+`objects` list is empty. A guest may
 continue running during reads, so values are observations rather than an atomic
 snapshot. `all` returns a top-level `schema`, `kind`, `model` and `atomic`, plus
 `heap`, `tasks`, `scheduler` and `objects` fields containing four separate

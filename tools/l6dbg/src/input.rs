@@ -1,5 +1,6 @@
 //! Live integration check: QMP lifecycle, paused guest deadlines, discrete
 //! button packets, visible selection changes, and encoder input.
+use firmware_api::{l6, l6max};
 use l6max_diagnostics::gdb::Gdb;
 use l6max_host::{
     display::PublishedDisplay,
@@ -436,7 +437,10 @@ fn run_l6_recorder_record_stop_probe(
     latest: &mut Option<Frame>,
 ) -> Result<(), String> {
     let panel_rows = || inputs.panel.snapshot().indicators;
-    let transport_led_records = || qmp.read_memory(0, 0x806293c6, 4).map_err(|e| e.to_string());
+    let transport_led_records = || {
+        qmp.read_memory(0, l6::rec_record_lamp, 4)
+            .map_err(|e| e.to_string())
+    };
     let play_stop_state = || qmp.read_memory(0, 0x806293c8, 2).map_err(|e| e.to_string());
     let panel_tap = |target: u32,
                      duration: Duration,
@@ -492,7 +496,10 @@ fn run_l6_play_gpio_runtime_probe(
     gdb_socket: &Path,
 ) -> Result<(), String> {
     let play_stop = || qmp.read_memory(0, 0x806293c8, 2).map_err(|e| e.to_string());
-    let transport_leds = || qmp.read_memory(0, 0x806293c6, 4).map_err(|e| e.to_string());
+    let transport_leds = || {
+        qmp.read_memory(0, l6::rec_record_lamp, 4)
+            .map_err(|e| e.to_string())
+    };
     // The diagnostic reaches this path at the end of the boot checks, but L6's
     // GPIO2.25 Play reader is also sampled during startup. Let that scan finish
     // before treating a press as a runtime transport action.
@@ -517,7 +524,7 @@ fn run_l6_play_gpio_runtime_probe(
     let mut debugger = Gdb::connect(gdb_socket).map_err(|e| e.to_string())?;
     qmp.stop().map_err(|e| e.to_string())?;
     debugger
-        .breakpoint(0x80020ca0, true)
+        .breakpoint(l6::main_event_submit, true)
         .map_err(|e| e.to_string())?;
     let applied = inputs.main.snapshot().applied;
     inputs.main.down(4, 10_000).map_err(|e| e.to_string())?;
@@ -541,7 +548,7 @@ fn run_l6_play_gpio_runtime_probe(
                         .try_into()
                         .unwrap(),
                 );
-                if pc != 0x80020ca0 {
+                if pc != l6::main_event_submit {
                     return Err(format!(
                         "GPIO2.25 Play probe stopped at {pc:#010x}, expected event submit 0x80020ca0"
                     ));
@@ -576,7 +583,7 @@ fn run_l6_play_gpio_runtime_probe(
         }
     }
     debugger
-        .breakpoint(0x80020ca0, false)
+        .breakpoint(l6::main_event_submit, false)
         .map_err(|e| e.to_string())?;
     let rows_at_submit = inputs.panel.snapshot().indicators;
     let state_at_submit = play_stop()?;
@@ -591,7 +598,7 @@ fn run_l6_play_gpio_runtime_probe(
     let mut play_callback_hit = None;
     if dispatch.is_some() {
         debugger
-            .breakpoint(0x80008a08, true)
+            .breakpoint(l6::rec_play_handler, true)
             .map_err(|error| error.to_string())?;
         match debugger.continue_until_stop(Duration::from_secs(5)) {
             Ok(_) => {
@@ -599,7 +606,7 @@ fn run_l6_play_gpio_runtime_probe(
                     .read_register(15)
                     .map_err(|error| error.to_string())?
                     & !1;
-                if pc != 0x80008a08 {
+                if pc != l6::rec_play_handler {
                     return Err(format!(
                         "Play event trace stopped at {pc:#010x}, expected l6_handle_play_button_event 0x80008a08"
                     ));
@@ -610,7 +617,7 @@ fn run_l6_play_gpio_runtime_probe(
                         .map_err(|error| error.to_string())?,
                 );
                 play_handler_mode = Some(u32::from_le_bytes(
-                    qmp.read_memory(0, 0x80578ebc, 4)
+                    qmp.read_memory(0, l6::rec_mode, 4)
                         .map_err(|error| error.to_string())?
                         .try_into()
                         .unwrap(),
@@ -633,7 +640,7 @@ fn run_l6_play_gpio_runtime_probe(
                     .read_memory(0, 0x801f8c74, 1)
                     .map_err(|error| error.to_string())?[0];
                 let recorder_selection_key = qmp
-                    .read_memory(0, 0x806101a8, 8)
+                    .read_memory(0, l6::rec_selected_key, 8)
                     .map_err(|error| error.to_string())?;
                 play_callback_eligible = play_handler_mode == Some(0)
                     && recorder_selection_key.iter().any(|byte| *byte != 0);
@@ -663,11 +670,11 @@ fn run_l6_play_gpio_runtime_probe(
             }
         }
         debugger
-            .breakpoint(0x80008a08, false)
+            .breakpoint(l6::rec_play_handler, false)
             .map_err(|error| error.to_string())?;
         if play_callback_eligible {
             debugger
-                .breakpoint(0x8004b890, true)
+                .breakpoint(l6::rec_playback_callback, true)
                 .map_err(|error| error.to_string())?;
             match debugger.continue_until_stop(Duration::from_secs(5)) {
                 Ok(_) => {
@@ -675,7 +682,7 @@ fn run_l6_play_gpio_runtime_probe(
                         .read_register(15)
                         .map_err(|error| error.to_string())?
                         & !1;
-                    if pc != 0x8004b890 {
+                    if pc != l6::rec_playback_callback {
                         return Err(format!(
                             "Play callback trace stopped at {pc:#010x}, expected mode-0 callback 0x8004b890"
                         ));
@@ -703,7 +710,7 @@ fn run_l6_play_gpio_runtime_probe(
                 }
             }
             debugger
-                .breakpoint(0x8004b890, false)
+                .breakpoint(l6::rec_playback_callback, false)
                 .map_err(|error| error.to_string())?;
         }
         if play_callback_eligible {
@@ -803,7 +810,7 @@ fn run_l6_play_gpio_runtime_probe(
         "L6 runtime Play target 4 (GPIO2.25) held for 5s: event submit={}; event gate={play_event_gate:02x?}; handler argument={play_handler_argument:?}; recorder mode={play_handler_mode:?}; handler guards (0x801f5f00, 0x80443108, option 0x41, 0x80578ec0, 0x801f8c74, recorder selection key 0x806101a8)={play_handler_guards:?}; settle={settle_ms}ms; panel rows={rows_before:06x?}->{rows_at_submit:06x?}->{rows_after_settle:06x?}; transport LEDs={leds_before:02x?}->{leds_at_submit:06x?}->{leds_after_settle:06x?}; PlayStop={state_before:02x?}->{state_at_submit:02x?}->{state_after_settle:02x?}; SAI1 TX sample signature changed after press={tx_sample_changed_after_press}",
         dispatch
             .map(|(pc, lr, register_args, fifth_argument)| {
-                let kind = if pc == 0x80020ca0 {
+                let kind = if pc == l6::main_event_submit {
                     "l6 event submit"
                 } else {
                     "FreeRTOS xQueueGenericSend"
@@ -938,7 +945,7 @@ fn run_l6max_recorder_playback_probe(
         }
     }
     debugger
-        .breakpoint(0x80045458, true)
+        .breakpoint(l6max::play_event_submit, true)
         .map_err(|error| error.to_string())?;
     let applied = inputs.main.snapshot().applied;
     inputs
@@ -960,7 +967,7 @@ fn run_l6max_recorder_playback_probe(
                     .read_register(14)
                     .map_err(|error| error.to_string())?
                     & !1;
-                if pc != 0x80045458 {
+                if pc != l6max::play_event_submit {
                     return Err(format!(
                         "L6max event trace stopped at {pc:#010x}, expected queue send 0x80045458"
                     ));
@@ -1000,7 +1007,7 @@ fn run_l6max_recorder_playback_probe(
         }
     }
     debugger
-        .breakpoint(0x80045458, false)
+        .breakpoint(l6max::play_event_submit, false)
         .map_err(|error| error.to_string())?;
     if let Some((pc, lr, args, fifth)) = &play_event_submission {
         println!(
@@ -1018,7 +1025,7 @@ fn run_l6max_recorder_playback_probe(
     let mut play_submit_return = None;
     if play_event_submission.is_some() {
         debugger
-            .breakpoint(0x800280a0, true)
+            .breakpoint(l6max::play_event_send_return, true)
             .map_err(|error| error.to_string())?;
         match debugger.continue_until_stop(Duration::from_secs(5)) {
             Ok(_) => {
@@ -1026,7 +1033,7 @@ fn run_l6max_recorder_playback_probe(
                     .read_register(15)
                     .map_err(|error| error.to_string())?
                     & !1;
-                if pc != 0x800280a0 {
+                if pc != l6max::play_event_send_return {
                     return Err(format!(
                         "L6max Play helper trace stopped at {pc:#010x}, expected return 0x800280a0"
                     ));
@@ -1052,7 +1059,7 @@ fn run_l6max_recorder_playback_probe(
             Err(error) => return Err(format!("waiting for L6max Play helper return: {error}")),
         }
         debugger
-            .breakpoint(0x800280a0, false)
+            .breakpoint(l6max::play_event_send_return, false)
             .map_err(|error| error.to_string())?;
     }
     if std::env::var_os("L6MAX_REQUIRE_PLAY_SUBMIT_RETURN").is_some()
@@ -1071,7 +1078,7 @@ fn run_l6max_recorder_playback_probe(
     if play_submit_return == Some(0) {
         // Capture the queued event at its class-0 main-button handler selected by the event loop.
         debugger
-            .breakpoint(0x80036a40, true)
+            .breakpoint(l6max::panel_handle_main_button_event, true)
             .map_err(|error| error.to_string())?;
         let dispatch_deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < dispatch_deadline {
@@ -1082,7 +1089,7 @@ fn run_l6max_recorder_playback_probe(
                         .read_register(15)
                         .map_err(|error| error.to_string())?
                         & !1;
-                    if pc != 0x80036a40 {
+                    if pc != l6max::panel_handle_main_button_event {
                         return Err(format!(
                             "L6max event-dispatch trace stopped at {pc:#010x}, expected main-button handler 0x80036a40"
                         ));
@@ -1105,7 +1112,7 @@ fn run_l6max_recorder_playback_probe(
                                 .map_err(|error| error.to_string())?[0],
                         );
                         play_notification_active_before = Some(
-                            qmp.read_memory(0, 0x8020a2c0, 1)
+                            qmp.read_memory(0, l6max::notification_busy, 1)
                                 .map_err(|error| error.to_string())?[0],
                         );
                         break;
@@ -1130,7 +1137,7 @@ fn run_l6max_recorder_playback_probe(
             }
         }
         debugger
-            .breakpoint(0x80036a40, false)
+            .breakpoint(l6max::panel_handle_main_button_event, false)
             .map_err(|error| error.to_string())?;
     }
     if std::env::var_os("L6MAX_REQUIRE_PLAY_HANDLER").is_some() && play_handler_fields.is_none() {
@@ -1160,7 +1167,7 @@ fn run_l6max_recorder_playback_probe(
     if play_handler_fields.is_some() {
         // The Play case selects callback slot 2 through this scheduler.
         debugger
-            .breakpoint(0x8008bd90, true)
+            .breakpoint(l6max::gui_callback_schedule, true)
             .map_err(|error| error.to_string())?;
         let callback_deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < callback_deadline {
@@ -1168,7 +1175,7 @@ fn run_l6max_recorder_playback_probe(
             match debugger.continue_until_stop(remaining) {
                 Ok(_) => {
                     let pc = debugger.read_register(15).map_err(|e| e.to_string())? & !1;
-                    if pc != 0x8008bd90 {
+                    if pc != l6max::gui_callback_schedule {
                         return Err(format!(
                             "L6max callback trace stopped at {pc:#010x}, expected 0x8008bd90"
                         ));
@@ -1176,7 +1183,11 @@ fn run_l6max_recorder_playback_probe(
                     let callback = debugger.read_register(0).map_err(|e| e.to_string())?;
                     let state = debugger.read_register(1).map_err(|e| e.to_string())?;
                     let lr = debugger.read_register(14).map_err(|e| e.to_string())? & !1;
-                    if callback == 2 && (0x80036a40..0x8003728c).contains(&lr) {
+                    if callback == 2
+                        && (l6max::panel_handle_main_button_event
+                            ..l6max::panel_handle_main_button_event_end)
+                            .contains(&lr)
+                    {
                         let read_u32 = |address| -> Result<u32, String> {
                             Ok(u32::from_le_bytes(
                                 qmp.read_memory(0, address, 4)
@@ -1185,7 +1196,7 @@ fn run_l6max_recorder_playback_probe(
                                     .unwrap(),
                             ))
                         };
-                        let window = read_u32(0x80202610)?;
+                        let window = read_u32(l6max::current_window)?;
                         let callback_table = read_u32(window + 24)?;
                         let callback_target = read_u32(callback_table + 8)? & !1;
                         play_callback_route = Some((callback, state, lr, callback_target));
@@ -1209,7 +1220,7 @@ fn run_l6max_recorder_playback_probe(
             }
         }
         debugger
-            .breakpoint(0x8008bd90, false)
+            .breakpoint(l6max::gui_callback_schedule, false)
             .map_err(|e| e.to_string())?;
     }
     if std::env::var_os("L6MAX_REQUIRE_PLAY_CALLBACK_QUEUE").is_some()
@@ -1255,12 +1266,12 @@ fn run_l6max_recorder_playback_probe(
                 // The selected window callback can pass through a shared state gate
                 // before it invokes the recorder Play action.
                 debugger
-                    .breakpoint(0x80046d68, true)
+                    .breakpoint(l6max::rec_play_action, true)
                     .map_err(|error| error.to_string())?;
                 match debugger.continue_until_stop(Duration::from_secs(5)) {
                     Ok(_) => {
                         let pc = debugger.read_register(15).map_err(|e| e.to_string())? & !1;
-                        if pc != 0x80046d68 {
+                        if pc != l6max::rec_play_action {
                             return Err(format!(
                                 "L6max recorder action trace stopped at {pc:#010x}, expected 0x80046d68"
                             ));
@@ -1301,9 +1312,9 @@ fn run_l6max_recorder_playback_probe(
                         play_recorder_action_gates = Some((
                             read_byte(0x80463005)?,
                             read_u32(0x80462d74)?,
-                            read_byte(0x8020a5ca)?,
+                            read_byte(l6max::update_package_flags)?,
                             read_byte(0x8020a28e)?,
-                            read_byte(0x8020a9ec)?,
+                            read_byte(l6max::rec_mode)?,
                             read_u32(0x8020a9f0)?,
                             read_u64(0x805c7c28)?,
                             read_u64(0x20014b40)?,
@@ -1333,7 +1344,7 @@ fn run_l6max_recorder_playback_probe(
                     }
                 }
                 debugger
-                    .breakpoint(0x80046d68, false)
+                    .breakpoint(l6max::rec_play_action, false)
                     .map_err(|error| error.to_string())?;
                 // The recorder Play action returns unless its gate returns -1. Stop at
                 // the instruction immediately after that call to record the
@@ -1417,8 +1428,20 @@ fn run_l6max_recorder_playback_probe(
         // cluster. At each wrapper entry, r0 is the queue and r1 points to the
         // 32-byte message; LR identifies the firmware callsite.
         let trace_points = [
-            0x8005f5d8, 0x8005f588, 0x800469f4, 0x80046a18, 0x80046a1c, 0x80046a1e, 0x80046d80,
-            0x8004e7f0, 0x8000f7a0, 0x80046ea2, 0x80046ebc, 0x80046ec2, 0x80046f2a, 0x80046f32,
+            0x8005f5d8,
+            0x8005f588,
+            0x800469f4,
+            0x80046a18,
+            0x80046a1c,
+            0x80046a1e,
+            l6max::rec_play_start_callback,
+            0x8004e7f0,
+            0x8000f7a0,
+            0x80046ea2,
+            0x80046ebc,
+            0x80046ec2,
+            0x80046f2a,
+            0x80046f32,
             0x80046f3a,
         ];
         for address in trace_points {
@@ -1438,7 +1461,12 @@ fn run_l6max_recorder_playback_probe(
                     }
                     if matches!(
                         pc,
-                        0x80046a18 | 0x80046a1c | 0x80046a1e | 0x80046d80 | 0x8004e7f0 | 0x8000f7a0
+                        0x80046a18
+                            | 0x80046a1c
+                            | 0x80046a1e
+                            | l6max::rec_play_start_callback
+                            | 0x8004e7f0
+                            | 0x8000f7a0
                     ) {
                         let args = (0..4)
                             .map(|register| debugger.read_register(register))
@@ -1512,7 +1540,9 @@ fn run_l6max_recorder_playback_probe(
                                         );
                                         break;
                                     }
-                                    if return_pc == 0x80046d80 || return_pc == 0x8004e7f0 {
+                                    if return_pc == l6max::rec_play_start_callback
+                                        || return_pc == 0x8004e7f0
+                                    {
                                         let args = (0..4)
                                             .map(|register| debugger.read_register(register))
                                             .collect::<Result<Vec<_>, _>>()
@@ -1744,12 +1774,12 @@ fn run_l6max_recorder_playback_probe(
     }
     if play_recorder_action_hit && std::env::var_os("L6MAX_TRACE_STREAM_READ").is_some() {
         debugger
-            .breakpoint(0x8004a130, true)
+            .breakpoint(l6max::rec_stream_read, true)
             .map_err(|error| error.to_string())?;
         match debugger.continue_until_stop(Duration::from_secs(3)) {
             Ok(_) => {
                 let pc = debugger.read_register(15).map_err(|e| e.to_string())? & !1;
-                if pc == 0x8004a130 {
+                if pc == l6max::rec_stream_read {
                     let args = (0..4)
                         .map(|register| debugger.read_register(register))
                         .collect::<Result<Vec<_>, _>>()
@@ -1777,7 +1807,7 @@ fn run_l6max_recorder_playback_probe(
             Err(error) => return Err(format!("waiting for L6max stream-read worker: {error}")),
         }
         debugger
-            .breakpoint(0x8004a130, false)
+            .breakpoint(l6max::rec_stream_read, false)
             .map_err(|error| error.to_string())?;
     }
     qmp.resume().map_err(|error| error.to_string())?;
@@ -1830,7 +1860,7 @@ fn run_l6max_recorder_playback_probe(
             .read_register(13)
             .map_err(|error| error.to_string())?;
         let current_tcb = u32::from_le_bytes(
-            qmp.read_memory(0, 0x808a3af0, 4)
+            qmp.read_memory(0, l6max::pxCurrentTCB, 4)
                 .map_err(|error| error.to_string())?
                 .try_into()
                 .unwrap(),
@@ -1886,7 +1916,7 @@ fn run_l6max_recorder_playback_probe(
             let recplay_event_container = recplay_word(10);
             let recplay_state_value = recplay_word(1);
             let tick_count = u32::from_le_bytes(
-                qmp.read_memory(0, 0x8020ab4c, 4)
+                qmp.read_memory(0, l6max::xTickCount, 4)
                     .map_err(|error| error.to_string())?
                     .try_into()
                     .unwrap(),
@@ -2310,14 +2340,14 @@ fn trace_l6max_recorder_event_window(
                         .collect::<Result<Vec<_>, _>>()
                         .map_err(|error| error.to_string())?;
                     let relevant = match pc {
-                        0x8002_8088 => args[2] == 0x2b,
-                        0x8003_6a40 => {
+                        l6max::panel_ui_event_queue_send => args[2] == 0x2b,
+                        l6max::panel_handle_main_button_event => {
                             let event = qmp
                                 .read_memory(0, args[0], 12)
                                 .map_err(|error| error.to_string())?;
                             u32::from_le_bytes(event[8..12].try_into().unwrap()) == 0x2b
                         }
-                        0x8008_bd90 => args[0] == 1 && args[1] == 0,
+                        l6max::gui_callback_schedule => args[0] == 1 && args[1] == 0,
                         0x8008_be38 => args[0] == 0 && args[7] == 0x8004_e819,
                         0x8004_e818 => args[0] == 0,
                         0x8004_6ce8 => lr == 0x8004_d8ce,
@@ -2510,7 +2540,7 @@ fn run_l6_inputs(
                 .read_memory(0, 0x806293f4, 8)
                 .map_err(|error| error.to_string())?;
             let transport_led_before = qmp
-                .read_memory(0, 0x806293c6, 4)
+                .read_memory(0, l6::rec_record_lamp, 4)
                 .map_err(|error| error.to_string())?;
             inputs
                 .main
@@ -2551,7 +2581,7 @@ fn run_l6_inputs(
                 .read_memory(0, 0x806293f4, 8)
                 .map_err(|error| error.to_string())?;
             let transport_led_held = qmp
-                .read_memory(0, 0x806293c6, 4)
+                .read_memory(0, l6::rec_record_lamp, 4)
                 .map_err(|error| error.to_string())?;
             if std::env::var_os("L6_REQUIRE_PAD_FILES").is_some() && (49..=52).contains(&target) {
                 let record_offset = ((target - 49) * 2) as usize;
@@ -2598,7 +2628,7 @@ fn run_l6_inputs(
                 .read_memory(0, 0x806293f4, 8)
                 .map_err(|error| error.to_string())?;
             let transport_led_released = qmp
-                .read_memory(0, 0x806293c6, 4)
+                .read_memory(0, l6::rec_record_lamp, 4)
                 .map_err(|error| error.to_string())?;
             let changes = |after: [u32; 8]| {
                 (0..8)
@@ -2641,7 +2671,7 @@ fn run_l6_inputs(
         let indicator_before = trace_record.then(|| inputs.panel.snapshot().indicators);
         let transport_led_before = if trace_record {
             Some(
-                qmp.read_memory(0, 0x806293c6, 4)
+                qmp.read_memory(0, l6::rec_record_lamp, 4)
                     .map_err(|error| error.to_string())?,
             )
         } else {
@@ -2670,7 +2700,7 @@ fn run_l6_inputs(
             pump_for(display, latest, Duration::from_millis(250))?;
             let indicator_after = inputs.panel.snapshot().indicators;
             let transport_led_after = qmp
-                .read_memory(0, 0x806293c6, 4)
+                .read_memory(0, l6::rec_record_lamp, 4)
                 .map_err(|error| error.to_string())?;
             let before = indicator_before.expect("record trace has indicator baseline");
             let changed_rows = (0..8)
@@ -2739,7 +2769,7 @@ fn trace_l6_gpio_event_submit(
     expected_code: u32,
     timeout: Duration,
 ) -> Result<Option<[u32; 4]>, String> {
-    const SUBMIT: u32 = 0x80020ca0;
+    const SUBMIT: u32 = l6::main_event_submit;
     const STAGE: u32 = 0x8006e4b8;
     debugger
         .breakpoint(SUBMIT, true)
@@ -2928,8 +2958,8 @@ fn trace_l6_class0_event_dispatch(
     target: u32,
     expected_code: u32,
 ) -> Result<bool, String> {
-    const HANDLER: u32 = 0x8002c9d8;
-    const SOUND_PAD_TRIGGER: u32 = 0x800408b0;
+    const HANDLER: u32 = l6::system_event_dispatcher;
+    const SOUND_PAD_TRIGGER: u32 = l6::sound_pad_event_handler;
     debugger
         .breakpoint(HANDLER, true)
         .map_err(|error| error.to_string())?;
@@ -2985,9 +3015,9 @@ fn trace_l6_class0_event_dispatch(
                             for (name, address) in [
                                 ("current pad", 0x801f5f00),
                                 ("busy", 0x80443108),
-                                ("assignment", 0x8044337f),
+                                ("assignment", l6::sound_pad_assignments),
                                 ("stream", 0x80441d88),
-                                ("status", 0x80441d8c),
+                                ("status", l6::sound_pad1_play_mode),
                             ] {
                                 let value = qmp
                                     .read_memory(0, address, 4)
@@ -3390,7 +3420,7 @@ fn probe_l6_editor(
             .read_memory(0, 0x806293f4, 8)
             .map_err(|error| error.to_string())?;
         let shared_led_before = qmp
-            .read_memory(0, 0x806293c6, 2)
+            .read_memory(0, l6::rec_record_lamp, 2)
             .map_err(|error| error.to_string())?;
         trace_playback_last_rows.replace(indicator_before);
         trace_playback_started.replace(Some(Instant::now()));
@@ -3489,7 +3519,7 @@ fn probe_l6_editor(
             .read_memory(0, 0x806293f4, 8)
             .map_err(|error| error.to_string())?;
         let shared_led_playing = qmp
-            .read_memory(0, 0x806293c6, 2)
+            .read_memory(0, l6::rec_record_lamp, 2)
             .map_err(|error| error.to_string())?;
         let changed_rows = (0..8)
             .filter_map(|row| {
@@ -3637,7 +3667,7 @@ fn run_l6max_panel_key_probe(
     }
     let read_words = || -> Result<[u32; 6], String> {
         let bytes = qmp
-            .read_memory(0, 0x8088_3554, 24)
+            .read_memory(0, l6max::panel_key_state, 24)
             .map_err(|error| error.to_string())?;
         Ok(std::array::from_fn(|index| {
             u32::from_le_bytes(bytes[index * 4..index * 4 + 4].try_into().unwrap())

@@ -1,4 +1,5 @@
 //! Observe the real recorder polling callback's effect on a live knob popup.
+use firmware_api::l6max;
 use l6max_diagnostics::gdb;
 use l6max_host::{engine::Options, headless::Headless};
 use std::{
@@ -15,6 +16,9 @@ pub fn run(args: Vec<OsString>) -> Result<(), Box<dyn std::error::Error>> {
         std::env::temp_dir().join(format!("l6dbg-popup-trigger-{}.sock", std::process::id()));
     options.gdb_socket = Some(socket.clone());
     let h = Headless::start(&options)?;
+    if h.engine.model() != l6fw::Model::L6max {
+        return Err("the popup probe requires L6max firmware".into());
+    }
     h.recorder()?;
     let q = &h.engine.management[0];
     let inputs = h.engine.inputs.as_ref().unwrap();
@@ -29,9 +33,9 @@ pub fn run(args: Vec<OsString>) -> Result<(), Box<dyn std::error::Error>> {
     h.wait(350)?;
     let snapshot = || -> Result<serde_json::Value, Box<dyn std::error::Error>> {
         Ok(serde_json::json!({
-  "bitmap":word(0x80207458)?,"busy":q.read_memory(0,0x8020a2b0,1)?[0],
-  "notification_active":q.read_memory(0,0x8020a2c0,1)?[0],
-  "elapsed":u16::from_le_bytes(q.read_memory(0,0x8020a2c4,2)?.try_into().unwrap()),
+  "bitmap":word(0x80207458)?,"busy":q.read_memory(0,l6max::notification_active,1)?[0],
+  "notification_active":q.read_memory(0,l6max::notification_busy,1)?[0],
+  "elapsed":u16::from_le_bytes(q.read_memory(0,l6max::notification_timer,2)?.try_into().unwrap()),
   "recorder_state_a":word(0x8020a9f0)?,"recorder_state_b":word(0x8020a9f4)?}))
     };
     let before = snapshot()?;
@@ -39,7 +43,7 @@ pub fn run(args: Vec<OsString>) -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(before["busy"], 0);
     q.stop()?;
     let mut g = gdb::Gdb::connect(&socket)?;
-    g.breakpoint(0x800064c0, true)?;
+    g.breakpoint(l6max::gui_notification_tick, true)?;
     q.resume()?;
     let deadline = Instant::now() + Duration::from_secs(15);
     while q.query_status()?.running {
@@ -49,7 +53,7 @@ pub fn run(args: Vec<OsString>) -> Result<(), Box<dyn std::error::Error>> {
         }
         thread::sleep(Duration::from_millis(5));
     }
-    g.breakpoint(0x800064c0, false)?;
+    g.breakpoint(l6max::gui_notification_tick, false)?;
     // One callback invocation is replaced before its prologue. LR and the task
     // stack remain intact. No dirty flag or recorder state is fabricated.
     g.register(0, 0)?;

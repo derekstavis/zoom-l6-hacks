@@ -3,7 +3,7 @@
 // not committed. See web/README.md.
 import init, {
   applyPatches as applyPatchesWasm,
-  detectFirmwareModel as detectFirmwareModelWasm,
+  detectModel as detectFirmwareModelWasm,
 } from '../wasm/generated/firmware_patch_wasm.js'
 
 let ready: Promise<void> | null = null

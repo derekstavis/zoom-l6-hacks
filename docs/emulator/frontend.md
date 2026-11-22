@@ -352,9 +352,10 @@ its TCB, creation sequence, mutex count, and validated event-list address.
 For machine-readable snapshots of a running emulator, start it with a control
 socket and use [`l6ctl rtos`](../development/tools/l6ctl.md#freertos-snapshots).
 
-Detailed decoding is currently limited to L6max MAIN 1.10, including patches
-that retain the guarded allocator and task-creation code. Other models or
-unrecognized revisions report that the layout is unsupported. Samples are
+Detailed decoding covers L6 and L6max MAIN 1.10, including patches that retain
+the guarded allocator and task-creation code. Unrecognized revisions report
+that the layout is unsupported. L6 has no notification semaphore, so its
+Objects tab is empty. Samples are
 collected while the guest runs, so counters and allocation structures can
 change during a read. Inconsistent heap/task samples are rejected and retried;
 the last successful view may be older than the latest attempt. Task state and

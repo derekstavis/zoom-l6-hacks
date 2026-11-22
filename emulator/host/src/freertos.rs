@@ -1,6 +1,6 @@
-//! Read-only, revision-guarded FreeRTOS diagnostics for L6max 1.10.
+//! Read-only, revision-guarded FreeRTOS diagnostics for L6 and L6max 1.10.
 use crate::{heap, qmp::QmpClient};
-use firmware_api::l6max;
+use firmware_api::{l6, l6max};
 use l6fw::Model;
 use sha2::{Digest, Sha256};
 
@@ -58,20 +58,46 @@ const L6MAX: Kernel = Kernel {
     )),
 };
 
+const L6: Kernel = Kernel {
+    revision_guard: "l6_1_10_kernel_routines",
+    heap: (l6::heap_first_block, l6::heap_end_block),
+    task_count: l6::uxCurrentNumberOfTasks,
+    task_change: l6::uxTaskNumber,
+    current_tcb: l6::pxCurrentTCB,
+    ready_lists: l6::pxReadyTasksLists,
+    delayed_lists: [l6::xDelayedTaskList1, l6::xDelayedTaskList2],
+    suspended_list: l6::xSuspendedTaskList,
+    critical_nesting: l6::uxCriticalNesting,
+    create_task: (
+        l6::xTaskCreate,
+        "95f5f47ae5e6a747dc8a3026df2d0a0863fbcbeaf4e274c88d0d3eb40be028b5",
+    ),
+    delay_task: (
+        l6::prvAddCurrentTaskToDelayedList,
+        "67e77ee24110232f6cafbdc4bf46621e4b2c9ed5f7b86cccf28cf037d3d691ac",
+    ),
+    tick: (
+        l6::xTaskIncrementTick,
+        "c2237a4f6c8d8d193a32ba73359ed8413dfd26ec30334b5b7d550d4ede0acb9a",
+    ),
+    // L6 has no screen, so no notification semaphore.
+    notification: None,
+};
+
 /// Kernel priorities; each has one 20-byte ready list.
 const PRIORITIES: u32 = 32;
 const LIST_LEN: u32 = 20;
 
-fn kernel(model: Model) -> Result<&'static Kernel, String> {
+fn kernel(model: Model) -> &'static Kernel {
     match model {
-        Model::L6max => Ok(&L6MAX),
-        Model::L6 => Err("FreeRTOS details are supported for L6max 1.10 only".into()),
+        Model::L6max => &L6MAX,
+        Model::L6 => &L6,
     }
 }
 
 /// The revision guard a snapshot of `model` reports.
-pub fn revision_guard(model: Model) -> Result<&'static str, String> {
-    Ok(kernel(model)?.revision_guard)
+pub fn revision_guard(model: Model) -> &'static str {
+    kernel(model).revision_guard
 }
 
 fn matches(q: &QmpClient, (address, hash): (u32, &str)) -> Result<bool, String> {
@@ -226,8 +252,7 @@ fn read(q: &QmpClient, addr: u32, len: usize) -> Result<Vec<u8>, String> {
     q.read_memory(0, addr, len).map_err(|e| e.to_string())
 }
 fn guard(q: &QmpClient, model: Model) -> Result<(heap::Heap, &'static Kernel), String> {
-    let k = kernel(model)?;
-    Ok((heap::read(q, model)?, k))
+    Ok((heap::read(q, model)?, kernel(model)))
 }
 fn read_arena(q: &QmpClient, (start, end): (u32, u32)) -> Result<Vec<u8>, String> {
     let mut memory = Vec::with_capacity((end - start) as usize);

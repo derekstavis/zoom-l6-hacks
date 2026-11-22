@@ -200,7 +200,7 @@ mod tests {
     fn semantic_targets_match_the_actual_model_hit_regions() {
         for model in [l6fw::Model::L6, l6fw::Model::L6max] {
             let layout = Layout::for_model(model);
-            for channel in 1..=if model == l6fw::Model::L6 { 6 } else { 8 } {
+            for channel in 1..=model.channels() {
                 let target =
                     smoke_core::control_target(model, &format!("channel.{channel}.mute")).unwrap();
                 let (control, region) =

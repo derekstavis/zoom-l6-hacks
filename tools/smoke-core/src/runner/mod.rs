@@ -767,7 +767,7 @@ impl Runner {
                     } else if until == "mixer-ready" {
                         // MAIN restores every ring at once after the sweep;
                         // L6 then lights its editing-mode lamp.
-                        rings(obs.data.indicators)[..if self.model == Model::L6 { 6 } else { 8 }]
+                        rings(obs.data.indicators)[..self.model.channels()]
                             .iter()
                             .all(|mask| *mask != 0)
                             && (self.model != Model::L6
@@ -1092,7 +1092,7 @@ impl Runner {
                     if only
                         && after
                             .iter()
-                            .take(if self.model == Model::L6 { 6 } else { 8 })
+                            .take(self.model.channels())
                             .zip(before)
                             .enumerate()
                             .any(|(i, (a, b))| i != channel - 1 && *a != b)

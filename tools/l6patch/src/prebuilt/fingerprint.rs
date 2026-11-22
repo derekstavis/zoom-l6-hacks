@@ -69,11 +69,11 @@ pub(crate) fn check(root: &Path) -> Result<(), String> {
         for (key, supported) in [
             (
                 "source_firmware_sha256",
-                firmware_patch_core::EXPECTED_FIRMWARE_SHA256,
+                l6fw::Model::L6max.stock_main_sha256(),
             ),
             (
                 "l6_source_firmware_sha256",
-                firmware_patch_core::L6_EXPECTED_FIRMWARE_SHA256,
+                l6fw::Model::L6.stock_main_sha256(),
             ),
         ] {
             if manifest[key].as_str() != Some(supported) {

@@ -28,7 +28,7 @@ fn card_file_name(module: &Module) -> String {
 
 /// The patches `model` can load from its SD card, in catalog order.
 pub fn available(model: l6fw::Model) -> Vec<&'static str> {
-    let model_name = crate::config::model_name(model);
+    let model_name = model.name();
     firmware_patch_core::patch_catalog()
         .iter()
         .filter(|package| {
@@ -123,7 +123,7 @@ pub fn check(model: l6fw::Model, selected: &[String]) -> Result<(), String> {
         if module(model, patch).is_none() {
             return Err(format!(
                 "{patch} cannot load from the {} SD card; it can only be installed in the firmware",
-                crate::config::model_name(model)
+                model.name()
             ));
         }
     }

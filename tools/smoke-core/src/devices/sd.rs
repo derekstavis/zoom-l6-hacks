@@ -519,12 +519,8 @@ pub(super) fn sd_fixture_edits(
             .join("main_firmware.bin"),
     )
     .map_err(|e| e.to_string())?;
-    let patch_model = match model {
-        l6fw::Model::L6 => firmware_patch_core::FirmwareModel::L6,
-        l6fw::Model::L6max => firmware_patch_core::FirmwareModel::L6max,
-    };
     let image_base = model.main_base();
-    firmware_patch_core::verify_firmware_for(patch_model, &stock)?;
+    firmware_patch_core::verify_firmware_for(model, &stock)?;
     let loader: Value = serde_json::from_slice(
         &fs::read(
             root.join(crate::fixture_layout::LOADER_BUILD)

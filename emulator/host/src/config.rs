@@ -48,19 +48,8 @@ struct Emulator {
     input_patch: BTreeMap<String, PathBuf>,
 }
 
-pub fn model_name(model: l6fw::Model) -> &'static str {
-    match model {
-        l6fw::Model::L6 => "l6",
-        l6fw::Model::L6max => "l6max",
-    }
-}
-
 pub fn parse_model(name: &str) -> Result<l6fw::Model, String> {
-    match name {
-        "l6" => Ok(l6fw::Model::L6),
-        "l6max" => Ok(l6fw::Model::L6max),
-        other => Err(format!("unknown model {other}")),
-    }
+    l6fw::Model::from_name(name).ok_or_else(|| format!("unknown model {name}"))
 }
 
 pub fn check_patch(name: &str) -> Result<(), String> {
@@ -125,27 +114,27 @@ impl Config {
     }
 
     pub fn firmware(&self, model: l6fw::Model) -> Option<&PathBuf> {
-        self.firmware.get(model_name(model))
+        self.firmware.get(model.name())
     }
 
     pub fn sd_card(&self, model: l6fw::Model) -> Option<&PathBuf> {
-        self.emulator.get(model_name(model))?.sd_card.as_ref()
+        self.emulator.get(model.name())?.sd_card.as_ref()
     }
 
     pub fn patches(&self, model: l6fw::Model) -> &[String] {
         self.emulator
-            .get(model_name(model))
+            .get(model.name())
             .map_or(&[], |emulator| &emulator.patches)
     }
 
     pub fn sd_patches(&self, model: l6fw::Model) -> &[String] {
         self.emulator
-            .get(model_name(model))
+            .get(model.name())
             .map_or(&[], |emulator| &emulator.sd_patches)
     }
 
     pub fn effect_replacements(&self, model: l6fw::Model) -> &BTreeMap<String, String> {
-        self.emulator.get(model_name(model)).map_or_else(
+        self.emulator.get(model.name()).map_or_else(
             || empty_effect_replacements(),
             |emulator| &emulator.effect_replacements,
         )
@@ -154,7 +143,7 @@ impl Config {
     /// A model's files by one-based channel, without checking that they exist, so
     /// that the GUI can show and replace a file that moved.
     pub fn input_patch_paths(&self, model: l6fw::Model) -> Option<BTreeMap<u32, PathBuf>> {
-        let emulator = self.emulator.get(model_name(model))?;
+        let emulator = self.emulator.get(model.name())?;
         Some(
             emulator
                 .input_patch
@@ -169,7 +158,7 @@ impl Config {
         &self,
         model: l6fw::Model,
     ) -> Result<Option<BTreeMap<u32, PathBuf>>, String> {
-        let name = model_name(model);
+        let name = model.name();
         let Some(emulator) = self
             .emulator
             .get(name)
@@ -241,7 +230,7 @@ fn emulator_table(
 ) -> &mut toml_edit::Table {
     let emulator = document["emulator"].or_insert(toml_edit::table());
     emulator.as_table_mut().unwrap().set_implicit(true);
-    emulator[model_name(model)]
+    emulator[model.name()]
         .or_insert(toml_edit::table())
         .as_table_mut()
         .unwrap()
@@ -250,8 +239,8 @@ fn emulator_table(
 pub fn save_firmware(path: &Path, model: l6fw::Model, package: &Path) -> Result<(), String> {
     let package = path_text(package)?.to_owned();
     edit(path, |document| {
-        document["model"] = toml_edit::value(model_name(model));
-        document["firmware"].or_insert(toml_edit::table())[model_name(model)] =
+        document["model"] = toml_edit::value(model.name());
+        document["firmware"].or_insert(toml_edit::table())[model.name()] =
             toml_edit::value(package);
     })
 }

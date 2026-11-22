@@ -172,11 +172,8 @@ impl StateSpec {
     }
 
     pub fn model(&self) -> Result<Model, String> {
-        match self.model.as_str() {
-            "l6" => Ok(Model::L6),
-            "l6max" => Ok(Model::L6max),
-            other => Err(format!("unknown model {other:?}; use l6 or l6max")),
-        }
+        Model::from_name(&self.model)
+            .ok_or_else(|| format!("unknown model {:?}; use l6 or l6max", self.model))
     }
 }
 

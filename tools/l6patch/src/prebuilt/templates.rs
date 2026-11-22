@@ -29,10 +29,8 @@ use firmware_patch_compile::{
     compile_sentinel_with_continuations, compile_with_continuations, function_hook_sites,
     hook_registrations, hook_windows, symbol,
 };
-use firmware_patch_core::{
-    FIRST_PAYLOAD, FirmwareModel, L6_MAIN_BASE, WASM_PATCHES, first_payload_for,
-    verify_firmware_for,
-};
+use firmware_patch_core::{WASM_PATCHES, verify_firmware_for};
+use l6fw::Model;
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
@@ -286,7 +284,7 @@ fn loader_site(
 /// sentinel-substituted, then removed from the shipped template and restored
 /// only from the user's verified upload.
 fn build_loader_template(
-    model: FirmwareModel,
+    model: Model,
     source: &Path,
     firmware: &[u8],
     scratch: &Path,
@@ -299,24 +297,13 @@ fn build_loader_template(
     let loader_root = patches.join("patch-loader").canonicalize()?;
     let midi_root = patches
         .join("midi-sync")
-        .join(if model == FirmwareModel::L6 {
-            "l6"
-        } else {
-            "l6max"
-        })
+        .join(model.name())
         .canonicalize()?;
-    let firmware_base = if model == FirmwareModel::L6 {
-        L6_MAIN_BASE
-    } else {
-        0x80000000
-    };
-    let (module_base, reserve_end) = if model == FirmwareModel::L6 {
-        (0x800c0000u32, 0x800c8000u32)
-    } else {
-        (0x80110000u32, 0x80118000u32)
-    };
+    let firmware_base = model.main_base();
+    let modules = model.sd_module_region();
+    let (module_base, reserve_end) = (modules.start, modules.end);
 
-    let sentinel_source = scratch.join(if model == FirmwareModel::L6 {
+    let sentinel_source = scratch.join(if model == Model::L6 {
         "loader-l6-sentinel"
     } else {
         "loader-l6max-sentinel"
@@ -324,7 +311,7 @@ fn build_loader_template(
     fs::create_dir_all(&sentinel_source)?;
     let midi_profile = [midi_root.as_path()];
     let continuation_roots: Vec<&Path> = midi_profile.to_vec();
-    let output = scratch.join(if model == FirmwareModel::L6 {
+    let output = scratch.join(if model == Model::L6 {
         "loader-compile-out-l6"
     } else {
         "loader-compile-out-l6max"
@@ -333,7 +320,7 @@ fn build_loader_template(
     let name = "patch-loader";
     let compile_one =
         |input: &Path, sentinel: bool| -> Result<(Vec<u8>, String), Box<dyn std::error::Error>> {
-            if model == FirmwareModel::L6 {
+            if model == Model::L6 {
                 if sentinel {
                     compile_sentinel_l6_patch_loader(
                         input,
@@ -484,7 +471,7 @@ fn build_loader_template(
         sites.push(dispatch);
     }
     let metadata = serde_json::json!({
-        "model": if model == FirmwareModel::L6 { "L6" } else { "L6max" },
+        "model": model.label(),
         "base": format!("{loader_base:#x}"),
         "static_patches": static_patches,
         "reserve_end": format!("{reserve_end:#x}"),
@@ -565,9 +552,9 @@ pub(crate) fn generate(
     let l6_source = l6_source.canonicalize()?;
     let firmware = fs::read(source.join("main_firmware.bin"))?;
     let digest = format!("{:x}", Sha256::digest(&firmware));
-    verify_firmware_for(FirmwareModel::L6max, &firmware)?;
+    verify_firmware_for(Model::L6max, &firmware)?;
     let l6_firmware = fs::read(l6_source.join("main_firmware.bin"))?;
-    verify_firmware_for(FirmwareModel::L6, &l6_firmware)?;
+    verify_firmware_for(Model::L6, &l6_firmware)?;
 
     let patches_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../patches");
     let scratch =
@@ -604,7 +591,8 @@ pub(crate) fn generate(
             &firmware,
             0x8000_0000,
         )?;
-        let (sentinel, value_to_address) = build_sentinel_firmware(&firmware, &rows, 0x80000000);
+        let (sentinel, value_to_address) =
+            build_sentinel_firmware(&firmware, &rows, Model::L6max.main_base());
         let sentinel_source = scratch.join(format!("{name}-sentinel"));
         fs::create_dir_all(&sentinel_source)?;
         fs::write(sentinel_source.join("main_firmware.bin"), &sentinel)?;
@@ -631,7 +619,7 @@ pub(crate) fn generate(
             .filter(|(i, _)| mask & (1u16 << i) != 0)
             .map(|(_, name)| *name)
             .collect();
-        let mut base = FIRST_PAYLOAD;
+        let mut base = Model::L6max.first_payload(firmware.len());
         for name in subset {
             if !units.contains_key(&(name, base)) {
                 let info = &per_patch[name];
@@ -658,7 +646,7 @@ pub(crate) fn generate(
                 }
                 let mut reconstructed = template.clone();
                 for window in &windows {
-                    let start = (window.firmware_address - 0x80000000) as usize;
+                    let start = (window.firmware_address - Model::L6max.main_base()) as usize;
                     reconstructed[window.payload_offset..window.payload_offset + window.length]
                         .copy_from_slice(&firmware[start..start + window.length]);
                 }
@@ -707,15 +695,16 @@ pub(crate) fn generate(
             .map(|(_, name)| *name)
             .collect();
         let (loader_template, _, _) = build_loader_template(
-            FirmwareModel::L6max,
+            Model::L6max,
             &source,
             &firmware,
             &scratch,
-            FIRST_PAYLOAD,
+            Model::L6max.first_payload(firmware.len()),
             &subset,
             &patch_rows,
         )?;
-        let mut base = (FIRST_PAYLOAD + loader_template.len() as u32 + 15) & !15;
+        let mut base =
+            (Model::L6max.first_payload(firmware.len()) + loader_template.len() as u32 + 15) & !15;
         for name in subset {
             if !units.contains_key(&(name, base)) {
                 let info = &per_patch[name];
@@ -736,7 +725,7 @@ pub(crate) fn generate(
                 }
                 let mut reconstructed = template.clone();
                 for window in &windows {
-                    let start = (window.firmware_address - 0x80000000) as usize;
+                    let start = (window.firmware_address - Model::L6max.main_base()) as usize;
                     reconstructed[window.payload_offset..window.payload_offset + window.length]
                         .copy_from_slice(&firmware[start..start + window.length]);
                 }
@@ -824,7 +813,7 @@ pub(crate) fn generate(
             .collect();
         let metadata = serde_json::json!({
             "name": unit.name,
-            "model": "L6max",
+            "model": Model::L6max.label(),
             "base": format!("{:#x}", unit.base),
             "payload_file": format!("{stem}.bin"),
             "payload_length": unit.template.len(),
@@ -837,7 +826,7 @@ pub(crate) fn generate(
             templates_dir.join(format!("{stem}.json")),
             serde_json::to_string_pretty(&metadata)?,
         )?;
-        manifest_units.push(serde_json::json!({"name": unit.name, "model": "L6max", "base": format!("{:#x}", unit.base), "metadata_file": format!("{stem}.json")}));
+        manifest_units.push(serde_json::json!({"name": unit.name, "model": Model::L6max.label(), "base": format!("{:#x}", unit.base), "metadata_file": format!("{stem}.json")}));
         println!(
             "{stem}: {} bytes, {} window(s), {} window byte(s)",
             unit.template.len(),
@@ -857,11 +846,11 @@ pub(crate) fn generate(
             &output_scratch,
             "midi-sync-l6",
             &l6_firmware,
-            L6_MAIN_BASE,
+            Model::L6.main_base(),
         )?;
-        let l6_base = first_payload_for(FirmwareModel::L6, l6_firmware.len());
+        let l6_base = Model::L6.first_payload(l6_firmware.len());
         let (l6_sentinel, l6_value_to_address) =
-            build_sentinel_firmware(&l6_firmware, &l6_rows, L6_MAIN_BASE);
+            build_sentinel_firmware(&l6_firmware, &l6_rows, Model::L6.main_base());
         let l6_sentinel_source = scratch.join("l6-midi-sync-sentinel");
         fs::create_dir_all(&l6_sentinel_source)?;
         fs::write(l6_sentinel_source.join("main_firmware.bin"), &l6_sentinel)?;
@@ -886,7 +875,7 @@ pub(crate) fn generate(
         }
         let mut l6_reconstructed = l6_template.clone();
         for window in &l6_windows {
-            let start = (window.firmware_address - L6_MAIN_BASE) as usize;
+            let start = (window.firmware_address - Model::L6.main_base()) as usize;
             l6_reconstructed[window.payload_offset..window.payload_offset + window.length]
                 .copy_from_slice(&l6_firmware[start..start + window.length]);
         }
@@ -928,7 +917,7 @@ pub(crate) fn generate(
             .collect();
         let l6_metadata = serde_json::json!({
             "name": "midi-sync",
-            "model": "L6",
+            "model": Model::L6.label(),
             "base": format!("{l6_base:#x}"),
             "payload_file": format!("{l6_stem}.bin"),
             "payload_length": l6_template.len(),
@@ -946,7 +935,7 @@ pub(crate) fn generate(
         )?;
         manifest_units.push(serde_json::json!({
             "name": "midi-sync",
-            "model": "L6",
+            "model": Model::L6.label(),
             "base": format!("{l6_base:#x}"),
             "metadata_file": l6_metadata_file,
         }));
@@ -959,7 +948,7 @@ pub(crate) fn generate(
         );
 
         let (l6_loader_template, _, _) = build_loader_template(
-            FirmwareModel::L6,
+            Model::L6,
             &l6_source,
             &l6_firmware,
             &scratch,
@@ -994,7 +983,7 @@ pub(crate) fn generate(
         }
         let mut loader_l6_reconstructed = loader_l6_template.clone();
         for window in &loader_l6_windows {
-            let start = (window.firmware_address - L6_MAIN_BASE) as usize;
+            let start = (window.firmware_address - Model::L6.main_base()) as usize;
             loader_l6_reconstructed[window.payload_offset..window.payload_offset + window.length]
                 .copy_from_slice(&l6_firmware[start..start + window.length]);
         }
@@ -1017,7 +1006,7 @@ pub(crate) fn generate(
             &loader_l6_template,
         )?;
         let loader_l6_metadata = serde_json::json!({
-            "name": "midi-sync", "model": "L6", "base": format!("{l6_static_base:#x}"),
+            "name": "midi-sync", "model": Model::L6.label(), "base": format!("{l6_static_base:#x}"),
             "payload_file": format!("{loader_l6_stem}.bin"), "payload_length": loader_l6_template.len(),
             "patch_info_offset": symbol(&loader_l6_symbols, firmware_patch_compile::PATCH_INFO_SYMBOL)?
                 .checked_sub(l6_static_base)
@@ -1038,7 +1027,7 @@ pub(crate) fn generate(
             serde_json::to_string_pretty(&loader_l6_metadata)?,
         )?;
         manifest_units.push(serde_json::json!({
-            "name":"midi-sync", "model":"L6", "base":format!("{l6_static_base:#x}"),
+            "name":"midi-sync", "model":Model::L6.label(), "base":format!("{l6_static_base:#x}"),
             "metadata_file":loader_l6_metadata_file,
         }));
     }
@@ -1053,27 +1042,20 @@ pub(crate) fn generate(
             .map(|(_, name)| *name)
             .collect();
         loader_profiles.push((
-            FirmwareModel::L6max,
+            Model::L6max,
             source.as_path(),
             firmware.as_slice(),
             mask,
             selected,
-            FIRST_PAYLOAD,
+            Model::L6max.first_payload(firmware.len()),
         ));
     }
     {
         let (l6_source, l6_firmware) = (l6_source.as_path(), l6_firmware.as_slice());
-        let l6_base = first_payload_for(FirmwareModel::L6, l6_firmware.len());
+        let l6_base = Model::L6.first_payload(l6_firmware.len());
         for mask in 0u8..2 {
             let selected = if mask == 0 { vec![] } else { vec!["midi-sync"] };
-            loader_profiles.push((
-                FirmwareModel::L6,
-                l6_source,
-                l6_firmware,
-                mask,
-                selected,
-                l6_base,
-            ));
+            loader_profiles.push((Model::L6, l6_source, l6_firmware, mask, selected, l6_base));
         }
     }
     for (model, loader_source, loader_firmware, mask, selected, base) in loader_profiles {
@@ -1086,11 +1068,7 @@ pub(crate) fn generate(
             &selected,
             &patch_rows,
         )?;
-        let model_name = if model == FirmwareModel::L6 {
-            "L6"
-        } else {
-            "L6max"
-        };
+        let model_name = model.label();
         let stem = format!("patch-loader-{model_name}-{mask:03}-{base:08x}");
         let payload_file = format!("patch-loader-{model_name}-{mask:03}-{base:08x}.bin");
         let payload_path = templates_dir.join(&payload_file);

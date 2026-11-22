@@ -26,10 +26,7 @@ pub const STOCK_L6MAX_PACKAGE_SHA256: &str =
 
 /// SHA-256 of the supported stock MAIN image for `model`.
 pub fn stock_sha256(model: l6fw::Model) -> &'static str {
-    match model {
-        l6fw::Model::L6 => firmware_patch_core::L6_EXPECTED_FIRMWARE_SHA256,
-        l6fw::Model::L6max => firmware_patch_core::EXPECTED_FIRMWARE_SHA256,
-    }
+    model.stock_main_sha256()
 }
 
 /// Whether `main` is the supported stock image of `model`.

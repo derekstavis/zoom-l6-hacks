@@ -36,9 +36,87 @@ impl Model {
         }
     }
 
+    /// The name packages, the patch catalog and update reports use: `L6` or
+    /// `L6max`.
+    pub fn label(self) -> &'static str {
+        match self {
+            Model::L6 => "L6",
+            Model::L6max => "L6max",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Model> {
+        Model::ALL.into_iter().find(|model| model.name() == name)
+    }
+
+    pub fn from_label(label: &str) -> Option<Model> {
+        Model::ALL.into_iter().find(|model| model.label() == label)
+    }
+
+    /// The update package's file name on the SD card.
+    pub fn package_file_name(self) -> &'static str {
+        match self {
+            Model::L6 => "L6.BIN",
+            Model::L6max => "L6max.bin",
+        }
+    }
+
     /// Guest address the MAIN image loads at.
     pub fn main_base(self) -> u32 {
         profile(self).main_base
+    }
+
+    /// Package offset of the MAIN trailer: MAIN length, then the four version
+    /// digits.
+    pub fn main_trailer_offset(self) -> usize {
+        profile(self).main_trailer
+    }
+
+    /// End of the MAIN slot: the guest address of the MAIN trailer, which a
+    /// grown MAIN image must not reach.
+    pub fn slot_end(self) -> u32 {
+        let profile = profile(self);
+        profile.main_base + (profile.main_trailer - 0x200) as u32
+    }
+
+    /// SHA-256 of the supported stock MAIN image (1.10).
+    pub fn stock_main_sha256(self) -> &'static str {
+        match self {
+            Model::L6 => "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799",
+            Model::L6max => "980d92272c1f84bed200b4d2f83575202f6a00082c928d99b9e8b53af8d44461",
+        }
+    }
+
+    /// The stock MAIN image's reset vector, which tells the models apart.
+    pub fn stock_reset_vector(self) -> u32 {
+        match self {
+            Model::L6 => 0x8000_1415,
+            Model::L6max => 0x8000_0415,
+        }
+    }
+
+    pub fn from_stock_reset_vector(reset_vector: u32) -> Option<Model> {
+        Model::ALL
+            .into_iter()
+            .find(|model| model.stock_reset_vector() == reset_vector)
+    }
+
+    /// Where the first firmware patch payload goes, for a MAIN image of
+    /// `main_length` bytes. L6max patches start at a fixed address inside its
+    /// MAIN slot; L6 patches follow the MAIN image, 16-byte aligned.
+    pub fn first_payload(self, main_length: usize) -> u32 {
+        match self {
+            Model::L6 => (self.main_base() + main_length as u32 + 15) & !15,
+            Model::L6max => 0x8010_8000,
+        }
+    }
+
+    /// The RAM the Patch loader reserves for SD modules, as `start..end`.
+    pub fn sd_module_region(self) -> core::ops::Range<u32> {
+        match self {
+            Model::L6 => 0x800c_0000..0x800c_8000,
+            Model::L6max => 0x8011_0000..0x8011_8000,
+        }
     }
 }
 
@@ -484,6 +562,24 @@ pub fn repack_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn models_have_one_memory_map() {
+        assert_eq!(Model::L6max.slot_end(), 0x801a_2ff8);
+        assert_eq!(Model::L6.slot_end(), 0x8028_5ff8);
+        assert_eq!(Model::L6max.first_payload(0x1081e8), 0x8010_8000);
+        assert_eq!(Model::L6.first_payload(0x21), 0x8000_1030);
+        for model in Model::ALL {
+            assert_eq!(Model::from_label(model.label()), Some(model));
+            assert_eq!(Model::from_name(model.name()), Some(model));
+            assert_eq!(
+                Model::from_stock_reset_vector(model.stock_reset_vector()),
+                Some(model)
+            );
+            let modules = model.sd_module_region();
+            assert!(model.first_payload(0) < modules.start && modules.end <= model.slot_end());
+        }
+    }
 
     fn fixture(model: Model, main_length: usize) -> Vec<u8> {
         let p = profile(model);

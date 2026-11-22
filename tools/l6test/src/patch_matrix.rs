@@ -19,9 +19,10 @@
 //!   website delivers them.
 
 use firmware_patch_core::{
-    EFFECT_REPLACEMENT_ROUTER_PACKAGE, FirmwareModel, PatchCategory, PatchPackage,
-    STOCK_EFFECT_SLOTS, patch_catalog, patch_package, resolve_patch_dependencies,
+    EFFECT_REPLACEMENT_ROUTER_PACKAGE, PatchCategory, PatchPackage, STOCK_EFFECT_SLOTS,
+    patch_catalog, patch_package, resolve_patch_dependencies,
 };
+use l6fw::Model;
 use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -151,15 +152,8 @@ pub struct GeneratedCase {
     pub suites: Vec<&'static str>,
 }
 
-fn model_names(model: FirmwareModel) -> (&'static str, &'static str) {
-    match model {
-        FirmwareModel::L6 => ("L6", "l6"),
-        FirmwareModel::L6max => ("L6max", "l6max"),
-    }
-}
-
-fn declares(models: &[String], model: FirmwareModel) -> bool {
-    models.iter().any(|name| name == model_names(model).0)
+fn declares(models: &[String], model: Model) -> bool {
+    models.iter().any(|name| name == model.label())
 }
 
 fn is_effect_package(package: &PatchPackage) -> bool {
@@ -167,7 +161,7 @@ fn is_effect_package(package: &PatchPackage) -> bool {
 }
 
 /// Patches a case can place, in package order, with their placements.
-fn placeable(model: FirmwareModel) -> Vec<(&'static PatchPackage, Vec<Placement>)> {
+fn placeable(model: Model) -> Vec<(&'static PatchPackage, Vec<Placement>)> {
     patch_catalog()
         .iter()
         .filter(|package| package.kind == "patch" && !is_effect_package(package))
@@ -185,7 +179,7 @@ fn placeable(model: FirmwareModel) -> Vec<(&'static PatchPackage, Vec<Placement>
 }
 
 /// Every slot assignment, the first being all stock.
-fn effect_assignments(model: FirmwareModel) -> Vec<Vec<(&'static str, String)>> {
+fn effect_assignments(model: Model) -> Vec<Vec<(&'static str, String)>> {
     let effects: Vec<String> = patch_catalog()
         .iter()
         .filter(|package| declares(&package.sd_card_models, model))
@@ -276,7 +270,7 @@ impl Combination {
 }
 
 /// Every valid combination for a model, in a stable order.
-fn combinations(model: FirmwareModel) -> Result<Vec<Combination>, String> {
+fn combinations(model: Model) -> Result<Vec<Combination>, String> {
     let patches = placeable(model);
     let mut choices: Vec<Vec<Option<Placement>>> = vec![Vec::new()];
     for (_, placements) in &patches {
@@ -555,11 +549,11 @@ fn header(text: &mut String, id: &str, model: &str, state: &str, card: bool) {
 }
 
 fn combination_case(
-    model: FirmwareModel,
+    model: Model,
     combination: &Combination,
     all: &Checks,
 ) -> Result<GeneratedCase, String> {
-    let (_, name) = model_names(model);
+    let name = model.name();
     let id = combination.id(name);
     for patch in combination.firmware.iter().chain(&combination.sd) {
         if all.get(patch).is_none() {
@@ -569,7 +563,7 @@ fn combination_case(
         }
     }
     let mut text = String::new();
-    let state = if model == FirmwareModel::L6max {
+    let state = if model == Model::L6max {
         "patch-matrix"
     } else {
         "setup-complete"
@@ -619,8 +613,8 @@ fn combination_case(
 
 /// One case per patch and delivery method the browser patcher and the
 /// website offer.
-fn delivery_cases(model: FirmwareModel, all: &Checks) -> Result<Vec<GeneratedCase>, String> {
-    let (_, name) = model_names(model);
+fn delivery_cases(model: Model, all: &Checks) -> Result<Vec<GeneratedCase>, String> {
+    let name = model.name();
     let mut cases = Vec::new();
     for package in patch_catalog().iter().filter(|p| p.kind == "patch") {
         let patch = package.name.as_str();
@@ -638,7 +632,7 @@ fn delivery_cases(model: FirmwareModel, all: &Checks) -> Result<Vec<GeneratedCas
                 &mut text,
                 &id,
                 name,
-                if model == FirmwareModel::L6max {
+                if model == Model::L6max {
                     "patch-matrix"
                 } else {
                     "setup-complete"
@@ -689,7 +683,7 @@ fn delivery_cases(model: FirmwareModel, all: &Checks) -> Result<Vec<GeneratedCas
                 &mut text,
                 &id,
                 name,
-                if model == FirmwareModel::L6max {
+                if model == Model::L6max {
                     "patch-matrix"
                 } else {
                     "setup-complete"
@@ -730,7 +724,7 @@ fn delivery_cases(model: FirmwareModel, all: &Checks) -> Result<Vec<GeneratedCas
 
 /// A combination as one value per factor: each placeable patch's placement
 /// (`-`, `fw` or `sd`), then each stock slot's effect (`-` for stock).
-fn factor_values(model: FirmwareModel, combination: &Combination) -> Vec<String> {
+fn factor_values(model: Model, combination: &Combination) -> Vec<String> {
     let mut values = Vec::new();
     for (package, _) in placeable(model) {
         let name = &package.name;
@@ -835,7 +829,7 @@ fn singles(combinations: &[Vec<String>]) -> BTreeSet<usize> {
 pub fn generate() -> Result<Vec<GeneratedCase>, String> {
     let all = Checks::load()?;
     let mut cases = Vec::new();
-    for model in [FirmwareModel::L6, FirmwareModel::L6max] {
+    for model in [Model::L6, Model::L6max] {
         let combinations = combinations(model)?;
         let values: Vec<Vec<String>> = combinations
             .iter()
@@ -864,7 +858,7 @@ mod tests {
 
     #[test]
     fn pairwise_covers_every_pair_and_single_every_value() {
-        for model in [FirmwareModel::L6, FirmwareModel::L6max] {
+        for model in [Model::L6, Model::L6max] {
             let values: Vec<Vec<String>> = combinations(model)
                 .unwrap()
                 .iter()
@@ -894,7 +888,7 @@ mod tests {
                 }
             }
             assert!(single.len() <= pairwise.len() && pairwise.len() <= values.len());
-            if model == FirmwareModel::L6max {
+            if model == Model::L6max {
                 assert!(pairwise.len() * 5 < values.len());
             }
         }
@@ -905,7 +899,7 @@ mod tests {
         let cases = generate().unwrap();
         let ids: BTreeSet<&str> = cases.iter().map(|case| case.id.as_str()).collect();
         assert_eq!(ids.len(), cases.len(), "case IDs are unique");
-        let l6max = combinations(FirmwareModel::L6max).unwrap();
+        let l6max = combinations(Model::L6max).unwrap();
         // knob-dialog and midi-sync are absent, in firmware or on SD, and
         // din-mixer-control absent or in firmware: 18 sets, 6 of them with
         // knob-dialog on SD. menu-loader and dump-rom go in firmware only, and
@@ -914,7 +908,7 @@ mod tests {
         // replacement needs knob-dialog on SD: 8 replacement assignments per
         // such set.
         assert_eq!(l6max.len(), (18 + 8 * 6) * 3 - 1);
-        assert_eq!(combinations(FirmwareModel::L6).unwrap().len(), 2);
+        assert_eq!(combinations(Model::L6).unwrap().len(), 2);
         assert!(
             l6max
                 .iter()

@@ -1711,6 +1711,7 @@ name = "firmware-patch-compile"
 version = "0.1.0"
 dependencies = [
  "firmware-patch-core",
+ "l6fw",
  "patch-hook-macros",
  "patch-loader-core",
  "sha2 0.10.9",
@@ -1720,6 +1721,7 @@ dependencies = [
 name = "firmware-patch-core"
 version = "0.1.0"
 dependencies = [
+ "l6fw",
  "serde",
  "serde_json",
  "sha2 0.10.9",

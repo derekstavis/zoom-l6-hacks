@@ -81,7 +81,7 @@ pub(crate) fn generate(
                 vec![],
                 assignments,
             )?;
-            let mut entry = install(&file, &directory, "L6max")?;
+            let mut entry = install(&file, &directory, l6fw::Model::L6max.label())?;
             entry["room"] = json!(room);
             entry["spring"] = json!(spring);
             replacements.push(entry);

@@ -10,10 +10,10 @@
 include!(concat!(env!("OUT_DIR"), "/templates_generated.rs"));
 
 use firmware_patch_core::{
-    FirmwareModel, HookEdit, L6_MAIN_BASE, L6_SLOT_END, PatchEdits, WASM_PATCHES,
-    apply_patch_with_map, branch, first_payload_for, resolve_patch_dependencies,
+    HookEdit, PatchEdits, WASM_PATCHES, apply_patch_with_map, branch, resolve_patch_dependencies,
     supports_wasm_patch, verify_firmware_for, write_image_length_and_version,
 };
+use l6fw::Model;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use wasm_bindgen::prelude::*;
@@ -25,7 +25,7 @@ struct Window {
 }
 
 struct Unit {
-    model: FirmwareModel,
+    model: Model,
     base: u32,
     template: Vec<u8>,
     windows: Vec<Window>,
@@ -51,7 +51,7 @@ struct LoaderSite {
 }
 
 struct LoaderUnit {
-    model: FirmwareModel,
+    model: Model,
     base: u32,
     module_base: u32,
     reserve_end: u32,
@@ -72,11 +72,8 @@ fn parse_unit(payload: &[u8], metadata_json: &str) -> Result<Unit, String> {
     let model_name = meta["model"]
         .as_str()
         .ok_or("template metadata missing model")?;
-    let model = match model_name {
-        "L6" => FirmwareModel::L6,
-        "L6max" => FirmwareModel::L6max,
-        other => return Err(format!("unknown firmware model in template: {other}")),
-    };
+    let model = Model::from_label(model_name)
+        .ok_or_else(|| format!("unknown firmware model in template: {model_name}"))?;
     let base = parse_hex(&meta["base"])?;
     let windows = meta["windows"]
         .as_array()
@@ -155,7 +152,7 @@ fn patch_info_offset(meta: &Value) -> Result<u32, String> {
 /// Finds the one embedded unit for `name` at exactly `base` — every
 /// non-empty subset of `WASM_PATCHES` resolves to an embedded unit, so
 /// this only fails if the embedded templates are stale or corrupt.
-fn find_unit(name: &str, model: FirmwareModel, base: u32) -> Result<Unit, String> {
+fn find_unit(name: &str, model: Model, base: u32) -> Result<Unit, String> {
     for (unit_name, payload, metadata) in EMBEDDED_UNITS {
         if *unit_name == name {
             let unit = parse_unit(payload, metadata)?;
@@ -171,15 +168,14 @@ fn find_unit(name: &str, model: FirmwareModel, base: u32) -> Result<Unit, String
 
 fn parse_loader(payload: &[u8], metadata_json: &str) -> Result<LoaderUnit, String> {
     let meta: Value = serde_json::from_str(metadata_json).map_err(|e| e.to_string())?;
-    let model = match meta["model"]
+    let label = meta["model"]
         .as_str()
-        .ok_or("loader metadata missing model")?
-    {
-        "L6" => FirmwareModel::L6,
-        "L6max" => FirmwareModel::L6max,
-        other => {
+        .ok_or("loader metadata missing model")?;
+    let model = match Model::from_label(label) {
+        Some(model) => model,
+        None => {
             return Err(format!(
-                "unknown firmware model in loader template: {other}"
+                "unknown firmware model in loader template: {label}"
             ));
         }
     };
@@ -242,15 +238,9 @@ fn parse_loader(payload: &[u8], metadata_json: &str) -> Result<LoaderUnit, Strin
     })
 }
 
-fn find_loader(model: FirmwareModel, base: u32, selected: &[&str]) -> Result<LoaderUnit, String> {
+fn find_loader(model: Model, base: u32, selected: &[&str]) -> Result<LoaderUnit, String> {
     for (loader_model, payload, metadata) in EMBEDDED_LOADERS {
-        if *loader_model
-            == if model == FirmwareModel::L6 {
-                "L6"
-            } else {
-                "L6max"
-            }
-        {
+        if *loader_model == model.label() {
             let loader = parse_loader(payload, metadata)?;
             if loader.model == model
                 && loader.base == base
@@ -271,10 +261,7 @@ fn find_loader(model: FirmwareModel, base: u32, selected: &[&str]) -> Result<Loa
 
 /// The patches that apply to `package`, or why none do.
 pub fn available_patches(package: &[u8]) -> Result<Vec<&'static str>, String> {
-    let model = match l6fw::model_from_package(package)? {
-        l6fw::Model::L6 => FirmwareModel::L6,
-        l6fw::Model::L6max => FirmwareModel::L6max,
-    };
+    let model = l6fw::model_from_package(package)?;
     let (_, segments) = l6fw::unpack_bytes(package)?;
     let firmware = segments
         .get("main_firmware.bin")
@@ -303,10 +290,7 @@ pub fn apply_patches_with_loader(
     selected: &[&str],
     install_patch_loader: bool,
 ) -> Result<(Vec<u8>, Value), String> {
-    let model = match l6fw::model_from_package(package)? {
-        l6fw::Model::L6 => FirmwareModel::L6,
-        l6fw::Model::L6max => FirmwareModel::L6max,
-    };
+    let model = l6fw::model_from_package(package)?;
     for name in selected {
         if !WASM_PATCHES.contains(name) {
             return Err(format!("unknown patch: {name}"));
@@ -314,10 +298,7 @@ pub fn apply_patches_with_loader(
         if !supports_wasm_patch(name, model) {
             return Err(format!(
                 "patch {name} is not available for {} firmware in the browser patcher",
-                match model {
-                    FirmwareModel::L6 => "L6",
-                    FirmwareModel::L6max => "L6max",
-                }
+                model.label()
             ));
         }
     }
@@ -330,10 +311,7 @@ pub fn apply_patches_with_loader(
         if !WASM_PATCHES.contains(&dependency.as_str()) || !supports_wasm_patch(dependency, model) {
             return Err(format!(
                 "patch dependency {dependency} is not available for {} firmware in the browser patcher",
-                match model {
-                    FirmwareModel::L6 => "L6",
-                    FirmwareModel::L6max => "L6max",
-                }
+                model.label()
             ));
         }
     }
@@ -355,11 +333,8 @@ pub fn apply_patches_with_loader(
         .clone();
 
     let mut firmware = original_firmware.clone();
-    let (firmware_base, slot_end) = match model {
-        FirmwareModel::L6 => (L6_MAIN_BASE, L6_SLOT_END),
-        FirmwareModel::L6max => (0x80000000, 0x801a2ff8),
-    };
-    let mut base = first_payload_for(model, original_length);
+    let (firmware_base, slot_end) = (model.main_base(), model.slot_end());
+    let mut base = model.first_payload(original_length);
     let mut applied_report = Vec::new();
     let mut diagnostic_hooks = Vec::new();
     let mut hook_ranges: Vec<(u32, usize, Option<String>)> = Vec::new();
@@ -576,8 +551,8 @@ pub fn apply_patches_with_loader(
     segments.insert("package_footer.bin".into(), footer);
     for (segment_name, start, end) in l6fw::layout_for(
         match model {
-            FirmwareModel::L6 => l6fw::Model::L6,
-            FirmwareModel::L6max => l6fw::Model::L6max,
+            Model::L6 => l6fw::Model::L6,
+            Model::L6max => l6fw::Model::L6max,
         },
         new_length as usize,
     ) {
@@ -590,7 +565,7 @@ pub fn apply_patches_with_loader(
         }
     }
     let packed = l6fw::repack_bytes(&manifest, &segments, true)?;
-    if model == FirmwareModel::L6max {
+    if model == Model::L6max {
         l6fw::update::validate(&packed).map_err(|e| e.to_string())?;
     } else if l6fw::model_from_package(&packed)? != l6fw::Model::L6 {
         return Err("patched package model changed unexpectedly".into());
@@ -598,7 +573,7 @@ pub fn apply_patches_with_loader(
 
     let report = serde_json::json!({
         "patched_sha256": format!("{:x}", Sha256::digest(&firmware)),
-        "model": if model == FirmwareModel::L6 { "L6" } else { "L6max" },
+        "model": model.label(),
         "image_length": firmware.len(),
         "patches": applied_report,
         "hooks": diagnostic_hooks,
@@ -610,13 +585,10 @@ pub fn apply_patches_with_loader(
 }
 
 /// Identifies the supported model from an uploaded firmware update package.
-#[wasm_bindgen(js_name = detectFirmwareModel)]
+#[wasm_bindgen(js_name = detectModel)]
 pub fn detect_firmware_model(package: &[u8]) -> Result<String, JsError> {
     let model = l6fw::model_from_package(package).map_err(|message| JsError::new(&message))?;
-    Ok(match model {
-        l6fw::Model::L6 => "L6".into(),
-        l6fw::Model::L6max => "L6max".into(),
-    })
+    Ok(model.label().into())
 }
 
 /// Everything `apply_patches_wasm` hands back to JS: the patched package
@@ -661,7 +633,7 @@ pub fn apply_patches_wasm(
 #[cfg(test)]
 mod tests {
     use super::{find_unit, parse_unit};
-    use firmware_patch_core::FirmwareModel;
+    use l6fw::Model;
 
     #[test]
     fn embedded_template_metadata_requires_an_explicit_model() {
@@ -692,7 +664,7 @@ mod tests {
 
     #[test]
     fn knob_template_has_well_formed_hook_metadata() {
-        let unit = find_unit("knob-dialog", FirmwareModel::L6max, 0x80108000).unwrap();
+        let unit = find_unit("knob-dialog", Model::L6max, Model::L6max.first_payload(0)).unwrap();
         assert_eq!(unit.hooks.len(), unit.hook_symbols.len());
         assert!(unit.hooks.iter().all(|hook| hook.length >= 4));
     }

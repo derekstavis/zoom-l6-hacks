@@ -337,11 +337,8 @@ impl CardSpec {
     }
 
     fn model(&self) -> Result<l6fw::Model, String> {
-        match self.model.as_str() {
-            "l6" => Ok(l6fw::Model::L6),
-            "l6max" => Ok(l6fw::Model::L6max),
-            other => Err(format!("unknown card spec model {other}")),
-        }
+        l6fw::Model::from_name(&self.model)
+            .ok_or_else(|| format!("unknown card spec model {}", self.model))
     }
 
     /// Build the card. `base` resolves `copy` paths.

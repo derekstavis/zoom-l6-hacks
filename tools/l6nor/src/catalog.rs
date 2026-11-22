@@ -371,11 +371,8 @@ impl Catalog {
         if raw.bank.markers != [1, 2, 3] {
             return Err("only the 1-2-3 wrapping marker sequence is supported".into());
         }
-        let model = match raw.model.as_str() {
-            "l6" => Model::L6,
-            "l6max" => Model::L6max,
-            other => return Err(format!("unknown model {other}")),
-        };
+        let model =
+            Model::from_name(&raw.model).ok_or_else(|| format!("unknown model {}", raw.model))?;
         let parse_fields = |fields: Vec<RawField>| -> Result<Vec<Field>, String> {
             fields.into_iter().map(RawField::parse).collect()
         };

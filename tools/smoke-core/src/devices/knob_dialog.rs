@@ -620,7 +620,9 @@ pub(super) fn run_knob_dialog(
     // directions. The web animation plays these captures at 20 fps.
     capture_demo("knob-dialog-demo-level-start")?;
     let mut level_peak_reached = false;
-    for index in 0..70 {
+    // Encoder samples can coalesce while the guest is busy. Keep the target
+    // value assertion, but allow enough bounded attempts to reach it.
+    for index in 0..128 {
         let displayed = decode_text(text_table + 179 * 4)?;
         let value = displayed
             .strip_suffix('%')

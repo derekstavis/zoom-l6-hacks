@@ -11,11 +11,13 @@ use std::sync::OnceLock;
 include!(concat!(env!("OUT_DIR"), "/generated_catalog.rs"));
 
 pub mod catalog;
+pub mod plan;
 pub use catalog::{
     EFFECT_REPLACEMENT_ROUTER_PACKAGE, EffectControl, EffectLink, EffectPackage, PackageKind,
     PatchCategory, PatchDependency, PatchPackage, STOCK_EFFECT_SLOTS, TapAction,
     effect_replacement_packages,
 };
+pub use plan::{Delivery, Plan};
 
 /// Every package in package order, generated at build time from the
 /// checked-in `patches/*/package.toml` files, so native tools and the browser
@@ -37,22 +39,11 @@ pub fn patch_package(name: &str) -> Option<&'static PatchPackage> {
     patch_catalog().iter().find(|package| package.name == name)
 }
 
-fn supports(name: &str, models: fn(&PatchPackage) -> &[Model], model: Model) -> bool {
-    patch_package(name).is_some_and(|package| {
-        package.kind == PackageKind::Patch && models(package).contains(&model)
-    })
-}
-
-pub fn supports_firmware_patch(name: &str, model: Model) -> bool {
-    supports(name, |package| &package.firmware_models, model)
-}
-
-pub fn supports_sd_patch(name: &str, model: Model) -> bool {
-    supports(name, |package| &package.sd_card_models, model)
-}
-
+/// Whether the browser patcher can apply `name` to `model`.
 pub fn supports_wasm_patch(name: &str, model: Model) -> bool {
-    supports(name, |package| &package.wasm_models, model)
+    patch_package(name).is_some_and(|package| {
+        package.kind == PackageKind::Patch && package.wasm_models.contains(&model)
+    })
 }
 
 /// The requested patches and everything they require, in package order with
@@ -67,32 +58,10 @@ pub fn resolve_patch_dependencies(requested: &[String]) -> Result<Vec<String>, S
     catalog::resolve_dependencies(patch_catalog(), requested)
 }
 
-/// Resolve slot-to-effect assignments into the package set for one composed
-/// replacement bundle. The `replacements` pairs are `(stock_slot, effect_id)`;
-/// an effect assigned to multiple slots is included only once.
-pub fn resolve_effect_replacements(
-    replacements: &[(String, String)],
-) -> Result<Vec<String>, String> {
-    let requested = effect_replacement_packages(replacements, patch_catalog())?;
-    resolve_patch_dependencies(&requested)
-}
-
-/// See [`catalog::effect_replacement_file_name`].
-pub fn effect_replacement_file_name(replacements: &[(String, String)]) -> Result<String, String> {
-    catalog::effect_replacement_file_name(patch_catalog(), replacements)
-}
-
 /// Every effect-replacement map the catalog's effects allow; see
 /// [`catalog::effect_assignments`].
 pub fn effect_assignments() -> Vec<Vec<(String, String)>> {
     catalog::effect_assignments(patch_catalog())
-}
-
-/// Return a versioned filename for a composed module. Requested packages are
-/// named first; dependency-only packages follow in their resolved order.
-pub fn composed_patch_file_name(requested: &[String]) -> Result<String, String> {
-    resolve_patch_dependencies(requested)?;
-    catalog::composed_file_name(patch_catalog(), requested)
 }
 
 /// Encodes a Thumb-2 BL (`link: true`) or B.W (`link: false`) branch from `from` to `to`.
@@ -347,9 +316,8 @@ mod tests {
         assert_eq!(knob.version, "1.0.0");
         assert_eq!(knob.title, "Show knob values on display");
         assert_eq!(knob.author, "derekstavis");
-        assert!(supports_firmware_patch("knob-dialog", Model::L6max));
-        assert!(!supports_firmware_patch("knob-dialog", Model::L6));
-        assert!(supports_sd_patch("midi-sync", Model::L6));
+        assert!(supports_wasm_patch("knob-dialog", Model::L6max));
+        assert!(!supports_wasm_patch("knob-dialog", Model::L6));
         assert!(
             patch_package("patch-loader")
                 .is_some_and(|package| package.kind == PackageKind::Loader)
@@ -380,12 +348,16 @@ mod tests {
                 );
             }
         }
+        let plan = Plan::new(
+            Model::L6max,
+            Delivery::SdCard,
+            &[],
+            &[("room".into(), "velvet".into())],
+        )
+        .unwrap();
+        assert_eq!(plan.patches, ["knob-dialog", "efx-loader", "efx-velvet"]);
         assert_eq!(
-            resolve_effect_replacements(&[("room".into(), "velvet".into())]).unwrap(),
-            ["knob-dialog", "efx-loader", "efx-velvet"]
-        );
-        assert_eq!(
-            effect_replacement_file_name(&[("room".into(), "velvet".into())]).unwrap(),
+            plan.file_name().unwrap(),
             "efx-loader-1.0.1-knob-dialog-1.0.0-efx-velvet-1.0.1-room-velvet-spring-stock.bin"
         );
     }
@@ -421,10 +393,8 @@ mod tests {
 
     #[test]
     fn package_filename_includes_id_and_version() {
-        assert_eq!(
-            composed_patch_file_name(&["midi-sync".to_owned()]).unwrap(),
-            "midi-sync-1.0.0.bin"
-        );
+        let plan = Plan::new(Model::L6, Delivery::SdCard, &["midi-sync".into()], &[]).unwrap();
+        assert_eq!(plan.file_name().unwrap(), "midi-sync-1.0.0.bin");
         assert_eq!(
             patch_package("midi-sync").unwrap().file_name,
             "midi-sync-1.0.0.bin"
@@ -441,11 +411,34 @@ mod tests {
     }
 
     #[test]
-    fn effect_replacement_resolution_accepts_empty_map_and_rejects_unknown_effects() {
-        assert!(resolve_effect_replacements(&[]).unwrap().is_empty());
+    fn a_plan_checks_the_model_the_delivery_and_the_effects() {
+        let plan = |model, delivery, patches: &[&str], effects: &[(&str, &str)]| {
+            let patches = patches.iter().map(|&name| name.into()).collect::<Vec<_>>();
+            let effects = effects
+                .iter()
+                .map(|&(slot, id)| (slot.into(), id.into()))
+                .collect::<Vec<_>>();
+            Plan::new(model, delivery, &patches, &effects)
+        };
+        let room = [("room", "velvet")];
+        let midi = plan(Model::L6max, Delivery::SdCard, &["midi-sync"], &room).unwrap();
+        assert_eq!(midi.requested, ["midi-sync", "efx-loader", "efx-velvet"]);
         assert_eq!(
-            resolve_effect_replacements(&[("room".into(), "missing-effect".into())]).unwrap_err(),
-            "unknown effect implementation `missing-effect`"
+            midi.members(),
+            ["midi-sync", "efx-loader", "efx-velvet", "knob-dialog"]
+        );
+        assert_eq!(
+            plan(Model::L6, Delivery::Firmware, &["knob-dialog"], &[]).unwrap_err(),
+            "patch `knob-dialog` is not available for L6 firmware"
+        );
+        assert!(plan(Model::L6max, Delivery::Browser, &["dump-rom"], &[]).is_err());
+        assert!(plan(Model::L6, Delivery::SdCard, &[], &room).is_err());
+        assert!(plan(Model::L6max, Delivery::Firmware, &[], &room).is_err());
+        assert!(plan(Model::L6max, Delivery::SdCard, &[], &[]).is_err());
+        assert!(plan(Model::L6max, Delivery::Browser, &["patch-loader"], &[]).is_err());
+        assert_eq!(
+            plan(Model::L6max, Delivery::SdCard, &[], &[("room", "missing")]).unwrap_err(),
+            "unknown effect implementation `missing`"
         );
     }
 

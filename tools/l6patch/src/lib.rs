@@ -35,8 +35,9 @@ is `l6patch firmware`.";
 struct Options {
     source: PathBuf,
     output: PathBuf,
-    patches: Option<Vec<String>>,
-    requested_patches: Vec<String>,
+    /// The patches asked for; a plain firmware build with none gets the
+    /// model's default.
+    patches: Vec<String>,
     effect_replacements: Vec<(String, String)>,
     version: Option<String>,
     experimental_sd_bundle: bool,
@@ -81,55 +82,21 @@ fn parse_legacy(
             _ => return Err(USAGE.into()),
         }
     }
-    merge_effect_replacement_packages(&mut requested, &effect_replacements)?;
-    let patches = if requested.is_empty() {
-        None
-    } else {
-        Some(resolve_patch_dependencies(&requested)?)
-    };
     if let Some(version) = &version {
         parse_version(version)?;
     }
     if experimental_sd_bundle && experimental_patch_loader {
         return Err("build the loader and SD bundle in separate output directories".into());
     }
-    if !effect_replacements.is_empty() && !experimental_sd_bundle {
-        return Err("effect replacements are available only in an SD patch bundle".into());
-    }
     Ok(Options {
         source: PathBuf::from(source),
         output: PathBuf::from(output),
-        patches,
-        requested_patches: requested,
+        patches: requested,
         effect_replacements,
         version,
         experimental_sd_bundle,
         experimental_patch_loader,
     })
-}
-
-/// Resolve dependencies at build time. SD builds link the closure into one
-/// module; firmware builds apply each member to the firmware image.
-fn resolve_patch_dependencies(
-    requested: &[String],
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    patch_core::resolve_patch_dependencies(requested).map_err(Into::into)
-}
-
-fn composed_bundle_name(
-    requested: &[String],
-    ordered_members: &[String],
-) -> Result<String, String> {
-    let mut members = Vec::new();
-    for name in requested.iter().chain(ordered_members) {
-        if !members.contains(&name.as_str()) {
-            members.push(name.as_str());
-        }
-    }
-    if members.is_empty() {
-        return Err("composed bundle needs at least one patch name".into());
-    }
-    Ok(members.join("-"))
 }
 
 #[derive(Debug)]
@@ -314,40 +281,15 @@ pub struct BuildRequest {
 
 /// Build firmware or SD patch artifacts directly, without spawning the CLI.
 pub fn build(request: BuildRequest) -> Result<(), Box<dyn std::error::Error>> {
-    if !request.effect_replacements.is_empty() && request.mode != BuildMode::SdBundle {
-        return Err("effect replacements are available only in an SD patch bundle".into());
-    }
-    let mut requested_patches = request.patches;
-    merge_effect_replacement_packages(&mut requested_patches, &request.effect_replacements)?;
-    let patches = if requested_patches.is_empty() {
-        None
-    } else {
-        Some(resolve_patch_dependencies(&requested_patches)?)
-    };
     run_options(Options {
         source: request.source,
         output: request.output,
-        patches,
-        requested_patches,
+        patches: request.patches,
         effect_replacements: request.effect_replacements,
         version: request.version,
         experimental_sd_bundle: request.mode == BuildMode::SdBundle,
         experimental_patch_loader: request.mode == BuildMode::PatchLoader,
     })
-}
-
-fn merge_effect_replacement_packages(
-    requested: &mut Vec<String>,
-    effect_replacements: &[(String, String)],
-) -> Result<(), Box<dyn std::error::Error>> {
-    for package in
-        patch_core::effect_replacement_packages(effect_replacements, patch_core::patch_catalog())?
-    {
-        if !requested.contains(&package) {
-            requested.push(package);
-        }
-    }
-    Ok(())
 }
 
 /// Run the command-line interface using process arguments.
@@ -518,30 +460,21 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let (firmware_base, slot_end) = (model.main_base(), model.slot_end());
     let modules = model.sd_module_region();
     let (module_base, module_end) = (modules.start, modules.end);
-    let patches = options.patches.unwrap_or_else(|| match model {
-        _ if options.experimental_patch_loader || options.experimental_sd_bundle => vec![],
-        l6fw::Model::L6 => vec!["midi-sync".to_owned()],
-        l6fw::Model::L6max => vec!["knob-dialog".to_owned()],
-    });
-    let selected_supported = |name: &str| {
-        if options.experimental_sd_bundle {
-            patch_core::supports_sd_patch(name, model)
-        } else {
-            patch_core::supports_firmware_patch(name, model)
-        }
+    let delivery = if options.experimental_sd_bundle {
+        patch_core::Delivery::SdCard
+    } else {
+        patch_core::Delivery::Firmware
     };
-    if let Some(name) = patches.iter().find(|name| !selected_supported(name)) {
-        let model_name = model.label();
-        let install_kind = if options.experimental_sd_bundle {
-            "SD card"
-        } else {
-            "firmware"
-        };
-        return Err(format!(
-            "patch `{name}` is not supported for {install_kind} installation on {model_name}"
-        )
-        .into());
-    }
+    let default_build = options.patches.is_empty()
+        && !options.experimental_patch_loader
+        && !options.experimental_sd_bundle;
+    let requested = match model {
+        l6fw::Model::L6 if default_build => vec!["midi-sync".to_owned()],
+        l6fw::Model::L6max if default_build => vec!["knob-dialog".to_owned()],
+        _ => options.patches.clone(),
+    };
+    let plan = patch_core::Plan::new(model, delivery, &requested, &options.effect_replacements)?;
+    let patches = plan.patches.clone();
     let version = match options.version {
         Some(version) => parse_version(&version)?,
         None => l6fw::PATCHED_VERSION,
@@ -572,9 +505,6 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         })
         .collect::<Result<Vec<_>, _>>()?;
     if options.experimental_sd_bundle {
-        if patches.is_empty() {
-            return Err("dynamic bundle needs at least one --patch".into());
-        }
         fs::create_dir_all(&options.output)?;
         let output = options.output.canonicalize()?;
         let patch_dir = output.join("PATCHES");
@@ -587,7 +517,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             .iter()
             .map(|(name, root)| (name.as_str(), root.as_path()))
             .collect::<Vec<_>>();
-        let bundle_name = composed_bundle_name(&options.requested_patches, &patches)?;
+        let bundle_name = plan.members().join("-");
         let link_name = "composed-patches";
         let (module, memory_len, symbols, relocations) = compile_sd_relocatable_composed(
             &source,
@@ -682,11 +612,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             relocations,
         };
         let file = sd_module.encode()?;
-        let filename = if options.effect_replacements.is_empty() {
-            patch_core::composed_patch_file_name(&options.requested_patches)?
-        } else {
-            patch_core::effect_replacement_file_name(&options.effect_replacements)?
-        };
+        let filename = plan.file_name()?;
         fs::write(patch_dir.join(&filename), &file)?;
         let report_patch = serde_json::json!({
             "name": bundle_name,
@@ -1126,14 +1052,6 @@ fn exported_symbol_offsets(symbols: &str) -> serde_json::Value {
 #[cfg(test)]
 mod manifest_tests {
     use super::*;
-
-    #[test]
-    fn package_catalog_supplies_versioned_composition_names() {
-        assert_eq!(
-            patch_core::composed_patch_file_name(&["midi-sync".to_owned()]).unwrap(),
-            "midi-sync-1.0.0.bin"
-        );
-    }
 
     #[test]
     fn exported_symbol_offsets_keep_global_data_and_clear_thumb_bits() {

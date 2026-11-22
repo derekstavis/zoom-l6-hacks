@@ -308,10 +308,13 @@ pub(crate) fn fixture_options(
         let firmware_model = fixture.model;
         // The browser patcher builds what it supports, as the website does.
         // Other firmware patches are built with l6patch.
-        let (patched_package, report) = if fixture
-            .patches
-            .iter()
-            .all(|name| patch_core::supports_wasm_patch(name, firmware_model))
+        let (patched_package, report) = if patch_core::Plan::new(
+            firmware_model,
+            patch_core::Delivery::Browser,
+            &fixture.patches,
+            &[],
+        )
+        .is_ok()
         {
             let (cached, report) = wasm_patch(cache, package, &fixture.patches)?;
             let patched_package = dir.join("patched-firmware.bin");

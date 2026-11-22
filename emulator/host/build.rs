@@ -35,8 +35,14 @@ fn main() {
                 .map(|(_, id)| id.clone())
         };
         let (room, spring) = (effect("room"), effect("spring"));
-        let file_name = patch_core::effect_replacement_file_name(&replacements)
-            .expect("catalog effect map has a versioned bundle filename");
+        let file_name = patch_core::Plan::new(
+            l6fw::Model::L6max,
+            patch_core::Delivery::SdCard,
+            &[],
+            &replacements,
+        )
+        .and_then(|plan| plan.file_name())
+        .expect("catalog effect map has a versioned bundle filename");
         let asset = repository
             .join("web/public/loadable-patches/L6max")
             .join(&file_name);

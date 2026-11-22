@@ -330,7 +330,10 @@ fn valid_github_username(username: &str) -> bool {
         && !username.contains("--")
 }
 
-fn package<'a>(catalog: &'a [PatchPackage], name: &str) -> Result<&'a PatchPackage, String> {
+pub(crate) fn package<'a>(
+    catalog: &'a [PatchPackage],
+    name: &str,
+) -> Result<&'a PatchPackage, String> {
     catalog
         .iter()
         .find(|package| package.name == name)

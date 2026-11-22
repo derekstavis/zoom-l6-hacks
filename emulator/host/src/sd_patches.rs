@@ -52,14 +52,12 @@ fn effect_bundle(
     if replacements.is_empty() {
         return Ok(None);
     }
-    if model != l6fw::Model::L6max {
-        return Err("custom effect replacements are supported on L6max only".into());
-    }
     let entries = replacements
         .iter()
         .map(|(slot, effect)| (slot.clone(), effect.clone()))
         .collect::<Vec<_>>();
-    let file_name = patch_core::effect_replacement_file_name(&entries)?;
+    let file_name =
+        patch_core::Plan::new(model, patch_core::Delivery::SdCard, &[], &entries)?.file_name()?;
     EFFECT_BUNDLES
         .iter()
         .find(|bundle| {

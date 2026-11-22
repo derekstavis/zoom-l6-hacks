@@ -81,9 +81,8 @@ impl Model {
         profile(self).main_trailer
     }
 
-    /// End of the package MAIN slot expressed relative to MAIN's load base.
-    /// This package-layout bound does not establish installed NOR capacity or
-    /// runtime safety, and need not describe a guest-visible trailer.
+    /// End of the MAIN slot: the guest address of the MAIN trailer, which a
+    /// grown MAIN image must not reach.
     pub fn slot_end(self) -> u32 {
         let profile = profile(self);
         profile.main_base + (profile.main_trailer - 0x200) as u32

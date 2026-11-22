@@ -17,7 +17,7 @@ l6fw.workspace = true
 l6patch = { path = "../l6patch" }
 l6nor.workspace = true
 firmware-patch-wasm.workspace = true
-firmware-patch-core.workspace = true
+patch-core.workspace = true
 patch-abi = { path = "../patch-abi" }
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true

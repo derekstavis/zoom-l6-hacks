@@ -25,13 +25,13 @@ pub fn installation_patches(
         .chain(sd_selected)
         .cloned()
         .collect::<Vec<_>>();
-    roots.extend(firmware_patch_core::effect_replacement_packages(
+    roots.extend(patch_core::effect_replacement_packages(
         &entries,
-        firmware_patch_core::patch_catalog(),
+        patch_core::patch_catalog(),
     )?);
     let mut required = BTreeSet::new();
     for root in roots {
-        for name in firmware_patch_core::resolve_patch_dependencies(std::slice::from_ref(&root))? {
+        for name in patch_core::resolve_patch_dependencies(std::slice::from_ref(&root))? {
             if name != root {
                 required.insert(name);
             }

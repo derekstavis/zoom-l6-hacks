@@ -18,11 +18,11 @@
 //!   through a firmware update, and hosted SD modules are loaded as the
 //!   website delivers them.
 
-use firmware_patch_core::{
-    EFFECT_REPLACEMENT_ROUTER_PACKAGE, PatchCategory, PatchPackage, STOCK_EFFECT_SLOTS,
-    patch_catalog, patch_package, resolve_patch_dependencies,
-};
 use l6fw::Model;
+use patch_core::{
+    EFFECT_REPLACEMENT_ROUTER_PACKAGE, PackageKind, PatchCategory, PatchPackage,
+    STOCK_EFFECT_SLOTS, patch_catalog, patch_package, resolve_patch_dependencies,
+};
 use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -152,10 +152,6 @@ pub struct GeneratedCase {
     pub suites: Vec<&'static str>,
 }
 
-fn declares(models: &[String], model: Model) -> bool {
-    models.iter().any(|name| name == model.label())
-}
-
 fn is_effect_package(package: &PatchPackage) -> bool {
     package.category == Some(PatchCategory::Effects)
 }
@@ -164,13 +160,13 @@ fn is_effect_package(package: &PatchPackage) -> bool {
 fn placeable(model: Model) -> Vec<(&'static PatchPackage, Vec<Placement>)> {
     patch_catalog()
         .iter()
-        .filter(|package| package.kind == "patch" && !is_effect_package(package))
+        .filter(|package| package.kind == PackageKind::Patch && !is_effect_package(package))
         .filter_map(|package| {
             let mut placements = Vec::new();
-            if declares(&package.firmware_models, model) {
+            if package.firmware_models.contains(&model) {
                 placements.push(Placement::Firmware);
             }
-            if declares(&package.sd_card_models, model) {
+            if package.sd_card_models.contains(&model) {
                 placements.push(Placement::Sd);
             }
             (!placements.is_empty()).then_some((package, placements))
@@ -182,7 +178,7 @@ fn placeable(model: Model) -> Vec<(&'static PatchPackage, Vec<Placement>)> {
 fn effect_assignments(model: Model) -> Vec<Vec<(&'static str, String)>> {
     let effects: Vec<String> = patch_catalog()
         .iter()
-        .filter(|package| declares(&package.sd_card_models, model))
+        .filter(|package| package.sd_card_models.contains(&model))
         .flat_map(|package| package.effects.iter().map(|effect| effect.id.clone()))
         .collect();
     let mut assignments = vec![Vec::new()];
@@ -616,7 +612,10 @@ fn combination_case(
 fn delivery_cases(model: Model, all: &Checks) -> Result<Vec<GeneratedCase>, String> {
     let name = model.name();
     let mut cases = Vec::new();
-    for package in patch_catalog().iter().filter(|p| p.kind == "patch") {
+    for package in patch_catalog()
+        .iter()
+        .filter(|p| p.kind == PackageKind::Patch)
+    {
         let patch = package.name.as_str();
         let closure = in_package_order(&closure(&[package.name.clone()])?);
         let combination = Combination {
@@ -624,7 +623,7 @@ fn delivery_cases(model: Model, all: &Checks) -> Result<Vec<GeneratedCase>, Stri
             sd: Vec::new(),
             effects: Vec::new(),
         };
-        if declares(&package.wasm_models, model) {
+        if package.wasm_models.contains(&model) {
             // Installed by the engine on a device running the stock firmware.
             let id = format!("{PREFIX}{name}_installed_{patch}");
             let mut text = String::new();
@@ -675,7 +674,7 @@ fn delivery_cases(model: Model, all: &Checks) -> Result<Vec<GeneratedCase>, Stri
                 suites: vec![SUITE, PAIRWISE_SUITE, SINGLE_SUITE],
             });
         }
-        if declares(&package.website_sd_models, model) {
+        if package.website_sd_models.contains(&model) {
             // The hosted module on the card, with the loader the engine installs.
             let id = format!("{PREFIX}{name}_hosted-sd_{patch}");
             let mut text = String::new();

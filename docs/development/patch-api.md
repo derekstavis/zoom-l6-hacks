@@ -268,10 +268,12 @@ controls = ["encoder-parameters"]
 tap_action = "toggle-editor"
 ```
 
-`firmware-patch-core` validates and enumerates these files through
-`patch_catalog()`. Its build script generates the native package catalog and
-the patch-name arrays from the same metadata. The web build exports that API
-as JSON instead of maintaining a second patch list.
+`patch-core` reads these files into typed records (`src/catalog.rs`) and
+enumerates them through `patch_catalog()`. Its build script compiles the same
+module, so the build rejects an unknown field, an unsupported model, a missing
+or mismatched dependency or an inconsistent effect, and names each package's
+SD module file with the same code `l6patch` uses. The web build exports that
+API as JSON instead of maintaining a second patch list.
 
 Composition is a build-time operation. It creates one BIN file named from the
 requested patch names and versions followed by dependency-only patch names and
@@ -298,7 +300,7 @@ patches and finds their menu items:
 - **Static images:** `l6patch` and the browser patcher link the records of the
   Patch loader and every installed payload into a ring in placement order, so
   any record leads to all of them. Both call
-  `firmware_patch_core::link_identity_ring`, and browser templates record each
+  `patch_core::link_identity_ring`, and browser templates record each
   payload's `patch_info_offset`. A record's patch name comes from the payload
   root's package directory, not the builder's output name.
 - **SD modules:** the composed linker script places the record at offset 0,

@@ -91,9 +91,9 @@ pub fn run_wasm_patch(options: &Options) -> Result<(), String> {
 
     let mut results = Vec::new();
     let profiles: Vec<Vec<&str>> = match model {
-        l6fw::Model::L6max => (1u16..(1u16 << firmware_patch_core::WASM_PATCHES.len()))
+        l6fw::Model::L6max => (1u16..(1u16 << patch_core::WASM_PATCHES.len()))
             .map(|mask| {
-                firmware_patch_core::WASM_PATCHES
+                patch_core::WASM_PATCHES
                     .iter()
                     .enumerate()
                     .filter(|(index, _)| mask & (1u16 << index) != 0)
@@ -140,8 +140,8 @@ pub fn run_wasm_patch(options: &Options) -> Result<(), String> {
     // add SD patches later without rebuilding the firmware update.
     let mut loader_results = Vec::new();
     if model == l6fw::Model::L6max {
-        for mask in 0u16..(1u16 << firmware_patch_core::WASM_PATCHES.len()) {
-            let selected: Vec<&str> = firmware_patch_core::WASM_PATCHES
+        for mask in 0u16..(1u16 << patch_core::WASM_PATCHES.len()) {
+            let selected: Vec<&str> = patch_core::WASM_PATCHES
                 .iter()
                 .enumerate()
                 .filter(|(index, _)| mask & (1u16 << index) != 0)

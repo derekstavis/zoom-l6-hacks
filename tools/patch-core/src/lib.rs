@@ -5,101 +5,31 @@
 //! payloads precompiled ahead of time). Every function here only moves bytes
 //! around in memory; none of it touches the filesystem or shells out.
 use l6fw::Model;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 
 include!(concat!(env!("OUT_DIR"), "/generated_catalog.rs"));
 
-/// One patch or loader package, generated from its `package.toml`.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PatchPackage {
-    pub name: String,
-    pub version: String,
-    pub kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub category: Option<PatchCategory>,
-    pub order: u32,
-    pub title: String,
-    pub author: String,
-    pub summary: String,
-    pub description: String,
-    pub models: Vec<String>,
-    pub firmware_models: Vec<String>,
-    pub sd_card_models: Vec<String>,
-    pub wasm_models: Vec<String>,
-    pub website: bool,
-    pub website_order: u32,
-    pub website_sd_models: Vec<String>,
-    pub emulator_gui: bool,
-    pub emulator_order: u32,
-    pub emulator_sd_models: Vec<String>,
-    pub readme: String,
-    pub demo_image: Option<String>,
-    pub request_command: Option<String>,
-    pub requires: Vec<PatchDependency>,
-    pub file_name: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub effects: Vec<EffectPackage>,
-}
+pub mod catalog;
+pub use catalog::{
+    EFFECT_REPLACEMENT_ROUTER_PACKAGE, EffectControl, EffectLink, EffectPackage, PackageKind,
+    PatchCategory, PatchDependency, PatchPackage, STOCK_EFFECT_SLOTS, TapAction,
+    effect_replacement_packages,
+};
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PatchDependency {
-    pub name: String,
-    pub version: String,
-}
-
-/// User-facing category used to organize selectable patches.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum PatchCategory {
-    Display,
-    Midi,
-    Effects,
-}
-
-/// Build-time registration metadata for a custom effect implementation.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct EffectPackage {
-    pub id: String,
-    pub title: String,
-    #[serde(default)]
-    pub based_on: Option<EffectLink>,
-    #[serde(default)]
-    pub learn_more: Option<EffectLink>,
-    #[serde(default)]
-    pub controls: Vec<String>,
-    #[serde(default = "default_tap_action")]
-    pub tap_action: String,
-}
-
-/// Optional attribution or background link for an effect package.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct EffectLink {
-    pub title: String,
-    pub url: String,
-}
-
-fn default_tap_action() -> String {
-    "stock".into()
-}
-
-/// Stable identifiers for L6max MAIN 1.10 stock effect slots exposed to
-/// build-time replacement. Names are also used in package metadata.
-pub const STOCK_EFFECT_SLOTS: [&str; 2] = ["room", "spring"];
-pub const EFFECT_REPLACEMENT_ROUTER_PACKAGE: &str = "efx-loader";
-
-/// Every package's metadata in package order. This is generated at build time
-/// from the checked-in `patches/*/package.toml` files and is available to
-/// native tools and the browser catalog exporter without runtime filesystem
-/// access.
+/// Every package in package order, generated at build time from the
+/// checked-in `patches/*/package.toml` files, so native tools and the browser
+/// catalog exporter need no filesystem access.
 pub fn patch_catalog() -> &'static [PatchPackage] {
     static CATALOG: OnceLock<Vec<PatchPackage>> = OnceLock::new();
     CATALOG.get_or_init(|| {
-        let value: serde_json::Value =
-            serde_json::from_str(PATCH_CATALOG_JSON).expect("generated package catalog is valid");
-        serde_json::from_value(value["packages"].clone())
-            .expect("generated package catalog matches PatchPackage")
+        #[derive(serde::Deserialize)]
+        struct Generated {
+            packages: Vec<PatchPackage>,
+        }
+        serde_json::from_str::<Generated>(PATCH_CATALOG_JSON)
+            .expect("generated package catalog is valid")
+            .packages
     })
 }
 
@@ -107,96 +37,34 @@ pub fn patch_package(name: &str) -> Option<&'static PatchPackage> {
     patch_catalog().iter().find(|package| package.name == name)
 }
 
-pub fn supports_firmware_patch(name: &str, model: Model) -> bool {
+fn supports(name: &str, models: fn(&PatchPackage) -> &[Model], model: Model) -> bool {
     patch_package(name).is_some_and(|package| {
-        package.kind == "patch"
-            && package
-                .firmware_models
-                .iter()
-                .any(|value| value == model.label())
+        package.kind == PackageKind::Patch && models(package).contains(&model)
     })
+}
+
+pub fn supports_firmware_patch(name: &str, model: Model) -> bool {
+    supports(name, |package| &package.firmware_models, model)
 }
 
 pub fn supports_sd_patch(name: &str, model: Model) -> bool {
-    patch_package(name).is_some_and(|package| {
-        package.kind == "patch"
-            && package
-                .sd_card_models
-                .iter()
-                .any(|value| value == model.label())
-    })
+    supports(name, |package| &package.sd_card_models, model)
 }
 
 pub fn supports_wasm_patch(name: &str, model: Model) -> bool {
-    patch_package(name).is_some_and(|package| {
-        package.kind == "patch"
-            && package
-                .wasm_models
-                .iter()
-                .any(|value| value == model.label())
-    })
+    supports(name, |package| &package.wasm_models, model)
 }
 
-/// Resolve selected patch dependencies once, ordering all ready patches by
-/// their package order while placing dependencies before their consumers.
+/// The requested patches and everything they require, in package order with
+/// every dependency before the patches that need it.
 pub fn resolve_patch_dependencies(requested: &[String]) -> Result<Vec<String>, String> {
-    fn visit(
-        name: &str,
-        active: &mut std::collections::BTreeSet<String>,
-        complete: &mut std::collections::BTreeSet<String>,
-        ordered: &mut Vec<String>,
-    ) -> Result<(), String> {
-        if complete.contains(name) {
-            return Ok(());
-        }
-        let package = patch_package(name)
-            .filter(|package| package.kind == "patch")
-            .ok_or_else(|| format!("patch `{name}` has no patches/{name}/package.toml"))?;
-        if !active.insert(name.to_owned()) {
-            return Err(format!("patch dependency cycle at `{name}`"));
-        }
-        for dependency in &package.requires {
-            visit(&dependency.name, active, complete, ordered)?;
-        }
-        active.remove(name);
-        complete.insert(name.to_owned());
-        ordered.push(name.to_owned());
-        Ok(())
+    if let Some(name) = requested
+        .iter()
+        .find(|name| patch_package(name).is_some_and(|package| package.kind != PackageKind::Patch))
+    {
+        return Err(format!("`{name}` is not a patch"));
     }
-
-    let mut active = std::collections::BTreeSet::new();
-    let mut complete = std::collections::BTreeSet::new();
-    let mut ordered = Vec::new();
-    for name in requested {
-        visit(name, &mut active, &mut complete, &mut ordered)?;
-    }
-
-    let mut remaining = ordered
-        .into_iter()
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut result = Vec::with_capacity(remaining.len());
-    while !remaining.is_empty() {
-        let next = remaining
-            .iter()
-            .filter(|name| {
-                patch_package(name).is_some_and(|package| {
-                    package
-                        .requires
-                        .iter()
-                        .all(|dependency| !remaining.contains(&dependency.name))
-                })
-            })
-            .min_by_key(|name| {
-                patch_package(name)
-                    .map(|package| (package.order, package.name.clone()))
-                    .unwrap_or((u32::MAX, (*name).clone()))
-            })
-            .cloned()
-            .ok_or("patch dependency cycle")?;
-        remaining.remove(&next);
-        result.push(next);
-    }
-    Ok(result)
+    catalog::resolve_dependencies(patch_catalog(), requested)
 }
 
 /// Resolve slot-to-effect assignments into the package set for one composed
@@ -209,106 +77,24 @@ pub fn resolve_effect_replacements(
     resolve_patch_dependencies(&requested)
 }
 
-/// Versioned filename for a composed effect-replacement map. Every member,
-/// the efx-loader router included, is named with its version, so a change to
-/// any of them gives a new file. Stock slots are written explicitly so each
-/// supported mapping has a unique SD asset name.
+/// See [`catalog::effect_replacement_file_name`].
 pub fn effect_replacement_file_name(replacements: &[(String, String)]) -> Result<String, String> {
-    let requested = effect_replacement_packages(replacements, patch_catalog())?;
-    if requested.is_empty() {
-        return Err("effect replacement bundle needs at least one assigned effect".into());
-    }
-    let resolved = resolve_patch_dependencies(&requested)?;
-    let package_names = resolved
-        .iter()
-        .filter(|name| name.as_str() != EFFECT_REPLACEMENT_ROUTER_PACKAGE)
-        .map(|name| {
-            let package = patch_package(name).ok_or("missing effect implementation package")?;
-            Ok(format!("{}-{}", package.name, package.version))
-        })
-        .collect::<Result<Vec<_>, String>>()?
-        .join("-");
-    let assignment = |slot: &str| {
-        replacements
-            .iter()
-            .find(|(selected_slot, _)| selected_slot == slot)
-            .map(|(_, id)| id.as_str())
-            .unwrap_or("stock")
-    };
-    let router = patch_package(EFFECT_REPLACEMENT_ROUTER_PACKAGE)
-        .ok_or("missing effect replacement router package")?;
-    Ok(format!(
-        "{}-{}-{}-room-{}-spring-{}.bin",
-        router.name,
-        router.version,
-        package_names,
-        assignment("room"),
-        assignment("spring")
-    ))
+    catalog::effect_replacement_file_name(patch_catalog(), replacements)
 }
 
-/// Validate a slot-to-effect map against a package catalog and return the
-/// distinct selected effect package names in first-assignment order.
-pub fn effect_replacement_packages(
-    replacements: &[(String, String)],
-    catalog: &[PatchPackage],
-) -> Result<Vec<String>, String> {
-    let mut slots = std::collections::BTreeSet::new();
-    let mut packages = Vec::new();
-    if !replacements.is_empty() {
-        if !catalog
-            .iter()
-            .any(|package| package.name == EFFECT_REPLACEMENT_ROUTER_PACKAGE)
-        {
-            return Err(format!(
-                "missing effect replacement router package `{EFFECT_REPLACEMENT_ROUTER_PACKAGE}`"
-            ));
-        }
-        packages.push(EFFECT_REPLACEMENT_ROUTER_PACKAGE.to_owned());
-    }
-    for (slot, effect_id) in replacements {
-        if !STOCK_EFFECT_SLOTS.contains(&slot.as_str()) {
-            return Err(format!("unknown stock effect slot `{slot}`"));
-        }
-        if !slots.insert(slot) {
-            return Err(format!(
-                "stock effect slot `{slot}` has multiple replacements"
-            ));
-        }
-        let package = catalog
-            .iter()
-            .find(|package| package.effects.iter().any(|effect| effect.id == *effect_id))
-            .ok_or_else(|| format!("unknown effect implementation `{effect_id}`"))?;
-        if !packages.contains(&package.name) {
-            packages.push(package.name.clone());
-        }
-    }
-    Ok(packages)
+/// Every effect-replacement map the catalog's effects allow; see
+/// [`catalog::effect_assignments`].
+pub fn effect_assignments() -> Vec<Vec<(String, String)>> {
+    catalog::effect_assignments(patch_catalog())
 }
 
 /// Return a versioned filename for a composed module. Requested packages are
 /// named first; dependency-only packages follow in their resolved order.
 pub fn composed_patch_file_name(requested: &[String]) -> Result<String, String> {
-    let ordered = resolve_patch_dependencies(requested)?;
-    let mut members = Vec::<&PatchPackage>::new();
-    for name in requested.iter().chain(ordered.iter()) {
-        let package = patch_package(name).ok_or_else(|| format!("unknown patch `{name}`"))?;
-        if !members.iter().any(|member| member.name == package.name) {
-            members.push(package);
-        }
-    }
-    if members.is_empty() {
-        return Err("composed bundle needs at least one patch name".into());
-    }
-    Ok(format!(
-        "{}.bin",
-        members
-            .iter()
-            .map(|package| format!("{}-{}", package.name, package.version))
-            .collect::<Vec<_>>()
-            .join("-")
-    ))
+    resolve_patch_dependencies(requested)?;
+    catalog::composed_file_name(patch_catalog(), requested)
 }
+
 /// Encodes a Thumb-2 BL (`link: true`) or B.W (`link: false`) branch from `from` to `to`.
 pub fn branch(from: u32, to: u32, link: bool) -> [u8; 4] {
     let displacement = to.wrapping_sub(from + 4);
@@ -507,16 +293,16 @@ mod tests {
         PatchPackage {
             name: name.into(),
             version: "1.0.0".into(),
-            kind: "patch".into(),
+            kind: PackageKind::Patch,
             category: Some(PatchCategory::Effects),
             order: 0,
             title: name.into(),
             author: "derekstavis".into(),
             summary: String::new(),
             description: String::new(),
-            models: vec!["L6max".into()],
+            models: vec![Model::L6max],
             firmware_models: Vec::new(),
-            sd_card_models: vec!["L6max".into()],
+            sd_card_models: vec![Model::L6max],
             wasm_models: Vec::new(),
             website: false,
             website_order: 0,
@@ -535,7 +321,7 @@ mod tests {
                 based_on: None,
                 learn_more: None,
                 controls: Vec::new(),
-                tap_action: "stock".into(),
+                tap_action: TapAction::Stock,
             }],
         }
     }
@@ -545,12 +331,14 @@ mod tests {
         let catalog = patch_catalog();
         let firmware_patches = catalog
             .iter()
-            .filter(|package| package.kind == "patch" && !package.firmware_models.is_empty())
+            .filter(|package| {
+                package.kind == PackageKind::Patch && !package.firmware_models.is_empty()
+            })
             .map(|package| package.name.as_str())
             .collect::<Vec<_>>();
         let wasm_patches = catalog
             .iter()
-            .filter(|package| package.kind == "patch" && !package.wasm_models.is_empty())
+            .filter(|package| package.kind == PackageKind::Patch && !package.wasm_models.is_empty())
             .map(|package| package.name.as_str())
             .collect::<Vec<_>>();
         assert_eq!(PATCHES.as_slice(), firmware_patches);
@@ -562,7 +350,10 @@ mod tests {
         assert!(supports_firmware_patch("knob-dialog", Model::L6max));
         assert!(!supports_firmware_patch("knob-dialog", Model::L6));
         assert!(supports_sd_patch("midi-sync", Model::L6));
-        assert!(patch_package("patch-loader").is_some_and(|package| package.kind == "loader"));
+        assert!(
+            patch_package("patch-loader")
+                .is_some_and(|package| package.kind == PackageKind::Loader)
+        );
         for (package_name, effect_id) in [("efx-plateau", "plateau"), ("efx-velvet", "velvet")] {
             let package = patch_package(package_name).unwrap();
             assert_eq!(package.author, "VegaDeftwing");
@@ -577,8 +368,8 @@ mod tests {
                 .iter()
                 .find(|effect| effect.id == effect_id)
                 .unwrap();
-            assert_eq!(effect.controls, ["encoder-parameters"]);
-            assert_eq!(effect.tap_action, "toggle-editor");
+            assert_eq!(effect.controls, [EffectControl::EncoderParameters]);
+            assert_eq!(effect.tap_action, TapAction::ToggleEditor);
             for slot in STOCK_EFFECT_SLOTS {
                 assert!(
                     effect_replacement_packages(
@@ -596,6 +387,35 @@ mod tests {
         assert_eq!(
             effect_replacement_file_name(&[("room".into(), "velvet".into())]).unwrap(),
             "efx-loader-1.0.1-knob-dialog-1.0.0-efx-velvet-1.0.1-room-velvet-spring-stock.bin"
+        );
+    }
+
+    #[test]
+    fn the_catalog_rejects_inconsistent_packages() {
+        let catalog = patch_catalog().to_vec();
+        assert_eq!(catalog::validate(&catalog), Ok(()));
+        let index = |name: &str| catalog.iter().position(|p| p.name == name).unwrap();
+        let broken = |edit: &dyn Fn(&mut Vec<PatchPackage>)| {
+            let mut packages = catalog.clone();
+            edit(&mut packages);
+            catalog::validate(&packages).unwrap_err()
+        };
+        let dump = index("dump-rom");
+        let velvet = index("efx-velvet");
+        assert!(broken(&|p| p[dump].requires[0].version = "9.9.9".into()).contains("version"));
+        assert!(broken(&|p| p[dump].requires[0].name = "missing".into()).contains("missing"));
+        assert!(broken(&|p| p[dump].wasm_models.push(Model::L6)).contains("subset"));
+        assert!(broken(&|p| p[dump].author = "-nobody".into()).contains("GitHub"));
+        assert!(broken(&|p| p[dump].category = None).contains("category"));
+        assert!(broken(&|p| p[velvet].effects[0].controls.clear()).contains("tap action"));
+        assert!(broken(&|p| p[velvet].effects[0].id = "plateau".into()).contains("duplicate"));
+        let menu = index("menu-loader");
+        assert!(
+            broken(&|p| p[menu].requires.push(PatchDependency {
+                name: "dump-rom".into(),
+                version: "1.0.0".into()
+            }))
+            .contains("cycle")
         );
     }
 

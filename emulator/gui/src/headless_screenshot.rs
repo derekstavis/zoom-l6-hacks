@@ -332,7 +332,7 @@ pub fn render_patches(args: &[String]) -> Result<(), String> {
     // What the stock 1.10 packages offer.
     let available = Ok(match model {
         l6fw::Model::L6 => vec!["midi-sync"],
-        l6fw::Model::L6max => firmware_patch_core::PATCHES.to_vec(),
+        l6fw::Model::L6max => patch_core::PATCHES.to_vec(),
     });
     let status = Status {
         model,

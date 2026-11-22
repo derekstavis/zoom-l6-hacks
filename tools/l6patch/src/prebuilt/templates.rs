@@ -2,7 +2,7 @@
 //! access to the real Zoom firmware, by design.
 //!
 //! Produces the static templates the browser-based patcher ships: for each
-//! non-empty subset of `firmware_patch_core::WASM_PATCHES`, and for each
+//! non-empty subset of `patch_core::WASM_PATCHES`, and for each
 //! patch within it, the payload `l6patch` would compile at that
 //! patch's position — but with every displaced byte copied verbatim by a
 //! continuation veneer zeroed out, plus metadata recording which firmware
@@ -29,8 +29,8 @@ use firmware_patch_compile::{
     compile_sentinel_with_continuations, compile_with_continuations, function_hook_sites,
     hook_registrations, hook_windows, symbol,
 };
-use firmware_patch_core::{WASM_PATCHES, verify_firmware_for};
 use l6fw::Model;
+use patch_core::{WASM_PATCHES, verify_firmware_for};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
@@ -529,7 +529,7 @@ fn preserved_instructions(
 }
 
 /// One precompiled build unit: a patch's payload at one specific base
-/// address, with verbatim displaced bytes removed, plus everything `firmware-patch-core::apply_patch`
+/// address, with verbatim displaced bytes removed, plus everything `patch-core::apply_patch`
 /// needs once the browser fills in `windows` from the user's own upload.
 struct Unit {
     name: &'static str,

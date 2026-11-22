@@ -6,7 +6,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
-firmware-patch-core.workspace = true
+patch-core.workspace = true
 l6fw.workspace = true
 patch-hook-macros = { path = "../patch-hook-macros" }
 patch-abi = { path = "../patch-abi" }

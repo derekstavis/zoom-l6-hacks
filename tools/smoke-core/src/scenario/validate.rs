@@ -49,8 +49,8 @@ impl Scenario {
                 return Err("sd_patches cannot combine installed_patches or update_patches".into());
             }
             if patches.iter().any(|name| {
-                firmware_patch_core::patch_package(name)
-                    .is_none_or(|package| package.kind != "patch")
+                patch_core::patch_package(name)
+                    .is_none_or(|package| package.kind != patch_core::PackageKind::Patch)
             }) {
                 return Err("unknown SD patch name".into());
             }
@@ -58,7 +58,7 @@ impl Scenario {
                 let firmware_model = *model;
                 if let Some(name) = patches
                     .iter()
-                    .find(|name| !firmware_patch_core::supports_sd_patch(name, firmware_model))
+                    .find(|name| !patch_core::supports_sd_patch(name, firmware_model))
                 {
                     return Err(format!(
                         "patch {name} does not support SD loading on {model}"
@@ -73,11 +73,8 @@ impl Scenario {
                 .iter()
                 .map(|(slot, effect)| (slot.clone(), effect.clone()))
                 .collect::<Vec<_>>();
-            firmware_patch_core::effect_replacement_packages(
-                &replacements,
-                firmware_patch_core::patch_catalog(),
-            )
-            .map_err(|error| format!("invalid effect_replacements: {error}"))?;
+            patch_core::effect_replacement_packages(&replacements, patch_core::patch_catalog())
+                .map_err(|error| format!("invalid effect_replacements: {error}"))?;
         }
         if value.backends.is_empty() {
             return Err("backends must contain headless and/or gui".into());

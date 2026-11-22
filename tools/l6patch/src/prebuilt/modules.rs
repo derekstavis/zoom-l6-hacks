@@ -2,7 +2,7 @@
 //! the emulator offers, and every L6max effect replacement bundle. Firmware is
 //! read locally and never copied into `web/public`.
 use crate::{BuildMode, BuildRequest};
-use firmware_patch_core::{STOCK_EFFECT_SLOTS, patch_catalog};
+use patch_core::patch_catalog;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -30,62 +30,53 @@ pub(crate) fn generate(
             .chain(&package.emulator_sd_models)
             .collect::<BTreeSet<_>>();
         for model in models {
-            let source = if model == "L6" {
+            let source = if *model == l6fw::Model::L6 {
                 l6_source
             } else {
                 l6max_source
             };
             let file = build(
                 source,
-                &scratch.join(format!("{model}-{}", package.name)),
+                &scratch.join(format!("{}-{}", model.label(), package.name)),
                 vec![package.name.clone()],
                 vec![],
             )?;
             if file.file_name().unwrap().to_string_lossy() != package.file_name {
                 return Err(format!(
-                    "{} {model}: the catalog expects {} but l6patch wrote {}",
+                    "{} {}: the catalog expects {} but l6patch wrote {}",
                     package.name,
+                    model.label(),
                     package.file_name,
                     file.display()
                 )
                 .into());
             }
-            let mut entry = install(&file, &directory, model)?;
+            let mut entry = install(&file, &directory, model.label())?;
             entry["id"] = json!(package.name);
-            entry["model"] = json!(model);
+            entry["model"] = json!(model.label());
             modules.push(entry);
         }
     }
 
-    let mut effects = patch_catalog()
-        .iter()
-        .flat_map(|package| package.effects.iter().map(|effect| effect.id.as_str()))
-        .collect::<Vec<_>>();
-    effects.sort();
-    let choices = std::iter::once("stock").chain(effects).collect::<Vec<_>>();
     let mut replacements = Vec::new();
-    for room in &choices {
-        for spring in &choices {
-            if *room == "stock" && *spring == "stock" {
-                continue;
-            }
-            let assignments = STOCK_EFFECT_SLOTS
-                .into_iter()
-                .zip([room, spring])
-                .filter(|(_, effect)| **effect != "stock")
-                .map(|(slot, effect)| (slot.to_owned(), (*effect).to_owned()))
-                .collect();
-            let file = build(
-                l6max_source,
-                &scratch.join(format!("L6max-effects-{room}-{spring}")),
-                vec![],
-                assignments,
-            )?;
-            let mut entry = install(&file, &directory, l6fw::Model::L6max.label())?;
-            entry["room"] = json!(room);
-            entry["spring"] = json!(spring);
-            replacements.push(entry);
-        }
+    for assignments in patch_core::effect_assignments() {
+        let effect = |slot: &str| {
+            assignments
+                .iter()
+                .find(|(selected, _)| selected == slot)
+                .map_or("stock".to_owned(), |(_, id)| id.clone())
+        };
+        let (room, spring) = (effect("room"), effect("spring"));
+        let file = build(
+            l6max_source,
+            &scratch.join(format!("L6max-effects-{room}-{spring}")),
+            vec![],
+            assignments,
+        )?;
+        let mut entry = install(&file, &directory, l6fw::Model::L6max.label())?;
+        entry["room"] = json!(room);
+        entry["spring"] = json!(spring);
+        replacements.push(entry);
     }
 
     let expected = modules

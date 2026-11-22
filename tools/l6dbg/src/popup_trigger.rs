@@ -33,8 +33,8 @@ pub fn run(args: Vec<OsString>) -> Result<(), Box<dyn std::error::Error>> {
     h.wait(350)?;
     let snapshot = || -> Result<serde_json::Value, Box<dyn std::error::Error>> {
         Ok(serde_json::json!({
-  "bitmap":word(l6max::gui_bitmap_table_entry_0 + 36 * 4)?,"busy":q.read_memory(0,l6max::notification_active,1)?[0],
-  "notification_active":q.read_memory(0,l6max::notification_busy,1)?[0],
+  "bitmap":word(l6max::gui_bitmap_table_entry_0 + 36 * 4)?,"busy":q.read_memory(0,l6max::notification_busy,1)?[0],
+  "notification_active":q.read_memory(0,l6max::notification_active,1)?[0],
   "elapsed":u16::from_le_bytes(q.read_memory(0,l6max::notification_timer,2)?.try_into().unwrap()),
   "recorder_state_a":word(l6max::rec_command_running)?,"recorder_state_b":word(0x8020a9f4)?}))
     };

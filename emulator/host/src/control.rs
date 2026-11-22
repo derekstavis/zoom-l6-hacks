@@ -174,7 +174,7 @@ fn rtos_sample(
     };
     Ok(
         json!({"schema":1,"kind":kind,"model":model.name(),"panel_guest_ms":inputs.panel.snapshot().guest_ms,
-        "atomic":false,"revision_guard":"l6max_1_10_kernel_routines","data":data}),
+        "atomic":false,"revision_guard":freertos::revision_guard(model)?,"data":data}),
     )
 }
 

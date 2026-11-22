@@ -419,6 +419,15 @@
     "definition": "0e30fca29292454ea4050711db24e773eabb8c071e85ded9c39dd00b375a58ae"
   },
   {
+    "case": "l6-audio-input-transport",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "ae025fe415c6921ed2a5472e933f0d0118ebd57b5514e2f4f28d30ca16fa092c"
+  },
+  {
     "case": "l6-din-sweep",
     "model": "l6",
     "backend": "headless",

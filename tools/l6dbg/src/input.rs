@@ -256,7 +256,7 @@ fn answer_pad_assignment_dialog(
 }
 fn l6max_pad_runtime(qmp: &QmpClient) -> Result<String, String> {
     let led_records = qmp
-        .read_memory(0, l6::sound_pad_lamps, 8)
+        .read_memory(0, l6max::sound_pad_lamps, 8)
         .map_err(|error| error.to_string())?;
     let active_pad = qmp
         .read_memory(0, l6max::recording_pad, 1)
@@ -270,6 +270,32 @@ fn l6max_pad_runtime(qmp: &QmpClient) -> Result<String, String> {
         .map_err(|error| error.to_string())?;
     Ok(format!(
         "LED records={led_records:02x?} active_pad={active_pad:02x?} sampler_busy={sampler_busy:02x?} playback_flags={playback_flags:02x?}"
+    ))
+}
+/// Sound-pad runtime state on either model. Fields a model doesn't have, or
+/// whose counterpart is unknown, print as `None`.
+fn pad_runtime(qmp: &QmpClient, model: l6fw::Model, playing_flag: u32) -> Result<String, String> {
+    let l6max_only = model == l6fw::Model::L6max;
+    let read = |present: bool, address: u32, length: usize| -> Result<Option<Vec<u8>>, String> {
+        present
+            .then(|| qmp.read_memory(0, address, length))
+            .transpose()
+            .map_err(|error| error.to_string())
+    };
+    let (lamps, pending) = if l6max_only {
+        (l6max::sound_pad_lamps, l6max::sound_pad_assignment_pending)
+    } else {
+        (l6::sound_pad_lamps, l6::sound_pad_assignments)
+    };
+    let recording_pad = read(l6max_only, l6max::recording_pad, 1)?;
+    let pad_bytes = read(l6max_only, 0x80461a7c, 16)?;
+    let playing = read(l6max_only, playing_flag, 1)?;
+    // L6's Record lamp is an LED record; L6max drives it through GPIO.
+    let record_lamp = read(!l6max_only, l6::rec_record_lamp, 2)?;
+    let lamps = read(true, lamps, 8)?;
+    let pending = read(true, pending, 4)?;
+    Ok(format!(
+        "pad lamps={lamps:02x?} assignment pending={pending:02x?} recording pad={recording_pad:02x?} L6max pad bytes 0x80461a7c={pad_bytes:02x?} playing flag {playing_flag:#010x}={playing:02x?} record lamp={record_lamp:02x?}"
     ))
 }
 fn sample_l6max_panel_rows(
@@ -3191,6 +3217,7 @@ fn probe_l6_editor(
     inputs: &InputHub,
     logs: &Path,
     assign_files: bool,
+    model: l6fw::Model,
 ) -> Result<L6EditorProbe, String> {
     let playback_settle_ms = std::env::var("L6_EDITOR_PAD_PLAYBACK_SETTLE_MS")
         .ok()
@@ -3450,27 +3477,12 @@ fn probe_l6_editor(
     for pad in pads {
         let mut playback_dialog_answered = false;
         let indicator_before = inputs.panel.snapshot().indicators;
-        // The per-pad playing flag at 0x806ea265 + pad * 0x44 distinguishes a
-        // failed play request from a bad observation of the separate LED record.
+        // On L6max, the per-pad playing flag at 0x806ea265 + pad * 0x44
+        // distinguishes a failed play request from a bad observation of the
+        // separate LED record. L6 has no known counterpart.
         let playback_flag_address = 0x806ea265 + u32::from(pad) * 0x44;
-        let active_pad_before = qmp
-            .read_memory(0, l6max::recording_pad, 1)
-            .map_err(|error| error.to_string())?;
-        let sampler_state_before = qmp
-            .read_memory(0, 0x80461a7c, 16)
-            .map_err(|error| error.to_string())?;
-        let sampler_busy_flags_before = qmp
-            .read_memory(0, l6max::sound_pad_assignment_pending, 4)
-            .map_err(|error| error.to_string())?;
-        let playback_flag_before = qmp
-            .read_memory(0, playback_flag_address, 1)
-            .map_err(|error| error.to_string())?;
-        let pad_led_before = qmp
-            .read_memory(0, l6::sound_pad_lamps, 8)
-            .map_err(|error| error.to_string())?;
-        let shared_led_before = qmp
-            .read_memory(0, l6::rec_record_lamp, 2)
-            .map_err(|error| error.to_string())?;
+        let runtime = || pad_runtime(qmp, model, playback_flag_address);
+        let runtime_before = runtime()?;
         trace_playback_last_rows.replace(indicator_before);
         trace_playback_started.replace(Some(Instant::now()));
         trace_playback_rows.set(true);
@@ -3552,24 +3564,7 @@ fn probe_l6_editor(
             resume_result?;
         }
         let indicator_playing = inputs.panel.snapshot().indicators;
-        let active_pad_playing = qmp
-            .read_memory(0, l6max::recording_pad, 1)
-            .map_err(|error| error.to_string())?;
-        let sampler_state_playing = qmp
-            .read_memory(0, 0x80461a7c, 16)
-            .map_err(|error| error.to_string())?;
-        let sampler_busy_flags_playing = qmp
-            .read_memory(0, l6max::sound_pad_assignment_pending, 4)
-            .map_err(|error| error.to_string())?;
-        let playback_flag_playing = qmp
-            .read_memory(0, playback_flag_address, 1)
-            .map_err(|error| error.to_string())?;
-        let pad_led_playing = qmp
-            .read_memory(0, l6::sound_pad_lamps, 8)
-            .map_err(|error| error.to_string())?;
-        let shared_led_playing = qmp
-            .read_memory(0, l6::rec_record_lamp, 2)
-            .map_err(|error| error.to_string())?;
+        let runtime_playing = runtime()?;
         let changed_rows = (0..8)
             .filter_map(|row| {
                 let changed = indicator_before[row] ^ indicator_playing[row];
@@ -3577,7 +3572,7 @@ fn probe_l6_editor(
             })
             .collect::<Vec<_>>();
         println!(
-            "L6 Editor pad {pad} playback indicators: rows={:06x?}->{:06x?}, changed={changed_rows:?}; active pad at 0x80463005={active_pad_before:02x?}->{active_pad_playing:02x?}; sampler arrays 0x80461a7c={sampler_state_before:02x?}->{sampler_state_playing:02x?}, busy flags 0x80463001={sampler_busy_flags_before:02x?}->{sampler_busy_flags_playing:02x?}; firmware flag at {playback_flag_address:#010x}={playback_flag_before:02x?}->{playback_flag_playing:02x?}; pad records={pad_led_before:02x?}->{pad_led_playing:02x?}; shared record={shared_led_before:02x?}->{shared_led_playing:02x?}",
+            "L6 Editor pad {pad} playback indicators: rows={:06x?}->{:06x?}, changed={changed_rows:?}; runtime before: {runtime_before}; playing: {runtime_playing}",
             &indicator_before[..8],
             &indicator_playing[..8]
         );
@@ -3943,7 +3938,14 @@ pub(crate) fn run(args: Vec<std::ffi::OsString>) -> Result<(), String> {
             .usb
             .as_ref()
             .ok_or("USB is required for Editor SysEx")?;
-        probe_l6_editor(usb, &engine.management[0], inputs, &options.logs, true)?;
+        probe_l6_editor(
+            usb,
+            &engine.management[0],
+            inputs,
+            &options.logs,
+            true,
+            engine.model(),
+        )?;
         if let Some(value) = sound_pad_probe.as_ref() {
             let pad = value
                 .to_str()
@@ -3969,7 +3971,7 @@ pub(crate) fn run(args: Vec<std::ffi::OsString>) -> Result<(), String> {
             let mut results = Vec::new();
             for target in targets.iter().copied() {
                 let tested_pad = if targets.len() == 1 { pad } else { target - 49 };
-                let pad_state_address = l6::sound_pad_lamps + tested_pad * 2;
+                let pad_state_address = l6max::sound_pad_lamps + tested_pad * 2;
                 let pad_record_before = engine.management[0]
                     .read_memory(0, pad_state_address, 2)
                     .map_err(|error| error.to_string())?;
@@ -4136,7 +4138,14 @@ pub(crate) fn run(args: Vec<std::ffi::OsString>) -> Result<(), String> {
             return Err("L6_EDITOR_PAD_PROBE_ONLY requires L6 firmware".into());
         }
         let usb = engine.usb.as_ref().ok_or("USB host is unavailable")?;
-        probe_l6_editor(usb, &engine.management[0], inputs, &options.logs, true)?;
+        probe_l6_editor(
+            usb,
+            &engine.management[0],
+            inputs,
+            &options.logs,
+            true,
+            engine.model(),
+        )?;
         println!("L6 Editor pad playback probe completed.");
         return Ok(());
     }
@@ -4145,8 +4154,14 @@ pub(crate) fn run(args: Vec<std::ffi::OsString>) -> Result<(), String> {
         && engine.model() == l6fw::Model::L6
     {
         if let Some(usb) = &engine.usb {
-            let editor_probe =
-                probe_l6_editor(usb, &engine.management[0], inputs, &options.logs, true);
+            let editor_probe = probe_l6_editor(
+                usb,
+                &engine.management[0],
+                inputs,
+                &options.logs,
+                true,
+                engine.model(),
+            );
             if l6_gpio_editor_setup {
                 editor_probe?;
                 if let Some(socket) = gpio_event_gdb_socket.as_deref() {
@@ -4528,7 +4543,14 @@ pub(crate) fn run(args: Vec<std::ffi::OsString>) -> Result<(), String> {
                 .as_ref()
                 .ok_or("USB is required to query the UI assignment")?;
             println!("Querying pad assignments after the screen-driven menu flow.");
-            let probe = probe_l6_editor(usb, &engine.management[0], inputs, &options.logs, false)?;
+            let probe = probe_l6_editor(
+                usb,
+                &engine.management[0],
+                inputs,
+                &options.logs,
+                false,
+                engine.model(),
+            )?;
             let assignment = probe
                 .assignments
                 .into_iter()
@@ -4548,7 +4570,7 @@ pub(crate) fn run(args: Vec<std::ffi::OsString>) -> Result<(), String> {
             println!("Completed the screen-driven assignment verification.");
             return Ok(());
         }
-        let pad_state_address = l6::sound_pad_lamps + pad * 2;
+        let pad_state_address = l6max::sound_pad_lamps + pad * 2;
         let pad_state_before = engine.management[0]
             .read_memory(0, pad_state_address, 2)
             .map_err(|error| error.to_string())?;

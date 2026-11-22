@@ -311,7 +311,7 @@ pub(crate) fn fixture_options(
         let (patched_package, report) = if fixture
             .patches
             .iter()
-            .all(|name| firmware_patch_core::supports_wasm_patch(name, firmware_model))
+            .all(|name| patch_core::supports_wasm_patch(name, firmware_model))
         {
             let (cached, report) = wasm_patch(cache, package, &fixture.patches)?;
             let patched_package = dir.join("patched-firmware.bin");

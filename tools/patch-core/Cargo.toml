@@ -1,5 +1,5 @@
 [package]
-name = "firmware-patch-core"
+name = "patch-core"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -12,6 +12,8 @@ sha2.workspace = true
 l6fw.workspace = true
 
 [build-dependencies]
+l6fw.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 

@@ -1710,30 +1710,19 @@ dependencies = [
 name = "firmware-patch-compile"
 version = "0.1.0"
 dependencies = [
- "firmware-patch-core",
  "l6fw",
  "patch-abi",
+ "patch-core",
  "patch-hook-macros",
  "sha2 0.10.9",
-]
-
-[[package]]
-name = "firmware-patch-core"
-version = "0.1.0"
-dependencies = [
- "l6fw",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "toml 0.8.23",
 ]
 
 [[package]]
 name = "firmware-patch-wasm"
 version = "0.1.0"
 dependencies = [
- "firmware-patch-core",
  "l6fw",
+ "patch-core",
  "serde_json",
  "sha2 0.10.9",
  "wasm-bindgen",
@@ -3597,7 +3586,6 @@ version = "0.1.0"
 name = "l6max-gui"
 version = "0.1.0"
 dependencies = [
- "firmware-patch-core",
  "gpui-component",
  "gpui-kit-assets",
  "gpui-pre",
@@ -3609,6 +3597,7 @@ dependencies = [
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
+ "patch-core",
  "raw-window-handle",
  "serde",
  "serde_json",
@@ -3625,11 +3614,11 @@ dependencies = [
  "alsa",
  "coremidi",
  "firmware-api",
- "firmware-patch-core",
  "firmware-patch-wasm",
  "l6fw",
  "libc",
  "memmap2",
+ "patch-core",
  "qapi",
  "qemu-build",
  "sd-image",
@@ -3659,9 +3648,9 @@ name = "l6patch"
 version = "0.1.0"
 dependencies = [
  "firmware-patch-compile",
- "firmware-patch-core",
  "l6fw",
  "patch-abi",
+ "patch-core",
  "serde_json",
  "sha2 0.10.9",
  "toml 0.8.23",
@@ -3672,7 +3661,6 @@ name = "l6test"
 version = "0.1.0"
 dependencies = [
  "firmware-api",
- "firmware-patch-core",
  "firmware-patch-wasm",
  "gif 0.14.2",
  "image",
@@ -3682,6 +3670,7 @@ dependencies = [
  "l6patch",
  "libc",
  "patch-abi",
+ "patch-core",
  "qemu-build",
  "schemars",
  "sd-image",
@@ -4865,6 +4854,17 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "patch-core"
+version = "0.1.0"
+dependencies = [
+ "l6fw",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "toml 0.8.23",
 ]
 
 [[package]]
@@ -6530,7 +6530,6 @@ dependencies = [
  "alsa",
  "coremidi",
  "firmware-api",
- "firmware-patch-core",
  "firmware-patch-wasm",
  "image",
  "l6fw",
@@ -6539,6 +6538,7 @@ dependencies = [
  "l6patch",
  "libc",
  "patch-abi",
+ "patch-core",
  "schemars",
  "sd-image",
  "serde",

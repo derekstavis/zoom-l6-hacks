@@ -430,7 +430,7 @@ pub fn compile_sd_relocatable_composed(
     let selected_effects = assignments
         .iter()
         .map(|(slot, id)| {
-            let package = firmware_patch_core::patch_catalog()
+            let package = patch_core::patch_catalog()
                 .iter()
                 .find(|package| package.effects.iter().any(|effect| effect.id == **id))
                 .ok_or_else(|| format!("unknown selected effect `{id}`"))?;
@@ -461,7 +461,7 @@ pub fn compile_sd_relocatable_composed(
         let stock_type = match *slot {
             "room" => 1,
             "spring" => 2,
-            _ => unreachable!("effect slots are validated by firmware-patch-core"),
+            _ => unreachable!("effect slots are validated by patch-core"),
         };
         source_text.push_str(&format!("{stock_type} => Some({effect_id:?}),\n"));
     }
@@ -510,11 +510,7 @@ pub fn compile_sd_relocatable_composed(
     source_text.push_str("pub fn tap_action(slot: u32) -> u32 { match slot {\n");
     for (slot, _, _, _, _, tap_action) in &selected_effects {
         let stock_type = if *slot == "room" { 1 } else { 2 };
-        let action = match tap_action.as_str() {
-            "toggle-editor" => 1,
-            "tempo" => 2,
-            _ => 0,
-        };
+        let action = tap_action.code();
         source_text.push_str(&format!("{stock_type} => {action},\n"));
     }
     source_text.push_str("_ => 0, } }\n");
@@ -522,14 +518,11 @@ pub fn compile_sd_relocatable_composed(
     // effect only exposes its `CONTROLS`. Only efx-loader asks for them.
     let has_router = roots
         .iter()
-        .any(|(name, _)| *name == firmware_patch_core::EFFECT_REPLACEMENT_ROUTER_PACKAGE);
+        .any(|(name, _)| *name == patch_core::EFFECT_REPLACEMENT_ROUTER_PACKAGE);
     if has_router {
         source_text.push_str("pub fn controls(slot: u32) -> Option<&'static crate::efx_loader::controls::Effect> { match slot {\n");
         for (slot, _, module_name, _, controls, _) in &selected_effects {
-            if controls
-                .iter()
-                .any(|control| control == "encoder-parameters")
-            {
+            if controls.contains(&patch_core::EffectControl::EncoderParameters) {
                 let stock_type = if *slot == "room" { 1 } else { 2 };
                 source_text.push_str(&format!(
                     "{stock_type} => Some(&crate::{module_name}::CONTROLS),\n"
@@ -540,7 +533,7 @@ pub fn compile_sd_relocatable_composed(
     }
     source_text.push_str("pub unsafe fn tap_tempo(slot: u32, state: *mut u8) { match slot {\n");
     for (slot, _, module_name, _, controls, _) in &selected_effects {
-        if controls.iter().any(|control| control == "tap-tempo") {
+        if controls.contains(&patch_core::EffectControl::TapTempo) {
             let stock_type = if *slot == "room" { 1 } else { 2 };
             source_text.push_str(&format!(
                 "{stock_type} => unsafe {{ crate::{module_name}::tap_tempo(state) }},\n"
@@ -674,7 +667,7 @@ fn package_name_for_root(root: &Path) -> Option<String> {
 
 /// The catalog name and version recorded in a payload's identity record.
 fn patch_identity(name: &str) -> (String, String) {
-    let version = firmware_patch_core::patch_catalog()
+    let version = patch_core::patch_catalog()
         .iter()
         .find(|package| package.name == name)
         .map(|package| package.version.clone())
@@ -688,7 +681,7 @@ pub const MENU_ITEM_LEN: u32 = 36;
 pub const MENU_ITEMS_SYMBOL_PREFIX: &str = "__l6_menu_items_";
 /// Symbol of the identity record in every payload.
 pub const PATCH_INFO_SYMBOL: &str = "__l6_patch_info";
-pub use firmware_patch_core::PATCH_INFO_NEXT_OFFSET;
+pub use patch_core::PATCH_INFO_NEXT_OFFSET;
 
 fn rust_string(text: &str) -> String {
     format!("{text:?}")

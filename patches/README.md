@@ -8,7 +8,7 @@ in ignored output directories.
 
 Each package's `package.toml` is the catalog record for its name, version,
 GitHub author, user-facing copy, supported models, installation methods, and
-web/emulator visibility. `firmware-patch-core::patch_catalog()` enumerates
+web/emulator visibility. `patch-core::patch_catalog()` enumerates
 those records; the web catalog is exported from that API when the site builds.
 
 The emulator's **File → Firmware Patches…** list and the browser patcher read

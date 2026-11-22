@@ -21,22 +21,18 @@ struct EffectBundle {
 include!(concat!(env!("OUT_DIR"), "/sd_modules.rs"));
 
 fn card_file_name(module: &Module) -> String {
-    let package = firmware_patch_core::patch_package(module.patch)
+    let package = patch_core::patch_package(module.patch)
         .expect("embedded SD module must have a package entry");
     format!("{:02}-{}", package.order, package.file_name)
 }
 
 /// The patches `model` can load from its SD card, in catalog order.
 pub fn available(model: l6fw::Model) -> Vec<&'static str> {
-    let model_name = model.name();
-    firmware_patch_core::patch_catalog()
+    patch_core::patch_catalog()
         .iter()
         .filter(|package| {
-            package.kind == "patch"
-                && package
-                    .emulator_sd_models
-                    .iter()
-                    .any(|name| name.eq_ignore_ascii_case(model_name))
+            package.kind == patch_core::PackageKind::Patch
+                && package.emulator_sd_models.contains(&model)
         })
         .filter(|package| module(model, &package.name).is_some())
         .map(|package| package.name.as_str())
@@ -63,7 +59,7 @@ fn effect_bundle(
         .iter()
         .map(|(slot, effect)| (slot.clone(), effect.clone()))
         .collect::<Vec<_>>();
-    let file_name = firmware_patch_core::effect_replacement_file_name(&entries)?;
+    let file_name = patch_core::effect_replacement_file_name(&entries)?;
     EFFECT_BUNDLES
         .iter()
         .find(|bundle| {
@@ -87,16 +83,13 @@ pub fn check_effect_replacements(
         .iter()
         .map(|(slot, effect)| (slot.clone(), effect.clone()))
         .collect::<Vec<_>>();
-    firmware_patch_core::effect_replacement_packages(
-        &entries,
-        firmware_patch_core::patch_catalog(),
-    )?;
+    patch_core::effect_replacement_packages(&entries, patch_core::patch_catalog())?;
     effect_bundle(model, replacements)?;
     Ok(())
 }
 
 fn effect_card_file_name(bundle: &EffectBundle) -> String {
-    let order = firmware_patch_core::patch_package("efx-loader")
+    let order = patch_core::patch_package("efx-loader")
         .expect("effect replacement package is in the catalog")
         .order;
     format!("{order:02}-{}", bundle.file_name)

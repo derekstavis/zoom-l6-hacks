@@ -13,7 +13,7 @@ l6max-host.workspace = true
 l6fw = { workspace = true, features = ["schemars"] }
 firmware-api.workspace = true
 l6patch = { path = "../l6patch" }
-firmware-patch-core.workspace = true
+patch-core.workspace = true
 firmware-patch-wasm.workspace = true
 patch-abi = { path = "../patch-abi" }
 serde = { version = "1", features = ["derive"] }

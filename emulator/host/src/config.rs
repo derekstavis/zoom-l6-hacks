@@ -53,12 +53,12 @@ pub fn parse_model(name: &str) -> Result<l6fw::Model, String> {
 }
 
 pub fn check_patch(name: &str) -> Result<(), String> {
-    if firmware_patch_core::PATCHES.contains(&name) {
+    if patch_core::PATCHES.contains(&name) {
         Ok(())
     } else {
         Err(format!(
             "unknown patch {name}; patches are {}",
-            firmware_patch_core::PATCHES.join(", ")
+            patch_core::PATCHES.join(", ")
         ))
     }
 }

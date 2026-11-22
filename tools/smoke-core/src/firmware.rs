@@ -1,7 +1,7 @@
 //! Which firmware a case boots, by name rather than by pinned hashes.
 //!
 //! The supported stock images are the ones the patch tools accept
-//! (`firmware_patch_core`). A patched image is known when the report our patch
+//! (`patch_core`). A patched image is known when the report our patch
 //! tools wrote for the case (`fixture_layout::FIRMWARE_REPORT`) names its
 //! exact hash; those tools only build from the supported stock image.
 use crate::fixture_layout::FIRMWARE_REPORT;

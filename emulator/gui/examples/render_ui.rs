@@ -240,7 +240,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let available = Ok(match model {
         l6fw::Model::L6 => vec!["midi-sync"],
-        l6fw::Model::L6max => firmware_patch_core::PATCHES.to_vec(),
+        l6fw::Model::L6max => patch_core::PATCHES.to_vec(),
     });
     let platform = current_platform(true);
     let text_system = platform.text_system();

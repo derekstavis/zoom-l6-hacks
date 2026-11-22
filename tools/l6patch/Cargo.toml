@@ -10,7 +10,7 @@ path = "src/lib.rs"
 
 [dependencies]
 firmware-patch-compile.workspace = true
-firmware-patch-core.workspace = true
+patch-core.workspace = true
 l6fw.workspace = true
 serde_json.workspace = true
 toml.workspace = true

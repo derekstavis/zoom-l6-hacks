@@ -9,11 +9,11 @@
 //! caller (the uploaded package).
 include!(concat!(env!("OUT_DIR"), "/templates_generated.rs"));
 
-use firmware_patch_core::{
+use l6fw::Model;
+use patch_core::{
     HookEdit, PatchEdits, WASM_PATCHES, apply_patch_with_map, branch, resolve_patch_dependencies,
     supports_wasm_patch, verify_firmware_for, write_image_length_and_version,
 };
-use l6fw::Model;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use wasm_bindgen::prelude::*;
@@ -273,7 +273,7 @@ pub fn available_patches(package: &[u8]) -> Result<Vec<&'static str>, String> {
         .collect())
 }
 
-/// Applies `selected` (a non-empty subset of `firmware_patch_core::WASM_PATCHES`,
+/// Applies `selected` (a non-empty subset of `patch_core::WASM_PATCHES`,
 /// any order) to `package` — a full Zoom update package, byte for byte what
 /// `l6fw::unpack`/`repack` round-trip — and returns the patched package plus
 /// a small JSON report. `package` is the only untrusted input: every other
@@ -523,7 +523,7 @@ pub fn apply_patches_with_loader(
             return Err("firmware feature payloads overlap the Patch loader module reserve".into());
         }
     }
-    firmware_patch_core::link_identity_ring(&mut firmware, firmware_base, &identities)?;
+    patch_core::link_identity_ring(&mut firmware, firmware_base, &identities)?;
     if let Some((_, reserve_end)) = loader_reserve {
         let reserve_offset = reserve_end
             .checked_sub(firmware_base)

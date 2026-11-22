@@ -1,7 +1,6 @@
 //! The window that selects which patches the guest runs, and whether each is
 //! installed in the firmware or loaded from the SD card by the Patch loader.
 use crate::NativePanel;
-use firmware_patch_core::{EffectPackage, PATCHES, PatchCategory, PatchPackage, patch_catalog};
 use gpui::{Context, CursorStyle, Entity, MouseButton, Render, Window, div, prelude::*, px};
 use gpui_component::{
     ActiveTheme, Disableable,
@@ -14,6 +13,7 @@ use gpui_component::{
     switch::Switch,
     tab::{Tab as KitTab, TabBar},
 };
+use patch_core::{EffectPackage, PATCHES, PatchCategory, PatchPackage, patch_catalog};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
@@ -33,7 +33,7 @@ fn offered() -> Vec<&'static PatchPackage> {
 fn offered_effects() -> Vec<(&'static PatchPackage, &'static EffectPackage)> {
     patch_catalog()
         .iter()
-        .filter(|package| package.models.iter().any(|model| model == "L6max"))
+        .filter(|package| package.models.contains(&l6fw::Model::L6max))
         .flat_map(|package| package.effects.iter().map(move |effect| (package, effect)))
         .collect()
 }
@@ -47,7 +47,7 @@ fn required_patches(
     effects: &BTreeSet<String>,
 ) -> BTreeMap<String, Delivery> {
     fn include(name: &str, delivery: Delivery, required: &mut BTreeMap<String, Delivery>) {
-        if let Some(package) = firmware_patch_core::patch_package(name) {
+        if let Some(package) = patch_core::patch_package(name) {
             for dependency in &package.requires {
                 if required.insert(dependency.name.clone(), delivery).is_none() {
                     include(&dependency.name, delivery, required);
@@ -402,7 +402,7 @@ fn effect_slot_row(
         }))
         .into_any_element();
     let note = occupied_by.map(|other| {
-        let title = firmware_patch_core::patch_catalog()
+        let title = patch_core::patch_catalog()
             .iter()
             .flat_map(|package| package.effects.iter().map(move |effect| (package, effect)))
             .find(|(_, effect)| effect.id == *other)

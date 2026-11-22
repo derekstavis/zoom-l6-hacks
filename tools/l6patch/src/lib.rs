@@ -7,7 +7,7 @@ use firmware_patch_compile::{
     compile_sd_relocatable_composed, compile_with_continuations, decode_thumb_bl_target,
     function_hook_sites, hook_registrations, symbol,
 };
-use firmware_patch_core::{
+use patch_core::{
     HookEdit, PatchEdits, apply_patch_with_map, branch, verify_firmware_for,
     write_image_length_and_version,
 };
@@ -113,7 +113,7 @@ fn parse_legacy(
 fn resolve_patch_dependencies(
     requested: &[String],
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    firmware_patch_core::resolve_patch_dependencies(requested).map_err(Into::into)
+    patch_core::resolve_patch_dependencies(requested).map_err(Into::into)
 }
 
 fn composed_bundle_name(
@@ -340,10 +340,9 @@ fn merge_effect_replacement_packages(
     requested: &mut Vec<String>,
     effect_replacements: &[(String, String)],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    for package in firmware_patch_core::effect_replacement_packages(
-        effect_replacements,
-        firmware_patch_core::patch_catalog(),
-    )? {
+    for package in
+        patch_core::effect_replacement_packages(effect_replacements, patch_core::patch_catalog())?
+    {
         if !requested.contains(&package) {
             requested.push(package);
         }
@@ -422,21 +421,19 @@ fn catalog(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::er
     let mut json = false;
     while let Some(flag) = args.next() {
         match (flag.as_str(), args.next().as_deref()) {
-            ("--model", Some(name)) => {
-                model = Some(l6fw::Model::from_name(name).ok_or(USAGE)?.label())
-            }
+            ("--model", Some(name)) => model = Some(l6fw::Model::from_name(name).ok_or(USAGE)?),
             ("--format", Some("json")) => json = true,
             ("--format", Some("text")) => json = false,
             _ => return Err(USAGE.into()),
         }
     }
-    let packages = firmware_patch_core::patch_catalog()
+    let packages = patch_core::patch_catalog()
         .iter()
-        .filter(|package| model.is_none_or(|model| package.models.iter().any(|m| m == model)));
+        .filter(|package| model.is_none_or(|model| package.models.contains(&model)));
     if json {
         match model {
             // The website build reads the unfiltered catalog as generated.
-            None => print!("{}", firmware_patch_core::PATCH_CATALOG_JSON),
+            None => print!("{}", patch_core::PATCH_CATALOG_JSON),
             Some(_) => println!(
                 "{}",
                 serde_json::to_string_pretty(
@@ -446,19 +443,30 @@ fn catalog(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::er
         }
         return Ok(());
     }
+    let labels = |models: &[l6fw::Model]| {
+        models
+            .iter()
+            .map(|model| model.label())
+            .collect::<Vec<_>>()
+            .join(",")
+    };
     for package in packages {
         let mut delivery = Vec::new();
         if !package.firmware_models.is_empty() {
-            delivery.push(format!("firmware {}", package.firmware_models.join(",")));
+            delivery.push(format!("firmware {}", labels(&package.firmware_models)));
         }
         if !package.sd_card_models.is_empty() {
-            delivery.push(format!("module {}", package.sd_card_models.join(",")));
+            delivery.push(format!("module {}", labels(&package.sd_card_models)));
         }
+        let kind = match package.kind {
+            patch_core::PackageKind::Patch => "patch",
+            patch_core::PackageKind::Loader => "loader",
+        };
         println!(
             "{:<20} {:<8} {:<8} {}",
             package.name,
             package.version,
-            package.kind,
+            kind,
             delivery.join("; ")
         );
     }
@@ -517,9 +525,9 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     });
     let selected_supported = |name: &str| {
         if options.experimental_sd_bundle {
-            firmware_patch_core::supports_sd_patch(name, model)
+            patch_core::supports_sd_patch(name, model)
         } else {
-            firmware_patch_core::supports_firmware_patch(name, model)
+            patch_core::supports_firmware_patch(name, model)
         }
     };
     if let Some(name) = patches.iter().find(|name| !selected_supported(name)) {
@@ -675,9 +683,9 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         };
         let file = sd_module.encode()?;
         let filename = if options.effect_replacements.is_empty() {
-            firmware_patch_core::composed_patch_file_name(&options.requested_patches)?
+            patch_core::composed_patch_file_name(&options.requested_patches)?
         } else {
-            firmware_patch_core::effect_replacement_file_name(&options.effect_replacements)?
+            patch_core::effect_replacement_file_name(&options.effect_replacements)?
         };
         fs::write(patch_dir.join(&filename), &file)?;
         let report_patch = serde_json::json!({
@@ -1018,7 +1026,7 @@ fn run_options(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     }
     // Link the static identity records into a ring so menu-loader can list
     // every installed payload starting from its own record.
-    firmware_patch_core::link_identity_ring(&mut firmware, firmware_base, &static_identities)?;
+    patch_core::link_identity_ring(&mut firmware, firmware_base, &static_identities)?;
     if options.experimental_patch_loader {
         let reserved_end = (module_end - firmware_base) as usize;
         let consumed = reserved_end - original_length;
@@ -1113,7 +1121,7 @@ fn exported_symbol_offsets(symbols: &str) -> serde_json::Value {
     serde_json::Value::Object(exports)
 }
 
-// Thumb-branch encoding is tested in `firmware-patch-core`, which owns `branch()`.
+// Thumb-branch encoding is tested in `patch-core`, which owns `branch()`.
 
 #[cfg(test)]
 mod manifest_tests {
@@ -1122,7 +1130,7 @@ mod manifest_tests {
     #[test]
     fn package_catalog_supplies_versioned_composition_names() {
         assert_eq!(
-            firmware_patch_core::composed_patch_file_name(&["midi-sync".to_owned()]).unwrap(),
+            patch_core::composed_patch_file_name(&["midi-sync".to_owned()]).unwrap(),
             "midi-sync-1.0.0.bin"
         );
     }

@@ -12,10 +12,7 @@ workspace = true
 default = ["alloc"]
 # The host-side writers. The Patch loader includes `src/lib.rs` directly and
 # builds without them.
-alloc = ["dep:sha2"]
-
-[dependencies]
-sha2 = { workspace = true, optional = true }
+alloc = []
 
 [dev-dependencies]
 serde_json.workspace = true

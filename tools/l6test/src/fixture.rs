@@ -283,7 +283,7 @@ pub(crate) fn prepare_sd_patch(
             .collect::<Vec<_>>();
         build(
             &bundle,
-            l6patch::BuildMode::SdBundle,
+            l6patch::BuildMode::Module,
             &patches,
             &effect_replacements,
         )?;

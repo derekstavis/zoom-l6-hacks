@@ -24,12 +24,12 @@
 //! the real firmware's bytes at the recorded windows reconstructs the real
 //! payload exactly, byte for byte — the load-bearing guarantee this whole
 //! approach rests on.
-use firmware_patch_compile::{
+use l6fw::Model;
+use patch_compile::{
     compile, compile_l6_patch_loader, compile_sentinel, compile_sentinel_l6_patch_loader,
     compile_sentinel_with_continuations, compile_with_continuations, function_hook_sites,
     hook_registrations, hook_windows, symbol,
 };
-use l6fw::Model;
 use patch_core::{WASM_PATCHES, verify_firmware_for};
 use sha2::{Digest, Sha256};
 use std::{
@@ -82,13 +82,13 @@ fn compile_hook_rows(
             let (chain_site, continuation_handler) = registrations
                 .iter()
                 .find_map(|registration| match registration {
-                    firmware_patch_compile::HookRegistration::Entry { site, handler }
+                    patch_compile::HookRegistration::Entry { site, handler }
                         if handler == &window.name =>
                     {
                         Some((Some(site.clone()), Some(handler.clone())))
                     }
-                    firmware_patch_compile::HookRegistration::CallPre { function, .. }
-                    | firmware_patch_compile::HookRegistration::CallPost { function, .. }
+                    patch_compile::HookRegistration::CallPre { function, .. }
+                    | patch_compile::HookRegistration::CallPost { function, .. }
                         if window.name == format!("call_dispatch:{function}") =>
                     {
                         Some((Some(function.clone()), None))
@@ -99,7 +99,7 @@ fn compile_hook_rows(
             let continuation_slot_offset = chain_site
                 .as_ref()
                 .map(|site| {
-                    let slot = firmware_patch_compile::continuation_slot_symbol(
+                    let slot = patch_compile::continuation_slot_symbol(
                         site,
                         continuation_handler.as_deref(),
                     );
@@ -477,7 +477,7 @@ fn build_loader_template(
         "reserve_end": format!("{reserve_end:#x}"),
         "module_base": format!("{module_base:#x}"),
         "payload_length": template.len(),
-        "patch_info_offset": symbol(&symbols, firmware_patch_compile::PATCH_INFO_SYMBOL)?
+        "patch_info_offset": symbol(&symbols, patch_compile::PATCH_INFO_SYMBOL)?
             .checked_sub(loader_base)
             .ok_or("identity record precedes the loader")?,
         "windows": windows.iter().map(|window| serde_json::json!({"payload_offset":window.payload_offset,"firmware_address":format!("{:#x}",window.firmware_address),"length":window.length})).collect::<Vec<_>>(),
@@ -662,10 +662,9 @@ pub(crate) fn generate(
                     .iter()
                     .map(|row| Ok((row.address, symbol(&symbols, &row.symbol)?, row.length)))
                     .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
-                let patch_info_offset =
-                    symbol(&symbols, firmware_patch_compile::PATCH_INFO_SYMBOL)?
-                        .checked_sub(base)
-                        .ok_or("identity record precedes the payload")?;
+                let patch_info_offset = symbol(&symbols, patch_compile::PATCH_INFO_SYMBOL)?
+                    .checked_sub(base)
+                    .ok_or("identity record precedes the payload")?;
                 units.insert(
                     (name, base),
                     Unit {
@@ -739,10 +738,9 @@ pub(crate) fn generate(
                     .iter()
                     .map(|row| Ok((row.address, symbol(&symbols, &row.symbol)?, row.length)))
                     .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
-                let patch_info_offset =
-                    symbol(&symbols, firmware_patch_compile::PATCH_INFO_SYMBOL)?
-                        .checked_sub(base)
-                        .ok_or("identity record precedes the payload")?;
+                let patch_info_offset = symbol(&symbols, patch_compile::PATCH_INFO_SYMBOL)?
+                    .checked_sub(base)
+                    .ok_or("identity record precedes the payload")?;
                 units.insert(
                     (name, base),
                     Unit {
@@ -922,7 +920,7 @@ pub(crate) fn generate(
             "payload_length": l6_template.len(),
             "windows": l6_windows_json,
             "hooks": l6_hooks_json,
-            "patch_info_offset": symbol(&l6_symbols, firmware_patch_compile::PATCH_INFO_SYMBOL)?
+            "patch_info_offset": symbol(&l6_symbols, patch_compile::PATCH_INFO_SYMBOL)?
                 .checked_sub(l6_base)
                 .ok_or("identity record precedes the payload")?,
             "window_byte_total": l6_windows.iter().map(|w| w.length).sum::<usize>(),
@@ -1007,7 +1005,7 @@ pub(crate) fn generate(
         let loader_l6_metadata = serde_json::json!({
             "name": "midi-sync", "model": Model::L6.label(), "base": format!("{l6_static_base:#x}"),
             "payload_file": format!("{loader_l6_stem}.bin"), "payload_length": loader_l6_template.len(),
-            "patch_info_offset": symbol(&loader_l6_symbols, firmware_patch_compile::PATCH_INFO_SYMBOL)?
+            "patch_info_offset": symbol(&loader_l6_symbols, patch_compile::PATCH_INFO_SYMBOL)?
                 .checked_sub(l6_static_base)
                 .ok_or("identity record precedes the payload")?,
             "windows": loader_l6_windows.iter().map(|window| serde_json::json!({

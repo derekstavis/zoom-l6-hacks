@@ -6,7 +6,7 @@ use super::{
     MAX_MEMORY_LEN, MAX_RELOCATIONS_PER_MODULE, RELOCATION_RECORD_LEN, checksum, read_body,
     read_header,
 };
-use crate::bundle::Relocation;
+use crate::relocation::Relocation;
 
 /// One SD module: its code as linked at offset zero, the zero-filled state
 /// that follows it, its function-entry hooks and its relocations.

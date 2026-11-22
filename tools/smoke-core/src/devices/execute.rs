@@ -435,7 +435,7 @@ impl State {
                                 .ok_or("ordered-chain fixture is shorter than its module")?
                                 .to_vec();
                         }
-                        patch_abi::bundle::relocate(
+                        patch_abi::relocation::relocate(
                             &mut expected,
                             module_relocations.clone().into_iter(),
                             link_base,
@@ -484,7 +484,7 @@ impl State {
                     {
                         let mutable_symbol_ranges = mutable_ranges_for_size(latest_payload.len());
                         let mut expected = latest_payload.clone();
-                        patch_abi::bundle::relocate(
+                        patch_abi::relocation::relocate(
                             &mut expected,
                             latest_relocations.clone().into_iter(),
                             link_base,

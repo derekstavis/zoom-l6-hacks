@@ -140,7 +140,7 @@ fn build(
         patches,
         effect_replacements,
         version: None,
-        mode: BuildMode::SdBundle,
+        mode: BuildMode::Module,
     })?;
     let report: Value = serde_json::from_slice(&fs::read(output.join("patch.json"))?)?;
     let file = report["patches"][0]["file"]

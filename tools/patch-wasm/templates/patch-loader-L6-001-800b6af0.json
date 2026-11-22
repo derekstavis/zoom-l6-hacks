@@ -3,9 +3,9 @@
   "model": "L6",
   "module_base": "0x800c0000",
   "name": "patch-loader",
-  "patch_info_offset": 7156,
+  "patch_info_offset": 7140,
   "payload_file": "patch-loader-L6-001-800b6af0.bin",
-  "payload_length": 7180,
+  "payload_length": 7164,
   "reserve_end": "0x800c8000",
   "sites": [
     {

@@ -19,7 +19,7 @@ l6max-host = { path = "emulator/host" }
 l6fw = { path = "tools/l6fw" }
 firmware-api = { path = "tools/firmware-api" }
 patch-core = { path = "tools/patch-core" }
-firmware-patch-compile = { path = "tools/firmware-patch-compile" }
+patch-compile = { path = "tools/patch-compile" }
 patch-wasm = { path = "tools/patch-wasm" }
 sd-image = { path = "tools/sd-image" }
 l6nor = { path = "tools/l6nor" }

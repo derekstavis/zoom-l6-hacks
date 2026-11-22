@@ -1707,17 +1707,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "firmware-patch-compile"
-version = "0.1.0"
-dependencies = [
- "l6fw",
- "patch-abi",
- "patch-core",
- "patch-hook-macros",
- "sha2 0.10.9",
-]
-
-[[package]]
 name = "fixedbitset"
 version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3636,9 +3625,9 @@ dependencies = [
 name = "l6patch"
 version = "0.1.0"
 dependencies = [
- "firmware-patch-compile",
  "l6fw",
  "patch-abi",
+ "patch-compile",
  "patch-core",
  "serde_json",
  "sha2 0.10.9",
@@ -4842,6 +4831,17 @@ name = "patch-abi"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "patch-compile"
+version = "0.1.0"
+dependencies = [
+ "l6fw",
+ "patch-abi",
+ "patch-core",
+ "patch-hook-macros",
  "sha2 0.10.9",
 ]
 

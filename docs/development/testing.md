@@ -520,7 +520,8 @@ cargo run --offline --locked -p l6test -- run --config config.toml \
 Patch, factory, and update cases need explicit local configuration and matching
 firmware. Use `knob-dialog`, `patched-update`,
 `firmware-update`, and `wasm-patch` as appropriate. `l6-patch-heap` and
-`l6max-patch-heap` check heap headroom with every patch for the model applied.
+`l6max-patch-heap` check heap headroom for the patch selections declared in
+each case; they do not cover every available patch or SD-loaded module.
 
 The committed browser templates and the SD modules the web page and emulator
 serve are generated, and their manifests record a fingerprint of the sources

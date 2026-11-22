@@ -56,8 +56,16 @@ mod imp {
     }
 
     const L6_MAIN_INIT_ADDRESSES: [u32; 10] = [
-        0x8001b2f8, 0x800328f8, 0x8001b0e8, 0x8002f8a0, 0x80008bc0, 0x80009a40, 0x80034de8,
-        0x80009848, 0x8003bc30, 0x800402c0,
+        l6::main_init_word_set,
+        l6::gpt1_microsecond_timer_start,
+        l6::main_device_initializer,
+        l6::main_runtime_buffers_clear,
+        l6::sampler_file_assign_priority_raise,
+        l6::recorder_media_refresh,
+        l6::recplayctl_state_reset,
+        l6::sound_pad_sampler_init,
+        l6::uicycle_init,
+        l6::timer_11_init,
     ];
     impl Port {
         fn send(&self, bytes: &[u8]) -> Result<(), String> {
@@ -108,7 +116,7 @@ mod imp {
 
     fn l6_event_queue_items(guest: &Headless) -> Result<u32, String> {
         let handle = guest.engine.management[0]
-            .read_memory(0, 0x801f8f28, 4)
+            .read_memory(0, l6::main_event_queue, 4)
             .map_err(|error| format!("cannot read L6 event queue handle: {error}"))?;
         let handle: [u8; 4] = handle
             .as_slice()
@@ -279,22 +287,22 @@ mod imp {
                 .breakpoint(l6::main_event_submit, true)
                 .map_err(|e| e.to_string())?;
             debugger
-                .breakpoint(0x80020360, true)
+                .breakpoint(l6::main_event_queue_drain, true)
                 .map_err(|e| e.to_string())?;
             debugger
-                .breakpoint(0x80020438, true)
+                .breakpoint(l6::main_event_queue_drain_variant, true)
                 .map_err(|e| e.to_string())?;
             debugger
-                .breakpoint(0x80020548, true)
+                .breakpoint(l6::main_event_queue_drain_with_args, true)
                 .map_err(|e| e.to_string())?;
             debugger
                 .breakpoint(l6::main_event_queue_reader, true)
                 .map_err(|e| e.to_string())?;
             debugger
-                .breakpoint(0x800344e0, true)
+                .breakpoint(l6::timer_22_restart, true)
                 .map_err(|e| e.to_string())?;
             debugger
-                .breakpoint(0x80034530, true)
+                .breakpoint(l6::timer_4_restart, true)
                 .map_err(|e| e.to_string())?;
             debugger
                 .breakpoint(l6::main_task, true)
@@ -349,9 +357,13 @@ mod imp {
                     let counter = match address {
                         l6::midi_in => Some(&worker_handler_hits),
                         l6::main_event_submit => Some(&worker_state_dispatch_hits),
-                        0x80020360 | 0x80020438 | 0x80020548 => Some(&worker_queue_receiver_hits),
+                        l6::main_event_queue_drain
+                        | l6::main_event_queue_drain_variant
+                        | l6::main_event_queue_drain_with_args => Some(&worker_queue_receiver_hits),
                         l6::main_event_queue_reader => Some(&worker_event_queue_reader_hits),
-                        0x800344e0 | 0x80034530 => Some(&worker_event_fallback_hits),
+                        l6::timer_22_restart | l6::timer_4_restart => {
+                            Some(&worker_event_fallback_hits)
+                        }
                         l6::main_task => Some(&worker_main_task_entry_hits),
                         l6::mixer_setter | l6::mixer_din_setter_6 | l6::mixer_set_eq => {
                             Some(&worker_candidate_setter_hits)
@@ -696,10 +708,9 @@ mod imp {
                         .try_into()
                         .map_err(|_| "invalid L6 event queue count read".to_owned())?,
                 );
-                let event_queue_handle =
-                    guest.engine.management[0]
-                        .read_memory(0, 0x801f8f28, 4)
-                        .map_err(|error| format!("cannot read L6 event queue handle: {error}"))?;
+                let event_queue_handle = guest.engine.management[0]
+                    .read_memory(0, l6::main_event_queue, 4)
+                    .map_err(|error| format!("cannot read L6 event queue handle: {error}"))?;
                 let event_queue_handle = u32::from_le_bytes(
                     event_queue_handle
                         .as_slice()

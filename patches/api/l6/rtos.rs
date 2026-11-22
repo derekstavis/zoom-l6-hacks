@@ -45,3 +45,20 @@ firmware_variables! {
     /// allocation and free counts.
     pub mut xFreeBytesRemaining: u32, at 0x801f_9020;
 }
+
+firmware_functions! {
+    pub unsafe fn vTaskPrioritySet(task: *mut u8, priority: u32) at 0x8007_4440;
+    pub unsafe fn xQueueReceive(queue: *mut u8, item: *mut u8, ticks_to_wait: u32) -> i32, at 0x8007_6710;
+    pub unsafe fn xQueueCreateCountingSemaphore(max_count: u32, initial_count: u32) -> *mut u8, at 0x8007_6318;
+}
+
+firmware_symbols! {
+    /// Non-blocking queue receive that decrements `main_event_queue_pending`.
+    pub fw_queue_receive at 0x8004_83d0;
+    pub fw_queue_send at 0x8004_83f8;
+}
+
+firmware_variables! {
+    /// The heap_4 end-marker pointer.
+    pub mut pxEnd: *mut u8, at 0x801f_901c;
+}

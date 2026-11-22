@@ -743,6 +743,13 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
                     run(Operation::KnobDialog, "knob-dialog")?;
                 }
                 if let Some(patch) = patches.iter().find(|patch| **patch == "midi-sync") {
+                    let usb = session
+                        .engine
+                        .usb
+                        .as_ref()
+                        .ok_or("USB host unavailable for post-update MIDI check")?;
+                    wait_usb_controller(&session, usb, 180_000, 300)
+                        .map_err(|error| format!("post-update USB controller: {error}"))?;
                     run(
                         Operation::DirectUsbMidiRoundTrip {
                             cable: 1,

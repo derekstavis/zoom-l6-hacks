@@ -48,33 +48,22 @@ impl Scenario {
             if !value.installed_patches.is_empty() || !value.update_patches.is_empty() {
                 return Err("sd_patches cannot combine installed_patches or update_patches".into());
             }
-            if patches.iter().any(|name| {
-                patch_core::patch_package(name)
-                    .is_none_or(|package| package.kind != patch_core::PackageKind::Patch)
-            }) {
-                return Err("unknown SD patch name".into());
-            }
-            for model in &value.models {
-                let firmware_model = *model;
-                if let Some(name) = patches
-                    .iter()
-                    .find(|name| !patch_core::supports_sd_patch(name, firmware_model))
-                {
-                    return Err(format!(
-                        "patch {name} does not support SD loading on {model}"
-                    ));
-                }
-                if !value.effect_replacements.is_empty() && firmware_model != Model::L6max {
-                    return Err("effect_replacements are currently supported on L6max only".into());
-                }
-            }
             let replacements = value
                 .effect_replacements
                 .iter()
                 .map(|(slot, effect)| (slot.clone(), effect.clone()))
                 .collect::<Vec<_>>();
-            patch_core::effect_replacement_packages(&replacements, patch_core::patch_catalog())
-                .map_err(|error| format!("invalid effect_replacements: {error}"))?;
+            if !patches.is_empty() || !replacements.is_empty() {
+                for model in &value.models {
+                    patch_core::Plan::new(
+                        *model,
+                        patch_core::Delivery::SdCard,
+                        patches,
+                        &replacements,
+                    )
+                    .map_err(|error| format!("invalid sd_patches for {model}: {error}"))?;
+                }
+            }
         }
         if value.backends.is_empty() {
             return Err("backends must contain headless and/or gui".into());

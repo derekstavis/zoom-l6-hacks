@@ -11,7 +11,7 @@ include!(concat!(env!("OUT_DIR"), "/templates_generated.rs"));
 
 use l6fw::Model;
 use patch_core::{
-    HookEdit, PatchEdits, WASM_PATCHES, apply_patch_with_map, branch, resolve_patch_dependencies,
+    Delivery, HookEdit, PatchEdits, Plan, WASM_PATCHES, apply_patch_with_map, branch,
     supports_wasm_patch, verify_firmware_for, write_image_length_and_version,
 };
 use serde_json::Value;
@@ -291,30 +291,12 @@ pub fn apply_patches_with_loader(
     install_patch_loader: bool,
 ) -> Result<(Vec<u8>, Value), String> {
     let model = l6fw::model_from_package(package)?;
-    for name in selected {
-        if !WASM_PATCHES.contains(name) {
-            return Err(format!("unknown patch: {name}"));
-        }
-        if !supports_wasm_patch(name, model) {
-            return Err(format!(
-                "patch {name} is not available for {} firmware in the browser patcher",
-                model.label()
-            ));
-        }
-    }
     let requested = selected
         .iter()
         .map(|name| (*name).to_owned())
         .collect::<Vec<_>>();
-    let dependencies = resolve_patch_dependencies(&requested)?;
-    for dependency in &dependencies {
-        if !WASM_PATCHES.contains(&dependency.as_str()) || !supports_wasm_patch(dependency, model) {
-            return Err(format!(
-                "patch dependency {dependency} is not available for {} firmware in the browser patcher",
-                model.label()
-            ));
-        }
-    }
+    let plan = Plan::new(model, Delivery::Browser, &requested, &[])?;
+    let dependencies = plan.patches;
     let ordered: Vec<&str> = dependencies.iter().map(String::as_str).collect();
     if ordered.is_empty() && !install_patch_loader {
         return Err("select at least one patch".into());

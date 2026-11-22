@@ -275,6 +275,13 @@ or mismatched dependency or an inconsistent effect, and names each package's
 SD module file with the same code `l6patch` uses. The web build exports that
 API as JSON instead of maintaining a second patch list.
 
+Every builder selects patches through `patch_core::Plan` (`src/plan.rs`). A plan
+takes the model, the delivery (firmware, the browser patcher or an SD card
+module), the requested patches and the effect map. It adds the effect packages,
+resolves dependencies, and rejects any package the model does not support for
+that delivery. `l6patch`, the browser patcher, the emulator and the scenario
+checks all build one, so they accept and order patches the same way.
+
 Composition is a build-time operation. It creates one BIN file named from the
 requested patch names and versions followed by dependency-only patch names and
 versions, such as `efx-plateau-1.0.0-knob-dialog-1.0.0.bin`. A dependency shared

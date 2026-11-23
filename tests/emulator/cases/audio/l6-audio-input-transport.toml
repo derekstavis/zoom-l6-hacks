@@ -1,0 +1,253 @@
+version = 1
+name = "l6-audio-input-transport"
+models = ["l6"]
+state = "volume-meter-ready"
+backends = ["headless"]
+
+# The Audio Input window's transport on L6: Play pressed after the mixer is
+# running, then Pause, seek, Stop and reloading one channel. Channel 2 is a
+# mono input on SAI3 and channel 3 a stereo input on SAI1, so both receive
+# interfaces are covered.
+
+[case]
+suites = ["full"]
+wall_timeout_s = 600
+environment = { L6_AUDIO_RAW_CAPTURE = "{logs}/sai-output.s32" }
+
+[[audio_input]]
+channel = 2
+loop-tone = { hz = 500.0, seconds = 30.0, amplitude = 0.05 }
+
+[[audio_input]]
+channel = 3
+loop-tone = { hz = 700.0, seconds = 30.0, amplitude = 0.002 }
+
+[[step]]
+action = "wait"
+until = "mixer-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "delay"
+guest_ms = 5000
+guest_timeout_ms = 10000
+wall_timeout_s = 300
+
+[[step]]
+action = "encoder"
+channel = 2
+steps = 30
+gesture = "scroll"
+
+[[step]]
+action = "encoder"
+channel = 3
+steps = 30
+gesture = "scroll"
+
+[[step]]
+action = "delay"
+guest_ms = 5000
+guest_timeout_ms = 20000
+wall_timeout_s = 120
+
+# Assigned input stays silent until Play.
+[[step]]
+action = "expect-output-tone"
+hz = 500.0
+
+[[step]]
+action = "expect-output-tone"
+hz = 700.0
+
+[[step]]
+action = "expect-audio-input"
+playing = false
+min_ms = 0
+max_ms = 0
+
+# Encoder acceleration varies with process timing, so levels are approximate.
+[[step]]
+action = "audio-input-transport"
+command = "play"
+
+[[step]]
+action = "delay"
+guest_ms = 2000
+guest_timeout_ms = 10000
+wall_timeout_s = 120
+
+[[step]]
+action = "expect-output-tone"
+hz = 500.0
+left_db = -1.5
+right_db = -1.5
+tolerance_db = 2.0
+
+[[step]]
+action = "expect-output-tone"
+hz = 700.0
+left_db = -44.0
+right_db = -44.0
+tolerance_db = 2.0
+
+[[step]]
+action = "expect-audio-input"
+playing = true
+min_ms = 1000
+max_ms = 4000
+
+[[step]]
+action = "audio-input-transport"
+command = "pause"
+
+[[step]]
+action = "delay"
+guest_ms = 2000
+guest_timeout_ms = 10000
+wall_timeout_s = 120
+
+# Paused input is silent and holds its position.
+[[step]]
+action = "expect-output-tone"
+hz = 500.0
+
+[[step]]
+action = "expect-output-tone"
+hz = 700.0
+
+[[step]]
+action = "expect-audio-input"
+playing = false
+min_ms = 1000
+max_ms = 4000
+
+[[step]]
+action = "audio-input-transport"
+command = "seek"
+position_ms = 20000
+
+[[step]]
+action = "delay"
+guest_ms = 2000
+guest_timeout_ms = 10000
+wall_timeout_s = 120
+
+[[step]]
+action = "expect-audio-input"
+playing = false
+min_ms = 20000
+max_ms = 20000
+
+[[step]]
+action = "audio-input-transport"
+command = "play"
+
+[[step]]
+action = "delay"
+guest_ms = 3000
+guest_timeout_ms = 12000
+wall_timeout_s = 120
+
+[[step]]
+action = "expect-audio-input"
+playing = true
+min_ms = 21000
+max_ms = 24000
+
+[[step]]
+action = "expect-output-tone"
+hz = 500.0
+left_db = -1.5
+right_db = -1.5
+tolerance_db = 2.0
+
+[[step]]
+action = "expect-output-tone"
+hz = 700.0
+left_db = -44.0
+right_db = -44.0
+tolerance_db = 2.0
+
+[[step]]
+action = "audio-input-transport"
+command = "stop"
+
+[[step]]
+action = "delay"
+guest_ms = 2000
+guest_timeout_ms = 10000
+wall_timeout_s = 120
+
+[[step]]
+action = "expect-audio-input"
+playing = false
+min_ms = 0
+max_ms = 0
+
+[[step]]
+action = "expect-output-tone"
+hz = 500.0
+
+[[step]]
+action = "expect-output-tone"
+hz = 700.0
+
+[[step]]
+action = "audio-input-transport"
+command = "play"
+
+[[step]]
+action = "delay"
+guest_ms = 2000
+guest_timeout_ms = 10000
+wall_timeout_s = 120
+
+# Dropping one channel leaves the other playing.
+[[step]]
+action = "audio-input-load"
+channel = 2
+loaded = false
+
+[[step]]
+action = "delay"
+guest_ms = 2000
+guest_timeout_ms = 10000
+wall_timeout_s = 120
+
+[[step]]
+action = "expect-output-tone"
+hz = 500.0
+
+[[step]]
+action = "expect-output-tone"
+hz = 700.0
+left_db = -44.0
+right_db = -44.0
+tolerance_db = 2.0
+
+[[step]]
+action = "audio-input-load"
+channel = 2
+loaded = true
+
+[[step]]
+action = "delay"
+guest_ms = 2000
+guest_timeout_ms = 10000
+wall_timeout_s = 120
+
+[[step]]
+action = "expect-output-tone"
+hz = 500.0
+left_db = -1.5
+right_db = -1.5
+tolerance_db = 2.0
+
+[[step]]
+action = "expect-output-tone"
+hz = 700.0
+left_db = -44.0
+right_db = -44.0
+tolerance_db = 2.0

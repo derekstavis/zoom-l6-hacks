@@ -239,7 +239,7 @@ The printed artifact directory contains:
 
 - `report.json` and, for completed suites, `summary.md`: matrix and outcome.
   See [Report](#report) below.
-- `progress.json`: live case counts and active cases, displayed with
+- `progress.jsonl`: live suite events and per-attempt progress streams, displayed with
   `cargo l6test watch /path/to/run` from another terminal. Closing the viewer
   does not stop the run; the report remains the authoritative result.
 - `manifest.json`: source revision, dirty diff/untracked hashes, scenario,

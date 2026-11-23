@@ -1,179 +1,337 @@
-//! Live progress shared between the suite driver and terminal watcher.
-use crate::report::Outcome;
-use serde::{Deserialize, Serialize};
+//! Suite event writer and replaying live watcher.
+use crate::report;
+use smoke_core::progress::{self, AttemptId, CaseEvent, CaseId, Outcome, SuiteEvent, Writer};
 use std::{
     collections::BTreeMap,
     ffi::OsString,
-    fs,
-    io::{self, IsTerminal, Write},
+    fs::File,
+    io::{self, IsTerminal, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::Mutex,
     thread,
     time::Duration,
 };
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct Active {
-    case: String,
-    model: String,
-    backend: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct Snapshot {
-    total: usize,
-    completed: usize,
-    outcome: String,
-    counts: BTreeMap<String, usize>,
-    active: BTreeMap<String, Active>,
+fn outcome(o: report::Outcome) -> Outcome {
+    match o {
+        report::Outcome::Pass => Outcome::Pass,
+        report::Outcome::Fail => Outcome::Fail,
+        report::Outcome::Flaky => Outcome::Flaky,
+        report::Outcome::Blocked => Outcome::Blocked,
+        report::Outcome::Xfail => Outcome::Xfail,
+        report::Outcome::Xpass => Outcome::Xpass,
+    }
 }
 
 pub struct Journal {
-    path: PathBuf,
-    state: Mutex<Snapshot>,
+    writer: Mutex<Option<Writer>>,
 }
 impl Journal {
-    pub fn new(dir: &Path, total: usize) -> Result<Self, String> {
-        let journal = Self {
-            path: dir.join("progress.json"),
-            state: Mutex::new(Snapshot {
-                total,
-                completed: 0,
-                outcome: "RUNNING".into(),
-                counts: BTreeMap::new(),
-                active: BTreeMap::new(),
-            }),
-        };
-        journal.save(&journal.state.lock().unwrap())?;
-        Ok(journal)
-    }
-    fn save(&self, state: &Snapshot) -> Result<(), String> {
-        let tmp = self.path.with_extension("json.tmp");
-        fs::write(&tmp, serde_json::to_vec(state).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
-        fs::rename(tmp, &self.path).map_err(|e| e.to_string())
-    }
-    pub fn start(&self, key: &str, case: &str, model: &str, backend: &str) {
-        let mut state = self.state.lock().unwrap();
-        state.active.insert(
-            key.into(),
-            Active {
-                case: case.into(),
-                model: model.into(),
-                backend: backend.into(),
-            },
-        );
-        if let Err(e) = self.save(&state) {
-            tracing::warn!(error = %e, "could not write progress");
+    pub fn new(dir: &Path, total: usize) -> Self {
+        let run_id = dir.display().to_string();
+        let writer = Writer::create(&dir.join("progress.jsonl"))
+            .and_then(|mut writer| {
+                writer.emit(&SuiteEvent::Header {
+                    version: progress::VERSION,
+                    run_id: run_id.clone(),
+                })?;
+                writer.emit(&SuiteEvent::RunStarted { total_cases: total })?;
+                Ok(writer)
+            })
+            .map_err(|e| tracing::warn!(error = %e, "could not create progress stream"))
+            .ok();
+        Self {
+            writer: Mutex::new(writer),
         }
     }
-    pub fn finish(&self, key: &str, outcome: Outcome) {
-        let mut state = self.state.lock().unwrap();
-        state.active.remove(key);
-        state.completed += 1;
-        *state.counts.entry(outcome.to_string()).or_default() += 1;
-        if let Err(e) = self.save(&state) {
-            tracing::warn!(error = %e, "could not write progress");
-        }
-    }
-    pub fn complete(&self, outcome: &str) -> Result<(), String> {
-        let mut state = self.state.lock().unwrap();
-        state.outcome = outcome.into();
-        self.save(&state)
-    }
-}
-impl Drop for Journal {
-    fn drop(&mut self) {
-        if let Ok(state) = self.state.get_mut()
-            && state.outcome == "RUNNING"
+    fn emit(&self, event: SuiteEvent) {
+        if let Ok(mut guard) = self.writer.lock()
+            && let Some(writer) = guard.as_mut()
+            && let Err(error) = writer.emit(&event)
         {
-            state.outcome = "BLOCKED".into();
-            state.active.clear();
-            let snapshot = state.clone();
-            let _ = self.save(&snapshot);
+            tracing::warn!(%error, "could not write progress event");
+            *guard = None;
         }
+    }
+    pub fn attempt_started(&self, id: AttemptId, path: PathBuf) {
+        self.emit(SuiteEvent::AttemptStarted {
+            id,
+            progress_path: path,
+        });
+    }
+    pub fn attempt_phase(&self, id: AttemptId, phase: progress::Phase) {
+        self.emit(SuiteEvent::AttemptPhaseChanged { id, phase });
+    }
+    pub fn attempt_finished(&self, id: AttemptId, result: report::Outcome) {
+        self.emit(SuiteEvent::AttemptFinished {
+            id,
+            outcome: outcome(result),
+        });
+    }
+    pub fn case_finished(&self, id: CaseId, result: report::Outcome) {
+        self.emit(SuiteEvent::CaseFinished {
+            id,
+            outcome: outcome(result),
+        });
+    }
+    pub fn complete(&self, result: report::Outcome) {
+        self.emit(SuiteEvent::RunFinished {
+            outcome: outcome(result),
+        });
     }
 }
 
-fn render(s: &Snapshot, color: bool) -> String {
+#[derive(Default)]
+struct Tail {
+    offset: u64,
+    partial: Vec<u8>,
+}
+impl Tail {
+    fn read<T: serde::de::DeserializeOwned>(&mut self, path: &Path) -> Result<Vec<T>, String> {
+        let mut file = match File::open(path) {
+            Ok(file) => file,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(vec![]),
+            Err(e) => return Err(format!("{}: {e}", path.display())),
+        };
+        file.seek(SeekFrom::Start(self.offset))
+            .map_err(|e| e.to_string())?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+        self.offset += bytes.len() as u64;
+        self.partial.extend(bytes);
+        let mut result = Vec::new();
+        while let Some(end) = self.partial.iter().position(|b| *b == b'\n') {
+            let line: Vec<u8> = self.partial.drain(..=end).collect();
+            result.push(
+                serde_json::from_slice(&line)
+                    .map_err(|e| format!("{}: invalid progress record: {e}", path.display()))?,
+            );
+        }
+        Ok(result)
+    }
+}
+
+struct Active {
+    id: AttemptId,
+    path: PathBuf,
+    tail: Tail,
+    header: bool,
+    total: Option<usize>,
+    step: Option<(usize, String)>,
+    phase: Option<progress::Phase>,
+    error: Option<String>,
+}
+#[derive(Default)]
+struct View {
+    run_id: Option<String>,
+    total: Option<usize>,
+    cases: BTreeMap<CaseId, Outcome>,
+    active: BTreeMap<CaseId, Active>,
+    outcome: Option<Outcome>,
+}
+impl View {
+    fn suite(&mut self, event: SuiteEvent) -> Result<(), String> {
+        if self.run_id.is_none() {
+            return match event {
+                SuiteEvent::Header { version, run_id } if version == progress::VERSION => {
+                    self.run_id = Some(run_id);
+                    Ok(())
+                }
+                SuiteEvent::Header { version, .. } => Err(format!(
+                    "progress version mismatch: run uses {version}, watcher uses {}",
+                    progress::VERSION
+                )),
+                _ => Err("progress stream is missing its header".into()),
+            };
+        }
+        match event {
+            SuiteEvent::Header { .. } => return Err("duplicate progress header".into()),
+            SuiteEvent::RunStarted { total_cases } => self.total = Some(total_cases),
+            SuiteEvent::AttemptStarted { id, progress_path } => {
+                self.active.insert(
+                    id.case.clone(),
+                    Active {
+                        id,
+                        path: progress_path,
+                        tail: Tail::default(),
+                        header: false,
+                        total: None,
+                        step: None,
+                        phase: None,
+                        error: None,
+                    },
+                );
+            }
+            SuiteEvent::AttemptPhaseChanged { id, phase } => {
+                if let Some(active) = self.active.get_mut(&id.case)
+                    && active.id == id
+                {
+                    active.phase = Some(phase);
+                }
+            }
+            SuiteEvent::AttemptFinished { id, .. } => {
+                if self.active.get(&id.case).is_some_and(|a| a.id == id) {
+                    self.active.remove(&id.case);
+                }
+            }
+            SuiteEvent::CaseFinished { id, outcome } => {
+                self.active.remove(&id);
+                self.cases.insert(id, outcome);
+            }
+            SuiteEvent::RunFinished { outcome } => self.outcome = Some(outcome),
+        }
+        Ok(())
+    }
+    fn read_cases(&mut self, root: &Path) -> Result<(), String> {
+        for active in self.active.values_mut() {
+            if active.error.is_some() {
+                continue;
+            }
+            let events = match active.tail.read::<CaseEvent>(&root.join(&active.path)) {
+                Ok(events) => events,
+                Err(error) => {
+                    active.error = Some(error);
+                    continue;
+                }
+            };
+            for event in events {
+                if !active.header {
+                    match event {
+                        CaseEvent::Header {
+                            version,
+                            run_id,
+                            id,
+                        } if version == progress::VERSION
+                            && self.run_id.as_deref() == Some(&run_id)
+                            && id == active.id =>
+                        {
+                            active.header = true
+                        }
+                        CaseEvent::Header { version, .. } if version != progress::VERSION => {
+                            return Err(format!(
+                                "progress version mismatch: case uses {version}, watcher uses {}",
+                                progress::VERSION
+                            ));
+                        }
+                        _ => {
+                            active.error = Some("invalid progress stream identity".into());
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                match event {
+                    CaseEvent::ScenarioStarted { total_steps } => active.total = Some(total_steps),
+                    CaseEvent::StepStarted { index, label } => active.step = Some((index, label)),
+                    CaseEvent::ScenarioFinished { .. } => {}
+                    CaseEvent::Header { .. } => {
+                        active.error = Some("duplicate case progress header".into());
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn render(view: &View, color: bool) -> String {
     let (cyan, green, red, yellow, reset) = if color {
         ("\x1b[1;36m", "\x1b[32m", "\x1b[31m", "\x1b[33m", "\x1b[0m")
     } else {
         ("", "", "", "", "")
     };
-    let filled = if s.total == 0 {
+    let total = view.total.unwrap_or(0);
+    let done = view.cases.len();
+    let filled = if total == 0 {
         0
     } else {
-        s.completed
-            .saturating_mul(30)
-            .checked_div(s.total)
-            .unwrap_or(0)
-            .min(30)
+        (done.saturating_mul(30) / total).min(30)
     };
-    let percent = if s.total == 0 {
+    let percent = if total == 0 {
         0
     } else {
-        s.completed.saturating_mul(100) / s.total
+        done.saturating_mul(100) / total
     };
-    let count = |key: &str| s.counts.get(key).copied().unwrap_or(0);
-    let mut out = format!(
-        "  {cyan}L6 test suite{reset}  {}\n  {}\n  {cyan}{}{}{reset}  {}/{} ({}%)\n  {green}✓ {} passed{reset}   {red}✗ {} failed{reset}   {yellow}! {} flaky   {} blocked{reset}\n",
-        s.outcome,
+    let count = |outcome| view.cases.values().filter(|o| **o == outcome).count();
+    let status = view
+        .outcome
+        .as_ref()
+        .map(|o| format!("{o:?}").to_uppercase())
+        .unwrap_or_else(|| "RUNNING".into());
+    let mut s = format!(
+        "  {cyan}L6 test suite{reset}  {status}\n  {}\n  {cyan}{}{}{reset}  {done}/{total} ({percent}%)\n  {green}✓ {} passed{reset}   {red}✗ {} failed{reset}   {yellow}! {} flaky   {} blocked{reset}\n",
         "━".repeat(42),
         "█".repeat(filled),
         "░".repeat(30 - filled),
-        s.completed,
-        s.total,
-        percent,
-        count("PASS"),
-        count("FAIL"),
-        count("FLAKY"),
-        count("BLOCKED")
+        count(Outcome::Pass),
+        count(Outcome::Fail),
+        count(Outcome::Flaky),
+        count(Outcome::Blocked)
     );
-    if count("XFAIL") + count("XPASS") > 0 {
-        out.push_str(&format!(
+    if count(Outcome::Xfail) + count(Outcome::Xpass) > 0 {
+        s.push_str(&format!(
             "  {} expected failures   {} unexpected passes\n",
-            count("XFAIL"),
-            count("XPASS")
+            count(Outcome::Xfail),
+            count(Outcome::Xpass)
         ));
     }
-    for active in s.active.values() {
-        out.push_str(&format!(
+    for a in view.active.values() {
+        s.push_str(&format!(
             "\n  Running: {} ({}, {})",
-            active.case, active.model, active.backend
+            a.id.case.case, a.id.case.model, a.id.case.backend
         ));
+        if a.id.attempt > 1 {
+            s.push_str(&format!(" · attempt {}", a.id.attempt));
+        }
+        if a.step.is_none()
+            && let Some(phase) = &a.phase
+        {
+            let label = match phase {
+                progress::Phase::PreparingFixture => "Preparing fixture",
+                progress::Phase::Executing => "Starting scenario",
+            };
+            s.push_str(&format!("\n    {label}"));
+        }
+        if let (Some(total), Some((index, label))) = (a.total, &a.step) {
+            s.push_str(&format!("\n    Step {index}/{total} · {label}"));
+        }
     }
-    out.push('\n');
-    out
+    s.push('\n');
+    s
 }
 
 pub fn watch(args: &[OsString]) -> Result<(), String> {
     if args.len() != 1 {
         return Err("Usage: cargo l6test watch RUN_DIRECTORY".into());
     }
-    let path = PathBuf::from(&args[0]).join("progress.json");
+    let path = PathBuf::from(&args[0]).join("progress.jsonl");
+    if !path.exists() {
+        return Err(format!(
+            "{}: progress stream not found; the run may use an older l6test",
+            path.display()
+        ));
+    }
     let terminal = io::stdout().is_terminal();
+    let mut tail = Tail::default();
+    let mut view = View::default();
     loop {
-        let bytes = fs::read(&path).map_err(|e| {
-            format!(
-                "{}: {e}; progress is available for runs started with this version of l6test",
-                path.display()
-            )
-        })?;
-        let state: Snapshot =
-            serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        for event in tail.read::<SuiteEvent>(&path)? {
+            view.suite(event)?;
+        }
+        view.read_cases(Path::new(&args[0]))?;
         if terminal {
             print!("\x1b[2J\x1b[H");
         }
         print!(
             "{}",
-            render(&state, terminal && std::env::var_os("NO_COLOR").is_none())
+            render(&view, terminal && std::env::var_os("NO_COLOR").is_none())
         );
-        if terminal && state.outcome == "RUNNING" {
+        if terminal && view.outcome.is_none() {
             println!("\n  Ctrl+C to close · tests keep running");
         }
         io::stdout().flush().map_err(|e| e.to_string())?;
-        if !terminal || state.outcome != "RUNNING" {
+        if !terminal || view.outcome.is_some() {
             return Ok(());
         }
         thread::sleep(Duration::from_secs(2));
@@ -183,72 +341,137 @@ pub fn watch(args: &[OsString]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn journal_tracks_overlapping_cases_and_preserves_flaky_results() {
-        let dir = std::env::temp_dir().join(format!("l6test-progress-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        let journal = Journal::new(&dir, 2).unwrap();
-        thread::scope(|scope| {
-            for key in ["a", "b"] {
-                let journal = &journal;
-                scope.spawn(move || journal.start(key, key, "l6", "headless"));
-            }
-        });
-        let read = || {
-            serde_json::from_slice::<Snapshot>(&fs::read(dir.join("progress.json")).unwrap())
-                .unwrap()
-        };
-        assert_eq!(read().active.len(), 2);
-        journal.finish("a", Outcome::Flaky);
-        journal.finish("b", Outcome::Pass);
-        journal.complete("FLAKY").unwrap();
-        let snapshot = read();
-        assert_eq!(
-            (snapshot.completed, snapshot.outcome.as_str()),
-            (2, "FLAKY")
-        );
-        assert!(snapshot.active.is_empty());
-        assert_eq!(snapshot.counts.get("FLAKY"), Some(&1));
-        drop(journal);
-        assert_eq!(read().outcome, "FLAKY");
-        fs::remove_dir_all(dir).unwrap();
+    use std::io::Write;
+    fn id() -> CaseId {
+        CaseId {
+            case: "boot".into(),
+            model: "l6".into(),
+            backend: "headless".into(),
+        }
     }
     #[test]
-    fn renders_concurrent_cases_and_all_outcomes() {
-        let mut active = BTreeMap::new();
-        active.insert(
-            "a".into(),
-            Active {
-                case: "boot".into(),
-                model: "l6".into(),
-                backend: "gui".into(),
-            },
-        );
-        active.insert(
-            "b".into(),
-            Active {
-                case: "midi".into(),
-                model: "l6max".into(),
-                backend: "headless".into(),
-            },
-        );
-        let state = Snapshot {
-            total: 4,
-            completed: 2,
-            outcome: "RUNNING".into(),
-            counts: [("FLAKY".into(), 1), ("XPASS".into(), 1)].into(),
-            active,
+    fn replay_tracks_retries_and_counts_the_final_case_once() {
+        let mut view = View::default();
+        view.suite(SuiteEvent::Header {
+            version: progress::VERSION,
+            run_id: "run".into(),
+        })
+        .unwrap();
+        view.suite(SuiteEvent::RunStarted { total_cases: 1 })
+            .unwrap();
+        let first = AttemptId {
+            case: id(),
+            attempt: 1,
         };
-        let text = render(&state, false);
-        for expected in [
-            "2/4 (50%)",
-            "1 flaky",
-            "1 unexpected passes",
-            "boot (l6, gui)",
-            "midi (l6max, headless)",
-        ] {
-            assert!(text.contains(expected), "{text}");
-        }
-        assert!(!text.contains('\x1b'));
+        view.suite(SuiteEvent::AttemptStarted {
+            id: first.clone(),
+            progress_path: "one".into(),
+        })
+        .unwrap();
+        view.suite(SuiteEvent::AttemptFinished {
+            id: first,
+            outcome: Outcome::Fail,
+        })
+        .unwrap();
+        let second = AttemptId {
+            case: id(),
+            attempt: 2,
+        };
+        view.suite(SuiteEvent::AttemptStarted {
+            id: second.clone(),
+            progress_path: "two".into(),
+        })
+        .unwrap();
+        assert!(render(&view, false).contains("attempt 2"));
+        view.suite(SuiteEvent::AttemptFinished {
+            id: second,
+            outcome: Outcome::Pass,
+        })
+        .unwrap();
+        view.suite(SuiteEvent::CaseFinished {
+            id: id(),
+            outcome: Outcome::Flaky,
+        })
+        .unwrap();
+        assert_eq!(view.cases.len(), 1);
+        assert!(render(&view, false).contains("1 flaky"));
+        assert!(view.active.is_empty());
+    }
+    #[test]
+    fn rejects_version_mismatch_and_missing_header() {
+        let mut view = View::default();
+        assert!(
+            view.suite(SuiteEvent::Header {
+                version: progress::VERSION + 1,
+                run_id: "run".into()
+            })
+            .unwrap_err()
+            .contains("version mismatch")
+        );
+        assert!(
+            view.suite(SuiteEvent::RunStarted { total_cases: 1 })
+                .is_err()
+        );
+    }
+    #[test]
+    fn late_attach_replays_step_and_checks_case_version() {
+        let dir = std::env::temp_dir().join(format!("l6-progress-case-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("attempt.jsonl");
+        let attempt = AttemptId {
+            case: id(),
+            attempt: 1,
+        };
+        let mut writer = Writer::create(&path).unwrap();
+        writer
+            .emit(&CaseEvent::Header {
+                version: progress::VERSION,
+                run_id: "run".into(),
+                id: attempt.clone(),
+            })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::ScenarioStarted { total_steps: 5 })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::StepStarted {
+                index: 3,
+                label: "press control".into(),
+            })
+            .unwrap();
+        let mut view = View::default();
+        view.suite(SuiteEvent::Header {
+            version: progress::VERSION,
+            run_id: "run".into(),
+        })
+        .unwrap();
+        view.suite(SuiteEvent::RunStarted { total_cases: 1 })
+            .unwrap();
+        view.suite(SuiteEvent::AttemptStarted {
+            id: attempt,
+            progress_path: "attempt.jsonl".into(),
+        })
+        .unwrap();
+        view.read_cases(&dir).unwrap();
+        assert!(render(&view, false).contains("Step 3/5 · press control"));
+        drop(writer);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn tail_waits_for_complete_lines_and_never_replays_them() {
+        let path = std::env::temp_dir().join(format!("l6-progress-tail-{}", std::process::id()));
+        let mut file = std::fs::File::create(&path).unwrap();
+        write!(file, "{{\"event\":\"run_started\",").unwrap();
+        file.flush().unwrap();
+        let mut tail = Tail::default();
+        assert!(tail.read::<SuiteEvent>(&path).unwrap().is_empty());
+        writeln!(file, "\"total_cases\":2}}").unwrap();
+        file.flush().unwrap();
+        assert_eq!(
+            tail.read::<SuiteEvent>(&path).unwrap(),
+            vec![SuiteEvent::RunStarted { total_cases: 2 }]
+        );
+        assert!(tail.read::<SuiteEvent>(&path).unwrap().is_empty());
+        std::fs::remove_file(path).unwrap();
     }
 }

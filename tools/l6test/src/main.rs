@@ -395,7 +395,7 @@ fn execute() -> Result<i32, String> {
     if jobs.is_empty() {
         return Err("no model/case combinations selected".into());
     }
-    let progress = progress::Journal::new(&output, jobs.len())?;
+    let progress = progress::Journal::new(&output, jobs.len());
     let mut packages = BTreeSet::new();
     let mut needs_l6patch = false;
     for job in &jobs {
@@ -481,13 +481,11 @@ fn execute() -> Result<i32, String> {
         update_references: args.update_references,
     };
     let run_job = |job: &Job| -> CaseResult {
-        let progress_key = job.dir.to_string_lossy();
-        progress.start(
-            &progress_key,
-            &job.case.id,
-            job.model.name(),
-            job.backend.name(),
-        );
+        let progress_case = smoke_core::progress::CaseId {
+            case: job.case.id.clone(),
+            model: job.model.name().into(),
+            backend: job.backend.name().into(),
+        };
         let case_span = tracing::info_span!("smoke_case",case=%job.case.id,model=%job.model,backend=job.backend.name(),artifacts=%job.dir.display());
         let _entered = case_span.enter();
         tracing::info!(event = "case_started", "case started");
@@ -508,7 +506,29 @@ fn execute() -> Result<i32, String> {
                         format!("{}-a{attempt}", job.midi_namespace),
                     )
                 };
-                run_case(&ctx, &fixture, job.case, job.backend, &dir, &namespace)
+                let id = smoke_core::progress::AttemptId {
+                    case: progress_case.clone(),
+                    attempt: attempt as u32,
+                };
+                progress.attempt_started(
+                    id.clone(),
+                    dir.strip_prefix(&output)
+                        .expect("attempt lives in run directory")
+                        .join("progress.jsonl"),
+                );
+                progress.attempt_phase(id.clone(), smoke_core::progress::Phase::PreparingFixture);
+                let result = run_case(
+                    &ctx,
+                    &fixture,
+                    job.case,
+                    job.backend,
+                    &dir,
+                    &namespace,
+                    &id,
+                    &progress,
+                );
+                progress.attempt_finished(id, result.outcome);
+                result
             }),
             Err(detail) => CaseResult {
                 detail,
@@ -534,7 +554,7 @@ fn execute() -> Result<i32, String> {
                 tracing::error!(event="case_finished",outcome=%result.outcome,detail=%result.detail,seconds=result.duration_s,"case failed")
             }
         }
-        progress.finish(&progress_key, result.outcome);
+        progress.case_finished(progress_case, result.outcome);
         result
     };
     // Queue shareable cases first so an exclusive one never idles the pool.
@@ -573,7 +593,7 @@ fn execute() -> Result<i32, String> {
         &cache_stats,
         args.fixtures_only,
     )?;
-    progress.complete(&outcome.to_string())?;
+    progress.complete(outcome);
     Ok(code)
 }
 struct Job<'a> {

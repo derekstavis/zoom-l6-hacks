@@ -33,14 +33,18 @@ passed: L6 in 20.7 seconds and L6max in 25.8 seconds, including fixtures. A
 repeat passed in 20.8 and 25.8 seconds. L6 Editor-assigned pad playback passed
 in 26.3 seconds, versus 67.3 seconds in the earlier suite. The L6max
 on-device assignment case passed in 187.9 seconds, versus 227.1 seconds in
-the earlier suite; its current checks do not prove rendered-pixel fidelity. These are individual
-runs, not a statistically controlled performance comparison. The tests still
+the earlier suite; its current checks do not prove rendered-pixel fidelity.
+These are individual runs, not a statistically controlled performance comparison. The tests still
 check the complete Editor exchange and assignment readback; the readiness
 check is an additional prerequisite, not a substitute for those assertions.
 A temporary fresh-state variant also passed once per model, in 61.2 seconds
-on L6 and 65.5 seconds on L6max. It exercised the retained prompt sequence;
-it is not a repeated reliability test. The real-device startup timing and
-behavior are not established by QEMU runs.
+on L6 and 65.5 seconds on L6max. It exercised the retained prompt sequence.
+After rebasing onto `main` `ffb935b8`, the four affected prepared-state
+cases passed again: Editor assignment in 20.9 seconds on L6 and 26.0 seconds
+on L6max, L6 playback in 26.5 seconds, and L6max on-device assignment in
+186.8 seconds. The temporary fresh-state variant passed again in 60.6 seconds
+on L6 and 65.4 seconds on L6max. These runs are not a controlled performance
+benchmark or proof of real-device startup timing and behavior.
 
 The 40-second delay is retained for cases that actually perform first-boot
 setup; replacing it requires a separate, model-specific prompt-ready signal and

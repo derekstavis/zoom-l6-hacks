@@ -128,6 +128,7 @@ struct View {
     cases: BTreeMap<CaseId, Outcome>,
     active: BTreeMap<CaseId, Active>,
     outcome: Option<Outcome>,
+    incomplete: bool,
 }
 impl View {
     fn suite(&mut self, event: SuiteEvent) -> Result<(), String> {
@@ -276,6 +277,9 @@ fn render(view: &View, color: bool) -> String {
             count(Outcome::Xpass)
         ));
     }
+    if view.incomplete {
+        s.push_str("  Progress stream ended early; see report.json.\n");
+    }
     for a in view.active.values() {
         s.push_str(&format!(
             "\n  Running: {} ({}, {})",
@@ -318,11 +322,28 @@ pub fn watch(args: &[OsString]) -> Result<(), String> {
     let terminal = io::stdout().is_terminal();
     let mut tail = Tail::default();
     let mut view = View::default();
+    let mut final_report_seen = false;
     loop {
         for event in tail.read::<SuiteEvent>(&path)? {
             view.suite(event)?;
         }
         view.read_cases(Path::new(&args[0]))?;
+        if view.outcome.is_none() && view.run_id.is_some() {
+            let report = Path::new(&args[0]).join("report.json");
+            if let Ok(bytes) = std::fs::read(report)
+                && let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                && let Some(status) = value.get("outcome")
+                && let Ok(outcome) = serde_json::from_value::<Outcome>(status.clone())
+            {
+                if !terminal || final_report_seen {
+                    view.outcome = Some(outcome);
+                    view.incomplete = true;
+                    view.active.clear();
+                } else {
+                    final_report_seen = true;
+                }
+            }
+        }
         if terminal {
             print!("\x1b[2J\x1b[H");
         }

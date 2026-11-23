@@ -483,8 +483,8 @@ fn execute() -> Result<i32, String> {
     let run_job = |job: &Job| -> CaseResult {
         let progress_case = smoke_core::progress::CaseId {
             case: job.case.id.clone(),
-            model: job.model.name().into(),
-            backend: job.backend.name().into(),
+            model: job.model,
+            backend: job.backend,
         };
         let case_span = tracing::info_span!("smoke_case",case=%job.case.id,model=%job.model,backend=job.backend.name(),artifacts=%job.dir.display());
         let _entered = case_span.enter();

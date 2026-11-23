@@ -281,6 +281,9 @@ fn render(view: &View, color: bool) -> String {
             "\n  Running: {} ({}, {})",
             a.id.case.case, a.id.case.model, a.id.case.backend
         ));
+        if let Some(error) = &a.error {
+            s.push_str(&format!("\n    Progress unavailable: {error}"));
+        }
         if a.id.attempt > 1 {
             s.push_str(&format!(" · attempt {}", a.id.attempt));
         }
@@ -345,8 +348,8 @@ mod tests {
     fn id() -> CaseId {
         CaseId {
             case: "boot".into(),
-            model: "l6".into(),
-            backend: "headless".into(),
+            model: l6fw::Model::L6,
+            backend: smoke_core::Backend::Headless,
         }
     }
     #[test]
@@ -414,7 +417,7 @@ mod tests {
         );
     }
     #[test]
-    fn late_attach_replays_step_and_checks_case_version() {
+    fn late_attach_replays_step() {
         let dir = std::env::temp_dir().join(format!("l6-progress-case-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("attempt.jsonl");
@@ -454,6 +457,42 @@ mod tests {
         .unwrap();
         view.read_cases(&dir).unwrap();
         assert!(render(&view, false).contains("Step 3/5 · press control"));
+        drop(writer);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn case_version_mismatch_refuses_watching() {
+        let dir = std::env::temp_dir().join(format!("l6-progress-version-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("attempt.jsonl");
+        let attempt = AttemptId {
+            case: id(),
+            attempt: 1,
+        };
+        let mut writer = Writer::create(&path).unwrap();
+        writer
+            .emit(&CaseEvent::Header {
+                version: progress::VERSION + 1,
+                run_id: "run".into(),
+                id: attempt.clone(),
+            })
+            .unwrap();
+        let mut view = View::default();
+        view.suite(SuiteEvent::Header {
+            version: progress::VERSION,
+            run_id: "run".into(),
+        })
+        .unwrap();
+        view.suite(SuiteEvent::AttemptStarted {
+            id: attempt,
+            progress_path: "attempt.jsonl".into(),
+        })
+        .unwrap();
+        assert!(
+            view.read_cases(&dir)
+                .unwrap_err()
+                .contains("version mismatch")
+        );
         drop(writer);
         std::fs::remove_dir_all(dir).unwrap();
     }

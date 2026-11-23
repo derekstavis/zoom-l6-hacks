@@ -14,8 +14,8 @@ pub const ATTEMPT_ENV: &str = "L6_TEST_PROGRESS_ATTEMPT";
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct CaseId {
     pub case: String,
-    pub model: String,
-    pub backend: String,
+    pub model: l6fw::Model,
+    pub backend: crate::Backend,
 }
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct AttemptId {

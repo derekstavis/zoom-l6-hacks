@@ -493,6 +493,56 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
+    fn live_case_phase_is_replaced_by_its_step() {
+        let dir = std::env::temp_dir().join(format!("l6-progress-phase-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut writer = Writer::create(&dir.join("attempt.jsonl")).unwrap();
+        let attempt = AttemptId {
+            case: id(),
+            attempt: 1,
+        };
+        writer
+            .emit(&CaseEvent::Header {
+                version: progress::VERSION,
+                run_id: "run".into(),
+                id: attempt.clone(),
+            })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::PhaseChanged {
+                phase: progress::CasePhase::StartingEmulator,
+            })
+            .unwrap();
+        let mut view = View::default();
+        view.suite(SuiteEvent::Header {
+            version: progress::VERSION,
+            run_id: "run".into(),
+        })
+        .unwrap();
+        view.suite(SuiteEvent::AttemptStarted {
+            id: attempt,
+            progress_path: "attempt.jsonl".into(),
+        })
+        .unwrap();
+        view.read_cases(&dir).unwrap();
+        assert!(render(&view, false).contains("Starting emulator"));
+        writer
+            .emit(&CaseEvent::ScenarioStarted { total_steps: 2 })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::StepStarted {
+                index: 1,
+                label: "Wait for boot ready".into(),
+            })
+            .unwrap();
+        view.read_cases(&dir).unwrap();
+        let text = render(&view, false);
+        assert!(text.contains("Step 1/2 · Wait for boot ready"));
+        assert!(!text.contains("Starting emulator"));
+        drop(writer);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn case_version_mismatch_refuses_watching() {
         let dir = std::env::temp_dir().join(format!("l6-progress-version-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

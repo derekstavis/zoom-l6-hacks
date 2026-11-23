@@ -159,8 +159,8 @@ pub fn step_label(action: &crate::Action) -> String {
     use crate::Action;
     match action {
         Action::Wait { until } => format!("Wait for {}", until.replace('-', " ")),
-        Action::Press { control } => format!("Press {}", control.replace('-', " ")),
-        Action::Hold { control, .. } => format!("Hold {}", control.replace('-', " ")),
+        Action::Press { control } => format!("Press {}", control.replace(['-', '.'], " ")),
+        Action::Hold { control, .. } => format!("Hold {}", control.replace(['-', '.'], " ")),
         Action::SelectMode { mode } => format!("Select {} mode", mode.replace('-', " ")),
         Action::ExpectMode { mode } => format!("Check {} mode", mode.replace('-', " ")),
         Action::ExpectRing { channel, .. } => format!("Check channel {channel} ring"),
@@ -197,6 +197,12 @@ mod tests {
                 control: "efx-select".into()
             }),
             "Press efx select"
+        );
+        assert_eq!(
+            step_label(&crate::Action::Press {
+                control: "channel.1.mute".into()
+            }),
+            "Press channel 1 mute"
         );
         assert_eq!(
             step_label(&crate::Action::SelectMode {

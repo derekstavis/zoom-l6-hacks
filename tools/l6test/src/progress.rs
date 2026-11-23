@@ -119,6 +119,7 @@ struct Active {
     total: Option<usize>,
     step: Option<(usize, String)>,
     phase: Option<progress::Phase>,
+    case_phase: Option<progress::CasePhase>,
     error: Option<String>,
 }
 #[derive(Default)]
@@ -159,6 +160,7 @@ impl View {
                         total: None,
                         step: None,
                         phase: None,
+                        case_phase: None,
                         error: None,
                     },
                 );
@@ -222,6 +224,7 @@ impl View {
                     continue;
                 }
                 match event {
+                    CaseEvent::PhaseChanged { phase } => active.case_phase = Some(phase),
                     CaseEvent::ScenarioStarted { total_steps } => active.total = Some(total_steps),
                     CaseEvent::StepStarted { index, label } => active.step = Some((index, label)),
                     CaseEvent::ScenarioFinished { .. } => {}
@@ -292,6 +295,14 @@ fn render(view: &View, color: bool) -> String {
             s.push_str(&format!(" · attempt {}", a.id.attempt));
         }
         if a.step.is_none()
+            && let Some(phase) = &a.case_phase
+        {
+            let label = match phase {
+                progress::CasePhase::StartingEmulator => "Starting emulator",
+                progress::CasePhase::PreparingScenario => "Preparing scenario",
+            };
+            s.push_str(&format!("\n    {label}"));
+        } else if a.step.is_none()
             && let Some(phase) = &a.phase
         {
             let label = match phase {

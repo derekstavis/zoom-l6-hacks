@@ -1762,6 +1762,12 @@ fn main() {
             std::process::exit(2);
         });
     options.defer_input_patch = options.smoke_scenario.is_none();
+    let progress = smoke_core::progress::CaseProgress::from_env();
+    if selected_scenario.is_some() {
+        progress.emit(smoke_core::progress::CaseEvent::PhaseChanged {
+            phase: smoke_core::progress::CasePhase::StartingEmulator,
+        });
+    }
     let qemu_processes = Engine::start(&options).unwrap_or_else(|error| {
         if bundle.is_some() {
             firmware_error = Some(error);
@@ -1785,8 +1791,15 @@ fn main() {
         .map(|_| PanelFeed::new(&qemu_processes).expect("valid panel feed"));
     let run_tick = display.is_some() || bundle.is_some();
     let testing = options.smoke_scenario.is_some();
+    if selected_scenario.is_some() {
+        progress.emit(smoke_core::progress::CaseEvent::PhaseChanged {
+            phase: smoke_core::progress::CasePhase::PreparingScenario,
+        });
+    }
     let scenario_smoke = selected_scenario
-        .map(|scenario| smoke_core::Runner::new(scenario, model, options.logs.clone()))
+        .map(|scenario| {
+            smoke_core::Runner::with_progress(scenario, model, options.logs.clone(), progress)
+        })
         .transpose()
         .unwrap_or_else(|error| {
             tracing::error!(%error, "Invalid smoke scenario");

@@ -77,7 +77,7 @@ enum SuiteEvent {
 }
 
 enum CaseEvent {
-    PhaseChanged { phase: Phase },
+    PhaseChanged { phase: CasePhase },
     ScenarioStarted { total_steps: usize },
     StepStarted { index: usize, label: String }, // one-based
     ScenarioFinished { outcome: ScenarioOutcome },

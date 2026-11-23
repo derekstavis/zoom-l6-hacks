@@ -89,10 +89,23 @@ pub struct Runner {
     checkpoints: BTreeMap<String, Observation>,
     scene_save: Option<SceneSaveState>,
     allowed_rejections: [u64; 2],
-    progress: Option<std::sync::Mutex<crate::progress::Writer>>,
+    progress: crate::progress::CaseProgress,
 }
 impl Runner {
     pub fn new(scenario: Scenario, model: Model, logs: PathBuf) -> Result<Self, String> {
+        Self::with_progress(
+            scenario,
+            model,
+            logs,
+            crate::progress::CaseProgress::from_env(),
+        )
+    }
+    pub fn with_progress(
+        scenario: Scenario,
+        model: Model,
+        logs: PathBuf,
+        progress: crate::progress::CaseProgress,
+    ) -> Result<Self, String> {
         if !scenario.models.contains(&model) {
             return Err("scenario does not support this model".into());
         }
@@ -138,30 +151,9 @@ impl Runner {
         }
         fs::create_dir_all(&logs).map_err(|e| e.to_string())?;
         let no_setup_screens = scenario.spec_state;
-        let progress_requested = std::env::var_os(crate::progress::PATH_ENV).is_some();
-        let progress = (|| -> Option<std::sync::Mutex<crate::progress::Writer>> {
-            use crate::progress::{self, CaseEvent};
-            let path = std::env::var_os(progress::PATH_ENV)?;
-            let run_id = std::env::var(progress::RUN_ENV).ok()?;
-            let id = serde_json::from_str(&std::env::var(progress::ATTEMPT_ENV).ok()?).ok()?;
-            let mut writer = progress::Writer::create(Path::new(&path)).ok()?;
-            writer
-                .emit(&CaseEvent::Header {
-                    version: progress::VERSION,
-                    run_id,
-                    id,
-                })
-                .ok()?;
-            writer
-                .emit(&CaseEvent::ScenarioStarted {
-                    total_steps: scenario.step.iter().filter(|s| s.applies_to(model)).count(),
-                })
-                .ok()?;
-            Some(std::sync::Mutex::new(writer))
-        })();
-        if progress_requested && progress.is_none() {
-            tracing::warn!("could not initialize scenario progress stream");
-        }
+        progress.emit(crate::progress::CaseEvent::ScenarioStarted {
+            total_steps: scenario.step.iter().filter(|s| s.applies_to(model)).count(),
+        });
         Ok(Self {
             scenario,
             model,
@@ -299,10 +291,8 @@ impl Runner {
             }
             let (entered, guest_start) = *self.entered.get_or_insert_with(|| {
                 let index = self.scenario.step[..=self.step].iter().filter(|s| s.applies_to(self.model)).count();
-                let label = serde_json::to_value(&step.action).ok().and_then(|v| v.get("action").and_then(Value::as_str).map(|s| s.replace('-', " "))).unwrap_or_else(|| "scenario step".into());
-                if let Some(writer) = &self.progress && let Ok(mut writer) = writer.lock() {
-                    if let Err(error) = writer.emit(&crate::progress::CaseEvent::StepStarted { index, label }) { tracing::warn!(%error, "could not write step progress"); }
-                }
+                let label = crate::progress::step_label(&step.action);
+                self.progress.emit(crate::progress::CaseEvent::StepStarted { index, label });
                 tracing::info!(event="step_started",scenario=%self.scenario.name,model=self.model.name(),step=self.step+1,action=?step.action,guest_ms=obs.panel.guest_ms,"step started");
                 (now, obs.panel.guest_ms)
             });
@@ -1296,19 +1286,14 @@ impl Runner {
         self.history.push_back(event);
     }
     pub fn finish(&self, outcome: &str, error: Option<&str>) -> Result<(), String> {
-        if let Some(writer) = &self.progress
-            && let Ok(mut writer) = writer.lock()
-        {
-            if let Err(error) = writer.emit(&crate::progress::CaseEvent::ScenarioFinished {
+        self.progress
+            .emit(crate::progress::CaseEvent::ScenarioFinished {
                 outcome: if outcome == "PASS" {
                     crate::progress::Outcome::Pass
                 } else {
                     crate::progress::Outcome::Fail
                 },
-            }) {
-                tracing::warn!(%error, "could not write scenario progress");
-            }
-        }
+            });
         if let Some(error) = error {
             tracing::error!(event="scenario_finished",scenario=%self.scenario.name,model=self.model.name(),step=self.step+1,outcome,%error,"scenario failed");
         } else {

@@ -37,7 +37,10 @@ the earlier suite; its current checks do not prove rendered-pixel fidelity. Thes
 runs, not a statistically controlled performance comparison. The tests still
 check the complete Editor exchange and assignment readback; the readiness
 check is an additional prerequisite, not a substitute for those assertions.
-The real-device startup timing and behavior are not established by QEMU runs.
+A temporary fresh-state variant also passed once per model, in 61.2 seconds
+on L6 and 65.5 seconds on L6max. It exercised the retained prompt sequence;
+it is not a repeated reliability test. The real-device startup timing and
+behavior are not established by QEMU runs.
 
 The 40-second delay is retained for cases that actually perform first-boot
 setup; replacing it requires a separate, model-specific prompt-ready signal and

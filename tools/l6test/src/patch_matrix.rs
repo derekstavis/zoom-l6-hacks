@@ -594,10 +594,15 @@ fn combination_case(
         &mut text,
         "action = \"wait\"\nuntil = \"mixer-ready\"\nguest_timeout_ms = 60000\nwall_timeout_s = 300",
     );
-    step(
-        &mut text,
-        "action = \"delay\"\nguest_ms = 8000\nguest_timeout_ms = 20000\nwall_timeout_s = 300",
-    );
+    // L6max's mixer and loader can be ready before its MIDI input path and
+    // recorder screen. Keep their startup allowance until those have their
+    // own readiness signals; the loader claim is not evidence for either.
+    if model == Model::L6max || combination.sd.is_empty() {
+        step(
+            &mut text,
+            "action = \"delay\"\nguest_ms = 8000\nguest_timeout_ms = 20000\nwall_timeout_s = 300",
+        );
+    }
     checks(&mut text, combination, all)?;
     Ok(GeneratedCase {
         id,

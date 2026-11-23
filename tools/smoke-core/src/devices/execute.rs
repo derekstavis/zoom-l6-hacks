@@ -156,7 +156,52 @@ impl State {
                 }
                 // Without a card mount since the last reset the loader has no
                 // registry, so every dispatch stub takes the stock path.
-                let Some(registry) = sd_registry_if_allocated(qmp, session.engine.model())? else {
+                // A successful loader claim is published only after the SD
+                // scan and hook installation have finished. Wait for that
+                // signal when a module is expected; absence checks remain
+                // immediate and require their own observation window.
+                let registry = if loaded {
+                    const SD_LOAD_GUEST_TIMEOUT_MS: u32 = 10_000;
+                    const SD_LOAD_WALL_TIMEOUT_S: u64 = 180;
+                    const SD_LOAD_POLL_INTERVAL_MS: u64 = 10;
+                    let start = guest_now(session);
+                    let deadline = Instant::now()
+                        + Duration::from_secs(wall_timeout_s.min(SD_LOAD_WALL_TIMEOUT_S));
+                    let mut last_state = String::from("registry not allocated");
+                    loop {
+                        session.poll()?;
+                        let registry = sd_registry_if_allocated(qmp, session.engine.model())?;
+                        if let Some(base) = registry {
+                            let claim = u32::from_le_bytes(
+                                qmp.read_memory(0, base + patch_abi::registry::CLAIM_OFFSET, 4)?
+                                    .try_into()
+                                    .unwrap(),
+                            );
+                            if claim == 1 {
+                                break registry;
+                            }
+                            let stage = u32::from_le_bytes(
+                                qmp.read_memory(0, base + patch_abi::registry::DEBUG_OFFSET, 4)?
+                                    .try_into()
+                                    .unwrap(),
+                            );
+                            last_state = format!("stage={stage:#x}, claim={claim:#x}");
+                        }
+                        if Instant::now() >= deadline
+                            || guest_now(session).wrapping_sub(start)
+                                >= guest_timeout_ms.min(SD_LOAD_GUEST_TIMEOUT_MS)
+                        {
+                            return Err(format!(
+                                "SD patch loader did not finish within its deadline ({last_state})"
+                            )
+                            .into());
+                        }
+                        thread::sleep(Duration::from_millis(SD_LOAD_POLL_INTERVAL_MS));
+                    }
+                } else {
+                    sd_registry_if_allocated(qmp, session.engine.model())?
+                };
+                let Some(registry) = registry else {
                     if loaded {
                         return Err("the Patch loader has not allocated its registry".into());
                     }

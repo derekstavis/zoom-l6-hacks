@@ -11,19 +11,20 @@ action = "include"
 path = "tests/emulator/fragments/prepared-home.toml"
 
 [[step]]
-action = "checkpoint"
-name = "home"
-
-[[step]]
 models = ["l6max"]
 action = "expect-display-image"
 image = "tests/emulator/references/l6max-recorder-home.png"
+
+[[step]]
+action = "checkpoint"
+name = "home"
 
 [[step]]
 action = "sd-card"
 inserted = false
 
 [[step]]
+models = ["l6"]
 action = "delay"
 guest_ms = 10000
 guest_timeout_ms = 15000
@@ -31,26 +32,47 @@ wall_timeout_s = 300
 
 [[step]]
 models = ["l6max"]
-action = "checkpoint"
-name = "storage-removed"
+action = "expect-display"
+checkpoint = "home"
+changed = true
+guest_timeout_ms = 20000
+wall_timeout_s = 480
 
 [[step]]
 models = ["l6max"]
 action = "expect-display-image"
 image = "tests/emulator/references/l6max-storage-removed.png"
+guest_timeout_ms = 20000
+wall_timeout_s = 480
+
+[[step]]
+models = ["l6max"]
+action = "checkpoint"
+name = "storage-removed"
 
 [[step]]
 action = "sd-card"
 inserted = true
 
 [[step]]
+models = ["l6"]
 action = "delay"
 guest_ms = 5000
 
 [[step]]
 models = ["l6max"]
+action = "expect-display"
+checkpoint = "storage-removed"
+changed = true
+guest_timeout_ms = 15000
+wall_timeout_s = 360
+
+[[step]]
+models = ["l6max"]
 action = "expect-display-image"
 image = "tests/emulator/references/l6max-recorder-home.png"
+guest_timeout_ms = 15000
+wall_timeout_s = 360
 
 [[step]]
 action = "expect-trace"

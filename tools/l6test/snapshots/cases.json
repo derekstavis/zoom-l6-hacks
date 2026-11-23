@@ -892,7 +892,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "6020b654af759829894462e09aa1662165a536dbc5abbdc47695134012dc6513"
+    "definition": "291cdfc3df37d2624e7372da8f750cfa7355dc12885867851dd08bed3a2948c8"
   },
   {
     "case": "patches-l6_update_midi-sync",
@@ -3161,7 +3161,7 @@
       "devices",
       "full"
     ],
-    "definition": "b8f417dc4f7759a13fa88ddba792cba6255c5e8fc8e1bcfc0f18250d26b3dd90"
+    "definition": "92df9544e1f7e299feb001415489fb1f98536dabf01e2a682fa14ddf71251833"
   },
   {
     "case": "storage-empty",

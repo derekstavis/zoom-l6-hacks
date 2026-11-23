@@ -532,14 +532,30 @@ pub(super) fn run_l6max_panel_key_map(
             || inputs.panel.snapshot().applied > applied,
             "sound-pad key press acknowledgement",
         )?;
-        wait_guest_duration(session, 100, deadline)?;
-        let held = read_words()?;
-        if held[word_index] & mask == 0 {
-            return Err(format!(
-                "L6max panel key target {target} did not set key {code:#04x}: word {} before={:#010x} held={:#010x} mask={mask:#010x}",
-                word_index, before[word_index], held[word_index]
-            ));
-        }
+        let wait_key_state = |active: bool| -> Result<[u32; 6], String> {
+            const GUEST_TIMEOUT_MS: u32 = 5_000;
+            const POLL_INTERVAL_MS: u64 = 5;
+            let start = guest_now(session);
+            loop {
+                session.poll()?;
+                let words = read_words()?;
+                if (words[word_index] & mask != 0) == active {
+                    return Ok(words);
+                }
+                if Instant::now() >= deadline
+                    || guest_now(session).wrapping_sub(start) >= GUEST_TIMEOUT_MS
+                {
+                    return Err(format!(
+                        "L6max panel key target {target} did not become {}: word {}={:#010x}, mask={mask:#010x}",
+                        if active { "active" } else { "released" },
+                        word_index,
+                        words[word_index]
+                    ));
+                }
+                thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+            }
+        };
+        let held = wait_key_state(true)?;
 
         let applied = inputs.panel.snapshot().applied;
         inputs.up(target).map_err(|error| error.to_string())?;
@@ -548,14 +564,7 @@ pub(super) fn run_l6max_panel_key_map(
             || inputs.panel.snapshot().applied > applied,
             "sound-pad key release acknowledgement",
         )?;
-        wait_guest_duration(session, 100, deadline)?;
-        let released = read_words()?;
-        if released[word_index] & mask != 0 {
-            return Err(format!(
-                "L6max panel key target {target} remained active after release: word {}={:#010x}, mask={mask:#010x}",
-                word_index, released[word_index]
-            ));
-        }
+        let released = wait_key_state(false)?;
         observations.push(json!({
             "target": target,
             "key_code": code,

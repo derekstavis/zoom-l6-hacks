@@ -177,7 +177,7 @@
     "suites": [
       "full"
     ],
-    "definition": "09a32718e285edbc7f0bbbebee3836f648675d48debabfc7c75726e3b4a54490"
+    "definition": "1a05022416917a5875422064f4113390eef4e1bee9718bee832121c74b313acb"
   },
   {
     "case": "editor-pad-assignments",
@@ -186,7 +186,7 @@
     "suites": [
       "full"
     ],
-    "definition": "7f383d3c0a315e6678e0aa93e95140d42b646569c2a500999036a191d85cd9b4"
+    "definition": "98cf89c99645ea33979c65c64f62e82fa662974afa2b558fafb5285e06b9ab08"
   },
   {
     "case": "encoder",
@@ -461,7 +461,7 @@
     "suites": [
       "full"
     ],
-    "definition": "b77e7c6396616f68034b85665475702614425bb9b5e2c2da5fbc65cfc528c74d"
+    "definition": "02d078ff00566095164fa6e37afc12e8110605067f0742999aa268f8c9f17498"
   },
   {
     "case": "l6-eq-audio-update",
@@ -733,7 +733,7 @@
     "suites": [
       "full"
     ],
-    "definition": "26b9e58350ab4bb69e26bde76e77e9dd2782834bf9e159979966e205d5f08b95"
+    "definition": "3ab23a06402b0a2bbf343cdc87c5c37db5a4a8cc2e0cc62babc00b4802fa4e7c"
   },
   {
     "case": "l6max-volume-meter-sweep",

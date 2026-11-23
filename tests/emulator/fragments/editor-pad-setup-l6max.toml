@@ -1,4 +1,6 @@
 [[step]]
+setup_input = true
+models = ["l6max"]
 action = "delay"
 guest_ms = 40000
 guest_timeout_ms = 45000

@@ -89,9 +89,23 @@ pub struct Runner {
     checkpoints: BTreeMap<String, Observation>,
     scene_save: Option<SceneSaveState>,
     allowed_rejections: [u64; 2],
+    progress: crate::progress::CaseProgress,
 }
 impl Runner {
     pub fn new(scenario: Scenario, model: Model, logs: PathBuf) -> Result<Self, String> {
+        Self::with_progress(
+            scenario,
+            model,
+            logs,
+            crate::progress::CaseProgress::from_env(),
+        )
+    }
+    pub fn with_progress(
+        scenario: Scenario,
+        model: Model,
+        logs: PathBuf,
+        progress: crate::progress::CaseProgress,
+    ) -> Result<Self, String> {
         if !scenario.models.contains(&model) {
             return Err("scenario does not support this model".into());
         }
@@ -137,6 +151,9 @@ impl Runner {
         }
         fs::create_dir_all(&logs).map_err(|e| e.to_string())?;
         let no_setup_screens = scenario.spec_state;
+        progress.emit(crate::progress::CaseEvent::ScenarioStarted {
+            total_steps: scenario.step.iter().filter(|s| s.applies_to(model)).count(),
+        });
         Ok(Self {
             scenario,
             model,
@@ -161,6 +178,7 @@ impl Runner {
             checkpoints: Default::default(),
             scene_save: None,
             allowed_rejections: [0, 0],
+            progress,
         })
     }
     pub fn tick(&mut self, data: PanelData, inputs: &InputHub) -> Result<Progress, String> {
@@ -272,6 +290,9 @@ impl Runner {
                 continue;
             }
             let (entered, guest_start) = *self.entered.get_or_insert_with(|| {
+                let index = self.scenario.step[..=self.step].iter().filter(|s| s.applies_to(self.model)).count();
+                let label = crate::progress::step_label(&step.action);
+                self.progress.emit(crate::progress::CaseEvent::StepStarted { index, label });
                 tracing::info!(event="step_started",scenario=%self.scenario.name,model=self.model.name(),step=self.step+1,action=?step.action,guest_ms=obs.panel.guest_ms,"step started");
                 (now, obs.panel.guest_ms)
             });
@@ -1265,6 +1286,14 @@ impl Runner {
         self.history.push_back(event);
     }
     pub fn finish(&self, outcome: &str, error: Option<&str>) -> Result<(), String> {
+        self.progress
+            .emit(crate::progress::CaseEvent::ScenarioFinished {
+                outcome: if outcome == "PASS" {
+                    crate::progress::Outcome::Pass
+                } else {
+                    crate::progress::Outcome::Fail
+                },
+            });
         if let Some(error) = error {
             tracing::error!(event="scenario_finished",scenario=%self.scenario.name,model=self.model.name(),step=self.step+1,outcome,%error,"scenario failed");
         } else {

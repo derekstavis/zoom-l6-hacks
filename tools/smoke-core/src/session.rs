@@ -117,8 +117,14 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
     if !scenario.backends.contains(&crate::Backend::Headless) {
         return Err("scenario does not support headless execution".into());
     }
+    let progress = crate::progress::CaseProgress::from_env();
     if scenario.step.len() == 1 && matches!(scenario.step[0].action, crate::Action::FirmwareUpdate)
     {
+        progress.emit(crate::progress::CaseEvent::ScenarioStarted { total_steps: 1 });
+        progress.emit(crate::progress::CaseEvent::StepStarted {
+            index: 1,
+            label: crate::progress::step_label(&scenario.step[0].action),
+        });
         devices::prepare(&scenario, &mut options)?;
         let started = std::time::Instant::now();
         let result = devices::run_firmware_update(&options);
@@ -140,9 +146,21 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
             serde_json::to_vec_pretty(&report).map_err(|error| error.to_string())?,
         )
         .map_err(|error| error.to_string())?;
+        progress.emit(crate::progress::CaseEvent::ScenarioFinished {
+            outcome: if result.is_ok() {
+                crate::progress::Outcome::Pass
+            } else {
+                crate::progress::Outcome::Fail
+            },
+        });
         return result;
     }
     if scenario.step.len() == 1 && matches!(scenario.step[0].action, crate::Action::WasmPatch) {
+        progress.emit(crate::progress::CaseEvent::ScenarioStarted { total_steps: 1 });
+        progress.emit(crate::progress::CaseEvent::StepStarted {
+            index: 1,
+            label: crate::progress::step_label(&scenario.step[0].action),
+        });
         devices::prepare(&scenario, &mut options)?;
         let started = std::time::Instant::now();
         let result = devices::run_wasm_patch(&options);
@@ -164,14 +182,31 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
             serde_json::to_vec_pretty(&report).map_err(|error| error.to_string())?,
         )
         .map_err(|error| error.to_string())?;
+        progress.emit(crate::progress::CaseEvent::ScenarioFinished {
+            outcome: if result.is_ok() {
+                crate::progress::Outcome::Pass
+            } else {
+                crate::progress::Outcome::Fail
+            },
+        });
         return result;
     }
+    progress.emit(crate::progress::CaseEvent::PhaseChanged {
+        phase: crate::progress::CasePhase::PreparingScenario,
+    });
     devices::prepare(&scenario, &mut options)?;
+    progress.emit(crate::progress::CaseEvent::PhaseChanged {
+        phase: crate::progress::CasePhase::StartingEmulator,
+    });
     let mut session = Some(Session::start(&options)?);
-    let mut runner = Runner::new(
+    progress.emit(crate::progress::CaseEvent::PhaseChanged {
+        phase: crate::progress::CasePhase::PreparingScenario,
+    });
+    let mut runner = Runner::with_progress(
         scenario,
         session.as_ref().unwrap().engine.model(),
         options.logs.clone(),
+        progress,
     )?;
     runner.trace_file(options.logs.join(if options.trace_sd {
         "sdhci.trace"

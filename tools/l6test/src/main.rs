@@ -9,6 +9,7 @@ mod gui_probe;
 mod hashing;
 mod identity;
 mod patch_matrix;
+mod progress;
 mod report;
 mod schedule;
 mod schema;
@@ -239,7 +240,7 @@ fn execute() -> Result<i32, String> {
     }
     if !["run", "check"].contains(&args.command.as_str()) {
         println!(
-            "Usage: cargo l6test list [--format text|json]\n       cargo l6test schema\n       cargo l6test check|run [--config config.toml] [--suite NAME | --case ID,GLOB,... | --rerun RUN [--only OUTCOMES]] [--model l6|l6max|all] [--backend headless|gui|both] [--shard I/N] [--retries N] [--strict] [--fixtures-only] [--no-cache] [--update-references] [--output NEW_DIR] [--no-build] [--jobs N] [--qemu BINARY] [--app PACKAGED_APP]\n       cargo l6test probe gui --keys TARGET,... --volatile [engine options]\n       cargo l6test capture screen --out FILE.gif [capture options] --volatile [engine options]"
+            "Usage: cargo l6test list [--format text|json]\n       cargo l6test schema\n       cargo l6test watch RUN_DIRECTORY\n       cargo l6test check|run [--config config.toml] [--suite NAME | --case ID,GLOB,... | --rerun RUN [--only OUTCOMES]] [--model l6|l6max|all] [--backend headless|gui|both] [--shard I/N] [--retries N] [--strict] [--fixtures-only] [--no-cache] [--update-references] [--output NEW_DIR] [--no-build] [--jobs N] [--qemu BINARY] [--app PACKAGED_APP]\n       cargo l6test probe gui --keys TARGET,... --volatile [engine options]\n       cargo l6test capture screen --out FILE.gif [capture options] --volatile [engine options]"
         );
         return Ok(0);
     }
@@ -394,6 +395,7 @@ fn execute() -> Result<i32, String> {
     if jobs.is_empty() {
         return Err("no model/case combinations selected".into());
     }
+    let progress = progress::Journal::new(&output, jobs.len());
     let mut packages = BTreeSet::new();
     let mut needs_l6patch = false;
     for job in &jobs {
@@ -479,6 +481,11 @@ fn execute() -> Result<i32, String> {
         update_references: args.update_references,
     };
     let run_job = |job: &Job| -> CaseResult {
+        let progress_case = smoke_core::progress::CaseId {
+            case: job.case.id.clone(),
+            model: job.model,
+            backend: job.backend,
+        };
         let case_span = tracing::info_span!("smoke_case",case=%job.case.id,model=%job.model,backend=job.backend.name(),artifacts=%job.dir.display());
         let _entered = case_span.enter();
         tracing::info!(event = "case_started", "case started");
@@ -499,7 +506,29 @@ fn execute() -> Result<i32, String> {
                         format!("{}-a{attempt}", job.midi_namespace),
                     )
                 };
-                run_case(&ctx, &fixture, job.case, job.backend, &dir, &namespace)
+                let id = smoke_core::progress::AttemptId {
+                    case: progress_case.clone(),
+                    attempt: attempt as u32,
+                };
+                progress.attempt_started(
+                    id.clone(),
+                    dir.strip_prefix(&output)
+                        .expect("attempt lives in run directory")
+                        .join("progress.jsonl"),
+                );
+                progress.attempt_phase(id.clone(), smoke_core::progress::Phase::PreparingFixture);
+                let result = run_case(
+                    &ctx,
+                    &fixture,
+                    job.case,
+                    job.backend,
+                    &dir,
+                    &namespace,
+                    &id,
+                    &progress,
+                );
+                progress.attempt_finished(id, result.outcome);
+                result
             }),
             Err(detail) => CaseResult {
                 detail,
@@ -525,6 +554,7 @@ fn execute() -> Result<i32, String> {
                 tracing::error!(event="case_finished",outcome=%result.outcome,detail=%result.detail,seconds=result.duration_s,"case failed")
             }
         }
+        progress.case_finished(progress_case, result.outcome);
         result
     };
     // Queue shareable cases first so an exclusive one never idles the pool.
@@ -563,6 +593,7 @@ fn execute() -> Result<i32, String> {
         &cache_stats,
         args.fixtures_only,
     )?;
+    progress.complete(outcome);
     Ok(code)
 }
 struct Job<'a> {
@@ -575,6 +606,13 @@ struct Job<'a> {
 }
 fn main() {
     let cli_args = env::args_os().skip(1).collect::<Vec<_>>();
+    if cli_args.first().is_some_and(|arg| arg == "watch") {
+        if let Err(error) = progress::watch(&cli_args[1..]) {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return;
+    }
     if let Err(error) = l6max_host::logging::init(l6max_host::logging::Format::Json) {
         eprintln!("{error}");
         std::process::exit(2);

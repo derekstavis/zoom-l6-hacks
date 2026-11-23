@@ -3,6 +3,7 @@ pub mod devices;
 pub mod firmware;
 pub mod fixture_layout;
 pub mod host_midi;
+pub mod progress;
 pub mod requirements;
 mod runner;
 mod scenario;

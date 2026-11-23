@@ -74,6 +74,8 @@ pub(crate) fn run_case(
     backend: Backend,
     dir: &Path,
     midi_namespace: &str,
+    progress_id: &smoke_core::progress::AttemptId,
+    progress: &crate::progress::Journal,
 ) -> CaseResult {
     let started = Instant::now();
     let mut result = CaseResult::new(&case.id, fixture.model, backend, dir);
@@ -84,6 +86,8 @@ pub(crate) fn run_case(
         backend,
         dir,
         midi_namespace,
+        progress_id,
+        progress,
         &mut result,
     ) {
         Ok(CaseRun::Ran { success, scenario }) => {
@@ -131,18 +135,29 @@ fn attempt(
     backend: Backend,
     dir: &Path,
     midi_namespace: &str,
+    progress_id: &smoke_core::progress::AttemptId,
+    progress: &crate::progress::Journal,
     result: &mut CaseResult,
 ) -> Result<CaseRun, CaseError> {
     let scenario = preflight(ctx, fixture, case, backend)?;
     let started = Instant::now();
     let prepared = build_fixture(ctx, fixture, case, scenario, dir)?;
-    let invocation = plan_invocation(ctx, case, backend, dir, midi_namespace, &prepared)
-        .failed_in(Phase::Fixture)?;
+    let invocation = plan_invocation(
+        ctx,
+        case,
+        backend,
+        dir,
+        midi_namespace,
+        &prepared,
+        progress_id,
+    )
+    .failed_in(Phase::Fixture)?;
     result.timings.fixture_s = started.elapsed().as_secs_f64();
     result.identity = identify(ctx, &prepared, &invocation).map(|identity| json!(identity));
     if ctx.fixtures_only {
         return Ok(CaseRun::FixturesOnly);
     }
+    progress.attempt_phase(progress_id.clone(), smoke_core::progress::Phase::Executing);
     execute(ctx, case, dir, invocation, result)
 }
 
@@ -295,6 +310,7 @@ fn plan_invocation(
     dir: &Path,
     midi_namespace: &str,
     prepared: &Prepared,
+    progress_id: &smoke_core::progress::AttemptId,
 ) -> Result<Invocation, String> {
     let config = ctx.config;
     let options = &prepared.options;
@@ -329,6 +345,17 @@ fn plan_invocation(
         )
         .env("L6_MIDI_NAMESPACE", midi_namespace);
     command.env("L6_PATCH_ARTIFACT_DIR", ctx.patch_artifact_dir);
+    if case.scenario.is_some() {
+        command.env(smoke_core::progress::PATH_ENV, dir.join("progress.jsonl"));
+        command.env(
+            smoke_core::progress::RUN_ENV,
+            ctx.output.display().to_string(),
+        );
+        command.env(
+            smoke_core::progress::ATTEMPT_ENV,
+            serde_json::to_string(progress_id).map_err(|e| e.to_string())?,
+        );
+    }
     if ctx.update_references {
         command
             .env(smoke_core::devices::UPDATE_REFERENCES_ENV, "1")

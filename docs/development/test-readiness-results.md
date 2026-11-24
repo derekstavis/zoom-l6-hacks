@@ -565,3 +565,12 @@ The scenario-file inventory does not include delays inside Rust device
 helpers. In particular, `knob_dialog.rs` contains additional guest-time
 waits and display captures; some test negative behavior or observation
 windows, and the remaining transitions still need individual review.
+
+The knob-dialog helper now waits for the display callback to discard invalid
+mailbox tags, and checks for popup state and a changed display while allowing
+the original bounded fallback window for a knob already at its limit. The
+complete dialog case and generated firmware-patch popup case both passed
+(`/private/tmp/l6-knob-internal-ready/report.json`). The subsequent default
+four-worker regression of panel, knob-dialog, USB, and fresh DIN cases passed
+all five cases (`/private/tmp/l6-readiness-regression-parallel/report.json`),
+after the full-run failures documented above.

@@ -1054,14 +1054,30 @@ pub(super) fn run_knob_dialog(
         qmp.stop()?;
         debugger.write(state + 3, &[tag])?;
         qmp.resume()?;
-        let invalid_tag_start = inputs.panel.snapshot().guest_ms;
-        wait_guest(
-            session,
-            invalid_tag_start,
-            250,
-            guest_timeout_ms,
-            wall_timeout_s,
-        )?;
+        // The callback acknowledges discarded tags by clearing the mailbox.
+        // Wait for that acknowledgement, rather than assuming it happened
+        // after a fixed amount of guest time.
+        const DISCARD_GUEST_TIMEOUT_MS: u32 = 10_000;
+        const DISCARD_WALL_TIMEOUT_S: u64 = 180;
+        const DISCARD_POLL_MS: u64 = 5;
+        let start = inputs.panel.snapshot().guest_ms;
+        let deadline =
+            Instant::now() + Duration::from_secs(wall_timeout_s.min(DISCARD_WALL_TIMEOUT_S));
+        loop {
+            session.poll()?;
+            if qmp.read_memory(0, state + 3, 1)? == u8::MAX.to_le_bytes() {
+                break;
+            }
+            if inputs.panel.snapshot().guest_ms.wrapping_sub(start)
+                >= guest_timeout_ms.min(DISCARD_GUEST_TIMEOUT_MS)
+                || Instant::now() >= deadline
+            {
+                return Err(
+                    format!("display callback did not safely discard {description}").into(),
+                );
+            }
+            thread::sleep(Duration::from_millis(DISCARD_POLL_MS));
+        }
         qmp.stop()?;
         let discarded = qmp.read_memory(0, state + 3, 1)? == u8::MAX.to_le_bytes();
         qmp.resume()?;
@@ -1489,11 +1505,27 @@ pub(super) fn run_knob_dialog_popup(
         inputs.knob(0, delta)?;
         turns.push(delta);
         let start = inputs.panel.snapshot().guest_ms;
-        wait_guest(session, start, 500, guest_timeout_ms, wall_timeout_s)?;
-        let state = qmp.read_memory(0, DIALOG_STATE, 2)?;
-        if u16::from_le_bytes([state[0], state[1]]) == DIALOG_STATE_MAGIC
-            && read_u32(DISPLAY_CALLBACK_SLOT5)? & 1 == 1
-        {
+        let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
+        let opened = loop {
+            let display = session.poll()?.display;
+            let state = qmp.read_memory(0, DIALOG_STATE, 2)?;
+            if u16::from_le_bytes([state[0], state[1]]) == DIALOG_STATE_MAGIC
+                && read_u32(DISPLAY_CALLBACK_SLOT5)? & 1 == 1
+                && display != before
+            {
+                break true;
+            }
+            if inputs.panel.snapshot().guest_ms.wrapping_sub(start) >= 500 {
+                break false;
+            }
+            if Instant::now() >= deadline
+                || inputs.panel.snapshot().guest_ms.wrapping_sub(start) >= guest_timeout_ms
+            {
+                return Err("knob-dialog popup observation exceeded its deadline".into());
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+        if opened {
             break;
         }
     }

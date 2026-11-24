@@ -808,6 +808,7 @@ impl State {
                 let gdb = self.gdb.as_mut().unwrap();
                 qmp.stop()?;
                 gdb.breakpoint(panel_event_dispatcher, true)?;
+                let mut dispatcher_armed = true;
                 gdb.breakpoint(main_event_submit, true)?;
                 inputs.down(target, 0)?;
                 let deadline = Instant::now() + Duration::from_secs(15);
@@ -823,6 +824,7 @@ impl State {
                     let pc = gdb.read_register(15)? & !1;
                     if pc == panel_event_dispatcher {
                         gdb.breakpoint(panel_event_dispatcher, false)?;
+                        dispatcher_armed = false;
                         continue;
                     }
                     if pc != main_event_submit {
@@ -868,6 +870,9 @@ impl State {
                         "MAIN map ({column},{row}) is {mapped_event}, expected {event}"
                     )
                     .into());
+                }
+                if dispatcher_armed {
+                    gdb.breakpoint(panel_event_dispatcher, false)?;
                 }
                 gdb.breakpoint(main_event_submit, false)?;
                 qmp.resume()?;

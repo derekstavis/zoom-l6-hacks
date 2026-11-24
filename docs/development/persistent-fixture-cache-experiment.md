@@ -41,6 +41,9 @@ the warm run built no entries. Firmware, state, card, audio, driver and QEMU
 identities matched across all three runs. These are single samples on a shared
 machine, not full-suite timings. Reports are `/private/tmp/l6-snapshot2-uncached`,
 `/private/tmp/l6-snapshot2-cold`, and `/private/tmp/l6-snapshot2-warm`.
+On Linux, a native toolchain identity probe reused the same digest on a second
+run (5.76 s cold, 46 ms warm). Changing the bytes of a temporary copy of
+`llvm-nm` at the same path caused the next probe to produce a different digest.
 
 See [the cache design](persistent-fixture-cache-design.md) for checkout isolation,
 leases, eviction and remaining validation. This is a prototype, not yet a

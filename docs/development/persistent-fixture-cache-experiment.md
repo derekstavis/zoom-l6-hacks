@@ -59,3 +59,35 @@ corruption recovery and cache namespace changes after edits to NOR and patch
 sources. QEMU SHA-256 for these trials was
 `d33f3853e30115234b1deb9c4b727dfed13a234fcde2fa18ffe05e7d692a62`;
 the external QEMU source was not attested.
+
+## All-catalog validation
+
+On 2026-11-24, `--suite stack --case '*' --backend both --model all --app …`
+selected all 372 catalog case/model/backend combinations, including generated
+patch combinations, named suites, unscheduled cases and the packaged GUI. It
+used the run-local cache, not the experimental persistent cache. The report
+(`/private/tmp/l6-cache-all-cases/report.json`) records 326 PASS and 46 FAIL;
+there were no BLOCKED cases. The checkout was clean at commit
+`b7dd8589cd018022afd825051d1d7b536ec1bf63`. Driver SHA-256 was
+`2bcaf760b4437734d42168652594a65de33f7723fe4d4d953552959a07d89cae`;
+QEMU was the externally pinned, source-unattested executable identified above.
+
+Forty-four generated L6max combinations containing menu-loader, dump-rom and
+midi-sync failed waiting for the menu-triggered state message: each received
+zero or one of 94 expected Control Change replies. The unscheduled
+`l6-level-meter-pwm` failed its increasing PWM-duty assertion, and the
+unscheduled `l6-usb-startup` timed out with its guest clock at 0 ms. These are
+failures, not passes or flakes. A focused MIDI case failed again on this branch
+(`/private/tmp/l6-cache-midi-focused-retry/report.json`). The same case and
+both unscheduled cases failed on the parent `73697362`, with matching
+firmware, state, card, audio and QEMU identities; the runner necessarily
+changed. Parent reports are `/private/tmp/l6-midi-parent-comparison-fixed/report.json`
+and `/private/tmp/l6-unscheduled-parent-comparison/report.json`. One
+representative parent case does not establish the cause of every generated
+failure. An earlier attempt to run the parent MIDI case stopped during fixture
+preparation because the staged driver could not find the macro artifact; it
+is recorded separately in `/private/tmp/l6-midi-parent-comparison/report.json`.
+
+`cargo test --offline --locked --workspace` passed on the cache branch. The
+firmware-dependent `l6test` fixture unit test remained ignored without its
+explicit environment variables.

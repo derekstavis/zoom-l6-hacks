@@ -17,7 +17,7 @@ It leaves other checkouts and the stable lock file untouched.
 Each canonical checkout receives a separate cache root even if a parent is
 shared. The namespace hashes the running driver, tracked and non-ignored untracked
 checkout files (including patch sources, `l6nor`, generated templates and
-`Cargo.lock`), `rustc -vV`, and `L6_`/`RUST` environment variables. It is
+`Cargo.lock`), `rustc -vV`, and `L6_`, `RUST`, and loader environment variables. It is
 intentionally conservative: even an unrelated checkout edit invalidates the
 namespace. Per-entry keys continue to identify firmware, resolved state,
 patch options and card contents. Card keys use copied-file content hashes,
@@ -25,17 +25,33 @@ not run-specific source paths. Entries are verified before reuse; processes
 serialize publication with per-entry file locks. Cases still receive their own
 state and card copies.
 
+Native patch entries additionally identify the selected compiler, LLVM tools,
+procedural macro, compiler libraries, rust-src, generated target libraries and
+resolved dynamic dependencies. The first run hashes their contents; a locked
+snapshot allows later runs to reuse the digest after checking file identities,
+change times, search directories and the loader environment. Tool replacement
+or changed inputs invalidate the snapshot. Unsupported loader overrides fail
+closed. This uses filesystem metadata to validate the snapshot, and assumes
+the cache and filesystem metadata have not been deliberately tampered with.
+
+In a release-build, two-case fixtures-only sample, uncached preparation took
+2.36 s, the first persistent run took 17.94 s, and the repeated warm run took
+0.40 s. The initial run paid for hashing the toolchain and macOS shared cache;
+the warm run built no entries. Firmware, state, card, audio, driver and QEMU
+identities matched across all three runs. These are single samples on a shared
+machine, not full-suite timings. Reports are `/private/tmp/l6-snapshot2-uncached`,
+`/private/tmp/l6-snapshot2-cold`, and `/private/tmp/l6-snapshot2-warm`.
+
 See [the cache design](persistent-fixture-cache-design.md) for checkout isolation,
 leases, eviction and remaining validation. This is a prototype, not yet a
-production-safe cache policy. In particular,
-`rustc -vV` and environment paths do not identify every byte of the external
-compiler, linker, LLVM utilities or rust-src; cache eviction, disk budgets,
-and behavior on filesystems without APFS clones also need design and testing.
+production-safe cache policy. Cache eviction, disk budgets, dynamic loader
+resolution on additional environments, and behavior on filesystems without APFS clones also need design and testing.
 The complete checkout fingerprint also costs startup time and over-invalidates.
 The usual run assumption that inputs are not edited while a run is active
 still applies.
 
-On 2026-11-24 a four-case, four-worker, fixtures-only sample used identical
+Before native toolchain identity was added, a four-case, four-worker,
+fixtures-only sample on 2026-11-24 used identical
 firmware, state, card, audio, driver and externally supplied QEMU identities.
 With an already-warm compiler sysroot, cold case preparation took 2.10 s wall
 and the immediately repeated warm case preparation took 0.25 s. All four

@@ -37,8 +37,12 @@ builder, hash the relevant executable and input bytes, and pass those exact
 resolved paths to the build. Detect replacement between hashing and execution
 or fail closed. Environment options that affect output belong in the key;
 avoid putting unrelated or secret environment values in persisted metadata.
-The current prototype's whole-checkout hash is conservative but incomplete
-for external tool bytes; it is not ready for production use.
+The prototype additionally fingerprints resolved tool bytes and their dynamic
+dependencies, and uses a metadata-checked snapshot to avoid rehashing them on
+every run. It verifies selections around builds, but does not yet pass one
+pinned set of tool paths through the entire builder; loader behavior and
+cross-platform qualification remain open work. The checkout hash is also
+conservative and can invalidate unrelated fixtures.
 
 ## Publication, use and eviction
 

@@ -378,8 +378,8 @@ cargo l6test cache clean --persistent-cache target/l6test-fixtures
 
 Cleaning refuses while a run uses that partition. Cache contents include
 firmware and generated SD/NOR images: keep them local and ignored. The
-prototype does not yet identify all external compiler and LLVM tool bytes,
-so it is not suitable for qualification or as a default. See the
+prototype verifies native toolchain inputs and reuses a metadata-checked
+identity snapshot, but remains experimental pending full validation. See the
 [experiment](persistent-fixture-cache-experiment.md) and
 [design](persistent-fixture-cache-design.md) for evidence and limitations.
 

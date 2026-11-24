@@ -33,6 +33,7 @@ pub struct RunCache {
     persistent: bool,
     // A run may keep using cached firmware after fixture preparation.
     _checkout_lease: Option<CacheLock>,
+    native_toolchain: OnceLock<Result<patch_compile::PayloadToolchain, String>>,
     /// When false every request builds afresh, for comparing cached and
     /// uncached fixtures.
     enabled: bool,
@@ -53,6 +54,7 @@ impl RunCache {
             root,
             persistent: false,
             _checkout_lease: None,
+            native_toolchain: OnceLock::new(),
             enabled: true,
             clones,
             builds: AtomicU64::new(0),
@@ -80,7 +82,7 @@ impl RunCache {
         // Keep this lock outside the removable tree for the life of the run.
         let lease = CacheLock::shared(&root.join(format!("{checkout_id}.lock")))?;
         let mut sha = Sha256::new();
-        sha.update(b"l6test-persistent-experiment-v1\0");
+        sha.update(b"l6test-persistent-experiment-v2\0");
         sha.update(crate::hashing::hash(
             &std::env::current_exe().map_err(|e| e.to_string())?,
         )?);
@@ -117,7 +119,12 @@ impl RunCache {
         }
         sha.update(rustc.stdout);
         let mut environment: Vec<_> = std::env::vars()
-            .filter(|(n, _)| n.starts_with("L6_") || n.starts_with("RUST"))
+            .filter(|(n, _)| {
+                n.starts_with("L6_")
+                    || n.starts_with("RUST")
+                    || n.starts_with("LD_")
+                    || n.starts_with("DYLD_")
+            })
             .collect();
         environment.sort();
         for (name, value) in environment {
@@ -174,7 +181,30 @@ impl RunCache {
         key: &str,
         build: impl FnOnce(&Path) -> Result<(), String>,
     ) -> Result<PathBuf, String> {
-        let mut digest = format!("{:x}", Sha256::digest(format!("{kind}\0{key}").as_bytes()));
+        let toolchain = if self.persistent && kind == "l6patch" {
+            let identity = self
+                .native_toolchain
+                .get_or_init(|| {
+                    fs::create_dir_all(&self.root).map_err(|e| e.to_string())?;
+                    let _lock = CacheLock::acquire(&self.root.join("toolchain.lock"))?;
+                    patch_compile::payload_toolchain_identity(Some(
+                        &self.root.join("toolchain.json"),
+                    ))
+                    .map_err(|e| format!("identify native patch toolchain: {e}"))
+                })
+                .as_ref()
+                .map_err(Clone::clone)?;
+            patch_compile::verify_payload_toolchain(identity)
+                .map_err(|e| format!("native patch toolchain changed: {e}"))?;
+            Some(identity)
+        } else {
+            None
+        };
+        let cache_key = match toolchain {
+            Some(identity) => format!("{kind}\0{key}\0{}", identity.digest),
+            None => format!("{kind}\0{key}"),
+        };
+        let mut digest = format!("{:x}", Sha256::digest(cache_key.as_bytes()));
         if !self.enabled {
             let n = self.builds.fetch_add(1, Ordering::Relaxed);
             digest = format!("{:x}", Sha256::digest(format!("{digest}\0{n}").as_bytes()));
@@ -211,6 +241,10 @@ impl RunCache {
                 if expected.is_some_and(|expected| {
                     cache_contents(&target).is_ok_and(|actual| actual == expected)
                 }) {
+                    if let Some(identity) = toolchain {
+                        patch_compile::verify_payload_toolchain(identity)
+                            .map_err(|e| format!("native patch toolchain changed: {e}"))?;
+                    }
                     built = false;
                     return Ok(target);
                 }
@@ -221,6 +255,10 @@ impl RunCache {
             // Builders such as `l6patch` and `l6fw::unpack` create their
             // output directory, so `build` receives a path that does not exist.
             build(&staging)?;
+            if let Some(identity) = toolchain {
+                patch_compile::verify_payload_toolchain(identity)
+                    .map_err(|e| format!("native patch toolchain changed: {e}"))?;
+            }
             fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
             let hashes = if self.persistent {
                 Some(cache_contents(&staging)?)

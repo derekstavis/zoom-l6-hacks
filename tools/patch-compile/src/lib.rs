@@ -5,6 +5,9 @@
 //!
 //! Never built for `wasm32-unknown-unknown`: it shells out to `rustc`/`lld`/
 //! `llvm-objcopy`, which don't exist in a browser.
+mod toolchain;
+pub use toolchain::PayloadToolchain;
+
 use sha2::{Digest, Sha256};
 use std::{
     fs,
@@ -118,16 +121,18 @@ fn immediate_abort_sysroot(rustc: &Path) -> Result<PathBuf, Box<dyn std::error::
         .into());
     }
     let mut key = Sha256::new();
-    key.update(run(Command::new(rustc).arg("-vV"))?);
+    let compiler_identity = toolchain::compiler_identity(rustc)?;
+    key.update(&compiler_identity);
     key.update(IMMEDIATE_ABORT_LIBRARY_FLAGS.join(" "));
     let key = format!("{:x}", key.finalize());
     let cache =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/l6-immediate-abort-sysroot");
     let root = cache.join(&key[..16]);
     let target_lib = |root: &Path| root.join("lib/rustlib/thumbv7em-none-eabihf/lib");
-    if target_lib(&root)
-        .join("libcompiler_builtins.rlib")
-        .is_file()
+    if target_lib(&root).join("libcore.rlib").is_file()
+        && target_lib(&root)
+            .join("libcompiler_builtins.rlib")
+            .is_file()
     {
         return Ok(root);
     }
@@ -178,6 +183,10 @@ fn immediate_abort_sysroot(rustc: &Path) -> Result<PathBuf, Box<dyn std::error::
         .arg(library.join("compiler-builtins/compiler-builtins/src/lib.rs"))
         .arg("--out-dir")
         .arg(&lib))?;
+    if toolchain::compiler_identity(rustc)? != compiler_identity {
+        let _ = fs::remove_dir_all(&staging);
+        return Err("compiler changed while building the patch sysroot".into());
+    }
     if fs::rename(&staging, &root).is_err() {
         // Another builder finished first; use its sysroot.
         let _ = fs::remove_dir_all(&staging);
@@ -220,6 +229,59 @@ fn llvm_tool(
             format!("{bundled} not found; run `rustup component add llvm-tools` or set {variable}")
                 .into()
         })
+}
+
+fn payload_tools() -> Result<(PathBuf, Vec<PathBuf>), Box<dyn std::error::Error>> {
+    let rustc = rustc_executable().ok_or("could not locate the active rustc executable")?;
+    let tools = vec![
+        rustc.clone(),
+        llvm_tool("L6_LD_LLD", HOMEBREW_LLD, "rust-lld")?,
+        llvm_tool("L6_LLVM_NM", HOMEBREW_NM, "llvm-nm")?,
+        llvm_tool("L6_LLVM_OBJCOPY", HOMEBREW_OBJCOPY, "llvm-objcopy")?,
+        llvm_tool("L6_LLVM_READELF", HOMEBREW_READELF, "llvm-readelf")?,
+        patch_hook_macro_library()?,
+    ];
+    if tools.iter().any(|path| !path.is_absolute()) {
+        return Err("persistent patch caching requires absolute compiler tool paths".into());
+    }
+    Ok((rustc, tools))
+}
+
+/// Resolve and identify the same native compiler tools used for payload builds.
+pub fn payload_toolchain_identity(
+    snapshot: Option<&Path>,
+) -> Result<PayloadToolchain, Box<dyn std::error::Error>> {
+    let (rustc, tools) = payload_tools()?;
+    if let Some(identity) = snapshot
+        .and_then(|path| fs::read(path).ok())
+        .and_then(|data| serde_json::from_slice::<PayloadToolchain>(&data).ok())
+    {
+        if identity.verify_tools(&tools).is_ok() {
+            return Ok(identity);
+        }
+    }
+    let sysroot = immediate_abort_sysroot(&rustc)?;
+    let lib = sysroot.join("lib/rustlib/thumbv7em-none-eabihf/lib");
+    let artifacts = [
+        lib.join("libcore.rlib"),
+        lib.join("libcompiler_builtins.rlib"),
+    ];
+    let identity = toolchain::payload_identity(&rustc, &tools, &artifacts)?;
+    if let Some(path) = snapshot {
+        let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
+        fs::write(&temporary, serde_json::to_vec(&identity)?)?;
+        fs::rename(temporary, path)?;
+    }
+    Ok(identity)
+}
+
+/// Ensure the selected tools and all identified inputs remain unchanged.
+pub fn verify_payload_toolchain(
+    identity: &PayloadToolchain,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (_, tools) = payload_tools()?;
+    identity.verify_tools(&tools)?;
+    Ok(())
 }
 
 /// Compiles one patch's payload at `base` against `main_firmware.bin` under

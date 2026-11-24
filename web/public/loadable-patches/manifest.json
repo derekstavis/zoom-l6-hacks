@@ -65,7 +65,7 @@
       "spring": "velvet"
     }
   ],
-  "generator_source_sha256": "9dff5fe2ec246be6c1b290de9ff3ac0065d240ba2a44353cd79e555bb6419987",
+  "generator_source_sha256": "65fbd526c2538db18bced51b366929c4602e1078bbfb5c15aef7b0af0c35ee94",
   "l6_source_firmware_sha256": "827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799",
   "modules": [
     {

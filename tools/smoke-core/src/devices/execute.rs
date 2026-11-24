@@ -1545,7 +1545,42 @@ impl State {
                     thread::sleep(Duration::from_millis(5));
                 }
                 fs::write(options.logs.join("usb-midi.bin"), &midi)?;
-                usb.send(endpoints.output, &[0x1b, 0xb0, cc, value])?;
+                // Confirm that MAIN consumed the incoming CC. If the mixer is
+                // already at the requested value, first send a different one
+                // so the final check cannot succeed on stale state.
+                let level_address = match session.engine.model() {
+                    l6fw::Model::L6 => l6::mixer_state_tail,
+                    l6fw::Model::L6max => l6max::mixer_channel_levels,
+                };
+                let qmp = &session.engine.management[0];
+                let send_and_wait = |level: u8| -> Result<(), Box<dyn std::error::Error>> {
+                    const GUEST_TIMEOUT_MS: u32 = 10_000;
+                    const WALL_TIMEOUT_S: u64 = 180;
+                    const POLL_INTERVAL_MS: u64 = 10;
+                    let start = guest_now(session);
+                    let deadline =
+                        Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
+                    usb.send(endpoints.output, &[0x1b, 0xb0, cc, level])?;
+                    loop {
+                        session.poll()?;
+                        if qmp.read_memory(0, level_address, 1)? == [level] {
+                            return Ok(());
+                        }
+                        if guest_now(session).wrapping_sub(start)
+                            >= guest_timeout_ms.min(GUEST_TIMEOUT_MS)
+                            || Instant::now() >= deadline
+                        {
+                            return Err(
+                                format!("USB MIDI channel level did not become {level}").into()
+                            );
+                        }
+                        thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+                    }
+                };
+                if qmp.read_memory(0, level_address, 1)? == [value] {
+                    send_and_wait(if value == 0 { 127 } else { 0 })?;
+                }
+                send_and_wait(value)?;
                 Ok(json!({"received":midi,"sent":[0x1b,0xb0,cc,value]}))
             }
             Operation::HostMidiRoundTrip => {

@@ -551,3 +551,17 @@ ended before the menu changed windows. Replacing the menu and return delays
 with bounded current-window checks passed the complete knob-dialog case
 (`/private/tmp/l6-knob-usb-probe/report.json`); the other two diagnostic
 cases in that report deliberately failed with placeholder memory values.
+
+The USB MIDI case now waits for channel-one mixer state to reflect the sent
+CC instead of sleeping for one guest second. Placeholder probes observed
+`0x12` on L6 and `0x18` on L6max before sending, and `0x20` on both after
+the message (`/private/tmp/l6-usb-mixer-before-probe/report.json` and
+`/private/tmp/l6-knob-usb-probe/report.json`). If the value is already the
+target, the action first sends and observes a different value so a stale value
+cannot satisfy the check. Both model cases passed with the new condition
+(`/private/tmp/l6-usb-midi-level-ready/report.json`).
+
+The scenario-file inventory does not include delays inside Rust device
+helpers. In particular, `knob_dialog.rs` contains additional guest-time
+waits and display captures; some test negative behavior or observation
+windows, and the remaining transitions still need individual review.

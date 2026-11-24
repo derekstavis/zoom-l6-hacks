@@ -40,7 +40,3 @@ action = "expect-encoder-reports"
 [[step]]
 action = "usb-midi"
 value = 32
-
-[[step]]
-action = "delay"
-guest_ms = 1000

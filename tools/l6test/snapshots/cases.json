@@ -3296,7 +3296,7 @@
       "devices",
       "full"
     ],
-    "definition": "64fd2ef331996b3837cb3b3e56e8b03cdd6fa220b188bebb8aa25eab6531152f"
+    "definition": "3337559b7ddd6af2946ecbb4c9f4ef6a3b4b2f60c24c742949a501d8133ab440"
   },
   {
     "case": "usb",
@@ -3306,7 +3306,7 @@
       "devices",
       "full"
     ],
-    "definition": "9747bb1fc3e28493a5d10591b5b180532cfe2c075874662addf8ef7a2a4eb283"
+    "definition": "16c95ea0a5cbfbb4fd31e2a57eb4ea4da55ba1341748c59aa90b92f5e4833e32"
   },
   {
     "case": "usb-storage",

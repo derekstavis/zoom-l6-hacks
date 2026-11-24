@@ -64,6 +64,28 @@ pub(super) fn run_knob_dialog(
             qmp.read_memory(0, address, 4)?.try_into().unwrap(),
         ))
     };
+    let wait_window = |recorder: bool| -> Result<u32, Box<dyn std::error::Error>> {
+        let start = inputs.panel.snapshot().guest_ms;
+        let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(120));
+        loop {
+            session.poll()?;
+            let window = word(l6max::current_window)?;
+            if (window == l6max::GUI_RECORDER_WINDOW) == recorder {
+                return Ok(window);
+            }
+            if inputs.panel.snapshot().guest_ms.wrapping_sub(start) >= guest_timeout_ms.min(10_000)
+                || Instant::now() >= deadline
+            {
+                return Err(if recorder {
+                    "Menu button did not return to recorder before dialog checks"
+                } else {
+                    "Menu button did not leave the recorder screen for the guard test"
+                }
+                .into());
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    };
     let text_pointers = word(l6max::gui_text_pointers_by_language)?;
     let original_resources = qmp.read_memory(0, text_pointers + 229 * 4, 12)?;
     let lengths_table = word(l6max::gui_text_lengths_by_language)?;
@@ -176,16 +198,7 @@ pub(super) fn run_knob_dialog(
         );
     }
     inputs.main.tap(0, 120)?;
-    let menu_start = inputs.panel.snapshot().guest_ms;
-    wait_guest(session, menu_start, 500, guest_timeout_ms, wall_timeout_s)?;
-    let non_recorder_window = u32::from_le_bytes(
-        qmp.read_memory(0, l6max::current_window, 4)?
-            .try_into()
-            .unwrap(),
-    );
-    if non_recorder_window == GUI_RECORDER_WINDOW {
-        return Err("Menu button did not leave the recorder screen for the guard test".into());
-    }
+    let non_recorder_window = wait_window(false)?;
     capture(100, "knob-dialog-non-recorder-before")?;
     inputs.knob(0, -1)?;
     let non_recorder_knob = inputs.panel.snapshot().guest_ms;
@@ -215,16 +228,7 @@ pub(super) fn run_knob_dialog(
             .into());
     }
     inputs.main.tap(0, 120)?;
-    let return_start = inputs.panel.snapshot().guest_ms;
-    wait_guest(session, return_start, 500, guest_timeout_ms, wall_timeout_s)?;
-    if u32::from_le_bytes(
-        qmp.read_memory(0, l6max::current_window, 4)?
-            .try_into()
-            .unwrap(),
-    ) != GUI_RECORDER_WINDOW
-    {
-        return Err("Menu button did not return to recorder before dialog checks".into());
-    }
+    wait_window(true)?;
     let non_recorder_guard_passed = true;
 
     let display_callbacks = qmp.read_memory(0, l6max::gui_display_callback_table, 24)?;

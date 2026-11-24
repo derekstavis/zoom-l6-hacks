@@ -545,3 +545,9 @@ reports until a bounded deadline, while still checking the button coordinates
 and mapped event. The focused case passed afterward
 (`/private/tmp/l6-readiness-panel-fix-run/report.json`); the original full-run
 failure remains recorded in `/private/tmp/l6-readiness-full/report.json`.
+
+The full run also failed the knob-dialog guard when a 500 ms guest delay
+ended before the menu changed windows. Replacing the menu and return delays
+with bounded current-window checks passed the complete knob-dialog case
+(`/private/tmp/l6-knob-usb-probe/report.json`); the other two diagnostic
+cases in that report deliberately failed with placeholder memory values.

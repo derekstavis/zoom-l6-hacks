@@ -123,6 +123,9 @@ fn immediate_abort_sysroot(rustc: &Path) -> Result<PathBuf, Box<dyn std::error::
     let mut key = Sha256::new();
     let compiler_identity = toolchain::compiler_identity(rustc)?;
     key.update(&compiler_identity);
+    // The compiler-builtins configuration below is part of the sysroot's
+    // inputs too. Rebuild when its build procedure changes.
+    key.update(include_bytes!("lib.rs"));
     key.update(IMMEDIATE_ABORT_LIBRARY_FLAGS.join(" "));
     let key = format!("{:x}", key.finalize());
     let cache =

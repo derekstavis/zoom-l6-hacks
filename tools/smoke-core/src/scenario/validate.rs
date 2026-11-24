@@ -247,7 +247,7 @@ impl Scenario {
             {
                 return Err("wasm-patch is a standalone L6/L6max scenario operation".into());
             }
-            if let Action::UsbSysex { requests } = &step.action {
+            if let Action::UsbSysex { requests, .. } = &step.action {
                 if requests.is_empty() {
                     return Err("usb-sysex needs at least one request".into());
                 }
@@ -283,7 +283,44 @@ impl Scenario {
                     return Err("expect-heap minimum_free must be positive and fit the heap".into());
                 }
             }
-            if let Action::ExpectMemory { symbol, bytes } = &step.action {
+            if let Action::WaitAudioInput { min_ms, max_ms, .. } = &step.action
+                && min_ms > max_ms
+            {
+                return Err("wait-audio-input minimum must not exceed maximum".into());
+            }
+            if let Action::WaitEffectMode {
+                panel_mode: None,
+                edit_mode: None,
+            } = &step.action
+            {
+                return Err("wait-effect-mode needs a panel or edit mode".into());
+            }
+            if let Action::WaitRecordedFiles { files } = &step.action
+                && (files.is_empty()
+                    || files.len() > 16
+                    || files.iter().any(|file| {
+                        file.is_empty()
+                            || file.contains(['/', '\\', ':'])
+                            || file == "."
+                            || file == ".."
+                    }))
+            {
+                return Err("wait-recorded-files needs 1..16 simple file names".into());
+            }
+            if let Action::WaitL6SoundPadFile { path } = &step.action {
+                if path.is_empty()
+                    || path.len() > 240
+                    || path.contains(['\\', ':'])
+                    || path
+                        .split('/')
+                        .any(|part| part.is_empty() || part == "." || part == "..")
+                {
+                    return Err("wait-l6-sound-pad-file needs a relative SD card path".into());
+                }
+            }
+            if let Action::ExpectMemory { symbol, bytes } | Action::WaitMemory { symbol, bytes } =
+                &step.action
+            {
                 if bytes.is_empty() || bytes.len() > 4096 {
                     return Err("expect-memory needs 1..4096 bytes".into());
                 }
@@ -314,17 +351,16 @@ impl Scenario {
             if let Action::HoldChord {
                 controls,
                 duration_ms,
+                until,
             } = &step.action
             {
-                if controls.is_empty()
-                    || controls.len() > 16
-                    || *duration_ms == 0
-                    || *duration_ms > step.guest_timeout_ms
-                {
-                    return Err(
-                        "hold-chord requires 1..16 controls and a duration within its deadline"
-                            .into(),
-                    );
+                if controls.is_empty() || controls.len() > 16 {
+                    return Err("hold-chord requires 1..16 controls".into());
+                }
+                match (duration_ms, until) {
+                    (Some(duration), None) if *duration > 0 && *duration <= step.guest_timeout_ms => {},
+                    (None, Some(ChordCondition::FactoryMode)) if value.models.iter().all(|model| !step.applies_to(*model) || *model == Model::L6max) => {},
+                    _ => return Err("hold-chord needs either a bounded duration or the L6max factory-mode condition".into()),
                 }
                 for model in &value.models {
                     if step.applies_to(*model) {
@@ -443,11 +479,14 @@ impl Scenario {
                 Action::Wait { until }
                     if until != "boot-ready"
                         && until != "panel-settled"
-                        && until != "mixer-ready" =>
+                        && until != "mixer-ready"
+                        && until != "sd-patch-loaded"
+                        && until != "sd-patch-empty" =>
                 {
                     return Err(format!("unknown wait condition: {until}"));
                 }
                 Action::Press { control }
+                | Action::PressDisplayChange { control }
                 | Action::Hold { control, .. }
                 | Action::Switch { control, .. }
                 | Action::ExpectButtonReport { control }
@@ -460,8 +499,12 @@ impl Scenario {
                             {
                                 return Err("switch action requires a latching switch".into());
                             }
-                            if matches!(step.action, Action::Press { .. } | Action::Hold { .. })
-                                && is_switch(*model, target)
+                            if matches!(
+                                step.action,
+                                Action::Press { .. }
+                                    | Action::PressDisplayChange { .. }
+                                    | Action::Hold { .. }
+                            ) && is_switch(*model, target)
                             {
                                 return Err("use switch action for a latching switch".into());
                             }

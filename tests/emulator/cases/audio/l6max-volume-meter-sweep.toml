@@ -16,12 +16,11 @@ until = "mixer-ready"
 guest_timeout_ms = 60000
 wall_timeout_s = 900
 
-# Spec-built state skips the L6max boot floor. Let the audio engine finish its
-# post-mixer startup before pressing a saved-state sound pad.
+# Wait for boot to settle before pressing a saved-state sound pad.
 [[step]]
-action = "delay"
-guest_ms = 5000
-guest_timeout_ms = 10000
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 60000
 wall_timeout_s = 300
 
 # Fail early if boot did not copy the prepared Pad 4 assignment into the active

@@ -16,9 +16,16 @@ guest_timeout_ms = 60000
 wall_timeout_s = 300
 
 [[step]]
-action = "delay"
-guest_ms = 8000
-guest_timeout_ms = 20000
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+models = ["l6max"]
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
+guest_timeout_ms = 30000
 wall_timeout_s = 300
 
 [[step]]
@@ -26,8 +33,8 @@ action = "press"
 control = "recorder-function-1"
 
 [[step]]
-action = "delay"
-guest_ms = 1500
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/menu-project.png"
 
 [[step]]
 action = "checkpoint"
@@ -38,8 +45,10 @@ action = "press"
 control = "recorder-function-1"
 
 [[step]]
-action = "delay"
-guest_ms = 3000
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
 
 [[step]]
 action = "checkpoint"
@@ -51,10 +60,6 @@ channel = 1
 steps = -2
 
 [[step]]
-action = "delay"
-guest_ms = 300
-
-[[step]]
 action = "expect-display"
 checkpoint = "recorder"
 changed = true
@@ -62,10 +67,6 @@ changed = true
 [[step]]
 action = "press"
 control = "recorder-function-1"
-
-[[step]]
-action = "delay"
-guest_ms = 1500
 
 [[step]]
 action = "expect-display"

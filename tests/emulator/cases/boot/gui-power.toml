@@ -9,13 +9,10 @@ volatile = true
 no_sd = true
 
 [[step]]
-action = "delay"
-guest_ms = 2000
-models = ["l6"]
-
-[[step]]
-action = "delay"
-guest_ms = 2000
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
 
 [[step]]
 action = "press"
@@ -40,43 +37,11 @@ control = "power"
 models = ["l6"]
 
 [[step]]
-action = "delay"
-guest_ms = 5000
-models = ["l6"]
-
-[[step]]
 action = "expect-startup-report"
 control = "rec-record"
 guest_timeout_ms = 30000
 wall_timeout_s = 60
 models = ["l6"]
-
-[[step]]
-action = "delay"
-guest_ms = 40000
-guest_timeout_ms = 60000
-wall_timeout_s = 600
-models = ["l6max"]
-
-[[step]]
-action = "press"
-control = "recorder.confirm"
-models = ["l6max"]
-
-[[step]]
-action = "delay"
-guest_ms = 2000
-models = ["l6max"]
-
-[[step]]
-action = "press"
-control = "recorder.confirm"
-models = ["l6max"]
-
-[[step]]
-action = "delay"
-guest_ms = 5000
-models = ["l6max"]
 
 [[step]]
 action = "hold"
@@ -97,8 +62,8 @@ control = "power"
 models = ["l6max"]
 
 [[step]]
-action = "delay"
-guest_ms = 40000
+action = "wait"
+until = "boot-ready"
 guest_timeout_ms = 60000
 wall_timeout_s = 600
 models = ["l6max"]

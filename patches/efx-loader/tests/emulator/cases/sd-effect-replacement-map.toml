@@ -24,6 +24,8 @@ path = "patches/efx-loader/tests/emulator/fragments/effect-replacement-load.toml
 action = "effect-replacement-state"
 expected_effect_type = 1
 expected_processor_type = 1
+wait_for_slot = true
+require_output = true
 
 [[step]]
 action = "checkpoint"
@@ -34,8 +36,8 @@ action = "press"
 control = "tap-button"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+edit_mode = true
 
 [[step]]
 action = "effect-replacement-state"
@@ -47,10 +49,6 @@ expected_edit_mode = true
 action = "effect-parameter-edit"
 encoder = 2
 steps = 1
-
-[[step]]
-action = "delay"
-guest_ms = 300
 
 [[step]]
 action = "expect-display-image"
@@ -75,13 +73,10 @@ action = "press"
 control = "efx-select"
 
 [[step]]
-action = "delay"
-guest_ms = 500
-
-[[step]]
 action = "effect-replacement-state"
 expected_effect_type = 2
 expected_processor_type = 0
+wait_for_slot = true
 expected_edit_mode = false
 
 [[step]]

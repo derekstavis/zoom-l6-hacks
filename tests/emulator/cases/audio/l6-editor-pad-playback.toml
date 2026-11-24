@@ -11,7 +11,7 @@ environment = { L6_AUDIO_SAMPLE_TRACE = "1" }
 
 [[step]]
 action = "include"
-path = "tests/emulator/fragments/editor-pad-setup-l6.toml"
+path = "tests/emulator/fragments/l6-first-boot-setup.toml"
 
 [[step]]
 action = "include"

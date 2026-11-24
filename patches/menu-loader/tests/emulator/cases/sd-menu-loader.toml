@@ -16,10 +16,21 @@ guest_timeout_ms = 60000
 wall_timeout_s = 300
 
 [[step]]
-action = "delay"
-guest_ms = 8000
-guest_timeout_ms = 20000
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 60000
 wall_timeout_s = 300
+
+[[step]]
+models = ["l6max"]
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "wait"
+until = "sd-patch-loaded"
 
 [[step]]
 action = "checkpoint"
@@ -36,8 +47,8 @@ action = "press"
 control = "recorder-function-1"
 
 [[step]]
-action = "delay"
-guest_ms = 1500
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/menu-project.png"
 
 [[step]]
 action = "press"
@@ -68,16 +79,16 @@ action = "press"
 control = "recorder-function-3"
 
 [[step]]
-action = "delay"
-guest_ms = 500
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-patch-menu/main-system.png"
 
 [[step]]
 action = "press"
 control = "recorder-function-4"
 
 [[step]]
-action = "delay"
-guest_ms = 1000
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-patch-menu/system-first-9.png"
 
 # System index 7 is Patches, after the seven stock items.
 
@@ -110,32 +121,24 @@ action = "press"
 control = "recorder-function-3"
 
 [[step]]
-action = "delay"
-guest_ms = 500
+action = "expect-display-image"
+image = "patches/menu-loader/tests/emulator/references/system-patches.png"
 
 [[step]]
 action = "checkpoint"
 name = "system-patches"
 
 [[step]]
-action = "expect-display-image"
-image = "patches/menu-loader/tests/emulator/references/system-patches.png"
-
-[[step]]
 action = "press"
 control = "recorder-function-4"
 
 [[step]]
-action = "delay"
-guest_ms = 1000
+action = "expect-display-image"
+image = "patches/menu-loader/tests/emulator/references/patches-top.png"
 
 [[step]]
 action = "checkpoint"
 name = "patches-top"
-
-[[step]]
-action = "expect-display-image"
-image = "patches/menu-loader/tests/emulator/references/patches-top.png"
 
 # Down three times scrolls the list to rows 1-3; Up then selects
 # knob-dialog, leaving the SD module's row visible and unselected, so its
@@ -158,16 +161,12 @@ action = "press"
 control = "recorder-function-2"
 
 [[step]]
-action = "delay"
-guest_ms = 1000
+action = "expect-display-image"
+image = "patches/menu-loader/tests/emulator/references/patches-sd-row.png"
 
 [[step]]
 action = "checkpoint"
 name = "patches-sd-row"
-
-[[step]]
-action = "expect-display-image"
-image = "patches/menu-loader/tests/emulator/references/patches-sd-row.png"
 
 # Back to System; midi-sync declares the item after Patches.
 
@@ -176,21 +175,17 @@ action = "press"
 control = "recorder-function-1"
 
 [[step]]
-action = "delay"
-guest_ms = 1000
+action = "expect-display-image"
+image = "patches/menu-loader/tests/emulator/references/system-patches.png"
 
 [[step]]
 action = "press"
 control = "recorder-function-3"
 
 [[step]]
-action = "delay"
-guest_ms = 1000
+action = "expect-display-image"
+image = "patches/menu-loader/tests/emulator/references/system-send-midi-state.png"
 
 [[step]]
 action = "checkpoint"
 name = "system-send-midi-state"
-
-[[step]]
-action = "expect-display-image"
-image = "patches/menu-loader/tests/emulator/references/system-send-midi-state.png"

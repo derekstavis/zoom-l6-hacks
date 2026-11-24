@@ -129,6 +129,44 @@ fn direct_usb_midi_cable_is_configurable_and_range_checked() {
     .is_err());
 }
 #[test]
+fn press_display_change_requires_ack_and_new_display() {
+    let scenario = Scenario::parse("version=1\nname='press-screen'\nmodels=['l6max']\n[[step]]\naction='press-display-change'\ncontrol='recorder.down'\n").unwrap();
+    let logs = std::env::temp_dir().join(format!(
+        "smoke-press-screen-{}-{}",
+        std::process::id(),
+        NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let mut runner = Runner::new(scenario, Model::L6max, logs.clone()).unwrap();
+    let now = Instant::now();
+    assert!(matches!(
+        runner.advance(sample(0), now).unwrap(),
+        Progress::Dispatch(_)
+    ));
+    let mut obs = sample(50);
+    obs.data.display[0] = 1;
+    assert!(matches!(
+        runner.advance(obs.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    obs.data.display[0] = 0;
+    obs.main.sent = 2;
+    obs.main.applied = 2;
+    obs.panel.sent = 2;
+    obs.panel.applied = 2;
+    assert!(matches!(
+        runner.advance(obs.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    obs.data.display[0] = 1;
+    assert!(matches!(
+        runner.advance(obs, now).unwrap(),
+        Progress::Complete
+    ));
+    fs::remove_dir_all(logs).unwrap();
+    assert!(Scenario::parse("version=1\nname='invalid'\nmodels=['l6']\n[[step]]\naction='press-display-change'\ncontrol='recorder.down'\n").is_err());
+}
+
+#[test]
 fn output_alone_cannot_pass_before_the_command_acknowledgement() {
     let mut runner = test_runner(
         "[[step]]\naction='encoder'\nchannel=1\nsteps=12\n[[step]]\naction='expect-ring'\nchannel=1\nmask=31\nchanged=true\nonly=true\n",
@@ -259,6 +297,128 @@ fn guest_time_and_wall_deadlines_are_independent() {
             .contains("timed out")
     );
     fs::remove_dir_all(&stalled.logs).unwrap();
+}
+
+#[test]
+fn saved_l6_pad_readiness_is_model_scoped_and_dispatches() {
+    let prefix = "version=1\nname='pad-ready'\nmodels=['l6']\nbackends=['headless']\n[[step]]\naction='wait-l6-sound-pad-file'\n";
+    let scenario =
+        Scenario::parse(&format!("{prefix}path='SOUND_PAD/PAD1/TONE220.WAV'\n")).unwrap();
+    let mut runner = Runner::new(
+        scenario,
+        Model::L6,
+        std::env::temp_dir().join(format!(
+            "smoke-pad-ready-{}",
+            NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        )),
+    )
+    .unwrap();
+    assert!(matches!(
+        runner.advance(sample(0), Instant::now()).unwrap(),
+        Progress::Device(devices::Operation::WaitL6SoundPadFile { .. })
+    ));
+    fs::remove_dir_all(&runner.logs).unwrap();
+    assert!(Scenario::parse(&format!("{prefix}path='../bad.wav'\n")).is_err());
+    assert!(
+        Scenario::parse(&format!(
+            "{}path='SOUND_PAD/PAD1/TONE220.WAV'\n",
+            prefix.replace("'l6'", "'l6max'")
+        ))
+        .is_err()
+    );
+}
+
+#[test]
+fn chord_requires_one_condition_and_factory_mode_is_l6max_only() {
+    let prefix = "version=1\nname='chord'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='hold-chord'\ncontrols=['sound-pad-1']\n";
+    Scenario::parse(&format!("{prefix}until='factory-mode'\n")).unwrap();
+    assert!(Scenario::parse(&format!("{prefix}duration_ms=1000\n")).is_ok());
+    assert!(Scenario::parse(prefix).is_err());
+    assert!(Scenario::parse(&format!("{prefix}duration_ms=1000\nuntil='factory-mode'\n")).is_err());
+    assert!(
+        Scenario::parse(&format!(
+            "{}until='factory-mode'\n",
+            prefix.replace("'l6max'", "'l6'")
+        ))
+        .is_err()
+    );
+}
+
+#[test]
+fn effect_mode_wait_requires_a_target() {
+    let prefix = "version=1\nname='effect-wait'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='wait-effect-mode'\n";
+    assert!(Scenario::parse(prefix).is_err());
+    assert!(Scenario::parse(&format!("{prefix}edit_mode=true\n")).is_ok());
+    assert!(Scenario::parse(&format!("{prefix}panel_mode=6\n")).is_ok());
+    assert!(
+        Scenario::parse(&format!(
+            "{}edit_mode=true\n",
+            prefix.replace("l6max", "l6")
+        ))
+        .is_err()
+    );
+}
+
+#[test]
+fn wait_recorded_files_validates_names_and_dispatches() {
+    let mut runner = test_runner(
+        "backends=['headless']\n[[step]]\naction='wait-recorded-files'\nfiles=['TRACK01.WAV']\n",
+    );
+    assert!(matches!(
+        runner.advance(sample(0), Instant::now()).unwrap(),
+        Progress::Device(devices::Operation::WaitRecordedFiles { .. })
+    ));
+    fs::remove_dir_all(&runner.logs).unwrap();
+    assert!(Scenario::parse("version=1\nname='invalid'\nmodels=['l6']\nbackends=['headless']\n[[step]]\naction='wait-recorded-files'\nfiles=['../outside']\n").is_err());
+}
+
+#[test]
+fn wait_audio_input_dispatches_transport_condition() {
+    let mut runner = test_runner(
+        "backends=['headless']\n[[step]]\naction='wait-audio-input'\nplaying=true\nmin_ms=1000\nmax_ms=2000\n",
+    );
+    assert!(matches!(
+        runner.advance(sample(0), Instant::now()).unwrap(),
+        Progress::Device(devices::Operation::WaitAudioInput {
+            playing: true,
+            min_ms: 1000,
+            max_ms: 2000
+        })
+    ));
+    fs::remove_dir_all(&runner.logs).unwrap();
+    assert!(Scenario::parse("version=1\nname='invalid'\nmodels=['l6']\nbackends=['headless']\n[[step]]\naction='wait-audio-input'\nplaying=false\nmin_ms=2\nmax_ms=1\n").is_err());
+}
+
+#[test]
+fn wait_memory_dispatches_with_a_resolved_address() {
+    let mut runner = test_runner(
+        "backends=['headless']\n[[step]]\naction='wait-memory'\nsymbol='rec_record_lamp'\nbytes=[16,0,0,0]\n",
+    );
+    assert!(matches!(
+        runner.advance(sample(0), Instant::now()).unwrap(),
+        Progress::Device(devices::Operation::WaitMemory { .. })
+    ));
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+
+#[test]
+fn sd_patch_empty_wait_dispatches_to_loader_check() {
+    let mut runner = test_runner("[[step]]\naction='wait'\nuntil='sd-patch-empty'\n");
+    assert!(matches!(
+        runner.advance(sample(0), Instant::now()).unwrap(),
+        Progress::Device(devices::Operation::WaitSdPatchEmpty)
+    ));
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+
+#[test]
+fn sd_patch_loaded_wait_dispatches_to_loader_check() {
+    let mut runner = test_runner("[[step]]\naction='wait'\nuntil='sd-patch-loaded'\n");
+    assert!(matches!(
+        runner.advance(sample(0), Instant::now()).unwrap(),
+        Progress::Device(devices::Operation::WaitSdPatchLoaded)
+    ));
+    fs::remove_dir_all(&runner.logs).unwrap();
 }
 
 #[test]

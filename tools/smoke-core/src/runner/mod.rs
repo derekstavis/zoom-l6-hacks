@@ -518,8 +518,14 @@ impl Runner {
                 Action::L6MidiMuteIndicators => {
                     return Ok(Progress::Device(devices::Operation::L6MidiMuteIndicators));
                 }
-                Action::UsbSysex { requests } => {
-                    return Ok(Progress::Device(devices::Operation::UsbSysex { requests }));
+                Action::UsbSysex {
+                    requests,
+                    complete_on_match,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::UsbSysex {
+                        requests,
+                        complete_on_match,
+                    }));
                 }
                 Action::EditorPadAssignments => {
                     return Ok(Progress::Device(devices::Operation::EditorPadAssignments));
@@ -555,6 +561,11 @@ impl Runner {
                         max_residual_db,
                     }));
                 }
+                Action::WaitL6SoundPadFile { path } => {
+                    return Ok(Progress::Device(devices::Operation::WaitL6SoundPadFile {
+                        path,
+                    }));
+                }
                 Action::L6RecorderPlayback { target } => {
                     return Ok(Progress::Device(devices::Operation::L6RecorderPlayback {
                         target,
@@ -574,6 +585,15 @@ impl Runner {
                         bytes,
                     }));
                 }
+                Action::WaitMemory { symbol, bytes } => {
+                    let address = crate::firmware::symbol(self.model, &symbol)
+                        .ok_or_else(|| format!("{symbol} is not declared for this model"))?;
+                    return Ok(Progress::Device(devices::Operation::WaitMemory {
+                        symbol,
+                        address,
+                        bytes,
+                    }));
+                }
                 Action::ExpectSdPatch {
                     loaded,
                     chain_count,
@@ -587,6 +607,15 @@ impl Runner {
                     return Ok(Progress::Device(devices::Operation::EffectParameterEdit {
                         encoder,
                         steps,
+                    }));
+                }
+                Action::WaitEffectMode {
+                    panel_mode,
+                    edit_mode,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::WaitEffectMode {
+                        panel_mode,
+                        edit_mode,
                     }));
                 }
                 Action::EffectReplacementState {
@@ -628,6 +657,7 @@ impl Runner {
                 Action::HoldChord {
                     controls,
                     duration_ms,
+                    until,
                 } => {
                     let targets = controls
                         .iter()
@@ -636,6 +666,7 @@ impl Runner {
                     return Ok(Progress::Device(devices::Operation::HoldChord {
                         targets,
                         duration_ms,
+                        until,
                     }));
                 }
                 Action::UsbStorage => return Ok(Progress::Device(devices::Operation::UsbStorage)),
@@ -708,6 +739,11 @@ impl Runner {
                         matches_state,
                     }));
                 }
+                Action::WaitRecordedFiles { files } => {
+                    return Ok(Progress::Device(devices::Operation::WaitRecordedFiles {
+                        files,
+                    }));
+                }
                 Action::AudioInputTransport {
                     command,
                     position_ms,
@@ -721,6 +757,17 @@ impl Runner {
                     return Ok(Progress::Device(devices::Operation::AudioInputLoad {
                         channel,
                         loaded,
+                    }));
+                }
+                Action::WaitAudioInput {
+                    playing,
+                    min_ms,
+                    max_ms,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::WaitAudioInput {
+                        playing,
+                        min_ms,
+                        max_ms,
                     }));
                 }
                 Action::ExpectAudioInput {
@@ -793,6 +840,12 @@ impl Runner {
                     return Ok(Progress::Device(devices::Operation::L6LevelMeterPwm));
                 }
                 Action::Wait { until } => {
+                    if until == "sd-patch-loaded" {
+                        return Ok(Progress::Device(devices::Operation::WaitSdPatchLoaded));
+                    }
+                    if until == "sd-patch-empty" {
+                        return Ok(Progress::Device(devices::Operation::WaitSdPatchEmpty));
+                    }
                     if until == "boot-ready" {
                         // Without the setup floor, L6max also needs its screen
                         // to have held one frame for a guest second.
@@ -862,6 +915,21 @@ impl Runner {
                     self.acknowledged(&obs)?
                         && obs.data.switches[control_target(self.model, &control)? as usize]
                             == enabled
+                }
+                Action::PressDisplayChange { control } => {
+                    if !self.dispatched {
+                        return self.dispatch(
+                            Command::Press {
+                                target: control_target(self.model, &control)?,
+                            },
+                            obs,
+                        );
+                    }
+                    self.acknowledged(&obs)?
+                        && self
+                            .baseline
+                            .as_ref()
+                            .is_some_and(|baseline| baseline.data.display != obs.data.display)
                 }
                 Action::Press { control } => {
                     if !self.dispatched {

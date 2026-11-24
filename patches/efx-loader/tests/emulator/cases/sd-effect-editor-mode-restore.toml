@@ -39,8 +39,9 @@ action = "press"
 control = "tap-button"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 6
+edit_mode = true
 
 [[step]]
 action = "effect-replacement-state"
@@ -85,10 +86,6 @@ channel = 1
 steps = 47
 
 [[step]]
-action = "delay"
-guest_ms = 300
-
-[[step]]
 action = "expect-ring"
 channel = 1
 mask = 0x01f
@@ -106,10 +103,6 @@ max = 0
 action = "encoder"
 channel = 1
 steps = 48
-
-[[step]]
-action = "delay"
-guest_ms = 300
 
 [[step]]
 action = "expect-ring"
@@ -131,10 +124,6 @@ channel = 4
 steps = 46
 
 [[step]]
-action = "delay"
-guest_ms = 300
-
-[[step]]
 action = "expect-ring"
 channel = 4
 mask = 0x1ff
@@ -152,10 +141,6 @@ max = 40
 action = "encoder"
 channel = 5
 steps = 38
-
-[[step]]
-action = "delay"
-guest_ms = 300
 
 [[step]]
 action = "expect-ring"
@@ -181,8 +166,9 @@ action = "press"
 control = "tap-button"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 9
+edit_mode = false
 
 [[step]]
 action = "effect-replacement-state"
@@ -239,8 +225,9 @@ action = "press"
 control = "tap-button"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 6
+edit_mode = true
 
 [[step]]
 action = "effect-replacement-state"
@@ -261,8 +248,9 @@ action = "select-mode"
 mode = "eq-high"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 0
+edit_mode = false
 
 [[step]]
 action = "effect-replacement-state"
@@ -319,8 +307,9 @@ action = "press"
 control = "tap-button"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 6
+edit_mode = true
 
 [[step]]
 action = "effect-replacement-state"
@@ -337,8 +326,9 @@ action = "select-mode"
 mode = "freq"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 1
+edit_mode = false
 
 [[step]]
 action = "effect-replacement-state"
@@ -395,8 +385,9 @@ action = "press"
 control = "tap-button"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 6
+edit_mode = true
 
 [[step]]
 action = "effect-replacement-state"
@@ -413,8 +404,9 @@ action = "select-mode"
 mode = "mid"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 2
+edit_mode = false
 
 [[step]]
 action = "effect-replacement-state"
@@ -471,8 +463,9 @@ action = "press"
 control = "tap-button"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 6
+edit_mode = true
 
 [[step]]
 action = "effect-replacement-state"
@@ -489,8 +482,9 @@ action = "select-mode"
 mode = "low"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 3
+edit_mode = false
 
 [[step]]
 action = "effect-replacement-state"
@@ -547,8 +541,9 @@ action = "press"
 control = "tap-button"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 6
+edit_mode = true
 
 [[step]]
 action = "effect-replacement-state"
@@ -565,8 +560,9 @@ action = "select-mode"
 mode = "aux1"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 4
+edit_mode = false
 
 [[step]]
 action = "effect-replacement-state"
@@ -623,8 +619,9 @@ action = "press"
 control = "tap-button"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 6
+edit_mode = true
 
 [[step]]
 action = "effect-replacement-state"
@@ -641,8 +638,9 @@ action = "select-mode"
 mode = "aux2"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 5
+edit_mode = false
 
 [[step]]
 action = "effect-replacement-state"
@@ -699,8 +697,9 @@ action = "press"
 control = "tap-button"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 6
+edit_mode = true
 
 [[step]]
 action = "effect-replacement-state"
@@ -717,8 +716,9 @@ action = "select-mode"
 mode = "sub-mix"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 7
+edit_mode = false
 
 [[step]]
 action = "effect-replacement-state"
@@ -775,8 +775,9 @@ action = "press"
 control = "tap-button"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 6
+edit_mode = true
 
 [[step]]
 action = "effect-replacement-state"
@@ -793,8 +794,9 @@ action = "select-mode"
 mode = "pan"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 8
+edit_mode = false
 
 [[step]]
 action = "effect-replacement-state"
@@ -833,8 +835,9 @@ action = "press"
 control = "tap-button"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 6
+edit_mode = true
 
 [[step]]
 action = "effect-replacement-state"
@@ -873,8 +876,9 @@ action = "select-mode"
 mode = "level"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 9
+edit_mode = false
 
 [[step]]
 action = "effect-replacement-state"

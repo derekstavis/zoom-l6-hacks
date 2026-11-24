@@ -108,6 +108,46 @@ pub(super) fn verify_sai_edma_trace(
     Ok(json!({"latest_enable_ms":latest_enable,"streams":streams}))
 }
 
+/// Wait for the exact L6 pad-1 file path and its assignment-pending flag.
+pub(super) fn wait_l6_sound_pad_file(
+    session: &Session,
+    path: &str,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    const GUEST_TIMEOUT_MS: u32 = 10_000;
+    const WALL_TIMEOUT_S: u64 = 180;
+    const POLL_INTERVAL_MS: u64 = 10;
+    if session.engine.model() != l6fw::Model::L6 {
+        return Err("saved pad-file readiness requires L6".into());
+    }
+    let expected: Vec<u8> = format!("A:\\{}", path.replace('/', "\\"))
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    let qmp = &session.engine.management[0];
+    let start = guest_now(session);
+    let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
+    loop {
+        session.poll()?;
+        let assigned = qmp.read_memory(0, l6::sound_pad1_path, expected.len())?;
+        let pending = qmp.read_memory(0, l6::sound_pad_assignments, 1)?[0];
+        if assigned == expected && pending == 0 {
+            return Ok(json!({"path": path, "pending": pending}));
+        }
+        if guest_now(session).wrapping_sub(start) >= guest_timeout_ms.min(GUEST_TIMEOUT_MS)
+            || Instant::now() >= deadline
+        {
+            return Err(format!(
+                "L6 pad 1 file {path} was not assigned before the deadline (pending={pending:#04x})"
+            )
+            .into());
+        }
+        thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+    }
+}
+
 pub(super) fn run_sound_pad_playback(
     session: &Session,
     options: &Options,

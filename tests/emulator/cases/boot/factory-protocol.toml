@@ -11,27 +11,14 @@ volatile = true
 no_sd = true
 
 [[step]]
-action = "delay"
-guest_ms = 40000
-guest_timeout_ms = 50000
-wall_timeout_s = 180
-
-# The factory firmware gives a valid retained calendar priority over its SD jig check.
-[[step]]
-action = "press"
-control = "recorder.confirm"
+action = "include"
+path = "tests/emulator/fragments/l6max-first-boot-prompts.toml"
 
 [[step]]
-action = "delay"
-guest_ms = 1950
-
-[[step]]
-action = "press"
-control = "recorder.confirm"
-
-[[step]]
-action = "delay"
-guest_ms = 4950
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-factory-sd-prompt.png"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
 
 [[step]]
 action = "restart"
@@ -39,9 +26,7 @@ action = "restart"
 [[step]]
 action = "hold-chord"
 controls = ["sound-pad-1", "sound-pad-2", "sound-pad-3"]
-duration_ms = 40000
-guest_timeout_ms = 50000
-wall_timeout_s = 180
+until = "factory-mode"
 
 [[step]]
 action = "expect-memory"
@@ -56,6 +41,7 @@ wall_timeout_s = 300
 
 [[step]]
 action = "usb-sysex"
+complete_on_match = true
 requests = [
   { bytes = [240, 126, 127, 6, 1, 247], expect_prefix = [240, 126] },
   { bytes = [240, 82, 0, 0, 103, 11, 247], expect_prefix = [240, 82, 0, 0, 103, 12] },
@@ -87,21 +73,18 @@ guest_timeout_ms = 30000
 wall_timeout_s = 180
 
 [[step]]
-action = "delay"
-guest_ms = 1500
-
-[[step]]
-action = "expect-memory"
+action = "wait-memory"
 symbol = "midi_sysex_session_state"
 bytes = [0]
 
 [[step]]
-action = "expect-memory"
+action = "wait-memory"
 symbol = "factory_connected"
 bytes = [0, 0, 0, 0]
 
 [[step]]
 action = "usb-sysex"
+complete_on_match = true
 requests = [
   { bytes = [240, 126, 127, 6, 1, 247], expect_prefix = [240, 126] },
   { bytes = [240, 82, 0, 0, 103, 11, 247], expect_prefix = [240, 82, 0, 0, 103, 12] },

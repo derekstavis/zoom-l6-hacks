@@ -30,8 +30,9 @@ action = "press"
 control = "tap-button"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 6
+edit_mode = true
 
 [[step]]
 action = "effect-replacement-state"
@@ -47,10 +48,6 @@ lit = true
 action = "encoder"
 channel = 3
 steps = 120
-
-[[step]]
-action = "delay"
-guest_ms = 300
 
 [[step]]
 action = "expect-ring"
@@ -72,10 +69,6 @@ channel = 5
 steps = -120
 
 [[step]]
-action = "delay"
-guest_ms = 300
-
-[[step]]
 action = "expect-ring"
 channel = 5
 mask = 0x001
@@ -86,10 +79,6 @@ settle_ms = 100
 action = "encoder"
 channel = 7
 steps = 1
-
-[[step]]
-action = "delay"
-guest_ms = 300
 
 [[step]]
 action = "expect-ring"
@@ -134,8 +123,8 @@ action = "press"
 control = "tap-button"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+edit_mode = false
 
 [[step]]
 action = "effect-replacement-state"
@@ -175,8 +164,9 @@ action = "press"
 control = "tap-button"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+panel_mode = 6
+edit_mode = true
 
 [[step]]
 action = "effect-replacement-state"
@@ -217,8 +207,8 @@ action = "press"
 control = "tap-button"
 
 [[step]]
-action = "delay"
-guest_ms = 100
+action = "wait-effect-mode"
+edit_mode = false
 
 [[step]]
 action = "effect-replacement-state"

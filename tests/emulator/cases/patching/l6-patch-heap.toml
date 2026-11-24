@@ -23,10 +23,7 @@ channel = 1
 steps = 4
 
 [[step]]
-action = "delay"
-guest_ms = 1000
-guest_timeout_ms = 5000
-wall_timeout_s = 60
+action = "expect-encoder-reports"
 
 [[step]]
 action = "encoder"
@@ -34,10 +31,7 @@ channel = 6
 steps = -4
 
 [[step]]
-action = "delay"
-guest_ms = 3000
-guest_timeout_ms = 10000
-wall_timeout_s = 120
+action = "expect-encoder-reports"
 
 # Record starts and stops a take.
 [[step]]
@@ -65,10 +59,8 @@ guest_timeout_ms = 30000
 wall_timeout_s = 60
 
 [[step]]
-action = "delay"
-guest_ms = 3000
-guest_timeout_ms = 10000
-wall_timeout_s = 120
+action = "wait-recorded-files"
+files = ["TRACK01.WAV", "TRACK02.WAV", "TRACK03_ST.WAV", "TRACK04_ST.WAV", "TRACK05_ST.WAV", "TRACK06_ST.WAV"]
 
 [[step]]
 action = "press"
@@ -82,14 +74,18 @@ guest_timeout_ms = 15000
 wall_timeout_s = 300
 
 [[step]]
+action = "wait-memory"
+symbol = "rec_playstop_lamp"
+bytes = [16, 0]
+
+[[step]]
 action = "press"
 control = "play"
 
 [[step]]
-action = "delay"
-guest_ms = 2000
-guest_timeout_ms = 10000
-wall_timeout_s = 120
+action = "wait-memory"
+symbol = "rec_playstop_lamp"
+bytes = [0, 0]
 
 [[step]]
 action = "expect-heap"

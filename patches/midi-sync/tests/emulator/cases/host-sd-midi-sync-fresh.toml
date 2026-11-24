@@ -1,0 +1,59 @@
+version = 1
+name = "host-sd-midi-sync-fresh"
+models = ["l6", "l6max"]
+backends = ["headless"]
+state = "none"
+# The engine installs the Patch loader in the stock firmware and writes the
+# hosted midi-sync module to the card, as `--sd-patch midi-sync` and the
+# emulator's SD card choice do.
+installed_sd_patches = ["midi-sync"]
+
+# Wait for the loader claim before exercising the installed module.
+
+[case]
+suites = []
+wall_timeout_s = 1200
+
+[[step]]
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/l6-first-boot-setup.toml"
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/l6max-first-boot-setup.toml"
+
+[[step]]
+models = ["l6max"]
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "wait"
+until = "sd-patch-loaded"
+
+[[step]]
+action = "press"
+control = "rec-record"
+
+[[step]]
+action = "expect-card-entry"
+path = "RECORDER"
+wall_timeout_s = 60
+
+[[step]]
+action = "direct-usb-midi-round-trip"
+guest_timeout_ms = 15000
+wall_timeout_s = 120
+
+[[step]]
+action = "host-midi-sync"
+guest_timeout_ms = 30000
+wall_timeout_s = 120

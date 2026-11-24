@@ -25,20 +25,15 @@ guest_timeout_ms = 30000
 wall_timeout_s = 60
 
 [[step]]
-action = "delay"
-guest_ms = 500
-guest_timeout_ms = 5000
-wall_timeout_s = 15
-
-[[step]]
-action = "expect-memory"
+action = "wait-memory"
 symbol = "rec_record_lamp"
 bytes = [16, 0, 0, 0]
 guest_timeout_ms = 30000
 wall_timeout_s = 60
 
 [[step]]
-action = "delay"
+action = "observe-duration"
+activity = "recording"
 guest_ms = 3000
 guest_timeout_ms = 10000
 wall_timeout_s = 30
@@ -50,13 +45,7 @@ guest_timeout_ms = 30000
 wall_timeout_s = 60
 
 [[step]]
-action = "delay"
-guest_ms = 500
-guest_timeout_ms = 5000
-wall_timeout_s = 15
-
-[[step]]
-action = "expect-memory"
+action = "wait-memory"
 symbol = "rec_record_lamp"
 bytes = [0, 0, 0, 0]
 guest_timeout_ms = 30000

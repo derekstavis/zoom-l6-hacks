@@ -31,12 +31,20 @@ pub enum Backend {
     Gui,
 }
 
+/// A condition that ends a held chord.
+#[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ChordCondition {
+    FactoryMode,
+}
+
 /// A deliberate test observation, rather than a readiness delay.
 #[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ObservationActivity {
     Recording,
     Playback,
+    AudioOutput,
 }
 
 impl Backend {
@@ -271,6 +279,9 @@ pub enum Action {
     L6MidiMuteIndicators,
     UsbSysex {
         requests: Vec<UsbSysexRequest>,
+        /// Complete positive requests on a matching complete reply.
+        #[serde(default)]
+        complete_on_match: bool,
     },
     EditorPadAssignments,
     EditorPadPlayback {
@@ -295,6 +306,10 @@ pub enum Action {
         #[serde(default = "default_max_residual_db")]
         max_residual_db: f64,
     },
+    /// Wait for L6 pad 1's active SD file assignment.
+    WaitL6SoundPadFile {
+        path: String,
+    },
     L6RecorderPlayback {
         target: u32,
     },
@@ -307,6 +322,12 @@ pub enum Action {
         symbol: String,
         bytes: Vec<u8>,
     },
+    /// Wait for a declared firmware symbol to match the expected bytes.
+    WaitMemory {
+        #[schemars(schema_with = "crate::firmware::symbol_schema")]
+        symbol: String,
+        bytes: Vec<u8>,
+    },
     ExpectSdPatch {
         loaded: bool,
         #[serde(default)]
@@ -315,6 +336,13 @@ pub enum Action {
     EffectParameterEdit {
         encoder: usize,
         steps: i32,
+    },
+    /// Wait for effect editor and panel-mode state in the loaded module.
+    WaitEffectMode {
+        #[serde(default)]
+        panel_mode: Option<u8>,
+        #[serde(default)]
+        edit_mode: Option<bool>,
     },
     EffectReplacementState {
         #[serde(default)]
@@ -349,7 +377,10 @@ pub enum Action {
     },
     HoldChord {
         controls: Vec<String>,
-        duration_ms: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        until: Option<ChordCondition>,
     },
     AudioCallbacks,
     KnobDialog,
@@ -390,6 +421,10 @@ pub enum Action {
     ObserveDuration {
         activity: ObservationActivity,
         guest_ms: u32,
+    },
+    /// Press an L6max control and wait until the display changes.
+    PressDisplayChange {
+        control: String,
     },
     Press {
         control: String,
@@ -461,6 +496,10 @@ pub enum Action {
         #[serde(default)]
         matches_state: Option<String>,
     },
+    /// Wait for the newest recording's WAV files to be finalized.
+    WaitRecordedFiles {
+        files: Vec<String>,
+    },
     /// Control input playback: `play`, `pause`, `stop` or `seek` to `position_ms`.
     AudioInputTransport {
         command: String,
@@ -474,6 +513,12 @@ pub enum Action {
     },
     /// Check the reported input playback state.
     ExpectAudioInput {
+        playing: bool,
+        min_ms: u32,
+        max_ms: u32,
+    },
+    /// Wait for the reported input transport state and position.
+    WaitAudioInput {
         playing: bool,
         min_ms: u32,
         max_ms: u32,

@@ -13,7 +13,7 @@ wall_timeout_s = 1200
 # checks used by the prepared-state case.
 [[step]]
 action = "include"
-path = "tests/emulator/fragments/editor-pad-setup-l6.toml"
+path = "tests/emulator/fragments/l6-first-boot-setup.toml"
 
 [[step]]
 action = "include"

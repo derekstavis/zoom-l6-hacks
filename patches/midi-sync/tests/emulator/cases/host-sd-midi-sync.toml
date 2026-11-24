@@ -7,17 +7,36 @@ backends = ["headless"]
 # emulator's SD card choice do.
 installed_sd_patches = ["midi-sync"]
 
-# USB MIDI is usable after the same boot interval as the installed-patch cases.
+# Wait for the loader claim before exercising the installed module.
 
 [case]
 suites = ["sd-matrix", "full"]
 wall_timeout_s = 1200
 
 [[step]]
-action = "delay"
-guest_ms = 40000
-guest_timeout_ms = 45000
-wall_timeout_s = 900
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/l6-first-boot-setup.toml"
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/l6max-first-boot-setup.toml"
+
+[[step]]
+models = ["l6max"]
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "wait"
+until = "sd-patch-loaded"
 
 [[step]]
 action = "press"

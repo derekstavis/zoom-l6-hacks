@@ -12,10 +12,14 @@ wall_timeout_s = 1800
 environment = { L6_AUDIO_SAMPLE_TRACE = "1", L6_AUDIO_COREAUDIO_CAPTURE = "{logs}/coreaudio.f32" }
 
 [[step]]
-action = "delay"
-guest_ms = 16000
-guest_timeout_ms = 21000
-wall_timeout_s = 900
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "wait-l6-sound-pad-file"
+path = "SOUND_PAD/PAD1/SWEEP.WAV"
 
 # Press Pad 1's saved one-shot assignment. The case captures the CoreAudio callback for comparison with the source WAV.
 [[step]]

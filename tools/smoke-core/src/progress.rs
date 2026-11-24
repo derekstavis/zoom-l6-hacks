@@ -171,12 +171,34 @@ pub fn step_label(action: &crate::Action) -> String {
     use crate::Action;
     match action {
         Action::Wait { until } => format!("Wait for {}", until.replace('-', " ")),
+        Action::PressDisplayChange { control } => format!(
+            "Press {} and wait for display",
+            control.replace(['-', '.'], " ")
+        ),
         Action::Press { control } => format!("Press {}", control.replace(['-', '.'], " ")),
         Action::Hold { control, .. } => format!("Hold {}", control.replace(['-', '.'], " ")),
+        Action::HoldChord {
+            until: Some(crate::scenario::ChordCondition::FactoryMode),
+            ..
+        } => "Hold chord until factory mode".into(),
+        Action::HoldChord {
+            duration_ms: Some(ms),
+            ..
+        } => format!("Hold chord for {ms} ms guest time"),
         Action::SelectMode { mode } => format!("Select {} mode", mode.replace('-', " ")),
         Action::ExpectMode { mode } => format!("Check {} mode", mode.replace('-', " ")),
         Action::ExpectRing { channel, .. } => format!("Check channel {channel} ring"),
         Action::ExpectMute { channel } => format!("Check channel {channel} mute"),
+        Action::WaitEffectMode { .. } => "Wait for effect editor state".into(),
+        Action::WaitRecordedFiles { .. } => "Wait for recorded files".into(),
+        Action::WaitAudioInput {
+            playing, min_ms, ..
+        } => format!(
+            "Wait for audio input {} at {min_ms} ms",
+            if *playing { "playing" } else { "paused" }
+        ),
+        Action::WaitMemory { symbol, .. } => format!("Wait for {symbol}"),
+        Action::WaitL6SoundPadFile { path } => format!("Wait for sound-pad file {path}"),
         Action::ExpectDisplayImage { image, .. } => format!(
             "Wait for {} screen",
             image
@@ -193,6 +215,7 @@ pub fn step_label(action: &crate::Action) -> String {
             let activity = match activity {
                 crate::scenario::ObservationActivity::Recording => "recording",
                 crate::scenario::ObservationActivity::Playback => "playback",
+                crate::scenario::ObservationActivity::AudioOutput => "audio output",
             };
             format!("Observe {activity} for {guest_ms} ms guest time")
         }

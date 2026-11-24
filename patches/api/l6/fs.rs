@@ -10,3 +10,8 @@ firmware_functions! {
     pub unsafe fn fs_find_next(info: *mut u8) -> i32, at 0x8005_de41;
     pub unsafe fn fs_find_close(info: *mut u8) -> i32, at 0x8005_d729;
 }
+
+firmware_variables! {
+    /// L6 1.10 SD volume A status flags; bit 0 marks unavailable, bit 1 marks a mounted volume.
+    pub sd_mount_status: u8, at 0x801f_8f5a;
+}

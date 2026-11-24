@@ -71,10 +71,8 @@ action = "press"
 control = "rec-play-stop"
 
 [[step]]
-action = "delay"
-guest_ms = 3000
-guest_timeout_ms = 10000
-wall_timeout_s = 120
+action = "wait-recorded-files"
+files = ["TRACK01_01.wav", "TRACK02_01.wav", "TRACK03_01.wav", "TRACK04_01.wav", "TRACK05_ST_01.wav", "TRACK06_ST_01.wav", "TRACK07_ST_01.wav", "TRACK08_ST_01.wav", "MASTER_01.wav"]
 
 [[step]]
 action = "press"
@@ -88,14 +86,18 @@ guest_timeout_ms = 15000
 wall_timeout_s = 300
 
 [[step]]
+action = "wait-memory"
+symbol = "rec_mode"
+bytes = [2]
+
+[[step]]
 action = "press"
 control = "rec-play-stop"
 
 [[step]]
-action = "delay"
-guest_ms = 2000
-guest_timeout_ms = 10000
-wall_timeout_s = 120
+action = "wait-memory"
+symbol = "rec_mode"
+bytes = [0]
 
 [[step]]
 action = "expect-heap"

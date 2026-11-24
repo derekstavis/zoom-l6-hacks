@@ -214,3 +214,327 @@ state assertion still runs. Room, Spring and a dual-replacement case passed in
 `/private/tmp/l6-effect-slot-trial/report.json`. The integrated focused run then passed all seven cases, including the three
 effect combinations, fresh setup and recordings on both models; see
 `/private/tmp/l6-readiness-effect-audio/report.json`.
+
+## No-card MIDI startup
+
+The prepared-state `l6-direct-midi-sync` and `l6max-direct-midi-sync` cases
+previously waited 40 seconds of guest time before the unchanged MIDI and panel
+assertions. A controlled fixture comparison in
+`/private/tmp/l6-midi-startup-before/report.json` and
+`/private/tmp/l6-midi-startup-probe-run/report.json` passed both models after
+replacing that delay with `boot-ready`. The QEMU, patched firmware, package and
+state identities match per model across the two reports. Total case wall times
+were 102.2 and 108.3 seconds before, and 86.2 and 71.5 seconds after;
+host load varied, so these numbers are observations rather than a controlled
+performance benchmark.
+
+Separate fresh-state probes in `/private/tmp/l6-midi-fresh-probe-run/report.json`
+passed on both models with no card and the original MIDI checks. L6 waits for
+boot readiness and retains the two-second interval between its confirmation
+presses. L6max checks the reviewed Date/Time and Battery Type prompts, then
+waits for the reviewed no-card recorder screen. Prepared-state cases skip the
+prompt actions but still wait for boot readiness. The same setup is shared by
+the no-card host MIDI, direct MIDI and installed-patch cases; the branch's
+integrated run passed all nine cases; its report is
+`/private/tmp/l6-midi-readiness-integrated-2/report.json`. An earlier
+run was stopped during startup after the worktree changed and did not
+produce a case result.
+
+For hosted SD MIDI, a separate probe replaced the 40-second delay with boot
+readiness and, on L6max, the reviewed recorder-home screen. Both models passed
+(`/private/tmp/l6-hosted-sd-readiness-probe/report.json`), but neither signal
+alone proves that the module has finished loading. A second probe additionally
+waited for the loader's published successful claim, and both models passed
+(`/private/tmp/l6-hosted-sd-claim-probe/report.json`). The reusable
+`sd-patch-loaded` condition now uses that claim, with the existing bounded
+10-guest-second, 180-wall-second, 10-ms polling policy. The case retains its
+actual MIDI sync exchange to verify the expected module's behavior.
+
+The integrated loader-claim run passed all five cases, covering prepared and
+fresh hosted-SD MIDI on both models and the pre-existing SD patch assertion;
+its report is `/private/tmp/l6-sd-claim-integrated/report.json`.
+
+The L6 panel-event map uses boot readiness in place of its 42-guest-second
+startup delay. The isolated probe preserved all 26 event assertions and
+passed in 22.7 wall seconds; see `/private/tmp/l6-panel-event-ready-probe/report.json`.
+
+The fresh L6 DIN-to-USB forwarding probe uses the same boot and prompt setup
+instead of its 22-guest-second startup wait and five-second post-confirmation
+wait. It retained the forwarding assertion and passed; see
+`/private/tmp/l6-din-ready-probe/report.json`.
+The integrated L6 panel-map and DIN-forwarding cases both passed; see
+`/private/tmp/l6-panel-din-integrated/report.json`.
+
+The factory setup probe first failed against the normal no-card recorder
+screen: the actual display was the factory SD-card test prompt
+(`/private/tmp/l6-factory-setup-probe/report.json`). A reviewed reference for
+that prompt was then used as the completion signal, and the full factory
+protocol case passed (`/private/tmp/l6-factory-card-probe/report.json`). The
+40-guest-second startup chord hold and protocol assertions remain unchanged.
+The first integrated factory attempt was blocked before running a case because
+its build ran out of disk space. After cleaning rebuildable probe targets, the
+integrated retry passed (`/private/tmp/l6-factory-ready-retry/report.json`).
+
+A full-hold factory probe observed `system_mode` transition from 0 to 7 about
+0.7 guest seconds after the new session started while the chord was held
+(`/private/tmp/l6-factory-mode-transition/report.json`). An initial attempt
+to release at that point failed because the button-down command still specified
+a 41-second minimum hold; the requested release was not acknowledged
+(`/private/tmp/l6-factory-early-release-probe/report.json`). A second probe
+used the emulator's normal button minimum, released after mode 7 and input
+acknowledgement, and passed the full protocol
+(`/private/tmp/l6-factory-short-hold-probe/report.json`). The integrated case
+now expresses this as `hold-chord` until `factory-mode`; a separate bounded
+`duration_ms` remains available for genuinely timed chords. The condition is
+restricted to supported stock L6max firmware and checks that factory mode was
+not already active before the chord.
+The integrated factory-mode condition passed the complete protocol case with a
+990 ms guest-time chord hold; see
+`/private/tmp/l6-factory-condition-integrated/report.json`. The earlier
+integrated fixed-hold case took 101.2 wall seconds and the condition-based run
+57.1 wall seconds, under variable host load; those are not a controlled
+benchmark.
+
+The first factory SysEx exchange previously observed 400 guest milliseconds
+per request, including requests with a known single positive reply. An isolated
+`complete_on_match` probe completed those requests after a matching complete
+response, while retaining the full window for the no-reply request. The full
+factory protocol passed; both the baseline and probe recorded 25 requests with
+24 replies, followed by three requests with three replies. The first exchange
+was 12.8 and 0.95 wall seconds respectively in these individual runs under
+variable load. See `/private/tmp/l6-factory-condition-integrated/report.json`
+and `/private/tmp/l6-factory-sysex-probe/report.json`. Rejected-prefix checks
+and explicit reply windows retain their complete observation interval.
+The integrated factory case passed both optimizations together in 36.4 wall
+seconds with a 567 ms guest-time chord hold. Its two exchanges retained 25/24
+and 3/3 request/reply counts; see
+`/private/tmp/l6-factory-fast-integrated/report.json`.
+
+The L6 saved-pad meter probe replaced a 16-guest-second startup delay with
+boot readiness followed by a bounded wait for the exact active pad-1 UTF-16
+file path. The existing play-mode, audio and independent meter checks passed
+(`/private/tmp/l6-saved-pad-ready-probe/report.json`), and the matching path was
+already present at the first read after boot readiness. The original case also
+passed (`/private/tmp/l6-saved-pad-before/report.json`). Their QEMU, firmware
+package and state identities match, but their generated SD image hashes differ
+and host load varied, so the 115.2/19.1 wall-second observations are not a
+controlled before/after performance comparison. The integrated condition also
+requires the assignment-pending flag to be clear and is scoped to supported
+stock L6 firmware.
+The integrated saved-pad run passed all three cases, including CoreAudio,
+waveform comparison and the meter check; see
+`/private/tmp/l6-saved-pad-integrated/report.json`. The integrated meter case
+and the original baseline have matching QEMU, firmware, package, card and state
+hashes. Their runner binaries differ because the implementation changed; wall
+load varied. The integrated meter case took 28.5 seconds versus 115.2 seconds
+in the baseline, so those individual measurements should not be treated as a
+controlled speed benchmark.
+
+A first L6max saved-pad probe removed the five-guest-second post-mixer wait
+and waited for the active Pad 4 path plus a clear assignment-pending flag.
+The path and flag matched, but the playback and stereo meter assertions failed
+with no audio (`/private/tmp/l6max-saved-pad-ready-probe/report.json`). Those
+fields alone are therefore not sufficient evidence of L6max sampler readiness.
+Adding a nonzero sampler file handle and configured buffer size did not fix
+playback either (`/private/tmp/l6max-sampler-ready-probe/report.json`).
+
+A later probe waited for existing boot readiness after mixer readiness. The
+three audio cases passed (`/private/tmp/l6max-boot-only-probe/report.json`);
+the probe had omitted the meter case’s original pad-path assertion, which was
+restored and passed separately (`/private/tmp/l6max-boot-assertion-probe/report.json`).
+The integrated run kept all original assertions and passed all three cases
+(`/private/tmp/l6max-boot-ready-integrated/report.json`). It reused the pinned
+runner from the L6 saved-pad integrated run with `--no-build`; the report records
+the binary and fixture identities. These observations justify using the existing
+boot condition in these scenarios, but do not establish an independent sampler
+readiness signal. An earlier combined boot-and-sampler probe passed two cases
+and reported the meter case failed before running out of disk while writing its
+report (`/private/tmp/l6max-pad-boot-probe/`); it is not counted as a pass.
+
+The GUI power case now waits for boot readiness before L6max power-off and
+after power-on, replacing two 40-guest-second delays. The first attempt passed
+L6 but failed L6max because the first-boot fragment was skipped for its
+prepared state (`/private/tmp/l6-gui-power-readiness-gui/report.json`). An
+explicit L6max boot condition then passed the L6max case
+(`/private/tmp/l6-gui-power-ready-retry/report.json`). The first invocation
+selected headless and ran no cases.
+
+The volatile SD MIDI case now lets its existing positive SD module assertion
+poll after reinsertion rather than waiting 20 guest seconds first; both models
+passed (`/private/tmp/l6-sd-volatile-ready-retry/report.json`). The preceding
+attempt failed both cases during fixture construction because the reused
+runner lacked patch-building artifacts (`/private/tmp/l6-sd-volatile-reinsertion/report.json`).
+The separate 40-second negative-observation delay remains.
+
+The SD MIDI and menu-loader scenarios now wait for boot, the L6max recorder
+home screen where applicable, and the SD loader claim in place of their
+eight-guest-second startup delays. All four model/case combinations passed
+(`/private/tmp/l6-sd-matrix-ready-next/report.json`).
+
+Card recording on both models, ROM dumping and the knob-dialog menu passed
+with boot/recorder-home readiness instead of an eight-guest-second delay
+(`/private/tmp/l6-menu-card-ready-next/report.json`).
+
+For negative SD module checks, the patch loader publishes debug stage `0x400`
+after a scan loaded no modules and resets its claim to zero. The bounded
+`sd-patch-empty` condition waits for both values; a missing registry alone is
+not a completed scan. Both models passed absent and corrupt bundle checks
+(`/private/tmp/l6-sd-empty-scan-probe/report.json`). Five further L6max cases
+passed using the same condition with boot and recorder-home readiness
+(`/private/tmp/l6-sd-empty-matrix/report.json`). This does not establish a
+scan after a no-card restart, so the volatile restart observation remains.
+
+Both audio-input recording cases and both SD warm-reset cases passed with
+boot/recorder-home readiness replacing the eight-guest-second setup delay
+(`/private/tmp/l6-record-warm-ready-retry/report.json`). The recording windows
+remain unchanged. The initial invocation was blocked during scenario validation
+because an L6-only case erroneously contained an L6max-only step; no case ran.
+
+The GUI switch-during-playback scenario passed with boot readiness in place
+of its five-guest-second startup delay (`/private/tmp/l6-gui-switch-ready/report.json`).
+Its two eight-second playback observation windows remain unchanged.
+
+All four audio-input and transport cases passed after their five-second setup
+delay was replaced by boot readiness (`/private/tmp/l6-audio-input-boot-ready/report.json`).
+
+Fresh USB setup now uses the model-specific first-boot sequence followed by
+the existing USB descriptor condition instead of a fixed five-second wait.
+Both models passed (`/private/tmp/l6-usb-first-boot-ready/report.json`).
+
+An attempt to replace the shared effect-loader startup delay with boot
+readiness passed three effect scenarios but failed replacement-map while
+waiting for a patched mixer function to return
+(`/private/tmp/l6-effect-boot-ready/report.json`). The original delay was
+restored and replacement-map then passed (`/private/tmp/l6-effect-map-baseline/report.json`).
+The failure is not silently counted as a pass; an effect-specific readiness
+signal is still needed before removing the delay.
+
+The direct L6 MIDI sync case passed using boot readiness and shared first-boot
+setup rather than a fixed five-second delay (`/private/tmp/l6-direct-midi-ready-next/report.json`).
+
+L6 recorder playback passed without its extra five-second delay after the
+existing selected-file assertion (`/private/tmp/l6-recorder-playback-ready/report.json`).
+
+L6 GUI power-on passed without the five-second delay before its existing
+startup-report check (`/private/tmp/l6-gui-power-startup-report/report.json`).
+
+The state-spec and L6max recorder playback cases passed without their extra
+three-second delays (`/private/tmp/l6-state-recorder-ready-retry/report.json`);
+the first invocation selected a nonexistent case ID and ran no cases.
+The EQ update and L6 recorder lamp cases now use bounded memory matching
+instead of fixed transition sleeps; all four focused cases passed
+(`/private/tmp/l6-memory-condition/report.json`). Recording durations remain
+explicit observation windows.
+
+The volatile SD case was subsequently checked with the card physically absent
+through restart: it waits for the new boot, checks the old module is absent,
+then reinserts the card and checks it loads again. Both models passed without
+the former 40-guest-second delay (`/private/tmp/l6-sd-volatile-boot-ready/report.json`).
+That wait was followed by a single assertion, not continuous observation;
+this result does not claim an uninterrupted 40-second absence observation.
+
+The knob-dialog menu scenario passed with reviewed recorder/menu screens and
+existing display comparisons replacing its menu transition delays
+(`/private/tmp/l6-knob-menu-all-ready/report.json`). The menu checkpoint was
+visually reviewed and matches the existing menu-project reference.
+
+GUI power passed both models with one initial boot condition instead of fixed
+initial sleeps (`/private/tmp/l6-gui-power-boot-first/report.json`). ROM dump
+and SD menu-loader passed with reviewed System-menu screens replacing menu
+transition sleeps (`/private/tmp/l6-patch-system-menu-ready/report.json` and
+`/private/tmp/l6-dump-rom-menu-ready/report.json`). The new Dump ROM selection
+reference was visually reviewed. Three effect cases passed with redundant
+pre-assertion sleeps removed (`/private/tmp/l6-effect-output-ready/report.json`).
+
+The effect startup was then revisited with a loader claim and a selected effect
+processor condition; the two audio-output cases also wait for output counters.
+A trial requiring output from all four cases failed the two UI-focused cases,
+which do not guarantee nonzero output (`/private/tmp/l6-effect-output-startup-integrated/report.json`).
+With output required only by the two audio-driven scenarios, all four passed
+(`/private/tmp/l6-effect-scoped-startup/report.json`). This replaces the
+previously restored five-second delay; the earlier failed boot-only trial
+remains recorded above.
+
+The effect editor mode-restore case also passed after four sleeps before
+positive ring assertions were removed (`/private/tmp/l6-effect-rings-ready/report.json`).
+The L6 and L6max audio input transport cases passed with seek and resumed
+position checks polling the reported transport state rather than waiting
+fixed periods (`/private/tmp/l6-transport-position-ready/report.json`). Their
+audio sampling intervals are unchanged.
+
+Four audio input cases passed with existing sample windows labeled as audio
+output observations (`/private/tmp/l6-audio-observation-windows/report.json`).
+Their durations were not shortened; the label distinguishes sample collection
+from readiness delays.
+
+L6 1.10 exposes a volume-A status byte used by the firmware's readiness
+check. In diagnostic runs its status was 2 with the card mounted, 1 after
+removal, and 2 after reinsertion. The placeholder-value probes intentionally
+reported failures; the first removal attempt timed out because its diagnostic
+delay had no timeout margin (`/private/tmp/l6-sd-mount-values/report.json` and
+`/private/tmp/l6-sd-mount-removed-value/report.json`). The real storage case
+now waits for those transitions on L6; both models passed the full case with
+its existing trace and display assertions (`/private/tmp/l6-storage-status-ready/report.json`).
+
+The USB storage test initially failed because it entered navigation before
+the recorder home screen appeared (`/private/tmp/l6-usb-storage-menu-probe/report.json`).
+It then passed with home/menu readiness; the first transfer-screen reference
+was wrong because the connection prompt appears only after the host attaches
+(`/private/tmp/l6-usb-storage-screens-ready/report.json`). The corrected,
+visually reviewed transfer screen and menu selection passed with the complete
+USB read/write checks (`/private/tmp/l6-usb-storage-screens-retry/report.json`).
+
+The first persistence experiment was blocked because expanded includes reused
+checkpoint names. An atomic press/display-change action then passed the full
+RTC/NOR workflow with the repeated date-editor waits removed
+(`/private/tmp/l6-persistence-confirm-ready/report.json`). Display changes
+are synchronization evidence; the RTC/NOR assertions still check the result.
+
+Removing the post-recording delays outright failed both cases because the WAV
+files were not present yet (`/private/tmp/l6-record-finalization-probe/report.json`).
+A bounded wait for each expected complete WAV file then passed both models
+with the original tone checks (`/private/tmp/l6-record-files-validated/report.json`).
+The file validator also has a unit test for truncated containers and chunks.
+
+Both patch heap cases passed with recorded-file completion before playback
+(`/private/tmp/l6-patch-heap-recording-ready/report.json`). The L6 case also
+passed with encoder-report checks and playback-lamp transitions replacing its
+remaining encoder/stop sleeps (`/private/tmp/l6-patch-heap-playback-state/report.json`).
+Four effect cases passed when editor/panel state replaced 27 short transition
+sleeps (`/private/tmp/l6-effect-mode-transitions/report.json`).
+
+A temporary fresh-state prepared-home case passed with the original prompt
+timing (`/private/tmp/l6-prepared-home-fresh-baseline/report.json`). A follow-up
+that required the factory SD prompt failed because this fixture had already
+reached recorder home (`/private/tmp/l6-prepared-home-fresh-ready/report.json`).
+The shared fragment was restored: the SD prompt is conditional, so a mandatory
+prompt image is not a safe replacement for its existing waits.
+
+The L6max heap playback probe intentionally used placeholder expectations to
+record `rec_mode` as 2 during playback and 0 after stopping
+(`/private/tmp/l6max-rec-mode-values/report.json`). The heap case passed with
+those transition checks replacing its post-playback delay
+(`/private/tmp/l6max-patch-heap-playback-ready/report.json`). Both input
+transport cases passed when playback position was checked before unloading a
+channel (`/private/tmp/l6-transport-playing-ready/report.json`).
+
+The factory disconnect state checks passed without their fixed delay
+(`/private/tmp/l6-factory-disconnect-ready/report.json`), and both effect
+slot-switch cases passed with the slot condition
+(`/private/tmp/l6-effect-slot-switch-ready/report.json`). The volatile SD
+case passed both models with guest removal evidence before checking the
+resident module (`/private/tmp/l6-sd-resident-removal-ready/report.json`).
+A persistence trial that waited only for edited RTC/NOR values failed the
+subsequent restart RTC comparison (`/private/tmp/l6-persistence-commit-ready/report.json`);
+the save delay was restored and the full case passed
+(`/private/tmp/l6-persistence-save-restored/report.json`).
+
+A representative 13-case sample passed with the driver's default four
+workers (`/private/tmp/l6-readiness-sample-parallel/report.json`), covering
+both models, recording, persistence, storage, patch heaps, factory mode,
+effects, and MIDI. Earlier sequential samples had mixed results: persistence
+failed both before and after these changes, and the L6max recording failed
+afterwards with a short recorded track during heavy host load. Both passed in
+the parallel sample, so these are timing-sensitive outcomes, not clean passes
+across all attempts. The host load differed substantially between the before
+and after runs, so their wall times are not a reliable speed comparison.

@@ -1,24 +1,11 @@
-# Enter the selected date field, increment it, and confirm.
 [[step]]
-action = "press"
+action = "press-display-change"
 control = "recorder.confirm"
 
 [[step]]
-action = "delay"
-guest_ms = 1050
-
-[[step]]
-action = "press"
+action = "press-display-change"
 control = "recorder.up"
 
 [[step]]
-action = "delay"
-guest_ms = 1050
-
-[[step]]
-action = "press"
+action = "press-display-change"
 control = "recorder.confirm"
-
-[[step]]
-action = "delay"
-guest_ms = 1050

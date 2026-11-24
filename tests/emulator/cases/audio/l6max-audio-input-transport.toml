@@ -24,9 +24,9 @@ guest_timeout_ms = 60000
 wall_timeout_s = 900
 
 [[step]]
-action = "delay"
-guest_ms = 5000
-guest_timeout_ms = 10000
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 60000
 wall_timeout_s = 300
 
 [[step]]
@@ -68,7 +68,8 @@ action = "audio-input-transport"
 command = "play"
 
 [[step]]
-action = "delay"
+action = "observe-duration"
+activity = "audio-output"
 guest_ms = 2000
 guest_timeout_ms = 10000
 wall_timeout_s = 120
@@ -96,7 +97,8 @@ action = "audio-input-transport"
 command = "pause"
 
 [[step]]
-action = "delay"
+action = "observe-duration"
+activity = "audio-output"
 guest_ms = 2000
 guest_timeout_ms = 10000
 wall_timeout_s = 120
@@ -118,13 +120,7 @@ command = "seek"
 position_ms = 20000
 
 [[step]]
-action = "delay"
-guest_ms = 2000
-guest_timeout_ms = 10000
-wall_timeout_s = 120
-
-[[step]]
-action = "expect-audio-input"
+action = "wait-audio-input"
 playing = false
 min_ms = 20000
 max_ms = 20000
@@ -134,13 +130,7 @@ action = "audio-input-transport"
 command = "play"
 
 [[step]]
-action = "delay"
-guest_ms = 3000
-guest_timeout_ms = 10000
-wall_timeout_s = 120
-
-[[step]]
-action = "expect-audio-input"
+action = "wait-audio-input"
 playing = true
 min_ms = 21000
 max_ms = 24000
@@ -156,7 +146,8 @@ action = "audio-input-transport"
 command = "stop"
 
 [[step]]
-action = "delay"
+action = "observe-duration"
+activity = "audio-output"
 guest_ms = 2000
 guest_timeout_ms = 10000
 wall_timeout_s = 120
@@ -176,10 +167,10 @@ action = "audio-input-transport"
 command = "play"
 
 [[step]]
-action = "delay"
-guest_ms = 2000
-guest_timeout_ms = 10000
-wall_timeout_s = 120
+action = "wait-audio-input"
+playing = true
+min_ms = 1000
+max_ms = 4000
 
 # Dropping one channel leaves the others playing.
 [[step]]
@@ -188,7 +179,8 @@ channel = 1
 loaded = false
 
 [[step]]
-action = "delay"
+action = "observe-duration"
+activity = "audio-output"
 guest_ms = 2000
 guest_timeout_ms = 10000
 wall_timeout_s = 120
@@ -209,7 +201,8 @@ channel = 1
 loaded = true
 
 [[step]]
-action = "delay"
+action = "observe-duration"
+activity = "audio-output"
 guest_ms = 2000
 guest_timeout_ms = 10000
 wall_timeout_s = 120

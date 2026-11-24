@@ -19,9 +19,16 @@ guest_timeout_ms = 60000
 wall_timeout_s = 300
 
 [[step]]
-action = "delay"
-guest_ms = 8000
-guest_timeout_ms = 20000
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+models = ["l6max"]
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
+guest_timeout_ms = 30000
 wall_timeout_s = 300
 
 # Menu > System (main menu index 7).
@@ -31,8 +38,8 @@ action = "press"
 control = "recorder-function-1"
 
 [[step]]
-action = "delay"
-guest_ms = 1500
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/menu-project.png"
 
 [[step]]
 action = "press"
@@ -63,16 +70,16 @@ action = "press"
 control = "recorder-function-3"
 
 [[step]]
-action = "delay"
-guest_ms = 500
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-patch-menu/main-system.png"
 
 [[step]]
 action = "press"
 control = "recorder-function-4"
 
 [[step]]
-action = "delay"
-guest_ms = 1000
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-patch-menu/system-first-9.png"
 
 # System index 8 is Dump ROM, after the seven stock items and Patches.
 
@@ -109,8 +116,8 @@ action = "press"
 control = "recorder-function-3"
 
 [[step]]
-action = "delay"
-guest_ms = 500
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-patch-menu/system-dump-rom-9.png"
 
 [[step]]
 action = "checkpoint"

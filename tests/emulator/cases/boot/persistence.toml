@@ -60,20 +60,12 @@ action = "include"
 path = "tests/emulator/fragments/recorder-next.toml"
 
 [[step]]
-action = "press"
+action = "press-display-change"
 control = "recorder.confirm"
 
 [[step]]
-action = "delay"
-guest_ms = 1050
-
-[[step]]
-action = "press"
+action = "press-display-change"
 control = "recorder.confirm"
-
-[[step]]
-action = "delay"
-guest_ms = 1050
 
 [[step]]
 action = "delay"
@@ -97,14 +89,10 @@ action = "expect-settings"
 restored = true
 
 [[step]]
-action = "press"
+action = "press-display-change"
 control = "recorder.menu"
 
 [[step]]
-action = "delay"
-guest_ms = 1500
-
-[[step]]
 action = "include"
 path = "tests/emulator/fragments/recorder-next.toml"
 
@@ -133,14 +121,10 @@ action = "include"
 path = "tests/emulator/fragments/recorder-next.toml"
 
 [[step]]
-action = "press"
+action = "press-display-change"
 control = "recorder.confirm"
 
 [[step]]
-action = "delay"
-guest_ms = 1050
-
-[[step]]
 action = "include"
 path = "tests/emulator/fragments/recorder-next.toml"
 
@@ -161,9 +145,5 @@ action = "include"
 path = "tests/emulator/fragments/recorder-next.toml"
 
 [[step]]
-action = "press"
+action = "press-display-change"
 control = "recorder.confirm"
-
-[[step]]
-action = "delay"
-guest_ms = 1050

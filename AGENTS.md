@@ -17,6 +17,8 @@ guarded FreeRTOS snapshots; see `docs/development/tools/l6ctl.md` for the JSON
 schema, supported revisions and live-sampling limits.
 Local firmware package and audio paths belong in ignored `config.toml`; never commit
 firmware, SD cards, saved flash, generated analysis artifacts or runtime logs.
+Persistent fixture caching is experimental and must not be used for qualification;
+see `docs/development/testing.md#fixture-cache` for scope and cleanup.
 
 Validation is tiered. While iterating, and for each PR in a stack, run the
 smallest set of cases that covers the change (`--case`, globs, `--rerun`). Run

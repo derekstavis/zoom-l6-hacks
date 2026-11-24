@@ -368,6 +368,25 @@ pub(super) fn run_l6_level_meter_pwm(
                     "L6 meter accumulator injection failed at {value}: wrote {bytes:02x?}, read {injected:02x?}"
                 ));
             }
+            // Continuing while still stopped at the entry breakpoint can hit
+            // it again without executing the builder. Step past its first
+            // instruction, then stop at the next invocation.
+            debugger
+                .breakpoint(level_meter_threshold_builder, false)
+                .map_err(|error| error.to_string())?;
+            debugger
+                .request("s")
+                .map_err(|error| format!("stepping into L6 meter builder: {error}"))?;
+            let stepped_pc = debugger
+                .read_register(15)
+                .map_err(|error| error.to_string())?
+                & !1;
+            if stepped_pc == level_meter_threshold_builder {
+                return Err("L6 meter builder did not advance past its entry".into());
+            }
+            debugger
+                .breakpoint(level_meter_threshold_builder, true)
+                .map_err(|error| error.to_string())?;
             debugger
                 .continue_until_stop(Duration::from_secs(10))
                 .map_err(|error| format!("advancing L6 meter task at {value}: {error}"))?;

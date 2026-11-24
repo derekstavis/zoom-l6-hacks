@@ -538,3 +538,10 @@ afterwards with a short recorded track during heavy host load. Both passed in
 the parallel sample, so these are timing-sensitive outcomes, not clean passes
 across all attempts. The host load differed substantially between the before
 and after runs, so their wall times are not a reliable speed comparison.
+
+The full run found an unrelated `b0` panel report while the L6 panel-event
+case was waiting for a button submission. The action now ignores non-button
+reports until a bounded deadline, while still checking the button coordinates
+and mapped event. The focused case passed afterward
+(`/private/tmp/l6-readiness-panel-fix-run/report.json`); the original full-run
+failure remains recorded in `/private/tmp/l6-readiness-full/report.json`.

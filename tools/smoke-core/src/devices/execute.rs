@@ -810,32 +810,42 @@ impl State {
                 gdb.breakpoint(panel_event_dispatcher, true)?;
                 gdb.breakpoint(main_event_submit, true)?;
                 inputs.down(target, 0)?;
-                gdb.continue_until_stop(Duration::from_secs(15))?;
-                let pc = gdb.read_register(15)? & !1;
-                if pc == panel_event_dispatcher {
-                    gdb.breakpoint(panel_event_dispatcher, false)?;
-                    gdb.continue_until_stop(Duration::from_secs(15))?;
-                    let pc = gdb.read_register(15)? & !1;
-                    if pc != main_event_submit {
+                let deadline = Instant::now() + Duration::from_secs(15);
+                let bytes = loop {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
                         return Err(format!(
-                            "panel target {target} reached {pc:#x}, not event submit"
+                            "panel target {target} did not submit a button report"
                         )
                         .into());
                     }
-                } else if pc != main_event_submit {
-                    return Err(format!(
-                        "panel target {target} stopped at {pc:#x}, not dispatcher or event submit"
-                    )
-                    .into());
-                }
-                let response = gdb.request(&format!("m{panel_report:x},3"))?;
-                if response.len() != 6 {
-                    return Err(format!("unexpected panel report bytes: {response}").into());
-                }
-                let bytes = (0..3)
-                    .map(|index| u8::from_str_radix(&response[index * 2..index * 2 + 2], 16))
-                    .collect::<Result<Vec<_>, _>>()?;
-                if !matches!(bytes[0], 0x90 | 0x91) || (bytes[1], bytes[2]) != (column, row) {
+                    gdb.continue_until_stop(remaining)?;
+                    let pc = gdb.read_register(15)? & !1;
+                    if pc == panel_event_dispatcher {
+                        gdb.breakpoint(panel_event_dispatcher, false)?;
+                        continue;
+                    }
+                    if pc != main_event_submit {
+                        return Err(format!(
+                            "panel target {target} stopped at {pc:#x}, not dispatcher or event submit"
+                        )
+                        .into());
+                    }
+                    let response = gdb.request(&format!("m{panel_report:x},3"))?;
+                    if response.len() != 6 {
+                        return Err(format!("unexpected panel report bytes: {response}").into());
+                    }
+                    let bytes = (0..3)
+                        .map(|index| u8::from_str_radix(&response[index * 2..index * 2 + 2], 16))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    // Other panel activity can submit events between input
+                    // injection and the button report, especially at boot.
+                    if !matches!(bytes[0], 0x90 | 0x91) {
+                        continue;
+                    }
+                    break bytes;
+                };
+                if (bytes[1], bytes[2]) != (column, row) {
                     return Err(format!(
                         "panel target {target} report {bytes:02x?}, expected ({column},{row})"
                     )

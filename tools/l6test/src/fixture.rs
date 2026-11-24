@@ -590,12 +590,17 @@ pub(crate) fn fixture_options(
             // A card depends on its resolved spec, with the files the driver
             // added, and the bytes of every file it copies.
             let mut copies = Vec::new();
-            for file in &card.file {
-                if let sd_image::spec::Content::Copy(path) = &file.content {
-                    copies.push(json!([file.path, hash(&base.join(path))?]));
+            let mut key_card = card.clone();
+            for file in &mut key_card.file {
+                if let sd_image::spec::Content::Copy(path) = &mut file.content {
+                    let content_hash = hash(&base.join(&*path))?;
+                    copies.push(json!([file.path, content_hash]));
+                    // The source path may point into this run's directory;
+                    // the card depends on the file's bytes, not that path.
+                    *path = PathBuf::from(format!("sha256:{content_hash}"));
                 }
             }
-            let resolved = serde_json::to_value(&card).map_err(|e| e.to_string())?;
+            let resolved = serde_json::to_value(&key_card).map_err(|e| e.to_string())?;
             let key =
                 json!({"card": crate::hashing::digest(&resolved), "copies": copies}).to_string();
             let built = cache.directory("card", &key, |out| {

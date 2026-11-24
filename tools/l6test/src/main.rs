@@ -63,6 +63,7 @@ struct Args {
     fixtures_only: bool,
     /// Build every fixture per case, without the run cache.
     no_cache: bool,
+    persistent_cache: Option<PathBuf>,
     /// Replace display references that are missing or differ with the
     /// rendered display, for review in the diff.
     update_references: bool,
@@ -95,6 +96,7 @@ fn parse_args() -> Result<Args, String> {
         only: select::RERUN_DEFAULT.to_vec(),
         fixtures_only: false,
         no_cache: false,
+        persistent_cache: None,
         update_references: false,
     };
     while let Some(arg) = args.next() {
@@ -136,6 +138,11 @@ fn parse_args() -> Result<Args, String> {
             "--strict" => result.strict = true,
             "--fixtures-only" => result.fixtures_only = true,
             "--no-cache" => result.no_cache = true,
+            "--persistent-cache" => {
+                result.persistent_cache = Some(PathBuf::from(
+                    args.next().ok_or("--persistent-cache needs a directory")?,
+                ))
+            }
             "--update-references" => result.update_references = true,
             "--shard" => {
                 result.shard = Some(select::Shard::parse(
@@ -242,7 +249,7 @@ fn execute() -> Result<i32, String> {
     }
     if !["run", "check"].contains(&args.command.as_str()) {
         println!(
-            "Usage: cargo l6test list [--format text|json]\n       cargo l6test schema\n       cargo l6test watch RUN_DIRECTORY\n       cargo l6test check|run [--config config.toml] [--suite NAME | --case ID,GLOB,... | --rerun RUN [--only OUTCOMES]] [--model l6|l6max|all] [--backend headless|gui|both] [--shard I/N] [--retries N] [--strict] [--fixtures-only] [--no-cache] [--update-references] [--output NEW_DIR] [--no-build] [--jobs N] [--qemu BINARY] [--app PACKAGED_APP]\n       cargo l6test probe gui --keys TARGET,... --volatile [engine options]\n       cargo l6test capture screen --out FILE.gif [capture options] --volatile [engine options]"
+            "Usage: cargo l6test list [--format text|json]\n       cargo l6test schema\n       cargo l6test watch RUN_DIRECTORY\n       cargo l6test check|run [--config config.toml] [--suite NAME | --case ID,GLOB,... | --rerun RUN [--only OUTCOMES]] [--model l6|l6max|all] [--backend headless|gui|both] [--shard I/N] [--retries N] [--strict] [--fixtures-only] [--no-cache | --persistent-cache DIRECTORY] [--update-references] [--output NEW_DIR] [--no-build] [--jobs N] [--qemu BINARY] [--app PACKAGED_APP]\n       cargo l6test probe gui --keys TARGET,... --volatile [engine options]\n       cargo l6test capture screen --out FILE.gif [capture options] --volatile [engine options]"
         );
         return Ok(0);
     }
@@ -487,8 +494,13 @@ fn execute() -> Result<i32, String> {
         fs::copy(built_dir.join(package), output.join("bin").join(package))
             .map_err(|e| e.to_string())?;
     }
+    if args.no_cache && args.persistent_cache.is_some() {
+        return Err("--no-cache and --persistent-cache cannot be combined".into());
+    }
     let cache = if args.no_cache {
         RunCache::disabled(output.join("cache"))
+    } else if let Some(path) = &args.persistent_cache {
+        RunCache::persistent(path, root)?
     } else {
         RunCache::new(output.join("cache"))
     };

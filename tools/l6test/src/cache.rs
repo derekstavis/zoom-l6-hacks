@@ -71,6 +71,10 @@ impl RunCache {
     /// toolchain, including uncommitted source changes.
     pub fn persistent(root: &Path, repository: &Path) -> Result<Self, String> {
         use std::os::unix::ffi::OsStrExt;
+        // A shared parent directory must never make independent checkouts
+        // share entries, locks, or future eviction decisions.
+        let checkout = repository.canonicalize().map_err(|e| e.to_string())?;
+        let checkout_id = format!("{:x}", Sha256::digest(checkout.as_os_str().as_bytes()));
         let mut sha = Sha256::new();
         sha.update(b"l6test-persistent-experiment-v1\0");
         sha.update(crate::hashing::hash(
@@ -118,7 +122,7 @@ impl RunCache {
             sha.update(value.as_bytes());
             sha.update([0]);
         }
-        let mut cache = Self::new(root.join(format!("{:x}", sha.finalize())));
+        let mut cache = Self::new(root.join(checkout_id).join(format!("{:x}", sha.finalize())));
         cache.persistent = true;
         Ok(cache)
     }
@@ -443,6 +447,50 @@ mod tests {
         let third = RunCache::persistent(&dir.join("cache"), &dir).unwrap().root;
         assert_ne!(second, third);
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn identical_checkouts_have_independent_cache_roots() {
+        let dir = temp("checkout-isolation");
+        let parent = dir.join("shared-parent");
+        let mut roots = Vec::new();
+        for name in ["checkout-a", "checkout-b"] {
+            let checkout = dir.join(name);
+            fs::create_dir_all(&checkout).unwrap();
+            assert!(
+                std::process::Command::new("git")
+                    .current_dir(&checkout)
+                    .args(["init", "-q"])
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            fs::write(checkout.join("same.rs"), b"same contents").unwrap();
+            roots.push(RunCache::persistent(&parent, &checkout).unwrap().root);
+        }
+        assert_ne!(roots[0].parent(), roots[1].parent());
+        let a = RunCache {
+            root: roots[0].clone(),
+            persistent: true,
+            ..RunCache::new(roots[0].clone())
+        };
+        let b = RunCache {
+            root: roots[1].clone(),
+            persistent: true,
+            ..RunCache::new(roots[1].clone())
+        };
+        let first = a
+            .directory("test", "same", |path| {
+                fs::create_dir_all(path).map_err(|e| e.to_string())
+            })
+            .unwrap();
+        let second = b
+            .directory("test", "same", |path| {
+                fs::create_dir_all(path).map_err(|e| e.to_string())
+            })
+            .unwrap();
+        assert_ne!(first, second);
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

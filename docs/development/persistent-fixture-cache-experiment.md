@@ -6,7 +6,8 @@ Use a local, ignored directory outside the checkout; its contents include
 copyrighted firmware and generated SD and NOR images. Remove it when no
 longer needed. Do not commit or share its contents.
 
-The namespace hashes the running driver, tracked and non-ignored untracked
+Each canonical checkout receives a separate cache root even if a parent is
+shared. The namespace hashes the running driver, tracked and non-ignored untracked
 checkout files (including patch sources, `l6nor`, generated templates and
 `Cargo.lock`), `rustc -vV`, and `L6_`/`RUST` environment variables. It is
 intentionally conservative: even an unrelated checkout edit invalidates the
@@ -16,7 +17,9 @@ not run-specific source paths. Entries are verified before reuse; processes
 serialize publication with per-entry file locks. Cases still receive their own
 state and card copies.
 
-This is a prototype, not yet a production-safe cache policy. In particular,
+See [the cache design](persistent-fixture-cache-design.md) for checkout isolation,
+leases, eviction and remaining validation. This is a prototype, not yet a
+production-safe cache policy. In particular,
 `rustc -vV` and environment paths do not identify every byte of the external
 compiler, linker, LLVM utilities or rust-src; cache eviction, disk budgets,
 and behavior on filesystems without APFS clones also need design and testing.

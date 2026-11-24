@@ -42,6 +42,7 @@ use supervise::{interrupt, supervise};
 
 struct Args {
     command: String,
+    cache_action: Option<String>,
     config: PathBuf,
     suite: String,
     case: Option<String>,
@@ -76,8 +77,14 @@ fn default_jobs() -> usize {
 fn parse_args() -> Result<Args, String> {
     let mut args = env::args().skip(1);
     let command = args.next().unwrap_or_else(|| "help".into());
+    let cache_action = if command == "cache" {
+        Some(args.next().ok_or("cache needs an action: clean")?)
+    } else {
+        None
+    };
     let mut result = Args {
         command,
+        cache_action,
         config: PathBuf::from(l6max_host::config::FILE_NAME),
         suite: "quick".into(),
         case: None,
@@ -215,6 +222,25 @@ impl Drop for RunJournal {
 fn execute() -> Result<i32, String> {
     let args = parse_args()?;
     let root = l6max_host::paths::repository_root();
+    if args.command == "cache" {
+        if args.cache_action.as_deref() != Some("clean") {
+            return Err("unknown cache action; use cache clean".into());
+        }
+        let path = args
+            .persistent_cache
+            .as_ref()
+            .ok_or("cache clean needs --persistent-cache DIRECTORY")?;
+        let removed = RunCache::clean(path, root)?;
+        println!(
+            "{}",
+            if removed {
+                "Removed this checkout's fixture cache."
+            } else {
+                "No fixture cache for this checkout."
+            }
+        );
+        return Ok(0);
+    }
     if args.command == "schema" {
         schema::write(root)?;
         return Ok(0);
@@ -249,7 +275,7 @@ fn execute() -> Result<i32, String> {
     }
     if !["run", "check"].contains(&args.command.as_str()) {
         println!(
-            "Usage: cargo l6test list [--format text|json]\n       cargo l6test schema\n       cargo l6test watch RUN_DIRECTORY\n       cargo l6test check|run [--config config.toml] [--suite NAME | --case ID,GLOB,... | --rerun RUN [--only OUTCOMES]] [--model l6|l6max|all] [--backend headless|gui|both] [--shard I/N] [--retries N] [--strict] [--fixtures-only] [--no-cache | --persistent-cache DIRECTORY] [--update-references] [--output NEW_DIR] [--no-build] [--jobs N] [--qemu BINARY] [--app PACKAGED_APP]\n       cargo l6test probe gui --keys TARGET,... --volatile [engine options]\n       cargo l6test capture screen --out FILE.gif [capture options] --volatile [engine options]"
+            "Usage: cargo l6test list [--format text|json]\n       cargo l6test schema\n       cargo l6test watch RUN_DIRECTORY\n       cargo l6test cache clean --persistent-cache DIRECTORY\n       cargo l6test check|run [--config config.toml] [--suite NAME | --case ID,GLOB,... | --rerun RUN [--only OUTCOMES]] [--model l6|l6max|all] [--backend headless|gui|both] [--shard I/N] [--retries N] [--strict] [--fixtures-only] [--no-cache | --persistent-cache DIRECTORY] [--update-references] [--output NEW_DIR] [--no-build] [--jobs N] [--qemu BINARY] [--app PACKAGED_APP]\n       cargo l6test probe gui --keys TARGET,... --volatile [engine options]\n       cargo l6test capture screen --out FILE.gif [capture options] --volatile [engine options]"
         );
         return Ok(0);
     }

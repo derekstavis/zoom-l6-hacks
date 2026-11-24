@@ -74,10 +74,12 @@ A cache miss or failed eviction must not turn an otherwise valid test into a
 false pass. Cleanup of abandoned staging directories must observe the same
 locks and not race active builders.
 
-The prototype currently implements neither namespace leases nor eviction.
-Until those exist, do not automatically delete a persistent cache while a run
-is active. Manual removal is safe only after all runs using that checkout's
-cache have ended.
+The prototype holds a shared **checkout-wide** lease for each run.
+`cargo l6test cache clean --persistent-cache DIRECTORY` takes the matching
+exclusive lease without waiting and removes only that checkout’s entries;
+it refuses while any run holds a shared lease. Its stable lock file is left
+in the parent. Automatic eviction and finer-grained namespace leases are not
+implemented. Do not manually delete the cache while a run is active.
 
 ## Validation needed before making this the default
 

@@ -5,8 +5,9 @@
 //! `<run>/cache/<kind>/<digest>` (its key beside it in `<digest>.key`), and
 //! cases copy the result into their own directory, so every case still owns
 //! and records its inputs. A key names every input of a build except the
-//! repository sources, which a run assumes do not change while it runs; the
-//! cache never outlives its run.
+//! repository sources, which a run assumes do not change while it runs.
+//! The opt-in persistent experiment additionally fingerprints the checkout
+//! and isolates it from other checkouts.
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -30,6 +31,8 @@ struct Stats {
 pub struct RunCache {
     root: PathBuf,
     persistent: bool,
+    // A run may keep using cached firmware after fixture preparation.
+    _checkout_lease: Option<CacheLock>,
     /// When false every request builds afresh, for comparing cached and
     /// uncached fixtures.
     enabled: bool,
@@ -49,6 +52,7 @@ impl RunCache {
         Self {
             root,
             persistent: false,
+            _checkout_lease: None,
             enabled: true,
             clones,
             builds: AtomicU64::new(0),
@@ -71,10 +75,10 @@ impl RunCache {
     /// toolchain, including uncommitted source changes.
     pub fn persistent(root: &Path, repository: &Path) -> Result<Self, String> {
         use std::os::unix::ffi::OsStrExt;
-        // A shared parent directory must never make independent checkouts
-        // share entries, locks, or future eviction decisions.
-        let checkout = repository.canonicalize().map_err(|e| e.to_string())?;
-        let checkout_id = format!("{:x}", Sha256::digest(checkout.as_os_str().as_bytes()));
+        let checkout_id = checkout_id(repository)?;
+        fs::create_dir_all(root).map_err(|e| e.to_string())?;
+        // Keep this lock outside the removable tree for the life of the run.
+        let lease = CacheLock::shared(&root.join(format!("{checkout_id}.lock")))?;
         let mut sha = Sha256::new();
         sha.update(b"l6test-persistent-experiment-v1\0");
         sha.update(crate::hashing::hash(
@@ -124,7 +128,32 @@ impl RunCache {
         }
         let mut cache = Self::new(root.join(checkout_id).join(format!("{:x}", sha.finalize())));
         cache.persistent = true;
+        cache._checkout_lease = Some(lease);
         Ok(cache)
+    }
+
+    /// Remove only this checkout's persistent cache. Never wait for a run:
+    /// a cached firmware file may still be in use until its lease is dropped.
+    pub fn clean(root: &Path, repository: &Path) -> Result<bool, String> {
+        let checkout_id = checkout_id(repository)?;
+        if !root.exists() {
+            return Ok(false);
+        }
+        let _lease = CacheLock::exclusive_nonblocking(&root.join(format!("{checkout_id}.lock")))?;
+        let checkout_root = root.join(checkout_id);
+        match fs::symlink_metadata(&checkout_root) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+                fs::remove_dir_all(&checkout_root)
+                    .map_err(|e| format!("{}: {e}", checkout_root.display()))?;
+                Ok(true)
+            }
+            Ok(_) => Err(format!(
+                "cache path is not a directory: {}",
+                checkout_root.display()
+            )),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(format!("{}: {error}", checkout_root.display())),
+        }
     }
 
     /// Whether a copy into a case directory is a clone: then a large sparse
@@ -267,17 +296,39 @@ impl RunCache {
 struct CacheLock(fs::File);
 impl CacheLock {
     fn acquire(path: &Path) -> Result<Self, String> {
+        Self::lock(path, libc::LOCK_EX)
+    }
+    fn shared(path: &Path) -> Result<Self, String> {
+        Self::lock(path, libc::LOCK_SH)
+    }
+    fn exclusive_nonblocking(path: &Path) -> Result<Self, String> {
+        Self::lock(path, libc::LOCK_EX | libc::LOCK_NB)
+    }
+    fn lock(path: &Path, mode: i32) -> Result<Self, String> {
         use std::os::fd::AsRawFd;
         let file = fs::OpenOptions::new()
             .create(true)
             .write(true)
             .open(path)
             .map_err(|e| e.to_string())?;
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
-            return Err(std::io::Error::last_os_error().to_string());
+        if unsafe { libc::flock(file.as_raw_fd(), mode) } != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::WouldBlock {
+                return Err("cache is in use by an active run; try again after it finishes".into());
+            }
+            return Err(format!("{}: {error}", path.display()));
         }
         Ok(Self(file))
     }
+}
+
+fn checkout_id(repository: &Path) -> Result<String, String> {
+    use std::os::unix::ffi::OsStrExt;
+    let checkout = repository.canonicalize().map_err(|e| e.to_string())?;
+    Ok(format!(
+        "{:x}",
+        Sha256::digest(checkout.as_os_str().as_bytes())
+    ))
 }
 impl Drop for CacheLock {
     fn drop(&mut self) {
@@ -491,6 +542,40 @@ mod tests {
             .unwrap();
         assert_ne!(first, second);
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn clean_refuses_active_checkout_and_preserves_other_checkouts() {
+        let dir = temp("clean-checkout");
+        let parent = dir.join("cache");
+        let a = dir.join("a");
+        let b = dir.join("b");
+        for checkout in [&a, &b] {
+            fs::create_dir_all(checkout).unwrap();
+            assert!(
+                std::process::Command::new("git")
+                    .current_dir(checkout)
+                    .args(["init", "-q"])
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            fs::write(checkout.join("source"), b"source").unwrap();
+        }
+        let a_cache = RunCache::persistent(&parent, &a).unwrap();
+        let b_cache = RunCache::persistent(&parent, &b).unwrap();
+        let a_root = a_cache.root.clone();
+        let b_root = b_cache.root.clone();
+        let err = RunCache::clean(&parent, &a).unwrap_err();
+        assert!(err.contains("active run"), "{err}");
+        assert!(a_root.exists());
+        drop(a_cache);
+        assert!(RunCache::clean(&parent, &a).unwrap());
+        assert!(!a_root.exists());
+        assert!(b_root.exists());
+        assert!(!RunCache::clean(&parent, &a).unwrap());
+        drop(b_cache);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

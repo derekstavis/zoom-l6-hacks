@@ -4,7 +4,15 @@ This branch adds an opt-in `--persistent-cache DIRECTORY` experiment to
 `l6test`. Without that option, the existing per-run cache is unchanged.
 Use a local, ignored directory outside the checkout; its contents include
 copyrighted firmware and generated SD and NOR images. Remove it when no
-longer needed. Do not commit or share its contents.
+longer needed. Do not commit or share its contents. To remove only this
+checkout’s entries, run:
+
+```sh
+cargo l6test cache clean --persistent-cache DIRECTORY
+```
+
+The command refuses to clean while a run holds the checkout cache lease.
+It leaves other checkouts and the stable lock file untouched.
 
 Each canonical checkout receives a separate cache root even if a parent is
 shared. The namespace hashes the running driver, tracked and non-ignored untracked

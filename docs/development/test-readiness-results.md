@@ -606,3 +606,10 @@ case passed (`/private/tmp/l6-scene-ready-gui/report.json`). In the
 knob-dialog helper, the remaining `wait_guest` calls cover two negative
 observations and the polling interval for the scene timeout; the timed display
 captures remain part of its image and animation checks.
+
+A subsequent 19-case parallel sample passed 18 cases and failed the generated
+firmware-patch popup check because it read an earlier value before the dialog
+updated (`/private/tmp/l6-readiness-representative-final/report.json`). The
+popup check now waits for a changed mixer value and the matching consumed
+dialog mailbox and text. The full dialog case and generated firmware and SD
+popup cases passed together afterward (`/private/tmp/l6-popup-value-ready/report.json`).

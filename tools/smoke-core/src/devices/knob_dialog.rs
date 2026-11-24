@@ -1542,6 +1542,7 @@ pub(super) fn run_knob_dialog_popup(
         .into());
     }
     let before = session.poll()?.display;
+    let level_before = qmp.read_memory(0, mixer_channel_levels, 1)?[0];
     let mut turns = Vec::new();
     // A knob already at an end of its range does not move, so turn back
     // the other way when the first turn opens nothing.
@@ -1556,6 +1557,7 @@ pub(super) fn run_knob_dialog_popup(
             if u16::from_le_bytes([state[0], state[1]]) == DIALOG_STATE_MAGIC
                 && read_u32(DISPLAY_CALLBACK_SLOT5)? & 1 == 1
                 && display != before
+                && qmp.read_memory(0, mixer_channel_levels, 1)?[0] != level_before
             {
                 break true;
             }
@@ -1585,21 +1587,35 @@ pub(super) fn run_knob_dialog_popup(
     if after == before {
         return Err("Knob Dialog opened but the display did not change".into());
     }
-    let pointer = read_u32(read_u32(gui_text_pointers_by_language)? + DIALOG_TEXT_ID * 4)?;
-    let units = qmp
-        .read_memory(0, pointer, 48)?
-        .chunks_exact(2)
-        .map(|b| u16::from_le_bytes([b[0], b[1]]))
-        .take_while(|c| *c != 0)
-        .collect::<Vec<_>>();
-    let displayed = String::from_utf16(&units)?;
-    let raw = qmp.read_memory(0, mixer_channel_levels, 1)?[0];
-    let expected = format!("{}%", (u32::from(raw) * 100 + 63) / 127);
-    if displayed != expected {
-        return Err(format!(
-            "Knob Dialog shows {displayed:?} for channel 1 level {raw}, expected {expected:?}"
-        )
-        .into());
-    }
+    let start = inputs.panel.snapshot().guest_ms;
+    let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(180));
+    let (raw, displayed) = loop {
+        session.poll()?;
+        let pointer = read_u32(read_u32(gui_text_pointers_by_language)? + DIALOG_TEXT_ID * 4)?;
+        let units = qmp
+            .read_memory(0, pointer, 48)?
+            .chunks_exact(2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+            .take_while(|c| *c != 0)
+            .collect::<Vec<_>>();
+        let displayed = String::from_utf16(&units)?;
+        let raw = qmp.read_memory(0, mixer_channel_levels, 1)?[0];
+        let expected = format!("{}%", (u32::from(raw) * 100 + 63) / 127);
+        if qmp.read_memory(0, DIALOG_STATE + 3, 1)? == [u8::MAX]
+            && raw != level_before
+            && displayed == expected
+        {
+            break (raw, displayed);
+        }
+        if inputs.panel.snapshot().guest_ms.wrapping_sub(start) >= guest_timeout_ms.min(10_000)
+            || Instant::now() >= deadline
+        {
+            return Err(format!(
+                "Knob Dialog shows {displayed:?} for channel 1 level {raw}, expected {expected:?}"
+            )
+            .into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    };
     Ok(json!({"turns":turns,"level_raw":raw,"displayed":displayed}))
 }

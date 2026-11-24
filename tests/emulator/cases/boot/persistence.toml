@@ -16,6 +16,12 @@ guest_timeout_ms = 120000
 wall_timeout_s = 600
 
 [[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-fresh-date-time.png"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
 action = "include"
 path = "tests/emulator/fragments/recorder-next.toml"
 

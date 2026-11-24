@@ -135,11 +135,6 @@ action = "press"
 control = "sound-pad-4"
 
 [[step]]
-action = "delay"
-guest_ms = 3000
-guest_timeout_ms = 10000
-
-[[step]]
 models = ["l6"]
 action = "save-scene"
 scene = 1

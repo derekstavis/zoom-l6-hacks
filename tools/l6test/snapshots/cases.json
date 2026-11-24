@@ -421,7 +421,7 @@
     "suites": [
       "full"
     ],
-    "definition": "d7e4c86c7de3a89d5f6c33349f56e3b0fe04749c99bc4cfe4458aea5f6312134"
+    "definition": "dabfcf84680af1d75ed31229c0090095ebe3d35119b0009c922c2df00cd1bcce"
   },
   {
     "case": "knob-dialog-menu",
@@ -448,7 +448,7 @@
     "suites": [
       "full"
     ],
-    "definition": "953dac3d22b006ebaf789154dea637a5fb75712ead3f3af332d5698a3c04cc69"
+    "definition": "fb246156c8ad284d48caa92dcdd31f69b13d1c76ae6f6d2ac8cf9c8120d72ed5"
   },
   {
     "case": "l6-audio-input-transport",
@@ -641,7 +641,7 @@
     "suites": [
       "full"
     ],
-    "definition": "8c30e71fd27d1519f5e5b947c04e224d0adef3a92ac14c6443b77a328905e66a"
+    "definition": "7b9cd9b1bbf4b1b20336cf9f7ac9d1b8f72498736b03c2a4912d7b7734f68705"
   },
   {
     "case": "l6max-audio-input-transport",
@@ -834,7 +834,7 @@
       "full",
       "panel"
     ],
-    "definition": "9aa884b11edd23bd11f9c1627227e48e6f20a6f86f3d39fd74f6df3578f482d9"
+    "definition": "de307dc46b60a8527b6d4979e4e782c859256c655af5d54aafa79acd2cf16ee8"
   },
   {
     "case": "panel",
@@ -845,7 +845,7 @@
       "full",
       "panel"
     ],
-    "definition": "9aa884b11edd23bd11f9c1627227e48e6f20a6f86f3d39fd74f6df3578f482d9"
+    "definition": "de307dc46b60a8527b6d4979e4e782c859256c655af5d54aafa79acd2cf16ee8"
   },
   {
     "case": "panel",
@@ -2857,7 +2857,7 @@
       "lifecycle",
       "full"
     ],
-    "definition": "1c6550403ebc67e1673d73deb5bbf62220be4f8b746a2138250c2885b43e5b84"
+    "definition": "1091183f99cd20f3298672e84b6e4abc7189875101345bdce83c7eec48465227"
   },
   {
     "case": "power",
@@ -3259,7 +3259,7 @@
     "suites": [
       "full"
     ],
-    "definition": "e1a24caabd547d7a150556020426c69c28204d93030e3e3dd9d8990a2b48e330"
+    "definition": "7911d9b2ce5c339835a9d91160e05bfb7cb57584784dc307e6dbc694abe97a2d"
   },
   {
     "case": "ui-input-l6",
@@ -3268,7 +3268,7 @@
     "suites": [
       "full"
     ],
-    "definition": "e1a24caabd547d7a150556020426c69c28204d93030e3e3dd9d8990a2b48e330"
+    "definition": "7911d9b2ce5c339835a9d91160e05bfb7cb57584784dc307e6dbc694abe97a2d"
   },
   {
     "case": "ui-input-l6-fresh",
@@ -3277,7 +3277,7 @@
     "suites": [
       "full"
     ],
-    "definition": "cb48b5f60a6e71e26eee45c26571cf6206045ac92aa82c7cce1214fdd797722d"
+    "definition": "dc0a88d8e44d1758ec1cb172912249c93d1456621fcc12ab9805738f5ea3719f"
   },
   {
     "case": "ui-input-l6-gui",
@@ -3286,7 +3286,7 @@
     "suites": [
       "full"
     ],
-    "definition": "8ce4e28a34b936585e0bc8c001d88b06ccfd87f0dc99dadca6bf937653a425a2"
+    "definition": "54104abc95d580b95e488510e3cf2127301b871d99e7fa8ef561a032eeb195ad"
   },
   {
     "case": "usb",

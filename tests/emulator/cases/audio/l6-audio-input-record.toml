@@ -49,6 +49,12 @@ guest_timeout_ms = 60000
 wall_timeout_s = 300
 
 [[step]]
+action = "wait-audio-input"
+playing = true
+min_ms = 250
+max_ms = 999
+
+[[step]]
 action = "press"
 control = "rec-record"
 

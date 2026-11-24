@@ -584,3 +584,25 @@ change failed (`/private/tmp/l6-knob-mode-ready/report.json`); the revised
 hook-return check also works at the end of a knob's range. The complete
 scenario passed, including all ten reviewed mode images and lock-contention
 checks (`/private/tmp/l6-knob-hook-ready/report.json`).
+
+A later 19-case four-worker sample had 16 passes and three failures
+(`/private/tmp/l6-readiness-final-parallel/report.json`). The knob-dialog
+failure left the OLED on the loading splash; its scenario now waits for the
+reviewed no-SD recorder screen. The persistence scenario now waits for the
+reviewed initial date editor. In the failed L6max input recording, the track
+contained about 1.2 seconds of initial silence and 2.66 seconds of frames;
+both recording scenarios now wait for the QEMU input position to advance
+before recording, while keeping their five-second guest recording window.
+Two subsequent four-worker samples each passed all six targeted cases,
+including both recordings, persistence and knob-dialog
+(`/private/tmp/l6-readiness-targeted-parallel/report.json` and
+`/private/tmp/l6-readiness-targeted-parallel-repeat/report.json`). These
+passes do not erase the earlier failures or prove the flakes cannot recur.
+
+The three-second lead-in before L6 scene saves was removed; the existing
+scene action checks button reports and lamp transitions. Both fresh and
+prepared headless cases passed in each targeted sample, and the prepared GUI
+case passed (`/private/tmp/l6-scene-ready-gui/report.json`). In the
+knob-dialog helper, the remaining `wait_guest` calls cover two negative
+observations and the polling interval for the scene timeout; the timed display
+captures remain part of its image and animation checks.

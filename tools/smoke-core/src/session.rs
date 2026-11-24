@@ -124,6 +124,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
         progress.emit(crate::progress::CaseEvent::StepStarted {
             index: 1,
             label: crate::progress::step_label(&scenario.step[0].action),
+            started_unix_ms: crate::progress::unix_ms(),
         });
         devices::prepare(&scenario, &mut options)?;
         let started = std::time::Instant::now();
@@ -147,6 +148,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
         )
         .map_err(|error| error.to_string())?;
         progress.emit(crate::progress::CaseEvent::ScenarioFinished {
+            finished_unix_ms: crate::progress::unix_ms(),
             outcome: if result.is_ok() {
                 crate::progress::Outcome::Pass
             } else {
@@ -160,6 +162,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
         progress.emit(crate::progress::CaseEvent::StepStarted {
             index: 1,
             label: crate::progress::step_label(&scenario.step[0].action),
+            started_unix_ms: crate::progress::unix_ms(),
         });
         devices::prepare(&scenario, &mut options)?;
         let started = std::time::Instant::now();
@@ -183,6 +186,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
         )
         .map_err(|error| error.to_string())?;
         progress.emit(crate::progress::CaseEvent::ScenarioFinished {
+            finished_unix_ms: crate::progress::unix_ms(),
             outcome: if result.is_ok() {
                 crate::progress::Outcome::Pass
             } else {

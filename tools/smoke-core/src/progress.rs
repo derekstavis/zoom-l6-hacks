@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 pub const PATH_ENV: &str = "L6_TEST_PROGRESS";
 pub const RUN_ENV: &str = "L6_TEST_PROGRESS_RUN";
 pub const ATTEMPT_ENV: &str = "L6_TEST_PROGRESS_ATTEMPT";
@@ -91,10 +91,22 @@ pub enum CaseEvent {
     StepStarted {
         index: usize,
         label: String,
+        started_unix_ms: u64,
     },
     ScenarioFinished {
         outcome: Outcome,
+        finished_unix_ms: u64,
     },
+}
+
+/// Wall-clock time for replay across processes and late watcher attachment.
+pub fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 pub struct Writer {

@@ -241,7 +241,11 @@ The printed artifact directory contains:
   See [Report](#report) below.
 - `progress.jsonl`: live suite events and per-attempt progress streams, displayed with
   `cargo l6test watch /path/to/run` from another terminal. Closing the viewer
-  does not stop the run; the report remains the authoritative result.
+  does not stop the run; the report remains the authoritative result. The watcher shows
+  wall time since the current step started, including on late attachment. The
+  summary lists completed steps for each case and attempt, sorted by wall time.
+  An interrupted step has no completed duration. These wall-clock measurements
+  may be affected by host load or system clock changes; they are not guest time.
 - `manifest.json`: source revision, dirty diff/untracked hashes, scenario,
   generated-scenario and board/patch hashes, driver binary and pinned QEMU
   identity.

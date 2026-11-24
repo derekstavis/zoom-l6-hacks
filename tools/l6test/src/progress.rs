@@ -117,7 +117,7 @@ struct Active {
     tail: Tail,
     header: bool,
     total: Option<usize>,
-    step: Option<(usize, String)>,
+    step: Option<(usize, String, u64)>,
     phase: Option<progress::Phase>,
     case_phase: Option<progress::CasePhase>,
     error: Option<String>,
@@ -226,7 +226,11 @@ impl View {
                 match event {
                     CaseEvent::PhaseChanged { phase } => active.case_phase = Some(phase),
                     CaseEvent::ScenarioStarted { total_steps } => active.total = Some(total_steps),
-                    CaseEvent::StepStarted { index, label } => active.step = Some((index, label)),
+                    CaseEvent::StepStarted {
+                        index,
+                        label,
+                        started_unix_ms,
+                    } => active.step = Some((index, label, started_unix_ms)),
                     CaseEvent::ScenarioFinished { .. } => {}
                     CaseEvent::Header { .. } => {
                         active.error = Some("duplicate case progress header".into());
@@ -311,8 +315,11 @@ fn render(view: &View, color: bool) -> String {
             };
             s.push_str(&format!("\n    {label}"));
         }
-        if let (Some(total), Some((index, label))) = (a.total, &a.step) {
-            s.push_str(&format!("\n    Step {index}/{total} · {label}"));
+        if let (Some(total), Some((index, label, started))) = (a.total, &a.step) {
+            let seconds = progress::unix_ms().saturating_sub(*started) / 1000;
+            s.push_str(&format!(
+                "\n    Step {index}/{total} · {label} · {seconds}s"
+            ));
         }
     }
     s.push('\n');
@@ -472,6 +479,7 @@ mod tests {
             .emit(&CaseEvent::StepStarted {
                 index: 3,
                 label: "press control".into(),
+                started_unix_ms: progress::unix_ms().saturating_sub(12_000),
             })
             .unwrap();
         let mut view = View::default();
@@ -488,7 +496,7 @@ mod tests {
         })
         .unwrap();
         view.read_cases(&dir).unwrap();
-        assert!(render(&view, false).contains("Step 3/5 · press control"));
+        assert!(render(&view, false).contains("Step 3/5 · press control · 12s"));
         drop(writer);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -533,6 +541,7 @@ mod tests {
             .emit(&CaseEvent::StepStarted {
                 index: 1,
                 label: "Wait for boot ready".into(),
+                started_unix_ms: progress::unix_ms(),
             })
             .unwrap();
         view.read_cases(&dir).unwrap();

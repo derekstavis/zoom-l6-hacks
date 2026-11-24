@@ -250,6 +250,53 @@ pub fn report(outcome: &str, results: &[CaseResult], extra: Value) -> Value {
     report
 }
 
+/// Recover completed wall-time intervals from a case stream. An interrupted final
+/// step has no end event and is intentionally omitted.
+fn step_timings(path: &Path) -> Vec<(usize, String, u64)> {
+    use smoke_core::progress::{CaseEvent, VERSION};
+    let Ok(stream) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut lines = stream.lines();
+    if !matches!(
+        lines
+            .next()
+            .and_then(|line| serde_json::from_str::<CaseEvent>(line).ok()),
+        Some(CaseEvent::Header {
+            version: VERSION,
+            ..
+        })
+    ) {
+        return Vec::new();
+    }
+    let mut current: Option<(usize, String, u64)> = None;
+    let mut timings = Vec::new();
+    for line in lines {
+        let Ok(event) = serde_json::from_str::<CaseEvent>(line) else {
+            break;
+        };
+        let (end, next) = match event {
+            CaseEvent::StepStarted {
+                index,
+                label,
+                started_unix_ms,
+            } => (started_unix_ms, Some((index, label, started_unix_ms))),
+            CaseEvent::ScenarioFinished {
+                finished_unix_ms, ..
+            } => (finished_unix_ms, None),
+            _ => continue,
+        };
+        if let Some((index, label, start)) = current.take()
+            && let Some(duration) = end.checked_sub(start)
+        {
+            timings.push((index, label, duration));
+        }
+        current = next;
+    }
+    timings.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
+    timings
+}
+
 pub fn write_summary(
     path: &Path,
     outcome: Outcome,
@@ -285,6 +332,39 @@ pub fn write_summary(
             result.phase,
             result.duration_s
         ));
+    }
+    for result in results {
+        let artifacts: Vec<&Path> = if result.attempts.is_empty() {
+            vec![result.artifacts.as_path()]
+        } else {
+            result
+                .attempts
+                .iter()
+                .map(|attempt| attempt.artifacts.as_path())
+                .collect()
+        };
+        for (attempt, dir) in artifacts.iter().enumerate() {
+            let timings = step_timings(&dir.join("progress.jsonl"));
+            if timings.is_empty() {
+                continue;
+            }
+            text.push_str(&format!(
+                "\n### {} · {} · {} · attempt {}\n\n",
+                result.case,
+                result.model,
+                result.backend,
+                attempt + 1
+            ));
+            text.push_str("| Step | Action | Wall seconds |\n| --- | --- | ---: |\n");
+            for (index, label, milliseconds) in timings {
+                text.push_str(&format!(
+                    "| {} | {} | {:.3} |\n",
+                    index,
+                    label.replace('|', "\\|"),
+                    milliseconds as f64 / 1000.0
+                ));
+            }
+        }
     }
     let flaky: Vec<_> = results
         .iter()
@@ -351,6 +431,63 @@ pub fn read_results(path: &Path) -> Result<Vec<CaseResult>, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn timing_report_orders_steps_and_omits_interrupted_final_step() {
+        use smoke_core::progress::{AttemptId, CaseEvent, CaseId, VERSION, Writer};
+        let path = std::env::temp_dir().join(format!("l6-step-timing-{}", std::process::id()));
+        let mut writer = Writer::create(&path).unwrap();
+        writer
+            .emit(&CaseEvent::Header {
+                version: VERSION,
+                run_id: "run".into(),
+                id: AttemptId {
+                    case: CaseId {
+                        case: "boot".into(),
+                        model: l6fw::Model::L6,
+                        backend: smoke_core::Backend::Headless,
+                    },
+                    attempt: 1,
+                },
+            })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::StepStarted {
+                index: 1,
+                label: "first".into(),
+                started_unix_ms: 1000,
+            })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::StepStarted {
+                index: 2,
+                label: "second".into(),
+                started_unix_ms: 2000,
+            })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::StepStarted {
+                index: 3,
+                label: "interrupted".into(),
+                started_unix_ms: 5000,
+            })
+            .unwrap();
+        assert_eq!(
+            super::step_timings(&path),
+            vec![(2, "second".into(), 3000), (1, "first".into(), 1000)]
+        );
+        writer
+            .emit(&CaseEvent::ScenarioFinished {
+                outcome: smoke_core::progress::Outcome::Fail,
+                finished_unix_ms: 5500,
+            })
+            .unwrap();
+        assert_eq!(
+            super::step_timings(&path)[2],
+            (3, "interrupted".into(), 500)
+        );
+        drop(writer);
+        std::fs::remove_file(path).unwrap();
+    }
     use super::*;
 
     fn result(outcome: Outcome, phase: Phase) -> CaseResult {

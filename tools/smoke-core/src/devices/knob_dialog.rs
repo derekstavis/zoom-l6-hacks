@@ -5,6 +5,30 @@ use super::*;
 /// knob-dialog window check compares the display with these by scene name.
 pub const KNOB_DIALOG_REFERENCES: &str = "patches/knob-dialog/tests/emulator/references";
 
+/// Wait until the MAIN 1.10 mixer call and the knob-dialog post-hook return.
+/// At this point a first-use guard has either rejected the turn or published
+/// the pending callback, even when the mixer value was already at its limit.
+fn turn_and_wait_hook(
+    session: &Session,
+    debugger: &mut l6max_diagnostics::gdb::Gdb,
+    delta: i32,
+    wall_timeout_s: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    const MIXER_HOOK_RETURN: u32 = 0x8003_6c78;
+    let qmp = &session.engine.management[0];
+    qmp.stop()?;
+    debugger.breakpoint(MIXER_HOOK_RETURN, true)?;
+    session.engine.inputs.as_ref().unwrap().knob(0, delta)?;
+    debugger.continue_until_stop(Duration::from_secs(wall_timeout_s.min(30)))?;
+    let pc = debugger.read_register(15)? & !1;
+    debugger.breakpoint(MIXER_HOOK_RETURN, false)?;
+    if pc != MIXER_HOOK_RETURN {
+        return Err(format!("knob turn stopped at {pc:#x}, not the mixer hook return").into());
+    }
+    qmp.resume()?;
+    Ok(())
+}
+
 pub(super) fn run_knob_dialog(
     session: &Session,
     options: &Options,
@@ -82,6 +106,28 @@ pub(super) fn run_knob_dialog(
                     "Menu button did not leave the recorder screen for the guard test"
                 }
                 .into());
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    };
+    // MAIN 1.10's parameter selector writes this byte before returning;
+    // the corresponding getter at 0x8000b4a8 reads it.
+    const SELECTED_PARAMETER_MODE: u32 = 0x8046_2d2c;
+    let wait_parameter_mode = |expected: u8| -> Result<(), Box<dyn std::error::Error>> {
+        let start = inputs.panel.snapshot().guest_ms;
+        let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(180));
+        loop {
+            session.poll()?;
+            let actual = qmp.read_memory(0, SELECTED_PARAMETER_MODE, 1)?[0];
+            if actual == expected {
+                return Ok(());
+            }
+            if inputs.panel.snapshot().guest_ms.wrapping_sub(start) >= guest_timeout_ms.min(10_000)
+                || Instant::now() >= deadline
+            {
+                return Err(
+                    format!("parameter mode did not become {expected}; found {actual}").into(),
+                );
             }
             thread::sleep(Duration::from_millis(5));
         }
@@ -242,8 +288,7 @@ pub(super) fn run_knob_dialog(
             .into());
     }
     inputs.tap(35, 50)?;
-    let pressed = inputs.panel.snapshot().guest_ms;
-    wait_guest(session, pressed, 500, guest_timeout_ms, wall_timeout_s)?;
+    wait_parameter_mode(9)?;
     let baseline = capture(100, "window-scene-before")?;
     let original_window = qmp.read_memory(0, l6max::current_window, 4)?;
     let original_bitmap = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)?;
@@ -362,15 +407,7 @@ pub(super) fn run_knob_dialog(
     qmp.stop()?;
     debugger.write(widget7 + 6, &2u16.to_le_bytes())?;
     qmp.resume()?;
-    inputs.knob(0, -1)?;
-    let mismatch_start = inputs.panel.snapshot().guest_ms;
-    wait_guest(
-        session,
-        mismatch_start,
-        500,
-        guest_timeout_ms,
-        wall_timeout_s,
-    )?;
+    turn_and_wait_hook(session, &mut debugger, -1, wall_timeout_s)?;
     qmp.stop()?;
     let mismatch_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
     let mismatch_slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
@@ -394,9 +431,7 @@ pub(super) fn run_knob_dialog(
     qmp.stop()?;
     debugger.write(alias_widget + 4, &179u16.to_le_bytes())?;
     qmp.resume()?;
-    inputs.knob(0, -1)?;
-    let alias_start = inputs.panel.snapshot().guest_ms;
-    wait_guest(session, alias_start, 500, guest_timeout_ms, wall_timeout_s)?;
+    turn_and_wait_hook(session, &mut debugger, -1, wall_timeout_s)?;
     qmp.stop()?;
     let alias_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
     let alias_slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
@@ -419,9 +454,7 @@ pub(super) fn run_knob_dialog(
     qmp.stop()?;
     debugger.write(alias_widget, &4u16.to_le_bytes())?;
     qmp.resume()?;
-    inputs.knob(0, -1)?;
-    let layer_start = inputs.panel.snapshot().guest_ms;
-    wait_guest(session, layer_start, 500, guest_timeout_ms, wall_timeout_s)?;
+    turn_and_wait_hook(session, &mut debugger, -1, wall_timeout_s)?;
     qmp.stop()?;
     let layer_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
     let layer_slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
@@ -444,15 +477,7 @@ pub(super) fn run_knob_dialog(
     qmp.stop()?;
     debugger.write(widget7, &[0])?;
     qmp.resume()?;
-    inputs.knob(0, -1)?;
-    let widget_layer_start = inputs.panel.snapshot().guest_ms;
-    wait_guest(
-        session,
-        widget_layer_start,
-        500,
-        guest_timeout_ms,
-        wall_timeout_s,
-    )?;
+    turn_and_wait_hook(session, &mut debugger, -1, wall_timeout_s)?;
     qmp.stop()?;
     let widget_layer_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
     let widget_layer_slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
@@ -474,15 +499,7 @@ pub(super) fn run_knob_dialog(
     qmp.stop()?;
     debugger.write(background10, &[1])?;
     qmp.resume()?;
-    inputs.knob(0, -1)?;
-    let background_layer_start = inputs.panel.snapshot().guest_ms;
-    wait_guest(
-        session,
-        background_layer_start,
-        500,
-        guest_timeout_ms,
-        wall_timeout_s,
-    )?;
+    turn_and_wait_hook(session, &mut debugger, -1, wall_timeout_s)?;
     qmp.stop()?;
     let background_layer_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
     let background_layer_slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
@@ -591,13 +608,30 @@ pub(super) fn run_knob_dialog(
     // the notification manager's lock.
     inputs.knob(0, -1)?;
     let contention_start = inputs.panel.snapshot().guest_ms;
-    wait_guest(
-        session,
-        contention_start,
-        500,
-        guest_timeout_ms,
-        wall_timeout_s,
-    )?;
+    let contention_deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(180));
+    loop {
+        session.poll()?;
+        let state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
+        let slot = word(l6max::gui_display_callback_table + 20)?;
+        if u16::from_le_bytes(state[..2].try_into().unwrap()) == 0x4b4e
+            && state[2] != 0
+            && state[3] == u8::MAX
+            && slot & 1 == 1
+        {
+            break;
+        }
+        if inputs
+            .panel
+            .snapshot()
+            .guest_ms
+            .wrapping_sub(contention_start)
+            >= guest_timeout_ms.min(10_000)
+            || Instant::now() >= contention_deadline
+        {
+            return Err("knob dialog did not render while the notification lock was held".into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
     qmp.stop()?;
     let first_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
     let first_slot5 = u32::from_le_bytes(
@@ -898,15 +932,33 @@ pub(super) fn run_knob_dialog(
     }
     debugger.write(notification_semaphore + 56, &0u32.to_le_bytes())?;
     qmp.resume()?;
-    inputs.knob(0, -1)?;
+    turn_and_wait_hook(session, &mut debugger, -1, wall_timeout_s)?;
     let callback_busy_start = inputs.panel.snapshot().guest_ms;
-    wait_guest(
-        session,
-        callback_busy_start,
-        300,
-        guest_timeout_ms,
-        wall_timeout_s,
-    )?;
+    let callback_deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(180));
+    loop {
+        session.poll()?;
+        let raw = qmp.read_memory(0, l6max::mixer_channel_levels, 1)?[0];
+        if qmp.read_memory(0, state + 3, 1)? == u8::MAX.to_le_bytes()
+            && knob_display_matches(
+                9,
+                &expected_value(9, raw),
+                &decode_text(text_table + 179 * 4)?,
+            )
+        {
+            break;
+        }
+        if inputs
+            .panel
+            .snapshot()
+            .guest_ms
+            .wrapping_sub(callback_busy_start)
+            >= guest_timeout_ms.min(10_000)
+            || Instant::now() >= callback_deadline
+        {
+            return Err("knob dialog did not update while the notification lock was held".into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
     qmp.stop()?;
     let pending_during_contention = qmp.read_memory(0, state + 3, 1)?;
     let lock_held_during_render =
@@ -936,17 +988,17 @@ pub(super) fn run_knob_dialog(
             )
             .into());
     }
-    for (button, name) in [
-        (35, "level"),
-        (28, "high"),
-        (33, "freq"),
-        (38, "mid"),
-        (43, "low"),
-        (10, "aux1"),
-        (15, "aux2"),
-        (20, "efx"),
-        (25, "sub-mix"),
-        (30, "pan"),
+    for (button, name, mode) in [
+        (35, "level", 9),
+        (28, "high", 0),
+        (33, "freq", 1),
+        (38, "mid", 2),
+        (43, "low", 3),
+        (10, "aux1", 4),
+        (15, "aux2", 5),
+        (20, "efx", 6),
+        (25, "sub-mix", 7),
+        (30, "pan", 8),
     ] {
         let selection_applied = inputs.panel.snapshot().applied;
         inputs.tap(button, 50)?;
@@ -955,8 +1007,7 @@ pub(super) fn run_knob_dialog(
             || inputs.panel.snapshot().applied > selection_applied,
             "knob-dialog parameter-selection input acknowledgement",
         )?;
-        let selection = inputs.panel.snapshot().guest_ms;
-        wait_guest(session, selection, 300, guest_timeout_ms, wall_timeout_s)?;
+        wait_parameter_mode(mode)?;
         let encoder_applied = inputs.panel.snapshot().applied;
         inputs.knob(0, -1)?;
         wait_l6_input(
@@ -1021,14 +1072,7 @@ pub(super) fn run_knob_dialog(
         capture(50, "knob-dialog-demo-pan-reset")?;
     }
     inputs.tap(35, 50)?;
-    let channel_selection = inputs.panel.snapshot().guest_ms;
-    wait_guest(
-        session,
-        channel_selection,
-        300,
-        guest_timeout_ms,
-        wall_timeout_s,
-    )?;
+    wait_parameter_mode(9)?;
     let channel0_level = l6max::mixer_channel_levels;
     let channel1_level = l6max::mixer_channel_levels + 1;
     let channel0_raw = qmp.read_memory(0, channel0_level, 1)?[0];

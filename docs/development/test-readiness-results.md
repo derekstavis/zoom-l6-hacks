@@ -574,3 +574,13 @@ complete dialog case and generated firmware-patch popup case both passed
 four-worker regression of panel, knob-dialog, USB, and fresh DIN cases passed
 all five cases (`/private/tmp/l6-readiness-regression-parallel/report.json`),
 after the full-run failures documented above.
+
+L6max MAIN 1.10's selector stores the encoder parameter mode at
+`0x80462d2c`: the getter at `0x8000b4a8` reads it and the selection path calls
+the setter at `0x8000bfe8`. The dialog test now waits for each selected mode,
+and its negative first-use guards wait for the post-hook return at
+`0x80036c78`. An initial lock-contention trial requiring the mixer value to
+change failed (`/private/tmp/l6-knob-mode-ready/report.json`); the revised
+hook-return check also works at the end of a knob's range. The complete
+scenario passed, including all ten reviewed mode images and lock-contention
+checks (`/private/tmp/l6-knob-hook-ready/report.json`).

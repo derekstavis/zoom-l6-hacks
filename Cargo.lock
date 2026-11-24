@@ -3647,6 +3647,7 @@ dependencies = [
  "l6nor",
  "l6patch",
  "libc",
+ "notify",
  "patch-abi",
  "patch-core",
  "patch-wasm",

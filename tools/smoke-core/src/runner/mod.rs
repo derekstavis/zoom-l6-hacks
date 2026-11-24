@@ -292,7 +292,7 @@ impl Runner {
             let (entered, guest_start) = *self.entered.get_or_insert_with(|| {
                 let index = self.scenario.step[..=self.step].iter().filter(|s| s.applies_to(self.model)).count();
                 let label = crate::progress::step_label(&step.action);
-                self.progress.emit(crate::progress::CaseEvent::StepStarted { index, label });
+                self.progress.emit(crate::progress::CaseEvent::StepStarted { index, label, started_unix_ms: crate::progress::unix_ms() });
                 tracing::info!(event="step_started",scenario=%self.scenario.name,model=self.model.name(),step=self.step+1,action=?step.action,guest_ms=obs.panel.guest_ms,"step started");
                 (now, obs.panel.guest_ms)
             });
@@ -1288,6 +1288,7 @@ impl Runner {
     pub fn finish(&self, outcome: &str, error: Option<&str>) -> Result<(), String> {
         self.progress
             .emit(crate::progress::CaseEvent::ScenarioFinished {
+                finished_unix_ms: crate::progress::unix_ms(),
                 outcome: if outcome == "PASS" {
                     crate::progress::Outcome::Pass
                 } else {

@@ -2,14 +2,14 @@
 use crate::report;
 use smoke_core::progress::{self, AttemptId, CaseEvent, CaseId, Outcome, SuiteEvent, Writer};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     ffi::OsString,
     fs::File,
     io::{self, IsTerminal, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Mutex, mpsc},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 fn outcome(o: report::Outcome) -> Outcome {
@@ -81,7 +81,7 @@ impl Journal {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Tail {
     offset: u64,
     partial: Vec<u8>,
@@ -111,18 +111,19 @@ impl Tail {
     }
 }
 
+#[derive(Clone)]
 struct Active {
     id: AttemptId,
     path: PathBuf,
     tail: Tail,
     header: bool,
     total: Option<usize>,
-    step: Option<(usize, String)>,
+    step: Option<(usize, String, u64)>,
     phase: Option<progress::Phase>,
     case_phase: Option<progress::CasePhase>,
     error: Option<String>,
 }
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct View {
     run_id: Option<String>,
     total: Option<usize>,
@@ -226,7 +227,11 @@ impl View {
                 match event {
                     CaseEvent::PhaseChanged { phase } => active.case_phase = Some(phase),
                     CaseEvent::ScenarioStarted { total_steps } => active.total = Some(total_steps),
-                    CaseEvent::StepStarted { index, label } => active.step = Some((index, label)),
+                    CaseEvent::StepStarted {
+                        index,
+                        label,
+                        started_unix_ms,
+                    } => active.step = Some((index, label, started_unix_ms)),
                     CaseEvent::ScenarioFinished { .. } => {}
                     CaseEvent::Header { .. } => {
                         active.error = Some("duplicate case progress header".into());
@@ -240,6 +245,9 @@ impl View {
 }
 
 fn render(view: &View, color: bool) -> String {
+    if view.run_id.is_none() {
+        return "  Loading progress…\n".into();
+    }
     let (cyan, green, red, yellow, reset) = if color {
         ("\x1b[1;36m", "\x1b[32m", "\x1b[31m", "\x1b[33m", "\x1b[0m")
     } else {
@@ -311,37 +319,80 @@ fn render(view: &View, color: bool) -> String {
             };
             s.push_str(&format!("\n    {label}"));
         }
-        if let (Some(total), Some((index, label))) = (a.total, &a.step) {
-            s.push_str(&format!("\n    Step {index}/{total} · {label}"));
+        if let (Some(total), Some((index, label, started))) = (a.total, &a.step) {
+            let seconds = progress::unix_ms().saturating_sub(*started) / 1000;
+            s.push_str(&format!(
+                "\n    Step {index}/{total} · {label} · {seconds}s"
+            ));
         }
     }
     s.push('\n');
     s
 }
 
-pub fn watch(args: &[OsString]) -> Result<(), String> {
-    if args.len() != 1 {
-        return Err("Usage: cargo l6test watch RUN_DIRECTORY".into());
+/// Read and deserialize progress away from the terminal thread. Filesystem
+/// notifications wake the reader; a bounded periodic check catches missed events
+/// and filesystems without reliable notifications.
+fn follow(root: PathBuf, terminal: bool, snapshots: mpsc::SyncSender<Result<View, String>>) {
+    use notify::{RecursiveMode, Watcher};
+    let (wake_tx, wake_rx) = mpsc::sync_channel::<()>(1);
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        let relevant = match event {
+            Ok(event) => {
+                event.paths.is_empty()
+                    || event.paths.iter().any(|path| {
+                        path.is_dir()
+                            || matches!(
+                                path.file_name().and_then(|name| name.to_str()),
+                                Some("progress.jsonl" | "report.json")
+                            )
+                    })
+            }
+            Err(_) => true,
+        };
+        if relevant {
+            let _ = wake_tx.try_send(());
+        }
+    })
+    .ok();
+    if let Some(watcher) = watcher.as_mut()
+        && watcher.watch(&root, RecursiveMode::NonRecursive).is_err()
+    {
+        watcher.unwatch(&root).ok();
     }
-    let path = PathBuf::from(&args[0]).join("progress.jsonl");
-    if !path.exists() {
-        return Err(format!(
-            "{}: progress stream not found; the run may use an older l6test",
-            path.display()
-        ));
-    }
-    let terminal = io::stdout().is_terminal();
+    let mut watched = BTreeSet::new();
     let mut tail = Tail::default();
     let mut view = View::default();
     let mut final_report_seen = false;
     loop {
-        for event in tail.read::<SuiteEvent>(&path)? {
-            view.suite(event)?;
-        }
-        view.read_cases(Path::new(&args[0]))?;
-        if view.outcome.is_none() && view.run_id.is_some() {
-            let report = Path::new(&args[0]).join("report.json");
-            if let Ok(bytes) = std::fs::read(report)
+        let read = (|| -> Result<(), String> {
+            for event in tail.read::<SuiteEvent>(&root.join("progress.jsonl"))? {
+                view.suite(event)?;
+            }
+            // Start watching each case directory before reading its stream, so
+            // creation or appends cannot fall between replay and registration.
+            if let Some(watcher) = watcher.as_mut() {
+                let active_dirs: BTreeSet<PathBuf> = view
+                    .active
+                    .values()
+                    .filter_map(|active| root.join(&active.path).parent().map(Path::to_path_buf))
+                    .collect();
+                for path in watched.difference(&active_dirs) {
+                    let _ = watcher.unwatch(path);
+                }
+                watched.retain(|path| active_dirs.contains(path));
+                for path in active_dirs {
+                    if !watched.contains(&path)
+                        && watcher.watch(&path, RecursiveMode::NonRecursive).is_ok()
+                    {
+                        watched.insert(path);
+                    }
+                }
+            }
+            view.read_cases(&root)?;
+            if view.outcome.is_none()
+                && view.run_id.is_some()
+                && let Ok(bytes) = std::fs::read(root.join("report.json"))
                 && let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes)
                 && let Some(status) = value.get("outcome")
                 && let Ok(outcome) = serde_json::from_value::<Outcome>(status.clone())
@@ -354,22 +405,88 @@ pub fn watch(args: &[OsString]) -> Result<(), String> {
                     final_report_seen = true;
                 }
             }
+            Ok(())
+        })();
+        match read {
+            Ok(()) => {
+                let done = view.outcome.is_some() || !terminal;
+                if snapshots.send(Ok(view.clone())).is_err() || done {
+                    return;
+                }
+            }
+            Err(error) => {
+                let _ = snapshots.send(Err(error));
+                return;
+            }
         }
-        if terminal {
-            print!("\x1b[2J\x1b[H");
+        // Also catches missed notifications and lets an interrupted run's
+        // report settle before deciding that its event stream ended early.
+        match wake_rx.recv_timeout(Duration::from_secs(1)) {
+            Ok(()) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => thread::sleep(Duration::from_secs(1)),
         }
-        print!(
-            "{}",
-            render(&view, terminal && std::env::var_os("NO_COLOR").is_none())
-        );
-        if terminal && view.outcome.is_none() {
-            println!("\n  Ctrl+C to close · tests keep running");
+    }
+}
+
+pub fn watch(args: &[OsString]) -> Result<(), String> {
+    if args.len() != 1 {
+        return Err("Usage: cargo l6test watch RUN_DIRECTORY".into());
+    }
+    let root = PathBuf::from(&args[0]);
+    let path = root.join("progress.jsonl");
+    if !path.exists() {
+        return Err(format!(
+            "{}: progress stream not found; the run may use an older l6test",
+            path.display()
+        ));
+    }
+    let terminal = io::stdout().is_terminal();
+    let (tx, rx) = mpsc::sync_channel(1);
+    thread::spawn(move || follow(root, terminal, tx));
+    let mut view = if terminal {
+        View::default()
+    } else {
+        rx.recv()
+            .map_err(|_| "progress reader stopped".to_string())??
+    };
+    let mut last_draw = Instant::now();
+    let mut redraw = true;
+    loop {
+        if redraw {
+            if terminal {
+                print!("\x1b[H\x1b[J");
+            }
+            print!(
+                "{}",
+                render(&view, terminal && std::env::var_os("NO_COLOR").is_none())
+            );
+            if terminal && view.outcome.is_none() {
+                println!("\n  Ctrl+C to close · tests keep running");
+            }
+            io::stdout().flush().map_err(|e| e.to_string())?;
+            if !terminal || view.outcome.is_some() {
+                return Ok(());
+            }
+            last_draw = Instant::now();
+            redraw = false;
         }
-        io::stdout().flush().map_err(|e| e.to_string())?;
-        if !terminal || view.outcome.is_some() {
-            return Ok(());
+        // Process a 100 ms UI tick independently of the reader. The current
+        // screen only needs one-second clock updates; animated widgets can
+        // request a redraw on every tick without affecting event processing.
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(snapshot) => {
+                view = snapshot?;
+                redraw = true;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if last_draw.elapsed() >= Duration::from_secs(1) {
+                    redraw = true;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err("progress reader stopped".into());
+            }
         }
-        thread::sleep(Duration::from_secs(2));
     }
 }
 
@@ -383,6 +500,91 @@ mod tests {
             model: l6fw::Model::L6,
             backend: smoke_core::Backend::Headless,
         }
+    }
+    #[test]
+    fn follower_replays_and_detects_new_case_streams() {
+        let dir = std::env::temp_dir().join(format!("l6-progress-follower-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut suite = Writer::create(&dir.join("progress.jsonl")).unwrap();
+        suite
+            .emit(&SuiteEvent::Header {
+                version: progress::VERSION,
+                run_id: "run".into(),
+            })
+            .unwrap();
+        suite
+            .emit(&SuiteEvent::RunStarted { total_cases: 1 })
+            .unwrap();
+        let (tx, rx) = mpsc::sync_channel(1);
+        let root = dir.clone();
+        let worker = std::thread::spawn(move || follow(root, true, tx));
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(3))
+                .unwrap()
+                .unwrap()
+                .total,
+            Some(1)
+        );
+        let attempt = AttemptId {
+            case: id(),
+            attempt: 1,
+        };
+        std::fs::create_dir(dir.join("case")).unwrap();
+        let mut case = Writer::create(&dir.join("case/progress.jsonl")).unwrap();
+        case.emit(&CaseEvent::Header {
+            version: progress::VERSION,
+            run_id: "run".into(),
+            id: attempt.clone(),
+        })
+        .unwrap();
+        case.emit(&CaseEvent::ScenarioStarted { total_steps: 1 })
+            .unwrap();
+        case.emit(&CaseEvent::StepStarted {
+            index: 1,
+            label: "test".into(),
+            started_unix_ms: progress::unix_ms(),
+        })
+        .unwrap();
+        suite
+            .emit(&SuiteEvent::AttemptStarted {
+                id: attempt,
+                progress_path: "case/progress.jsonl".into(),
+            })
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(4);
+        loop {
+            let view = rx
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .unwrap()
+                .unwrap();
+            if view
+                .active
+                .get(&id())
+                .is_some_and(|active| active.step.is_some())
+            {
+                break;
+            }
+        }
+        suite
+            .emit(&SuiteEvent::RunFinished {
+                outcome: Outcome::Pass,
+            })
+            .unwrap();
+        loop {
+            if rx
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap()
+                .unwrap()
+                .outcome
+                .is_some()
+            {
+                break;
+            }
+        }
+        worker.join().unwrap();
+        drop(case);
+        drop(suite);
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn replay_tracks_retries_and_counts_the_final_case_once() {
@@ -472,6 +674,7 @@ mod tests {
             .emit(&CaseEvent::StepStarted {
                 index: 3,
                 label: "press control".into(),
+                started_unix_ms: progress::unix_ms().saturating_sub(12_000),
             })
             .unwrap();
         let mut view = View::default();
@@ -488,7 +691,7 @@ mod tests {
         })
         .unwrap();
         view.read_cases(&dir).unwrap();
-        assert!(render(&view, false).contains("Step 3/5 · press control"));
+        assert!(render(&view, false).contains("Step 3/5 · press control · 12s"));
         drop(writer);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -533,6 +736,7 @@ mod tests {
             .emit(&CaseEvent::StepStarted {
                 index: 1,
                 label: "Wait for boot ready".into(),
+                started_unix_ms: progress::unix_ms(),
             })
             .unwrap();
         view.read_cases(&dir).unwrap();

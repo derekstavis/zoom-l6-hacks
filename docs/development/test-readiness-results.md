@@ -624,3 +624,8 @@ forced an encoder submission before the button; it recorded one skipped
 submission and verified all 26 button mappings
 (`/private/tmp/l6-panel-interleaving-forced/report.json`). The injected input
 was removed after that diagnostic.
+
+The final 19-case representative run passed with the default four workers
+(`/private/tmp/l6-readiness-representative-head/report.json`). Earlier failures
+and later passes are retained above as timing-sensitive outcomes; the
+representative pass does not replace full-suite qualification.

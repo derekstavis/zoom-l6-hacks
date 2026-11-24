@@ -43,15 +43,48 @@ pub(super) fn run_knob_dialog(
     }
     let inputs = session.engine.inputs.as_ref().unwrap();
     let qmp = &session.engine.management[0];
-    // Callers complete first-boot setup and wait for the mixer before this
-    // check. A static (including blank) OLED is a valid display state.
+    // The project title varies with the selected project. The recorder
+    // transport controls in the middle of this reviewed image do not.
     const READY_GUEST_TIMEOUT_MS: u32 = 30_000;
     const READY_WALL_TIMEOUT_S: u64 = 180;
-    const READY_QUIET_MS: u32 = 1_000;
     const READY_POLL_MS: u64 = 5;
+    let recorder_reference = image::open(
+        l6max_host::paths::repository_root()
+            .join("tests/emulator/references/l6max-recorder-home.png"),
+    )?
+    .to_luma8();
+    if recorder_reference.dimensions() != (128, 64) {
+        return Err("recorder reference must be 128×64".into());
+    }
+    let recorder_controls_visible = |display: &[u8; 1024]| {
+        (16..40).all(|y| {
+            (0..128).all(|x| {
+                let index = ((63 - y) / 8) * 128 + x;
+                let actual = display[index] & (1 << ((63 - y) % 8)) != 0;
+                actual == (recorder_reference.get_pixel(x as u32, y as u32).0[0] >= 128)
+            })
+        })
+    };
+    let wait_recorder_controls = || -> Result<(), Box<dyn std::error::Error>> {
+        let start = inputs.panel.snapshot().guest_ms;
+        let deadline =
+            Instant::now() + Duration::from_secs(wall_timeout_s.min(READY_WALL_TIMEOUT_S));
+        loop {
+            let display = session.poll()?.display;
+            if recorder_controls_visible(&display) {
+                return Ok(());
+            }
+            if inputs.panel.snapshot().guest_ms.wrapping_sub(start)
+                >= guest_timeout_ms.min(READY_GUEST_TIMEOUT_MS)
+                || Instant::now() >= deadline
+            {
+                return Err("recorder controls did not render before knob-dialog checks".into());
+            }
+            thread::sleep(Duration::from_millis(READY_POLL_MS));
+        }
+    };
     let start = inputs.panel.snapshot().guest_ms;
     let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(READY_WALL_TIMEOUT_S));
-    let mut stable: Option<([u8; 1024], u32)> = None;
     loop {
         let display = session.poll()?.display;
         let now = inputs.panel.snapshot().guest_ms;
@@ -62,18 +95,12 @@ pub(super) fn run_knob_dialog(
         );
         let busy = qmp.read_memory(0, l6max::notification_busy, 1)?[0];
         let active = qmp.read_memory(0, l6max::notification_active, 1)?[0];
-        if window == l6max::GUI_RECORDER_WINDOW && busy == 0 && active == 0 {
-            match stable {
-                Some((old, since))
-                    if old == display && now.wrapping_sub(since) >= READY_QUIET_MS =>
-                {
-                    break;
-                }
-                Some((old, _)) if old == display => {}
-                _ => stable = Some((display, now)),
-            }
-        } else {
-            stable = None;
+        if window == l6max::GUI_RECORDER_WINDOW
+            && busy == 0
+            && active == 0
+            && recorder_controls_visible(&display)
+        {
+            break;
         }
         if now.wrapping_sub(start) >= guest_timeout_ms.min(READY_GUEST_TIMEOUT_MS)
             || Instant::now() >= deadline
@@ -275,6 +302,7 @@ pub(super) fn run_knob_dialog(
     }
     inputs.main.tap(0, 120)?;
     wait_window(true)?;
+    wait_recorder_controls()?;
     let non_recorder_guard_passed = true;
 
     let display_callbacks = qmp.read_memory(0, l6max::gui_display_callback_table, 24)?;

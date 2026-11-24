@@ -629,3 +629,18 @@ The final 19-case representative run passed with the default four workers
 (`/private/tmp/l6-readiness-representative-head/report.json`). Earlier failures
 and later passes are retained above as timing-sensitive outcomes; the
 representative pass does not replace full-suite qualification.
+
+The first regenerated SD matrix passed 22 cases and failed the dynamic
+knob-dialog case while the SD access screen was still displayed
+(`/private/tmp/l6-readiness-sd-matrix/report.json`). A four-worker cold-cache
+follow-up exposed a separate sysroot staging race: three patch builds used the
+same process-ID-based temporary directory and failed while one passed
+(`/private/tmp/l6-sd-dialog-home-parallel/report.json`). After giving each
+build a distinct directory, all four builds passed that stage, but two cases
+failed because the checks captured a menu before the recorder rendered or
+assumed every project displayed the same title
+(`/private/tmp/l6-sd-dialog-home-cold-repeat/report.json`). The helper now
+waits for the reviewed recorder controls and firmware state, allowing the
+project title to vary. All four cases then passed together
+(`/private/tmp/l6-sd-dialog-controls-parallel/report.json`). These focused
+passes do not erase the earlier failures; the full SD matrix must be rerun.

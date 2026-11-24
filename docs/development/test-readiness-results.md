@@ -642,5 +642,9 @@ assumed every project displayed the same title
 (`/private/tmp/l6-sd-dialog-home-cold-repeat/report.json`). The helper now
 waits for the reviewed recorder controls and firmware state, allowing the
 project title to vary. All four cases then passed together
-(`/private/tmp/l6-sd-dialog-controls-parallel/report.json`). These focused
-passes do not erase the earlier failures; the full SD matrix must be rerun.
+(`/private/tmp/l6-sd-dialog-controls-parallel/report.json`). The subsequent
+full SD matrix passed all 23 cases with four workers
+(`/private/tmp/l6-readiness-sd-matrix-repeat/report.json`), and browser/native
+patch parity passed for both models
+(`/private/tmp/l6-readiness-wasm-parity-correct/report.json`). These later
+passes do not erase the earlier failures.

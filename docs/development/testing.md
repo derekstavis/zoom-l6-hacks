@@ -242,8 +242,9 @@ The printed artifact directory contains:
 - `progress.jsonl`: live suite events and per-attempt progress streams, displayed with
   `cargo l6test watch /path/to/run` from another terminal. Closing the viewer
   does not stop the run; the report remains the authoritative result. The watcher shows
-  wall time since the current step started, including on late attachment. The
-  summary lists completed steps for each case and attempt, sorted by wall time.
+  wall time since the current step or runner startup phase started, including on late
+  attachment. The summary lists completed runner phases and steps for each case
+  and attempt; steps are sorted by wall time.
   An interrupted step has no completed duration. These wall-clock measurements
   may be affected by host load or system clock changes; they are not guest time. File
   notifications wake a background progress reader, which also checks for missed
@@ -286,16 +287,30 @@ waits and button timing use guest time, with independent wall-clock ceilings.
 ### Report
 
 `report.json` (schema 2) has the run `outcome`, `counts` per outcome, fixture
-`cache` statistics and one result per case, model and backend. Each result
+`cache` statistics, `run_timings` for catalog loading, generation, preflight, selection,
+optional build, staging and case execution, and one result per case, model and backend. Each result
 keeps the schema 1 fields (`case`, `model`, `backend`, `outcome`, `detail`,
 `artifacts`) and adds:
 
 | Field | Meaning |
 | --- | --- |
 | `phase` | Where the case stopped: `preflight`, `fixture` or `execute` |
-| `duration_s`, `timings` | Wall seconds in total, building fixtures and executing |
+| `duration_s`, `timings` | Wall seconds in total, building fixtures and executing; `timings.stages` breaks out driver operations per attempt |
+
 | `identity` | Hashes of what the case ran on: QEMU, the runner executable, the firmware package and unpacked firmware, the card, the state and audio input |
 | `attempts` | Every attempt, when the case was retried |
+
+Stage times include cache waits and I/O, and are recorded even when an operation
+fails. SD stock, loader and module timings are included in SD patch preparation;
+binary hashing and audio input preparation are included in invocation; card
+hashing is included in card preparation. These nested durations must not be
+added to their parents. Runner shutdown is included in execution and is
+measured from the scenario's completion event to child exit when available.
+Parallel case durations also overlap.
+Run preflight includes resolving and, when requested, building QEMU; the
+separate build time covers the selected Cargo executables.
+For an example and the scope of a local hash-stage comparison, see
+[test timing results](test-timing-results.md).
 
 Outcomes:
 

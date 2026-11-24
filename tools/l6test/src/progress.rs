@@ -59,6 +59,12 @@ impl Journal {
             progress_path: path,
         });
     }
+    pub fn run_phase(&self, phase: progress::RunPhase) {
+        self.emit(SuiteEvent::RunPhaseChanged {
+            phase,
+            started_unix_ms: progress::unix_ms(),
+        });
+    }
     pub fn attempt_phase(&self, id: AttemptId, phase: progress::Phase) {
         self.emit(SuiteEvent::AttemptPhaseChanged { id, phase });
     }
@@ -120,7 +126,7 @@ struct Active {
     total: Option<usize>,
     step: Option<(usize, String, u64)>,
     phase: Option<progress::Phase>,
-    case_phase: Option<progress::CasePhase>,
+    case_phase: Option<(progress::CasePhase, u64)>,
     error: Option<String>,
 }
 #[derive(Clone, Default)]
@@ -131,6 +137,7 @@ struct View {
     active: BTreeMap<CaseId, Active>,
     outcome: Option<Outcome>,
     incomplete: bool,
+    run_phase: Option<(progress::RunPhase, u64)>,
 }
 impl View {
     fn suite(&mut self, event: SuiteEvent) -> Result<(), String> {
@@ -150,6 +157,10 @@ impl View {
         match event {
             SuiteEvent::Header { .. } => return Err("duplicate progress header".into()),
             SuiteEvent::RunStarted { total_cases } => self.total = Some(total_cases),
+            SuiteEvent::RunPhaseChanged {
+                phase,
+                started_unix_ms,
+            } => self.run_phase = Some((phase, started_unix_ms)),
             SuiteEvent::AttemptStarted { id, progress_path } => {
                 self.active.insert(
                     id.case.clone(),
@@ -225,7 +236,10 @@ impl View {
                     continue;
                 }
                 match event {
-                    CaseEvent::PhaseChanged { phase } => active.case_phase = Some(phase),
+                    CaseEvent::PhaseChanged {
+                        phase,
+                        started_unix_ms,
+                    } => active.case_phase = Some((phase, started_unix_ms)),
                     CaseEvent::ScenarioStarted { total_steps } => active.total = Some(total_steps),
                     CaseEvent::StepStarted {
                         index,
@@ -291,6 +305,18 @@ fn render(view: &View, color: bool) -> String {
     if view.incomplete {
         s.push_str("  Progress stream ended early; see report.json.\n");
     }
+    if view.active.is_empty()
+        && view.outcome.is_none()
+        && let Some((phase, started)) = &view.run_phase
+    {
+        let label = match phase {
+            progress::RunPhase::Building => "Building executables",
+            progress::RunPhase::Staging => "Staging executables",
+            progress::RunPhase::Executing => "Starting cases",
+        };
+        let seconds = progress::unix_ms().saturating_sub(*started) / 1000;
+        s.push_str(&format!("\n  {label} · {seconds}s\n"));
+    }
     for a in view.active.values() {
         s.push_str(&format!(
             "\n  Running: {} ({}, {})",
@@ -305,11 +331,12 @@ fn render(view: &View, color: bool) -> String {
         if a.step.is_none()
             && let Some(phase) = &a.case_phase
         {
-            let label = match phase {
+            let label = match &phase.0 {
                 progress::CasePhase::StartingEmulator => "Starting emulator",
                 progress::CasePhase::PreparingScenario => "Preparing scenario",
             };
-            s.push_str(&format!("\n    {label}"));
+            let seconds = progress::unix_ms().saturating_sub(phase.1) / 1000;
+            s.push_str(&format!("\n    {label} · {seconds}s"));
         } else if a.step.is_none()
             && let Some(phase) = &a.phase
         {
@@ -651,6 +678,31 @@ mod tests {
         );
     }
     #[test]
+    fn replay_shows_the_current_suite_setup_phase() {
+        let mut view = View::default();
+        view.suite(SuiteEvent::Header {
+            version: progress::VERSION,
+            run_id: "run".into(),
+        })
+        .unwrap();
+        view.suite(SuiteEvent::RunStarted { total_cases: 1 })
+            .unwrap();
+        view.suite(SuiteEvent::RunPhaseChanged {
+            phase: progress::RunPhase::Building,
+            started_unix_ms: progress::unix_ms(),
+        })
+        .unwrap();
+        assert!(render(&view, false).contains("Building executables"));
+        view.suite(SuiteEvent::RunPhaseChanged {
+            phase: progress::RunPhase::Staging,
+            started_unix_ms: progress::unix_ms(),
+        })
+        .unwrap();
+        let rendered = render(&view, false);
+        assert!(rendered.contains("Staging executables"));
+        assert!(!rendered.contains("Building executables"));
+    }
+    #[test]
     fn late_attach_replays_step() {
         let dir = std::env::temp_dir().join(format!("l6-progress-case-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -714,6 +766,7 @@ mod tests {
         writer
             .emit(&CaseEvent::PhaseChanged {
                 phase: progress::CasePhase::StartingEmulator,
+                started_unix_ms: progress::unix_ms(),
             })
             .unwrap();
         let mut view = View::default();

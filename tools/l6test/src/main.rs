@@ -36,7 +36,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     thread,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use supervise::{interrupt, supervise};
 
@@ -212,7 +212,9 @@ fn execute() -> Result<i32, String> {
         schema::write(root)?;
         return Ok(0);
     }
+    let catalog_started = Instant::now();
     let mut catalog = catalog::load(root)?;
+    let catalog_s = catalog_started.elapsed().as_secs_f64();
     if args.command == "list" {
         if args.json {
             let rows = catalog::matrix(&catalog)?;
@@ -269,15 +271,19 @@ fn execute() -> Result<i32, String> {
     let output = fs::canonicalize(output).map_err(|e| e.to_string())?;
     tracing::info!(event="run_started", artifacts=%output.display(), suite=%args.suite, backend=%args.backend, model=%args.model,"smoke run started");
     let _journal = RunJournal(output.clone());
+    let mut run_timings = report::RunTimings::default();
+    run_timings.catalog_s = catalog_s;
     // Cases run from the spec in place; only the generated scenarios are
     // written, into the run, so case processes can load them.
     let generated_dir = output.join("generated");
+    let started = Instant::now();
     catalog::write_generated(&mut catalog, &generated_dir)?;
-    let blocked_report = |error: &str| {
+    run_timings.generated_s = started.elapsed().as_secs_f64();
+    let blocked_report = |error: &str, timings: &report::RunTimings| {
         fs::write(
             output.join("report.json"),
             serde_json::to_vec_pretty(
-                &json!({"schema":report::SCHEMA,"outcome":"BLOCKED","error":error}),
+                &json!({"schema":report::SCHEMA,"outcome":"BLOCKED","error":error,"run_timings":timings}),
             )
             .unwrap(),
         )
@@ -304,10 +310,12 @@ fn execute() -> Result<i32, String> {
         let manifest = json!({"schema":report::SCHEMA,"tooling_commit":git(root,&["rev-parse","HEAD"]),"working_tree":git(root,&["status","--short"]),"tracked_diff_sha256":format!("{:x}",Sha256::digest(git(root,&["diff","--binary","HEAD"]).as_bytes())),"untracked":untracked,"qemu":config.qemu,"qemu_sha256":config.qemu_sha256,"qemu_provenance":"explicitly pinned external binary; build source not attested","scenario_files":catalog::spec_dirs(root)?.iter().map(|dir|Ok((dir.strip_prefix(root).unwrap().display().to_string(),files(dir)?))).collect::<Result<BTreeMap<_,_>,String>>()?,"generated_scenarios":files(&generated_dir)?,"board_sources":files(&root.join("emulator/qemu/hw/arm"))?,"qemu_patches":files(&root.join("emulator/qemu/patches"))?,"logging":{"format":env::var("L6_LOG_FORMAT").unwrap_or_else(|_|"json".into()),"filter":env::var("RUST_LOG").unwrap_or_else(|_|l6max_host::logging::DEFAULT_FILTER.into())},"driver_sha256":hash(&env::current_exe().map_err(|e|e.to_string())?)?,"suite":args.suite,"case":args.case,"backend":args.backend,"model":args.model,"shard":args.shard.map(|s|format!("{}/{}",s.index,s.count)),"rerun":args.rerun,"retries":args.retries});
         Ok((config, manifest))
     };
+    let started = Instant::now();
     let (config, manifest) = match preflight() {
         Ok(v) => v,
         Err(error) => {
-            blocked_report(&error)?;
+            run_timings.preflight_s = started.elapsed().as_secs_f64();
+            blocked_report(&error, &run_timings)?;
             return Err(error);
         }
     };
@@ -316,6 +324,8 @@ fn execute() -> Result<i32, String> {
         serde_json::to_vec_pretty(&manifest).unwrap(),
     )
     .map_err(|e| e.to_string())?;
+    run_timings.preflight_s = started.elapsed().as_secs_f64();
+    let started = Instant::now();
     let suite = catalog.suites.members(&args.suite)?;
     let cases: Vec<&Case> = catalog
         .cases
@@ -397,7 +407,7 @@ fn execute() -> Result<i32, String> {
     }
     let progress = progress::Journal::new(&output, jobs.len());
     let mut packages = BTreeSet::new();
-    let mut needs_l6patch = false;
+    let mut needs_patch_macros = false;
     for job in &jobs {
         let case = job.case;
         if case.blocked.is_some() || case.scenario.is_none() && config.app.is_none() {
@@ -406,32 +416,43 @@ fn execute() -> Result<i32, String> {
         if job.backend == Backend::Gui && case.scenario.is_some() {
             packages.insert("l6max-gui");
         }
-        needs_l6patch |= case
+        needs_patch_macros |= case
             .scenario
             .as_ref()
             .and_then(|path| Scenario::load(&catalog::scenario_file(path)).ok())
             .is_some_and(|scenario| scenario.needs_patch_builder());
     }
-    if args.build {
+    run_timings.selection_s = started.elapsed().as_secs_f64();
+    // Fixture building uses the l6patch library in this process. Payload
+    // compilation needs its procedural macro artifact, not the l6patch CLI.
+    let mut build_packages = packages.clone();
+    if needs_patch_macros {
+        build_packages.insert("patch-hook-macros");
+    }
+    // With no explicit packages Cargo builds workspace defaults (the GUI),
+    // which a headless, non-patching run does not need.
+    if args.build && !build_packages.is_empty() {
+        progress.run_phase(smoke_core::progress::RunPhase::Building);
+        let started = Instant::now();
         let mut command = Command::new("cargo");
         command
             .current_dir(root)
             .args(["build", "--offline", "--locked"]);
-        for package in &packages {
+        for package in &build_packages {
             command.arg("-p").arg(package);
         }
-        if needs_l6patch {
-            command.args(["-p", "l6patch"]);
-        }
         let built = supervise(command, &output, 600);
+        run_timings.build_s = Some(started.elapsed().as_secs_f64());
         if !matches!(built, Ok(true)) {
             let error = built
                 .err()
                 .unwrap_or_else(|| "build failed; inspect stdout.log/stderr.log".into());
-            blocked_report(&error)?;
+            blocked_report(&error, &run_timings)?;
             return Err(error);
         }
     }
+    progress.run_phase(smoke_core::progress::RunPhase::Staging);
+    let started = Instant::now();
     // Resolve Cargo's actual output directory; CARGO_TARGET_DIR or workspace
     // configuration must not make us copy an older binary from root/target.
     let metadata = Command::new("cargo")
@@ -471,6 +492,7 @@ fn execute() -> Result<i32, String> {
     } else {
         RunCache::new(output.join("cache"))
     };
+    run_timings.staging_s = started.elapsed().as_secs_f64();
     let ctx = Context {
         root,
         output: &output,
@@ -559,6 +581,8 @@ fn execute() -> Result<i32, String> {
     };
     // Queue shareable cases first so an exclusive one never idles the pool.
     jobs.sort_by_key(|job| job.exclusive);
+    progress.run_phase(smoke_core::progress::RunPhase::Executing);
+    let started = Instant::now();
     let results = schedule(
         &jobs,
         args.jobs,
@@ -574,12 +598,13 @@ fn execute() -> Result<i32, String> {
             .map_err(|e| e.to_string())
         },
     )?;
+    run_timings.cases_s = started.elapsed().as_secs_f64();
     let (outcome, code) = report::summarize(&results, args.strict);
     let cache_stats = cache.stats();
     let report = report::report(
         &outcome.to_string(),
         &results,
-        json!({"cache": cache_stats, "strict": args.strict, "fixtures_only": args.fixtures_only}),
+        json!({"cache": cache_stats, "strict": args.strict, "fixtures_only": args.fixtures_only, "run_timings": run_timings}),
     );
     fs::write(
         output.join("report.json"),
@@ -592,6 +617,7 @@ fn execute() -> Result<i32, String> {
         &results,
         &cache_stats,
         args.fixtures_only,
+        &run_timings,
     )?;
     progress.complete(outcome);
     Ok(code)

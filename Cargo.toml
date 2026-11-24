@@ -42,6 +42,11 @@ image = { version = "0.25.1", default-features = false, features = ["png"] }
 [profile.dev.package.l6max-host]
 opt-level = 3
 
+# Suite runs hash the pinned runner and QEMU for each case. Keep the same
+# verification in debug builds without paying unoptimized SHA-256 costs.
+[profile.dev.package."sha2@0.10.9"]
+opt-level = 3
+
 [profile.dev.package.gpui-pre]
 opt-level = 1
 [profile.dev.package.resvg]

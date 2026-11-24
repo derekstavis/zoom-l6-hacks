@@ -197,14 +197,17 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
     }
     progress.emit(crate::progress::CaseEvent::PhaseChanged {
         phase: crate::progress::CasePhase::PreparingScenario,
+        started_unix_ms: crate::progress::unix_ms(),
     });
     devices::prepare(&scenario, &mut options)?;
     progress.emit(crate::progress::CaseEvent::PhaseChanged {
         phase: crate::progress::CasePhase::StartingEmulator,
+        started_unix_ms: crate::progress::unix_ms(),
     });
     let mut session = Some(Session::start(&options)?);
     progress.emit(crate::progress::CaseEvent::PhaseChanged {
         phase: crate::progress::CasePhase::PreparingScenario,
+        started_unix_ms: crate::progress::unix_ms(),
     });
     let mut runner = Runner::with_progress(
         scenario,

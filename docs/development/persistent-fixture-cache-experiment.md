@@ -76,7 +76,7 @@ with identical identities and shared the patch, state and card builds
 `/private/tmp/l6-persistent-race-v2-b/report.json`). Unit checks also exercise
 corruption recovery and cache namespace changes after edits to NOR and patch
 sources. QEMU SHA-256 for these trials was
-`d33f3853e30115234b1deb9c4b727dfed13a234fcde2fa18ffe05e7d692a62`;
+`d33f3853e30115234b1deb9c4b727dfed13a234fcdece2fa18ffe05e7d692a62`;
 the external QEMU source was not attested.
 
 ## All-catalog validation

@@ -564,6 +564,14 @@ mod tests {
         }
         let a_cache = RunCache::persistent(&parent, &a).unwrap();
         let b_cache = RunCache::persistent(&parent, &b).unwrap();
+        for cache in [&a_cache, &b_cache] {
+            cache
+                .directory("test", "fixture", |path| {
+                    fs::create_dir_all(path).map_err(|e| e.to_string())?;
+                    fs::write(path.join("fixture"), b"cached").map_err(|e| e.to_string())
+                })
+                .unwrap();
+        }
         let a_root = a_cache.root.clone();
         let b_root = b_cache.root.clone();
         let err = RunCache::clean(&parent, &a).unwrap_err();

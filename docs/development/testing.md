@@ -245,7 +245,9 @@ The printed artifact directory contains:
   wall time since the current step started, including on late attachment. The
   summary lists completed steps for each case and attempt, sorted by wall time.
   An interrupted step has no completed duration. These wall-clock measurements
-  may be affected by host load or system clock changes; they are not guest time.
+  may be affected by host load or system clock changes; they are not guest time. File
+  notifications wake a background progress reader, which also checks for missed
+  notifications once per second. The terminal render loop remains independent.
 - `manifest.json`: source revision, dirty diff/untracked hashes, scenario,
   generated-scenario and board/patch hashes, driver binary and pinned QEMU
   identity.

@@ -31,6 +31,14 @@ pub enum Backend {
     Gui,
 }
 
+/// A deliberate test observation, rather than a readiness delay.
+#[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ObservationActivity {
+    Recording,
+    Playback,
+}
+
 impl Backend {
     pub fn name(self) -> &'static str {
         match self {
@@ -156,6 +164,9 @@ fn default_tone_tolerance_db() -> f64 {
 fn default_max_residual_db() -> f64 {
     -60.
 }
+fn is_zero(value: &u32) -> bool {
+    *value == 0
+}
 fn guest_timeout() -> u32 {
     10_000
 }
@@ -206,6 +217,9 @@ pub enum Action {
     },
     ExpectDisplayImage {
         image: PathBuf,
+        /// Require the matching image to remain visible for this guest time.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        settle_ms: u32,
     },
     ExpectTrace {
         contains: Vec<String>,
@@ -262,7 +276,7 @@ pub enum Action {
     EditorPadPlayback {
         pad: u8,
     },
-    L6maxUiPadAssignment {
+    L6maxUiPadVerify {
         pad: u8,
     },
     SoundPadPlayback {
@@ -327,6 +341,8 @@ pub enum Action {
         /// The selected slot's replacement has produced nonzero output.
         #[serde(default)]
         require_output: bool,
+        #[serde(default)]
+        wait_for_slot: bool,
     },
     ExpectHeap {
         minimum_free: u32,
@@ -368,6 +384,11 @@ pub enum Action {
         until: String,
     },
     Delay {
+        guest_ms: u32,
+    },
+    /// Observe an activity for a test-defined duration of guest time.
+    ObserveDuration {
+        activity: ObservationActivity,
         guest_ms: u32,
     },
     Press {

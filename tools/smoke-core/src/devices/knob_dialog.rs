@@ -19,14 +19,45 @@ pub(super) fn run_knob_dialog(
     }
     let inputs = session.engine.inputs.as_ref().unwrap();
     let qmp = &session.engine.management[0];
+    // Callers complete first-boot setup and wait for the mixer before this
+    // check. A static (including blank) OLED is a valid display state.
+    const READY_GUEST_TIMEOUT_MS: u32 = 30_000;
+    const READY_WALL_TIMEOUT_S: u64 = 180;
+    const READY_QUIET_MS: u32 = 1_000;
+    const READY_POLL_MS: u64 = 5;
     let start = inputs.panel.snapshot().guest_ms;
-    wait_guest(session, start, 40_000, guest_timeout_ms, wall_timeout_s)?;
-    inputs.tap(3, 50)?;
-    let after = inputs.panel.snapshot().guest_ms;
-    wait_guest(session, after, 1_950, guest_timeout_ms, wall_timeout_s)?;
-    inputs.tap(3, 50)?;
-    let after = inputs.panel.snapshot().guest_ms;
-    wait_guest(session, after, 4_950, guest_timeout_ms, wall_timeout_s)?;
+    let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(READY_WALL_TIMEOUT_S));
+    let mut stable: Option<([u8; 1024], u32)> = None;
+    loop {
+        let display = session.poll()?.display;
+        let now = inputs.panel.snapshot().guest_ms;
+        let window = u32::from_le_bytes(
+            qmp.read_memory(0, l6max::current_window, 4)?
+                .try_into()
+                .unwrap(),
+        );
+        let busy = qmp.read_memory(0, l6max::notification_busy, 1)?[0];
+        let active = qmp.read_memory(0, l6max::notification_active, 1)?[0];
+        if window == l6max::GUI_RECORDER_WINDOW && busy == 0 && active == 0 {
+            match stable {
+                Some((old, since))
+                    if old == display && now.wrapping_sub(since) >= READY_QUIET_MS =>
+                {
+                    break;
+                }
+                Some((old, _)) if old == display => {}
+                _ => stable = Some((display, now)),
+            }
+        } else {
+            stable = None;
+        }
+        if now.wrapping_sub(start) >= guest_timeout_ms.min(READY_GUEST_TIMEOUT_MS)
+            || Instant::now() >= deadline
+        {
+            return Err("recorder did not settle before knob-dialog checks".into());
+        }
+        thread::sleep(Duration::from_millis(READY_POLL_MS));
+    }
 
     let word = |address: u32| -> Result<u32, Box<dyn std::error::Error>> {
         Ok(u32::from_le_bytes(
@@ -1490,14 +1521,5 @@ pub(super) fn run_knob_dialog_popup(
         )
         .into());
     }
-    // Let the window close before later steps use the screen.
-    let start = inputs.panel.snapshot().guest_ms;
-    wait_guest(
-        session,
-        start,
-        3000,
-        guest_timeout_ms.max(3500),
-        wall_timeout_s,
-    )?;
     Ok(json!({"turns":turns,"level_raw":raw,"displayed":displayed}))
 }

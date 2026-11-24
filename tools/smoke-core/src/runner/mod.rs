@@ -300,7 +300,7 @@ impl Runner {
             if now.duration_since(entered) > Duration::from_secs(step.wall_timeout_s)
                 || elapsed > step.guest_timeout_ms
             {
-                if let Action::ExpectDisplayImage { image } = &step.action {
+                if let Action::ExpectDisplayImage { image, .. } = &step.action {
                     let path = crate::scenario::spec_path(image)?;
                     return Err(format!(
                         "step {}: {}",
@@ -347,7 +347,7 @@ impl Runner {
                         .ok_or("checkpoint not executed for this model")?;
                     (base.data.display != obs.data.display) == changed
                 }
-                Action::ExpectDisplayImage { image } => {
+                Action::ExpectDisplayImage { image, settle_ms } => {
                     if self.model == Model::L6 {
                         return Err("L6 has no display".into());
                     }
@@ -357,7 +357,20 @@ impl Runner {
                     let path = crate::scenario::spec_path(&image)?;
                     let display = obs.data.display;
                     if devices::reference_differences(&display, &path) == Some(0) {
-                        true
+                        if settle_ms == 0 {
+                            true
+                        } else {
+                            let guest = obs.panel.guest_ms;
+                            match self.settling {
+                                Some((frame, since)) if frame == display => {
+                                    guest.wrapping_sub(since) >= settle_ms
+                                }
+                                _ => {
+                                    self.settling = Some((display, guest));
+                                    false
+                                }
+                            }
+                        }
                     } else if devices::updating_references() {
                         let guest = obs.panel.guest_ms;
                         match self.settling {
@@ -379,6 +392,7 @@ impl Runner {
                             }
                         }
                     } else {
+                        self.settling = None;
                         false
                     }
                 }
@@ -515,8 +529,8 @@ impl Runner {
                         pad,
                     }));
                 }
-                Action::L6maxUiPadAssignment { pad } => {
-                    return Ok(Progress::Device(devices::Operation::L6maxUiPadAssignment {
+                Action::L6maxUiPadVerify { pad } => {
+                    return Ok(Progress::Device(devices::Operation::L6maxUiPadVerify {
                         pad,
                     }));
                 }
@@ -587,6 +601,7 @@ impl Runner {
                     minimum_exit_ring_refreshes,
                     expected_effect,
                     require_output,
+                    wait_for_slot,
                 } => {
                     return Ok(Progress::Device(
                         devices::Operation::EffectReplacementState {
@@ -601,6 +616,7 @@ impl Runner {
                             minimum_exit_ring_refreshes,
                             expected_effect,
                             require_output,
+                            wait_for_slot,
                         },
                     ));
                 }
@@ -830,7 +846,9 @@ impl Runner {
                         leds(obs.data.indicators)[17 + index]
                     }
                 }
-                Action::Delay { guest_ms } => elapsed >= guest_ms,
+                Action::Delay { guest_ms } | Action::ObserveDuration { guest_ms, .. } => {
+                    elapsed >= guest_ms
+                }
                 Action::Switch { control, enabled } => {
                     if !self.dispatched {
                         return self.dispatch(

@@ -104,7 +104,7 @@ pub enum Operation {
     EditorPadPlayback {
         pad: u8,
     },
-    L6maxUiPadAssignment {
+    L6maxUiPadVerify {
         pad: u8,
     },
     SoundPadPlayback {
@@ -148,6 +148,7 @@ pub enum Operation {
         minimum_exit_ring_refreshes: Option<u32>,
         expected_effect: Option<String>,
         require_output: bool,
+        wait_for_slot: bool,
     },
     ExpectHeap {
         minimum_free: u32,
@@ -379,7 +380,7 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
                 | crate::Action::UsbSysex { .. }
                 | crate::Action::EditorPadAssignments
                 | crate::Action::EditorPadPlayback { .. }
-                | crate::Action::L6maxUiPadAssignment { .. }
+                | crate::Action::L6maxUiPadVerify { .. }
         )
     }) {
         options.usb_enabled = false;

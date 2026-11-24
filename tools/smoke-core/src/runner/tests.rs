@@ -39,6 +39,66 @@ fn test_runner(steps: &str) -> Runner {
 }
 
 #[test]
+fn display_reference_settling_requires_a_continuous_matching_guest_interval() {
+    let text = "version=1\nname='display-settle'\nmodels=['l6max']\n[[step]]\naction='expect-display-image'\nimage='tests/emulator/references/l6max-recorder-home.png'\nsettle_ms=500\n";
+    let scenario = Scenario::parse(text).unwrap();
+    let mut runner = Runner::new(
+        scenario,
+        Model::L6max,
+        std::env::temp_dir().join(format!(
+            "smoke-display-settle-{}",
+            NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        )),
+    )
+    .unwrap();
+    let reference = image::open(
+        crate::scenario::spec_path(std::path::Path::new(
+            "tests/emulator/references/l6max-recorder-home.png",
+        ))
+        .unwrap(),
+    )
+    .unwrap()
+    .to_luma8();
+    let mut matched = sample(0);
+    for y in 0..64 {
+        for x in 0..128 {
+            if reference.get_pixel(x, y).0[0] != 0 {
+                let index = ((63 - y as usize) / 8) * 128 + x as usize;
+                matched.data.display[index] |= 1 << ((63 - y as usize) % 8);
+            }
+        }
+    }
+    let now = Instant::now();
+    assert!(matches!(
+        runner.advance(matched.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    matched.panel.guest_ms = 300;
+    matched.data.display[0] ^= 1;
+    assert!(matches!(
+        runner.advance(matched.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    matched.data.display[0] ^= 1;
+    matched.panel.guest_ms = 400;
+    assert!(matches!(
+        runner.advance(matched.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    matched.panel.guest_ms = 899;
+    assert!(matches!(
+        runner.advance(matched.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    matched.panel.guest_ms = 900;
+    assert!(matches!(
+        runner.advance(matched, now).unwrap(),
+        Progress::Complete
+    ));
+    assert!(Scenario::parse(&text.replace("settle_ms=500", "settle_ms=11000")).is_err());
+}
+
+#[test]
 fn direct_usb_midi_cable_is_configurable_and_range_checked() {
     let default = Scenario::parse(
         "version=1\nname='midi'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='direct-usb-midi-round-trip'\n",
@@ -199,6 +259,32 @@ fn guest_time_and_wall_deadlines_are_independent() {
             .contains("timed out")
     );
     fs::remove_dir_all(&stalled.logs).unwrap();
+}
+
+#[test]
+fn activity_observation_uses_its_test_defined_guest_duration() {
+    let mut runner = test_runner(
+        "[[step]]\naction='observe-duration'\nactivity='recording'\nguest_ms=1000\nwall_timeout_s=3\n",
+    );
+    let now = Instant::now();
+    assert!(matches!(
+        runner.advance(sample(200), now).unwrap(),
+        Progress::Waiting
+    ));
+    assert!(matches!(
+        runner
+            .advance(sample(1199), now + Duration::from_secs(2))
+            .unwrap(),
+        Progress::Waiting
+    ));
+    assert!(matches!(
+        runner
+            .advance(sample(1200), now + Duration::from_secs(2))
+            .unwrap(),
+        Progress::Complete
+    ));
+    fs::remove_dir_all(&runner.logs).unwrap();
+    assert!(Scenario::parse("version=1\nname='bad-observation'\nmodels=['l6']\n[[step]]\naction='observe-duration'\nactivity='recording'\nguest_ms=11000\n").is_err());
 }
 #[test]
 fn duplicate_reports_and_unrelated_ring_changes_are_failures() {
@@ -416,12 +502,12 @@ fn editor_pad_assignment_requires_prior_usb_midi_enumeration() {
     ));
     assert!(invalid_pad.unwrap_err().contains("pad must be 0..3"));
     let ui_playback = Scenario::parse(&format!(
-        "{prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='l6max-ui-pad-assignment'\npad=2\n"
+        "{prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='l6max-ui-pad-verify'\npad=2\n"
     ));
     assert!(ui_playback.is_ok());
     let wrong_model = prefix.replace("l6max", "l6");
     let wrong_model = Scenario::parse(&format!(
-        "{wrong_model}[[step]]\naction='usb-descriptors'\n[[step]]\naction='l6max-ui-pad-assignment'\npad=2\n"
+        "{wrong_model}[[step]]\naction='usb-descriptors'\n[[step]]\naction='l6max-ui-pad-verify'\npad=2\n"
     ));
     assert!(wrong_model.unwrap_err().contains("scoped to L6max"));
 }

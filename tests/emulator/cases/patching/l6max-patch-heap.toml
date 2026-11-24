@@ -18,10 +18,14 @@ guest_timeout_ms = 60000
 wall_timeout_s = 300
 
 [[step]]
-action = "delay"
-guest_ms = 8000
-guest_timeout_ms = 20000
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
+guest_timeout_ms = 30000
 wall_timeout_s = 300
+
+[[step]]
+action = "checkpoint"
+name = "recorder-home"
 
 [[step]]
 action = "encoder"
@@ -29,8 +33,9 @@ channel = 1
 steps = 4
 
 [[step]]
-action = "delay"
-guest_ms = 1000
+action = "expect-display"
+checkpoint = "recorder-home"
+changed = true
 guest_timeout_ms = 5000
 wall_timeout_s = 60
 
@@ -40,8 +45,8 @@ channel = 8
 steps = -4
 
 [[step]]
-action = "delay"
-guest_ms = 3000
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
 guest_timeout_ms = 10000
 wall_timeout_s = 120
 
@@ -55,7 +60,8 @@ path = "RECORDER"
 wall_timeout_s = 60
 
 [[step]]
-action = "delay"
+action = "observe-duration"
+activity = "recording"
 guest_ms = 10000
 guest_timeout_ms = 30000
 wall_timeout_s = 300
@@ -75,7 +81,8 @@ action = "press"
 control = "rec-play-stop"
 
 [[step]]
-action = "delay"
+action = "observe-duration"
+activity = "playback"
 guest_ms = 5000
 guest_timeout_ms = 15000
 wall_timeout_s = 300

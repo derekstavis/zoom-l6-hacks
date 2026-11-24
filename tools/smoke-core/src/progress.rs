@@ -177,10 +177,25 @@ pub fn step_label(action: &crate::Action) -> String {
         Action::ExpectMode { mode } => format!("Check {} mode", mode.replace('-', " ")),
         Action::ExpectRing { channel, .. } => format!("Check channel {channel} ring"),
         Action::ExpectMute { channel } => format!("Check channel {channel} mute"),
+        Action::ExpectDisplayImage { image, .. } => format!(
+            "Wait for {} screen",
+            image
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("expected")
+                .replace('-', " ")
+        ),
         Action::Encoder { channel, steps, .. } => {
             format!("Turn channel {channel} encoder ({steps} steps)")
         }
         Action::Delay { guest_ms } => format!("Wait {guest_ms} ms guest time"),
+        Action::ObserveDuration { activity, guest_ms } => {
+            let activity = match activity {
+                crate::scenario::ObservationActivity::Recording => "recording",
+                crate::scenario::ObservationActivity::Playback => "playback",
+            };
+            format!("Observe {activity} for {guest_ms} ms guest time")
+        }
         _ => serde_json::to_value(action)
             .ok()
             .and_then(|v| {
@@ -225,6 +240,20 @@ mod tests {
         assert_eq!(
             step_label(&crate::Action::Delay { guest_ms: 1500 }),
             "Wait 1500 ms guest time"
+        );
+        assert_eq!(
+            step_label(&crate::Action::ObserveDuration {
+                activity: crate::scenario::ObservationActivity::Recording,
+                guest_ms: 10000,
+            }),
+            "Observe recording for 10000 ms guest time"
+        );
+        assert_eq!(
+            step_label(&crate::Action::ExpectDisplayImage {
+                image: "tests/smoke/images/menu-sound-pad.png".into(),
+                settle_ms: 500,
+            }),
+            "Wait for menu sound pad screen"
         );
     }
 }

@@ -96,7 +96,7 @@ pub fn of(action: &Action) -> Requirement {
         | Action::UsbSysex { .. }
         | Action::EditorPadAssignments
         | Action::EditorPadPlayback { .. }
-        | Action::L6maxUiPadAssignment { .. }
+        | Action::L6maxUiPadVerify { .. }
         | Action::SoundPadPlayback { .. }
         | Action::ExpectMemory { .. }
         | Action::ExpectSdPatch { .. }
@@ -128,6 +128,7 @@ pub fn of(action: &Action) -> Requirement {
         | Action::ExpectPowered { .. }
         | Action::Wait { .. }
         | Action::Delay { .. }
+        | Action::ObserveDuration { .. }
         | Action::Press { .. }
         | Action::Hold { .. }
         | Action::SaveScene { .. }

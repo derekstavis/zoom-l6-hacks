@@ -3,7 +3,7 @@ action = "include"
 path = "tests/emulator/fragments/prepared-home.toml"
 
 # L6's encoder sweep passes through a blank-ring interval before MAIN's saved
-# values settle. Recheck the mixer after that interval before sending controls.
+# values settle. Require restored mixer rings before sending controls.
 [[step]]
 models = ["l6"]
 action = "include"

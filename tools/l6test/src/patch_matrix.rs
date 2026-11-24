@@ -338,6 +338,22 @@ fn delay(text: &mut String, guest_ms: u32) {
     step(text, &format!("action = \"delay\"\nguest_ms = {guest_ms}"));
 }
 
+/// L6max must finish rendering the recorder before patch inputs can work.
+/// L6 has no display, so its other delivery paths retain their startup wait.
+fn startup_readiness(text: &mut String, model: Model) {
+    if model == Model::L6max {
+        step(
+            text,
+            "action = \"expect-display-image\"\nimage = \"tests/emulator/references/l6max-recorder-home.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
+        );
+    } else {
+        step(
+            text,
+            "action = \"delay\"\nguest_ms = 8000\nguest_timeout_ms = 20000\nwall_timeout_s = 300",
+        );
+    }
+}
+
 /// Patches rows and System items menu-loader shows for a combination.
 fn menu_rows(
     combination: &Combination,
@@ -431,14 +447,13 @@ fn effect_slot_checks(text: &mut String, combination: &Combination) {
         if index > 0 {
             press(text, "efx-select", 1);
         }
-        delay(text, 1000);
         let effect = combination
             .effects
             .iter()
             .find(|(assigned, _)| assigned == slot)
             .map(|(_, effect)| effect);
         let mut body = format!(
-            "action = \"effect-replacement-state\"\nexpected_effect_type = {}\nexpected_processor_type = {}",
+            "action = \"effect-replacement-state\"\nwait_for_slot = true\nexpected_effect_type = {}\nexpected_processor_type = {}",
             index + 1,
             if effect.is_some() { index + 1 } else { 0 }
         );
@@ -462,12 +477,18 @@ fn menu_checks(
     stock_system_items: &[String],
 ) -> Result<(), String> {
     let (rows, items) = menu_rows(combination, all, stock_system_items)?;
-    // Let earlier input finish: a Knob Dialog window opened by an
-    // encoder turn, or a just-tapped button, would absorb the press.
-    delay(text, 3000);
+    // Earlier input may have opened a Knob Dialog or notification. Wait for
+    // the reviewed home screen to remain visible before opening the menu.
+    step(
+        text,
+        "action = \"expect-display-image\"\nimage = \"tests/emulator/references/l6max-recorder-home.png\"\nsettle_ms = 500\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
+    );
     // Menu, then System at main-menu index 7.
     press(text, "recorder-function-1", 1);
-    delay(text, 1500);
+    step(
+        text,
+        "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-sound-assign/menu-project.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
+    );
     step(
         text,
         &format!(
@@ -483,9 +504,18 @@ fn menu_checks(
         ),
     );
     press(text, "recorder-function-3", 7);
-    delay(text, 500);
+    step(
+        text,
+        "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-patch-menu/main-system.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
+    );
     press(text, "recorder-function-4", 1);
-    delay(text, 1000);
+    step(
+        text,
+        &format!(
+            "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-patch-menu/system-first-{}.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
+            items.len()
+        ),
+    );
     // Open System > Patches and compare its rows as drawn; back in System
     // the cursor stays on Patches. Each item a patch adds comes after
     // Patches, so the actions below move down from there.
@@ -494,9 +524,14 @@ fn menu_checks(
         .position(|item| item == "Patches")
         .ok_or("System menu has no Patches")?;
     press(text, "recorder-function-3", patches);
-    delay(text, 500);
+    step(
+        text,
+        &format!(
+            "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-patch-menu/system-patches-{}.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
+            items.len()
+        ),
+    );
     press(text, "recorder-function-4", 1);
-    delay(text, 1000);
     step(
         text,
         &format!(
@@ -505,7 +540,13 @@ fn menu_checks(
         ),
     );
     press(text, "recorder-function-1", 1);
-    delay(text, 1000);
+    step(
+        text,
+        &format!(
+            "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-patch-menu/system-patches-{}.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
+            items.len()
+        ),
+    );
     // Run each item's action in menu order, moving down from Patches.
     let mut actions: Vec<(usize, &str)> = Vec::new();
     for (name, patch) in &all.order {
@@ -594,14 +635,10 @@ fn combination_case(
         &mut text,
         "action = \"wait\"\nuntil = \"mixer-ready\"\nguest_timeout_ms = 60000\nwall_timeout_s = 300",
     );
-    // L6max's mixer and loader can be ready before its MIDI input path and
-    // recorder screen. Keep their startup allowance until those have their
-    // own readiness signals; the loader claim is not evidence for either.
+    // The L6 SD loader has its own completion signal in `checks`. L6max
+    // also needs its rendered recorder screen before patch input checks.
     if model == Model::L6max || combination.sd.is_empty() {
-        step(
-            &mut text,
-            "action = \"delay\"\nguest_ms = 8000\nguest_timeout_ms = 20000\nwall_timeout_s = 300",
-        );
+        startup_readiness(&mut text, model);
     }
     checks(&mut text, combination, all)?;
     Ok(GeneratedCase {
@@ -648,10 +685,7 @@ fn delivery_cases(model: Model, all: &Checks) -> Result<Vec<GeneratedCase>, Stri
                 &mut text,
                 "action = \"wait\"\nuntil = \"mixer-ready\"\nguest_timeout_ms = 60000\nwall_timeout_s = 300",
             );
-            step(
-                &mut text,
-                "action = \"delay\"\nguest_ms = 8000\nguest_timeout_ms = 20000\nwall_timeout_s = 300",
-            );
+            startup_readiness(&mut text, model);
             checks(&mut text, &combination, all)?;
             cases.push(GeneratedCase {
                 id,
@@ -699,10 +733,7 @@ fn delivery_cases(model: Model, all: &Checks) -> Result<Vec<GeneratedCase>, Stri
                 &mut text,
                 "action = \"wait\"\nuntil = \"mixer-ready\"\nguest_timeout_ms = 60000\nwall_timeout_s = 300",
             );
-            step(
-                &mut text,
-                "action = \"delay\"\nguest_ms = 8000\nguest_timeout_ms = 20000\nwall_timeout_s = 300",
-            );
+            startup_readiness(&mut text, model);
             let hosted = Combination {
                 firmware: Vec::new(),
                 sd: Vec::new(),

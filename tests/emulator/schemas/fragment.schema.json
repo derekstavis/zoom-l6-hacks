@@ -17,6 +17,14 @@
       ],
       "type": "string"
     },
+    "ObservationActivity": {
+      "description": "A deliberate test observation, rather than a readiness delay.",
+      "enum": [
+        "recording",
+        "playback"
+      ],
+      "type": "string"
+    },
     "PadAssignmentSource": {
       "enum": [
         "editor",
@@ -176,6 +184,12 @@
                 "$ref": "#/definitions/Model"
               },
               "type": "array"
+            },
+            "settle_ms": {
+              "description": "Require the matching image to remain visible for this guest time.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
             },
             "setup_input": {
               "default": false,
@@ -996,7 +1010,7 @@
           "additionalProperties": false,
           "properties": {
             "action": {
-              "const": "l6max-ui-pad-assignment",
+              "const": "l6max-ui-pad-verify",
               "type": "string"
             },
             "guest_timeout_ms": {
@@ -1744,6 +1758,10 @@
               "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
               "type": "boolean"
             },
+            "wait_for_slot": {
+              "default": false,
+              "type": "boolean"
+            },
             "wall_timeout_s": {
               "default": 180,
               "format": "uint64",
@@ -2411,6 +2429,54 @@
           },
           "required": [
             "action",
+            "guest_ms"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Observe an activity for a test-defined duration of guest time.",
+          "properties": {
+            "action": {
+              "const": "observe-duration",
+              "type": "string"
+            },
+            "activity": {
+              "$ref": "#/definitions/ObservationActivity"
+            },
+            "guest_ms": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "activity",
             "guest_ms"
           ],
           "type": "object"
@@ -4049,7 +4115,7 @@
             "usb-sysex",
             "editor-pad-assignments",
             "editor-pad-playback",
-            "l6max-ui-pad-assignment",
+            "l6max-ui-pad-verify",
             "sound-pad-playback",
             "l6-recorder-playback",
             "l6max-recorder-playback",
@@ -4073,6 +4139,7 @@
             "expect-settings",
             "wait",
             "delay",
+            "observe-duration",
             "press",
             "hold",
             "save-scene",

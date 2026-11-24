@@ -61,7 +61,8 @@ action = "press"
 control = "rec-record"
 
 [[step]]
-action = "delay"
+action = "observe-duration"
+activity = "recording"
 guest_ms = 5000
 guest_timeout_ms = 20000
 wall_timeout_s = 300

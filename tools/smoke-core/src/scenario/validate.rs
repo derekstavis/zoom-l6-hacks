@@ -82,22 +82,19 @@ impl Scenario {
             }
             match &step.action {
                 Action::EditorPadAssignments => pad_assignments_seen = true,
-                Action::L6maxUiPadAssignment { pad } => {
+                Action::L6maxUiPadVerify { pad } => {
                     if !usb_descriptors_seen {
                         return Err(
-                            "l6max-ui-pad-assignment requires a preceding usb-descriptors step"
-                                .into(),
+                            "l6max-ui-pad-verify requires a preceding usb-descriptors step".into(),
                         );
                     }
                     if *pad > 3 {
-                        return Err("l6max-ui-pad-assignment pad must be 0..3".into());
+                        return Err("l6max-ui-pad-verify pad must be 0..3".into());
                     }
                     if value.models.as_slice() != [Model::L6max]
                         || step.models.iter().any(|model| *model != Model::L6max)
                     {
-                        return Err(
-                            "l6max-ui-pad-assignment scenarios must be scoped to L6max".into()
-                        );
+                        return Err("l6max-ui-pad-verify scenarios must be scoped to L6max".into());
                     }
                 }
                 Action::EditorPadPlayback { pad } => {
@@ -159,6 +156,11 @@ impl Scenario {
             }
             if step.wall_timeout_s == 0 || step.guest_timeout_ms == 0 {
                 return Err("timeouts must be positive".into());
+            }
+            if let Action::ObserveDuration { guest_ms, .. } = &step.action
+                && (*guest_ms == 0 || *guest_ms > step.guest_timeout_ms)
+            {
+                return Err("observation duration must fit within the guest timeout".into());
             }
             if step.models.iter().any(|m| !value.models.contains(m)) {
                 return Err("step model outside scenario scope".into());
@@ -338,10 +340,15 @@ impl Scenario {
                 }
             }
             match &step.action {
-                Action::ExpectDisplayImage { image } => {
+                Action::ExpectDisplayImage { image, settle_ms } => {
                     spec_path(image)?;
                     if image.extension().is_none_or(|extension| extension != "png") {
                         return Err("expect-display-image needs a PNG image".into());
+                    }
+                    if *settle_ms > step.guest_timeout_ms {
+                        return Err(
+                            "expect-display-image settle_ms exceeds the guest timeout".into()
+                        );
                     }
                 }
                 Action::Checkpoint { name } => {

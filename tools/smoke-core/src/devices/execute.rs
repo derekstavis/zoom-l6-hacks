@@ -93,22 +93,38 @@ impl State {
                 minimum_exit_ring_refreshes,
                 expected_effect,
                 require_output,
-            } => Ok(effect_replacement_state(
-                options,
-                session,
-                expected_effect_type,
-                expected_processor_type,
-                expected_panel_mode,
-                expected_edit_mode,
-                minimum_parameter_edits,
-                expected_parameter_id,
-                expected_parameter_value,
-                expected_dialog_active,
-                minimum_exit_ring_refreshes,
-                expected_effect.as_deref(),
-                require_output,
-            )
-            .map_err(std::io::Error::other)?),
+                wait_for_slot,
+            } => {
+                if wait_for_slot {
+                    wait_effect_slot(
+                        options,
+                        session,
+                        expected_effect_type,
+                        expected_processor_type,
+                        expected_effect.as_deref(),
+                        require_output,
+                        guest_timeout_ms,
+                        wall_timeout_s,
+                    )
+                    .map_err(std::io::Error::other)?;
+                }
+                Ok(effect_replacement_state(
+                    options,
+                    session,
+                    expected_effect_type,
+                    expected_processor_type,
+                    expected_panel_mode,
+                    expected_edit_mode,
+                    minimum_parameter_edits,
+                    expected_parameter_id,
+                    expected_parameter_value,
+                    expected_dialog_active,
+                    minimum_exit_ring_refreshes,
+                    expected_effect.as_deref(),
+                    require_output,
+                )
+                .map_err(std::io::Error::other)?)
+            }
             Operation::ExpectSdPatch {
                 loaded,
                 chain_count,
@@ -1500,11 +1516,11 @@ impl State {
                     wall_timeout_s,
                 )
             }
-            Operation::L6maxUiPadAssignment { pad } => {
+            Operation::L6maxUiPadVerify { pad } => {
                 let endpoints = self
                     .midi
-                    .ok_or("l6max-ui-pad-assignment needs preceding USB MIDI enumeration")?;
-                run_l6max_ui_pad_assignment(
+                    .ok_or("l6max-ui-pad-verify needs preceding USB MIDI enumeration")?;
+                run_l6max_ui_pad_verify(
                     session,
                     options,
                     endpoints,

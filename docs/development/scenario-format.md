@@ -83,6 +83,7 @@ card-reader mode), stays unmarked.
 | --- | --- | --- |
 | `wait` | `until = "boot-ready"`, `"mixer-ready"` or `"panel-settled"` | Boot waits for the full LED sweep, then an L6 mode lamp or L6max pixels; prepared mixer readiness requires nonzero values on every visible ring and, on L6, a lit mode lamp; settling waits for one guest second of unchanged output |
 | `delay` | `guest_ms` | Wait on guest time, not host time |
+| `observe-duration` | `activity` (`recording` or `playback`), `guest_ms` | Observe an already-started activity for a test-defined duration in guest time; start and verify the activity separately |
 | `include` | `path` | Expand a strict `[[step]]` fragment named from the repository root; cycles and depth (eight) are checked |
 | `select-mode` | `mode` | Pass if the mode lamp is lit; otherwise wait for one guest second of stable panel output and press the mode button |
 | `switch` | `control`, `enabled` | Set a latching switch using its real GUI toggle or one headless electrical edge |
@@ -125,11 +126,14 @@ motion is additionally covered by production gesture unit tests.
 
 For UI behavior, use `expect-display-image` to compare the rendered 128×64
 L6max pixels with a reviewed PNG, named from the repository root (normally
-under `tests/emulator/references/`, or a patch's
+under `tests/smoke/images/`, or an existing `tests/emulator/references/` or patch's
 `tests/emulator/references/` for its own UI). Comparison is exact after converting the reference to
 black-and-white pixels. Review the screenshot before updating a reference;
 memory and firmware-state assertions may supplement image comparisons but do
-not establish that the UI rendered correctly.
+not establish that the UI rendered correctly. Set `settle_ms` when the
+matching image must remain visible for a guest-time interval before the next
+step; it defaults to zero. This is a stability requirement, not a polling
+interval or wall-time timeout.
 
 Supported semantic controls include each physical channel mute, modes
 `eq-high`, `freq`, `mid`, `low`, `aux1`, `aux2`, `efx`, `pan`, `level` and L6max
@@ -170,7 +174,7 @@ is rejected when it loads.
 | `knob-dialog` | — | Patched L6max only; compare all ten parameter scenes with reviewed display images, then verify heap lifetime, busy-aware expiry, display cleanup, widget restoration and exact encoder reports |
 | `knob-dialog-popup` | — | L6max with Knob Dialog, on the recorder screen; turn the channel 1 level knob and require the dialog's state, display callback and value text for the new level, then let the window close |
 | `expect-menu` | `menu`, optional `path`, `items` | L6max; read a menu's children from guest memory and require exactly the titles in `items`. `menu` is `main`, `project`, `sound-pad`, `mixer` or `system`; `path` descends through child titles. Menu Loader adds its rows when the menu is first entered |
-| `effect-replacement-state` | optional `expected_effect_type`, `expected_processor_type`, `expected_effect`, `require_output` and other module fields | L6max effect replacement bundle; compare the selected stock slot and the loader's state with the expectations. `expected_effect` is the effect ID running in the selected slot; `require_output` requires that slot's replacement to have produced nonzero output |
+| `effect-replacement-state` | optional `expected_effect_type`, `expected_processor_type`, `expected_effect`, `require_output`, `wait_for_slot` and other module fields | L6max effect replacement bundle; compare the selected stock slot and the loader's state with the expectations. `expected_effect` is the effect ID running in the selected slot; `require_output` requires that slot's replacement to have produced nonzero output; `wait_for_slot` waits for the selected slot and processor and, when output is required, a fresh nonzero output count |
 | `firmware-update` | — | L6 and L6max disposable-state update lifecycle, corrupt-checksum rejection, NOR segment install, L6max panel programming, protected-region preservation and clean restart; an `update_patches` package additionally checks model-specific post-install behavior |
 | `power-press` | `hold_ms`, `powered` | Check expected power result, model cutoff timing and stopped clock |
 | `restart` | — | Retire the session before reopening its isolated persistent state; reset readiness, trace counters and action baselines |

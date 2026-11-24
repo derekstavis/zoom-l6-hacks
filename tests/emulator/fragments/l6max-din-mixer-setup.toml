@@ -1,29 +1,12 @@
 [[step]]
-action = "delay"
-guest_ms = 40000
-guest_timeout_ms = 50000
-wall_timeout_s = 180
-
-# Confirm the startup prompts. A state spec boots without them.
-[[step]]
-setup_input = true
-action = "press"
-control = "recorder.confirm"
+action = "include"
+path = "tests/emulator/fragments/l6max-first-boot-setup.toml"
 
 [[step]]
-setup_input = true
-action = "delay"
-guest_ms = 1950
-
-[[step]]
-setup_input = true
-action = "press"
-control = "recorder.confirm"
-
-[[step]]
-setup_input = true
-action = "delay"
-guest_ms = 4950
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
 
 [[step]]
 action = "usb-descriptors"

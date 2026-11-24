@@ -14,7 +14,7 @@ path = "tests/emulator/fragments/editor-pad-setup-l6.toml"
 
 [[step]]
 action = "include"
-path = "tests/emulator/fragments/editor-pad-setup-l6max.toml"
+path = "tests/emulator/fragments/l6max-first-boot-setup.toml"
 
 [[step]]
 action = "include"

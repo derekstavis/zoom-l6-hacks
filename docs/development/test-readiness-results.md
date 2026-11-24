@@ -613,3 +613,14 @@ updated (`/private/tmp/l6-readiness-representative-final/report.json`). The
 popup check now waits for a changed mixer value and the matching consumed
 dialog mailbox and text. The full dialog case and generated firmware and SD
 popup cases passed together afterward (`/private/tmp/l6-popup-value-ready/report.json`).
+
+Another 19-case parallel sample passed 18 and timed out on the L6 panel-event
+observer, although the expected button packet reached MAIN
+(`/private/tmp/l6-readiness-representative-verified/report.json`). The
+observer now steps over an unrelated submission before continuing. A focused
+four-worker run passed (`/private/tmp/l6-panel-resume-parallel/report.json`)
+but did not encounter an unrelated submission. A temporary diagnostic then
+forced an encoder submission before the button; it recorded one skipped
+submission and verified all 26 button mappings
+(`/private/tmp/l6-panel-interleaving-forced/report.json`). The injected input
+was removed after that diagnostic.

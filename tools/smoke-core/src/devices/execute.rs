@@ -812,11 +812,12 @@ impl State {
                 gdb.breakpoint(main_event_submit, true)?;
                 inputs.down(target, 0)?;
                 let deadline = Instant::now() + Duration::from_secs(15);
+                let mut skipped_reports = 0u32;
                 let bytes = loop {
                     let remaining = deadline.saturating_duration_since(Instant::now());
                     if remaining.is_zero() {
                         return Err(format!(
-                            "panel target {target} did not submit a button report"
+                            "panel target {target} did not submit a button report after {skipped_reports} unrelated submissions"
                         )
                         .into());
                     }
@@ -843,6 +844,13 @@ impl State {
                     // Other panel activity can submit events between input
                     // injection and the button report, especially at boot.
                     if !matches!(bytes[0], 0x90 | 0x91) {
+                        skipped_reports += 1;
+                        // Continuing from a software breakpoint can stop on
+                        // the same instruction again. Step over the unrelated
+                        // submission before waiting for the next one.
+                        gdb.breakpoint(main_event_submit, false)?;
+                        gdb.request("s")?;
+                        gdb.breakpoint(main_event_submit, true)?;
                         continue;
                     }
                     break bytes;
@@ -889,7 +897,9 @@ impl State {
                     }
                     thread::sleep(Duration::from_millis(5));
                 }
-                Ok(json!({"target":target,"column":column,"row":row,"event":event,"report":bytes}))
+                Ok(
+                    json!({"target":target,"column":column,"row":row,"event":event,"report":bytes,"skipped_reports":skipped_reports}),
+                )
             }
             Operation::WaitRecordedFiles { files } => {
                 const GUEST_TIMEOUT_MS: u32 = 20_000;

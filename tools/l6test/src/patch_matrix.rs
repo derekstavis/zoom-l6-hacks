@@ -566,9 +566,27 @@ fn menu_checks(
     for (index, steps) in actions {
         press(text, "recorder-function-3", index - cursor);
         delay(text, 500);
+        if items[index] == "Send MIDI State" && combination.installs("dump-rom") {
+            step(
+                text,
+                "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-patch-menu/system-send-midi-state-10.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 120",
+            );
+        }
         press(text, "recorder-function-4", 1);
         cursor = index;
         include(text, steps);
+        if items[index] == "Dump ROM" {
+            // The dump's final file appears before its completion popup
+            // clears. Do not let the next Down press dismiss that popup.
+            step(
+                text,
+                "action = \"wait-memory\"\nsymbol = \"notification_busy\"\nbytes = [0]\nguest_timeout_ms = 30000\nwall_timeout_s = 120",
+            );
+            step(
+                text,
+                "action = \"wait-memory\"\nsymbol = \"notification_active\"\nbytes = [0]\nguest_timeout_ms = 30000\nwall_timeout_s = 120",
+            );
+        }
     }
     Ok(())
 }

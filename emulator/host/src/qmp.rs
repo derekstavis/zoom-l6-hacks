@@ -5,7 +5,7 @@ use std::{
     io::{self, BufRead, BufReader, Read},
     net::Shutdown,
     os::unix::net::UnixStream,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, TryLockError},
     time::{Duration, Instant},
 };
 
@@ -78,8 +78,29 @@ impl QmpClient {
 
     fn execute<C: Command>(&self, command: &C) -> io::Result<C::Ok> {
         let mut management = self.management.lock().unwrap();
-        management.inner_mut().get_mut_read().get_mut().deadline = Instant::now() + REQUEST_TIMEOUT;
+        Self::execute_locked(&mut management, command, Instant::now() + REQUEST_TIMEOUT)
+    }
+
+    /// Execute while holding the management connection, with one deadline for
+    /// the request. A shorter enclosing deadline also bounds socket writes.
+    fn execute_locked<C: Command>(
+        management: &mut Management,
+        command: &C,
+        deadline: Instant,
+    ) -> io::Result<C::Ok> {
         let started = Instant::now();
+        let remaining = deadline
+            .checked_duration_since(started)
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::TimedOut, "QMP request deadline exceeded")
+            })?;
+        let request_deadline = deadline.min(started + REQUEST_TIMEOUT);
+        management.inner_mut().get_mut_read().get_mut().deadline = request_deadline;
+        management
+            .inner()
+            .get_ref_write()
+            .set_write_timeout(Some(remaining.min(REQUEST_TIMEOUT)))?;
         let result = management.execute(command);
         let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
         if matches!(result, Err(qapi::ExecuteError::Io(_))) {
@@ -94,7 +115,14 @@ impl QmpClient {
             }
             Err(error) => {
                 tracing::warn!(target: "l6max_host::qmp", event = "qmp_command", command = C::NAME, elapsed_ms, outcome = "error", error = %error, "QMP command failed");
-                Err(io::Error::from(error))
+                if Instant::now() >= request_deadline {
+                    Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "QMP request deadline exceeded",
+                    ))
+                } else {
+                    Err(io::Error::from(error))
+                }
             }
         }
     }
@@ -214,19 +242,36 @@ impl QmpClient {
     /// Request a reset and wait until QEMU reports completing that reset.
     /// This is a reset barrier, not a firmware or panel readiness signal.
     pub fn system_reset_and_wait(&self, timeout: Duration) -> io::Result<()> {
-        // Capture older events without letting an earlier RESET satisfy this
-        // request. Preserve all other events for the normal consumer.
-        self.query_status()?;
-        let old_events = self.drain_management_events();
-        self.preserved_events.lock().unwrap().extend(old_events);
-        self.system_reset()?;
         let deadline = Instant::now() + timeout;
+        // Keep event ownership from the pre-reset pump through the matching
+        // event. A concurrent clone may issue commands or drain events, so it
+        // must not be able to consume the event between a query and its drain.
+        let mut management = loop {
+            match self.management.try_lock() {
+                Ok(management) => break management,
+                Err(TryLockError::Poisoned(_)) => panic!("QMP management lock poisoned"),
+                Err(TryLockError::WouldBlock) => {
+                    let remaining = deadline
+                        .checked_duration_since(Instant::now())
+                        .filter(|remaining| !remaining.is_zero())
+                        .ok_or_else(|| {
+                            io::Error::new(io::ErrorKind::TimedOut, "QMP reset event timed out")
+                        })?;
+                    std::thread::sleep(remaining.min(Duration::from_millis(10)));
+                }
+            }
+        };
+        Self::execute_locked(&mut management, &qmp::query_status {}, deadline)?;
+        self.preserved_events
+            .lock()
+            .unwrap()
+            .extend(management.events());
+        Self::execute_locked(&mut management, &qmp::system_reset {}, deadline)?;
         loop {
-            self.query_status()?;
-            let events = self.drain_management_events();
+            Self::execute_locked(&mut management, &qmp::query_status {}, deadline)?;
             let mut found = false;
             let mut preserved = self.preserved_events.lock().unwrap();
-            for event in events {
+            for event in management.events() {
                 if !found
                     && matches!(
                         event,
@@ -248,13 +293,13 @@ impl QmpClient {
             if found {
                 return Ok(());
             }
-            if Instant::now() >= deadline {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "QMP reset event timed out",
-                ));
-            }
-            std::thread::sleep(Duration::from_millis(10));
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .filter(|remaining| !remaining.is_zero())
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::TimedOut, "QMP reset event timed out")
+                })?;
+            std::thread::sleep(remaining.min(Duration::from_millis(10)));
         }
     }
 
@@ -543,6 +588,96 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert!(matches!(events[0], qmp::Event::RESET { .. }));
         assert!(matches!(events[1], qmp::Event::STOP { .. }));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn reset_wait_exclusively_owns_events_against_concurrent_drain() {
+        use std::sync::mpsc;
+        let (client, mut peer) = UnixStream::pair().unwrap();
+        let (query_tx, query_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let mut reader = BufReader::new(peer.try_clone().unwrap());
+            greeting(&mut peer);
+            expect_command(&mut reader, "qmp_capabilities");
+            peer.write_all(b"{\"return\":{}}\r\n").unwrap();
+            expect_command(&mut reader, "query-status");
+            peer.write_all(
+                b"{\"return\":{\"running\":true,\"singlestep\":false,\"status\":\"running\"}}\r\n",
+            )
+            .unwrap();
+            expect_command(&mut reader, "system_reset");
+            peer.write_all(b"{\"return\":{}}\r\n").unwrap();
+            expect_command(&mut reader, "query-status");
+            query_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            peer.write_all(b"{\"event\":\"RESET\",\"data\":{\"guest\":false,\"reason\":\"host-qmp-system-reset\"},\"timestamp\":{\"seconds\":3,\"microseconds\":0}}\r\n{\"return\":{\"running\":true,\"singlestep\":false,\"status\":\"running\"}}\r\n").unwrap();
+        });
+        let client = QmpClient::connect(client).unwrap();
+        let reset_client = client.clone();
+        let reset =
+            thread::spawn(move || reset_client.system_reset_and_wait(Duration::from_secs(2)));
+        query_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let (drain_tx, drain_rx) = mpsc::channel();
+        let drain = thread::spawn(move || drain_tx.send(client.drain_events()).unwrap());
+        assert!(drain_rx.recv_timeout(Duration::from_millis(50)).is_err());
+        release_tx.send(()).unwrap();
+        reset.join().unwrap().unwrap();
+        assert!(
+            drain_rx
+                .recv_timeout(Duration::from_secs(1))
+                .unwrap()
+                .is_empty()
+        );
+        drain.join().unwrap();
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn reset_deadline_bounds_a_stalled_status_reply() {
+        let (client, mut peer) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || {
+            let mut reader = BufReader::new(peer.try_clone().unwrap());
+            greeting(&mut peer);
+            expect_command(&mut reader, "qmp_capabilities");
+            peer.write_all(b"{\"return\":{}}\r\n").unwrap();
+            expect_command(&mut reader, "query-status");
+            thread::sleep(Duration::from_millis(1_200));
+        });
+        let client = QmpClient::connect(client).unwrap();
+        let started = Instant::now();
+        assert_eq!(
+            client
+                .system_reset_and_wait(Duration::from_millis(60))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::TimedOut
+        );
+        assert!(started.elapsed() < Duration::from_millis(800));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn reset_deadline_includes_waiting_for_a_busy_connection() {
+        let (client, mut peer) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || {
+            let mut reader = BufReader::new(peer.try_clone().unwrap());
+            greeting(&mut peer);
+            expect_command(&mut reader, "qmp_capabilities");
+            peer.write_all(b"{\"return\":{}}\r\n").unwrap();
+        });
+        let client = QmpClient::connect(client).unwrap();
+        let held = client.management.lock().unwrap();
+        let clone = client.clone();
+        let started = Instant::now();
+        let reset = thread::spawn(move || clone.system_reset_and_wait(Duration::from_millis(60)));
+        assert_eq!(
+            reset.join().unwrap().unwrap_err().kind(),
+            io::ErrorKind::TimedOut
+        );
+        assert!(started.elapsed() < Duration::from_millis(800));
+        drop(held);
         server.join().unwrap();
     }
 

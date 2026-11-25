@@ -989,6 +989,33 @@ impl Runner {
                         devices::Operation::KnobDialogConfirmInvalidTag,
                     ));
                 }
+                Action::KnobDialogSettleLevel { artifact } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogSettleLevel {
+                            artifact: artifact.clone(),
+                        },
+                    ));
+                }
+                Action::KnobDialogInjectInvalidSignature => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogInjectInvalidSignature,
+                    ));
+                }
+                Action::KnobDialogObserveInvalidSignature { guest_ms } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogObserveInvalidSignature { guest_ms },
+                    ));
+                }
+                Action::KnobDialogSampleInvalidSignature => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogSampleInvalidSignature,
+                    ));
+                }
+                Action::KnobDialogRestoreInvalidSignature => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogRestoreInvalidSignature,
+                    ));
+                }
                 Action::KnobDialog => {
                     return Ok(Progress::Device(devices::Operation::KnobDialog));
                 }

@@ -279,6 +279,17 @@ pub fn step_label(action: &crate::Action) -> String {
         }
         Action::KnobDialogWaitInvalidTag => "Wait for invalid tag discard".into(),
         Action::KnobDialogConfirmInvalidTag => "Confirm invalid tag discard".into(),
+        Action::KnobDialogSettleLevel { artifact } => {
+            format!("Settle channel 1 level ({artifact})")
+        }
+        Action::KnobDialogInjectInvalidSignature => "Inject invalid state signature".into(),
+        Action::KnobDialogObserveInvalidSignature { guest_ms } => {
+            format!("Observe invalid signature for {guest_ms} ms guest time")
+        }
+        Action::KnobDialogSampleInvalidSignature => "Sample invalid signature rejection".into(),
+        Action::KnobDialogRestoreInvalidSignature => {
+            "Restore state and check signature rejection".into()
+        }
         Action::SelectMode { mode } => format!("Select {} mode", mode.replace('-', " ")),
         Action::ExpectMode { mode } => format!("Check {} mode", mode.replace('-', " ")),
         Action::ExpectRing { channel, .. } => format!("Check channel {channel} ring"),

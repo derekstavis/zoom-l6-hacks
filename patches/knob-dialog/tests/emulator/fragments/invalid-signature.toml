@@ -1,0 +1,33 @@
+[[step]]
+action = "knob-dialog-settle-level"
+artifact = "window-scene-before-invalid-state-metadata"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-inject-invalid-signature"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-observe-invalid-signature"
+guest_ms = 150
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-sample-invalid-signature"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-restore-invalid-signature"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-settle-level"
+artifact = "window-scene-after-invalid-state-metadata"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+

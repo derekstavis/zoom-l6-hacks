@@ -117,6 +117,11 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobDialogInjectInvalidTag { .. }
         | Action::KnobDialogWaitInvalidTag
         | Action::KnobDialogConfirmInvalidTag
+        | Action::KnobDialogSettleLevel { .. }
+        | Action::KnobDialogInjectInvalidSignature
+        | Action::KnobDialogObserveInvalidSignature { .. }
+        | Action::KnobDialogSampleInvalidSignature
+        | Action::KnobDialogRestoreInvalidSignature
         | Action::CaptureDisplay { .. }
         | Action::ExpectCapturedDisplayImage { .. }
         | Action::KnobDialog

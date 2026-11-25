@@ -626,6 +626,15 @@ pub enum Action {
     },
     KnobDialogWaitInvalidTag,
     KnobDialogConfirmInvalidTag,
+    KnobDialogSettleLevel {
+        artifact: String,
+    },
+    KnobDialogInjectInvalidSignature,
+    KnobDialogObserveInvalidSignature {
+        guest_ms: u32,
+    },
+    KnobDialogSampleInvalidSignature,
+    KnobDialogRestoreInvalidSignature,
     KnobDialog,
     /// Turn the channel 1 level knob once on the recorder screen and check
     /// that Knob Dialog shows the new value.
@@ -977,6 +986,23 @@ pub(crate) fn valid_invalid_tag_steps(steps: &[&Step]) -> bool {
         && matches!(inject2.action, Action::KnobDialogInjectInvalidTag { tag } if tag >> 4 >= 8 && tag & 0x0f <= 9)
         && matches!(wait2.action, Action::KnobDialogWaitInvalidTag)
         && matches!(confirm2.action, Action::KnobDialogConfirmInvalidTag))
+}
+
+pub(crate) fn valid_invalid_signature_steps(steps: &[&Step]) -> bool {
+    let valid_artifact = |name: &str| {
+        !name.is_empty()
+            && name.len() <= 64
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    };
+    matches!(steps, [before, inject, observe, sample, restore, after]
+        if matches!(&before.action, Action::KnobDialogSettleLevel { artifact } if valid_artifact(artifact))
+        && matches!(inject.action, Action::KnobDialogInjectInvalidSignature)
+        && matches!(observe.action, Action::KnobDialogObserveInvalidSignature { guest_ms } if guest_ms > 0 && guest_ms <= observe.guest_timeout_ms)
+        && matches!(sample.action, Action::KnobDialogSampleInvalidSignature)
+        && matches!(restore.action, Action::KnobDialogRestoreInvalidSignature)
+        && matches!(&after.action, Action::KnobDialogSettleLevel { artifact } if valid_artifact(artifact)))
 }
 
 /// Expand includes. A fragment is shared, so its steps scoped only to models

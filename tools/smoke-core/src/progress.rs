@@ -219,6 +219,22 @@ pub fn step_label(action: &crate::Action) -> String {
                 .unwrap_or("expected")
                 .replace('-', " ")
         ),
+        Action::EnqueueEncoder { channel, steps, .. } => {
+            format!("Enqueue channel {channel} encoder ({steps} steps)")
+        }
+        Action::HostMidiExpectCc {
+            channel,
+            controller,
+        } => format!("Wait for MIDI CC {controller} on channel {channel}"),
+        Action::HostMidiSendCc {
+            channel,
+            controller,
+            value,
+        } => format!("Send MIDI CC {controller}={value} on channel {channel}"),
+        Action::HostMidiSettle { guest_ms } => format!("Settle MIDI for {guest_ms} ms guest time"),
+        Action::ExpectRingChanged { channel, .. } => {
+            format!("Wait for channel {channel} ring change")
+        }
         Action::Encoder { channel, steps, .. } => {
             format!("Turn channel {channel} encoder ({steps} steps)")
         }

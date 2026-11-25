@@ -256,6 +256,34 @@ pub enum Action {
         value: u8,
     },
     HostMidiRoundTrip,
+    HostMidiConnect,
+    HostMidiBegin,
+    HostMidiEnd,
+    EnqueueEncoder {
+        channel: usize,
+        steps: i32,
+        #[serde(default)]
+        midi_transaction: bool,
+    },
+    HostMidiExpectCc {
+        channel: u8,
+        controller: u8,
+    },
+    HostMidiSettle {
+        guest_ms: u32,
+    },
+    HostMidiSendCc {
+        channel: u8,
+        controller: u8,
+        value: u8,
+    },
+    ExpectRingChanged {
+        channel: usize,
+        checkpoint: String,
+        #[serde(default)]
+        midi_transaction: bool,
+    },
+
     DirectUsbMidiRoundTrip {
         #[serde(default = "default_midi_cable")]
         cable: u8,

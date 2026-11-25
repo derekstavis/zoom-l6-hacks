@@ -236,6 +236,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     if options.state_dir.is_none() {
                         return Err("restart requires isolated persistent state".into());
                     }
+                    device_state.restarted();
                     drop(session.take());
                     options.logs = options.logs.join("restart");
                     let mut restart_options = options.clone();
@@ -244,7 +245,6 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         restart_options.no_sd = true;
                     }
                     session = Some(Session::start(&restart_options)?);
-                    device_state.restarted();
                     runner.restarted(&options.logs);
                     runner.trace_file(options.logs.join(if options.trace_sd {
                         "sdhci.trace"

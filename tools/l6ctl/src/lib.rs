@@ -221,6 +221,18 @@ impl<'a> OwnedControl<'a> {
             .ok_or(ControlError::Unavailable("QEMU management unavailable"))
     }
 
+    /// Enqueue a one-based encoder input, without waiting for guest acknowledgment.
+    pub fn encoder(&self, channel: u32, steps: i32) -> Result<AxisReceipt, ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
+        control::enqueue_encoder(inputs, self.engine.model(), channel, steps)
+            .map_err(ControlError::Rejected)?;
+        Ok(AxisReceipt { channel, steps })
+    }
+
     pub fn rtos_heap(&self) -> Result<freertos::HeapSnapshot, ControlError> {
         freertos::heap(self.main_qmp()?, self.engine.model()).map_err(ControlError::Rejected)
     }

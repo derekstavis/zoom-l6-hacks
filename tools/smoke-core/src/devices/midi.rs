@@ -830,7 +830,7 @@ impl State {
         // step opened one: a direct USB client would compete with the native
         // bridge for the same endpoints.
         let mut direct = None;
-        if self.host_midi.is_none() {
+        if self.host_midi.is_none() && self.native_midi.is_none() {
             let usb = session
                 .engine
                 .usb
@@ -840,11 +840,14 @@ impl State {
                 l6ctl::midi::MidiSession::connect_direct(usb, 1).map_err(std::io::Error::other)?,
             );
         }
-        let mixer: &mut dyn crate::host_midi::Client = match (&mut self.host_midi, &mut direct) {
-            (Some(client), _) => client.as_mut(),
-            (None, Some(client)) => client,
-            (None, None) => unreachable!("one USB client was opened above"),
-        };
+        let mixer: &mut dyn crate::host_midi::Client =
+            if let Some(client) = self.native_midi.as_mut() {
+                client
+            } else if let Some(client) = self.host_midi.as_mut() {
+                client.as_mut()
+            } else {
+                direct.as_mut().expect("one USB client was opened above")
+            };
         let ring = || l6max_host::indicators::rings(inputs.panel.snapshot().indicators)[0];
         let timeout = Duration::from_secs(wall_timeout_s.min(3));
 
@@ -963,8 +966,7 @@ impl State {
     ) -> Result<Value, Box<dyn std::error::Error>> {
         let model = session.engine.model();
         let client = self
-            .host_midi
-            .as_mut()
+            .host_midi_client()
             .ok_or("host-midi-sync requires a preceding host-midi-round-trip action")?;
         let start = session
             .engine
@@ -1262,8 +1264,7 @@ impl State {
             .into());
         }
         let client = self
-            .host_midi
-            .as_mut()
+            .host_midi_client()
             .ok_or("L6 ring-pin sweep requires a preceding direct USB MIDI operation")?;
         let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
         client.send(&[0xb0, cc, 0]).map_err(std::io::Error::other)?;
@@ -1334,8 +1335,7 @@ impl State {
             );
         }
         let client = self
-            .host_midi
-            .as_mut()
+            .host_midi_client()
             .ok_or("L6 mute-indicator probe requires a preceding direct USB MIDI operation")?;
         let expected = [
             [0, 0, 0, 0, 1 << 11, 0, 0, 0],
@@ -1390,5 +1390,650 @@ impl State {
             observations.push(json!({"channel":channel + 1,"cc":cc,"on":on,"off":off}));
         }
         Ok(json!({"channels":observations}))
+    }
+}
+
+/// Retry endpoint discovery without letting the independent ten-second cap
+/// exceed the scenario's overall wall or guest budget.
+struct ConnectBudget {
+    guest_start: u32,
+    guest_timeout_ms: u32,
+    overall_deadline: Instant,
+}
+
+fn retry_native_midi<T>(
+    mut connect: impl FnMut() -> Result<T, String>,
+    mut pump: impl FnMut() -> Result<(), String>,
+    mut guest_now: impl FnMut() -> u32,
+    mut now: impl FnMut() -> Instant,
+    mut sleep: impl FnMut(Duration),
+    budget: ConnectBudget,
+) -> Result<T, String> {
+    let deadline = (now() + Duration::from_secs(10)).min(budget.overall_deadline);
+    loop {
+        if now() >= deadline
+            || guest_now().wrapping_sub(budget.guest_start) > budget.guest_timeout_ms
+        {
+            return Err(
+                "native MIDI endpoint did not appear before the connection deadline".into(),
+            );
+        }
+        match connect() {
+            Ok(client) => {
+                if now() >= deadline
+                    || guest_now().wrapping_sub(budget.guest_start) > budget.guest_timeout_ms
+                {
+                    return Err(
+                        "native MIDI endpoint appeared after the connection deadline".into(),
+                    );
+                }
+                return Ok(client);
+            }
+            Err(error) if error.contains("missing native MIDI") => {
+                pump()?;
+                if guest_now().wrapping_sub(budget.guest_start) > budget.guest_timeout_ms {
+                    return Err(
+                        "native MIDI endpoint did not appear before the guest timeout".into(),
+                    );
+                }
+                let remaining = deadline.saturating_duration_since(now());
+                if remaining.is_zero() {
+                    return Err(
+                        "native MIDI endpoint did not appear before the connection deadline".into(),
+                    );
+                }
+                sleep(Duration::from_millis(25).min(remaining));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Timing shared by the native host MIDI scenario's individual steps.
+pub(super) struct MidiRoundTrip {
+    guest_start: u32,
+    receive_start: u32,
+    deadline: Instant,
+    overall_deadline: Instant,
+    guest_timeout_ms: u32,
+    midi_sent_at: Option<Instant>,
+}
+
+impl MidiRoundTrip {
+    fn receive_expired(&self, now: Instant, guest_now: u32) -> bool {
+        now >= self.deadline.min(self.overall_deadline)
+            || guest_now.wrapping_sub(self.receive_start) > self.guest_timeout_ms
+            || self.exceeded(now, guest_now)
+    }
+
+    fn exceeded(&self, now: Instant, guest_now: u32) -> bool {
+        now > self.overall_deadline
+            || guest_now.wrapping_sub(self.guest_start) > self.guest_timeout_ms
+    }
+}
+
+fn poll_timed_control_change(
+    context: &MidiRoundTrip,
+    mut poll: impl FnMut() -> Result<Option<l6ctl::midi::ControlChange>, String>,
+    mut now: impl FnMut() -> Instant,
+    mut guest_now: impl FnMut() -> u32,
+) -> Result<Option<l6ctl::midi::ControlChange>, String> {
+    let message = poll()?;
+    if context.receive_expired(now(), guest_now()) {
+        Ok(None)
+    } else {
+        Ok(message)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RingObservation {
+    Changed,
+    Waiting,
+    Expired,
+}
+
+fn ring_observation(
+    before: [u32; 8],
+    after: [u32; 8],
+    index: usize,
+    now: Instant,
+    deadline: Instant,
+) -> RingObservation {
+    if now >= deadline {
+        RingObservation::Expired
+    } else if l6max_host::indicators::rings(after)[index]
+        != l6max_host::indicators::rings(before)[index]
+    {
+        RingObservation::Changed
+    } else {
+        RingObservation::Waiting
+    }
+}
+
+fn uses_midi_budget(operation: &Operation) -> bool {
+    !matches!(
+        operation,
+        Operation::ExpectRingChanged {
+            midi_transaction: false,
+            ..
+        } | Operation::EnqueueEncoder {
+            midi_transaction: false,
+            ..
+        }
+    )
+}
+
+impl State {
+    fn end_midi_transaction(&mut self) -> Result<(), String> {
+        self.midi_round_trip
+            .take()
+            .map(|_| ())
+            .ok_or_else(|| "host MIDI transaction is not active".into())
+    }
+
+    pub(super) fn run_declarative_midi(
+        &mut self,
+        session: &Session,
+        operation: Operation,
+        guest_timeout_ms: u32,
+        wall_timeout_s: u64,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        use l6ctl::midi::{ControlChange, MidiSession};
+        let inputs = session
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or("MIDI test needs inputs")?;
+        if matches!(operation, Operation::HostMidiConnect) {
+            if self.host_midi.is_some() || self.native_midi.is_some() {
+                return Err("host MIDI client already connected".into());
+            }
+            let started = Instant::now();
+            let guest_start = inputs.panel.snapshot().guest_ms;
+            let endpoint = l6max_host::host_midi::endpoint_name(
+                &l6max_host::host_midi::port_names_for_model_with_namespace(
+                    session.engine.model(),
+                    midi_namespace().as_deref(),
+                )[1],
+            );
+            // This retries exactly the same endpoint race as existing MIDI consumers.
+            let client = retry_native_midi(
+                || MidiSession::connect_native(&endpoint),
+                || session.poll().map(|_| ()),
+                || inputs.panel.snapshot().guest_ms,
+                Instant::now,
+                thread::sleep,
+                ConnectBudget {
+                    guest_start,
+                    guest_timeout_ms,
+                    overall_deadline: started + Duration::from_secs(wall_timeout_s),
+                },
+            )
+            .map_err(|error| {
+                let bridge = session
+                    .engine
+                    .midi
+                    .as_ref()
+                    .map(|midi| midi.status.lock().unwrap().clone())
+                    .unwrap_or_else(|| "USB MIDI bridge unavailable".into());
+                std::io::Error::other(format!("{error}; bridge status: {bridge}"))
+            })?;
+            self.native_midi = Some(client);
+            self.midi_round_trip = Some(MidiRoundTrip {
+                guest_start,
+                receive_start: inputs.panel.snapshot().guest_ms,
+                deadline: Instant::now() + Duration::from_secs(wall_timeout_s.min(30)),
+                overall_deadline: started + Duration::from_secs(wall_timeout_s),
+                guest_timeout_ms,
+                midi_sent_at: None,
+            });
+            return Ok(json!({"endpoint": endpoint}));
+        }
+        if matches!(operation, Operation::HostMidiEnd) {
+            self.end_midi_transaction()?;
+            return Ok(json!({"transaction": "ended"}));
+        }
+        if matches!(operation, Operation::HostMidiBegin) {
+            if self.native_midi.is_none() {
+                return Err("host-midi-begin requires a connected native MIDI session".into());
+            }
+            if self.midi_round_trip.is_some() {
+                return Err("host MIDI transaction is already active".into());
+            }
+            let now = Instant::now();
+            let guest = inputs.panel.snapshot().guest_ms;
+            self.midi_round_trip = Some(MidiRoundTrip {
+                guest_start: guest,
+                receive_start: guest,
+                deadline: now + Duration::from_secs(wall_timeout_s.min(30)),
+                overall_deadline: now + Duration::from_secs(wall_timeout_s),
+                guest_timeout_ms,
+                midi_sent_at: None,
+            });
+            return Ok(json!({"transaction": "started"}));
+        }
+        let independent_operation = !uses_midi_budget(&operation);
+        if matches!(
+            operation,
+            Operation::EnqueueEncoder {
+                midi_transaction: true,
+                ..
+            }
+        ) && self.midi_round_trip.is_none()
+        {
+            return Err("encoder input requires an active host MIDI transaction".into());
+        }
+        if let Some(context) = &self.midi_round_trip {
+            if !independent_operation
+                && context.exceeded(Instant::now(), inputs.panel.snapshot().guest_ms)
+            {
+                return Err("device operation exceeded its shared deadline".into());
+            }
+        }
+        let result = match operation {
+            Operation::EnqueueEncoder {
+                channel,
+                steps,
+                midi_transaction,
+            } => {
+                if midi_transaction
+                    && self
+                        .midi_round_trip
+                        .as_ref()
+                        .is_some_and(|context| Instant::now() >= context.deadline)
+                {
+                    return Err("host MIDI receive deadline elapsed before encoder input".into());
+                }
+                let receipt =
+                    l6ctl::OwnedControl::new(&session.engine).encoder(channel as u32, steps)?;
+                json!({"channel": receipt.channel, "steps": receipt.steps})
+            }
+            Operation::HostMidiExpectCc {
+                channel,
+                controller,
+            } => {
+                let context = self.midi_round_trip.as_ref().ok_or(
+                    "host MIDI transaction is not active; run host-midi-connect or host-midi-begin",
+                )?;
+                let client = self
+                    .native_midi
+                    .as_mut()
+                    .ok_or("host MIDI client unavailable")?;
+                let mut found = None;
+                let mut observed = std::collections::VecDeque::new();
+                while !context.receive_expired(Instant::now(), inputs.panel.snapshot().guest_ms) {
+                    session.poll()?;
+                    if context.receive_expired(Instant::now(), inputs.panel.snapshot().guest_ms) {
+                        break;
+                    }
+                    if let Some(message) = poll_timed_control_change(
+                        context,
+                        || client.poll_control_change(),
+                        Instant::now,
+                        || inputs.panel.snapshot().guest_ms,
+                    )
+                    .map_err(std::io::Error::other)?
+                    {
+                        let bytes = message.to_bytes().map_err(std::io::Error::other)?;
+                        if message.channel == channel && message.controller == controller {
+                            found = Some(bytes);
+                            break;
+                        }
+                        if observed.len() == 8 {
+                            observed.pop_front();
+                        }
+                        observed.push_back(bytes);
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+                let message = found.ok_or_else(|| std::io::Error::other(format!(
+                    "expected host MIDI CC channel {channel}, controller {controller}; observed {observed:02x?}"
+                )))?;
+                json!({"encoder_cc": message})
+            }
+            Operation::HostMidiSettle { guest_ms } => {
+                let context = self.midi_round_trip.as_ref().ok_or(
+                    "host MIDI transaction is not active; run host-midi-connect or host-midi-begin",
+                )?;
+                let start = inputs.panel.snapshot().guest_ms;
+                while inputs.panel.snapshot().guest_ms.wrapping_sub(start) < guest_ms {
+                    session.poll()?;
+                    let now = inputs.panel.snapshot().guest_ms;
+                    if Instant::now() >= context.deadline.min(context.overall_deadline)
+                        || context.exceeded(Instant::now(), now)
+                    {
+                        return Err(format!(
+                            "guest did not advance {guest_ms} ms before the shared MIDI deadline"
+                        )
+                        .into());
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+                json!({"guest_ms": guest_ms})
+            }
+            Operation::HostMidiSendCc {
+                channel,
+                controller,
+                value,
+            } => {
+                let context = self.midi_round_trip.as_mut().ok_or(
+                    "host MIDI transaction is not active; run host-midi-connect or host-midi-begin",
+                )?;
+                let message = ControlChange {
+                    channel,
+                    controller,
+                    value,
+                };
+                self.native_midi
+                    .as_mut()
+                    .ok_or("host MIDI client unavailable")?
+                    .send_control_change(message)
+                    .map_err(std::io::Error::other)?;
+                context.midi_sent_at = Some(Instant::now());
+                json!({"midi_cc": message.to_bytes().map_err(std::io::Error::other)?})
+            }
+            Operation::ExpectRingChanged {
+                channel,
+                before,
+                midi_transaction,
+            } => {
+                let deadline = if midi_transaction {
+                    let context = self
+                        .midi_round_trip
+                        .as_ref()
+                        .ok_or("ring assertion requires an active host MIDI transaction")?;
+                    let sent = context
+                        .midi_sent_at
+                        .ok_or("ring assertion requires a host MIDI CC sent in this transaction")?;
+                    (sent + Duration::from_secs(wall_timeout_s)).min(context.overall_deadline)
+                } else {
+                    Instant::now() + Duration::from_secs(wall_timeout_s)
+                };
+                let index = channel
+                    .checked_sub(1)
+                    .ok_or("ring channel must be positive")?;
+                let after = loop {
+                    session.poll()?;
+                    let after = inputs.panel.snapshot().indicators;
+                    let observation =
+                        ring_observation(before, after, index, Instant::now(), deadline);
+                    if observation == RingObservation::Expired
+                        || midi_transaction
+                            && self.midi_round_trip.as_ref().is_some_and(|context| {
+                                context.exceeded(Instant::now(), inputs.panel.snapshot().guest_ms)
+                            })
+                    {
+                        return Err(std::io::Error::other(format!("channel {channel} ring did not change; expected different ring from baseline; before={before:08x?}, last_after={after:08x?}")).into());
+                    }
+                    if observation == RingObservation::Changed {
+                        break after;
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                };
+                json!({"channel": channel, "indicator_before": before, "indicator_after": after})
+            }
+            _ => unreachable!(),
+        };
+        if let Some(context) = &self.midi_round_trip {
+            if !independent_operation
+                && context.exceeded(Instant::now(), inputs.panel.snapshot().guest_ms)
+            {
+                return Err("device operation exceeded its shared deadline".into());
+            }
+        }
+        Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod declarative_midi_tests {
+    use super::*;
+    use std::{
+        collections::VecDeque,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+    };
+
+    struct FakeClient {
+        queue: VecDeque<[u8; 3]>,
+        released: Arc<AtomicBool>,
+    }
+    impl crate::host_midi::Client for FakeClient {
+        fn send(&mut self, _: &[u8]) -> Result<(), String> {
+            Ok(())
+        }
+        fn poll(&mut self) -> Result<Option<[u8; 3]>, String> {
+            Ok(self.queue.pop_front())
+        }
+        fn release(&mut self) {
+            self.released.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn restart_releases_subscription_and_discards_queued_messages_and_deadline() {
+        let released = Arc::new(AtomicBool::new(false));
+        let client = FakeClient {
+            queue: VecDeque::from([[0xb0, 83, 1]]),
+            released: released.clone(),
+        };
+        let start = Instant::now();
+        let mut state = State::default();
+        state.host_midi = Some(Box::new(client));
+        state.midi_round_trip = Some(MidiRoundTrip {
+            guest_start: 0,
+            receive_start: 0,
+            deadline: start,
+            overall_deadline: start,
+            guest_timeout_ms: 1,
+            midi_sent_at: None,
+        });
+        state.restarted();
+        assert!(released.load(Ordering::SeqCst));
+        assert!(state.native_midi.is_none());
+        assert!(state.midi_round_trip.is_none());
+        let replacement = FakeClient {
+            queue: VecDeque::from([[0xb0, 81, 2]]),
+            released: Arc::new(AtomicBool::new(false)),
+        };
+        state.host_midi = Some(Box::new(replacement));
+        assert_eq!(
+            state.host_midi.as_mut().unwrap().poll().unwrap(),
+            Some([0xb0, 81, 2])
+        );
+        assert!(state.host_midi.as_mut().unwrap().poll().unwrap().is_none());
+    }
+
+    #[test]
+    fn endpoint_retry_respects_short_wall_and_guest_budgets() {
+        use std::cell::Cell;
+        let start = Instant::now();
+        let now = Cell::new(start);
+        let attempts = Cell::new(0);
+        let result: Result<(), String> = retry_native_midi(
+            || {
+                attempts.set(attempts.get() + 1);
+                Err("missing native MIDI source".into())
+            },
+            || Ok(()),
+            || 0,
+            || now.get(),
+            |duration| now.set(now.get() + duration),
+            ConnectBudget {
+                guest_start: 0,
+                guest_timeout_ms: 1000,
+                overall_deadline: start + Duration::from_millis(4),
+            },
+        );
+        assert!(result.unwrap_err().contains("connection deadline"));
+        assert_eq!(attempts.get(), 1);
+        assert_eq!(now.get(), start + Duration::from_millis(4));
+
+        let now = Cell::new(start);
+        let result: Result<(), String> = retry_native_midi(
+            || Err("missing native MIDI source".into()),
+            || Ok(()),
+            || 0,
+            || now.get(),
+            |duration| now.set(now.get() + duration),
+            ConnectBudget {
+                guest_start: 0,
+                guest_timeout_ms: 1000,
+                overall_deadline: start + Duration::from_secs(120),
+            },
+        );
+        assert!(result.unwrap_err().contains("connection deadline"));
+        assert_eq!(now.get(), start + Duration::from_secs(10));
+
+        let guest = Cell::new(0);
+        let result: Result<(), String> = retry_native_midi(
+            || Err("missing native MIDI source".into()),
+            || {
+                guest.set(2);
+                Ok(())
+            },
+            || guest.get(),
+            || start,
+            |_| panic!("guest deadline should stop before sleep"),
+            ConnectBudget {
+                guest_start: 0,
+                guest_timeout_ms: 1,
+                overall_deadline: start + Duration::from_secs(120),
+            },
+        );
+        assert!(result.unwrap_err().contains("guest timeout"));
+    }
+
+    #[test]
+    fn unrelated_encoder_and_ring_actions_do_not_use_midi_budget() {
+        assert!(!uses_midi_budget(&Operation::EnqueueEncoder {
+            channel: 1,
+            steps: 1,
+            midi_transaction: false
+        }));
+        assert!(uses_midi_budget(&Operation::EnqueueEncoder {
+            channel: 1,
+            steps: 1,
+            midi_transaction: true
+        }));
+        assert!(!uses_midi_budget(&Operation::ExpectRingChanged {
+            channel: 1,
+            before: [0; 8],
+            midi_transaction: false
+        }));
+        assert!(uses_midi_budget(&Operation::ExpectRingChanged {
+            channel: 1,
+            before: [0; 8],
+            midi_transaction: true
+        }));
+    }
+
+    #[test]
+    fn matching_cc_returned_after_poll_deadline_is_not_accepted() {
+        use std::cell::Cell;
+        let start = Instant::now();
+        let now = Cell::new(start);
+        let context = MidiRoundTrip {
+            guest_start: 0,
+            receive_start: 0,
+            deadline: start + Duration::from_secs(3),
+            overall_deadline: start + Duration::from_secs(10),
+            guest_timeout_ms: 1000,
+            midi_sent_at: None,
+        };
+        let message = l6ctl::midi::ControlChange {
+            channel: 0,
+            controller: 81,
+            value: 7,
+        };
+        let received = poll_timed_control_change(
+            &context,
+            || {
+                now.set(start + Duration::from_secs(3));
+                Ok(Some(message))
+            },
+            || now.get(),
+            || 0,
+        )
+        .unwrap();
+        assert!(received.is_none());
+        let received =
+            poll_timed_control_change(&context, || Ok(Some(message)), || start, || 0).unwrap();
+        assert_eq!(received, Some(message));
+    }
+
+    #[test]
+    fn ring_changes_must_arrive_before_the_declared_deadline() {
+        let start = Instant::now();
+        let deadline = start + Duration::from_secs(3);
+        let before = [0; 8];
+        let mut changed = before;
+        changed[0] = 1 << (2 ^ 7);
+        assert_eq!(
+            ring_observation(before, before, 0, start, deadline),
+            RingObservation::Waiting
+        );
+        assert_eq!(
+            ring_observation(before, changed, 0, start, deadline),
+            RingObservation::Changed
+        );
+        assert_eq!(
+            ring_observation(before, changed, 0, deadline, deadline),
+            RingObservation::Expired
+        );
+    }
+
+    #[test]
+    fn finishing_transaction_drops_budget_but_retains_pending_queue() {
+        let start = Instant::now();
+        let released = Arc::new(AtomicBool::new(false));
+        let mut state = State::default();
+        state.host_midi = Some(Box::new(FakeClient {
+            queue: VecDeque::from([[0xb0, 81, 7]]),
+            released: released.clone(),
+        }));
+        state.midi_round_trip = Some(MidiRoundTrip {
+            guest_start: 0,
+            receive_start: 0,
+            deadline: start,
+            overall_deadline: start,
+            guest_timeout_ms: 1,
+            midi_sent_at: Some(start),
+        });
+        state.end_midi_transaction().unwrap();
+        assert!(state.midi_round_trip.is_none());
+        assert!(
+            state
+                .end_midi_transaction()
+                .unwrap_err()
+                .contains("not active")
+        );
+        assert!(!released.load(Ordering::SeqCst));
+        assert_eq!(
+            state.host_midi.as_mut().unwrap().poll().unwrap(),
+            Some([0xb0, 81, 7])
+        );
+    }
+
+    #[test]
+    fn shared_overall_budget_includes_guest_wraparound() {
+        let start = Instant::now();
+        let context = MidiRoundTrip {
+            guest_start: u32::MAX - 5,
+            receive_start: 10,
+            deadline: start + Duration::from_secs(30),
+            overall_deadline: start + Duration::from_secs(120),
+            guest_timeout_ms: 20,
+            midi_sent_at: None,
+        };
+        assert!(!context.receive_expired(start + Duration::from_secs(29), 14));
+        assert!(context.receive_expired(start + Duration::from_secs(30), 14));
+        assert!(context.receive_expired(start + Duration::from_secs(1), 31));
+        assert!(!context.exceeded(start + Duration::from_secs(119), 14));
+        assert!(context.exceeded(start + Duration::from_secs(121), 14));
+        assert!(context.exceeded(start + Duration::from_secs(1), 15));
     }
 }

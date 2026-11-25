@@ -90,6 +90,13 @@ mod recorded_wav_tests {
 
 impl State {
     pub fn restarted(&mut self) {
+        if let Some(mut client) = self.native_midi.take() {
+            client.release();
+        }
+        if let Some(mut client) = self.host_midi.take() {
+            client.release();
+        }
+        self.midi_round_trip = None;
         self.midi = None;
     }
     pub fn execute(
@@ -1597,6 +1604,21 @@ impl State {
                 }
                 send_and_wait(value)?;
                 Ok(json!({"received":midi,"sent":[0x1b,0xb0,cc,value]}))
+            }
+            Operation::HostMidiConnect => self.run_declarative_midi(
+                session,
+                Operation::HostMidiConnect,
+                guest_timeout_ms,
+                wall_timeout_s,
+            ),
+            operation @ (Operation::HostMidiBegin
+            | Operation::HostMidiEnd
+            | Operation::EnqueueEncoder { .. }
+            | Operation::HostMidiExpectCc { .. }
+            | Operation::HostMidiSettle { .. }
+            | Operation::HostMidiSendCc { .. }
+            | Operation::ExpectRingChanged { .. }) => {
+                self.run_declarative_midi(session, operation, guest_timeout_ms, wall_timeout_s)
             }
             Operation::HostMidiRoundTrip => {
                 self.run_host_midi_round_trip(session, guest_timeout_ms, wall_timeout_s, None, true)

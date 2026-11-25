@@ -153,12 +153,38 @@ devices require `backends = ["headless"]`; a scenario that names another backend
 is rejected when it loads.
 `trace_sd = true` enables SD trace instrumentation (also enabled by `sd-card`).
 
+Native MIDI steps retain one session and its receive queue across steps. `host-midi-connect`
+starts the first bounded transaction. A ring assertion with `midi_transaction = true`
+uses the last CC send as its deadline anchor; a plain ring assertion is
+independent. `host-midi-end` completes the transaction without closing the
+session, and `host-midi-begin` starts another transaction on that session.
+Receive, settle, and send steps require an active transaction. Encoder input channels are one-based; MIDI channels use the zero-based wire convention,
+matching `l6ctl midi`. `enqueue-encoder` reports enqueueing without waiting for
+the normal encoder acknowledgment, and `expect-ring-changed` compares a named
+checkpoint without requiring encoder reports. A native MIDI session cannot share
+USB endpoints with direct USB operations in the same scenario. The existing
+L6max DIN mixer setup uses direct USB descriptors and SysEx, so it cannot be
+combined with the native bridge in one scenario under this policy. The migrated
+`host-midi` case enqueues one explicit -4 turn; repeated legacy round trips still
+alternate direction. Typed MIDI receive filters non-CC ALSA events. Connection
+retries honor the shared guest and wall limits while retaining the independent
+10-second discovery cap. Ring observations at or after the declared wall deadline
+fail even if the ring changed by that observation.
+
 | Action | Fields | Contract |
 | --- | --- | --- |
 | `sd-card` | `inserted` | QMP removal or insertion of the case's copied card |
 | `usb-descriptors` | — | Validate device/configuration descriptors and SET_CONFIGURATION |
 | `usb-midi` | `value` | Require the preceding encoder input's model-mapped channel-1 CC on USB MIDI IN, then send that CC with `value` |
 | `host-midi-round-trip` | — | Verify host MIDI input/output delivery through the configured host MIDI backend |
+| `host-midi-connect` | — | Connect the model's native mixer endpoint and start the first MIDI transaction |
+| `host-midi-begin` | — | Start a new bounded transaction on the retained session |
+| `host-midi-end` | — | End the active transaction while retaining the session and its queue |
+| `enqueue-encoder` | `channel`, `steps`, optional `midi_transaction` | Enqueue an encoder input without waiting for guest acknowledgment; optionally enforce the active MIDI budget |
+| `host-midi-expect-cc` | `channel`, `controller` | Wait for a matching CC on the retained native session |
+| `host-midi-settle` | `guest_ms` | Allow guest time to pass within the shared MIDI deadline |
+| `host-midi-send-cc` | `channel`, `controller`, `value` | Send a CC through the retained native session |
+| `expect-ring-changed` | `channel`, `checkpoint`, optional `midi_transaction` | Wait for a ring to differ from a named checkpoint; when `midi_transaction` is true, anchor its deadline at the MIDI send |
 | `direct-usb-midi-round-trip` | optional `cable` (0–15), `expect_ring_change` (defaults to true) | Check the encoder report and channel-1 mixer CC on a selected USB MIDI cable; set `expect_ring_change = false` to verify other cables are ignored |
 | `l6-din-usb-forwarding` | — | Verify L6 DIN-to-USB forwarding behavior |
 | `host-midi-sync` | optional `request` (default `true`) | Send the CC 127 state request on the client of a preceding round trip and collect the model's full Control Change reply. With `request = false`, only collect a reply to a request made another way, such as the **Send MIDI State** menu item |

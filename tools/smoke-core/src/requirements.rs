@@ -98,6 +98,14 @@ pub fn of(action: &Action) -> Requirement {
         | Action::UsbStorage
         | Action::UsbMidi { .. }
         | Action::HostMidiRoundTrip
+        | Action::HostMidiConnect
+        | Action::HostMidiBegin
+        | Action::HostMidiEnd
+        | Action::EnqueueEncoder { .. }
+        | Action::HostMidiExpectCc { .. }
+        | Action::HostMidiSettle { .. }
+        | Action::HostMidiSendCc { .. }
+        | Action::ExpectRingChanged { .. }
         | Action::DirectUsbMidiRoundTrip { .. }
         | Action::HostMidiSync { .. }
         | Action::L6MidiSync

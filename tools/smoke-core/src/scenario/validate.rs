@@ -398,7 +398,8 @@ impl Scenario {
                         return Err("checkpoint needs a unique nonempty name".into());
                     }
                 }
-                Action::ExpectDisplay { checkpoint, .. }
+                Action::ExpectRingChanged { checkpoint, .. }
+                | Action::ExpectDisplay { checkpoint, .. }
                 | Action::ExpectScene {
                     checkpoint: Some(checkpoint),
                     ..
@@ -518,12 +519,33 @@ impl Scenario {
                         }
                     }
                 }
-                Action::Encoder { channel, steps, .. }
+                Action::EnqueueEncoder { channel, steps, .. }
+                | Action::Encoder { channel, steps, .. }
                     if *steps == 0 || steps.unsigned_abs() > 120 || *channel == 0 =>
                 {
                     return Err(
                         "encoder channel must be positive, steps must be nonzero and at most 120"
                             .into(),
+                    );
+                }
+                Action::HostMidiExpectCc {
+                    channel,
+                    controller,
+                } if *channel > 15 || *controller > 127 => {
+                    return Err("MIDI channel must be 0..15 and controller 0..127".into());
+                }
+                Action::HostMidiSendCc {
+                    channel,
+                    controller,
+                    value,
+                } if *channel > 15 || *controller > 127 || *value > 127 => {
+                    return Err("MIDI channel must be 0..15 and controller/value 0..127".into());
+                }
+                Action::HostMidiSettle { guest_ms }
+                    if *guest_ms == 0 || *guest_ms > step.guest_timeout_ms =>
+                {
+                    return Err(
+                        "MIDI settle duration must be positive and within the guest timeout".into(),
                     );
                 }
                 Action::EffectParameterEdit { encoder, steps }
@@ -575,7 +597,9 @@ impl Scenario {
             {
                 return Err("expect-button-led same=true requires a checkpoint".into());
             }
-            if let Action::Encoder { channel, .. }
+            if let Action::EnqueueEncoder { channel, .. }
+            | Action::ExpectRingChanged { channel, .. }
+            | Action::Encoder { channel, .. }
             | Action::ExpectRingLevel { channel, .. }
             | Action::ExpectRing { channel, .. }
             | Action::ExpectMute { channel } = &step.action

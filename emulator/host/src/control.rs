@@ -41,6 +41,41 @@ pub fn info(inputs: &InputHub, model: Model) -> Info {
     }
 }
 
+/// Validate a one-based channel and enqueue a panel encoder input.
+/// Success reports enqueueing only; the guest may not have applied it yet.
+pub fn enqueue_encoder(
+    inputs: &InputHub,
+    model: Model,
+    channel: u32,
+    steps: i32,
+) -> Result<(), String> {
+    enqueue_encoder_with(model, channel, steps, |index, steps| {
+        inputs
+            .encoder(index, steps)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    })
+}
+
+fn enqueue_encoder_with(
+    model: Model,
+    channel: u32,
+    steps: i32,
+    enqueue: impl FnOnce(u32, i32) -> Result<(), String>,
+) -> Result<(), String> {
+    let count = model.channels() as u32;
+    if channel == 0 || channel > count {
+        return Err(format!(
+            "encoder channel must be 1..{count} for {}",
+            model.name()
+        ));
+    }
+    if steps == 0 || steps.unsigned_abs() > 1000 {
+        return Err("steps must be between -1000 and 1000, excluding zero".into());
+    }
+    enqueue(channel - 1, steps)
+}
+
 pub struct ControlServer {
     path: PathBuf,
     stopping: Arc<AtomicBool>,
@@ -265,20 +300,9 @@ fn execute(
         }
         "encoder" => {
             let channel = number(request, "channel")?;
-            let count = model.channels() as u64;
-            if channel == 0 || channel > count {
-                return Err(format!(
-                    "encoder channel must be 1..{count} for {}",
-                    model.name()
-                ));
-            }
             let steps = signed(request, "steps")?;
-            if steps == 0 || steps.unsigned_abs() > 1000 {
-                return Err("steps must be between -1000 and 1000, excluding zero".into());
-            }
-            inputs
-                .encoder(channel as u32 - 1, steps)
-                .map_err(|error| error.to_string())?;
+            let channel = u32::try_from(channel).map_err(|_| "encoder channel is too large")?;
+            enqueue_encoder(inputs, model, channel, steps)?;
             Ok(json!({"channel":channel,"steps":steps}))
         }
         "analog" => {
@@ -368,5 +392,43 @@ mod tests {
         assert!(line.ends_with('\n'));
         assert_eq!(serde_json::from_str::<Value>(&line).unwrap(), expected);
         writer.join().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod encoder_enqueue_tests {
+    use super::*;
+    #[test]
+    fn one_based_channels_are_validated_and_enqueued_without_waiting() {
+        let mut observed = None;
+        enqueue_encoder_with(Model::L6, 1, -4, |index, steps| {
+            observed = Some((index, steps));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(observed, Some((0, -4)));
+        enqueue_encoder_with(Model::L6max, 8, 1000, |index, steps| {
+            assert_eq!((index, steps), (7, 1000));
+            Ok(())
+        })
+        .unwrap();
+        for (model, channel, steps) in [
+            (Model::L6, 0, 1),
+            (Model::L6, 7, 1),
+            (Model::L6max, 9, 1),
+            (Model::L6, 1, 0),
+            (Model::L6, 1, 1001),
+        ] {
+            assert!(
+                enqueue_encoder_with(model, channel, steps, |_, _| panic!(
+                    "invalid input was enqueued"
+                ))
+                .is_err()
+            );
+        }
+        assert_eq!(
+            enqueue_encoder_with(Model::L6, 1, 1, |_, _| Err("enqueue failed".into())).unwrap_err(),
+            "enqueue failed"
+        );
     }
 }

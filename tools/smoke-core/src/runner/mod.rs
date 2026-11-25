@@ -478,6 +478,68 @@ impl Runner {
                 Action::UsbMidi { value } => {
                     return Ok(Progress::Device(devices::Operation::UsbMidi { value }));
                 }
+                Action::HostMidiConnect => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiConnect));
+                }
+                Action::HostMidiBegin => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiBegin));
+                }
+                Action::HostMidiEnd => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiEnd));
+                }
+                Action::EnqueueEncoder {
+                    channel,
+                    steps,
+                    midi_transaction,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::EnqueueEncoder {
+                        channel,
+                        steps,
+                        midi_transaction,
+                    }));
+                }
+                Action::HostMidiExpectCc {
+                    channel,
+                    controller,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiExpectCc {
+                        channel,
+                        controller,
+                    }));
+                }
+                Action::HostMidiSettle { guest_ms } => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiSettle {
+                        guest_ms,
+                    }));
+                }
+                Action::HostMidiSendCc {
+                    channel,
+                    controller,
+                    value,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiSendCc {
+                        channel,
+                        controller,
+                        value,
+                    }));
+                }
+                Action::ExpectRingChanged {
+                    channel,
+                    checkpoint,
+                    midi_transaction,
+                } => {
+                    let before = self
+                        .checkpoints
+                        .get(&checkpoint)
+                        .ok_or("checkpoint not executed for this model")?
+                        .data
+                        .indicators;
+                    return Ok(Progress::Device(devices::Operation::ExpectRingChanged {
+                        channel,
+                        before,
+                        midi_transaction,
+                    }));
+                }
                 Action::HostMidiRoundTrip => {
                     return Ok(Progress::Device(devices::Operation::HostMidiRoundTrip));
                 }

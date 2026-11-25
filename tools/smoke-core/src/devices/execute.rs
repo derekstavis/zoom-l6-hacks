@@ -38,6 +38,12 @@ fn knob_dialog_phase(
         | Operation::KnobDialogObserveInvalidSignature { .. }
         | Operation::KnobDialogSampleInvalidSignature
         | Operation::KnobDialogRestoreInvalidSignature
+        | Operation::KnobDialogPrepareNotification
+        | Operation::KnobDialogArmNotificationCallback
+        | Operation::KnobDialogWaitNotificationCallback
+        | Operation::KnobDialogInvokeNotification { .. }
+        | Operation::KnobDialogWaitNotificationFrame { .. }
+        | Operation::KnobDialogExpectNotificationInvariants { .. }
         | Operation::KnobDialog => next_mode
             .and_then(|index| u16::try_from(17 + index * 10 + usize::from(final_phase?)).ok()),
         _ => None,
@@ -2635,6 +2641,58 @@ impl State {
                     .as_mut()
                     .ok_or("missing knob preflight")?,
             ),
+            Operation::KnobDialogPrepareNotification => prepare_notification(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
+            Operation::KnobDialogArmNotificationCallback => arm_notification_callback(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
+            Operation::KnobDialogWaitNotificationCallback => wait_notification_callback(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
+            Operation::KnobDialogInvokeNotification { message } => invoke_notification(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                message,
+            ),
+            Operation::KnobDialogWaitNotificationFrame {
+                clear,
+                artifact,
+                guest_ms,
+                limit_ms,
+            } => wait_notification_frame(
+                session,
+                options,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                clear,
+                &artifact,
+                guest_ms,
+                limit_ms,
+                guest_timeout_ms,
+                wall_timeout_s,
+            ),
+            Operation::KnobDialogExpectNotificationInvariants { clear } => {
+                expect_notification_invariants(
+                    session,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob preflight")?,
+                    clear,
+                )
+            }
             Operation::KnobDialog => {
                 self.knob_heap_reader = None;
                 let _baseline = self
@@ -2849,6 +2907,24 @@ mod knob_phase_tests {
             Operation::KnobDialogSettleLevel {
                 artifact: "after".into(),
             },
+            Operation::KnobDialogPrepareNotification,
+            Operation::KnobDialogArmNotificationCallback,
+            Operation::KnobDialogWaitNotificationCallback,
+            Operation::KnobDialogInvokeNotification { message: 4 },
+            Operation::KnobDialogWaitNotificationFrame {
+                clear: false,
+                artifact: "shown".into(),
+                guest_ms: 100,
+                limit_ms: 1500,
+            },
+            Operation::KnobDialogExpectNotificationInvariants { clear: false },
+            Operation::KnobDialogWaitNotificationFrame {
+                clear: true,
+                artifact: "cleared".into(),
+                guest_ms: 100,
+                limit_ms: 5000,
+            },
+            Operation::KnobDialogExpectNotificationInvariants { clear: true },
             Operation::KnobDialog,
         ]
         .into_iter()

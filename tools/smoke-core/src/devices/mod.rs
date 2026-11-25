@@ -34,7 +34,7 @@ use midi::*;
 use midi_probe::*;
 use mode_primitives::{
     embedded_invalid_signature_operations, embedded_invalid_tag_operations,
-    embedded_midi_sync_operations, embedded_mode_operations,
+    embedded_midi_sync_operations, embedded_mode_operations, embedded_notification_operations,
 };
 use panel::*;
 use sd::*;
@@ -349,6 +349,21 @@ pub enum Operation {
     },
     KnobDialogSampleInvalidSignature,
     KnobDialogRestoreInvalidSignature,
+    KnobDialogPrepareNotification,
+    KnobDialogArmNotificationCallback,
+    KnobDialogWaitNotificationCallback,
+    KnobDialogInvokeNotification {
+        message: u32,
+    },
+    KnobDialogWaitNotificationFrame {
+        clear: bool,
+        artifact: String,
+        guest_ms: u32,
+        limit_ms: u32,
+    },
+    KnobDialogExpectNotificationInvariants {
+        clear: bool,
+    },
     KnobDialog,
     KnobPopupOpen {
         first_steps: i32,

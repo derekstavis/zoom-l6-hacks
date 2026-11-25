@@ -674,6 +674,7 @@ pub(super) struct PreflightContext {
     mode_index: usize,
     last_mode: Option<u8>,
     final_phase: u8,
+    pending_notification: Option<PendingNotification>,
     pending_invalid_signature: Option<PendingInvalidSignature>,
     pending_invalid_tag: Option<PendingInvalidTag>,
 }
@@ -815,6 +816,7 @@ pub(super) fn begin_preflight(
         mode_index: 0,
         last_mode: None,
         final_phase: 0,
+        pending_notification: None,
         pending_invalid_signature: None,
         pending_invalid_tag: None,
     })
@@ -2406,7 +2408,7 @@ pub(super) fn run_knob_dialog(
         return Err("knob-dialog preflight incomplete".into());
     }
     let context = context_slot.as_ref().unwrap();
-    if context.final_phase != if prefix { 0 } else { 13 } {
+    if context.final_phase != if prefix { 0 } else { 21 } {
         return Err("knob-dialog final phases out of order".into());
     }
     if context.alias_widget.is_none()
@@ -2419,7 +2421,7 @@ pub(super) fn run_knob_dialog(
     let mut context = context_slot.take().unwrap();
 
     let active_snapshot = context.active.as_ref().unwrap().clone();
-    let mut debugger = context.debugger.take().unwrap();
+    let debugger = context.debugger.take().unwrap();
     let original_window = context.original_window.clone();
     let original_bitmap = context.original_bitmap.clone();
     let original_bitmap_descriptor = context.original_bitmap_descriptor.clone();
@@ -2448,7 +2450,7 @@ pub(super) fn run_knob_dialog(
             state_heap_bytes,
             hook_task,
             callback_task,
-            refreshed,
+            refreshed: _,
         } = active_snapshot;
         let state = l6max::gui_bitmap_table_entry_0;
         if prefix {
@@ -2584,113 +2586,14 @@ pub(super) fn run_knob_dialog(
         }
         let invalid_metadata_rejected = true;
         let invalid_tag_discarded = true;
-        let lit_pixels = |y0: usize, y1: usize| {
-            (y0..y1)
-                .flat_map(|y| {
-                    (0..128).map(move |x| {
-                        let index = ((63 - y) / 8) * 128 + x;
-                        refreshed[index] & (1 << ((63 - y) % 8)) != 0
-                    })
-                })
-                .filter(|lit| *lit)
-                .count()
-        };
-        if lit_pixels(0, 17) < 10 || lit_pixels(30, 48) < 5 {
-            return Err("shared text resource did not render both dialog lines".into());
-        }
-        let scene_text_before_notification = qmp.read_memory(0, shared_resource_pointer, 512)?;
-        // Exercise the stock notification renderer over the layer-4 scene.
-        // This calls the generic firmware API directly, without relying on
-        // the patch's removed notification hooks.
-        qmp.stop()?;
-        let callback_entry = active_slot5 & !1;
-        debugger.breakpoint(callback_entry, true)?;
-        debugger.resume_guest()?;
-        let breakpoint_deadline = Instant::now() + Duration::from_secs(15);
-        while qmp.query_status()?.running {
-            session.poll()?;
-            if Instant::now() >= breakpoint_deadline {
-                return Err("dialog callback breakpoint was not reached".into());
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-        debugger.breakpoint(callback_entry, false)?;
-        // Message 4 uses the three-line notification background, bitmap 36.
-        debugger.register(0, 4)?;
-        debugger.register(15, l6max::gui_notification_show)?;
-        debugger.resume_guest()?;
-        let notification_start = inputs.panel.snapshot().guest_ms;
-        let mut notification_frame = capture(100, "window-scene-stock-notification")?;
-        while notification_frame == refreshed {
-            let elapsed = inputs
-                .panel
-                .snapshot()
-                .guest_ms
-                .wrapping_sub(notification_start);
-            if elapsed >= 1_500 {
-                return Err(
-                    "stock notification did not render its frame over the custom scene".into(),
-                );
-            }
-            notification_frame = capture(100, "window-scene-stock-notification")?;
-        }
-        let callback_after_notification =
-            qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
-        let resource_pointer_after_notification = qmp.read_memory(0, text_table + 179 * 4, 4)?;
-        let resource_after_notification = qmp.read_memory(0, shared_resource_pointer, 512)?;
-        if callback_after_notification != active_slot5.to_le_bytes()
-            || resource_pointer_after_notification != shared_resource_pointer.to_le_bytes()
-            || resource_after_notification != scene_text_before_notification
-        {
-            return Err(format!(
-                "stock notification changed scene state: callback {callback_after_notification:02x?} vs {active_slot5:08x}, resource pointer {resource_pointer_after_notification:02x?} vs {shared_resource_pointer:08x}, resource modified={}",
-                resource_after_notification != scene_text_before_notification
-            ).into());
-        }
-        // The dialog has its own inactivity timeout. Wait for the notification
-        // frame to clear instead of sleeping past that timeout as well.
-        let after_notification = loop {
-            let frame = capture(100, "window-scene-after-notification")?;
-            if frame != notification_frame {
-                break frame;
-            }
-            let elapsed = inputs
-                .panel
-                .snapshot()
-                .guest_ms
-                .wrapping_sub(notification_start);
-            if elapsed >= 5_000 {
-                return Err("stock notification did not clear after its timeout".into());
-            }
-        };
-        let callback_after_expiry =
-            qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
-        let resource_pointer_after_expiry = qmp.read_memory(0, text_table + 179 * 4, 4)?;
-        let resource_after_expiry = qmp.read_memory(0, shared_resource_pointer, 512)?;
-        if callback_after_expiry != active_slot5.to_le_bytes()
-            || resource_pointer_after_expiry != shared_resource_pointer.to_le_bytes()
-            || resource_after_expiry != scene_text_before_notification
-        {
-            let utf16 = |bytes: &[u8]| -> String {
-                bytes
-                    .chunks(2)
-                    .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-                    .take_while(|unit| *unit != 0)
-                    .take(24)
-                    .map(|unit| char::from_u32(unit.into()).unwrap_or('?'))
-                    .collect()
-            };
-            return Err(format!(
-                "stock notification expiry damaged or prematurely removed the custom scene: callback {callback_after_expiry:02x?} vs {active_slot5:08x}, resource pointer {resource_pointer_after_expiry:02x?} vs {shared_resource_pointer:08x}, resource {:?} vs {:?}, ticks {}, window {:02x?}, notification active {} busy {}, guest ms since notification {}",
-                utf16(&resource_after_expiry),
-                utf16(&scene_text_before_notification),
-                qmp.read_memory(0, state + 2, 1)?[0],
-                qmp.read_memory(0, l6max::current_window, 4)?,
-                qmp.read_memory(0, l6max::notification_active, 1)?[0],
-                qmp.read_memory(0, l6max::notification_busy, 1)?[0],
-                inputs.panel.snapshot().guest_ms.wrapping_sub(notification_start)
-            ).into());
-        }
+        let notification = context
+            .pending_notification
+            .as_ref()
+            .ok_or("missing notification context")?;
+        let notification_frame = notification.frame.ok_or("missing notification frame")?;
+        let after_notification = notification
+            .after
+            .ok_or("missing cleared notification frame")?;
         let timeout_start = inputs.panel.snapshot().guest_ms;
         loop {
             let ticks = qmp.read_memory(0, state + 2, 1)?[0];
@@ -2882,6 +2785,287 @@ pub(super) fn run_knob_dialog(
     } else {
         debugger.finish(result)
     }
+}
+
+struct PendingNotification {
+    text_before: Vec<u8>,
+    breakpoint_deadline: Option<Instant>,
+    guest_start: Option<u32>,
+    frame: Option<[u8; 1024]>,
+    after: Option<[u8; 1024]>,
+}
+
+pub(super) fn prepare_notification(
+    session: &Session,
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.final_phase != 13 {
+        return Err("notification preparation out of order".into());
+    }
+    let refreshed = &context
+        .active
+        .as_ref()
+        .ok_or("missing active snapshot")?
+        .refreshed;
+    let lit = |y0: usize, y1: usize| {
+        (y0..y1)
+            .flat_map(|y| {
+                (0..128).map(move |x| {
+                    let index = ((63 - y) / 8) * 128 + x;
+                    refreshed[index] & (1 << ((63 - y) % 8)) != 0
+                })
+            })
+            .filter(|lit| *lit)
+            .count()
+    };
+    if lit(0, 17) < 10 || lit(30, 48) < 5 {
+        return Err("shared text resource did not render both dialog lines".into());
+    }
+    let text_before =
+        session.engine.management[0].read_memory(0, context.shared_resource_pointer, 512)?;
+    context.pending_notification = Some(PendingNotification {
+        text_before,
+        breakpoint_deadline: None,
+        guest_start: None,
+        frame: None,
+        after: None,
+    });
+    context.final_phase += 1;
+    Ok(json!({}))
+}
+
+pub(super) fn arm_notification_callback(
+    session: &Session,
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.final_phase != 14 {
+        return Err("notification breakpoint out of order".into());
+    }
+    let callback = context
+        .active
+        .as_ref()
+        .ok_or("missing active snapshot")?
+        .active_slot5
+        & !1;
+    let debugger = context.debugger.as_mut().ok_or("missing knob debugger")?;
+    session.engine.management[0].stop()?;
+    debugger.breakpoint(callback, true)?;
+    debugger.resume_guest()?;
+    context
+        .pending_notification
+        .as_mut()
+        .ok_or("missing notification context")?
+        .breakpoint_deadline = Some(Instant::now() + Duration::from_secs(15));
+    context.final_phase += 1;
+    Ok(json!({}))
+}
+
+pub(super) fn wait_notification_callback(
+    session: &Session,
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.final_phase != 15 {
+        return Err("notification callback wait out of order".into());
+    }
+    let callback = context
+        .active
+        .as_ref()
+        .ok_or("missing active snapshot")?
+        .active_slot5
+        & !1;
+    let deadline = context
+        .pending_notification
+        .as_ref()
+        .ok_or("missing notification context")?
+        .breakpoint_deadline
+        .ok_or("missing breakpoint deadline")?;
+    let qmp = &session.engine.management[0];
+    while qmp.query_status()?.running {
+        session.poll()?;
+        if Instant::now() >= deadline {
+            return Err("dialog callback breakpoint was not reached".into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob debugger")?
+        .breakpoint(callback, false)?;
+    context.final_phase += 1;
+    Ok(json!({}))
+}
+
+pub(super) fn invoke_notification(
+    session: &Session,
+    context: &mut PreflightContext,
+    message: u32,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.final_phase != 16 {
+        return Err("notification invocation out of order".into());
+    }
+    let debugger = context.debugger.as_mut().ok_or("missing knob debugger")?;
+    debugger.register(0, message)?;
+    debugger.register(15, l6max::gui_notification_show)?;
+    debugger.resume_guest()?;
+    let now = session
+        .engine
+        .inputs
+        .as_ref()
+        .ok_or("missing inputs")?
+        .panel
+        .snapshot()
+        .guest_ms;
+    context
+        .pending_notification
+        .as_mut()
+        .ok_or("missing notification context")?
+        .guest_start = Some(now);
+    context.final_phase += 1;
+    Ok(json!({"message":message}))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum NotificationFrameWait {
+    Changed,
+    Pending,
+    Expired,
+}
+
+fn notification_frame_wait(
+    changed: bool,
+    start: u32,
+    now: u32,
+    limit_ms: u32,
+) -> NotificationFrameWait {
+    if changed {
+        NotificationFrameWait::Changed
+    } else if now.wrapping_sub(start) >= limit_ms {
+        NotificationFrameWait::Expired
+    } else {
+        NotificationFrameWait::Pending
+    }
+}
+
+pub(super) fn wait_notification_frame(
+    session: &Session,
+    options: &Options,
+    context: &mut PreflightContext,
+    clear: bool,
+    artifact: &str,
+    guest_ms: u32,
+    limit_ms: u32,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.final_phase != if clear { 19 } else { 17 } {
+        return Err("notification frame wait out of order".into());
+    }
+    let pending = context
+        .pending_notification
+        .as_ref()
+        .ok_or("missing notification context")?;
+    let start = pending.guest_start.ok_or("missing notification start")?;
+    let baseline = if clear {
+        pending.frame.ok_or("missing notification frame")?
+    } else {
+        context
+            .active
+            .as_ref()
+            .ok_or("missing active snapshot")?
+            .refreshed
+    };
+    let frame = loop {
+        let frame = capture_knob_frame(
+            session,
+            options,
+            guest_ms,
+            artifact,
+            guest_timeout_ms,
+            wall_timeout_s,
+        )?;
+        if notification_frame_wait(frame != baseline, start, start, limit_ms)
+            == NotificationFrameWait::Changed
+        {
+            break frame;
+        }
+        let now = session
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or("missing inputs")?
+            .panel
+            .snapshot()
+            .guest_ms;
+        if notification_frame_wait(false, start, now, limit_ms) == NotificationFrameWait::Expired {
+            return Err(if clear {
+                "stock notification did not clear after its timeout"
+            } else {
+                "stock notification did not render its frame over the custom scene"
+            }
+            .into());
+        }
+    };
+    let pending = context.pending_notification.as_mut().unwrap();
+    if clear {
+        pending.after = Some(frame);
+    } else {
+        pending.frame = Some(frame);
+    }
+    context.final_phase += 1;
+    Ok(json!({"artifact":artifact}))
+}
+
+pub(super) fn expect_notification_invariants(
+    session: &Session,
+    context: &mut PreflightContext,
+    clear: bool,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.final_phase != if clear { 20 } else { 18 } {
+        return Err("notification assertion out of order".into());
+    }
+    let pending = context
+        .pending_notification
+        .as_ref()
+        .ok_or("missing notification context")?;
+    let active_slot5 = context
+        .active
+        .as_ref()
+        .ok_or("missing active snapshot")?
+        .active_slot5;
+    let qmp = &session.engine.management[0];
+    let callback = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
+    let pointer = qmp.read_memory(0, context.text_table + 179 * 4, 4)?;
+    let resource = qmp.read_memory(0, context.shared_resource_pointer, 512)?;
+    if callback != active_slot5.to_le_bytes()
+        || pointer != context.shared_resource_pointer.to_le_bytes()
+        || resource != pending.text_before
+    {
+        if !clear {
+            return Err(format!("stock notification changed scene state: callback {callback:02x?} vs {active_slot5:08x}, resource pointer {pointer:02x?} vs {:08x}, resource modified={}", context.shared_resource_pointer, resource != pending.text_before).into());
+        }
+        let utf16 = |bytes: &[u8]| -> String {
+            bytes
+                .chunks(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .take_while(|unit| *unit != 0)
+                .take(24)
+                .map(|unit| char::from_u32(unit.into()).unwrap_or('?'))
+                .collect()
+        };
+        let start = pending.guest_start.ok_or("missing notification start")?;
+        let now = session
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or("missing inputs")?
+            .panel
+            .snapshot()
+            .guest_ms;
+        return Err(format!("stock notification expiry damaged or prematurely removed the custom scene: callback {callback:02x?} vs {active_slot5:08x}, resource pointer {pointer:02x?} vs {:08x}, resource {:?} vs {:?}, ticks {}, window {:02x?}, notification active {} busy {}, guest ms since notification {}", context.shared_resource_pointer, utf16(&resource), utf16(&pending.text_before), qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 2, 1)?[0], qmp.read_memory(0, l6max::current_window, 4)?, qmp.read_memory(0, l6max::notification_active, 1)?[0], qmp.read_memory(0, l6max::notification_busy, 1)?[0], now.wrapping_sub(start)).into());
+    }
+    context.final_phase += 1;
+    Ok(json!({"clear":clear}))
 }
 
 struct PendingInvalidSignature {
@@ -3748,6 +3932,26 @@ mod debug_cleanup_tests {
         assert!(errors.join(" ").contains("guest left stopped"));
     }
     #[test]
+    fn failed_breakpoint_cleanup_never_restores_registers_or_resumes() {
+        let mut fake = Fake {
+            breakpoint_fails: true,
+            ..Default::default()
+        };
+        let errors = cleanup_debugger(&mut fake);
+        assert_eq!(fake.calls, ["stop", "writes", "breakpoints"]);
+        assert!(errors.join(" ").contains("guest left stopped"));
+    }
+    #[test]
+    fn failed_register_cleanup_never_resumes() {
+        let mut fake = Fake {
+            register_fails: true,
+            ..Default::default()
+        };
+        let errors = cleanup_debugger(&mut fake);
+        assert_eq!(fake.calls, ["stop", "writes", "breakpoints", "registers"]);
+        assert!(errors.join(" ").contains("guest left stopped"));
+    }
+    #[test]
     fn failed_stop_skips_unsafe_mutations_and_resume() {
         let mut fake = Fake {
             stop_fails: true,
@@ -4014,5 +4218,34 @@ mod settle_level_observation_tests {
     fn does_not_read_text_before_mailbox_clears() {
         assert!(!settled_level_matches(4, 5, || Ok(0), || panic!("text read")).unwrap());
         assert!(settled_level_matches(4, 5, || Ok(255), || Ok("4%".into())).unwrap());
+    }
+}
+
+#[cfg(test)]
+mod notification_frame_wait_tests {
+    use super::*;
+    #[test]
+    fn uses_original_guest_start_across_wrap_and_accepts_changed_frame_first() {
+        let start = u32::MAX - 499;
+        assert_eq!(
+            notification_frame_wait(false, start, 999, 1500),
+            NotificationFrameWait::Pending
+        );
+        assert_eq!(
+            notification_frame_wait(false, start, 1000, 1500),
+            NotificationFrameWait::Expired
+        );
+        assert_eq!(
+            notification_frame_wait(false, start, 4499, 5000),
+            NotificationFrameWait::Pending
+        );
+        assert_eq!(
+            notification_frame_wait(false, start, 4500, 5000),
+            NotificationFrameWait::Expired
+        );
+        assert_eq!(
+            notification_frame_wait(true, start, 4500, 5000),
+            NotificationFrameWait::Changed
+        );
     }
 }

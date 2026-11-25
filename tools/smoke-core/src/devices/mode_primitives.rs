@@ -192,6 +192,56 @@ pub(super) fn embedded_invalid_signature_operations() -> Result<Vec<(String, Ope
         .collect()
 }
 
+pub(super) fn embedded_notification_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/notification.toml"
+    ))
+    .map_err(|error| format!("invalid embedded notification fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_knob_notification_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded notification fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobDialogPrepareNotification => {
+                    Operation::KnobDialogPrepareNotification
+                }
+                crate::Action::KnobDialogArmNotificationCallback => {
+                    Operation::KnobDialogArmNotificationCallback
+                }
+                crate::Action::KnobDialogWaitNotificationCallback => {
+                    Operation::KnobDialogWaitNotificationCallback
+                }
+                crate::Action::KnobDialogInvokeNotification { message } => {
+                    Operation::KnobDialogInvokeNotification { message: *message }
+                }
+                crate::Action::KnobDialogWaitNotificationFrame {
+                    clear,
+                    artifact,
+                    guest_ms,
+                    limit_ms,
+                } => Operation::KnobDialogWaitNotificationFrame {
+                    clear: *clear,
+                    artifact: artifact.clone(),
+                    guest_ms: *guest_ms,
+                    limit_ms: *limit_ms,
+                },
+                crate::Action::KnobDialogExpectNotificationInvariants { clear } => {
+                    Operation::KnobDialogExpectNotificationInvariants { clear: *clear }
+                }
+                _ => return Err("unsupported embedded notification action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
 /// Convert a mode-fragment action for the post-update lifecycle. Scenario
 /// loading validates the complete sequence before this conversion.
 pub(super) fn mode_step_operation(action: &crate::Action) -> Option<Operation> {

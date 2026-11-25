@@ -1308,8 +1308,10 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
     let signature = include_str!(
         "../../../../patches/knob-dialog/tests/emulator/fragments/invalid-signature.toml"
     );
+    let notification =
+        include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/notification.toml");
     let dialog = format!(
-        "{tags}{signature}[[step]]\naction='knob-dialog'\nguest_timeout_ms=180000\nwall_timeout_s=600\n"
+        "{tags}{signature}{notification}[[step]]\naction='knob-dialog'\nguest_timeout_ms=180000\nwall_timeout_s=600\n"
     );
     let modes =
         include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/mode-walk.toml");
@@ -1335,6 +1337,9 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
         .is_err()
     );
     assert!(Scenario::parse(&complete.replace("mode = 8", "mode = 7")).is_err());
+    assert!(Scenario::parse(&complete.replacen("message = 4", "message = 3", 1)).is_err());
+    assert!(Scenario::parse(&complete.replacen("limit_ms = 1500", "limit_ms = 0", 1)).is_err());
+    assert!(Scenario::parse(&complete.replacen("clear = false", "clear = true", 1)).is_err());
     assert!(
         Scenario::parse(&complete.replacen(
             "action = \"knob-dialog-sample-invalid-signature\"",

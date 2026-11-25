@@ -110,3 +110,24 @@ is recorded separately in `/private/tmp/l6-midi-parent-comparison/report.json`.
 `cargo test --offline --locked --workspace` passed on the cache branch. The
 firmware-dependent `l6test` fixture unit test remained ignored without its
 explicit environment variables.
+
+## Qualification after native toolchain identity
+
+On 2026-11-24 the complete 372-case catalog ran with four workers, both models,
+both backends, and the packaged app, at commit
+`d810f5a11e6c0badd7a11326fa15e98f047b3f09`. It used the run-local cache,
+not the experimental persistent cache. The report
+`/private/tmp/l6-toolchain-final-all/report.json` recorded 369 PASS and three
+FAIL, with no BLOCKED cases. `sd-knob-midi` and `sd-knob-dialog-dynamic` on
+L6max failed the combined dialog first-use assertion; `sd-warm-reset` on L6
+observed a loaded registry when it expected no loaded module. Both dialog
+cases had passed the separately run 23-case SD matrix with matching identities.
+
+All three passed a focused rerun (`/private/tmp/l6-toolchain-final-rerun/report.json`)
+with the same firmware, card, state, audio, runner and QEMU identities. Treat
+them as timing flakes, not a clean first run. The failed warm-reset trace shows
+the mixer-readiness step completing immediately after the QEMU reset request;
+it may have observed the previous boot's state. The dialog failure combines
+several checks and did not identify the failing subcondition. Both need
+investigation before claiming their causes are fixed. The QEMU executable was
+externally supplied and its source was not attested.

@@ -1889,9 +1889,14 @@ impl State {
             Operation::L6DinSweep => {
                 Ok(run_l6_din_sweep(session, options).map_err(std::io::Error::other)?)
             }
-            Operation::L6maxInputTiming => {
-                Ok(run_l6max_input_timing(session, options).map_err(std::io::Error::other)?)
-            }
+            Operation::L6maxInputTiming => Ok(run_l6max_input_timing(
+                session,
+                options,
+                operation_start,
+                guest_timeout_ms,
+                wall_timeout_s,
+            )
+            .map_err(std::io::Error::other)?),
             Operation::L6maxPanelKeyBegin => {
                 if session.engine.model() != l6fw::Model::L6max || self.panel_keys.is_some() {
                     return Err("panel key scope requires a fresh L6max".into());

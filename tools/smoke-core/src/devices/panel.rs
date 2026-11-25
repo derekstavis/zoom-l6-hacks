@@ -624,9 +624,34 @@ pub(super) fn run_l6_input_sweep(session: &Session, options: &Options) -> Result
     )
 }
 
+/// Observe guest progress while retaining the caller's overall wall and guest budgets.
+fn wait_panel_guest_elapsed(
+    start_guest: u32,
+    duration_ms: u32,
+    operation_guest: u32,
+    guest_budget: u32,
+    wall_deadline: Instant,
+    mut sample: impl FnMut() -> Result<(u32, Instant), String>,
+    mut pump: impl FnMut() -> Result<(), String>,
+) -> Result<(), String> {
+    loop {
+        let (now, wall_now) = sample()?;
+        if wall_now >= wall_deadline || now.wrapping_sub(operation_guest) > guest_budget {
+            return Err("L6max display settle exceeded its guest or wall deadline".into());
+        }
+        if now.wrapping_sub(start_guest) >= duration_ms {
+            return Ok(());
+        }
+        pump()?;
+    }
+}
+
 pub(super) fn run_l6max_input_timing(
     session: &Session,
     options: &Options,
+    operation_start: (Instant, u32),
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
 ) -> Result<Value, String> {
     use std::time::Duration;
     let inputs = session
@@ -709,10 +734,22 @@ pub(super) fn run_l6max_input_timing(
         ));
     }
     let resumed_guest = inputs.panel.snapshot().guest_ms;
-    wait_l6_input(
-        session,
-        || inputs.panel.snapshot().guest_ms.wrapping_sub(resumed_guest) >= 1500,
-        "L6max display settle after rapid input",
+    let wall_deadline = operation_start
+        .0
+        .checked_add(Duration::from_secs(wall_timeout_s))
+        .ok_or("L6max input timing wall deadline overflow")?;
+    wait_panel_guest_elapsed(
+        resumed_guest,
+        1500,
+        operation_start.1,
+        guest_timeout_ms,
+        wall_deadline,
+        || Ok((inputs.panel.snapshot().guest_ms, Instant::now())),
+        || {
+            session.poll()?;
+            thread::sleep(Duration::from_millis(5));
+            Ok(())
+        },
     )?;
     let after = session.poll()?;
     if current.display == after.display {
@@ -743,4 +780,81 @@ pub(super) fn run_l6max_input_timing(
     Ok(
         json!({"paused_guest_clock":true,"rapid_press_reports":presses,"rapid_release_reports":releases,"display_changed":true,"encoder_channel":3,"encoder_reports":encoder_reports}),
     )
+}
+
+#[cfg(test)]
+mod panel_guest_wait_tests {
+    use super::*;
+    use std::{cell::Cell, time::Duration};
+    #[test]
+    fn slow_guest_keeps_full_1500ms_observation_past_ten_wall_seconds() {
+        let base = Instant::now();
+        let ticks = Cell::new(0u32);
+        let result = wait_panel_guest_elapsed(
+            100,
+            1500,
+            100,
+            60_000,
+            base + Duration::from_secs(120),
+            || {
+                Ok((
+                    100 + ticks.get() * 100,
+                    base + Duration::from_secs(u64::from(ticks.get())),
+                ))
+            },
+            || {
+                ticks.set(ticks.get() + 1);
+                Ok(())
+            },
+        );
+        assert!(result.is_ok());
+        assert_eq!(ticks.get(), 15);
+    }
+    #[test]
+    fn stalled_guest_expires_at_original_wall_deadline() {
+        let base = Instant::now();
+        let ticks = Cell::new(0u64);
+        let result = wait_panel_guest_elapsed(
+            100,
+            1500,
+            100,
+            60_000,
+            base + Duration::from_secs(12),
+            || Ok((100, base + Duration::from_secs(ticks.get()))),
+            || {
+                ticks.set(ticks.get() + 1);
+                Ok(())
+            },
+        );
+        assert!(result.unwrap_err().contains("deadline"));
+        assert_eq!(ticks.get(), 12);
+    }
+    #[test]
+    fn guest_wrap_and_overall_guest_budget_are_checked() {
+        let base = Instant::now();
+        assert!(
+            wait_panel_guest_elapsed(
+                u32::MAX - 999,
+                1500,
+                u32::MAX - 999,
+                2000,
+                base + Duration::from_secs(20),
+                || Ok((500, base)),
+                || Ok(())
+            )
+            .is_ok()
+        );
+        assert!(
+            wait_panel_guest_elapsed(
+                0,
+                1500,
+                0,
+                1200,
+                base + Duration::from_secs(20),
+                || Ok((1300, base)),
+                || Ok(())
+            )
+            .is_err()
+        );
+    }
 }

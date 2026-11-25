@@ -1,44 +1,8 @@
+use l6ctl::{ControlClient, Request, RtosKind};
 use l6fw::Model;
 use l6max_host::controls::control_target;
 use serde_json::{Value, json};
-use std::{
-    env,
-    io::{BufRead, BufReader, Write},
-    os::unix::net::UnixStream,
-    path::PathBuf,
-};
-
-fn request(socket: &PathBuf, message: Value) -> Result<Value, String> {
-    let mut stream = UnixStream::connect(socket).map_err(|error| {
-        format!(
-            "cannot connect to {}: {error}; launch the emulator with `--control-socket {}`",
-            socket.display(),
-            socket.display()
-        )
-    })?;
-    let timeout = if message.get("command").and_then(Value::as_str) == Some("rtos") {
-        30
-    } else {
-        3
-    };
-    stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(timeout)))
-        .map_err(|error| error.to_string())?;
-    writeln!(stream, "{message}").map_err(|error| error.to_string())?;
-    let mut reply = String::new();
-    BufReader::new(stream)
-        .read_line(&mut reply)
-        .map_err(|error| error.to_string())?;
-    let reply: Value = serde_json::from_str(&reply).map_err(|error| error.to_string())?;
-    if reply.get("ok").and_then(Value::as_bool) != Some(true) {
-        return Err(reply
-            .get("error")
-            .and_then(Value::as_str)
-            .unwrap_or("control request failed")
-            .to_owned());
-    }
-    Ok(reply.get("result").cloned().unwrap_or(Value::Null))
-}
+use std::{env, path::PathBuf};
 
 fn target(model: Model, name: &str) -> Result<u32, String> {
     if let Ok(target) = name.parse::<u32>() {
@@ -79,6 +43,7 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
     let socket = socket.ok_or("provide --socket PATH or set L6_CONTROL_SOCKET")?;
+    let client = ControlClient::new(&socket);
     if command == "rtos" {
         let kind = args
             .get(1)
@@ -89,7 +54,15 @@ fn run() -> Result<(), String> {
         {
             return Err("Usage: l6ctl rtos heap|tasks|scheduler|objects|all [--pretty]".into());
         }
-        let result = request(&socket, json!({"command":"rtos","kind":kind}))?;
+        let kind = match kind {
+            "heap" => RtosKind::Heap,
+            "tasks" => RtosKind::Tasks,
+            "scheduler" => RtosKind::Scheduler,
+            "objects" => RtosKind::Objects,
+            "all" => RtosKind::All,
+            _ => unreachable!(),
+        };
+        let result = client.rtos(kind).map_err(|e| e.to_string())?;
         println!(
             "{}",
             if args.len() == 3 {
@@ -104,11 +77,14 @@ fn run() -> Result<(), String> {
     if command == "info" {
         println!(
             "{}",
-            serde_json::to_string_pretty(&request(&socket, json!({"command":"info"}))?).unwrap()
+            serde_json::to_string_pretty(
+                &client.request(&Request::Info).map_err(|e| e.to_string())?
+            )
+            .unwrap()
         );
         return Ok(());
     }
-    let info = request(&socket, json!({"command":"info"}))?;
+    let info = client.request(&Request::Info).map_err(|e| e.to_string())?;
     let model = match info.get("model").and_then(Value::as_str) {
         Some("l6") => Model::L6,
         Some("l6max") => Model::L6max,
@@ -129,20 +105,23 @@ fn run() -> Result<(), String> {
                     } else if args.len() != 2 {
                         return Err("Usage: l6ctl button NAME|TARGET [--hold-ms MS]".into());
                     }
-                    json!({"command":"tap","target":target,"hold_ms":hold_ms})
+                    Request::Tap { target, hold_ms }
                 }
                 "down" => {
                     if args.len() != 3 {
                         return Err("Usage: l6ctl down NAME|TARGET DURATION_MS".into());
                     }
                     let duration_ms: u32 = parse_int(args.get(2), "duration")?;
-                    json!({"command":"down","target":target,"duration_ms":duration_ms})
+                    Request::Down {
+                        target,
+                        duration_ms,
+                    }
                 }
                 "up" => {
                     if args.len() != 2 {
                         return Err("Usage: l6ctl up NAME|TARGET".into());
                     }
-                    json!({"command":"up","target":target})
+                    Request::Up { target }
                 }
                 _ => unreachable!(),
             }
@@ -153,7 +132,7 @@ fn run() -> Result<(), String> {
             }
             let channel: u32 = parse_int(args.get(1), "channel")?;
             let steps: i32 = parse_int(args.get(2), "steps")?;
-            json!({"command":"encoder","channel":channel,"steps":steps})
+            Request::Encoder { channel, steps }
         }
         "analog" => {
             if args.len() != 3 {
@@ -161,7 +140,7 @@ fn run() -> Result<(), String> {
             }
             let channel: u32 = parse_int(args.get(1), "channel")?;
             let steps: i32 = parse_int(args.get(2), "steps")?;
-            json!({"command":"analog","channel":channel,"steps":steps})
+            Request::Analog { channel, steps }
         }
         "set-analog" => {
             if args.len() != 3 {
@@ -169,14 +148,40 @@ fn run() -> Result<(), String> {
             }
             let channel: u32 = parse_int(args.get(1), "channel")?;
             let value: u16 = parse_int(args.get(2), "value")?;
-            json!({"command":"set-analog","channel":channel,"value":value})
+            Request::SetAnalog { channel, value }
         }
         other => return Err(format!("unknown command {other:?}; use `l6ctl --help`")),
     };
-    println!(
-        "{}",
-        serde_json::to_string(&request(&socket, message)?).unwrap()
-    );
+    let response = match message {
+        Request::Tap { target, hold_ms } => {
+            serde_json::to_value(client.tap(target, hold_ms).map_err(|e| e.to_string())?)
+        }
+        Request::Down {
+            target,
+            duration_ms,
+        } => serde_json::to_value(
+            client
+                .down(target, duration_ms)
+                .map_err(|e| e.to_string())?,
+        ),
+        Request::Up { target } => {
+            serde_json::to_value(client.up(target).map_err(|e| e.to_string())?)
+        }
+        Request::Encoder { channel, steps } => {
+            serde_json::to_value(client.encoder(channel, steps).map_err(|e| e.to_string())?)
+        }
+        Request::Analog { channel, steps } => {
+            serde_json::to_value(client.analog(channel, steps).map_err(|e| e.to_string())?)
+        }
+        Request::SetAnalog { channel, value } => serde_json::to_value(
+            client
+                .set_analog(channel, value)
+                .map_err(|e| e.to_string())?,
+        ),
+        Request::Info | Request::Rtos { .. } => unreachable!(),
+    }
+    .map_err(|e| e.to_string())?;
+    println!("{}", serde_json::to_string(&response).unwrap());
     Ok(())
 }
 
@@ -198,37 +203,5 @@ fn main() {
             eprintln!("l6ctl: {error}");
         }
         std::process::exit(2);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::{os::unix::net::UnixListener, thread};
-
-    #[test]
-    fn rtos_request_preserves_json_and_reports_server_error() {
-        let path = std::env::temp_dir().join(format!("l6ctl-test-{}.sock", std::process::id()));
-        let listener = UnixListener::bind(&path).unwrap();
-        let server = thread::spawn(move || {
-            for success in [true, false] {
-                let (mut stream, _) = listener.accept().unwrap();
-                let mut line = String::new();
-                BufReader::new(&stream).read_line(&mut line).unwrap();
-                let message: Value = serde_json::from_str(&line).unwrap();
-                assert_eq!(message, json!({"command":"rtos","kind":"tasks"}));
-                let response = if success {
-                    json!({"ok":true,"result":{"schema":1,"kind":"tasks"}})
-                } else {
-                    json!({"ok":false,"error":"unsupported firmware"})
-                };
-                writeln!(stream, "{response}").unwrap();
-            }
-        });
-        let message = json!({"command":"rtos","kind":"tasks"});
-        assert_eq!(request(&path, message.clone()).unwrap()["schema"], 1);
-        assert_eq!(request(&path, message).unwrap_err(), "unsupported firmware");
-        server.join().unwrap();
-        std::fs::remove_file(path).unwrap();
     }
 }

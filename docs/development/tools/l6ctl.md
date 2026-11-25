@@ -39,6 +39,22 @@ Use `cargo l6ctl --help` for the syntax summary. The endpoint is
 opt-in: an emulator started without `--control-socket` exposes no control
 socket.
 
+## Rust API
+
+The `l6ctl` crate also exposes typed control requests for Rust callers.
+`ControlClient::new(path)` attaches to the existing optional socket;
+`info`, `tap`, `down`, `up`, `encoder`, `analog`, and `set_analog` return
+typed responses. Encoder and analog channels use the same one-based numbering
+as the CLI. Socket input receipts indicate that the request was enqueued,
+not that the guest applied it. `request` and `RtosKind` expose the existing
+versioned RTOS JSON until its socket responses have shared typed schemas.
+
+Code that already owns an `l6max_host::engine::Engine` can borrow it with
+`OwnedControl::new(&engine)`. Its `info` and `rtos_*` methods use the host's
+existing snapshots directly; it does not create a second guest or open a
+control socket. RTOS decoding and model/revision guards remain in
+`l6max-host`, and the two transports do not yet expose identical capabilities.
+
 ## FreeRTOS snapshots
 
 `l6ctl rtos heap|tasks|scheduler|objects|all` reads the running guest through

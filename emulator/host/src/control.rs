@@ -1,6 +1,7 @@
 //! Optional local Unix-socket control endpoint for a running emulator.
 use crate::{freertos, input::InputHub, qmp::QmpClient};
 use l6fw::Model;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -17,6 +18,28 @@ use std::{
     thread::{self, JoinHandle},
     time::Duration,
 };
+
+/// Basic state shared by in-process callers and the control socket.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct Info {
+    pub model: Model,
+    pub guest_ms: u32,
+    pub powered_off: bool,
+    pub main_indicators: [u32; 8],
+    pub panel_indicators: [u32; 8],
+}
+
+pub fn info(inputs: &InputHub, model: Model) -> Info {
+    let main = inputs.main.snapshot();
+    let panel = inputs.panel.snapshot();
+    Info {
+        model,
+        guest_ms: panel.guest_ms,
+        powered_off: main.powered_off,
+        main_indicators: main.indicators,
+        panel_indicators: panel.indicators,
+    }
+}
 
 pub struct ControlServer {
     path: PathBuf,
@@ -204,17 +227,7 @@ fn execute(
                 sample(kind)
             }
         }
-        "info" => {
-            let main = inputs.main.snapshot();
-            let panel = inputs.panel.snapshot();
-            Ok(json!({
-                "model": model.name(),
-                "guest_ms": panel.guest_ms,
-                "powered_off": main.powered_off,
-                "main_indicators": main.indicators,
-                "panel_indicators": panel.indicators,
-            }))
-        }
+        "info" => serde_json::to_value(info(inputs, model)).map_err(|error| error.to_string()),
         "tap" | "down" | "up" => {
             let target = number(request, "target")?;
             if target >= crate::controls::INPUT_COUNT as u64 {

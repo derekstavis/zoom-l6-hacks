@@ -353,6 +353,62 @@ fn update_gui_state_cli_and_client_preserve_raw_snapshot() {
 }
 
 #[test]
+fn installer_outcome_cli_and_client_preserve_result_and_unavailable() {
+    let path = socket_path();
+    let sample = json!({"status":"installed"});
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"installer-outcome"}),
+                json!({"ok":true,"result":sample}),
+            ),
+            (
+                json!({"command":"installer-outcome"}),
+                json!({"ok":true,"result":sample}),
+            ),
+            (
+                json!({"command":"installer-outcome"}),
+                json!({"ok":true,"result":{"status":"failed","error":"bad card"}}),
+            ),
+            (
+                json!({"command":"installer-outcome"}),
+                json!({"ok":false,"error":"replacement installer was not run for this engine start"}),
+            ),
+        ],
+    );
+    let client = ControlClient::new(&path);
+    assert_eq!(
+        client.installer_outcome().unwrap(),
+        l6ctl::InstallerOutcome::Installed
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .arg("installer-outcome")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        sample
+    );
+    assert_eq!(
+        client.installer_outcome().unwrap(),
+        l6ctl::InstallerOutcome::Failed("bad card".into())
+    );
+    assert!(
+        matches!(client.installer_outcome(), Err(ControlError::Rejected(message)) if message.contains("not run"))
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn cli_keeps_existing_one_based_encoder_and_output_contract() {
     let path = socket_path();
     let server = server(

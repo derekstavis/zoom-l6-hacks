@@ -109,6 +109,7 @@ impl ControlServer {
         inputs: Arc<InputHub>,
         model: Model,
         qmp: QmpClient,
+        installer_outcome: Option<crate::update_bootloader::Outcome>,
     ) -> Result<Self, String> {
         if fs::symlink_metadata(&path).is_ok() {
             return Err(format!(
@@ -152,8 +153,10 @@ impl ControlServer {
                         Ok((stream, _)) => {
                             let inputs = inputs.clone();
                             let qmp = qmp.clone();
-                            workers
-                                .push(thread::spawn(move || handle(stream, &inputs, model, &qmp)));
+                            let installer_outcome = installer_outcome.clone();
+                            workers.push(thread::spawn(move || {
+                                handle(stream, &inputs, model, &qmp, installer_outcome.as_ref())
+                            }));
                         }
                         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                             thread::sleep(Duration::from_millis(10));
@@ -389,7 +392,20 @@ fn execute(
     }
 }
 
-fn handle(mut stream: UnixStream, inputs: &InputHub, model: Model, qmp: &QmpClient) {
+fn installer_observation(
+    outcome: Option<&crate::update_bootloader::Outcome>,
+) -> Result<Value, String> {
+    let outcome = outcome.ok_or("replacement installer was not run for this engine start")?;
+    serde_json::to_value(outcome).map_err(|error| error.to_string())
+}
+
+fn handle(
+    mut stream: UnixStream,
+    inputs: &InputHub,
+    model: Model,
+    qmp: &QmpClient,
+    installer_outcome: Option<&crate::update_bootloader::Outcome>,
+) {
     // Accepted sockets can inherit O_NONBLOCK from the listener (notably on
     // macOS). Use bounded blocking I/O so large JSON replies are complete.
     if let Err(error) = configure_client(&stream) {
@@ -406,6 +422,9 @@ fn handle(mut stream: UnixStream, inputs: &InputHub, model: Model, qmp: &QmpClie
                 return Err("request exceeds 4096 bytes".into());
             }
             let request: Value = serde_json::from_str(&line).map_err(|error| error.to_string())?;
+            if request.get("command").and_then(Value::as_str) == Some("installer-outcome") {
+                return installer_observation(installer_outcome);
+            }
             execute(&request, inputs, model, qmp)
         });
     let reply = match outcome {
@@ -432,6 +451,30 @@ fn send_response(stream: &mut UnixStream, reply: &Value) -> std::io::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installer_observation_reports_actual_result_or_unavailable() {
+        use crate::update_bootloader::Outcome;
+        assert!(installer_observation(None).unwrap_err().contains("not run"));
+        for (outcome, expected) in [
+            (Outcome::Installed, json!({"status":"installed"})),
+            (Outcome::NoPending, json!({"status":"no-pending"})),
+            (
+                Outcome::PreviousFailure,
+                json!({"status":"previous-failure"}),
+            ),
+            (
+                Outcome::Failed("bad card".into()),
+                json!({"status":"failed","error":"bad card"}),
+            ),
+        ] {
+            assert_eq!(installer_observation(Some(&outcome)).unwrap(), expected);
+            assert_eq!(
+                serde_json::from_value::<Outcome>(expected).unwrap(),
+                outcome
+            );
+        }
+    }
 
     #[test]
     fn input_status_request_dispatches_and_rejects_invalid_sources() {

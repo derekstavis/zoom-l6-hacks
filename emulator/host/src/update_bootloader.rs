@@ -11,7 +11,8 @@ const MARKER: usize = 0x1ff000;
 const PACKAGE_SIZE: usize = 0x1a8200;
 const MAX_PACKAGE_SIZE: usize = 0x395200;
 const L6_RESOURCE_SIZE: usize = 0x400000;
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "status", content = "error", rename_all = "kebab-case")]
 pub enum Outcome {
     NoPending,
     Installed,

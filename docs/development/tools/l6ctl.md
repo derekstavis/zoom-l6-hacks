@@ -16,6 +16,7 @@ cargo l6ctl --socket /tmp/l6-control.sock info
 cargo l6ctl --socket /tmp/l6-control.sock input status panel
 cargo l6ctl --socket /tmp/l6-control.sock heap-counters
 cargo l6ctl --socket /tmp/l6-control.sock midi-config
+cargo l6ctl --socket /tmp/l6-control.sock installer-outcome
 cargo l6ctl --socket /tmp/l6-control.sock update-state
 cargo l6ctl --socket /tmp/l6-control.sock update-gui-state
 cargo l6ctl --socket /tmp/l6-control.sock button channel.1.mute
@@ -282,3 +283,13 @@ Rust methods are `ControlClient::update_gui_state` and
 revision fingerprints identify inspected startup and confirmation routines,
 not the entire image or unrelated patches. The raw flag bit 0x100 is used by
 the update preparation scenario; pixels are still needed to verify rendering.
+
+### Replacement installer outcome
+
+`l6ctl --socket PATH installer-outcome` reports the result of the emulator's
+replacement installer for this engine start: `installed`, `no-pending`,
+`failed` (with the error), or `previous-failure`. If the replacement
+installer was not enabled, the command reports an unavailable error. This is
+emulator behavior, not an observation of the hardware boot ROM. The matching
+Rust methods are `ControlClient::installer_outcome` and
+`OwnedControl::installer_outcome`; a new engine start has its own result.

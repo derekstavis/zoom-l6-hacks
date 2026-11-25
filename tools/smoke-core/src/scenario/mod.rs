@@ -258,6 +258,12 @@ pub enum Action {
     HostMidiRoundTrip,
     HostMidiConnect,
     HostMidiBegin,
+    HostMidiDrain {
+        quiet_wall_ms: u32,
+    },
+    HostMidiExpectCount {
+        count: usize,
+    },
     HostMidiEnd,
     EnqueueEncoder {
         channel: usize,

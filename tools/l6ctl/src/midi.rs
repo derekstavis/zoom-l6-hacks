@@ -39,6 +39,13 @@ impl MidiSession {
             .transpose()
     }
 
+    /// Poll the legacy three-byte control observation used by existing MIDI
+    /// state checks. On ALSA this also reflects other control-shaped events;
+    /// use `poll_control_change` when strict CC filtering is required.
+    pub fn poll_control_observation(&mut self) -> Result<Option<[u8; 3]>, String> {
+        self.client.poll()
+    }
+
     pub fn send_bytes(&mut self, bytes: &[u8]) -> Result<(), String> {
         self.client.send_bytes(bytes)
     }
@@ -156,6 +163,10 @@ mod tests {
         assert_eq!(
             session.poll_control_change().unwrap().unwrap().controller,
             81
+        );
+        assert_eq!(
+            session.poll_control_observation().unwrap_err(),
+            "legacy path called"
         );
     }
 

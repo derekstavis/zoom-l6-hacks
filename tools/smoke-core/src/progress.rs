@@ -228,6 +228,10 @@ pub fn step_label(action: &crate::Action) -> String {
             controller,
             value,
         } => format!("Send MIDI CC {controller}={value} on channel {channel}"),
+        Action::HostMidiDrain { quiet_wall_ms } => {
+            format!("Drain MIDI until {quiet_wall_ms} ms wall quiet")
+        }
+        Action::HostMidiExpectCount { count } => format!("Wait for {count} MIDI messages"),
         Action::HostMidiSettle { guest_ms } => format!("Settle MIDI for {guest_ms} ms guest time"),
         Action::ExpectRingChanged { channel, .. } => {
             format!("Wait for channel {channel} ring change")

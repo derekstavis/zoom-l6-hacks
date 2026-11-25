@@ -100,6 +100,8 @@ pub fn of(action: &Action) -> Requirement {
         | Action::HostMidiRoundTrip
         | Action::HostMidiConnect
         | Action::HostMidiBegin
+        | Action::HostMidiDrain { .. }
+        | Action::HostMidiExpectCount { .. }
         | Action::HostMidiEnd
         | Action::EnqueueEncoder { .. }
         | Action::HostMidiExpectCc { .. }

@@ -1449,6 +1449,66 @@ fn retry_native_midi<T>(
     }
 }
 
+/// Consume legacy control observations until they have been quiet for the
+/// declared wall interval. A continuous stream cannot exceed the budget.
+fn drain_control_until_quiet(
+    quiet: Duration,
+    mut poll: impl FnMut() -> Result<Option<[u8; 3]>, String>,
+    mut pump: impl FnMut() -> Result<(), String>,
+    mut now: impl FnMut() -> Instant,
+    mut expired: impl FnMut() -> bool,
+    mut sleep: impl FnMut(Duration),
+) -> Result<usize, String> {
+    let mut quiet_since = now();
+    let mut drained = 0;
+    while now().duration_since(quiet_since) < quiet {
+        pump()?;
+        while poll()?.is_some() {
+            quiet_since = now();
+            drained += 1;
+            if expired() {
+                return Err("MIDI input did not become quiet before the shared deadline".into());
+            }
+        }
+        if expired() {
+            return Err("MIDI input did not become quiet before the shared deadline".into());
+        }
+        sleep(Duration::from_millis(5));
+    }
+    Ok(drained)
+}
+
+fn midi_collection_deadline(sent: Instant, wall_timeout: Duration, overall: Instant) -> Instant {
+    (sent + wall_timeout).min(overall)
+}
+
+fn collect_control_observations(
+    count: usize,
+    mut poll: impl FnMut() -> Result<Option<[u8; 3]>, String>,
+    mut pump: impl FnMut() -> Result<(), String>,
+    mut expired: impl FnMut() -> bool,
+    mut sleep: impl FnMut(Duration),
+) -> Result<Vec<[u8; 3]>, String> {
+    let mut replies = Vec::with_capacity(count);
+    loop {
+        pump()?;
+        while let Some(message) = poll()? {
+            replies.push(message);
+            if replies.len() == count {
+                return Ok(replies);
+            }
+        }
+        if expired() {
+            return Err(format!(
+                "midi-sync returned {}/{} expected Control Change replies before deadline; observed {replies:02x?}",
+                replies.len(),
+                count
+            ));
+        }
+        sleep(Duration::from_millis(5));
+    }
+}
+
 /// Timing shared by the native host MIDI scenario's individual steps.
 pub(super) struct MidiRoundTrip {
     guest_start: u32,
@@ -1649,6 +1709,51 @@ impl State {
                     l6ctl::OwnedControl::new(&session.engine).encoder(channel as u32, steps)?;
                 json!({"channel": receipt.channel, "steps": receipt.steps})
             }
+            Operation::HostMidiDrain { quiet_wall_ms } => {
+                let context = self
+                    .midi_round_trip
+                    .as_ref()
+                    .ok_or("MIDI drain requires an active transaction")?;
+                let client = self
+                    .native_midi
+                    .as_mut()
+                    .ok_or("host MIDI client unavailable")?;
+                let drained = drain_control_until_quiet(
+                    Duration::from_millis(u64::from(quiet_wall_ms)),
+                    || client.poll_control_observation(),
+                    || session.poll().map(|_| ()),
+                    Instant::now,
+                    || context.exceeded(Instant::now(), inputs.panel.snapshot().guest_ms),
+                    thread::sleep,
+                )?;
+                json!({"drained": drained, "quiet_wall_ms": quiet_wall_ms})
+            }
+            Operation::HostMidiExpectCount { count } => {
+                let context = self
+                    .midi_round_trip
+                    .as_ref()
+                    .ok_or("MIDI collection requires an active transaction")?;
+                let client = self
+                    .native_midi
+                    .as_mut()
+                    .ok_or("host MIDI client unavailable")?;
+                let deadline = midi_collection_deadline(
+                    context.midi_sent_at.unwrap_or_else(Instant::now),
+                    Duration::from_secs(wall_timeout_s),
+                    context.overall_deadline,
+                );
+                let replies = collect_control_observations(
+                    count,
+                    || client.poll_control_observation(),
+                    || session.poll().map(|_| ()),
+                    || {
+                        Instant::now() >= deadline
+                            || context.exceeded(Instant::now(), inputs.panel.snapshot().guest_ms)
+                    },
+                    thread::sleep,
+                )?;
+                json!({"expected_replies": count, "reply_count": replies.len(), "replies": replies})
+            }
             Operation::HostMidiExpectCc {
                 channel,
                 controller,
@@ -1811,6 +1916,111 @@ mod declarative_midi_tests {
         fn release(&mut self) {
             self.released.store(true, Ordering::SeqCst);
         }
+    }
+
+    #[test]
+    fn drain_uses_wall_quiet_since_the_last_observation() {
+        use std::cell::{Cell, RefCell};
+        let start = Instant::now();
+        let now = Cell::new(start);
+        let queue = RefCell::new(VecDeque::from([
+            Some([0xb0, 1, 1]),
+            None,
+            Some([0xb0, 2, 2]),
+            None,
+            None,
+            None,
+        ]));
+        let count = drain_control_until_quiet(
+            Duration::from_millis(10),
+            || Ok(queue.borrow_mut().pop_front().flatten()),
+            || Ok(()),
+            || now.get(),
+            || false,
+            |duration| now.set(now.get() + duration),
+        )
+        .unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(now.get(), start + Duration::from_millis(15));
+    }
+
+    #[test]
+    fn collector_preserves_order_and_unread_queue_and_reports_partial_timeout() {
+        use std::cell::{Cell, RefCell};
+        let queue = RefCell::new(VecDeque::from([[0xb0, 1, 1], [0xb0, 2, 2], [0xb0, 3, 3]]));
+        let received = collect_control_observations(
+            2,
+            || Ok(queue.borrow_mut().pop_front()),
+            || Ok(()),
+            || false,
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(received, vec![[0xb0, 1, 1], [0xb0, 2, 2]]);
+        assert_eq!(queue.borrow_mut().pop_front(), Some([0xb0, 3, 3]));
+        let attempts = Cell::new(0);
+        let error = collect_control_observations(
+            2,
+            || {
+                let n = attempts.get();
+                attempts.set(n + 1);
+                Ok((n == 0).then_some([0xb0, 4, 4]))
+            },
+            || Ok(()),
+            || attempts.get() >= 2,
+            |_| {},
+        )
+        .unwrap_err();
+        assert!(error.contains("1/2"));
+        assert!(error.contains("b0"));
+    }
+
+    #[test]
+    fn collector_retains_legacy_completion_order_and_overall_deadline() {
+        let start = Instant::now();
+        let sent = start + Duration::from_millis(500);
+        assert_eq!(
+            midi_collection_deadline(
+                sent,
+                Duration::from_secs(120),
+                start + Duration::from_secs(120)
+            ),
+            start + Duration::from_secs(120)
+        );
+        assert_eq!(
+            midi_collection_deadline(
+                sent,
+                Duration::from_secs(3),
+                start + Duration::from_secs(120)
+            ),
+            sent + Duration::from_secs(3)
+        );
+        // The prior collector checks a complete response before checking its
+        // timeout. Preserve that observed order in this extraction.
+        let result =
+            collect_control_observations(1, || Ok(Some([0xb0, 1, 2])), || Ok(()), || true, |_| {})
+                .unwrap();
+        assert_eq!(result, vec![[0xb0, 1, 2]]);
+    }
+
+    #[test]
+    fn drain_stops_continuous_traffic_when_budget_expires() {
+        use std::cell::Cell;
+        let n = Cell::new(0);
+        let error = drain_control_until_quiet(
+            Duration::from_millis(500),
+            || {
+                n.set(n.get() + 1);
+                Ok(Some([0xb0, 1, 1]))
+            },
+            || Ok(()),
+            Instant::now,
+            || n.get() == 3,
+            |_| {},
+        )
+        .unwrap_err();
+        assert!(error.contains("shared deadline"));
+        assert_eq!(n.get(), 3);
     }
 
     #[test]

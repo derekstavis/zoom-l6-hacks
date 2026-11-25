@@ -1612,6 +1612,8 @@ impl State {
                 wall_timeout_s,
             ),
             operation @ (Operation::HostMidiBegin
+            | Operation::HostMidiDrain { .. }
+            | Operation::HostMidiExpectCount { .. }
             | Operation::HostMidiEnd
             | Operation::EnqueueEncoder { .. }
             | Operation::HostMidiExpectCc { .. }

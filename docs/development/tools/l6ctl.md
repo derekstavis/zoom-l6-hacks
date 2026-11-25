@@ -158,3 +158,12 @@ on a host with that service using:
 ```sh
 cargo test --offline --locked -p l6ctl --test midi -- --ignored
 ```
+
+The CLI listener reports strict Control Change messages. The Rust session also
+exposes `poll_control_observation` for the existing MIDI-sync scenario's
+legacy counting semantics: on ALSA it can synthesize control-shaped bytes for
+other control events and can hide ALSA input errors. It is an observation of
+the legacy client, not a raw MIDI byte stream.
+
+The current CLI listener exits after one strict Control Change; it cannot
+collect a MIDI-sync response as a single CLI session.

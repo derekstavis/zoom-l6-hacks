@@ -21,11 +21,33 @@ action = "include"
 path = "tests/emulator/fragments/l6max-first-boot-no-sd.toml"
 
 [[step]]
-action = "host-midi-round-trip"
-guest_timeout_ms = 15000
+action = "include"
+path = "tests/emulator/fragments/host-midi-native-round-trip.toml"
+
+[[step]]
+action = "host-midi-begin"
+guest_timeout_ms = 30000
 wall_timeout_s = 120
 
 [[step]]
-action = "host-midi-sync"
+action = "host-midi-drain"
+quiet_wall_ms = 500
 guest_timeout_ms = 30000
 wall_timeout_s = 120
+
+[[step]]
+action = "host-midi-send-cc"
+channel = 0
+controller = 127
+value = 127
+guest_timeout_ms = 30000
+wall_timeout_s = 120
+
+[[step]]
+action = "host-midi-expect-count"
+count = 94
+guest_timeout_ms = 30000
+wall_timeout_s = 120
+
+[[step]]
+action = "host-midi-end"

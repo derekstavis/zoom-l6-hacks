@@ -556,6 +556,17 @@ impl Scenario {
                 } if *channel > 15 || *controller > 127 || *value > 127 => {
                     return Err("MIDI channel must be 0..15 and controller/value 0..127".into());
                 }
+                Action::HostMidiDrain { quiet_wall_ms }
+                    if *quiet_wall_ms == 0
+                        || u64::from(*quiet_wall_ms) > step.wall_timeout_s.saturating_mul(1000) =>
+                {
+                    return Err(
+                        "MIDI quiet interval must be positive and within the wall timeout".into(),
+                    );
+                }
+                Action::HostMidiExpectCount { count } if *count == 0 || *count > 16384 => {
+                    return Err("MIDI message count must be 1..16384".into());
+                }
                 Action::HostMidiSettle { guest_ms }
                     if *guest_ms == 0 || *guest_ms > step.guest_timeout_ms =>
                 {

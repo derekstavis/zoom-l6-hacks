@@ -350,7 +350,7 @@
     "suites": [
       "full"
     ],
-    "definition": "2c8a5c71530bc215286ea116ac0b824718502f091dab0a6bd0e1b3c092c9d8e3"
+    "definition": "1cdbc89514106dd65334a33138db838f569eb0fc51e3c025f2b0a0524564c18e"
   },
   {
     "case": "host-sd-midi-sync",

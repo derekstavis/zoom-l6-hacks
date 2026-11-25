@@ -178,6 +178,8 @@ fail even if the ring changed by that observation.
 | `usb-midi` | `value` | Require the preceding encoder input's model-mapped channel-1 CC on USB MIDI IN, then send that CC with `value` |
 | `host-midi-round-trip` | — | Verify host MIDI input/output delivery through the configured host MIDI backend |
 | `host-midi-connect` | — | Connect the model's native mixer endpoint and start the first MIDI transaction |
+| `host-midi-drain` | `quiet_wall_ms` | Drain the retained native session until no legacy control observation arrives for the declared wall interval, within the transaction budget |
+| `host-midi-expect-count` | `count` | Collect that many legacy control observations on the retained native session; preserve their order and remaining queue |
 | `host-midi-begin` | — | Start a new bounded transaction on the retained session |
 | `host-midi-end` | — | End the active transaction while retaining the session and its queue |
 | `enqueue-encoder` | `channel`, `steps`, optional `midi_transaction` | Enqueue an encoder input without waiting for guest acknowledgment; optionally enforce the active MIDI budget |

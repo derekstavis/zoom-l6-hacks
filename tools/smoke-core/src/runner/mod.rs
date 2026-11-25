@@ -485,6 +485,16 @@ impl Runner {
                 Action::HostMidiConnect => {
                     return Ok(Progress::Device(devices::Operation::HostMidiConnect));
                 }
+                Action::HostMidiDrain { quiet_wall_ms } => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiDrain {
+                        quiet_wall_ms,
+                    }));
+                }
+                Action::HostMidiExpectCount { count } => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiExpectCount {
+                        count,
+                    }));
+                }
                 Action::HostMidiBegin => {
                     return Ok(Progress::Device(devices::Operation::HostMidiBegin));
                 }

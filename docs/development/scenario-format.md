@@ -280,7 +280,9 @@ message delivered just after the interval.
 | `wait-knob-parameter-mode` | `mode` | Wait for the guarded parameter selector with its 10,000-guest-ms / 180-second wall caps. |
 | `capture-display` / `expect-captured-display-image` | `guest_ms`, `artifact` / `image` | Capture a frame after the requested guest duration, then compare that exact frame once with a reviewed PNG and write its named artifact. |
 | `knob-dialog-expect-heap` | — | Compare allocation and free counters with the active-dialog baseline. The bounded mode walk validates the 1.10 allocator once; images replacing that allocator are rejected. |
-| `knob-dialog` | — | Patched L6max only; compare all ten parameter scenes with reviewed display images, then verify heap lifetime, busy-aware expiry, display cleanup, widget restoration and exact encoder reports |
+| `knob-dialog-final-begin` | — | Exercise the Pan sweep and channel-2 LEVEL value before the invalid-mailbox probes, retaining the debugger context. |
+| `knob-dialog-inject-invalid-tag` / `knob-dialog-wait-invalid-tag` / `knob-dialog-confirm-invalid-tag` | `tag` on injection | Hand a tag to the callback while the debugger owns the guest, wait for the cleared mailbox with a deadline starting at handoff, and recheck while stopped. An interrupted handoff leaves the guest stopped. |
+| `knob-dialog` | — | Finish the L6max diagnostic: check heap lifetime, notification expiry, display cleanup, widget restoration and exact encoder reports. The preceding mode walk checks reviewed display images. |
 | `knob-popup-open` | `first_steps`, `fallback_steps`, `attempt_guest_ms` | On the L6max recorder screen, try the channel 1 level knob by `first_steps`, then by `fallback_steps` if the popup does not open within `attempt_guest_ms`; retain the initial display and level as evidence |
 | `knob-popup-expect-open` | — | Require the dialog signature, callback and a changed display under the shared popup deadline |
 | `knob-popup-expect-value` | — | Require the rendered channel 1 level text and changed mixer value under the shared popup deadline; unlike the original monolithic action, fail promptly when its overall step deadline expires |

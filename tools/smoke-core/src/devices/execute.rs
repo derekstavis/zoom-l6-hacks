@@ -6,7 +6,8 @@ fn knob_dialog_phase(
     scope: Option<&KnobModeScope>,
     pending: Option<&PendingInput>,
     next_mode: Option<usize>,
-) -> Option<u8> {
+    final_phase: Option<u8>,
+) -> Option<u16> {
     let fixed = match operation {
         Operation::KnobDialogGuard => Some(0),
         Operation::KnobDialogBaseline => Some(1),
@@ -25,9 +26,15 @@ fn knob_dialog_phase(
         Operation::KnobDialogBitmapZero => Some(14),
         Operation::KnobDialogActiveOverlay => Some(15),
         Operation::KnobDialogLockedUpdate => Some(16),
-        Operation::KnobDialogModeBegin { .. } | Operation::KnobDialog => {
-            next_mode.and_then(|index| u8::try_from(17 + index * 10).ok())
+        Operation::KnobDialogModeBegin { .. } => {
+            next_mode.and_then(|index| u16::try_from(17 + index * 10).ok())
         }
+        Operation::KnobDialogFinalBegin
+        | Operation::KnobDialogInjectInvalidTag { .. }
+        | Operation::KnobDialogWaitInvalidTag
+        | Operation::KnobDialogConfirmInvalidTag
+        | Operation::KnobDialog => next_mode
+            .and_then(|index| u16::try_from(17 + index * 10 + usize::from(final_phase?)).ok()),
         _ => None,
     };
     if fixed.is_some() {
@@ -51,10 +58,10 @@ fn knob_dialog_phase(
         Operation::KnobDialogModeEnd => 9,
         _ => return None,
     };
-    Some(17 + scope.index as u8 * 10 + offset)
+    Some(17 + scope.index as u16 * 10 + offset)
 }
 
-type KnobDeadline = (Instant, u32, u32, u64, u8);
+type KnobDeadline = (Instant, u32, u32, u64, u16);
 
 fn advance_knob_deadline(is_terminal: bool, shared: KnobDeadline) -> Option<KnobDeadline> {
     if is_terminal {
@@ -342,6 +349,7 @@ impl State {
             self.knob_mode.as_ref(),
             self.pending_input.as_ref(),
             self.knob_dialog_preflight.as_ref().map(knob_mode_index),
+            self.knob_dialog_preflight.as_ref().map(final_phase),
         );
         let deadline_operation = expected.map(|_| matches!(operation, Operation::KnobDialog));
         if expected.is_none() && self.has_knob_preflight() {
@@ -460,7 +468,7 @@ impl State {
         operation: Operation,
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
-        shared: Option<(Instant, u32, u32, u64, u8)>,
+        shared: Option<(Instant, u32, u32, u64, u16)>,
         operation_start: (Instant, u32),
     ) -> Result<Value, Box<dyn std::error::Error>> {
         match operation {
@@ -2551,6 +2559,41 @@ impl State {
                 guest_timeout_ms,
                 wall_timeout_s,
             ),
+            Operation::KnobDialogFinalBegin => {
+                self.knob_heap_reader = None;
+                run_knob_dialog(
+                    true,
+                    session,
+                    options,
+                    &mut self.knob_dialog_preflight,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                    shared,
+                    operation_start,
+                )
+            }
+            Operation::KnobDialogInjectInvalidTag { tag } => inject_invalid_tag(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                tag,
+                wall_timeout_s,
+            ),
+            Operation::KnobDialogWaitInvalidTag => wait_invalid_tag(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                guest_timeout_ms,
+                wall_timeout_s,
+            ),
+            Operation::KnobDialogConfirmInvalidTag => confirm_invalid_tag(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
             Operation::KnobDialog => {
                 self.knob_heap_reader = None;
                 let _baseline = self
@@ -2558,6 +2601,7 @@ impl State {
                     .take()
                     .ok_or("knob-dialog requires baseline frame")?;
                 run_knob_dialog(
+                    false,
                     session,
                     options,
                     &mut self.knob_dialog_preflight,
@@ -2677,7 +2721,7 @@ mod knob_phase_tests {
                      shared: &mut Option<KnobDeadline>| {
             let before = shared.expect("deadline lost before the final operation");
             assert_eq!(
-                knob_dialog_phase(operation, scope, pending, next_mode),
+                knob_dialog_phase(operation, scope, pending, next_mode, Some(0)),
                 Some(before.4)
             );
             *shared = advance_knob_deadline(matches!(operation, Operation::KnobDialog), before);
@@ -2746,7 +2790,26 @@ mod knob_phase_tests {
                 check(op, Some(&scope), *pending, Some(index), &mut shared);
             }
         }
-        check(&Operation::KnobDialog, None, None, Some(3), &mut shared);
+        for (phase, op) in [
+            Operation::KnobDialogFinalBegin,
+            Operation::KnobDialogInjectInvalidTag { tag: 15 },
+            Operation::KnobDialogWaitInvalidTag,
+            Operation::KnobDialogConfirmInvalidTag,
+            Operation::KnobDialogInjectInvalidTag { tag: 240 },
+            Operation::KnobDialogWaitInvalidTag,
+            Operation::KnobDialogConfirmInvalidTag,
+            Operation::KnobDialog,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let before = shared.unwrap();
+            assert_eq!(
+                knob_dialog_phase(&op, None, None, Some(3), Some(phase as u8)),
+                Some(before.4)
+            );
+            shared = advance_knob_deadline(matches!(op, Operation::KnobDialog), before);
+        }
         assert!(shared.is_none());
     }
 }

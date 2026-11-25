@@ -673,6 +673,8 @@ pub(super) struct PreflightContext {
     overlay_heap: Option<(Vec<u32>, u32)>,
     mode_index: usize,
     last_mode: Option<u8>,
+    final_phase: u8,
+    pending_invalid_tag: Option<PendingInvalidTag>,
 }
 
 pub(super) fn begin_preflight(
@@ -811,6 +813,8 @@ pub(super) fn begin_preflight(
         overlay_heap: None,
         mode_index: 0,
         last_mode: None,
+        final_phase: 0,
+        pending_invalid_tag: None,
     })
 }
 
@@ -1126,7 +1130,7 @@ pub(super) fn run_first_activation(
     context: &mut PreflightContext,
     guest_timeout_ms: u32,
     wall_timeout_s: u64,
-    shared: (std::time::Instant, u32, u32, u64, u8),
+    shared: (std::time::Instant, u32, u32, u64, u16),
 ) -> Result<Value, Box<dyn std::error::Error>> {
     use std::time::Instant;
     if context.next != 6 {
@@ -2222,12 +2226,13 @@ fn channel_level_turn_clamped(raw: u8, delta: i32) -> bool {
 }
 
 pub(super) fn run_knob_dialog(
+    prefix: bool,
     session: &Session,
     options: &Options,
     context_slot: &mut Option<PreflightContext>,
     guest_timeout_ms: u32,
     wall_timeout_s: u64,
-    shared: Option<(Instant, u32, u32, u64, u8)>,
+    shared: Option<(Instant, u32, u32, u64, u16)>,
     operation_start: (Instant, u32),
 ) -> Result<Value, Box<dyn std::error::Error>> {
     use std::time::Instant;
@@ -2380,6 +2385,9 @@ pub(super) fn run_knob_dialog(
         return Err("knob-dialog preflight incomplete".into());
     }
     let context = context_slot.as_ref().unwrap();
+    if context.final_phase != if prefix { 0 } else { 7 } {
+        return Err("knob-dialog final phases out of order".into());
+    }
     if context.alias_widget.is_none()
         || context.alias_layer.is_none()
         || context.debugger.is_none()
@@ -2389,26 +2397,26 @@ pub(super) fn run_knob_dialog(
     }
     let mut context = context_slot.take().unwrap();
 
-    let active_snapshot = context.active.take().unwrap();
+    let active_snapshot = context.active.as_ref().unwrap().clone();
     let mut debugger = context.debugger.take().unwrap();
-    let original_window = context.original_window;
-    let original_bitmap = context.original_bitmap;
-    let original_bitmap_descriptor = context.original_bitmap_descriptor;
-    let original_notification_semaphore = context.original_notification_semaphore;
+    let original_window = context.original_window.clone();
+    let original_bitmap = context.original_bitmap.clone();
+    let original_bitmap_descriptor = context.original_bitmap_descriptor.clone();
+    let original_notification_semaphore = context.original_notification_semaphore.clone();
     let text_table = context.text_table;
-    let original_resources = context.original_resources;
+    let original_resources = context.original_resources.clone();
     let shared_resource_pointer = context.shared_resource_pointer;
-    let original_shared_resource = context.original_shared_resource;
+    let original_shared_resource = context.original_shared_resource.clone();
     let original_lengths_table = context.original_lengths_table;
-    let original_lengths = context.original_lengths;
+    let original_lengths = context.original_lengths.clone();
     let widget7 = context.widget7;
     let widget33 = context.widget33;
-    let original_widget7 = context.original_widget7;
-    let original_widget33 = context.original_widget33;
+    let original_widget7 = context.original_widget7.clone();
+    let original_widget33 = context.original_widget33.clone();
     let background10 = context.background10;
     let background37 = context.background37;
     let background48 = context.background48;
-    let original_background_layers = context.original_background_layers;
+    let original_background_layers = context.original_background_layers.clone();
     let widget_layer_guard_rejected = true;
     let background_layer_guard_rejected = true;
     let callback_preflight_race_rejected = true;
@@ -2422,59 +2430,60 @@ pub(super) fn run_knob_dialog(
             refreshed,
         } = active_snapshot;
         let state = l6max::gui_bitmap_table_entry_0;
-        // The preceding mode walk ends on Pan with a verified live scene.
-        // Sweep from center through left 50% to right 50%, capturing at 20 fps.
-        capture_demo("knob-dialog-demo-pan-center")?;
-        if decode_text(text_table + 179 * 4)? != "CENTER" {
-            return Err("demo pan sweep did not start at center".into());
-        }
-        use firmware_api::l6max::mixer_first_channel_pan;
-        let pan_start = qmp.read_memory(0, mixer_first_channel_pan, 1)?[0];
-        for name in ["left", "right"] {
-            let mut reached_target = false;
-            for index in 0..100 {
+        if prefix {
+            // The preceding mode walk ends on Pan with a verified live scene.
+            // Sweep from center through left 50% to right 50%, capturing at 20 fps.
+            capture_demo("knob-dialog-demo-pan-center")?;
+            if decode_text(text_table + 179 * 4)? != "CENTER" {
+                return Err("demo pan sweep did not start at center".into());
+            }
+            use firmware_api::l6max::mixer_first_channel_pan;
+            let pan_start = qmp.read_memory(0, mixer_first_channel_pan, 1)?[0];
+            for name in ["left", "right"] {
+                let mut reached_target = false;
+                for index in 0..100 {
+                    let raw = qmp.read_memory(0, mixer_first_channel_pan, 1)?[0];
+                    let displayed = decode_text(text_table + 179 * 4)?;
+                    let target_reached = if name == "left" {
+                        displayed
+                            .strip_prefix("L ")
+                            .and_then(|value| value.strip_suffix('%'))
+                            .and_then(|value| value.parse::<u8>().ok())
+                            .is_some_and(|value| value >= 48)
+                    } else {
+                        displayed
+                            .strip_prefix("R ")
+                            .and_then(|value| value.strip_suffix('%'))
+                            .and_then(|value| value.parse::<u8>().ok())
+                            .is_some_and(|value| value >= 48)
+                    };
+                    if target_reached {
+                        reached_target = true;
+                        break;
+                    }
+                    let target = if name == "left" { 32 } else { 95 };
+                    inputs.knob(0, if raw < target { 1 } else { -1 })?;
+                    capture_demo(&format!("knob-dialog-demo-pan-{name}-{index:02}"))?;
+                }
+                if !reached_target {
+                    return Err(format!("demo pan sweep did not reach {name} 50%").into());
+                }
+                capture(500, &format!("knob-dialog-demo-pan-{name}-end"))?;
+            }
+            for _ in 0..100 {
                 let raw = qmp.read_memory(0, mixer_first_channel_pan, 1)?[0];
-                let displayed = decode_text(text_table + 179 * 4)?;
-                let target_reached = if name == "left" {
-                    displayed
-                        .strip_prefix("L ")
-                        .and_then(|value| value.strip_suffix('%'))
-                        .and_then(|value| value.parse::<u8>().ok())
-                        .is_some_and(|value| value >= 48)
-                } else {
-                    displayed
-                        .strip_prefix("R ")
-                        .and_then(|value| value.strip_suffix('%'))
-                        .and_then(|value| value.parse::<u8>().ok())
-                        .is_some_and(|value| value >= 48)
-                };
-                if target_reached {
-                    reached_target = true;
+                if raw == pan_start {
                     break;
                 }
-                let target = if name == "left" { 32 } else { 95 };
-                inputs.knob(0, if raw < target { 1 } else { -1 })?;
-                capture_demo(&format!("knob-dialog-demo-pan-{name}-{index:02}"))?;
+                inputs.knob(0, if raw < pan_start { 1 } else { -1 })?;
+                capture(50, "knob-dialog-demo-pan-reset")?;
             }
-            if !reached_target {
-                return Err(format!("demo pan sweep did not reach {name} 50%").into());
-            }
-            capture(500, &format!("knob-dialog-demo-pan-{name}-end"))?;
-        }
-        for _ in 0..100 {
-            let raw = qmp.read_memory(0, mixer_first_channel_pan, 1)?[0];
-            if raw == pan_start {
-                break;
-            }
-            inputs.knob(0, if raw < pan_start { 1 } else { -1 })?;
-            capture(50, "knob-dialog-demo-pan-reset")?;
-        }
-        inputs.tap(35, 50)?;
-        wait_parameter_mode(9)?;
-        let channel0_level = l6max::mixer_channel_levels;
-        let channel1_level = l6max::mixer_channel_levels + 1;
-        let channel0_raw = qmp.read_memory(0, channel0_level, 1)?[0];
-        let mut channel1_raw = qmp.read_memory(0, channel1_level, 1)?[0];
+            inputs.tap(35, 50)?;
+            wait_parameter_mode(9)?;
+            let channel0_level = l6max::mixer_channel_levels;
+            let channel1_level = l6max::mixer_channel_levels + 1;
+            let channel0_raw = qmp.read_memory(0, channel0_level, 1)?[0];
+            let mut channel1_raw = qmp.read_memory(0, channel1_level, 1)?[0];
         let mut observed_change = false;
         for delta in [-1, 1, -2, 2] {
             check_deadline()?;
@@ -2549,52 +2558,15 @@ pub(super) fn run_knob_dialog(
                 "channel-2 event did not display its own LEVEL value: channel0={channel0_raw}, channel1={channel1_raw}, displayed={channel1_display:?}"
             )
             .into());
-        }
-        for (tag, description) in [(0x0f, "invalid mode 15"), (0xf0, "invalid channel 15")] {
-            qmp.stop()?;
-            debugger.write(state + 3, &[tag])?;
-            // Once resumed the guest owns this mailbox; never replay its old value.
-            debugger.handoff_mailbox(state + 3);
-            debugger.resume_guest()?;
-            // The callback acknowledges discarded tags by clearing the mailbox.
-            // Wait for that acknowledgement, rather than assuming it happened
-            // after a fixed amount of guest time.
-            const DISCARD_GUEST_TIMEOUT_MS: u32 = 10_000;
-            const DISCARD_WALL_TIMEOUT_S: u64 = 180;
-            const DISCARD_POLL_MS: u64 = 5;
-            let start = inputs.panel.snapshot().guest_ms;
-            let deadline =
-                Instant::now() + Duration::from_secs(wall_timeout_s.min(DISCARD_WALL_TIMEOUT_S));
-            loop {
-                session.poll()?;
-                if qmp.read_memory(0, state + 3, 1)? == u8::MAX.to_le_bytes() {
-                    break;
-                }
-                if inputs.panel.snapshot().guest_ms.wrapping_sub(start)
-                    >= guest_timeout_ms.min(DISCARD_GUEST_TIMEOUT_MS)
-                    || Instant::now() >= deadline
-                {
-                    return Err(
-                        format!("display callback did not safely discard {description}").into(),
-                    );
-                }
-                thread::sleep(Duration::from_millis(DISCARD_POLL_MS));
             }
-            qmp.stop()?;
-            let discarded = qmp.read_memory(0, state + 3, 1)? == u8::MAX.to_le_bytes();
-            debugger.resume_guest()?;
-            if !discarded {
-                return Err(
-                    format!("display callback did not safely discard {description}").into(),
-                );
-            }
-            debugger.acknowledge_mailbox();
+            return Ok(json!({"pan_and_level_checked": true}));
         }
         // An encoder turn reaches the mailbox through the panel MCU, its UART
         // and the mixer, so a fixed delay can end before the dialog shows it.
         // A late event is held while a stock notification is active and then
         // changes the scene after expiry. Wait until the dialog has consumed
         // the event and shows the new mixer value.
+        let channel0_level = l6max::mixer_channel_levels;
         let settled_turn = |name: &str| -> Result<(), Box<dyn std::error::Error>> {
             let before = qmp.read_memory(0, channel0_level, 1)?[0];
             inputs.knob(0, if before == 0 { 1 } else { -1 })?;
@@ -2939,7 +2911,134 @@ pub(super) fn run_knob_dialog(
             "display_callback_remains_registered": true
         }));
     })();
-    debugger.finish(result)
+    if prefix && result.is_ok() {
+        context.final_phase = 1;
+        context.debugger = Some(debugger);
+        *context_slot = Some(context);
+        result
+    } else {
+        debugger.finish(result)
+    }
+}
+
+struct PendingInvalidTag {
+    tag: u8,
+    guest_start: u32,
+    wall_deadline: Instant,
+}
+
+impl PendingInvalidTag {
+    fn expired(&self, guest: u32, now: Instant, guest_timeout_ms: u32) -> bool {
+        guest.wrapping_sub(self.guest_start) >= guest_timeout_ms.min(10_000)
+            || now >= self.wall_deadline
+    }
+    fn description(&self) -> String {
+        if self.tag & 0x0f >= 10 {
+            format!("invalid mode {}", self.tag & 0x0f)
+        } else {
+            format!("invalid channel {}", self.tag >> 4)
+        }
+    }
+}
+
+pub(super) fn final_phase(context: &PreflightContext) -> u8 {
+    context.final_phase
+}
+
+pub(super) fn inject_invalid_tag(
+    session: &Session,
+    context: &mut PreflightContext,
+    tag: u8,
+    wall_timeout_s: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if !matches!(context.final_phase, 1 | 4) {
+        return Err("invalid tag injection out of order".into());
+    }
+    let qmp = &session.engine.management[0];
+    let debugger = context.debugger.as_mut().ok_or("missing knob debugger")?;
+    qmp.stop()?;
+    let address = l6max::gui_bitmap_table_entry_0 + 3;
+    debugger.write(address, &[tag])?;
+    debugger.handoff_mailbox(address);
+    debugger.resume_guest()?;
+    let guest_start = session
+        .engine
+        .inputs
+        .as_ref()
+        .ok_or("missing inputs")?
+        .panel
+        .snapshot()
+        .guest_ms;
+    context.pending_invalid_tag = Some(PendingInvalidTag {
+        tag,
+        guest_start,
+        wall_deadline: Instant::now() + Duration::from_secs(wall_timeout_s.min(180)),
+    });
+    context.final_phase += 1;
+    Ok(json!({"tag":tag}))
+}
+
+pub(super) fn wait_invalid_tag(
+    session: &Session,
+    context: &mut PreflightContext,
+    guest_timeout_ms: u32,
+    _wall_timeout_s: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if !matches!(context.final_phase, 2 | 5) {
+        return Err("invalid tag wait out of order".into());
+    }
+    let qmp = &session.engine.management[0];
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    let pending = context
+        .pending_invalid_tag
+        .as_ref()
+        .ok_or("missing pending invalid tag")?;
+    loop {
+        session.poll()?;
+        if qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 3, 1)? == [0xff] {
+            break;
+        }
+        if pending.expired(
+            inputs.panel.snapshot().guest_ms,
+            Instant::now(),
+            guest_timeout_ms,
+        ) {
+            return Err(format!(
+                "display callback did not safely discard {}",
+                pending.description()
+            )
+            .into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    context.final_phase += 1;
+    Ok(json!({}))
+}
+
+pub(super) fn confirm_invalid_tag(
+    session: &Session,
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if !matches!(context.final_phase, 3 | 6) {
+        return Err("invalid tag confirmation out of order".into());
+    }
+    let description = context
+        .pending_invalid_tag
+        .as_ref()
+        .ok_or("missing pending invalid tag")?
+        .description();
+    let qmp = &session.engine.management[0];
+    let debugger = context.debugger.as_mut().ok_or("missing knob debugger")?;
+    qmp.stop()?;
+    let discarded = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 3, 1)? == [0xff];
+    debugger.resume_guest()?;
+    if !discarded {
+        return Err(format!("display callback did not safely discard {description}").into());
+    }
+    debugger.acknowledge_mailbox();
+    context.pending_invalid_tag = None;
+    context.final_phase += 1;
+    Ok(json!({}))
 }
 
 pub(super) fn knob_display_matches(mode: u32, expected: &str, displayed: &str) -> bool {
@@ -3643,5 +3742,27 @@ mod channel_level_readiness_tests {
         assert!(channel_level_turn_clamped(127, 1));
         assert!(!channel_level_turn_clamped(0, 1));
         assert!(!channel_level_turn_clamped(1, -1));
+    }
+}
+
+#[cfg(test)]
+mod invalid_tag_deadline_tests {
+    use super::*;
+    #[test]
+    fn timer_includes_inter_step_delay_and_guest_wrap() {
+        let start = Instant::now();
+        let tag = PendingInvalidTag {
+            tag: 15,
+            guest_start: u32::MAX - 4,
+            wall_deadline: start + Duration::from_secs(180),
+        };
+        assert!(!tag.expired(4, start + Duration::from_secs(1), 10_000));
+        assert!(tag.expired(9995, start + Duration::from_secs(1), 10_000));
+        assert!(tag.expired(4, start + Duration::from_secs(180), 10_000));
+        assert_eq!(tag.description(), "invalid mode 15");
+        assert_eq!(
+            PendingInvalidTag { tag: 240, ..tag }.description(),
+            "invalid channel 15"
+        );
     }
 }

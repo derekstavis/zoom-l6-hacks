@@ -1,0 +1,37 @@
+[[step]]
+action = "knob-dialog-final-begin"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-inject-invalid-tag"
+tag = 15
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-wait-invalid-tag"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-confirm-invalid-tag"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-inject-invalid-tag"
+tag = 240
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-wait-invalid-tag"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-confirm-invalid-tag"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+

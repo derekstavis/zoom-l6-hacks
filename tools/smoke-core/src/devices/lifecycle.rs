@@ -910,6 +910,9 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
                     for (label, operation) in embedded_mode_operations()? {
                         run(operation, &label)?;
                     }
+                    for (label, operation) in embedded_invalid_tag_operations()? {
+                        run(operation, &label)?;
+                    }
                     run(Operation::KnobDialog, "knob-dialog")?;
                 }
                 if let Some(patch) = patches.iter().find(|patch| **patch == "midi-sync") {

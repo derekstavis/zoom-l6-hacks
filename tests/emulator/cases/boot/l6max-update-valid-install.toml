@@ -25,6 +25,7 @@ expected = "installed"
 
 [[step]]
 action = "wait-update-panel-ready"
+require_programming = true
 guest_timeout_ms = 60000
 wall_timeout_s = 300
 

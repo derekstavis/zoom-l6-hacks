@@ -48,6 +48,9 @@ fn synthetic_update(
                 return Err("synthetic update did not have the intended checksum failure".into());
             }
         }
+        smoke_core::UpdateFixture::PatchedMidi => {
+            return Err("patched update is not synthetic".into());
+        }
         smoke_core::UpdateFixture::SyntheticValid => {
             l6fw::update::recompute_checksum(&mut package).map_err(|error| error.to_string())?;
             l6fw::update::validate(&package).map_err(|error| error.to_string())?;
@@ -325,11 +328,91 @@ fn build_fixture(
             .as_ref()
             .ok_or_else(|| failed("update card needs a firmware package".into()))?;
         let source_bytes = fs::read(source).failed_in(Phase::Fixture)?;
-        let package = checked_update(source_bytes, inputs.package_sha256.as_deref(), fixture)
-            .map_err(failed)?;
-        let update = dir.join("synthetic-update.bin");
+        let package = if fixture == smoke_core::UpdateFixture::PatchedMidi {
+            let stock_hash = format!("{:x}", Sha256::digest(&source_bytes));
+            if stock_hash != smoke_core::firmware::STOCK_L6MAX_PACKAGE_SHA256
+                || inputs.package_sha256.as_deref() != Some(stock_hash.as_str())
+            {
+                return Err(failed(
+                    "patched update requires the pinned stock package".into(),
+                ));
+            }
+            let patched = selected
+                .update_package
+                .as_ref()
+                .ok_or_else(|| failed("missing patched update".into()))?;
+            let bytes = fs::read(patched).failed_in(Phase::Fixture)?;
+            l6fw::update::validate(&bytes).map_err(|e| failed(e.to_string()))?;
+            l6max_host::package::check_layout(&bytes).map_err(|e| failed(e.to_string()))?;
+            l6max_host::update_bootloader::validate(&bytes).map_err(|e| failed(e.to_string()))?;
+            if bytes.get(0x1a31fc..0x1a3200) != Some(l6fw::PATCHED_VERSION.as_slice()) {
+                return Err(failed(
+                    "patched L6max update must carry the patched version".into(),
+                ));
+            }
+            if inputs.update_package_sha256.as_deref()
+                != Some(format!("{:x}", Sha256::digest(&bytes)).as_str())
+            {
+                return Err(failed(
+                    "patched update differs from its recorded identity".into(),
+                ));
+            }
+            bytes
+        } else {
+            checked_update(source_bytes, inputs.package_sha256.as_deref(), fixture)
+                .map_err(failed)?
+        };
+        let update = dir.join("staged-update.bin");
         fs::write(&update, &package).failed_in(Phase::Fixture)?;
-        let card = dir.join("synthetic-update-card.img");
+        if fixture == smoke_core::UpdateFixture::PatchedMidi {
+            let report = dir.join(layout::PATCHED_UPDATE.replace(".bin", ".json"));
+            let report_bytes = fs::read(&report).failed_in(Phase::Fixture)?;
+            let report_json: Value =
+                serde_json::from_slice(&report_bytes).failed_in(Phase::Fixture)?;
+            let package_hash = format!("{:x}", Sha256::digest(&package));
+            let patch_names = report_json["patches"]
+                .as_array()
+                .ok_or_else(|| failed("update report lacks patches".into()))?;
+            let plan = patch_core::Plan::new(
+                Model::L6max,
+                patch_core::Delivery::Browser,
+                &update_patches,
+                &[],
+            )
+            .map_err(failed)?;
+            let reported: Vec<_> = patch_names
+                .iter()
+                .filter_map(|patch| patch["name"].as_str())
+                .filter(|name| *name != "patch-loader")
+                .collect();
+            if report_json["model"].as_str() != Some(Model::L6max.label())
+                || report_json["update_sha256"].as_str() != Some(package_hash.as_str())
+                || reported != plan.patches.iter().map(String::as_str).collect::<Vec<_>>()
+            {
+                return Err(failed(
+                    "update report does not identify requested patches and package".into(),
+                ));
+            }
+            let verify = dir.join("verify-firmware");
+            let unpacked = crate::fixture::unpacked(ctx.cache, &update).map_err(failed)?;
+            crate::cache::copy_tree(&unpacked, &verify).map_err(failed)?;
+            fs::write(verify.join(layout::FIRMWARE_REPORT), &report_bytes)
+                .failed_in(Phase::Fixture)?;
+            fs::write(verify.join(layout::PATCH_REPORT), &report_bytes)
+                .failed_in(Phase::Fixture)?;
+            let main = fs::read(verify.join("main_firmware.bin")).failed_in(Phase::Fixture)?;
+            if !matches!(
+                smoke_core::firmware::identify(&main, &verify),
+                smoke_core::firmware::FirmwareIdentity::Built { .. }
+            ) {
+                return Err(failed(
+                    "update report does not identify unpacked patched MAIN".into(),
+                ));
+            }
+            inputs.update_report_sha256 = Some(format!("{:x}", Sha256::digest(&report_bytes)));
+            inputs.verify_firmware = Some(files(&verify).map_err(failed)?);
+        }
+        let card = dir.join("staged-update-card.img");
         let mut volume =
             sd_image::create_empty(&card, "L6MAX").map_err(|e| failed(e.to_string()))?;
         volume
@@ -561,6 +644,11 @@ fn identify(ctx: &Context, prepared: &Prepared, invocation: &Invocation) -> Opti
         firmware_package_sha256: inputs.package_sha256.clone(),
         update_package_sha256: inputs.update_package_sha256.clone(),
         update_card_package_sha256: inputs.update_card_package_sha256.clone(),
+        update_report_sha256: inputs.update_report_sha256.clone(),
+        verify_firmware: inputs
+            .verify_firmware
+            .as_ref()
+            .map(|files| digest(&json!(files))),
         firmware: digest(&json!(inputs.firmware)),
         card_sha256: execution.sd_sha256.clone(),
         state: digest(&json!(execution.state_sha256)),

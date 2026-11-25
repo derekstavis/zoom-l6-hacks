@@ -174,8 +174,12 @@ fn panel_update_ready(
     rtc_response: bool,
     writes: usize,
     image_verified: bool,
+    require_programming: bool,
 ) -> bool {
-    mode == 4 && image_matches && rtc_response && writes == 64 && image_verified
+    mode == 4
+        && image_matches
+        && rtc_response
+        && (!require_programming || (writes == 64 && image_verified))
 }
 
 fn verify_frozen_snapshot(path: &std::path::Path, expected: &[u8]) -> Result<(), String> {
@@ -197,6 +201,7 @@ fn wait_update_panel_ready(
     anchor: (Instant, u32),
     guest_timeout_ms: u32,
     wall_timeout_s: u64,
+    require_programming: bool,
 ) -> Result<(), String> {
     let control = l6ctl::OwnedControl::new(&session.engine);
     let (started, start) = anchor;
@@ -225,6 +230,7 @@ fn wait_update_panel_ready(
                 .filter(|line| line.starts_with("l6 panel ROM write 080"))
                 .count(),
             trace.contains("l6 panel ROM 16 KiB image match: yes"),
+            require_programming,
         ) {
             return Ok(());
         }
@@ -237,6 +243,82 @@ fn wait_update_panel_ready(
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+#[derive(Clone, Copy)]
+struct WallBudget {
+    deadline: Instant,
+}
+impl WallBudget {
+    fn new(start: Instant, duration_s: u64) -> Result<Self, String> {
+        if duration_s == 0 {
+            return Err("shared wall deadline must be positive".into());
+        }
+        let deadline = start
+            .checked_add(Duration::from_secs(duration_s))
+            .ok_or("shared wall deadline overflow")?;
+        Ok(Self { deadline })
+    }
+    fn check(&self, now: Instant) -> Result<(), String> {
+        if now >= self.deadline {
+            Err("shared wall deadline exceeded".into())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+fn verify_patched_artifacts(
+    logs: &std::path::Path,
+    inputs: &serde_json::Value,
+) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let verify = logs.join("verify-firmware");
+    let expected = inputs["verify_firmware"]
+        .as_object()
+        .ok_or("missing frozen verify firmware identity")?;
+    let mut actual = std::collections::BTreeMap::new();
+    fn visit(
+        root: &std::path::Path,
+        dir: &std::path::Path,
+        files: &mut std::collections::BTreeMap<String, String>,
+    ) -> Result<(), String> {
+        for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            if path.is_symlink() {
+                return Err("symlink in verify firmware".into());
+            }
+            if path.is_dir() {
+                visit(root, &path, files)?;
+            } else {
+                let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+                files.insert(
+                    path.strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
+                    format!("{:x}", Sha256::digest(&bytes)),
+                );
+            }
+        }
+        Ok(())
+    }
+    visit(&verify, &verify, &mut actual)?;
+    if serde_json::to_value(&actual).map_err(|e| e.to_string())?
+        != serde_json::Value::Object(expected.clone())
+    {
+        return Err("verify firmware changed after staging".into());
+    }
+    let report = std::fs::read(logs.join("patched-update.json")).map_err(|e| e.to_string())?;
+    if inputs["update_report_sha256"].as_str()
+        != Some(format!("{:x}", Sha256::digest(&report)).as_str())
+        || std::fs::read(verify.join(crate::fixture_layout::FIRMWARE_REPORT))
+            .map_err(|e| e.to_string())?
+            != report
+    {
+        return Err("update report changed after staging".into());
+    }
+    Ok(())
 }
 
 /// Execute a scenario without GPUI, with the production panel feed and shared assertions.
@@ -332,10 +414,11 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
         started_unix_ms: crate::progress::unix_ms(),
     });
     let managed = scenario.update_fixture.is_some();
+    let mut managed_inputs = None;
     let managed_package = if managed {
         use sha2::{Digest, Sha256};
         let package =
-            std::fs::read(options.logs.join("synthetic-update.bin")).map_err(|e| e.to_string())?;
+            std::fs::read(options.logs.join("staged-update.bin")).map_err(|e| e.to_string())?;
         let inputs: serde_json::Value = serde_json::from_slice(
             &std::fs::read(options.logs.join("inputs.json")).map_err(|e| e.to_string())?,
         )
@@ -344,6 +427,10 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
         if inputs["update_card_package_sha256"].as_str() != Some(digest.as_str()) {
             return Err("staged update package identity changed before execution".into());
         }
+        if scenario.update_fixture == Some(crate::scenario::UpdateFixture::PatchedMidi) {
+            verify_patched_artifacts(&options.logs, &inputs)?;
+        }
+        managed_inputs = Some(inputs);
         Some(package)
     } else {
         None
@@ -377,11 +464,15 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
     let mut device_state = devices::State::default();
     let mut lifecycle_last_boot = None;
     let mut installer_anchor = None;
+    let mut shared_wall_budget: Option<WallBudget> = None;
     let mut pending_snapshot: Option<Vec<u8>> = None;
     let mut installed_panel_snapshot: Option<Vec<u8>> = None;
     let mut card_inserted = options.sd_image.is_some() && !options.no_sd;
     let mut result: Result<(), String> = (|| {
         loop {
+            if let Some(budget) = shared_wall_budget {
+                budget.check(Instant::now())?;
+            }
             if runner.current_step() == runner.scenario.step.len()
                 && device_state.has_knob_preflight()
             {
@@ -398,8 +489,30 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     })?
                 }
             };
+            if let Some(budget) = shared_wall_budget {
+                budget.check(Instant::now())?;
+            }
             match progress {
-                Progress::Complete => return Ok(()),
+                Progress::Complete => {
+                    if shared_wall_budget.is_some() {
+                        return Err("shared wall deadline was not ended".into());
+                    }
+                    return Ok(());
+                }
+                Progress::Device(devices::Operation::BeginWallDeadline { duration_s }) => {
+                    if shared_wall_budget.is_some() {
+                        return Err("shared wall deadline is already active".into());
+                    }
+                    shared_wall_budget = Some(WallBudget::new(Instant::now(), duration_s)?);
+                    runner.device_finished(json!({"duration_s":duration_s}));
+                }
+                Progress::Device(devices::Operation::EndWallDeadline) => {
+                    let budget = shared_wall_budget
+                        .take()
+                        .ok_or("no active shared wall deadline")?;
+                    budget.check(Instant::now())?;
+                    runner.device_finished(json!({"deadline":"completed"}));
+                }
                 Progress::Dispatch(command) => session.as_ref().unwrap().dispatch(&command)?,
                 Progress::Device(devices::Operation::LifecycleStart { profile }) => {
                     if session.is_some() || options.state_dir.is_none() {
@@ -412,6 +525,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         LifecycleBoot::Initial => None,
                         LifecycleBoot::Installer => Some(LifecycleBoot::Initial),
                         LifecycleBoot::Restart => Some(LifecycleBoot::Installer),
+                        LifecycleBoot::Verify => Some(LifecycleBoot::Restart),
                     };
                     if lifecycle_last_boot != expected_previous {
                         return Err("lifecycle boot profile is out of order".into());
@@ -435,16 +549,58 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                                 return Err("update card package changed after staging".into());
                             }
                         }
-                        LifecycleBoot::Restart => {
+                        LifecycleBoot::Restart | LifecycleBoot::Verify => {
                             boot.sd_image = None;
                             boot.no_sd = true;
                         }
                     }
-                    boot.update_bootloader = profile != LifecycleBoot::Initial;
+                    boot.update_bootloader =
+                        matches!(profile, LifecycleBoot::Installer | LifecycleBoot::Restart);
+                    if profile == LifecycleBoot::Verify {
+                        if runner.scenario.update_fixture
+                            != Some(crate::scenario::UpdateFixture::PatchedMidi)
+                        {
+                            return Err("verify boot requires patched update".into());
+                        }
+                        verify_patched_artifacts(
+                            &options.logs,
+                            managed_inputs.as_ref().ok_or("missing managed identity")?,
+                        )?;
+                        boot.firmware_dir = options.logs.join("verify-firmware");
+                        boot.usb_cable_at_start = true;
+                        boot.usb_enabled = false;
+                        boot.midi_enabled = false;
+                        let main = std::fs::read(boot.firmware_dir.join("main_firmware.bin"))
+                            .map_err(|e| e.to_string())?;
+                        let installed = crate::devices::selected_main_image(&boot)?;
+                        if installed != main {
+                            return Err("installed MAIN differs from frozen verify firmware".into());
+                        }
+                        let mut verify_scenario = runner.scenario.clone();
+                        let start = verify_scenario
+                            .step
+                            .iter()
+                            .position(|step| {
+                                matches!(
+                                    step.action,
+                                    crate::Action::LifecycleStart {
+                                        profile: LifecycleBoot::Verify
+                                    }
+                                )
+                            })
+                            .ok_or("missing verify profile")?;
+                        verify_scenario.step.drain(..=start);
+                        crate::requirements::check_firmware(
+                            &verify_scenario,
+                            l6fw::Model::L6max,
+                            &crate::firmware::identify(&main, &boot.firmware_dir),
+                        )?;
+                    }
                     let label = match profile {
                         LifecycleBoot::Initial => "initial",
                         LifecycleBoot::Installer => "installer",
                         LifecycleBoot::Restart => "restart",
+                        LifecycleBoot::Verify => "verify",
                     };
                     boot.logs = options.logs.join(format!("boot-{label}"));
                     session = Some(Session::start(&boot)?);
@@ -461,7 +617,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     };
                     lifecycle_last_boot = Some(profile);
                     runner.restarted(&boot.logs);
-                    runner.device_finished(json!({"started":true,"profile":label,"card":profile != LifecycleBoot::Restart,"replacement_installer":boot.update_bootloader}));
+                    runner.device_finished(json!({"started":true,"profile":label,"card":matches!(profile, LifecycleBoot::Initial | LifecycleBoot::Installer),"replacement_installer":boot.update_bootloader}));
                 }
                 Progress::Device(devices::Operation::LifecycleStop) => {
                     device_state.restarted()?;
@@ -607,7 +763,39 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         json!({"replacement_installer_outcome":format!("{actual:?}")}),
                     );
                 }
-                Progress::Device(devices::Operation::WaitUpdatePanelReady) => {
+                Progress::Device(devices::Operation::WaitUsbController) => {
+                    let current = session
+                        .as_ref()
+                        .ok_or("USB readiness requires an active guest")?;
+                    let control = l6ctl::OwnedControl::new(&current.engine);
+                    control.usb_attach().map_err(|e| e.to_string())?;
+                    let step = &runner.scenario.step[runner.current_step()];
+                    let start = control
+                        .input_status(l6ctl::InputSource::Panel)
+                        .map_err(|e| e.to_string())?
+                        .guest_ms;
+                    let deadline = Instant::now() + Duration::from_secs(step.wall_timeout_s);
+                    loop {
+                        if control.usb_controller().map_err(|e| e.to_string())?.running {
+                            break;
+                        }
+                        let guest = control
+                            .input_status(l6ctl::InputSource::Panel)
+                            .map_err(|e| e.to_string())?
+                            .guest_ms;
+                        if guest.wrapping_sub(start) >= step.guest_timeout_ms
+                            || Instant::now() >= deadline
+                        {
+                            return Err("USB device controller did not start".into());
+                        }
+                        current.poll()?;
+                        std::thread::sleep(Duration::from_millis(25));
+                    }
+                    runner.device_finished(json!({"attached":true,"running":true}));
+                }
+                Progress::Device(devices::Operation::WaitUpdatePanelReady {
+                    require_programming,
+                }) => {
                     let current = session
                         .as_ref()
                         .ok_or("panel image wait requires an active guest")?;
@@ -627,8 +815,9 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         installer_anchor.ok_or("panel readiness requires an installer boot")?,
                         step.guest_timeout_ms,
                         step.wall_timeout_s,
+                        require_programming,
                     )?;
-                    runner.device_finished(json!({"panel_image_matches":true,"atomic":false}));
+                    runner.device_finished(json!({"panel_image_matches":true,"require_programming":require_programming,"atomic":false}));
                 }
                 Progress::Device(devices::Operation::ExpectUpdateMode { mode }) => {
                     let current = session
@@ -848,14 +1037,65 @@ mod lifecycle_clock_tests {
     }
 
     #[test]
+    fn shared_wall_deadline_spans_several_steps() {
+        let start = Instant::now();
+        let budget = WallBudget::new(start, 300).unwrap();
+        assert!(budget.check(start + Duration::from_secs(100)).is_ok());
+        assert!(budget.check(start + Duration::from_secs(200)).is_ok());
+        assert!(budget.check(start + Duration::from_secs(300)).is_err());
+        let mut dispatched = false;
+        let mut delayed_tick = || -> Result<(), String> {
+            budget.check(start + Duration::from_secs(301))?;
+            dispatched = true;
+            Ok(())
+        };
+        assert!(delayed_tick().is_err());
+        assert!(!dispatched);
+        assert!(WallBudget::new(start, 0).is_err());
+    }
+
+    #[test]
     fn panel_readiness_requires_all_simultaneous_conditions() {
-        assert!(panel_update_ready(4, true, true, 64, true));
-        assert!(!panel_update_ready(3, true, true, 64, true));
-        assert!(!panel_update_ready(4, false, true, 64, true));
-        assert!(!panel_update_ready(4, true, false, 64, true));
-        assert!(!panel_update_ready(4, true, true, 63, true));
-        assert!(!panel_update_ready(4, true, true, 65, true));
-        assert!(!panel_update_ready(4, true, true, 64, false));
+        assert!(panel_update_ready(4, true, true, 64, true, true));
+        assert!(!panel_update_ready(3, true, true, 64, true, true));
+        assert!(!panel_update_ready(4, false, true, 64, true, true));
+        assert!(!panel_update_ready(4, true, false, 64, true, true));
+        assert!(!panel_update_ready(4, true, true, 63, true, true));
+        assert!(!panel_update_ready(4, true, true, 65, true, true));
+        assert!(!panel_update_ready(4, true, true, 64, false, true));
+        assert!(panel_update_ready(4, true, true, 0, false, false));
+        assert!(!panel_update_ready(3, true, true, 0, false, false));
+        assert!(!panel_update_ready(4, false, true, 0, false, false));
+        assert!(!panel_update_ready(4, true, false, 0, false, false));
+    }
+
+    #[test]
+    fn patched_artifacts_reject_changed_report_and_firmware() {
+        use sha2::{Digest, Sha256};
+        let root =
+            std::env::temp_dir().join(format!("l6-patched-artifacts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let verify = root.join("verify-firmware");
+        std::fs::create_dir_all(&verify).unwrap();
+        let report = b"report";
+        let main = b"main";
+        std::fs::write(root.join("patched-update.json"), report).unwrap();
+        std::fs::write(verify.join(crate::fixture_layout::FIRMWARE_REPORT), report).unwrap();
+        std::fs::write(verify.join("main_firmware.bin"), main).unwrap();
+        let hash = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
+        let inputs = json!({"update_report_sha256":hash(report),"verify_firmware":{
+            crate::fixture_layout::FIRMWARE_REPORT:hash(report), "main_firmware.bin":hash(main)
+        }});
+        assert!(verify_patched_artifacts(&root, &inputs).is_ok());
+        std::fs::write(verify.join("main_firmware.bin"), b"different").unwrap();
+        assert!(verify_patched_artifacts(&root, &inputs).is_err());
+        std::fs::write(verify.join("main_firmware.bin"), main).unwrap();
+        std::fs::write(root.join("patched-update.json"), b"different").unwrap();
+        assert!(verify_patched_artifacts(&root, &inputs).is_err());
+        std::fs::write(root.join("patched-update.json"), report).unwrap();
+        std::fs::write(verify.join("unexpected.bin"), b"extra").unwrap();
+        assert!(verify_patched_artifacts(&root, &inputs).is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

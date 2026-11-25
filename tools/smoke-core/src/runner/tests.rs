@@ -1062,6 +1062,44 @@ fn includes_are_confined_cycle_checked_and_preserve_model_scope() {
     }
     fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn include_deadline_overrides_preserve_scope_and_reject_mixed_deadlines() {
+    let (dir, rel) = include_test_dir("deadline-override");
+    fs::write(dir.join("inner.toml"), "[[step]]\naction='delay'\nguest_ms=2\nguest_timeout_ms=100\nwall_timeout_s=5\n[[step]]\naction='delay'\nguest_ms=3\nguest_timeout_ms=100\nwall_timeout_s=5\n").unwrap();
+    fs::write(
+        dir.join("outer.toml"),
+        format!("[[step]]\naction='include'\npath='{rel}/inner.toml'\n"),
+    )
+    .unwrap();
+    let source = format!(
+        "version=1\nname='include'\nmodels=['l6max']\n[[step]]\nmodels=['l6max']\nsetup_input=true\naction='include'\npath='{rel}/outer.toml'\ninclude_guest_timeout_ms=200\ninclude_wall_timeout_s=9\n"
+    );
+    let scenario = Scenario::from_text(&source).unwrap();
+    assert_eq!(scenario.step.len(), 2);
+    assert!(
+        scenario
+            .step
+            .iter()
+            .all(|step| step.models == [Model::L6max]
+                && step.setup_input
+                && step.guest_timeout_ms == 200
+                && step.wall_timeout_s == 9)
+    );
+    assert!(
+        Scenario::from_text(
+            &source.replace("include_guest_timeout_ms=200", "include_guest_timeout_ms=0")
+        )
+        .is_err()
+    );
+    fs::write(dir.join("inner.toml"), "[[step]]\naction='delay'\nguest_ms=2\nguest_timeout_ms=100\nwall_timeout_s=5\n[[step]]\naction='delay'\nguest_ms=3\nguest_timeout_ms=99\nwall_timeout_s=5\n").unwrap();
+    assert!(
+        Scenario::from_text(&source)
+            .unwrap_err()
+            .contains("uniform child")
+    );
+    fs::remove_dir_all(dir).unwrap();
+}
 #[test]
 fn l6max_tap_tempo_lamp_does_not_block_panel_settling() {
     let mut rows = [0x28, 0x1000, 0x40002, 0x8000, 0x110, 4, 1, 0];
@@ -1495,7 +1533,7 @@ fn synthetic_install_requires_all_boot_and_storage_checks() {
     assert!(Scenario::from_text(&source[..first_installer]).is_err());
     for missing in [
         "[[step]]\naction = \"expect-installer-outcome\"\nexpected = \"installed\"\n\n",
-        "[[step]]\naction = \"wait-update-panel-ready\"\nguest_timeout_ms = 60000\nwall_timeout_s = 300\n\n",
+        "[[step]]\naction = \"wait-update-panel-ready\"\nrequire_programming = true\nguest_timeout_ms = 60000\nwall_timeout_s = 300\n\n",
         "[[step]]\naction = \"expect-update-comparison\"\nfield = \"protected-region\"\n\n",
         "[[step]]\naction = \"expect-installer-outcome\"\nexpected = \"no-pending\"\n\n",
         "[[step]]\naction = \"expect-panel-unchanged\"\n",
@@ -1509,5 +1547,46 @@ fn synthetic_install_requires_all_boot_and_storage_checks() {
     assert!(
         Scenario::from_text(&source.replace("profile = \"restart\"", "profile = \"installer\""))
             .is_err()
+    );
+}
+
+#[test]
+fn patched_update_requires_complete_four_boot_verification() {
+    let source =
+        include_str!("../../../../tests/emulator/cases/boot/l6max-update-patched-midi.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    for missing in [
+        "[[step]]\naction = \"end-wall-deadline\"\n\n",
+        "[[step]]\naction = \"wait-usb-controller\"\nguest_timeout_ms = 180000\nwall_timeout_s = 300\n\n",
+        "[[step]]\naction = \"direct-usb-midi-round-trip\"\nguest_timeout_ms = 180000\nwall_timeout_s = 300\n\n",
+        "[[step]]\naction = \"include\"\npath = \"patches/midi-sync/tests/emulator/fragments/request-state.toml\"\ninclude_guest_timeout_ms = 180000\ninclude_wall_timeout_s = 300\n\n",
+        "[[step]]\naction = \"expect-update-comparison\"\nfield = \"protected-region\"\n\n",
+        "[[step]]\naction = \"expect-panel-unchanged\"\n",
+    ] {
+        assert!(source.contains(missing));
+        assert!(
+            Scenario::from_text(&source.replace(missing, "")).is_err(),
+            "missing {missing}"
+        );
+    }
+    assert!(
+        Scenario::from_text(
+            &source.replace("require_programming = false", "require_programming = true")
+        )
+        .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replace(
+            "include_guest_timeout_ms = 180000",
+            "include_guest_timeout_ms = 30000"
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replace(
+            "update_patches.l6max = [\"midi-sync\"]",
+            "update_patches.l6max = [\"knob-dialog\"]"
+        ))
+        .is_err()
     );
 }

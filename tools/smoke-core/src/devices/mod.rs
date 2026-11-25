@@ -94,7 +94,14 @@ pub enum Operation {
     ExpectInstallerOutcome {
         expected: crate::scenario::InstallerExpected,
     },
-    WaitUpdatePanelReady,
+    WaitUpdatePanelReady {
+        require_programming: bool,
+    },
+    WaitUsbController,
+    BeginWallDeadline {
+        duration_s: u64,
+    },
+    EndWallDeadline,
     ExpectUpdateMode {
         mode: u32,
     },
@@ -450,6 +457,28 @@ fn validate_native_midi_capabilities(
 
 /// Configure only the hardware instrumentation explicitly requested by a scenario.
 pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String> {
+    // Managed patched updates boot stock before the verification generation.
+    // Apply hardware requirements and firmware guards to that phase only;
+    // the verify generation is checked against its own frozen build at startup.
+    let mut initial_phase = None;
+    if scenario.update_fixture == Some(crate::scenario::UpdateFixture::PatchedMidi) {
+        let mut initial = scenario.clone();
+        let boundary = initial
+            .step
+            .iter()
+            .position(|step| {
+                matches!(
+                    step.action,
+                    crate::Action::LifecycleStart {
+                        profile: crate::scenario::LifecycleBoot::Verify
+                    }
+                )
+            })
+            .ok_or("patched update has no verify boot")?;
+        initial.step.truncate(boundary);
+        initial_phase = Some(initial);
+    }
+    let scenario = initial_phase.as_ref().unwrap_or(scenario);
     if scenario.step.iter().any(|step| {
         matches!(
             step.action,

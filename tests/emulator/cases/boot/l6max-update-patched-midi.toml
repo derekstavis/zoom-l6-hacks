@@ -1,0 +1,131 @@
+version = 1
+name = "l6max-update-patched-midi"
+models = ["l6max"]
+backends = ["headless"]
+state = "none"
+card = "none"
+update_fixture = "patched-midi"
+update_patches.l6max = ["midi-sync"]
+update_goal = "install"
+
+[case]
+suites = ["full"]
+wall_timeout_s = 1200
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/l6max-update-valid-handoff.toml"
+
+[[step]]
+action = "lifecycle-start"
+profile = "installer"
+
+[[step]]
+action = "expect-installer-outcome"
+expected = "installed"
+
+[[step]]
+action = "wait-update-panel-ready"
+require_programming = false
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "expect-trace"
+contains = ["l6 panel RTC response start"]
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "expect-update-mode"
+mode = 4
+
+[[step]]
+action = "lifecycle-stop"
+
+[[step]]
+action = "expect-update-comparison"
+field = "main-payload"
+
+[[step]]
+action = "expect-update-comparison"
+field = "boot-region"
+
+[[step]]
+action = "expect-update-comparison"
+field = "protected-region"
+
+[[step]]
+action = "expect-update-comparison"
+field = "panel-image"
+
+[[step]]
+action = "expect-update-marker-absent"
+
+[[step]]
+action = "capture-installed-panel"
+
+[[step]]
+action = "lifecycle-start"
+profile = "restart"
+
+[[step]]
+action = "expect-installer-outcome"
+expected = "no-pending"
+
+[[step]]
+action = "wait-panel-uptime"
+guest_ms = 40000
+guest_timeout_ms = 300000
+wall_timeout_s = 1200
+
+[[step]]
+action = "expect-trace"
+contains = []
+absent = ["l6 panel ROM erase", "l6 panel ROM mass erase"]
+
+[[step]]
+action = "lifecycle-stop"
+
+[[step]]
+action = "expect-panel-unchanged"
+
+[[step]]
+action = "lifecycle-start"
+profile = "verify"
+
+[[step]]
+action = "begin-wall-deadline"
+duration_s = 300
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/l6max-first-boot-no-sd.toml"
+
+[[step]]
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "end-wall-deadline"
+
+[[step]]
+action = "wait-usb-controller"
+guest_timeout_ms = 180000
+wall_timeout_s = 300
+
+[[step]]
+action = "direct-usb-midi-round-trip"
+guest_timeout_ms = 180000
+wall_timeout_s = 300
+
+[[step]]
+action = "include"
+path = "patches/midi-sync/tests/emulator/fragments/request-state.toml"
+include_guest_timeout_ms = 180000
+include_wall_timeout_s = 300
+
+[[step]]
+action = "lifecycle-stop"

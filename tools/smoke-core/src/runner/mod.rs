@@ -989,8 +989,23 @@ impl Runner {
                         devices::Operation::ExpectInstallerOutcome { expected },
                     ));
                 }
-                Action::WaitUpdatePanelReady => {
-                    return Ok(Progress::Device(devices::Operation::WaitUpdatePanelReady));
+                Action::BeginWallDeadline { duration_s } => {
+                    return Ok(Progress::Device(devices::Operation::BeginWallDeadline {
+                        duration_s,
+                    }));
+                }
+                Action::EndWallDeadline => {
+                    return Ok(Progress::Device(devices::Operation::EndWallDeadline));
+                }
+                Action::WaitUsbController => {
+                    return Ok(Progress::Device(devices::Operation::WaitUsbController));
+                }
+                Action::WaitUpdatePanelReady {
+                    require_programming,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::WaitUpdatePanelReady {
+                        require_programming,
+                    }));
                 }
                 Action::ExpectUpdateMode { mode } => {
                     return Ok(Progress::Device(devices::Operation::ExpectUpdateMode {

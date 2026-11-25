@@ -125,6 +125,7 @@ struct Active {
     header: bool,
     total: Option<usize>,
     step: Option<(usize, String, u64)>,
+    subprogress: Option<(u32, u32)>,
     phase: Option<progress::Phase>,
     case_phase: Option<(progress::CasePhase, u64)>,
     error: Option<String>,
@@ -171,6 +172,7 @@ impl View {
                         header: false,
                         total: None,
                         step: None,
+                        subprogress: None,
                         phase: None,
                         case_phase: None,
                         error: None,
@@ -245,7 +247,24 @@ impl View {
                         index,
                         label,
                         started_unix_ms,
-                    } => active.step = Some((index, label, started_unix_ms)),
+                    } => {
+                        active.step = Some((index, label, started_unix_ms));
+                        active.subprogress = None;
+                    }
+                    CaseEvent::StepProgress {
+                        index,
+                        completed,
+                        total,
+                    } => {
+                        if total == 0
+                            || completed > total
+                            || !active.step.as_ref().is_some_and(|step| step.0 == index)
+                        {
+                            active.error = Some("invalid step progress".into());
+                            break;
+                        }
+                        active.subprogress = Some((completed, total));
+                    }
                     CaseEvent::ScenarioFinished { .. } => {}
                     CaseEvent::Header { .. } => {
                         active.error = Some("duplicate case progress header".into());
@@ -348,8 +367,12 @@ fn render(view: &View, color: bool) -> String {
         }
         if let (Some(total), Some((index, label, started))) = (a.total, &a.step) {
             let seconds = progress::unix_ms().saturating_sub(*started) / 1000;
+            let count = a
+                .subprogress
+                .map(|(done, total)| format!(" · {done}/{total}"))
+                .unwrap_or_default();
             s.push_str(&format!(
-                "\n    Step {index}/{total} · {label} · {seconds}s"
+                "\n    Step {index}/{total} · {label}{count} · {seconds}s"
             ));
         }
     }
@@ -729,6 +752,13 @@ mod tests {
                 started_unix_ms: progress::unix_ms().saturating_sub(12_000),
             })
             .unwrap();
+        writer
+            .emit(&CaseEvent::StepProgress {
+                index: 3,
+                completed: 17,
+                total: 47,
+            })
+            .unwrap();
         let mut view = View::default();
         view.suite(SuiteEvent::Header {
             version: progress::VERSION,
@@ -743,7 +773,7 @@ mod tests {
         })
         .unwrap();
         view.read_cases(&dir).unwrap();
-        assert!(render(&view, false).contains("Step 3/5 · press control · 12s"));
+        assert!(render(&view, false).contains("Step 3/5 · press control · 17/47 · 12s"));
         drop(writer);
         std::fs::remove_dir_all(dir).unwrap();
     }

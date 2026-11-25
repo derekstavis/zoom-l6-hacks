@@ -518,6 +518,17 @@ impl State {
                     thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
                 }
             }
+            Operation::EffectPacedTurn { channel, steps } => Ok(effect_paced_turn(
+                options,
+                session,
+                channel,
+                steps,
+                guest_timeout_ms,
+                wall_timeout_s,
+                self.paced_progress.clone(),
+                self.paced_index,
+            )
+            .map_err(std::io::Error::other)?),
             Operation::EffectParameterEdit { encoder, steps } => {
                 Ok(effect_parameter_edit(options, session, encoder, steps)
                     .map_err(std::io::Error::other)?)

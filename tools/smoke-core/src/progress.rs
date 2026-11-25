@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const VERSION: u32 = 4;
+pub const VERSION: u32 = 6;
 pub const PATH_ENV: &str = "L6_TEST_PROGRESS";
 pub const RUN_ENV: &str = "L6_TEST_PROGRESS_RUN";
 pub const ATTEMPT_ENV: &str = "L6_TEST_PROGRESS_ATTEMPT";
@@ -105,6 +105,11 @@ pub enum CaseEvent {
         label: String,
         started_unix_ms: u64,
     },
+    StepProgress {
+        index: usize,
+        completed: u32,
+        total: u32,
+    },
     ScenarioFinished {
         outcome: Outcome,
         finished_unix_ms: u64,
@@ -182,6 +187,9 @@ impl CaseProgress {
 pub fn step_label(action: &crate::Action) -> String {
     use crate::Action;
     match action {
+        Action::EffectPacedTurn { channel, steps } => {
+            format!("Apply {steps} paced effect edits on channel {channel}")
+        }
         Action::Wait { until } => format!("Wait for {}", until.replace('-', " ")),
         Action::MidiProbeBegin => "Connect MIDI probe sessions".into(),
         Action::MidiProbeSendCc {

@@ -5,6 +5,7 @@ pub mod config;
 pub mod control;
 pub mod din_midi;
 pub mod display;
+pub mod effect_editor;
 pub mod engine;
 pub mod firmware_patches;
 pub mod freertos;

@@ -256,6 +256,10 @@ pub enum Operation {
         loaded: bool,
         chain_count: Option<u8>,
     },
+    EffectPacedTurn {
+        channel: usize,
+        steps: i32,
+    },
     EffectParameterEdit {
         encoder: usize,
         steps: i32,
@@ -690,6 +694,8 @@ fn thumb_bl_target(address: u32, instruction: [u8; 4]) -> Option<u32> {
 
 #[derive(Default)]
 pub struct State {
+    paced_progress: crate::progress::CaseProgress,
+    paced_index: usize,
     saved: Option<(Vec<u8>, usize)>,
     midi: Option<l6max_host::usb::Endpoints>,
     gdb: Option<l6max_diagnostics::gdb::Gdb>,
@@ -736,6 +742,10 @@ struct CapturedDisplay {
 }
 
 impl State {
+    pub fn set_paced_progress(&mut self, progress: crate::progress::CaseProgress, index: usize) {
+        self.paced_progress = progress;
+        self.paced_index = index;
+    }
     pub fn take_host_midi(&mut self) -> Option<Box<dyn crate::host_midi::Client>> {
         self.native_midi
             .take()

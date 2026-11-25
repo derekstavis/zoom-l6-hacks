@@ -1548,6 +1548,22 @@ impl Scenario {
             }
         }
         for step in &value.step {
+            if let Action::EffectPacedTurn { channel, steps } = step.action {
+                if !(1..=8).contains(&channel)
+                    || steps == 0
+                    || steps.unsigned_abs() > 128
+                    || value
+                        .models
+                        .iter()
+                        .any(|model| step.applies_to(*model) && *model != l6fw::Model::L6max)
+                {
+                    return Err(
+                        "effect-paced-turn requires L6max, channel 1..8 and 1..128 turns".into(),
+                    );
+                }
+            }
+        }
+        for step in &value.step {
             if let Action::DirectUsbMidiRoundTrip { cable, .. } = &step.action
                 && *cable > 15
             {

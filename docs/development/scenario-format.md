@@ -401,3 +401,5 @@ value is established by the state and firmware. Reverse movement in the
 quick scenario must restore channel 2's known initial mask `0x001`.
 
 The MIDI state request fragment begins a sync scope, drains until 500 ms of wall-time quiet, sends CC 127/127, asserts the reply, then ends the scope. The System menu fragment begins and asserts without a drain or request so a response queued by the menu action is preserved. Guest time is measured from scope start; the reply wall deadline begins after the send, or after preparation for a menu response. The shared guest and wall deadlines also bound preparation, the quiet drain and request.
+
+`effect-paced-turn` applies a signed number of one-step L6max effect-editor turns. Each turn waits for its exact panel acknowledgement and one consumed effect edit, with an empty mailbox and idle callback gate. A dropped edit, unexpected counter jump, lost acknowledgement, or the step's shared guest/wall deadline fails the step. The watcher shows completed turns; subsequent ring assertions retain their original baseline and report-count checks.

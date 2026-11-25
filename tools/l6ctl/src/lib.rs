@@ -4,6 +4,9 @@
 //! particular its input replies confirm enqueueing, not guest acknowledgement.
 pub use l6max_host::control::Info;
 pub use l6max_host::debug::{Command as DebugCommand, Observation as DebugObservation};
+pub use l6max_host::effect_editor::{
+    Binding as EffectEditorBinding, Snapshot as EffectEditorSnapshot,
+};
 pub use l6max_host::heap::Counters as HeapCounters;
 pub use l6max_host::input::button_source;
 pub use l6max_host::input::{InputAck, InputAckState, InputCounters, InputSource};
@@ -47,6 +50,7 @@ pub enum Request {
     HeapCounters,
     MemoryRead { address: u32, length: usize },
     MidiConfig,
+    EffectEditor { binding: EffectEditorBinding },
     UpdateState,
     UpdateGuiState,
     InstallerOutcome,
@@ -269,6 +273,7 @@ impl ControlClient {
                 | Request::HeapCounters
                 | Request::MemoryRead { .. }
                 | Request::MidiConfig
+                | Request::EffectEditor { .. }
                 | Request::UpdateState
                 | Request::UpdateGuiState
                 | Request::KnobPopup { .. }
@@ -316,6 +321,13 @@ impl ControlClient {
         length: usize,
     ) -> Result<MemoryRead, ControlError> {
         self.request_as(&Request::MemoryRead { address, length })
+    }
+
+    pub fn effect_editor(
+        &self,
+        binding: EffectEditorBinding,
+    ) -> Result<EffectEditorSnapshot, ControlError> {
+        self.request_as(&Request::EffectEditor { binding })
     }
 
     pub fn midi_config(&self) -> Result<MidiConfig, ControlError> {
@@ -491,6 +503,44 @@ impl<'a> OwnedControl<'a> {
         deadline: std::time::Instant,
     ) -> Result<MemoryRead, ControlError> {
         l6max_host::memory::read_main_before(self.main_qmp()?, address, length, deadline)
+            .map_err(ControlError::Rejected)
+    }
+
+    pub fn effect_editor_reader_before(
+        &self,
+        binding: EffectEditorBinding,
+        deadline: std::time::Instant,
+    ) -> Result<l6max_host::effect_editor::Reader, ControlError> {
+        l6max_host::effect_editor::Reader::new_before(
+            self.main_qmp()?,
+            self.engine.model(),
+            binding,
+            deadline,
+        )
+        .map_err(ControlError::Rejected)
+    }
+
+    pub fn effect_editor_reader_before_checked(
+        &self,
+        binding: EffectEditorBinding,
+        deadline: std::time::Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<l6max_host::effect_editor::Reader, ControlError> {
+        l6max_host::effect_editor::Reader::new_before_checked(
+            self.main_qmp()?,
+            self.engine.model(),
+            binding,
+            deadline,
+            check,
+        )
+        .map_err(ControlError::Rejected)
+    }
+
+    pub fn effect_editor_reader(
+        &self,
+        binding: EffectEditorBinding,
+    ) -> Result<l6max_host::effect_editor::Reader, ControlError> {
+        l6max_host::effect_editor::Reader::new(self.main_qmp()?, self.engine.model(), binding)
             .map_err(ControlError::Rejected)
     }
 

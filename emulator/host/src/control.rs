@@ -337,6 +337,17 @@ fn execute(
         }
         "update-state" => serde_json::to_value(crate::update_state::update_state(qmp, model)?)
             .map_err(|error| error.to_string()),
+        "effect-editor" => {
+            let binding: crate::effect_editor::Binding = serde_json::from_value(
+                request
+                    .get("binding")
+                    .cloned()
+                    .ok_or("effect-editor needs binding")?,
+            )
+            .map_err(|e| e.to_string())?;
+            serde_json::to_value(crate::effect_editor::Reader::new(qmp, model, binding)?.read()?)
+                .map_err(|e| e.to_string())
+        }
         "midi-config" => serde_json::to_value(crate::midi_config::config(qmp, model)?)
             .map_err(|error| error.to_string()),
         "rtos" => {

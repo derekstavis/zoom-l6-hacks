@@ -754,6 +754,18 @@ impl Runner {
                         chain_count,
                     }));
                 }
+                Action::EffectPacedTurn { channel, steps } => {
+                    self.baseline = Some(obs.clone());
+                    self.last_command = Some(Command::Encoder {
+                        channel,
+                        steps,
+                        gesture: crate::scenario::Gesture::Scroll,
+                    });
+                    return Ok(Progress::Device(devices::Operation::EffectPacedTurn {
+                        channel,
+                        steps,
+                    }));
+                }
                 Action::EffectParameterEdit { encoder, steps } => {
                     return Ok(Progress::Device(devices::Operation::EffectParameterEdit {
                         encoder,
@@ -1703,6 +1715,12 @@ impl Runner {
         self.last_report_guest = 0;
         self.last = None;
         self.allowed_rejections = [0, 0];
+    }
+    pub fn current_display_index(&self) -> usize {
+        self.scenario.step[..=self.step]
+            .iter()
+            .filter(|step| step.applies_to(self.model))
+            .count()
     }
     pub fn current_step(&self) -> usize {
         self.step

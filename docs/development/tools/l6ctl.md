@@ -399,3 +399,5 @@ Rust callers use `OwnedControl::debug_session()` for an owned engine or
 `ControlClient::debug_session()` for the persistent socket. Both accept
 `DebugCommand` and return `DebugObservation`. A caller should explicitly send
 `Close` and check its result; dropping a session also attempts cleanup.
+
+`l6ctl effect-editor REPORT MODULE` inspects a running L6max effect editor using a composed SD build report and its matching module file. The response reports a non-atomic mailbox/counter snapshot and the supplied fixture module hash; it checks the loaded module's bounds and a hash of immutable module code with relocation and continuation words masked; writable state is not hashed. This read-only operation is also available to owned guests through `EffectEditorBinding` and `effect_editor_reader_before`.

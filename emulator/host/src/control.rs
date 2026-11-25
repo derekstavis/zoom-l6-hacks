@@ -283,6 +283,20 @@ fn execute(
             let counters = crate::heap::counters(qmp, model)?;
             serde_json::to_value(counters).map_err(|error| error.to_string())
         }
+        "memory-read" => {
+            let address = request
+                .get("address")
+                .and_then(Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok())
+                .ok_or("memory-read needs a u32 address")?;
+            let length = request
+                .get("length")
+                .and_then(Value::as_u64)
+                .and_then(|v| usize::try_from(v).ok())
+                .ok_or("memory-read needs a length")?;
+            serde_json::to_value(crate::memory::read_main(qmp, address, length)?)
+                .map_err(|e| e.to_string())
+        }
         "update-gui-state" => {
             serde_json::to_value(crate::update_state::update_gui_state(qmp, model)?)
                 .map_err(|error| error.to_string())

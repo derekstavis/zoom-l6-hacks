@@ -132,3 +132,5 @@ ROM programming.
 [`l6max-setup-complete.toml`](../../../tests/emulator/fixtures/states/l6max-setup-complete.toml)
 reproduces the first-boot setup flow without input. The `state-spec` case checks the
 result.
+
+`cargo l6nor update-compare BEFORE AFTER PANEL PACKAGE` compares stopped L6max NOR snapshots and panel flash against a validated update package. It prints separate payload, protected-region, marker and panel results; the caller decides which results to assert.

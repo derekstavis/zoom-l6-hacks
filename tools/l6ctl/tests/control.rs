@@ -156,6 +156,47 @@ fn missing_socket_reports_connection_failure() {
 }
 
 #[test]
+fn memory_read_cli_and_client_use_bounded_read_wire_contract() {
+    let path = socket_path();
+    let sample = json!({"address":2147483676u32,"bytes":[223,155,87,19],"atomic":false});
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"memory-read","address":2147483676u32,"length":4}),
+                json!({"ok":true,"result":sample}),
+            ),
+            (
+                json!({"command":"memory-read","address":2147483676u32,"length":4}),
+                json!({"ok":true,"result":sample}),
+            ),
+        ],
+    );
+    let client = ControlClient::new(&path);
+    assert_eq!(
+        client.read_main_memory(0x8000001c, 4).unwrap().bytes,
+        [223, 155, 87, 19]
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["memory-read", "0x8000001c", "4"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        sample
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn heap_counters_cli_and_client_use_typed_guarded_snapshot() {
     let path = socket_path();
     let sample = json!({"model":"l6max","atomic":false,"revision_guard":"1.10_pvPortMalloc_vPortFree","free":100,"minimum_ever_free":200,"allocations":5,"frees":3});

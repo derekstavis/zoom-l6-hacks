@@ -329,6 +329,13 @@
       },
       "type": "object"
     },
+    "InstallerExpected": {
+      "enum": [
+        "installed",
+        "no-pending"
+      ],
+      "type": "string"
+    },
     "Level": {
       "additionalProperties": false,
       "description": "One hold of a `levels` tone. Silence when both levels are zero.",
@@ -352,6 +359,15 @@
         "right"
       ],
       "type": "object"
+    },
+    "LifecycleBoot": {
+      "description": "One boot generation of a managed update lifecycle.",
+      "enum": [
+        "initial",
+        "installer",
+        "restart"
+      ],
+      "type": "string"
     },
     "MidiProbePort": {
       "description": "MIDI transport used by a bounded mixer/DIN observation.",
@@ -407,6 +423,9 @@
               },
               "type": "array"
             },
+            "profile": {
+              "$ref": "#/definitions/LifecycleBoot"
+            },
             "setup_input": {
               "default": false,
               "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
@@ -420,7 +439,8 @@
             }
           },
           "required": [
-            "action"
+            "action",
+            "profile"
           ],
           "type": "object"
         },
@@ -640,6 +660,295 @@
           "properties": {
             "action": {
               "const": "capture-update-marker-pending",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "expect-installer-outcome",
+              "type": "string"
+            },
+            "expected": {
+              "$ref": "#/definitions/InstallerExpected"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "expected"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "wait-update-panel-ready",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "expect-update-mode",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "mode": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "expect-main-memory",
+              "type": "string"
+            },
+            "address": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "bytes": {
+              "items": {
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "address",
+            "bytes"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "expect-update-comparison",
+              "type": "string"
+            },
+            "field": {
+              "$ref": "#/definitions/UpdateComparisonField"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "field"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "capture-installed-panel",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "expect-panel-unchanged",
               "type": "string"
             },
             "guest_timeout_ms": {
@@ -7255,6 +7564,13 @@
             "expect-update-marker-absent",
             "expect-live-update-marker-absent",
             "capture-update-marker-pending",
+            "expect-installer-outcome",
+            "wait-update-panel-ready",
+            "expect-update-mode",
+            "expect-main-memory",
+            "expect-update-comparison",
+            "capture-installed-panel",
+            "expect-panel-unchanged",
             "expect-update-gui",
             "include",
             "checkpoint",
@@ -7397,11 +7713,27 @@
       ],
       "type": "object"
     },
+    "UpdateComparisonField": {
+      "enum": [
+        "main-payload",
+        "boot-region",
+        "protected-region",
+        "panel-image"
+      ],
+      "type": "string"
+    },
     "UpdateFixture": {
       "description": "Case-local synthetic L6max update card variant.",
       "enum": [
         "bad-checksum",
         "synthetic-valid"
+      ],
+      "type": "string"
+    },
+    "UpdateGoal": {
+      "enum": [
+        "handoff",
+        "install"
       ],
       "type": "string"
     },
@@ -7593,6 +7925,16 @@
         }
       ],
       "description": "Build a case-local synthetic L6max update card before execution."
+    },
+    "update_goal": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/UpdateGoal"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "update_patches": {
       "additionalProperties": false,

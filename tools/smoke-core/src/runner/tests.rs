@@ -1424,7 +1424,7 @@ fn midi_sync_requires_ordered_complete_scope_and_matching_deadlines() {
 #[test]
 fn update_lifecycle_requires_isolated_fixture_and_ordered_steps() {
     let prefix = "version=1\nname='bad-update'\nmodels=['l6max']\nbackends=['headless']\nstate='none'\ncard='none'\nupdate_fixture='bad-checksum'\n";
-    let start = "[[step]]\naction='lifecycle-start'\n";
+    let start = "[[step]]\naction='lifecycle-start'\nprofile='initial'\n";
     let wait = "[[step]]\naction='wait-panel-uptime'\nguest_ms=40000\nguest_timeout_ms=300000\n";
     let state = "[[step]]\naction='expect-update-state'\nmode=1\nflags_mask=9\nflags_value=0\n";
     let stop = "[[step]]\naction='lifecycle-stop'\n";
@@ -1463,9 +1463,12 @@ fn update_lifecycle_requires_isolated_fixture_and_ordered_steps() {
 
 #[test]
 fn synthetic_valid_handoff_requires_all_semantic_checks() {
-    let source =
-        include_str!("../../../../tests/emulator/cases/boot/l6max-update-valid-handoff.toml");
-    assert!(Scenario::parse(source).is_ok());
+    let fragment =
+        include_str!("../../../../tests/emulator/fragments/l6max-update-valid-handoff.toml");
+    let source = format!(
+        "version=1\nname='handoff'\nmodels=['l6max']\nbackends=['headless']\nstate='none'\ncard='none'\nupdate_fixture='synthetic-valid'\nupdate_goal='handoff'\n{fragment}"
+    );
+    assert!(Scenario::parse(&source).is_ok());
     for missing in [
         "[[step]]\naction = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-firmware-update-dialog.png\"\nguest_timeout_ms = 60000\nwall_timeout_s = 300\n\n",
         "[[step]]\naction = \"expect-update-state\"\nmode = 6\nflags_mask = 9\nflags_value = 0\n\n",
@@ -1479,4 +1482,32 @@ fn synthetic_valid_handoff_requires_all_semantic_checks() {
             "missing {missing}"
         );
     }
+}
+
+#[test]
+fn synthetic_install_requires_all_boot_and_storage_checks() {
+    let source =
+        include_str!("../../../../tests/emulator/cases/boot/l6max-update-valid-install.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    let first_installer = source
+        .find("[[step]]\naction = \"lifecycle-start\"\nprofile = \"installer\"")
+        .unwrap();
+    assert!(Scenario::from_text(&source[..first_installer]).is_err());
+    for missing in [
+        "[[step]]\naction = \"expect-installer-outcome\"\nexpected = \"installed\"\n\n",
+        "[[step]]\naction = \"wait-update-panel-ready\"\nguest_timeout_ms = 60000\nwall_timeout_s = 300\n\n",
+        "[[step]]\naction = \"expect-update-comparison\"\nfield = \"protected-region\"\n\n",
+        "[[step]]\naction = \"expect-installer-outcome\"\nexpected = \"no-pending\"\n\n",
+        "[[step]]\naction = \"expect-panel-unchanged\"\n",
+    ] {
+        assert!(source.contains(missing));
+        assert!(
+            Scenario::from_text(&source.replace(missing, "")).is_err(),
+            "missing {missing}"
+        );
+    }
+    assert!(
+        Scenario::from_text(&source.replace("profile = \"restart\"", "profile = \"installer\""))
+            .is_err()
+    );
 }

@@ -293,3 +293,5 @@ installer was not enabled, the command reports an unavailable error. This is
 emulator behavior, not an observation of the hardware boot ROM. The matching
 Rust methods are `ControlClient::installer_outcome` and
 `OwnedControl::installer_outcome`; a new engine start has its own result.
+
+`cargo l6ctl --socket PATH memory-read ADDRESS LENGTH` reads 1–4096 bytes of MAIN SDRAM (0x80000000–0x83ffffff) as non-atomic raw data. It does not select a firmware revision or interpret the bytes.

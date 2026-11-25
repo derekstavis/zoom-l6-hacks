@@ -168,6 +168,77 @@ fn wait_panel_uptime(session: &Session, target: u32, wall_timeout_s: u64) -> Res
     }
 }
 
+fn panel_update_ready(
+    mode: u32,
+    image_matches: bool,
+    rtc_response: bool,
+    writes: usize,
+    image_verified: bool,
+) -> bool {
+    mode == 4 && image_matches && rtc_response && writes == 64 && image_verified
+}
+
+fn verify_frozen_snapshot(path: &std::path::Path, expected: &[u8]) -> Result<(), String> {
+    let actual = std::fs::read(path).map_err(|e| e.to_string())?;
+    if actual != expected {
+        return Err(format!(
+            "snapshot changed after capture: {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn wait_update_panel_ready(
+    session: &Session,
+    state: &std::path::Path,
+    package: &[u8],
+    trace_path: &std::path::Path,
+    anchor: (Instant, u32),
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<(), String> {
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let (started, start) = anchor;
+    let deadline = started + Duration::from_secs(wall_timeout_s);
+    loop {
+        if !session.poll()?.powered {
+            return Err("guest powered off before panel image matched".into());
+        }
+        let image_matches = match std::fs::read(state.join("panel-flash.bin")) {
+            Ok(panel) => l6nor::update::panel_image_matches(&panel, package)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => return Err(error.to_string()),
+        };
+        let trace = match std::fs::read_to_string(trace_path) {
+            Ok(trace) => trace,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(error.to_string()),
+        };
+        let mode = control.update_state().map_err(|e| e.to_string())?.mode;
+        if panel_update_ready(
+            mode,
+            image_matches,
+            trace.contains("l6 panel RTC response start"),
+            trace
+                .lines()
+                .filter(|line| line.starts_with("l6 panel ROM write 080"))
+                .count(),
+            trace.contains("l6 panel ROM 16 KiB image match: yes"),
+        ) {
+            return Ok(());
+        }
+        let guest = control
+            .input_status(l6ctl::InputSource::Panel)
+            .map_err(|e| e.to_string())?
+            .guest_ms;
+        if guest.wrapping_sub(start) >= guest_timeout_ms || Instant::now() >= deadline {
+            return Err("panel update readiness did not converge before deadline".into());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// Execute a scenario without GPUI, with the production panel feed and shared assertions.
 pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
     if !scenario.backends.contains(&crate::Backend::Headless) {
@@ -261,6 +332,22 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
         started_unix_ms: crate::progress::unix_ms(),
     });
     let managed = scenario.update_fixture.is_some();
+    let managed_package = if managed {
+        use sha2::{Digest, Sha256};
+        let package =
+            std::fs::read(options.logs.join("synthetic-update.bin")).map_err(|e| e.to_string())?;
+        let inputs: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(options.logs.join("inputs.json")).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        let digest = format!("{:x}", Sha256::digest(&package));
+        if inputs["update_card_package_sha256"].as_str() != Some(digest.as_str()) {
+            return Err("staged update package identity changed before execution".into());
+        }
+        Some(package)
+    } else {
+        None
+    };
     let mut session = if managed {
         None
     } else {
@@ -288,6 +375,10 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
         "engine.trace"
     }));
     let mut device_state = devices::State::default();
+    let mut lifecycle_last_boot = None;
+    let mut installer_anchor = None;
+    let mut pending_snapshot: Option<Vec<u8>> = None;
+    let mut installed_panel_snapshot: Option<Vec<u8>> = None;
     let mut card_inserted = options.sd_image.is_some() && !options.no_sd;
     let mut result: Result<(), String> = (|| {
         loop {
@@ -310,16 +401,67 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
             match progress {
                 Progress::Complete => return Ok(()),
                 Progress::Dispatch(command) => session.as_ref().unwrap().dispatch(&command)?,
-                Progress::Device(devices::Operation::LifecycleStart) => {
-                    if session.is_some()
-                        || options.state_dir.is_none()
-                        || options.sd_image.is_none()
-                        || options.no_sd
-                    {
-                        return Err("lifecycle start requires an inactive guest, isolated state and update card".into());
+                Progress::Device(devices::Operation::LifecycleStart { profile }) => {
+                    if session.is_some() || options.state_dir.is_none() {
+                        return Err(
+                            "lifecycle start requires an inactive guest and isolated state".into(),
+                        );
                     }
-                    session = Some(Session::start(&options)?);
-                    runner.device_finished(json!({"started":true}));
+                    use crate::scenario::LifecycleBoot;
+                    let expected_previous = match profile {
+                        LifecycleBoot::Initial => None,
+                        LifecycleBoot::Installer => Some(LifecycleBoot::Initial),
+                        LifecycleBoot::Restart => Some(LifecycleBoot::Installer),
+                    };
+                    if lifecycle_last_boot != expected_previous {
+                        return Err("lifecycle boot profile is out of order".into());
+                    }
+                    let mut boot = options.clone();
+                    match profile {
+                        LifecycleBoot::Initial | LifecycleBoot::Installer => {
+                            if boot.sd_image.is_none() || boot.no_sd {
+                                return Err("update boot needs its staged card".into());
+                            }
+                            let package = managed_package
+                                .as_deref()
+                                .ok_or("missing frozen update package")?;
+                            let card_package = sd_image::read_file(
+                                boot.sd_image.as_ref().unwrap(),
+                                "L6max.BIN",
+                                package.len() as u64 + 1,
+                            )
+                            .map_err(|e| e.to_string())?;
+                            if card_package != package {
+                                return Err("update card package changed after staging".into());
+                            }
+                        }
+                        LifecycleBoot::Restart => {
+                            boot.sd_image = None;
+                            boot.no_sd = true;
+                        }
+                    }
+                    boot.update_bootloader = profile != LifecycleBoot::Initial;
+                    let label = match profile {
+                        LifecycleBoot::Initial => "initial",
+                        LifecycleBoot::Installer => "installer",
+                        LifecycleBoot::Restart => "restart",
+                    };
+                    boot.logs = options.logs.join(format!("boot-{label}"));
+                    session = Some(Session::start(&boot)?);
+                    installer_anchor = if profile == LifecycleBoot::Installer {
+                        let started = Instant::now();
+                        let current = session.as_ref().unwrap();
+                        let guest = l6ctl::OwnedControl::new(&current.engine)
+                            .input_status(l6ctl::InputSource::Panel)
+                            .map_err(|e| e.to_string())?
+                            .guest_ms;
+                        Some((started, guest))
+                    } else {
+                        None
+                    };
+                    lifecycle_last_boot = Some(profile);
+                    runner.restarted(&boot.logs);
+                    runner.device_finished(json!({"started":true,"profile":label,"card":profile != LifecycleBoot::Restart,"replacement_installer":boot.update_bootloader}));
                 }
                 Progress::Device(devices::Operation::LifecycleStop) => {
                     device_state.restarted()?;
@@ -385,6 +527,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     file.write_all(nor.bytes())
                         .and_then(|()| file.sync_all())
                         .map_err(|e| e.to_string())?;
+                    pending_snapshot = Some(nor.bytes().to_vec());
                     use sha2::{Digest, Sha256};
                     runner.device_finished(json!({"update_marker":format!("{marker:?}"), "main_nor_sha256":format!("{:x}", Sha256::digest(nor.bytes())), "snapshot":"pending-main-nor.bin"}));
                 }
@@ -437,6 +580,175 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         ));
                     }
                     runner.device_finished(json!({"window":sample.current_window,"progress_flags":sample.progress_flags,"atomic":sample.atomic,"revision_guard":sample.revision_guard}));
+                }
+                Progress::Device(devices::Operation::ExpectInstallerOutcome { expected }) => {
+                    let current = session
+                        .as_ref()
+                        .ok_or("installer outcome requires an active guest")?;
+                    let actual = l6ctl::OwnedControl::new(&current.engine)
+                        .installer_outcome()
+                        .map_err(|e| e.to_string())?;
+                    let matches = matches!(
+                        (expected, &actual),
+                        (
+                            crate::scenario::InstallerExpected::Installed,
+                            l6ctl::InstallerOutcome::Installed
+                        ) | (
+                            crate::scenario::InstallerExpected::NoPending,
+                            l6ctl::InstallerOutcome::NoPending
+                        )
+                    );
+                    if !matches {
+                        return Err(format!(
+                            "replacement installer outcome mismatch: expected {expected:?}, got {actual:?}"
+                        ));
+                    }
+                    runner.device_finished(
+                        json!({"replacement_installer_outcome":format!("{actual:?}")}),
+                    );
+                }
+                Progress::Device(devices::Operation::WaitUpdatePanelReady) => {
+                    let current = session
+                        .as_ref()
+                        .ok_or("panel image wait requires an active guest")?;
+                    let state = options
+                        .state_dir
+                        .as_deref()
+                        .ok_or("panel image needs persistent state")?;
+                    let package = managed_package
+                        .as_deref()
+                        .ok_or("missing frozen update package")?;
+                    let step = &runner.scenario.step[runner.current_step()];
+                    wait_update_panel_ready(
+                        current,
+                        state,
+                        package,
+                        &options.logs.join("boot-installer/engine.trace"),
+                        installer_anchor.ok_or("panel readiness requires an installer boot")?,
+                        step.guest_timeout_ms,
+                        step.wall_timeout_s,
+                    )?;
+                    runner.device_finished(json!({"panel_image_matches":true,"atomic":false}));
+                }
+                Progress::Device(devices::Operation::ExpectUpdateMode { mode }) => {
+                    let current = session
+                        .as_ref()
+                        .ok_or("update mode requires an active guest")?;
+                    let sample = l6ctl::OwnedControl::new(&current.engine)
+                        .update_state()
+                        .map_err(|e| e.to_string())?;
+                    if sample.mode != mode {
+                        return Err(format!(
+                            "update mode mismatch: expected {mode}, got {}",
+                            sample.mode
+                        ));
+                    }
+                    runner.device_finished(json!({"mode":sample.mode,"revision_guard":sample.revision_guard,"atomic":sample.atomic}));
+                }
+                Progress::Device(devices::Operation::ExpectMainMemory { address, bytes }) => {
+                    let current = session
+                        .as_ref()
+                        .ok_or("memory observation requires an active guest")?;
+                    let sample = l6ctl::OwnedControl::new(&current.engine)
+                        .read_main_memory(address, bytes.len())
+                        .map_err(|e| e.to_string())?;
+                    if sample.bytes != bytes {
+                        return Err(format!(
+                            "MAIN memory mismatch at {address:#x}: expected {bytes:02x?}, got {:02x?}",
+                            sample.bytes
+                        ));
+                    }
+                    runner.device_finished(
+                        json!({"address":address,"bytes":sample.bytes,"atomic":sample.atomic}),
+                    );
+                }
+                Progress::Device(devices::Operation::ExpectUpdateComparison { field }) => {
+                    if session.is_some() {
+                        return Err("installed update comparison requires stopped guest".into());
+                    }
+                    let state = options
+                        .state_dir
+                        .as_ref()
+                        .ok_or("installed update needs persistent state")?;
+                    let frozen = pending_snapshot
+                        .as_deref()
+                        .ok_or("missing frozen pending NOR snapshot")?;
+                    verify_frozen_snapshot(&options.logs.join("pending-main-nor.bin"), frozen)?;
+                    let pending = l6nor::MainNor::from_bytes(frozen.to_vec())?;
+                    let installed = l6nor::MainNor::read(&state.join("main-nor.bin"))?;
+                    let panel =
+                        std::fs::read(state.join("panel-flash.bin")).map_err(|e| e.to_string())?;
+                    let comparison = l6nor::update::compare_l6max(
+                        &pending,
+                        &installed,
+                        &panel,
+                        managed_package
+                            .as_deref()
+                            .ok_or("missing frozen update package")?,
+                    )?;
+                    let matched = match field {
+                        crate::scenario::UpdateComparisonField::MainPayload => {
+                            comparison.main_payload_matches
+                        }
+                        crate::scenario::UpdateComparisonField::BootRegion => {
+                            comparison.boot_region_preserved
+                        }
+                        crate::scenario::UpdateComparisonField::ProtectedRegion => {
+                            comparison.protected_region_preserved
+                        }
+                        crate::scenario::UpdateComparisonField::PanelImage => {
+                            comparison.panel_image_matches
+                        }
+                    };
+                    if !matched {
+                        return Err(format!("installed update comparison failed for {field:?}"));
+                    }
+                    runner.device_finished(json!({"field":format!("{field:?}"),"matches":true}));
+                }
+                Progress::Device(devices::Operation::CaptureInstalledPanel) => {
+                    if session.is_some() {
+                        return Err("panel snapshot requires stopped guest".into());
+                    }
+                    let state = options
+                        .state_dir
+                        .as_ref()
+                        .ok_or("panel snapshot needs persistent state")?;
+                    let panel =
+                        std::fs::read(state.join("panel-flash.bin")).map_err(|e| e.to_string())?;
+                    let mut file = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(options.logs.join("installed-panel-flash.bin"))
+                        .map_err(|e| e.to_string())?;
+                    use std::io::Write;
+                    file.write_all(&panel)
+                        .and_then(|()| file.sync_all())
+                        .map_err(|e| e.to_string())?;
+                    installed_panel_snapshot = Some(panel.clone());
+                    use sha2::{Digest, Sha256};
+                    runner.device_finished(json!({"panel_sha256":format!("{:x}",Sha256::digest(&panel)),"snapshot":"installed-panel-flash.bin"}));
+                }
+                Progress::Device(devices::Operation::ExpectPanelUnchanged) => {
+                    if session.is_some() {
+                        return Err("panel comparison requires stopped guest".into());
+                    }
+                    let state = options
+                        .state_dir
+                        .as_ref()
+                        .ok_or("panel comparison needs persistent state")?;
+                    let before = installed_panel_snapshot
+                        .as_deref()
+                        .ok_or("missing frozen installed panel snapshot")?;
+                    verify_frozen_snapshot(
+                        &options.logs.join("installed-panel-flash.bin"),
+                        before,
+                    )?;
+                    let after =
+                        std::fs::read(state.join("panel-flash.bin")).map_err(|e| e.to_string())?;
+                    if before != after.as_slice() {
+                        return Err("panel flash changed across restart".into());
+                    }
+                    runner.device_finished(json!({"panel_unchanged":true}));
                 }
                 Progress::Device(devices::Operation::Restart) => {
                     if options.state_dir.is_none() {
@@ -533,5 +845,28 @@ mod lifecycle_clock_tests {
         assert!(!watch.stalled(0, 200, start + Duration::from_secs(118)));
         assert!(!watch.stalled(0, 200, start + Duration::from_secs(177)));
         assert!(watch.stalled(0, 200, start + Duration::from_secs(178)));
+    }
+
+    #[test]
+    fn panel_readiness_requires_all_simultaneous_conditions() {
+        assert!(panel_update_ready(4, true, true, 64, true));
+        assert!(!panel_update_ready(3, true, true, 64, true));
+        assert!(!panel_update_ready(4, false, true, 64, true));
+        assert!(!panel_update_ready(4, true, false, 64, true));
+        assert!(!panel_update_ready(4, true, true, 63, true));
+        assert!(!panel_update_ready(4, true, true, 65, true));
+        assert!(!panel_update_ready(4, true, true, 64, false));
+    }
+
+    #[test]
+    fn frozen_snapshot_rejects_changed_or_missing_artifact() {
+        let path = std::env::temp_dir().join(format!("l6-frozen-snapshot-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        assert!(verify_frozen_snapshot(&path, b"before").is_err());
+        std::fs::write(&path, b"before").unwrap();
+        assert!(verify_frozen_snapshot(&path, b"before").is_ok());
+        std::fs::write(&path, b"changed").unwrap();
+        assert!(verify_frozen_snapshot(&path, b"before").is_err());
+        std::fs::remove_file(path).unwrap();
     }
 }

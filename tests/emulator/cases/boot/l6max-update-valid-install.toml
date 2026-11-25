@@ -1,0 +1,106 @@
+version = 1
+name = "l6max-update-valid-install"
+models = ["l6max"]
+backends = ["headless"]
+state = "none"
+card = "none"
+update_fixture = "synthetic-valid"
+update_goal = "install"
+
+[case]
+suites = ["full"]
+wall_timeout_s = 1200
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/l6max-update-valid-handoff.toml"
+
+[[step]]
+action = "lifecycle-start"
+profile = "installer"
+
+[[step]]
+action = "expect-installer-outcome"
+expected = "installed"
+
+[[step]]
+action = "wait-update-panel-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "expect-trace"
+contains = ["l6 panel RTC response start", "l6 panel ROM 16 KiB image match: yes"]
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "expect-trace-count"
+pattern = "l6 panel ROM write 080"
+count = 64
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "expect-update-mode"
+mode = 4
+
+[[step]]
+action = "expect-main-memory"
+address = 0x8000001c
+bytes = [0xdf, 0x9b, 0x57, 0x13]
+
+[[step]]
+action = "lifecycle-stop"
+
+[[step]]
+action = "expect-update-comparison"
+field = "main-payload"
+
+[[step]]
+action = "expect-update-comparison"
+field = "boot-region"
+
+[[step]]
+action = "expect-update-comparison"
+field = "protected-region"
+
+[[step]]
+action = "expect-update-comparison"
+field = "panel-image"
+
+[[step]]
+action = "expect-update-marker-absent"
+
+[[step]]
+action = "capture-installed-panel"
+
+[[step]]
+action = "lifecycle-start"
+profile = "restart"
+
+[[step]]
+action = "expect-installer-outcome"
+expected = "no-pending"
+
+[[step]]
+action = "wait-panel-uptime"
+guest_ms = 40000
+guest_timeout_ms = 300000
+wall_timeout_s = 1200
+
+[[step]]
+action = "expect-main-memory"
+address = 0x8000001c
+bytes = [0xdf, 0x9b, 0x57, 0x13]
+
+[[step]]
+action = "expect-trace"
+contains = []
+absent = ["l6 panel ROM erase", "l6 panel ROM mass erase"]
+
+[[step]]
+action = "lifecycle-stop"
+
+[[step]]
+action = "expect-panel-unchanged"

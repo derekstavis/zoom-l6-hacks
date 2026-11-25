@@ -43,9 +43,8 @@ wall_timeout_s = 600
 action = "include"
 path = "patches/knob-dialog/tests/emulator/fragments/preflight-probes.toml"
 [[step]]
-action = "knob-dialog-callback-race"
-guest_timeout_ms = 180000
-wall_timeout_s = 600
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/callback-race.toml"
 [[step]]
 action = "knob-dialog-first-activation"
 guest_timeout_ms = 180000

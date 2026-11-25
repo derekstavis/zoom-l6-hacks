@@ -280,6 +280,16 @@ pub fn step_label(action: &crate::Action) -> String {
             duration_ms: Some(ms),
             ..
         } => format!("Hold chord for {ms} ms guest time"),
+        Action::KnobRaceBegin => "Hold notification lock and trigger first-use registration".into(),
+        Action::KnobRaceWaitRegistration => "Wait for first-use callback registration".into(),
+        Action::KnobRaceArmCallback => "Mutate descriptor and arm callback".into(),
+        Action::KnobRaceWaitCallback => "Wait for first display callback".into(),
+        Action::KnobRaceCapture { guest_ms, .. } => {
+            format!("Capture rejected callback frame ({guest_ms} ms guest time)")
+        }
+        Action::KnobRaceSample => "Sample callback rejection state".into(),
+        Action::KnobRaceRestore => "Restore raced descriptor".into(),
+        Action::KnobRaceAssert => "Check callback rejection and retry readiness".into(),
         Action::KnobLevelStart { .. } => "Capture initial level demo".into(),
         Action::KnobLevelSweep { sweep } => format!("Sweep level {:?}", sweep.direction),
         Action::KnobOverlayReactivate { delta } => {

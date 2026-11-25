@@ -668,7 +668,17 @@ pub enum Action {
     KnobProbeSample,
     KnobProbeRestore,
     KnobProbeAssert,
-    KnobDialogCallbackRace,
+    KnobRaceBegin,
+    KnobRaceWaitRegistration,
+    KnobRaceArmCallback,
+    KnobRaceWaitCallback,
+    KnobRaceCapture {
+        guest_ms: u32,
+        artifact: String,
+    },
+    KnobRaceSample,
+    KnobRaceRestore,
+    KnobRaceAssert,
     KnobDialogFirstActivation,
     KnobActiveBegin,
     KnobActiveSampleCallbacks,
@@ -1582,6 +1592,30 @@ mod active_display_fragment_tests {
     }
 }
 
+pub(crate) fn valid_callback_race_steps(steps: &[&Step]) -> bool {
+    let [
+        begin,
+        registration,
+        arm,
+        callback,
+        capture,
+        sample,
+        restore,
+        assertion,
+    ] = steps
+    else {
+        return false;
+    };
+    matches!(begin.action, Action::KnobRaceBegin)
+        && matches!(registration.action, Action::KnobRaceWaitRegistration)
+        && matches!(arm.action, Action::KnobRaceArmCallback)
+        && matches!(callback.action, Action::KnobRaceWaitCallback)
+        && matches!(&capture.action, Action::KnobRaceCapture { guest_ms: 150, artifact } if artifact == "window-scene-callback-preflight-race")
+        && matches!(sample.action, Action::KnobRaceSample)
+        && matches!(restore.action, Action::KnobRaceRestore)
+        && matches!(assertion.action, Action::KnobRaceAssert)
+}
+
 pub(crate) fn valid_preflight_probe_steps(steps: &[&Step]) -> bool {
     use PreflightProbe as P;
     const PROBES: [P; 5] = [
@@ -1753,6 +1787,33 @@ mod bitmap_probe_fragment_tests {
             panic!("expected bitmap invocation");
         }
         assert!(!valid_bitmap_probe_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+    }
+}
+
+#[cfg(test)]
+mod callback_race_fragment_tests {
+    use super::*;
+
+    #[test]
+    fn requires_ordered_race_steps_and_reviewed_capture() {
+        let mut fragment: Fragment = toml::from_str(include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/callback-race.toml"
+        ))
+        .unwrap();
+        assert!(valid_callback_race_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(5, 6);
+        assert!(!valid_callback_race_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(5, 6);
+        if let Action::KnobRaceCapture { guest_ms, .. } = &mut fragment.step[4].action {
+            *guest_ms = 149;
+        }
+        assert!(!valid_callback_race_steps(
             &fragment.step.iter().collect::<Vec<_>>()
         ));
     }

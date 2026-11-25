@@ -101,7 +101,14 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobProbeSample
         | Action::KnobProbeRestore
         | Action::KnobProbeAssert
-        | Action::KnobDialogCallbackRace
+        | Action::KnobRaceBegin
+        | Action::KnobRaceWaitRegistration
+        | Action::KnobRaceArmCallback
+        | Action::KnobRaceWaitCallback
+        | Action::KnobRaceSample
+        | Action::KnobRaceRestore
+        | Action::KnobRaceAssert
+        | Action::KnobRaceCapture { .. }
         | Action::KnobDialogFirstActivation
         | Action::KnobActiveBegin
         | Action::KnobActiveSampleCallbacks

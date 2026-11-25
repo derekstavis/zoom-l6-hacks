@@ -1,0 +1,42 @@
+[[step]]
+action = "knob-race-begin"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-race-wait-registration"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-race-arm-callback"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-race-wait-callback"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-race-capture"
+guest_ms = 150
+artifact = "window-scene-callback-preflight-race"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-race-sample"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-race-restore"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-race-assert"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+

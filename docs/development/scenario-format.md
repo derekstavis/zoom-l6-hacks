@@ -262,7 +262,7 @@ message delivered just after the interval.
 | `knob-dialog-baseline` | — | Select level mode and capture the baseline frame for the later race check |
 | `knob-probe-*` | probe for prepare, delta for trigger | Inject a guarded descriptor conflict, sample rejection, restore it and assert the saved state and heap |
 | `knob-dialog-preflight-begin` | — | Capture the original descriptors, resources and heap, and open the debugger for the following five probes |
-| `knob-dialog-callback-race` | — | Verify callback-side preflight rejects descriptor drift while retaining the notification semaphore in the owned debugger context |
+| `knob-race-*` | capture duration and artifact | Observe registration and callback breakpoints, capture and sample rejected descriptor drift, then restore the descriptor before asserting while retaining the notification semaphore for first activation |
 | `knob-dialog-first-activation` | — | Wait for the display callback to return, then verify first activation and restore the notification semaphore |
 | `knob-active-*` | — | Turn the knob, capture the active display and preserve its frame and callback pointer |
 | `knob-level-*` | — | Capture the bounded level sweep to at least 69% and back to 0% |

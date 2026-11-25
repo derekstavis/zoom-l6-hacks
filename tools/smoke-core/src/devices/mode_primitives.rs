@@ -117,6 +117,38 @@ pub(super) fn embedded_mode_operations() -> Result<Vec<(String, Operation)>, Str
         .collect()
 }
 
+pub(super) fn embedded_invalid_tag_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/invalid-tags.toml"
+    ))
+    .map_err(|error| format!("invalid embedded invalid-tag fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_invalid_tag_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded invalid-tag fragment has an invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match step.action {
+                crate::Action::KnobDialogFinalBegin => Operation::KnobDialogFinalBegin,
+                crate::Action::KnobDialogInjectInvalidTag { tag } => {
+                    Operation::KnobDialogInjectInvalidTag { tag }
+                }
+                crate::Action::KnobDialogWaitInvalidTag => Operation::KnobDialogWaitInvalidTag,
+                crate::Action::KnobDialogConfirmInvalidTag => {
+                    Operation::KnobDialogConfirmInvalidTag
+                }
+                _ => return Err("unsupported embedded invalid-tag action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
 /// Convert a mode-fragment action for the post-update lifecycle. Scenario
 /// loading validates the complete sequence before this conversion.
 pub(super) fn mode_step_operation(action: &crate::Action) -> Option<Operation> {

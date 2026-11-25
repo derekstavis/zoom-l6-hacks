@@ -32,7 +32,7 @@ pub use knob_dialog::*;
 pub use lifecycle::*;
 use midi::*;
 use midi_probe::*;
-use mode_primitives::{embedded_midi_sync_operations, embedded_mode_operations};
+use mode_primitives::{embedded_invalid_tag_operations, embedded_midi_sync_operations, embedded_mode_operations};
 use panel::*;
 use sd::*;
 use usb::*;
@@ -331,6 +331,12 @@ pub enum Operation {
     },
     KnobDialogExpectHeap,
     KnobDialogModeEnd,
+    KnobDialogFinalBegin,
+    KnobDialogInjectInvalidTag {
+        tag: u8,
+    },
+    KnobDialogWaitInvalidTag,
+    KnobDialogConfirmInvalidTag,
     KnobDialog,
     KnobPopupOpen {
         first_steps: i32,
@@ -711,7 +717,7 @@ pub struct State {
     knob_popup: Option<knob_dialog::PopupContext>,
     knob_dialog_baseline: Option<[u8; 1024]>,
     knob_dialog_preflight: Option<knob_dialog::PreflightContext>,
-    knob_dialog_deadline: Option<(std::time::Instant, u32, u32, u64, u8)>,
+    knob_dialog_deadline: Option<(std::time::Instant, u32, u32, u64, u16)>,
     knob_mode: Option<KnobModeScope>,
     knob_heap_reader: Option<l6max_host::heap::CounterReader>,
     pending_input: Option<PendingInput>,

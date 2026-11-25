@@ -758,7 +758,8 @@ impl Scenario {
                 Action::KnobDialogBitmapZero => "knob-dialog-overlay-invariants",
                 Action::KnobDialogActiveOverlay => "knob-dialog-bitmap-zero",
                 Action::KnobDialogLockedUpdate => "knob-dialog-active-overlay",
-                Action::KnobDialog => "knob-dialog-mode-end",
+                Action::KnobDialogFinalBegin => "knob-dialog-mode-end",
+                Action::KnobDialog => "knob-dialog-confirm-invalid-tag",
                 _ => continue,
             };
             for model in &value.models {
@@ -818,6 +819,9 @@ impl Scenario {
                         "knob-dialog-active-overlay" => {
                             matches!(previous.action, Action::KnobDialogActiveOverlay)
                         }
+                        "knob-dialog-confirm-invalid-tag" => {
+                            matches!(previous.action, Action::KnobDialogConfirmInvalidTag)
+                        }
                         "knob-dialog-mode-end" => {
                             matches!(previous.action, Action::KnobDialogModeEnd)
                         }
@@ -874,7 +878,10 @@ impl Scenario {
                     || !matches!(subsequent[11].action, Action::KnobDialogBitmapZero)
                     || !matches!(subsequent[12].action, Action::KnobDialogActiveOverlay)
                     || !matches!(subsequent[13].action, Action::KnobDialogLockedUpdate)
-                    || !valid_knob_mode_steps(&subsequent[14..subsequent.len() - 1])
+                    || !valid_knob_mode_steps(&subsequent[14..subsequent.len().saturating_sub(8)])
+                    || !valid_invalid_tag_steps(
+                        &subsequent[subsequent.len().saturating_sub(8)..subsequent.len() - 1],
+                    )
                     || subsequent.iter().any(|next| {
                         next.guest_timeout_ms != step.guest_timeout_ms
                             || next.wall_timeout_s != step.wall_timeout_s

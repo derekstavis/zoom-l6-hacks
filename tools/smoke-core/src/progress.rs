@@ -269,6 +269,16 @@ pub fn step_label(action: &crate::Action) -> String {
         ),
         Action::KnobDialogExpectHeap => "Check persistent heap counters".into(),
         Action::KnobDialogModeEnd => "Finish knob dialog mode".into(),
+        Action::KnobDialogFinalBegin => "Check Pan sweep and channel 2 level".into(),
+        Action::KnobDialogInjectInvalidTag { tag } => {
+            if tag & 0x0f >= 10 {
+                format!("Inject invalid mode {}", tag & 0x0f)
+            } else {
+                format!("Inject invalid channel {}", tag >> 4)
+            }
+        }
+        Action::KnobDialogWaitInvalidTag => "Wait for invalid tag discard".into(),
+        Action::KnobDialogConfirmInvalidTag => "Confirm invalid tag discard".into(),
         Action::SelectMode { mode } => format!("Select {} mode", mode.replace('-', " ")),
         Action::ExpectMode { mode } => format!("Check {} mode", mode.replace('-', " ")),
         Action::ExpectRing { channel, .. } => format!("Check channel {channel} ring"),

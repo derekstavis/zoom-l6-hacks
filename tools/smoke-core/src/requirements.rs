@@ -113,6 +113,10 @@ pub fn of(action: &Action) -> Requirement {
         | Action::WaitKnobParameterMode { .. }
         | Action::KnobDialogExpectHeap
         | Action::KnobDialogModeEnd
+        | Action::KnobDialogFinalBegin
+        | Action::KnobDialogInjectInvalidTag { .. }
+        | Action::KnobDialogWaitInvalidTag
+        | Action::KnobDialogConfirmInvalidTag
         | Action::CaptureDisplay { .. }
         | Action::ExpectCapturedDisplayImage { .. }
         | Action::KnobDialog

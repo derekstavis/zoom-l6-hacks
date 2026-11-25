@@ -971,6 +971,24 @@ impl Runner {
                 Action::KnobDialogModeEnd => {
                     return Ok(Progress::Device(devices::Operation::KnobDialogModeEnd));
                 }
+                Action::KnobDialogFinalBegin => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogFinalBegin));
+                }
+                Action::KnobDialogInjectInvalidTag { tag } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogInjectInvalidTag { tag },
+                    ));
+                }
+                Action::KnobDialogWaitInvalidTag => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogWaitInvalidTag,
+                    ));
+                }
+                Action::KnobDialogConfirmInvalidTag => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogConfirmInvalidTag,
+                    ));
+                }
                 Action::KnobDialog => {
                     return Ok(Progress::Device(devices::Operation::KnobDialog));
                 }

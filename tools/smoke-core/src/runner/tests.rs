@@ -1303,7 +1303,11 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
     let tasks = "[[step]]\naction='knob-dialog-task-contexts'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let overlay = "[[step]]\naction='knob-dialog-overlay-invariants'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-bitmap-zero'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-active-overlay'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let locked = "[[step]]\naction='knob-dialog-locked-update'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
-    let dialog = "[[step]]\naction='knob-dialog'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
+    let tags =
+        include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/invalid-tags.toml");
+    let dialog = format!(
+        "{tags}[[step]]\naction='knob-dialog'\nguest_timeout_ms=180000\nwall_timeout_s=600\n"
+    );
     let modes =
         include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/mode-walk.toml");
     assert!(
@@ -1328,6 +1332,16 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
         .is_err()
     );
     assert!(Scenario::parse(&complete.replace("mode = 8", "mode = 7")).is_err());
+    assert!(Scenario::parse(&complete.replacen("tag = 15", "tag = 1", 1)).is_err());
+    assert!(Scenario::parse(&complete.replacen("tag = 240", "tag = 16", 1)).is_err());
+    assert!(
+        Scenario::parse(&complete.replacen(
+            "action = \"knob-dialog-wait-invalid-tag\"",
+            "action = \"knob-dialog-confirm-invalid-tag\"",
+            1
+        ))
+        .is_err()
+    );
 
     let setup_pruned =
         format!("{prefix}{ready}{guard}{baseline}{preflight}{activation}{active_demo}{tasks}{overlay}{locked}{modes}{dialog}")

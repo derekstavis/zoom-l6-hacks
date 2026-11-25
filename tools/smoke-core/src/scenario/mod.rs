@@ -620,6 +620,12 @@ pub enum Action {
     },
     KnobDialogExpectHeap,
     KnobDialogModeEnd,
+    KnobDialogFinalBegin,
+    KnobDialogInjectInvalidTag {
+        tag: u8,
+    },
+    KnobDialogWaitInvalidTag,
+    KnobDialogConfirmInvalidTag,
     KnobDialog,
     /// Turn the channel 1 level knob once on the recorder screen and check
     /// that Knob Dialog shows the new value.
@@ -960,6 +966,17 @@ pub(crate) fn valid_knob_mode_steps(steps: &[&Step]) -> bool {
             steps[steps.len() - 7].action,
             Action::WaitKnobParameterMode { mode: 8 }
         )
+}
+
+pub(crate) fn valid_invalid_tag_steps(steps: &[&Step]) -> bool {
+    matches!(steps, [begin, inject1, wait1, confirm1, inject2, wait2, confirm2]
+        if matches!(begin.action, Action::KnobDialogFinalBegin)
+        && matches!(inject1.action, Action::KnobDialogInjectInvalidTag { tag } if tag & 0x0f >= 10 && tag >> 4 < 8)
+        && matches!(wait1.action, Action::KnobDialogWaitInvalidTag)
+        && matches!(confirm1.action, Action::KnobDialogConfirmInvalidTag)
+        && matches!(inject2.action, Action::KnobDialogInjectInvalidTag { tag } if tag >> 4 >= 8 && tag & 0x0f <= 9)
+        && matches!(wait2.action, Action::KnobDialogWaitInvalidTag)
+        && matches!(confirm2.action, Action::KnobDialogConfirmInvalidTag))
 }
 
 /// Expand includes. A fragment is shared, so its steps scoped only to models

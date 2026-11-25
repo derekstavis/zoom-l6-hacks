@@ -469,13 +469,14 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
             l6fw::model_from_main(&main).map_err(|error| error.to_string())?
         },
         options.logs.clone(),
-        progress,
+        progress.clone(),
     )?;
     runner.trace_file(options.logs.join(if options.trace_sd {
         "sdhci.trace"
     } else {
         "engine.trace"
     }));
+    let case_progress = progress.clone();
     let mut device_state = devices::State::default();
     let mut lifecycle_last_boot = None;
     let mut lifecycle_boot_options: Option<Options> = None;
@@ -1159,6 +1160,8 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         devices::Operation::SdCard { inserted } => Some(*inserted),
                         _ => None,
                     };
+                    device_state
+                        .set_paced_progress(case_progress.clone(), runner.current_display_index());
                     let step = &runner.scenario.step[runner.current_step()];
                     let evidence = device_state.execute(
                         session.as_ref().unwrap(),

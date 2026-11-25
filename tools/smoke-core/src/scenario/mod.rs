@@ -525,6 +525,10 @@ pub enum Action {
         #[serde(default)]
         chain_count: Option<u8>,
     },
+    EffectPacedTurn {
+        channel: usize,
+        steps: i32,
+    },
     EffectParameterEdit {
         encoder: usize,
         steps: i32,

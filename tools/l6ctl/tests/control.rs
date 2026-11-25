@@ -811,3 +811,38 @@ fn debugger_uses_one_persistent_typed_connection_for_api_and_cli() {
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn effect_editor_client_uses_bounded_typed_wire_contract() {
+    let path = socket_path();
+    let binding = l6ctl::EffectEditorBinding {
+        module_len: 512,
+        code_len: 256,
+        state_offset: 128,
+        hook_offset: 0,
+        hook_guard: [3; 32],
+        immutable_sha256: "b".repeat(64),
+        masked_words: vec![],
+        applied_offset: 256,
+        dropped_offset: 260,
+        pending_offset: 264,
+        gate_offset: 128,
+        fixture_module_sha256: "a".repeat(64),
+    };
+    let response = json!({"revision_guard":"l6max_1_10_fixture_hook","fixture_module_sha256":"a".repeat(64),"atomic":false,"applied":7,"dropped":1,"pending":0,"gate":0});
+    let server = server(
+        &path,
+        vec![(
+            json!({"command":"effect-editor","binding":binding}),
+            json!({"ok":true,"result":response}),
+        )],
+    );
+    let sample = ControlClient::new(&path).effect_editor(binding).unwrap();
+    assert_eq!(
+        (sample.applied, sample.dropped, sample.pending, sample.gate),
+        (7, 1, 0, 0)
+    );
+    assert!(!sample.atomic);
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}

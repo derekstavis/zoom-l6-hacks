@@ -1122,3 +1122,184 @@ pub(super) fn sd_typed_site_chain(
         .collect();
     Ok((chain, links))
 }
+
+/// Fixture-scoped control of the effect editor's single-slot mailbox.
+pub(super) fn effect_editor_reader(
+    options: &Options,
+    session: &Session,
+    deadline: Instant,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<l6max_host::effect_editor::Reader, String> {
+    let main = selected_main_image(options)?;
+    sd_fixture_edits(options, &main, session.engine.model())?;
+    let root = sd_fixture_root(options)?;
+    let output = root.join(crate::fixture_layout::SD_BUNDLE_BUILD);
+    let report_bytes =
+        fs::read(output.join(crate::fixture_layout::PATCH_REPORT)).map_err(|e| e.to_string())?;
+    let report: Value = serde_json::from_slice(&report_bytes).map_err(|e| e.to_string())?;
+    let patches = report["patches"]
+        .as_array()
+        .ok_or("effect module report missing")?;
+    if patches.len() != 1 {
+        return Err("paced effect edits require one composed module".into());
+    }
+    let filename = patches[0]["file"]
+        .as_str()
+        .and_then(|v| Path::new(v).file_name())
+        .ok_or("effect module file missing")?;
+    let bytes = fs::read(output.join("PATCHES").join(filename)).map_err(|e| e.to_string())?;
+    let binding = l6ctl::EffectEditorBinding::from_fixture(&report_bytes, &bytes)?;
+    l6ctl::OwnedControl::new(&session.engine)
+        .effect_editor_reader_before_checked(binding, deadline, check)
+        .map_err(|e| e.to_string())
+}
+
+/// Interpret a non-atomic sample against the counters preceding one input.
+fn paced_effect_state(
+    before: &l6ctl::EffectEditorSnapshot,
+    now: &l6ctl::EffectEditorSnapshot,
+) -> Result<bool, String> {
+    if now.dropped != before.dropped {
+        return Err("effect editor dropped a paced turn".into());
+    }
+    match now.applied.wrapping_sub(before.applied) {
+        0 => Ok(false),
+        1 => Ok(now.pending == 0 && now.gate == 0),
+        count => Err(format!(
+            "effect editor applied {count} turns while awaiting one"
+        )),
+    }
+}
+
+fn paced_acknowledged(state: l6ctl::InputAckState) -> Result<bool, String> {
+    match state {
+        l6ctl::InputAckState::Applied => Ok(true),
+        l6ctl::InputAckState::Pending => Ok(false),
+        l6ctl::InputAckState::Rejected => Err("paced effect encoder was rejected".into()),
+        l6ctl::InputAckState::Unknown => {
+            Err("paced effect encoder acknowledgement unavailable".into())
+        }
+    }
+}
+
+pub(super) fn effect_paced_turn(
+    options: &Options,
+    session: &Session,
+    channel: usize,
+    steps: i32,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+    progress: crate::progress::CaseProgress,
+    index: usize,
+) -> Result<Value, String> {
+    if session.engine.model() != l6fw::Model::L6max
+        || !(1..=8).contains(&channel)
+        || steps == 0
+        || steps.unsigned_abs() > 128
+    {
+        return Err("invalid paced effect turn".into());
+    }
+    let start = Instant::now();
+    let start_guest = guest_now(session);
+    let check = || -> Result<(), String> {
+        if start.elapsed() >= Duration::from_secs(wall_timeout_s)
+            || guest_now(session).wrapping_sub(start_guest) >= guest_timeout_ms
+        {
+            Err("paced effect turn exceeded its shared deadline".into())
+        } else {
+            Ok(())
+        }
+    };
+    check()?;
+    let deadline = start
+        .checked_add(Duration::from_secs(wall_timeout_s))
+        .ok_or("paced effect deadline overflow")?;
+    let reader = effect_editor_reader(options, session, deadline, &check)?;
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let total = steps.unsigned_abs();
+    let mut prior = None;
+    let mut before = loop {
+        check()?;
+        session.poll()?;
+        let now = reader.read_before_checked(deadline, &check)?;
+        check()?;
+        if now.pending == 0 && now.gate == 0 && prior.as_ref() == Some(&now) {
+            break now;
+        }
+        prior = (now.pending == 0 && now.gate == 0).then_some(now);
+        thread::sleep(Duration::from_millis(5));
+    };
+    progress.emit(crate::progress::CaseEvent::StepProgress {
+        index,
+        completed: 0,
+        total,
+    });
+    for completed in 1..=total {
+        check()?;
+        // Gesture polarity is the inverse of the wire-level encoder command.
+        let receipt = control
+            .encoder(channel as u32, -steps.signum())
+            .map_err(|e| e.to_string())?;
+        let mut acknowledged = false;
+        loop {
+            check()?;
+            session.poll()?;
+            let ack = control
+                .input_ack(l6ctl::InputSource::Panel, receipt.sequence)
+                .map_err(|e| e.to_string())?
+                .state;
+            acknowledged |= paced_acknowledged(ack)?;
+            let now = reader.read_before_checked(deadline, &check)?;
+            check()?;
+            let applied = paced_effect_state(&before, &now)?;
+            if acknowledged && applied {
+                before = now;
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        progress.emit(crate::progress::CaseEvent::StepProgress {
+            index,
+            completed,
+            total,
+        });
+    }
+    Ok(
+        json!({"channel":channel,"steps":steps,"applied":total,"dropped_counter":before.dropped,"fixture_module_sha256":before.fixture_module_sha256}),
+    )
+}
+
+#[cfg(test)]
+mod paced_effect_tests {
+    use super::*;
+    fn sample(applied: u32, dropped: u32, pending: u32) -> l6ctl::EffectEditorSnapshot {
+        l6ctl::EffectEditorSnapshot {
+            revision_guard: "test".into(),
+            fixture_module_sha256: "test".into(),
+            atomic: false,
+            applied,
+            dropped,
+            pending,
+            gate: 0,
+        }
+    }
+    #[test]
+    fn acknowledgement_fails_closed() {
+        assert!(!paced_acknowledged(l6ctl::InputAckState::Pending).unwrap());
+        assert!(paced_acknowledged(l6ctl::InputAckState::Applied).unwrap());
+        assert!(paced_acknowledged(l6ctl::InputAckState::Rejected).is_err());
+        assert!(paced_acknowledged(l6ctl::InputAckState::Unknown).is_err());
+    }
+    #[test]
+    fn requires_one_consumed_edit_and_rejects_drops_or_jumps_even_on_wrap() {
+        let before = sample(u32::MAX, 9, 0);
+        assert!(!paced_effect_state(&before, &sample(u32::MAX, 9, 0)).unwrap());
+        assert!(!paced_effect_state(&before, &sample(0, 9, 1)).unwrap());
+        let mut busy = sample(0, 9, 0);
+        busy.gate = 1;
+        assert!(!paced_effect_state(&before, &busy).unwrap());
+        assert!(paced_effect_state(&before, &sample(0, 9, 0)).unwrap());
+        assert!(paced_effect_state(&before, &sample(1, 9, 0)).is_err());
+        assert!(paced_effect_state(&before, &sample(0, 10, 0)).is_err());
+    }
+}

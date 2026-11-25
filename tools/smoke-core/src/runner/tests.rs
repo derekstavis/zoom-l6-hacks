@@ -1666,3 +1666,32 @@ fn l6_stock_update_requires_both_boots_and_all_comparisons() {
             .is_err()
     );
 }
+
+#[test]
+fn paced_turn_preserves_ring_baseline_and_exact_report_count() {
+    let scenario = Scenario::parse("version=1\nname='paced'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='effect-paced-turn'\nchannel=1\nsteps=2\n[[step]]\naction='expect-ring'\nchannel=1\nmask=31\nonly=true\n").unwrap();
+    let mut runner = Runner::new(
+        scenario,
+        Model::L6max,
+        std::env::temp_dir().join(format!(
+            "paced-unit-{}",
+            NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        )),
+    )
+    .unwrap();
+    let now = Instant::now();
+    assert!(matches!(
+        runner.advance(sample(0), now).unwrap(),
+        Progress::Device(crate::devices::Operation::EffectPacedTurn {
+            channel: 1,
+            steps: 2
+        })
+    ));
+    runner.device_finished(serde_json::json!({"applied":2}));
+    let mut extra = sample(200);
+    extra.reports = 3;
+    assert!(
+        matches!(runner.advance(extra, now), Err(error) if error.contains("duplicate encoder reports"))
+    );
+    fs::remove_dir_all(&runner.logs).unwrap();
+}

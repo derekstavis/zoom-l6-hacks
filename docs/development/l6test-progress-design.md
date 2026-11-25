@@ -80,6 +80,7 @@ enum CaseEvent {
     PhaseChanged { phase: CasePhase },
     ScenarioStarted { total_steps: usize },
     StepStarted { index: usize, label: String }, // one-based
+    StepProgress { index: usize, completed: u32, total: u32 },
     ScenarioFinished { outcome: ScenarioOutcome },
 }
 ```
@@ -112,6 +113,7 @@ number displayed in `StepStarted` is the one-based position in that effective
 sequence. If the runner retains a different internal index, it must map it to
 this sequence without changing execution or error reporting. A zero-step
 scenario is valid; do not display `1/0`.
+A bounded repeated operation may emit `StepProgress` for its current step; the watcher displays completed/total turns without resetting the step's start time. Replaying the events reconstructs the same progress for a late attach.
 
 Before scenario execution, display the known phase, such as fixture creation,
 boot or readiness. A driver phase should be emitted only when that stage is

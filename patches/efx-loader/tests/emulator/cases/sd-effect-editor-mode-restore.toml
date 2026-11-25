@@ -58,9 +58,11 @@ action = "expect-mode"
 mode = "efx"
 
 [[step]]
-action = "encoder"
+action = "effect-paced-turn"
 channel = 1
 steps = -5
+guest_timeout_ms = 60000
+wall_timeout_s = 300
 
 [[step]]
 action = "delay"
@@ -81,9 +83,11 @@ only = true
 settle_ms = 100
 
 [[step]]
-action = "encoder"
+action = "effect-paced-turn"
 channel = 1
 steps = 47
+guest_timeout_ms = 60000
+wall_timeout_s = 300
 
 [[step]]
 action = "expect-ring"
@@ -100,9 +104,11 @@ min = 0
 max = 0
 
 [[step]]
-action = "encoder"
+action = "effect-paced-turn"
 channel = 1
 steps = 48
+guest_timeout_ms = 60000
+wall_timeout_s = 300
 
 [[step]]
 action = "expect-ring"
@@ -119,9 +125,11 @@ min = 40
 max = 40
 
 [[step]]
-action = "encoder"
+action = "effect-paced-turn"
 channel = 4
 steps = 46
+guest_timeout_ms = 60000
+wall_timeout_s = 300
 
 [[step]]
 action = "expect-ring"
@@ -138,9 +146,11 @@ min = 40
 max = 40
 
 [[step]]
-action = "encoder"
+action = "effect-paced-turn"
 channel = 5
 steps = 38
+guest_timeout_ms = 60000
+wall_timeout_s = 300
 
 [[step]]
 action = "expect-ring"

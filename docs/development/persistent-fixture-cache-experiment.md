@@ -141,3 +141,11 @@ step took 0, 0 and 1 ms respectively. The immediate check can observe stale
 panel state and does not establish that the new boot reached the mixer, even
 when the following assertion passes. The reset readiness logic and combined
 dialog assertion are also present on `main` at `d6fc1fec`.
+
+A later focused run tested a reset barrier and fresh panel boot sweep before
+accepting post-reset mixer readiness. Both models passed with four workers;
+the new mixer waits took 7.0 seconds (L6) and 7.6 seconds (L6max), and both
+then verified that the SD module was unloaded. The report at
+`/private/tmp/l6-warm-reset-focused/report.json` records the exact firmware,
+card, state, runner and QEMU hashes. QEMU was externally supplied and its
+source was not attested. A single passing run does not establish a flake rate.

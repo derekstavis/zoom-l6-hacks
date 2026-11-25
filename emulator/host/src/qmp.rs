@@ -42,6 +42,7 @@ type Management = Qmp<Stream<BufReader<DeadlineReader>, UnixStream>>;
 #[derive(Clone)]
 pub struct QmpClient {
     management: Arc<Mutex<Management>>,
+    preserved_events: Arc<Mutex<Vec<qmp::Event>>>,
 }
 
 impl QmpClient {
@@ -66,6 +67,7 @@ impl QmpClient {
         management.handshake().map_err(io::Error::from)?;
         Ok(Self {
             management: Arc::new(Mutex::new(management)),
+            preserved_events: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
@@ -123,6 +125,53 @@ impl QmpClient {
     /// model explicitly clears them during reset.
     pub fn system_reset(&self) -> io::Result<()> {
         self.execute(&qmp::system_reset {}).map(|_| ())
+    }
+
+    /// Request a reset and wait until QEMU reports completing that reset.
+    /// This is a reset barrier, not a firmware or panel readiness signal.
+    pub fn system_reset_and_wait(&self, timeout: Duration) -> io::Result<()> {
+        // Capture older events without letting an earlier RESET satisfy this
+        // request. Preserve all other events for the normal consumer.
+        self.query_status()?;
+        let old_events = self.drain_management_events();
+        self.preserved_events.lock().unwrap().extend(old_events);
+        self.system_reset()?;
+        let deadline = Instant::now() + timeout;
+        loop {
+            self.query_status()?;
+            let events = self.drain_management_events();
+            let mut found = false;
+            let mut preserved = self.preserved_events.lock().unwrap();
+            for event in events {
+                if !found
+                    && matches!(
+                        event,
+                        qmp::Event::RESET {
+                            data: qmp::RESET {
+                                reason: qmp::ShutdownCause::host_qmp_system_reset,
+                                ..
+                            },
+                            ..
+                        }
+                    )
+                {
+                    found = true;
+                } else {
+                    preserved.push(event);
+                }
+            }
+            drop(preserved);
+            if found {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "QMP reset event timed out",
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     pub fn quit(&self) -> io::Result<()> {
@@ -207,7 +256,8 @@ impl QmpClient {
     }
 
     pub fn drain_events(&self) -> Vec<qmp::Event> {
-        let events: Vec<_> = self.management.lock().unwrap().events().collect();
+        let mut events = std::mem::take(&mut *self.preserved_events.lock().unwrap());
+        events.extend(self.drain_management_events());
         for event in &events {
             let name = serde_json::to_value(event)
                 .ok()
@@ -221,6 +271,10 @@ impl QmpClient {
             tracing::debug!(target: "l6max_host::qmp", event = "qmp_event", qmp_event = %name, "QMP event received");
         }
         events
+    }
+
+    fn drain_management_events(&self) -> Vec<qmp::Event> {
+        self.management.lock().unwrap().events().collect()
     }
 }
 
@@ -275,6 +329,37 @@ mod tests {
         client.resume().unwrap();
         assert_eq!(client.drain_events().len(), 1);
         client.quit().unwrap();
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn reset_wait_ignores_old_events_and_preserves_unrelated_events() {
+        let (client, mut peer) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || {
+            let mut reader = BufReader::new(peer.try_clone().unwrap());
+            greeting(&mut peer);
+            expect_command(&mut reader, "qmp_capabilities");
+            peer.write_all(b"{\"return\":{}}\r\n").unwrap();
+            expect_command(&mut reader, "query-status");
+            peer.write_all(b"{\"event\":\"RESET\",\"data\":{\"guest\":false,\"reason\":\"host-qmp-system-reset\"},\"timestamp\":{\"seconds\":1,\"microseconds\":0}}\r\n{\"return\":{\"running\":true,\"singlestep\":false,\"status\":\"running\"}}\r\n").unwrap();
+            expect_command(&mut reader, "system_reset");
+            peer.write_all(b"{\"event\":\"STOP\",\"timestamp\":{\"seconds\":2,\"microseconds\":0}}\r\n{\"return\":{}}\r\n").unwrap();
+            expect_command(&mut reader, "query-status");
+            peer.write_all(
+                b"{\"return\":{\"running\":true,\"singlestep\":false,\"status\":\"running\"}}\r\n",
+            )
+            .unwrap();
+            expect_command(&mut reader, "query-status");
+            peer.write_all(b"{\"event\":\"RESET\",\"data\":{\"guest\":false,\"reason\":\"host-qmp-system-reset\"},\"timestamp\":{\"seconds\":3,\"microseconds\":0}}\r\n{\"return\":{\"running\":true,\"singlestep\":false,\"status\":\"running\"}}\r\n").unwrap();
+        });
+        let client = QmpClient::connect(client).unwrap();
+        client
+            .system_reset_and_wait(Duration::from_secs(1))
+            .unwrap();
+        let events = client.drain_events();
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], qmp::Event::RESET { .. }));
+        assert!(matches!(events[1], qmp::Event::STOP { .. }));
         server.join().unwrap();
     }
 

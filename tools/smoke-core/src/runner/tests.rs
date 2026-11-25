@@ -1072,3 +1072,73 @@ fn unexpected_power_loss_fails_but_explicit_restart_accepts_shutdown() {
         fs::remove_dir_all(&runner.logs).unwrap();
     }
 }
+
+#[test]
+fn warm_reset_requires_fresh_boot_sweep_before_mixer_ready() {
+    for model in [Model::L6, Model::L6max] {
+        let name = if model == Model::L6 { "l6" } else { "l6max" };
+        let scenario = Scenario::parse(&format!("version=1\nname='reset'\nmodels=['{name}']\n[[step]]\naction='wait'\nuntil='mixer-ready'\n")).unwrap();
+        let logs = std::env::temp_dir().join(format!(
+            "smoke-reset-{}-{}",
+            std::process::id(),
+            NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let mut runner = Runner::new(scenario, model, logs.clone()).unwrap();
+        let mut old = sample(1000);
+        for pins in l6max_host::indicators::RING_PINS
+            .iter()
+            .take(model.channels())
+        {
+            let (row, column) = pins[0];
+            old.data.indicators[row] |= 1 << (column ^ 7);
+        }
+        if model == Model::L6 {
+            old.data.indicators[4] |= 1 << 8;
+        }
+        old.panel.indicator_updates = 10;
+        runner.warm_reset(old.data.indicators, 10);
+        let now = Instant::now();
+        assert!(matches!(
+            runner.advance(old.clone(), now).unwrap(),
+            Progress::Waiting
+        ));
+        old.panel.guest_ms = 2500;
+        old.panel.indicator_updates = 11;
+        assert!(matches!(
+            runner.advance(old.clone(), now).unwrap(),
+            Progress::Waiting
+        ));
+        let mut sweep = old.clone();
+        sweep.panel.guest_ms = 2600;
+        sweep.panel.indicator_updates = 12;
+        for pins in l6max_host::indicators::RING_PINS
+            .iter()
+            .take(model.channels())
+        {
+            for &(row, column) in pins {
+                sweep.data.indicators[row] |= 1 << (column ^ 7);
+            }
+        }
+        assert!(matches!(
+            runner.advance(sweep, now).unwrap(),
+            Progress::Waiting
+        ));
+        old.panel.indicator_updates = 13;
+        old.panel.guest_ms = 2700;
+        assert!(matches!(
+            runner.advance(old.clone(), now).unwrap(),
+            Progress::Waiting
+        ));
+        old.panel.guest_ms = 3699;
+        assert!(matches!(
+            runner.advance(old.clone(), now).unwrap(),
+            Progress::Waiting
+        ));
+        old.panel.guest_ms = 3700;
+        assert!(matches!(
+            runner.advance(old, now).unwrap(),
+            Progress::Complete
+        ));
+        fs::remove_dir_all(logs).unwrap();
+    }
+}

@@ -36,6 +36,12 @@ struct SceneSaveState {
     release_count: u64,
 }
 
+struct WarmResetReadiness {
+    old_indicators: [u32; 8],
+    barrier_updates: u64,
+    fresh_transition_seen: bool,
+}
+
 fn panel_led_state(model: Model, data: PanelData, index: usize) -> bool {
     if model == Model::L6 {
         return l6_button_leds(data.indicators)[index];
@@ -76,6 +82,7 @@ pub struct Runner {
     baseline: Option<Observation>,
     last_command: Option<Command>,
     startup: BootReadiness,
+    warm_reset_readiness: Option<WarmResetReadiness>,
     trace: TraceCursor,
     trace_path: PathBuf,
     history: VecDeque<Value>,
@@ -166,6 +173,7 @@ impl Runner {
             baseline: None,
             last_command: None,
             startup: BootReadiness::new(no_setup_screens),
+            warm_reset_readiness: None,
             trace,
             history: Default::default(),
             completed: vec![],
@@ -236,9 +244,25 @@ impl Runner {
         if self.panel_quiet.is_none_or(|(rows, _)| rows != quiet_rows) {
             self.panel_quiet = Some((quiet_rows, obs.panel.guest_ms));
         }
-        let ready = self
-            .startup
-            .observe(self.model, obs.panel.guest_ms, obs.data.indicators);
+        let can_observe_boot = match &mut self.warm_reset_readiness {
+            Some(reset) => {
+                if obs.panel.indicator_updates > reset.barrier_updates
+                    && rings(obs.data.indicators)[..self.model.channels()]
+                        != rings(reset.old_indicators)[..self.model.channels()]
+                {
+                    reset.fresh_transition_seen = true;
+                }
+                reset.fresh_transition_seen
+            }
+            None => true,
+        };
+        let ready = can_observe_boot
+            && self
+                .startup
+                .observe(self.model, obs.panel.guest_ms, obs.data.indicators);
+        if ready {
+            self.warm_reset_readiness = None;
+        }
         if self.last.as_ref().is_none_or(|last| {
             obs.panel.guest_ms.wrapping_sub(last.panel.guest_ms) >= 1000
                 || obs.data.indicators != last.data.indicators
@@ -857,9 +881,10 @@ impl Runner {
                     } else if until == "mixer-ready" {
                         // MAIN restores every ring at once after the sweep;
                         // L6 then lights its editing-mode lamp.
-                        rings(obs.data.indicators)[..self.model.channels()]
-                            .iter()
-                            .all(|mask| *mask != 0)
+                        self.warm_reset_readiness.is_none()
+                            && rings(obs.data.indicators)[..self.model.channels()]
+                                .iter()
+                                .all(|mask| *mask != 0)
                             && (self.model != Model::L6
                                 || l6_mode_leds(obs.data.indicators).contains(&true))
                     } else {
@@ -1303,12 +1328,30 @@ impl Runner {
         self.trace.restart();
         self.trace_path = logs.join("engine.trace");
         self.startup = BootReadiness::new(self.scenario.spec_state);
+        self.warm_reset_readiness = None;
         self.entered = None;
         self.settling = None;
         self.panel_quiet = None;
         self.ring_quiet = None;
         self.last_report_guest = 0;
         self.last = None;
+    }
+
+    /// Discard readiness from before an in-place MAIN reset. Panel firmware
+    /// and its input connection continue running, so require a new indicator
+    /// transition after the QMP reset barrier before recognizing a boot sweep.
+    pub fn warm_reset(&mut self, old_indicators: [u32; 8], barrier_updates: u64) {
+        self.startup = BootReadiness::new(true);
+        self.warm_reset_readiness = Some(WarmResetReadiness {
+            old_indicators,
+            barrier_updates,
+            fresh_transition_seen: false,
+        });
+        self.panel_quiet = None;
+        self.ring_quiet = None;
+        self.last = None;
+        self.baseline = None;
+        self.last_command = None;
     }
     pub fn current_step(&self) -> usize {
         self.step

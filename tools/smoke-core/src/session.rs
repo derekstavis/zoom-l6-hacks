@@ -254,6 +254,18 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     runner.device_finished(json!({"restarted":true,"logs":options.logs}));
                 }
                 Progress::Device(operation) => {
+                    let warm_reset_panel =
+                        matches!(operation, devices::Operation::WarmReset).then(|| {
+                            session
+                                .as_ref()
+                                .unwrap()
+                                .engine
+                                .inputs
+                                .as_ref()
+                                .unwrap()
+                                .panel
+                                .snapshot()
+                        });
                     let card_change = match &operation {
                         devices::Operation::SdCard { inserted } => Some(*inserted),
                         _ => None,
@@ -268,6 +280,18 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     )?;
                     if let Some(inserted) = card_change {
                         card_inserted = inserted;
+                    }
+                    if let Some(panel) = warm_reset_panel {
+                        let barrier = session
+                            .as_ref()
+                            .unwrap()
+                            .engine
+                            .inputs
+                            .as_ref()
+                            .unwrap()
+                            .panel
+                            .snapshot();
+                        runner.warm_reset(panel.indicators, barrier.indicator_updates);
                     }
                     runner.device_finished(evidence);
                 }

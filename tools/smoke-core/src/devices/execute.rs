@@ -2586,7 +2586,8 @@ impl State {
             }
             Operation::Restart => Err("restart is supervised by the session runner".into()),
             Operation::WarmReset => {
-                session.engine.management[0].system_reset()?;
+                session.engine.management[0]
+                    .system_reset_and_wait(Duration::from_secs(wall_timeout_s))?;
                 Ok(json!({"reset":"qmp-system-reset"}))
             }
             operation @ (Operation::PowerBegin { .. }

@@ -612,6 +612,15 @@
     "definition": "a57dd505c8f76a618648a81e08b7a8ef1cdf604eaa75ffd7479d9f98056e528b"
   },
   {
+    "case": "l6-update-patched-midi",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "6371edb783502d745bb40343805d7a133ef3d6a4fbd39229e6f9896065dfea2e"
+  },
+  {
     "case": "l6-update-stock-install",
     "model": "l6",
     "backend": "headless",
@@ -1012,7 +1021,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "8fa3549815dbbc42b29145f908d99ba89861435c49a6b4c1c6f9903882c123a0"
+    "definition": "6371edb783502d745bb40343805d7a133ef3d6a4fbd39229e6f9896065dfea2e"
   },
   {
     "case": "patches-l6max_din-mixer-control.fw",

@@ -466,11 +466,22 @@ fn validate_native_midi_capabilities(
 
 /// Configure only the hardware instrumentation explicitly requested by a scenario.
 pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String> {
+    prepare_with_report(scenario, options, None)
+}
+
+pub(crate) fn prepare_with_report(
+    scenario: &Scenario,
+    options: &mut Options,
+    report_directory: Option<&Path>,
+) -> Result<(), String> {
     // Managed patched updates boot stock before the verification generation.
     // Apply hardware requirements and firmware guards to that phase only;
     // the verify generation is checked against its own frozen build at startup.
     let mut initial_phase = None;
-    if scenario.update_fixture == Some(crate::scenario::UpdateFixture::PatchedMidi) {
+    if scenario
+        .update_fixture
+        .is_some_and(crate::scenario::UpdateFixture::is_patched)
+    {
         let mut initial = scenario.clone();
         let boundary = initial
             .step
@@ -507,7 +518,7 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
     crate::requirements::check_firmware(
         scenario,
         model,
-        &crate::firmware::identify(&main, &options.logs),
+        &crate::firmware::identify(&main, report_directory.unwrap_or(&options.logs)),
     )?;
     if scenario.step.iter().any(|s| {
         matches!(
@@ -860,6 +871,34 @@ fn wait_guest(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn preparation_can_use_a_separately_staged_firmware_report() {
+        use super::{Options, Scenario, prepare, prepare_with_report};
+        use sha2::{Digest, Sha256};
+        let root = std::env::temp_dir().join(format!("l6-verify-report-{}", std::process::id()));
+        let firmware = root.join("firmware");
+        let logs = root.join("logs");
+        std::fs::create_dir_all(&firmware).unwrap();
+        std::fs::create_dir_all(&logs).unwrap();
+        let mut main = vec![0; 8];
+        main[..4].copy_from_slice(&0x20220000u32.to_le_bytes());
+        main[4..].copy_from_slice(&0x80001415u32.to_le_bytes());
+        std::fs::write(firmware.join("main_firmware.bin"), &main).unwrap();
+        let hash = format!("{:x}", Sha256::digest(&main));
+        std::fs::write(
+            firmware.join(crate::fixture_layout::FIRMWARE_REPORT),
+            format!(r#"{{"patched_sha256":"{hash}"}}"#),
+        )
+        .unwrap();
+        let scenario = Scenario::from_text("version=1\nname='verify'\nmodels=['l6']\nbackends=['headless']\n[[step]]\naction='delay'\nguest_ms=1\n").unwrap();
+        let mut options = Options::parse_args(std::iter::empty::<std::ffi::OsString>()).unwrap();
+        options.firmware_dir = firmware.clone();
+        options.logs = logs;
+        options.state_dir = None;
+        assert!(prepare(&scenario, &mut options).is_err());
+        assert!(prepare_with_report(&scenario, &mut options, Some(&firmware)).is_ok());
+        std::fs::remove_dir_all(root).unwrap();
+    }
     use super::{
         create_factory_card, display_difference_count, editor_pad_assignment_matches,
         editor_pad_file_count, editor_pad_filename_valid, knob_display_matches, sound_pad_led,

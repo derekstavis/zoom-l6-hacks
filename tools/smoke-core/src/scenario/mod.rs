@@ -61,8 +61,19 @@ pub enum MidiProbePort {
 pub enum UpdateFixture {
     BadChecksum,
     L6Stock,
+    L6PatchedMidi,
     SyntheticValid,
     PatchedMidi,
+}
+
+impl UpdateFixture {
+    pub fn is_l6(self) -> bool {
+        matches!(self, Self::L6Stock | Self::L6PatchedMidi)
+    }
+
+    pub fn is_patched(self) -> bool {
+        matches!(self, Self::PatchedMidi | Self::L6PatchedMidi)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, schemars::JsonSchema, Serialize)]

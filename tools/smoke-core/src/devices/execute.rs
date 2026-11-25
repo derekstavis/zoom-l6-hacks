@@ -404,7 +404,10 @@ impl State {
             | Operation::LifecycleStop
             | Operation::WaitPanelUptime { .. }
             | Operation::ExpectUpdateState { .. }
-            | Operation::ExpectUpdateMarkerAbsent => {
+            | Operation::ExpectUpdateMarkerAbsent
+            | Operation::ExpectLiveUpdateMarkerAbsent
+            | Operation::CaptureUpdateMarkerPending
+            | Operation::ExpectUpdateGui { .. } => {
                 Err("managed lifecycle operation must run at the session boundary".into())
             }
             Operation::ExpectRecorder => {

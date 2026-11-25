@@ -87,6 +87,13 @@ pub enum Operation {
         flags_value: u8,
     },
     ExpectUpdateMarkerAbsent,
+    ExpectLiveUpdateMarkerAbsent,
+    CaptureUpdateMarkerPending,
+    ExpectUpdateGui {
+        window: u32,
+        progress_mask: u32,
+        progress_value: u32,
+    },
     SdCard {
         inserted: bool,
     },

@@ -263,6 +263,7 @@ impl Runner {
             .find(|step| step.applies_to(self.model))
             .is_some_and(|step| match &step.action {
                 Action::ExpectPowered { powered: false } => true,
+                Action::LifecycleStop => true,
                 Action::Press { control } if control == "power" => true,
                 Action::Hold { control, .. } if control == "power" => true,
                 Action::Press { control } if self.model == Model::L6 && control == "rec-record" => {
@@ -970,6 +971,27 @@ impl Runner {
                 }
                 Action::LifecycleStop => {
                     return Ok(Progress::Device(devices::Operation::LifecycleStop));
+                }
+                Action::ExpectLiveUpdateMarkerAbsent => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectLiveUpdateMarkerAbsent,
+                    ));
+                }
+                Action::CaptureUpdateMarkerPending => {
+                    return Ok(Progress::Device(
+                        devices::Operation::CaptureUpdateMarkerPending,
+                    ));
+                }
+                Action::ExpectUpdateGui {
+                    window,
+                    progress_mask,
+                    progress_value,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectUpdateGui {
+                        window,
+                        progress_mask,
+                        progress_value,
+                    }));
                 }
                 Action::WaitPanelUptime { guest_ms } => {
                     return Ok(Progress::Device(devices::Operation::WaitPanelUptime {

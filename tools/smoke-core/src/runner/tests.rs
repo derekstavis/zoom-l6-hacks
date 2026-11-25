@@ -1423,13 +1423,20 @@ fn midi_sync_requires_ordered_complete_scope_and_matching_deadlines() {
 
 #[test]
 fn update_lifecycle_requires_isolated_fixture_and_ordered_steps() {
-    let prefix = "version=1\nname='bad-update'\nmodels=['l6max']\nbackends=['headless']\nstate='none'\ncard='none'\nupdate_bad_checksum_card=true\n";
+    let prefix = "version=1\nname='bad-update'\nmodels=['l6max']\nbackends=['headless']\nstate='none'\ncard='none'\nupdate_fixture='bad-checksum'\n";
     let start = "[[step]]\naction='lifecycle-start'\n";
     let wait = "[[step]]\naction='wait-panel-uptime'\nguest_ms=40000\nguest_timeout_ms=300000\n";
     let state = "[[step]]\naction='expect-update-state'\nmode=1\nflags_mask=9\nflags_value=0\n";
     let stop = "[[step]]\naction='lifecycle-stop'\n";
     let marker = "[[step]]\naction='expect-update-marker-absent'\n";
     assert!(Scenario::parse(&format!("{prefix}{start}{wait}{state}{stop}{marker}")).is_ok());
+    assert!(
+        Scenario::parse(
+            &format!("{prefix}{start}{wait}{state}{stop}{marker}")
+                .replace("guest_ms=40000", "guest_ms=1")
+        )
+        .is_err()
+    );
     assert!(Scenario::parse(&format!("{prefix}{start}{wait}{state}{marker}")).is_err());
     assert!(
         Scenario::parse(
@@ -1452,4 +1459,24 @@ fn update_lifecycle_requires_isolated_fixture_and_ordered_steps() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn synthetic_valid_handoff_requires_all_semantic_checks() {
+    let source =
+        include_str!("../../../../tests/emulator/cases/boot/l6max-update-valid-handoff.toml");
+    assert!(Scenario::parse(source).is_ok());
+    for missing in [
+        "[[step]]\naction = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-firmware-update-dialog.png\"\nguest_timeout_ms = 60000\nwall_timeout_s = 300\n\n",
+        "[[step]]\naction = \"expect-update-state\"\nmode = 6\nflags_mask = 9\nflags_value = 0\n\n",
+        "[[step]]\naction = \"expect-update-gui\"\nwindow = 0x8020029c\nprogress_mask = 0x100\nprogress_value = 0x100\n\n",
+        "[[step]]\naction = \"expect-live-update-marker-absent\"\n\n",
+        "[[step]]\naction = \"expect-powered\"\npowered = false\nguest_timeout_ms = 4294967295\nwall_timeout_s = 30\n\n",
+    ] {
+        assert!(source.contains(missing));
+        assert!(
+            Scenario::parse(&source.replace(missing, "")).is_err(),
+            "missing {missing}"
+        );
+    }
 }

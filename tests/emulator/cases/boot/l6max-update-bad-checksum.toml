@@ -4,7 +4,7 @@ models = ["l6max"]
 backends = ["headless"]
 state = "none"
 card = "none"
-update_bad_checksum_card = true
+update_fixture = "bad-checksum"
 
 [case]
 suites = ["full"]

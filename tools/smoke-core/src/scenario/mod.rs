@@ -55,6 +55,14 @@ pub enum MidiProbePort {
     Din,
 }
 
+/// Case-local synthetic L6max update card variant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, schemars::JsonSchema, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpdateFixture {
+    BadChecksum,
+    SyntheticValid,
+}
+
 impl Backend {
     pub fn name(self) -> &'static str {
         match self {
@@ -109,9 +117,9 @@ pub struct Scenario {
     /// Patches for the update package, per model, applied to the configured package.
     #[serde(default)]
     pub update_patches: std::collections::BTreeMap<Model, Vec<String>>,
-    /// Build a case-local card carrying a deliberately invalid L6max update.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub update_bad_checksum_card: bool,
+    /// Build a case-local synthetic L6max update card before execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_fixture: Option<UpdateFixture>,
     #[serde(default)]
     pub gdb: bool,
     pub audio_device: Option<String>,
@@ -163,9 +171,6 @@ impl Step {
 }
 fn default_backends() -> Vec<Backend> {
     vec![Backend::Headless, Backend::Gui]
-}
-fn is_false(value: &bool) -> bool {
-    !value
 }
 fn default_midi_cable() -> u8 {
     1
@@ -238,6 +243,13 @@ pub enum Action {
         flags_value: u8,
     },
     ExpectUpdateMarkerAbsent,
+    ExpectLiveUpdateMarkerAbsent,
+    CaptureUpdateMarkerPending,
+    ExpectUpdateGui {
+        window: u32,
+        progress_mask: u32,
+        progress_value: u32,
+    },
     Include {
         path: PathBuf,
     },

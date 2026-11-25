@@ -129,7 +129,10 @@ pub fn of(action: &Action) -> Requirement {
         | Action::LifecycleStop
         | Action::WaitPanelUptime { .. }
         | Action::ExpectUpdateState { .. }
-        | Action::ExpectUpdateMarkerAbsent => on(L6MAX),
+        | Action::ExpectUpdateMarkerAbsent
+        | Action::ExpectLiveUpdateMarkerAbsent
+        | Action::CaptureUpdateMarkerPending
+        | Action::ExpectUpdateGui { .. } => on(L6MAX),
         Action::SdCard { .. }
         | Action::UsbDescriptors
         | Action::UsbStorage

@@ -29,7 +29,10 @@ use std::{
 };
 
 /// The same synthetic bad-checksum package used by the legacy L6max lifecycle.
-fn bad_checksum_update(mut package: Vec<u8>) -> Result<Vec<u8>, String> {
+fn synthetic_update(
+    mut package: Vec<u8>,
+    fixture: smoke_core::UpdateFixture,
+) -> Result<Vec<u8>, String> {
     l6fw::update::validate(&package).map_err(|error| error.to_string())?;
     for offset in [0x1a31fc, 0x1a81fc] {
         package[offset..offset + 4].copy_from_slice(&l6fw::PATCHED_VERSION);
@@ -37,16 +40,26 @@ fn bad_checksum_update(mut package: Vec<u8>) -> Result<Vec<u8>, String> {
     package[0x1a71fc..0x1a7200].copy_from_slice(b"0101");
     package[0x21c..0x220].copy_from_slice(&0x13579bdfu32.to_le_bytes());
     package[0x1a321c..0x1a3220].copy_from_slice(&0x2468ace0u32.to_le_bytes());
-    if !l6fw::update::validate(&package).is_err_and(|error| error.to_string().contains("checksum"))
-    {
-        return Err("synthetic update did not have the intended checksum failure".into());
+    match fixture {
+        smoke_core::UpdateFixture::BadChecksum => {
+            if !l6fw::update::validate(&package)
+                .is_err_and(|error| error.to_string().contains("checksum"))
+            {
+                return Err("synthetic update did not have the intended checksum failure".into());
+            }
+        }
+        smoke_core::UpdateFixture::SyntheticValid => {
+            l6fw::update::recompute_checksum(&mut package).map_err(|error| error.to_string())?;
+            l6fw::update::validate(&package).map_err(|error| error.to_string())?;
+        }
     }
     Ok(package)
 }
 
-fn checked_bad_checksum_update(
+fn checked_update(
     source_bytes: Vec<u8>,
     recorded: Option<&str>,
+    fixture: smoke_core::UpdateFixture,
 ) -> Result<Vec<u8>, String> {
     let source_hash = format!("{:x}", Sha256::digest(&source_bytes));
     if source_hash != smoke_core::firmware::STOCK_L6MAX_PACKAGE_SHA256
@@ -54,7 +67,7 @@ fn checked_bad_checksum_update(
     {
         return Err("bad-checksum update needs the hash-pinned L6max 1.10 package matching its staged identity".into());
     }
-    bad_checksum_update(source_bytes)
+    synthetic_update(source_bytes, fixture)
 }
 
 /// What every case of a run shares.
@@ -290,10 +303,7 @@ fn build_fixture(
     drop(timer);
     let (mut options, mut inputs) =
         fixture_options(ctx.config, &selected, dir, ctx.cache, stages).failed_in(Phase::Fixture)?;
-    if scenario
-        .as_ref()
-        .is_some_and(|s| s.update_bad_checksum_card)
-    {
+    if let Some(fixture) = scenario.as_ref().and_then(|s| s.update_fixture) {
         if case.no_sd
             || case.volatile
             || selected.state_spec.is_some()
@@ -315,11 +325,11 @@ fn build_fixture(
             .as_ref()
             .ok_or_else(|| failed("update card needs a firmware package".into()))?;
         let source_bytes = fs::read(source).failed_in(Phase::Fixture)?;
-        let package = checked_bad_checksum_update(source_bytes, inputs.package_sha256.as_deref())
+        let package = checked_update(source_bytes, inputs.package_sha256.as_deref(), fixture)
             .map_err(failed)?;
-        let update = dir.join("bad-checksum-update.bin");
+        let update = dir.join("synthetic-update.bin");
         fs::write(&update, &package).failed_in(Phase::Fixture)?;
-        let card = dir.join("bad-checksum-card.img");
+        let card = dir.join("synthetic-update-card.img");
         let mut volume =
             sd_image::create_empty(&card, "L6MAX").map_err(|e| failed(e.to_string()))?;
         volume
@@ -651,11 +661,12 @@ mod tests {
     use super::*;
     #[test]
     fn bad_checksum_fixture_rejects_invalid_source() {
-        assert!(bad_checksum_update(vec![0; 100]).is_err());
+        assert!(synthetic_update(vec![0; 100], smoke_core::UpdateFixture::BadChecksum).is_err());
         assert!(
-            checked_bad_checksum_update(
+            checked_update(
                 vec![0; 100],
-                Some(smoke_core::firmware::STOCK_L6MAX_PACKAGE_SHA256)
+                Some(smoke_core::firmware::STOCK_L6MAX_PACKAGE_SHA256),
+                smoke_core::UpdateFixture::BadChecksum
             )
             .is_err()
         );
@@ -666,17 +677,31 @@ mod tests {
     fn bad_checksum_fixture_matches_legacy_mutations() {
         let path = std::env::var_os("L6MAX_UPDATE_TEST_PACKAGE").unwrap();
         let original = fs::read(path).unwrap();
-        assert!(checked_bad_checksum_update(original.clone(), Some("incorrect identity")).is_err());
-        let mut changed = original.clone();
-        changed[0x300] ^= 1;
         assert!(
-            checked_bad_checksum_update(
-                changed,
-                Some(smoke_core::firmware::STOCK_L6MAX_PACKAGE_SHA256)
+            checked_update(
+                original.clone(),
+                Some("incorrect identity"),
+                smoke_core::UpdateFixture::BadChecksum
             )
             .is_err()
         );
-        let mutated = bad_checksum_update(original.clone()).unwrap();
+        let mut changed = original.clone();
+        changed[0x300] ^= 1;
+        assert!(
+            checked_update(
+                changed,
+                Some(smoke_core::firmware::STOCK_L6MAX_PACKAGE_SHA256),
+                smoke_core::UpdateFixture::BadChecksum
+            )
+            .is_err()
+        );
+        let mutated =
+            synthetic_update(original.clone(), smoke_core::UpdateFixture::BadChecksum).unwrap();
+        let valid =
+            synthetic_update(original.clone(), smoke_core::UpdateFixture::SyntheticValid).unwrap();
+        assert!(l6fw::update::validate(&valid).is_ok());
+        assert_eq!(&valid[0x200..], &mutated[0x200..]);
+        assert_ne!(&valid[0x1fc..0x200], &mutated[0x1fc..0x200]);
         let mut expected = original;
         for offset in [0x1a31fc, 0x1a81fc] {
             expected[offset..offset + 4].copy_from_slice(&l6fw::PATCHED_VERSION);

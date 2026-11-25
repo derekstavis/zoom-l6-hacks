@@ -200,6 +200,7 @@ pub(crate) fn prepare_sd_patch(
     fixture: &mut Fixture,
     dir: &Path,
     cache: &RunCache,
+    stages: &crate::report::StageRecorder,
 ) -> Result<(), String> {
     let Some(patches) = fixture.sd_patches.clone() else {
         return Ok(());
@@ -219,10 +220,12 @@ pub(crate) fn prepare_sd_patch(
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     // `smoke-core` reads the stock image from the case's `sd-stock-firmware`
     // to locate the loader's edits, so each SD case keeps its own copy.
+    let timer = stages.start(crate::report::Stage::SdStockFirmware);
     cache::copy_tree(
         &unpacked(cache, &package)?,
         &dir.join(layout::SD_STOCK_FIRMWARE),
     )?;
+    drop(timer);
     let build = |output: &Path,
                  mode: l6patch::BuildMode,
                  selected: &[String],
@@ -260,12 +263,14 @@ pub(crate) fn prepare_sd_patch(
         Ok(())
     };
     let loader = dir.join(layout::LOADER_BUILD);
+    let timer = stages.start(crate::report::Stage::SdLoaderBuild);
     build(
         &loader,
         l6patch::BuildMode::PatchLoader,
         &fixture.patches,
         &[],
     )?;
+    drop(timer);
     // The case boots the loader build; its report identifies that MAIN.
     fs::copy(
         loader.join(layout::PATCH_REPORT),
@@ -275,6 +280,7 @@ pub(crate) fn prepare_sd_patch(
     fixture.firmware_package = Some(loader.join(fixture.model.package_file_name()));
     fixture.patches.clear();
     if !patches.is_empty() || !fixture.effect_replacements.is_empty() {
+        let timer = stages.start(crate::report::Stage::SdModuleBuild);
         let bundle = dir.join(layout::SD_BUNDLE_BUILD);
         let effect_replacements = fixture
             .effect_replacements
@@ -288,6 +294,7 @@ pub(crate) fn prepare_sd_patch(
             &effect_replacements,
         )?;
         fixture.sd_bundle = Some(bundle.join("PATCHES"));
+        drop(timer);
     }
     Ok(())
 }
@@ -297,7 +304,9 @@ pub(crate) fn fixture_options(
     fixture: &Fixture,
     dir: &Path,
     cache: &RunCache,
+    stages: &crate::report::StageRecorder,
 ) -> Result<(Options, Inputs), String> {
+    let timer = stages.start(crate::report::Stage::Firmware);
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let mut selected_package = fixture.firmware_package.clone();
     let firmware = if !fixture.patches.is_empty() {
@@ -371,6 +380,8 @@ pub(crate) fn fixture_options(
             return Err("update package belongs to a different model than the fixture".into());
         }
     }
+    drop(timer);
+    let timer = stages.start(crate::report::Stage::State);
     let state = dir.join("state");
     fs::create_dir_all(&state).map_err(|e| e.to_string())?;
     // A spec edits the disposable copy: seed missing NOR from the selected
@@ -421,6 +432,8 @@ pub(crate) fn fixture_options(
     if fixture.gdb {
         args.extend(["--gdb-socket".into(), gdb_socket_path(dir).into_os_string()]);
     }
+    drop(timer);
+    let timer = stages.start(crate::report::Stage::Card);
     let sd_hash = if let Some(spec) = &fixture.card_spec {
         let target = dir.join("card.img");
         let mut card = sd_image::spec::CardSpec::load_for(spec, fixture.model.name())?;
@@ -595,7 +608,10 @@ pub(crate) fn fixture_options(
             card.build(&target, base).map_err(|e| e.to_string())?;
         }
         args.extend(["--sd-image".into(), target.clone().into_os_string()]);
-        Some(hash_sparse(&target)?)
+        let hash_timer = stages.start(crate::report::Stage::CardHash);
+        let hash = hash_sparse(&target)?;
+        drop(hash_timer);
+        Some(hash)
     } else {
         if fixture.sd_bundle.is_some() {
             return Err("SD patch bundle requires a card spec".into());
@@ -603,6 +619,8 @@ pub(crate) fn fixture_options(
         args.push("--no-sd".into());
         None
     };
+    drop(timer);
+    let timer = stages.start(crate::report::Stage::FixtureInputs);
     if let Some(package) = &selected_package {
         args.extend([
             "--firmware-package".into(),
@@ -642,6 +660,7 @@ pub(crate) fn fixture_options(
         qemu_sha256: config.qemu_sha256.clone(),
         execution: None,
     };
+    drop(timer);
     Ok((options, inputs))
 }
 pub(crate) fn engine_args(options: &Options) -> Vec<String> {
@@ -791,7 +810,13 @@ mod tests {
             gdb: false,
         };
         let cache = RunCache::new(dir.join("cache"));
-        prepare_sd_patch(&mut fixture, &dir, &cache).unwrap();
+        prepare_sd_patch(
+            &mut fixture,
+            &dir,
+            &cache,
+            &crate::report::StageRecorder::default(),
+        )
+        .unwrap();
         let patch_dir = fixture.sd_bundle.as_ref().unwrap();
         let report: serde_json::Value = serde_json::from_slice(
             &fs::read(patch_dir.parent().unwrap().join("patch.json")).unwrap(),

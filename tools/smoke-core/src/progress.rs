@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 4;
 pub const PATH_ENV: &str = "L6_TEST_PROGRESS";
 pub const RUN_ENV: &str = "L6_TEST_PROGRESS_RUN";
 pub const ATTEMPT_ENV: &str = "L6_TEST_PROGRESS_ATTEMPT";
@@ -39,6 +39,13 @@ pub enum Phase {
     Executing,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunPhase {
+    Building,
+    Staging,
+    Executing,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum SuiteEvent {
     Header {
@@ -47,6 +54,10 @@ pub enum SuiteEvent {
     },
     RunStarted {
         total_cases: usize,
+    },
+    RunPhaseChanged {
+        phase: RunPhase,
+        started_unix_ms: u64,
     },
     AttemptStarted {
         id: AttemptId,
@@ -84,6 +95,7 @@ pub enum CaseEvent {
     },
     PhaseChanged {
         phase: CasePhase,
+        started_unix_ms: u64,
     },
     ScenarioStarted {
         total_steps: usize,

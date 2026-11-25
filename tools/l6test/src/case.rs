@@ -12,7 +12,7 @@ use crate::{
     },
     hashing::{digest, files, hash, hash_sparse},
     identity::CaseIdentity,
-    report::{CaseError, CaseResult, InPhase, Outcome, Phase},
+    report::{CaseError, CaseResult, InPhase, Outcome, Phase, Stage, StageRecorder},
     supervise::{cancelled, supervise},
 };
 use l6fw::Model;
@@ -79,6 +79,7 @@ pub(crate) fn run_case(
 ) -> CaseResult {
     let started = Instant::now();
     let mut result = CaseResult::new(&case.id, fixture.model, backend, dir);
+    let stages = StageRecorder::default();
     match attempt(
         ctx,
         fixture,
@@ -89,6 +90,7 @@ pub(crate) fn run_case(
         progress_id,
         progress,
         &mut result,
+        &stages,
     ) {
         Ok(CaseRun::Ran { success, scenario }) => {
             result.phase = Phase::Execute;
@@ -120,6 +122,7 @@ pub(crate) fn run_case(
         }
     }
     result.duration_s = started.elapsed().as_secs_f64();
+    result.timings.stages = stages.results();
     let _ = fs::create_dir_all(dir);
     let _ = fs::write(
         dir.join("result.json"),
@@ -138,27 +141,38 @@ fn attempt(
     progress_id: &smoke_core::progress::AttemptId,
     progress: &crate::progress::Journal,
     result: &mut CaseResult,
+    stages: &StageRecorder,
 ) -> Result<CaseRun, CaseError> {
+    let timer = stages.start(Stage::Preflight);
     let scenario = preflight(ctx, fixture, case, backend)?;
+    drop(timer);
     let started = Instant::now();
-    let prepared = build_fixture(ctx, fixture, case, scenario, dir)?;
-    let invocation = plan_invocation(
-        ctx,
-        case,
-        backend,
-        dir,
-        midi_namespace,
-        &prepared,
-        progress_id,
-    )
-    .failed_in(Phase::Fixture)?;
+    let built = (|| {
+        let prepared = build_fixture(ctx, fixture, case, scenario, dir, stages)?;
+        let _timer = stages.start(Stage::Invocation);
+        let invocation = plan_invocation(
+            ctx,
+            case,
+            backend,
+            dir,
+            midi_namespace,
+            &prepared,
+            progress_id,
+            stages,
+        )
+        .failed_in(Phase::Fixture)?;
+        Ok::<_, CaseError>((prepared, invocation))
+    })();
     result.timings.fixture_s = started.elapsed().as_secs_f64();
+    let (prepared, invocation) = built?;
+    let timer = stages.start(Stage::Identity);
     result.identity = identify(ctx, &prepared, &invocation).map(|identity| json!(identity));
+    drop(timer);
     if ctx.fixtures_only {
         return Ok(CaseRun::FixturesOnly);
     }
     progress.attempt_phase(progress_id.clone(), smoke_core::progress::Phase::Executing);
-    execute(ctx, case, dir, invocation, result)
+    execute(ctx, case, dir, invocation, result, stages)
 }
 
 /// Whether the case can run here at all. Problems are BLOCKED.
@@ -211,10 +225,14 @@ fn build_fixture(
     case: &Case,
     scenario: Option<Scenario>,
     dir: &Path,
+    stages: &StageRecorder,
 ) -> Result<Prepared, CaseError> {
     let failed = |message: String| CaseError::failed(Phase::Fixture, message);
     let mut selected = fixture.clone();
-    prepare_sd_patch(&mut selected, dir, ctx.cache).failed_in(Phase::Fixture)?;
+    let timer = stages.start(Stage::SdPatch);
+    prepare_sd_patch(&mut selected, dir, ctx.cache, stages).failed_in(Phase::Fixture)?;
+    drop(timer);
+    let timer = stages.start(Stage::UpdatePackage);
     let update_patches = scenario
         .as_ref()
         .and_then(|scenario| scenario.update_patches.get(&fixture.model).cloned())
@@ -240,8 +258,10 @@ fn build_fixture(
     if case.no_sd {
         selected.card_spec = None;
     }
+    drop(timer);
     let (mut options, mut inputs) =
-        fixture_options(ctx.config, &selected, dir, ctx.cache).failed_in(Phase::Fixture)?;
+        fixture_options(ctx.config, &selected, dir, ctx.cache, stages).failed_in(Phase::Fixture)?;
+    let timer = stages.start(Stage::ScenarioPreparation);
     if case.volatile && selected.state_spec.is_none() {
         options.state_dir = None;
     }
@@ -278,6 +298,8 @@ fn build_fixture(
             }
         })?;
     }
+    drop(timer);
+    let timer = stages.start(Stage::ExecutionInputs);
     (|| -> Result<(), String> {
         inputs.execution = Some(Execution {
             spec_state,
@@ -293,6 +315,7 @@ fn build_fixture(
         .map_err(|e| e.to_string())
     })()
     .failed_in(Phase::Fixture)?;
+    drop(timer);
     Ok(Prepared {
         scenario,
         fixture: selected,
@@ -311,6 +334,7 @@ fn plan_invocation(
     midi_namespace: &str,
     prepared: &Prepared,
     progress_id: &smoke_core::progress::AttemptId,
+    stages: &StageRecorder,
 ) -> Result<Invocation, String> {
     let config = ctx.config;
     let options = &prepared.options;
@@ -325,7 +349,9 @@ fn plan_invocation(
         (Some(_), Backend::Headless) => ctx.output.join("bin/l6test"),
         (Some(_), _) => ctx.output.join("bin/l6max-gui"),
     };
+    let timer = stages.start(Stage::InvocationBinaryHash);
     let binary_sha256 = hash(&binary)?;
+    drop(timer);
     let mut command = Command::new(&binary);
     command.current_dir(ctx.root);
     for (key, _) in env::vars_os() {
@@ -377,6 +403,7 @@ fn plan_invocation(
         }
     }
     command.args(engine_args(options));
+    let timer = stages.start(Stage::AudioInputPreparation);
     let mut audio_input = Vec::new();
     if !prepared.fixture.audio_input.is_empty() {
         let directory = dir.join("audio-input");
@@ -391,6 +418,7 @@ fn plan_invocation(
         }
         command.env("L6_AUDIO_INPUT_DIR", directory);
     }
+    drop(timer);
     for (key, value) in &case.environment {
         let mut value = expand(value, options);
         if let Some(package) = config.firmware.get(&Model::L6) {
@@ -453,7 +481,9 @@ fn execute(
     dir: &Path,
     invocation: Invocation,
     result: &mut CaseResult,
+    stages: &StageRecorder,
 ) -> Result<CaseRun, CaseError> {
+    let timer = stages.start(Stage::ExecutionSetup);
     let Invocation {
         command,
         binary,
@@ -468,9 +498,16 @@ fn execute(
         serde_json::to_vec_pretty(&record).unwrap(),
     )
     .failed_in(Phase::Execute)?;
+    drop(timer);
     let started = Instant::now();
     let success = supervise(command, dir, case.wall_timeout_s);
     result.timings.execute_s = started.elapsed().as_secs_f64();
+    if let Some(seconds) = crate::report::child_shutdown_seconds(
+        &dir.join("progress.jsonl"),
+        smoke_core::progress::unix_ms(),
+    ) {
+        stages.record(Stage::ChildShutdown, seconds);
+    }
     let success = success.map_err(|message| {
         if cancelled() {
             // An interrupted case did not complete; it is not a failure.
@@ -480,6 +517,7 @@ fn execute(
         }
     })?;
     // A changed executable invalidates the result rather than failing it.
+    let timer = stages.start(Stage::ExecutableVerification);
     if hash(&binary).blocked_in(Phase::Execute)? != binary_sha256 {
         return Err(CaseError::blocked(
             Phase::Execute,
@@ -492,6 +530,7 @@ fn execute(
             "QEMU changed during the case; result is invalid",
         ));
     }
+    drop(timer);
     let scenario = fs::read(dir.join("scenario.json"))
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())

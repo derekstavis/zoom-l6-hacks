@@ -107,6 +107,116 @@ impl<T, E: ToString> InPhase<T> for Result<T, E> {
 pub struct Timings {
     pub fixture_s: f64,
     pub execute_s: f64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stages: Vec<StageTiming>,
+}
+
+/// Host wall time spent setting up and executing the suite, measured once per run.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct RunTimings {
+    pub catalog_s: f64,
+    pub generated_s: f64,
+    pub preflight_s: f64,
+    pub selection_s: f64,
+    pub build_s: Option<f64>,
+    pub staging_s: f64,
+    pub cases_s: f64,
+}
+
+/// Wall-clock duration of one driver operation, including cache waits and I/O.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct StageTiming {
+    pub stage: Stage,
+    pub seconds: f64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Stage {
+    Preflight,
+    SdPatch,
+    SdStockFirmware,
+    SdLoaderBuild,
+    SdModuleBuild,
+    UpdatePackage,
+    Firmware,
+    State,
+    Card,
+    CardHash,
+    FixtureInputs,
+    ScenarioPreparation,
+    ExecutionInputs,
+    Invocation,
+    InvocationBinaryHash,
+    AudioInputPreparation,
+    Identity,
+    ExecutionSetup,
+    ChildShutdown,
+    ExecutableVerification,
+}
+
+impl fmt::Display for Stage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Preflight => "Preflight",
+            Self::SdPatch => "SD patch preparation",
+            Self::SdStockFirmware => "  Stock firmware for SD patch",
+            Self::SdLoaderBuild => "  SD loader build",
+            Self::SdModuleBuild => "  SD module build",
+            Self::UpdatePackage => "Update package preparation",
+            Self::Firmware => "Firmware preparation",
+            Self::State => "State preparation",
+            Self::Card => "Card preparation (includes card hash)",
+            Self::CardHash => "Card hash",
+            Self::FixtureInputs => "Fixture inputs",
+            Self::ScenarioPreparation => "Scenario preparation",
+            Self::ExecutionInputs => "Execution input hashes",
+            Self::Invocation => "Invocation preparation",
+            Self::InvocationBinaryHash => "  Invocation binary hash",
+            Self::AudioInputPreparation => "  Audio input preparation",
+            Self::Identity => "Identity",
+            Self::ExecutionSetup => "Execution setup",
+            Self::ChildShutdown => "Runner shutdown",
+            Self::ExecutableVerification => "Executable verification",
+        })
+    }
+}
+
+/// Per-attempt recorder; a guard records even when an operation returns early.
+#[derive(Clone, Default)]
+pub struct StageRecorder(std::rc::Rc<std::cell::RefCell<Vec<StageTiming>>>);
+
+impl StageRecorder {
+    pub fn start(&self, stage: Stage) -> StageGuard {
+        StageGuard {
+            recorder: self.clone(),
+            stage,
+            start: std::time::Instant::now(),
+        }
+    }
+
+    pub fn results(&self) -> Vec<StageTiming> {
+        self.0.borrow().clone()
+    }
+
+    pub fn record(&self, stage: Stage, seconds: f64) {
+        self.0.borrow_mut().push(StageTiming { stage, seconds });
+    }
+}
+
+pub struct StageGuard {
+    recorder: StageRecorder,
+    stage: Stage,
+    start: std::time::Instant,
+}
+
+impl Drop for StageGuard {
+    fn drop(&mut self) {
+        self.recorder.0.borrow_mut().push(StageTiming {
+            stage: self.stage,
+            seconds: self.start.elapsed().as_secs_f64(),
+        });
+    }
 }
 
 /// One execution of a case. A case without retries has one attempt.
@@ -117,6 +227,8 @@ pub struct Attempt {
     pub detail: String,
     pub artifacts: PathBuf,
     pub duration_s: f64,
+    #[serde(default)]
+    pub timings: Timings,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -166,6 +278,7 @@ impl CaseResult {
             detail: self.detail.clone(),
             artifacts: self.artifacts.clone(),
             duration_s: self.duration_s,
+            timings: self.timings.clone(),
         }
     }
 }
@@ -297,12 +410,89 @@ fn step_timings(path: &Path) -> Vec<(usize, String, u64)> {
     timings
 }
 
+/// Recover completed runner startup intervals; interrupted phases have no end.
+fn case_phase_timings(path: &Path) -> Vec<(smoke_core::progress::CasePhase, u64)> {
+    use smoke_core::progress::{CaseEvent, VERSION};
+    let Ok(stream) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut lines = stream.lines();
+    if !matches!(
+        lines
+            .next()
+            .and_then(|line| serde_json::from_str::<CaseEvent>(line).ok()),
+        Some(CaseEvent::Header {
+            version: VERSION,
+            ..
+        })
+    ) {
+        return Vec::new();
+    }
+    let mut current = None;
+    let mut timings = Vec::new();
+    for line in lines {
+        let Ok(event) = serde_json::from_str::<CaseEvent>(line) else {
+            break;
+        };
+        let (end, next) = match event {
+            CaseEvent::PhaseChanged {
+                phase,
+                started_unix_ms,
+            } => (started_unix_ms, Some((phase, started_unix_ms))),
+            CaseEvent::StepStarted {
+                started_unix_ms, ..
+            } => (started_unix_ms, None),
+            CaseEvent::ScenarioFinished {
+                finished_unix_ms, ..
+            } => (finished_unix_ms, None),
+            _ => continue,
+        };
+        if let Some((phase, start)) = current.take()
+            && let Some(duration) = end.checked_sub(start)
+        {
+            timings.push((phase, duration));
+        }
+        current = next;
+    }
+    timings
+}
+
+/// Time after the last scenario result until the child exits. Missing or
+/// interrupted streams do not provide a reliable start time.
+pub(crate) fn child_shutdown_seconds(path: &Path, exited_unix_ms: u64) -> Option<f64> {
+    use smoke_core::progress::{CaseEvent, VERSION};
+    let stream = std::fs::read_to_string(path).ok()?;
+    let mut lines = stream.lines();
+    if !matches!(
+        lines
+            .next()
+            .and_then(|line| serde_json::from_str::<CaseEvent>(line).ok()),
+        Some(CaseEvent::Header {
+            version: VERSION,
+            ..
+        })
+    ) {
+        return None;
+    }
+    let mut finished = None;
+    for line in lines {
+        match serde_json::from_str::<CaseEvent>(line).ok()? {
+            CaseEvent::ScenarioFinished {
+                finished_unix_ms, ..
+            } => finished = Some(finished_unix_ms),
+            _ => {}
+        }
+    }
+    Some(exited_unix_ms.checked_sub(finished?)? as f64 / 1000.0)
+}
+
 pub fn write_summary(
     path: &Path,
     outcome: Outcome,
     results: &[CaseResult],
     cache: &Value,
     fixtures_only: bool,
+    run_timings: &RunTimings,
 ) -> Result<(), String> {
     let mut text = String::new();
     if fixtures_only {
@@ -319,6 +509,21 @@ pub fn write_summary(
     text.push_str(&format!(
         "Run: {outcome}\n\n{counts}; {:.0} s of case time\n\n",
         total
+    ));
+    text.push_str(&format!(
+        "Run wall time: catalog {:.3} s, preflight {:.3} s, selection {:.3} s, staging {:.3} s, cases {:.3} s",
+        run_timings.catalog_s,
+        run_timings.preflight_s,
+        run_timings.selection_s,
+        run_timings.staging_s,
+        run_timings.cases_s
+    ));
+    if let Some(build) = run_timings.build_s {
+        text.push_str(&format!(", build {build:.3} s"));
+    }
+    text.push_str(&format!(
+        ", generated scenarios {:.3} s\n\n",
+        run_timings.generated_s
     ));
     text.push_str("| Case | Model | Backend | Result | Phase | Seconds |\n");
     text.push_str("| --- | --- | --- | --- | --- | --- |\n");
@@ -345,7 +550,13 @@ pub fn write_summary(
         };
         for (attempt, dir) in artifacts.iter().enumerate() {
             let timings = step_timings(&dir.join("progress.jsonl"));
-            if timings.is_empty() {
+            let phases = case_phase_timings(&dir.join("progress.jsonl"));
+            let stages = if result.attempts.is_empty() {
+                &result.timings.stages
+            } else {
+                &result.attempts[attempt].timings.stages
+            };
+            if timings.is_empty() && stages.is_empty() && phases.is_empty() {
                 continue;
             }
             text.push_str(&format!(
@@ -355,7 +566,31 @@ pub fn write_summary(
                 result.backend,
                 attempt + 1
             ));
-            text.push_str("| Step | Action | Wall seconds |\n| --- | --- | ---: |\n");
+            if !stages.is_empty() {
+                text.push_str("| Driver operation | Wall seconds |\n| --- | ---: |\n");
+                for stage in stages {
+                    text.push_str(&format!("| {} | {:.3} |\n", stage.stage, stage.seconds));
+                }
+                text.push('\n');
+            }
+            if !phases.is_empty() {
+                text.push_str("| Runner phase | Wall seconds |\n| --- | ---: |\n");
+                for (phase, milliseconds) in phases {
+                    let label = match phase {
+                        smoke_core::progress::CasePhase::PreparingScenario => "Preparing scenario",
+                        smoke_core::progress::CasePhase::StartingEmulator => "Starting emulator",
+                    };
+                    text.push_str(&format!(
+                        "| {} | {:.3} |\n",
+                        label,
+                        milliseconds as f64 / 1000.0
+                    ));
+                }
+                text.push('\n');
+            }
+            if !timings.is_empty() {
+                text.push_str("| Step | Action | Wall seconds |\n| --- | --- | ---: |\n");
+            }
             for (index, label, milliseconds) in timings {
                 text.push_str(&format!(
                     "| {} | {} | {:.3} |\n",
@@ -432,6 +667,20 @@ pub fn read_results(path: &Path) -> Result<Vec<CaseResult>, String> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn stage_is_recorded_when_an_operation_fails() {
+        let recorder = super::StageRecorder::default();
+        let operation = || -> Result<(), &'static str> {
+            let _timer = recorder.start(super::Stage::Card);
+            Err("failed")
+        };
+        assert!(operation().is_err());
+        let results = recorder.results();
+        assert_eq!(results.len(), 1);
+        assert!(matches!(results[0].stage, super::Stage::Card));
+        assert!(results[0].seconds >= 0.0);
+    }
+
+    #[test]
     fn timing_report_orders_steps_and_omits_interrupted_final_step() {
         use smoke_core::progress::{AttemptId, CaseEvent, CaseId, VERSION, Writer};
         let path = std::env::temp_dir().join(format!("l6-step-timing-{}", std::process::id()));
@@ -451,12 +700,31 @@ mod tests {
             })
             .unwrap();
         writer
+            .emit(&CaseEvent::PhaseChanged {
+                phase: smoke_core::progress::CasePhase::PreparingScenario,
+                started_unix_ms: 100,
+            })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::PhaseChanged {
+                phase: smoke_core::progress::CasePhase::StartingEmulator,
+                started_unix_ms: 400,
+            })
+            .unwrap();
+        writer
             .emit(&CaseEvent::StepStarted {
                 index: 1,
                 label: "first".into(),
                 started_unix_ms: 1000,
             })
             .unwrap();
+        assert_eq!(
+            super::case_phase_timings(&path),
+            vec![
+                (smoke_core::progress::CasePhase::PreparingScenario, 300),
+                (smoke_core::progress::CasePhase::StartingEmulator, 600),
+            ]
+        );
         writer
             .emit(&CaseEvent::StepStarted {
                 index: 2,
@@ -485,6 +753,7 @@ mod tests {
             super::step_timings(&path)[2],
             (3, "interrupted".into(), 500)
         );
+        assert_eq!(super::child_shutdown_seconds(&path, 7000), Some(1.5));
         drop(writer);
         std::fs::remove_file(path).unwrap();
     }
@@ -523,10 +792,19 @@ mod tests {
     #[test]
     fn a_failure_then_a_pass_is_flaky_and_keeps_every_attempt() {
         let outcomes = [Outcome::Fail, Outcome::Pass];
-        let flaky = with_retries(2, |n| result(outcomes[n - 1], Phase::Execute));
+        let flaky = with_retries(2, |n| {
+            let mut result = result(outcomes[n - 1], Phase::Execute);
+            result.timings.stages.push(super::StageTiming {
+                stage: super::Stage::Card,
+                seconds: n as f64,
+            });
+            result
+        });
         assert_eq!(flaky.outcome, Outcome::Flaky);
         assert_eq!(flaky.attempts.len(), 2);
         assert_eq!(flaky.duration_s, 2.0);
+        assert_eq!(flaky.attempts[0].timings.stages[0].seconds, 1.0);
+        assert_eq!(flaky.attempts[1].timings.stages[0].seconds, 2.0);
         assert!(flaky.detail.contains("attempt 2"));
     }
 

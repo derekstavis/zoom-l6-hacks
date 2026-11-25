@@ -1766,6 +1766,7 @@ fn main() {
     if selected_scenario.is_some() {
         progress.emit(smoke_core::progress::CaseEvent::PhaseChanged {
             phase: smoke_core::progress::CasePhase::StartingEmulator,
+            started_unix_ms: smoke_core::progress::unix_ms(),
         });
     }
     let qemu_processes = Engine::start(&options).unwrap_or_else(|error| {
@@ -1794,6 +1795,7 @@ fn main() {
     if selected_scenario.is_some() {
         progress.emit(smoke_core::progress::CaseEvent::PhaseChanged {
             phase: smoke_core::progress::CasePhase::PreparingScenario,
+            started_unix_ms: smoke_core::progress::unix_ms(),
         });
     }
     let scenario_smoke = selected_scenario

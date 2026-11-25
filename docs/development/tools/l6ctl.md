@@ -17,6 +17,7 @@ cargo l6ctl --socket /tmp/l6-control.sock input status panel
 cargo l6ctl --socket /tmp/l6-control.sock heap-counters
 cargo l6ctl --socket /tmp/l6-control.sock midi-config
 cargo l6ctl --socket /tmp/l6-control.sock update-state
+cargo l6ctl --socket /tmp/l6-control.sock update-gui-state
 cargo l6ctl --socket /tmp/l6-control.sock button channel.1.mute
 cargo l6ctl --socket /tmp/l6-control.sock down play 500
 cargo l6ctl --socket /tmp/l6-control.sock up play
@@ -273,3 +274,11 @@ The two values are separate live reads (`atomic: false`). The equivalent Rust
 methods are `ControlClient::update_state` and `OwnedControl::update_state`.
 Mode 1 and flags bits 0 and 3 clear are the existing rejection check; this
 observation alone does not prove that a particular package was rejected.
+
+`l6ctl --socket PATH update-gui-state` reads the raw 32-bit current-window
+pointer and update-progress descriptor flags in L6max 1.10. The equivalent
+Rust methods are `ControlClient::update_gui_state` and
+`OwnedControl::update_gui_state`. The separate reads are non-atomic, and
+revision fingerprints identify inspected startup and confirmation routines,
+not the entire image or unrelated patches. The raw flag bit 0x100 is used by
+the update preparation scenario; pixels are still needed to verify rendering.

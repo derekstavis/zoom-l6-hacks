@@ -395,6 +395,253 @@ pub(in crate::devices) fn run(
     Ok(json!({"pan_and_level_checked":true}))
 }
 
+fn with_level_host<T>(
+    session: &Session,
+    options: &Options,
+    context: &PreflightContext,
+    progress: CaseProgress,
+    index: usize,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+    shared: (Instant, u32, u32, u64, u16),
+    f: impl FnOnce(&mut LiveHost<'_, '_>, &Reporter<'_>) -> Result<T, Box<dyn std::error::Error>>,
+) -> Result<T, Box<dyn std::error::Error>> {
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let deadline = SharedDeadline {
+        start: shared.0,
+        guest_start: shared.1,
+        guest_budget: shared.2,
+        wall_budget: shared.3,
+    };
+    let check = || -> Result<(), Box<dyn std::error::Error>> {
+        let guest = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
+        if deadline.expired(Instant::now(), guest) {
+            Err("knob-dialog shared deadline exceeded".into())
+        } else {
+            Ok(())
+        }
+    };
+    check()?;
+    let reader = control.knob_popup_reader()?;
+    check()?;
+    let reporter = Reporter {
+        progress,
+        index,
+        check: Some(&check),
+    };
+    let mut host = LiveHost {
+        session,
+        options,
+        control: &control,
+        reader: &reader,
+        text_table: context.text_table,
+        guest_timeout_ms,
+        wall_timeout_s,
+        check: &check,
+    };
+    f(&mut host, &reporter)
+}
+
+pub(in crate::devices) fn run_level_demo_frame(
+    session: &Session,
+    options: &Options,
+    context: &mut PreflightContext,
+    demo: &DemoCapture,
+    artifact: &str,
+    progress: CaseProgress,
+    index: usize,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+    shared: (Instant, u32, u32, u64, u16),
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.level_phase != Some(0)
+        || !crate::scenario::adaptive::demo(demo)
+        || !crate::scenario::adaptive::artifact(artifact)
+    {
+        return Err("level demo start out of order or invalid".into());
+    }
+    with_level_host(
+        session,
+        options,
+        context,
+        progress,
+        index,
+        guest_timeout_ms,
+        wall_timeout_s,
+        shared,
+        |host, reporter| {
+            reporter.scope("level start", None, 1, || {
+                demo_frame(host, reporter, "level start", 1, 1, demo, artifact)
+            })
+        },
+    )?;
+    context.level_phase = Some(1);
+    Ok(json!({"artifact":artifact}))
+}
+
+fn level_target(
+    direction: crate::scenario::adaptive::LevelDirection,
+    min_percent: u8,
+    text: &str,
+) -> bool {
+    use crate::scenario::adaptive::LevelDirection as D;
+    match direction {
+        D::Up => {
+            text.strip_suffix('%')
+                .and_then(|value| value.parse::<u8>().ok())
+                .unwrap_or(0)
+                >= min_percent
+        }
+        D::Down => text == "0%",
+    }
+}
+
+fn execute_level_sweep(
+    sweep: &crate::scenario::adaptive::LevelSweep,
+    host: &mut impl AdaptiveHost,
+    reporter: &Reporter,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::scenario::adaptive::{LevelChild as C, LevelDirection as D};
+    sweep.validate()?;
+    let label = match sweep.direction {
+        D::Up => "level up",
+        D::Down => "level down",
+    };
+    reporter.scope(label, None, sweep.max_attempts, || {
+        for attempt in 1..=sweep.max_attempts {
+            let matched = reporter.attempt(label, attempt, sweep.max_attempts, || {
+                let mut text = String::new();
+                for child in &sweep.children {
+                    match child {
+                        C::ReadText => {
+                            text = reporter.child(
+                                label,
+                                attempt,
+                                sweep.max_attempts,
+                                "read level text",
+                                || host.text(),
+                            )?
+                        }
+                        C::CheckTarget => {
+                            if reporter.child(
+                                label,
+                                attempt,
+                                sweep.max_attempts,
+                                "check level target",
+                                || Ok(level_target(sweep.direction, sweep.min_percent, &text)),
+                            )? {
+                                return Ok(true);
+                            }
+                        }
+                        C::Turn => reporter.child(
+                            label,
+                            attempt,
+                            sweep.max_attempts,
+                            "turn level",
+                            || {
+                                host.encoder(
+                                    1,
+                                    match sweep.direction {
+                                        D::Up => -1,
+                                        D::Down => 1,
+                                    },
+                                )
+                            },
+                        )?,
+                        C::CaptureDemo => demo_frame(
+                            host,
+                            reporter,
+                            label,
+                            attempt,
+                            sweep.max_attempts,
+                            &sweep.demo,
+                            &format!("{}-{:02}", sweep.artifact_prefix, attempt - 1),
+                        )?,
+                    }
+                }
+                Ok(false)
+            })?;
+            if matched {
+                return Ok(());
+            }
+        }
+        match sweep.direction {
+            D::Up => Err(format!("demo level sweep did not reach {}%", sweep.min_percent).into()),
+            D::Down => Ok(()),
+        }
+    })
+}
+
+pub(in crate::devices) fn run_level_sweep(
+    session: &Session,
+    options: &Options,
+    context: &mut PreflightContext,
+    sweep: &crate::scenario::adaptive::LevelSweep,
+    progress: CaseProgress,
+    index: usize,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+    shared: (Instant, u32, u32, u64, u16),
+) -> Result<Value, Box<dyn std::error::Error>> {
+    use crate::scenario::adaptive::LevelDirection as D;
+    let expected = match sweep.direction {
+        D::Up => 1,
+        D::Down => 3,
+    };
+    if context.level_phase != Some(expected) {
+        return Err("level sweep out of order".into());
+    }
+    with_level_host(
+        session,
+        options,
+        context,
+        progress,
+        index,
+        guest_timeout_ms,
+        wall_timeout_s,
+        shared,
+        |host, reporter| execute_level_sweep(sweep, host, reporter),
+    )?;
+    if sweep.direction == D::Up {
+        context.level_peak = Some(sweep.min_percent);
+        context.level_phase = Some(2);
+    } else {
+        context.level_phase = Some(4);
+    }
+    Ok(json!({"direction":format!("{:?}",sweep.direction)}))
+}
+
+pub(in crate::devices) fn run_level_expect_zero(
+    session: &Session,
+    options: &Options,
+    context: &mut PreflightContext,
+    progress: CaseProgress,
+    index: usize,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+    shared: (Instant, u32, u32, u64, u16),
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.level_phase != Some(4) {
+        return Err("level zero assertion out of order".into());
+    }
+    let text = with_level_host(
+        session,
+        options,
+        context,
+        progress,
+        index,
+        guest_timeout_ms,
+        wall_timeout_s,
+        shared,
+        |host, reporter| reporter.child("level zero", 1, 1, "read final level", || host.text()),
+    )?;
+    if text != "0%" {
+        return Err("demo level sweep did not return to zero".into());
+    }
+    context.level_phase = Some(5);
+    Ok(json!({"displayed":text}))
+}
+
 fn execute_plan(
     plan: &Plan,
     host: &mut impl AdaptiveHost,
@@ -758,6 +1005,74 @@ mod tests {
         assert!(reached(Direction::Left, 48, "L 48%"));
         assert!(!reached(Direction::Left, 48, "R 48%"));
         assert!(!reached(Direction::Right, 48, "R 47%"));
+    }
+    fn level_sweep(
+        direction: crate::scenario::adaptive::LevelDirection,
+        max_attempts: u32,
+    ) -> crate::scenario::adaptive::LevelSweep {
+        use crate::scenario::adaptive::{LevelChild as C, LevelDirection as D};
+        crate::scenario::adaptive::LevelSweep {
+            direction,
+            children: vec![C::ReadText, C::CheckTarget, C::Turn, C::CaptureDemo],
+            min_percent: if direction == D::Up { 69 } else { 0 },
+            max_attempts,
+            artifact_prefix: "level".into(),
+            demo: DemoCapture {
+                guest_ms: 100,
+                min_lit: 100,
+                checked_frames: 6,
+            },
+        }
+    }
+    fn level_host(texts: &[&str]) -> FakeHost {
+        FakeHost {
+            calls: Vec::new(),
+            pans: Default::default(),
+            texts: texts.iter().map(|s| (*s).to_owned()).collect(),
+            levels: Default::default(),
+        }
+    }
+    #[test]
+    fn level_up_parsing_polarity_and_zero_based_artifacts_match_original() {
+        use crate::scenario::adaptive::LevelDirection as D;
+        let mut host = level_host(&["unparseable", "68%", "69%"]);
+        let reporter = Reporter {
+            progress: CaseProgress::default(),
+            index: 1,
+            check: None,
+        };
+        execute_level_sweep(&level_sweep(D::Up, 3), &mut host, &reporter).unwrap();
+        assert_eq!(
+            host.calls,
+            [
+                "text",
+                "encoder:1:-1",
+                "capture:100:level-00",
+                "text",
+                "encoder:1:-1",
+                "capture:100:level-01",
+                "text"
+            ]
+        );
+    }
+    #[test]
+    fn up_exhaustion_does_not_reread_but_down_leaves_final_zero_read() {
+        use crate::scenario::adaptive::LevelDirection as D;
+        let reporter = Reporter {
+            progress: CaseProgress::default(),
+            index: 1,
+            check: None,
+        };
+        let mut up = level_host(&["68%", "69%"]);
+        assert!(execute_level_sweep(&level_sweep(D::Up, 1), &mut up, &reporter).is_err());
+        assert_eq!(up.texts.len(), 1);
+        let mut down = level_host(&["1%", "0%", "0%"]);
+        execute_level_sweep(&level_sweep(D::Down, 2), &mut down, &reporter).unwrap();
+        assert_eq!(
+            down.calls,
+            ["text", "encoder:1:1", "capture:100:level-00", "text"]
+        );
+        assert_eq!(down.text().unwrap(), "0%");
     }
 }
 

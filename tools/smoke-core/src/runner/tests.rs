@@ -1308,7 +1308,8 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
         include_str!(
             "../../../../patches/knob-dialog/tests/emulator/fragments/active-display.toml"
         ),
-        "\n[[step]]\naction='knob-dialog-level-demo'\nguest_timeout_ms=180000\nwall_timeout_s=600\n"
+        "\n",
+        include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/level-demo.toml")
     );
     let tasks =
         include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/task-contexts.toml");

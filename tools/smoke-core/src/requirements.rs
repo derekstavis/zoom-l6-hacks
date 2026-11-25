@@ -108,7 +108,11 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobActiveCheckCallbacks
         | Action::KnobActiveCheckFrame
         | Action::KnobActiveFinish
-        | Action::KnobDialogLevelDemo
+        | Action::KnobLevelBegin
+        | Action::KnobLevelStart { .. }
+        | Action::KnobLevelSweep { .. }
+        | Action::KnobLevelExpectZero
+        | Action::KnobLevelFinish
         | Action::KnobTaskBegin
         | Action::KnobTaskArmHook
         | Action::KnobTaskWaitHook

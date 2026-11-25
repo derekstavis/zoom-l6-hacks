@@ -333,6 +333,62 @@
       ],
       "type": "string"
     },
+    "LevelChild": {
+      "enum": [
+        "read-text",
+        "check-target",
+        "turn",
+        "capture-demo"
+      ],
+      "type": "string"
+    },
+    "LevelDirection": {
+      "enum": [
+        "up",
+        "down"
+      ],
+      "type": "string"
+    },
+    "LevelSweep": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_prefix": {
+          "type": "string"
+        },
+        "children": {
+          "items": {
+            "$ref": "#/definitions/LevelChild"
+          },
+          "type": "array"
+        },
+        "demo": {
+          "$ref": "#/definitions/DemoCapture"
+        },
+        "direction": {
+          "$ref": "#/definitions/LevelDirection"
+        },
+        "max_attempts": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_percent": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "direction",
+        "children",
+        "min_percent",
+        "max_attempts",
+        "artifact_prefix",
+        "demo"
+      ],
+      "type": "object"
+    },
     "LifecycleBoot": {
       "description": "One boot generation of a managed update lifecycle.",
       "enum": [
@@ -5403,7 +5459,167 @@
           "additionalProperties": false,
           "properties": {
             "action": {
-              "const": "knob-dialog-level-demo",
+              "const": "knob-level-begin",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "knob-level-start",
+              "type": "string"
+            },
+            "artifact": {
+              "type": "string"
+            },
+            "demo": {
+              "$ref": "#/definitions/DemoCapture"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "demo",
+            "artifact"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "knob-level-sweep",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "sweep": {
+              "$ref": "#/definitions/LevelSweep"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "sweep"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "knob-level-expect-zero",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "knob-level-finish",
               "type": "string"
             },
             "guest_timeout_ms": {
@@ -10499,7 +10715,11 @@
             "knob-active-check-callbacks",
             "knob-active-check-frame",
             "knob-active-finish",
-            "knob-dialog-level-demo",
+            "knob-level-begin",
+            "knob-level-start",
+            "knob-level-sweep",
+            "knob-level-expect-zero",
+            "knob-level-finish",
             "knob-task-begin",
             "knob-task-arm-hook",
             "knob-task-wait-hook",

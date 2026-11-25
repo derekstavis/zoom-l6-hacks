@@ -7,6 +7,7 @@ pub use l6max_host::heap::Counters as HeapCounters;
 pub use l6max_host::input::button_source;
 pub use l6max_host::input::{InputCounters, InputSource};
 pub use l6max_host::knob_popup::{ParameterState, RecorderState, Snapshot as KnobPopupSnapshot};
+pub use l6max_host::midi_config::Config as MidiConfig;
 use l6max_host::{control, engine::Engine, freertos, qmp};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -36,6 +37,7 @@ pub enum Request {
     Info,
     InputStatus { source: InputSource },
     HeapCounters,
+    MidiConfig,
     KnobPopup { with_text: bool },
     RecorderState,
     KnobParameterState,
@@ -138,6 +140,7 @@ impl ControlClient {
             request,
             Request::Rtos { .. }
                 | Request::HeapCounters
+                | Request::MidiConfig
                 | Request::KnobPopup { .. }
                 | Request::RecorderState
                 | Request::KnobParameterState
@@ -175,6 +178,10 @@ impl ControlClient {
     /// One guarded, non-atomic live counter read (no heap traversal).
     pub fn heap_counters(&self) -> Result<HeapCounters, ControlError> {
         self.request_as(&Request::HeapCounters)
+    }
+
+    pub fn midi_config(&self) -> Result<MidiConfig, ControlError> {
+        self.request_as(&Request::MidiConfig)
     }
 
     /// Request the host's existing versioned RTOS JSON snapshot.
@@ -273,6 +280,11 @@ impl<'a> OwnedControl<'a> {
     /// Recreate this reader after a guest restart or firmware change.
     pub fn heap_counter_reader(&self) -> Result<l6max_host::heap::CounterReader, ControlError> {
         l6max_host::heap::counter_reader(self.main_qmp()?, self.engine.model())
+            .map_err(ControlError::Rejected)
+    }
+
+    pub fn midi_config(&self) -> Result<MidiConfig, ControlError> {
+        l6max_host::midi_config::config(self.main_qmp()?, self.engine.model())
             .map_err(ControlError::Rejected)
     }
 

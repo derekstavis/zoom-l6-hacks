@@ -210,6 +210,53 @@ fn heap_counters_cli_and_client_use_typed_guarded_snapshot() {
 }
 
 #[test]
+fn midi_config_cli_and_client_use_typed_snapshot() {
+    let path = socket_path();
+    let sample = json!({"atomic":false,"revision_guard":"l6_1_10_midi_routines","channel":2,"cc_map":vec![255; 54]});
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"midi-config"}),
+                json!({"ok":true,"result":sample}),
+            ),
+            (
+                json!({"command":"midi-config"}),
+                json!({"ok":true,"result":sample}),
+            ),
+            (
+                json!({"command":"midi-config"}),
+                json!({"ok":false,"error":"unsupported L6 MIDI revision"}),
+            ),
+        ],
+    );
+    let client = ControlClient::new(&path);
+    let config = client.midi_config().unwrap();
+    assert_eq!(config.channel, 2);
+    assert_eq!(config.cc_map, vec![255; 54]);
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .arg("midi-config")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        sample
+    );
+    assert!(
+        matches!(client.midi_config(), Err(ControlError::Rejected(message)) if message == "unsupported L6 MIDI revision")
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn cli_keeps_existing_one_based_encoder_and_output_contract() {
     let path = socket_path();
     let server = server(

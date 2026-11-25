@@ -15,6 +15,7 @@ Then run commands in another terminal:
 cargo l6ctl --socket /tmp/l6-control.sock info
 cargo l6ctl --socket /tmp/l6-control.sock input status panel
 cargo l6ctl --socket /tmp/l6-control.sock heap-counters
+cargo l6ctl --socket /tmp/l6-control.sock midi-config
 cargo l6ctl --socket /tmp/l6-control.sock button channel.1.mute
 cargo l6ctl --socket /tmp/l6-control.sock down play 500
 cargo l6ctl --socket /tmp/l6-control.sock up play
@@ -238,6 +239,23 @@ include display pixels and does not by itself prove that the screen rendered.
 The first-use knob guard uses an in-process snapshot while its test owns the
 paused guest. The CLI does not offer an atomic version: `knob-popup` and
 `recorder-state` are non-atomic observations and do not acquire pause ownership.
+
+`l6ctl --socket PATH midi-config` reads the L6 1.10 MIDI channel and its 54
+raw CC mappings. Entries retain their order and duplicates; `255` means
+unmapped. The channel and map are separate live reads and are not atomic.
+The host checks the stock MIDI channel and mapped-CC sender routines before
+reading; other models and revisions are rejected, as are patches that alter
+either guard routine. The command requires a running guest with its MAIN
+firmware loaded.
+
+The production guards have been checked against the unpacked L6 1.10 MAIN
+SHA-256 `827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799`
+and a midi-sync-patched MAIN SHA-256
+`57b716759a62be814cc0df4c8b38df1a08985545584f4bfad2420d34895addee`.
+Those checks used real firmware bytes with simulated configuration reads;
+they do not establish live-guest behavior. To repeat them with an unpacked
+MAIN, set `L6_MIDI_TEST_MAIN` to its path and run
+`cargo test --offline --locked -p l6max-host compatible_firmware_passes_production_guards -- --ignored`.
 
 `l6ctl --socket PATH knob-parameter-state` reads the L6max 1.10 parameter
 selector and callback slots 0, 2 and 5. The sample is non-atomic.

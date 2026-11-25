@@ -635,16 +635,24 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         if l6_verify {
                             // The legacy L6 probe boots the unpacked patched image in a fresh disposable session.
                             boot.state_dir = None;
-                        } else if runner.scenario.update_fixture
-                            == Some(crate::scenario::UpdateFixture::PatchedMidi)
-                        {
+                        } else if matches!(
+                            runner.scenario.update_fixture,
+                            Some(
+                                crate::scenario::UpdateFixture::PatchedMidi
+                                    | crate::scenario::UpdateFixture::PatchedKnobMidi
+                            )
+                        ) {
                             boot.usb_cable_at_start = true;
                             boot.usb_enabled = false;
                             boot.midi_enabled = false;
                         }
-                        if runner.scenario.update_fixture
-                            == Some(crate::scenario::UpdateFixture::PatchedKnob)
-                        {
+                        if matches!(
+                            runner.scenario.update_fixture,
+                            Some(
+                                crate::scenario::UpdateFixture::PatchedKnob
+                                    | crate::scenario::UpdateFixture::PatchedKnobMidi
+                            )
+                        ) {
                             boot.gdb_socket = Some(crate::devices::gdb_socket_path(
                                 &options.logs,
                                 "post-update-knob",

@@ -1755,6 +1755,38 @@ fn patched_knob_update_requires_full_install_and_knob_checks() {
 }
 
 #[test]
+fn patched_knob_midi_update_requires_both_ordered_verifications() {
+    let source =
+        include_str!("../../../../tests/emulator/cases/boot/l6max-update-patched-knob-midi.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    for changed in [
+        source.replace(
+            "action = \"knob-dialog-guard\"",
+            "action = \"knob-dialog-ready\"",
+        ),
+        source.replace("action = \"knob-dialog\"", "action = \"knob-dialog-ready\""),
+        source.replace(
+            "action = \"wait-usb-controller\"",
+            "action = \"knob-dialog-ready\"",
+        ),
+        source.replace(
+            "path = \"patches/midi-sync/tests/emulator/fragments/request-state.toml\"",
+            "path = \"patches/knob-dialog/tests/emulator/fragments/mode-walk.toml\"",
+        ),
+        source.replace(
+            "include_wall_timeout_s = 300",
+            "include_wall_timeout_s = 600",
+        ),
+        source.replace(
+            "update_patches.l6max = [\"knob-dialog\", \"midi-sync\"]",
+            "update_patches.l6max = [\"knob-dialog\"]",
+        ),
+    ] {
+        assert!(Scenario::from_text(&changed).is_err());
+    }
+}
+
+#[test]
 fn l6_stock_update_requires_both_boots_and_all_comparisons() {
     let source = include_str!("../../../../tests/emulator/cases/boot/l6-update-stock-install.toml");
     assert!(Scenario::from_text(source).is_ok());

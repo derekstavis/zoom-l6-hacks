@@ -57,6 +57,7 @@ fn synthetic_update(
         }
         smoke_core::UpdateFixture::PatchedMidi
         | smoke_core::UpdateFixture::PatchedKnob
+        | smoke_core::UpdateFixture::PatchedKnobMidi
         | smoke_core::UpdateFixture::BadChecksumStock
         | smoke_core::UpdateFixture::L6Stock
         | smoke_core::UpdateFixture::L6PatchedMidi => {

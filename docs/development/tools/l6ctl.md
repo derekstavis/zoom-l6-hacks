@@ -16,6 +16,7 @@ cargo l6ctl --socket /tmp/l6-control.sock info
 cargo l6ctl --socket /tmp/l6-control.sock input status panel
 cargo l6ctl --socket /tmp/l6-control.sock heap-counters
 cargo l6ctl --socket /tmp/l6-control.sock midi-config
+cargo l6ctl --socket /tmp/l6-control.sock update-state
 cargo l6ctl --socket /tmp/l6-control.sock button channel.1.mute
 cargo l6ctl --socket /tmp/l6-control.sock down play 500
 cargo l6ctl --socket /tmp/l6-control.sock up play
@@ -261,3 +262,14 @@ MAIN, set `L6_MIDI_TEST_MAIN` to its path and run
 
 `l6ctl --socket PATH knob-parameter-state` reads the L6max 1.10 parameter
 selector and callback slots 0, 2 and 5. The sample is non-atomic.
+
+### L6max update state
+
+`l6ctl --socket PATH update-state` reads the L6max 1.10 startup mode and
+SD status flags as raw `mode` (u32) and `flags` (u8). It checks fingerprints
+of the inspected 1.10 startup, update and SD routines before reading; these
+fingerprints do not identify the whole image or rule out unrelated patches.
+The two values are separate live reads (`atomic: false`). The equivalent Rust
+methods are `ControlClient::update_state` and `OwnedControl::update_state`.
+Mode 1 and flags bits 0 and 3 clear are the existing rejection check; this
+observation alone does not prove that a particular package was rejected.

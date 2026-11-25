@@ -280,6 +280,8 @@ fn execute(
             let counters = crate::heap::counters(qmp, model)?;
             serde_json::to_value(counters).map_err(|error| error.to_string())
         }
+        "update-state" => serde_json::to_value(crate::update_state::update_state(qmp, model)?)
+            .map_err(|error| error.to_string()),
         "midi-config" => serde_json::to_value(crate::midi_config::config(qmp, model)?)
             .map_err(|error| error.to_string()),
         "rtos" => {

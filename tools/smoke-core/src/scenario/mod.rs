@@ -462,9 +462,15 @@ pub enum Action {
     },
     UsbDescriptors,
     UsbStorage,
-    UsbMidi {
+    UsbMidiOpen,
+    UsbMidiBegin,
+    UsbMidiExpectEncoder,
+    UsbMidiPrepareLevel {
         value: u8,
     },
+    UsbMidiSetAlternate,
+    UsbMidiSetTarget,
+    UsbMidiEnd,
     HostMidiRoundTrip,
     MidiProbeBegin,
     MidiProbeSendCc {

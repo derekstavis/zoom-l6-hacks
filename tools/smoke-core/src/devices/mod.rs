@@ -138,9 +138,15 @@ pub enum Operation {
     },
     UsbDescriptors,
     UsbStorage,
-    UsbMidi {
+    UsbMidiOpen,
+    UsbMidiBegin,
+    UsbMidiExpectEncoder,
+    UsbMidiPrepareLevel {
         value: u8,
     },
+    UsbMidiSetAlternate,
+    UsbMidiSetTarget,
+    UsbMidiEnd,
     HostMidiRoundTrip,
     MidiProbeBegin,
     MidiProbeSendCc {
@@ -616,7 +622,7 @@ fn validate_native_midi_capabilities(
                     | crate::Action::HostMidiRoundTrip
                     | crate::Action::UsbDescriptors
                     | crate::Action::UsbStorage
-                    | crate::Action::UsbMidi { .. }
+                    | crate::Action::UsbMidiOpen
                     | crate::Action::UsbSysexBegin
                     | crate::Action::UsbSysexExchange { .. }
                     | crate::Action::UsbSysexEnd
@@ -801,7 +807,7 @@ pub(crate) fn prepare_with_report(
                 s.action,
                 crate::Action::UsbDescriptors
                     | crate::Action::UsbStorage
-                    | crate::Action::UsbMidi { .. }
+                    | crate::Action::UsbMidiOpen
                     | crate::Action::UsbSysexBegin
                     | crate::Action::UsbSysexExchange { .. }
                     | crate::Action::UsbSysexEnd
@@ -871,6 +877,7 @@ pub struct State {
     adaptive_index: usize,
 
     din_usb: Option<midi::DinUsbScope>,
+    usb_midi: Option<midi::UsbMidiScope>,
     panel_keys: Option<PanelKeyScope>,
     saved: Option<(Vec<u8>, usize)>,
     midi: Option<l6max_host::usb::Endpoints>,
@@ -1261,7 +1268,7 @@ mod native_midi_capability_tests {
             crate::Action::HostMidiRoundTrip,
             crate::Action::UsbDescriptors,
             crate::Action::UsbStorage,
-            crate::Action::UsbMidi { value: 1 },
+            crate::Action::UsbMidiOpen,
             crate::Action::UsbSysexBegin,
             crate::Action::DirectUsbMidiRoundTrip {
                 cable: 1,

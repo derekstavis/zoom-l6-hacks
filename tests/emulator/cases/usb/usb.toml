@@ -30,6 +30,9 @@ guest_timeout_ms = 60000
 wall_timeout_s = 300
 
 [[step]]
+action = "usb-midi-open"
+
+[[step]]
 action = "encoder"
 channel = 1
 steps = 4
@@ -38,5 +41,20 @@ steps = 4
 action = "expect-encoder-reports"
 
 [[step]]
-action = "usb-midi"
+action = "usb-midi-begin"
+
+[[step]]
+action = "usb-midi-expect-encoder"
+
+[[step]]
+action = "usb-midi-prepare-level"
 value = 32
+
+[[step]]
+action = "usb-midi-set-alternate"
+
+[[step]]
+action = "usb-midi-set-target"
+
+[[step]]
+action = "usb-midi-end"

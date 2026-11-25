@@ -483,9 +483,27 @@ impl Runner {
                 Action::UsbDescriptors => {
                     return Ok(Progress::Device(devices::Operation::UsbDescriptors));
                 }
-                Action::UsbMidi { value } => {
-                    return Ok(Progress::Device(devices::Operation::UsbMidi { value }));
+                Action::UsbMidiOpen => {
+                    return Ok(Progress::Device(devices::Operation::UsbMidiOpen));
                 }
+                Action::UsbMidiBegin => {
+                    return Ok(Progress::Device(devices::Operation::UsbMidiBegin));
+                }
+                Action::UsbMidiExpectEncoder => {
+                    return Ok(Progress::Device(devices::Operation::UsbMidiExpectEncoder));
+                }
+                Action::UsbMidiPrepareLevel { value } => {
+                    return Ok(Progress::Device(devices::Operation::UsbMidiPrepareLevel {
+                        value,
+                    }));
+                }
+                Action::UsbMidiSetAlternate => {
+                    return Ok(Progress::Device(devices::Operation::UsbMidiSetAlternate));
+                }
+                Action::UsbMidiSetTarget => {
+                    return Ok(Progress::Device(devices::Operation::UsbMidiSetTarget));
+                }
+                Action::UsbMidiEnd => return Ok(Progress::Device(devices::Operation::UsbMidiEnd)),
                 Action::HostMidiConnect => {
                     return Ok(Progress::Device(devices::Operation::HostMidiConnect));
                 }

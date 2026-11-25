@@ -1787,6 +1787,31 @@ fn patched_knob_midi_update_requires_both_ordered_verifications() {
 }
 
 #[test]
+fn usb_midi_requires_retained_ordered_transaction() {
+    let source = include_str!("../../../../tests/emulator/cases/usb/usb.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    for changed in [
+        source.replace("action = \"usb-midi-open\"", "action = \"usb-midi-begin\""),
+        source.replace(
+            "action = \"usb-midi-expect-encoder\"",
+            "action = \"usb-midi-set-target\"",
+        ),
+        source.replace(
+            "action = \"usb-midi-set-alternate\"",
+            "action = \"usb-midi-set-target\"",
+        ),
+        source.replace("action = \"usb-midi-end\"", "action = \"usb-midi-open\""),
+        source.replace("value = 32", "value = 128"),
+        source.replace(
+            "action = \"usb-midi-set-target\"",
+            "action = \"usb-midi-set-target\"\nwall_timeout_s = 30",
+        ),
+    ] {
+        assert!(Scenario::from_text(&changed).is_err());
+    }
+}
+
+#[test]
 fn l6_stock_update_requires_both_boots_and_all_comparisons() {
     let source = include_str!("../../../../tests/emulator/cases/boot/l6-update-stock-install.toml");
     assert!(Scenario::from_text(source).is_ok());

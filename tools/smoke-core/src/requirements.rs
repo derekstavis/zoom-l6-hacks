@@ -240,7 +240,13 @@ pub fn of(action: &Action) -> Requirement {
         Action::SdCard { .. }
         | Action::UsbDescriptors
         | Action::UsbStorage
-        | Action::UsbMidi { .. }
+        | Action::UsbMidiOpen
+        | Action::UsbMidiBegin
+        | Action::UsbMidiExpectEncoder
+        | Action::UsbMidiPrepareLevel { .. }
+        | Action::UsbMidiSetAlternate
+        | Action::UsbMidiSetTarget
+        | Action::UsbMidiEnd
         | Action::HostMidiRoundTrip
         | Action::HostMidiConnect
         | Action::HostMidiBegin

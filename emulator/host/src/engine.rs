@@ -759,6 +759,7 @@ impl Engine {
                 model,
                 engine.management[0].clone(),
                 engine.installer_outcome.clone(),
+                engine.usb_controller(),
             )?);
         }
         // The DIN MIDI bridge is always running, draining the UART socket so
@@ -780,6 +781,13 @@ impl Engine {
         }
         Ok(engine)
     }
+    /// Controller operations use the same host socket and respect bridge ownership.
+    pub fn usb_controller(&self) -> Option<crate::usb::Controller> {
+        self.usb
+            .as_ref()
+            .map(|host| crate::usb::Controller::new(host.clone()))
+    }
+
     /// Connect the USB cable: enables the 3 USB MIDI ports and lets firmware
     /// enumerate. A no-op if already connected.
     pub fn connect_usb(&mut self) -> Result<(), String> {
@@ -788,6 +796,13 @@ impl Engine {
                 .usb
                 .clone()
                 .ok_or("USB is not available for this engine")?;
+            let ownership = usb.ownership();
+            let mut owned = ownership
+                .lock()
+                .map_err(|_| "USB ownership lock poisoned")?;
+            if *owned != crate::usb::UsbOwner::None {
+                return Err("USB is owned by a raw or direct attachment".into());
+            }
             self.midi = Some(
                 crate::usb_midi::MidiBridge::start(
                     usb,
@@ -798,6 +813,7 @@ impl Engine {
                 )
                 .map_err(|e| e.to_string())?,
             );
+            *owned = crate::usb::UsbOwner::Bridge;
         }
         Ok(())
     }
@@ -805,12 +821,28 @@ impl Engine {
     /// ports and tells firmware the device is gone, without tearing down the
     /// inherited socket, so a later `connect_usb` can reconnect in place.
     pub fn disconnect_usb(&mut self) {
+        let Some(usb_host) = self.usb.clone() else {
+            return;
+        };
+        let ownership = usb_host.ownership();
+        let mut owned = ownership
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if matches!(
+            *owned,
+            crate::usb::UsbOwner::Raw
+                | crate::usb::UsbOwner::Direct
+                | crate::usb::UsbOwner::RawDirect
+        ) {
+            return;
+        }
         if let Some(midi) = self.midi.take() {
             midi.disconnect();
         }
         if let Some(usb) = &self.usb {
             let _ = usb.connect(false);
         }
+        *owned = crate::usb::UsbOwner::None;
     }
     pub fn usb_connected(&self) -> bool {
         self.midi.is_some()

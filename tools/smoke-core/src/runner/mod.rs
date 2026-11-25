@@ -769,6 +769,9 @@ impl Runner {
                 Action::KnobDialogReady => {
                     return Ok(Progress::Device(devices::Operation::KnobDialogReady));
                 }
+                Action::KnobDialogGuard => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogGuard));
+                }
                 Action::KnobDialog => {
                     return Ok(Progress::Device(devices::Operation::KnobDialog));
                 }

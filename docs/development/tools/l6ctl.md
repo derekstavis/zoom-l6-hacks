@@ -197,3 +197,7 @@ GUI revisions and out-of-range text pointers return an error.
 `l6ctl --socket PATH recorder-state` reads the revision-guarded L6max 1.10
 recorder window and notification flags. This non-atomic observation does not
 include display pixels and does not by itself prove that the screen rendered.
+
+The first-use knob guard uses an in-process snapshot while its test owns the
+paused guest. The CLI does not offer an atomic version: `knob-popup` and
+`recorder-state` are non-atomic observations and do not acquire pause ownership.

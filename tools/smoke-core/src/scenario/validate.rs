@@ -92,9 +92,11 @@ impl Scenario {
             }
         }
         for (index, step) in value.step.iter().enumerate() {
-            if !matches!(step.action, Action::KnobDialog) {
-                continue;
-            }
+            let expected = match step.action {
+                Action::KnobDialogGuard => "knob-dialog-ready",
+                Action::KnobDialog => "knob-dialog-guard",
+                _ => continue,
+            };
             for model in &value.models {
                 if !step.applies_to(*model) {
                     continue;
@@ -104,11 +106,17 @@ impl Scenario {
                     .rev()
                     .find(|previous| previous.applies_to(*model));
                 if !previous.is_some_and(|previous| {
-                    matches!(previous.action, Action::KnobDialogReady)
+                    let correct = match expected {
+                        "knob-dialog-ready" => matches!(previous.action, Action::KnobDialogReady),
+                        _ => matches!(previous.action, Action::KnobDialogGuard),
+                    };
+                    correct
                         && previous.guest_timeout_ms == step.guest_timeout_ms
                         && previous.wall_timeout_s == step.wall_timeout_s
                 }) {
-                    return Err("knob-dialog requires an immediately preceding knob-dialog-ready with matching deadlines".into());
+                    return Err(format!(
+                        "knob-dialog step requires immediately preceding {expected} with matching deadlines"
+                    ));
                 }
             }
         }

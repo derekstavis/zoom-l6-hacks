@@ -91,14 +91,35 @@ pub(super) fn run_knob_dialog_ready(
     Ok(serde_json::json!({"recorder_ready": true}))
 }
 
-pub(super) fn run_knob_dialog(
+fn guard_rejected(state: &l6max_host::knob_popup::GuardState, window_before: u32) -> bool {
+    state.state == 0 && state.callback == 0 && state.window == window_before
+}
+
+fn paused_observation<T>(
+    stop: impl FnOnce() -> Result<(), String>,
+    read: impl FnOnce() -> Result<T, String>,
+    resume: impl FnOnce() -> Result<(), String>,
+) -> Result<T, String> {
+    stop()?;
+    let result = read();
+    let resumed = resume();
+    match (result, resumed) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(format!("failed to resume QEMU: {error}")),
+        (Err(error), Err(resume_error)) => {
+            Err(format!("{error}; failed to resume QEMU: {resume_error}"))
+        }
+    }
+}
+
+pub(super) fn run_knob_dialog_guard(
     session: &Session,
     options: &Options,
     guest_timeout_ms: u32,
     wall_timeout_s: u64,
 ) -> Result<Value, Box<dyn std::error::Error>> {
     use std::time::Instant;
-
     let main = selected_main_image(options).map_err(std::io::Error::other)?;
     if main.get(0x40c..0x410) != Some(&0x8007eea9u32.to_le_bytes()) {
         return Err("patched startup hook does not reserve popup RAM".into());
@@ -163,6 +184,130 @@ pub(super) fn run_knob_dialog(
             thread::sleep(Duration::from_millis(5));
         }
     };
+    let text_pointers = word(l6max::gui_text_pointers_by_language)?;
+    let original_resources = qmp.read_memory(0, text_pointers + 229 * 4, 12)?;
+    let lengths_table = word(l6max::gui_text_lengths_by_language)?;
+    let original_lengths = qmp.read_memory(0, lengths_table + 229 * 2, 6)?;
+    let mut original_text = Vec::new();
+    for (pointer, capacity) in original_resources
+        .chunks_exact(4)
+        .zip(original_lengths.chunks_exact(2))
+    {
+        let address = u32::from_le_bytes(pointer.try_into().unwrap());
+        let count = (usize::from(u16::from_le_bytes(capacity.try_into()?)) + 1) * 2;
+        original_text.push((address, qmp.read_memory(0, address, count)?));
+    }
+    let capture = |duration: u32, name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
+        let start = inputs.panel.snapshot().guest_ms;
+        let begin = Instant::now();
+        let raw = loop {
+            let data = session.poll()?;
+            let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(start);
+            if elapsed >= duration {
+                break data.display;
+            }
+            if elapsed > guest_timeout_ms || begin.elapsed() > Duration::from_secs(wall_timeout_s) {
+                return Err("knob-dialog display capture exceeded its deadline".into());
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+        let native = image::GrayImage::from_fn(128, 64, |x, y| {
+            let index = ((63 - y as usize) / 8) * 128 + x as usize;
+            image::Luma([if raw[index] & (1 << ((63 - y as usize) % 8)) != 0 {
+                255
+            } else {
+                0
+            }])
+        });
+        if let Some(scene) = name.strip_prefix("window-scene-")
+            && [
+                "high", "freq", "mid", "low", "aux1", "aux2", "efx", "sub-mix", "pan", "level",
+            ]
+            .contains(&scene)
+        {
+            let path = l6max_host::paths::repository_root()
+                .join(KNOB_DIALOG_REFERENCES)
+                .join(format!("{scene}.png"));
+            check_display_reference(&raw, &path, &options.logs, name)
+                .map_err(|error| format!("knob-dialog screen {scene}: {error}"))?;
+        }
+        image::DynamicImage::ImageLuma8(native)
+            .resize(768, 384, image::imageops::FilterType::Nearest)
+            .save(options.logs.join(format!("{name}.png")))?;
+        Ok(raw)
+    };
+    let inputs = session.engine.inputs.as_ref().unwrap();
+    // Check the first-use guard on an actual non-recorder screen before
+    // the dialog has initialized state or claimed its display callback.
+    use firmware_api::l6max::GUI_RECORDER_WINDOW;
+    if u32::from_le_bytes(
+        qmp.read_memory(0, l6max::current_window, 4)?
+            .try_into()
+            .unwrap(),
+    ) != GUI_RECORDER_WINDOW
+    {
+        return Err("knob-dialog test did not start from the recorder screen".into());
+    }
+    if qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)? != 0u32.to_le_bytes()
+        || qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)? != 0u32.to_le_bytes()
+    {
+        return Err(
+            "knob-dialog state or callback was already active before the guard test".into(),
+        );
+    }
+    inputs.main.tap(0, 120)?;
+    let non_recorder_window = wait_window(false)?;
+    capture(100, "knob-dialog-non-recorder-before")?;
+    inputs.knob(0, -1)?;
+    let non_recorder_knob = inputs.panel.snapshot().guest_ms;
+    wait_guest(
+        session,
+        non_recorder_knob,
+        500,
+        guest_timeout_ms,
+        wall_timeout_s,
+    )?;
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let reader = control.knob_popup_reader()?;
+    let observed = paused_observation(
+        || qmp.stop().map_err(|error| error.to_string()),
+        || reader.guard_state(),
+        || qmp.resume().map_err(|error| error.to_string()),
+    )?;
+    let non_recorder_no_dialog = guard_rejected(&observed, non_recorder_window);
+    if !non_recorder_no_dialog {
+        return Err(format!(
+            "knob event opened or changed the dialog outside recorder: state={:02x?}, slot5={:02x?}, window={:#010x}",
+            observed.state.to_le_bytes(), observed.callback.to_le_bytes(), observed.window
+        ).into());
+    }
+    inputs.main.tap(0, 120)?;
+    wait_window(true)?;
+    wait_recorder_controls()?;
+    let non_recorder_guard_passed = true;
+
+    Ok(json!({"non_recorder_first_use_rejected": non_recorder_guard_passed}))
+}
+
+pub(super) fn run_knob_dialog(
+    session: &Session,
+    options: &Options,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    use std::time::Instant;
+
+    let main = selected_main_image(options).map_err(std::io::Error::other)?;
+    if main.get(0x40c..0x410) != Some(&0x8007eea9u32.to_le_bytes()) {
+        return Err("patched startup hook does not reserve popup RAM".into());
+    }
+    let inputs = session.engine.inputs.as_ref().unwrap();
+    let qmp = &session.engine.management[0];
+    let word = |address: u32| -> Result<u32, Box<dyn std::error::Error>> {
+        Ok(u32::from_le_bytes(
+            qmp.read_memory(0, address, 4)?.try_into().unwrap(),
+        ))
+    };
     // MAIN 1.10's parameter selector writes this byte before returning;
     // the corresponding getter at 0x8000b4a8 reads it.
     const SELECTED_PARAMETER_MODE: u32 = 0x8046_2d2c;
@@ -185,19 +330,6 @@ pub(super) fn run_knob_dialog(
             thread::sleep(Duration::from_millis(5));
         }
     };
-    let text_pointers = word(l6max::gui_text_pointers_by_language)?;
-    let original_resources = qmp.read_memory(0, text_pointers + 229 * 4, 12)?;
-    let lengths_table = word(l6max::gui_text_lengths_by_language)?;
-    let original_lengths = qmp.read_memory(0, lengths_table + 229 * 2, 6)?;
-    let mut original_text = Vec::new();
-    for (pointer, capacity) in original_resources
-        .chunks_exact(4)
-        .zip(original_lengths.chunks_exact(2))
-    {
-        let address = u32::from_le_bytes(pointer.try_into().unwrap());
-        let count = (usize::from(u16::from_le_bytes(capacity.try_into()?)) + 1) * 2;
-        original_text.push((address, qmp.read_memory(0, address, count)?));
-    }
     let heap = || -> Result<Vec<u32>, Box<dyn std::error::Error>> {
         Ok(qmp
             .read_memory(0, l6max::xFreeBytesRemaining, 16)?
@@ -277,60 +409,7 @@ pub(super) fn run_knob_dialog(
             _ => format!("{}%", (raw as u32 * 100 + 63) / 127),
         }
     };
-    let inputs = session.engine.inputs.as_ref().unwrap();
-    // Check the first-use guard on an actual non-recorder screen before
-    // the dialog has initialized state or claimed its display callback.
-    use firmware_api::l6max::GUI_RECORDER_WINDOW;
-    if u32::from_le_bytes(
-        qmp.read_memory(0, l6max::current_window, 4)?
-            .try_into()
-            .unwrap(),
-    ) != GUI_RECORDER_WINDOW
-    {
-        return Err("knob-dialog test did not start from the recorder screen".into());
-    }
-    if qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)? != 0u32.to_le_bytes()
-        || qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)? != 0u32.to_le_bytes()
-    {
-        return Err(
-            "knob-dialog state or callback was already active before the guard test".into(),
-        );
-    }
-    inputs.main.tap(0, 120)?;
-    let non_recorder_window = wait_window(false)?;
-    capture(100, "knob-dialog-non-recorder-before")?;
-    inputs.knob(0, -1)?;
-    let non_recorder_knob = inputs.panel.snapshot().guest_ms;
-    wait_guest(
-        session,
-        non_recorder_knob,
-        500,
-        guest_timeout_ms,
-        wall_timeout_s,
-    )?;
-    qmp.stop()?;
-    let non_recorder_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
-    let non_recorder_slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
-    let non_recorder_window_after = u32::from_le_bytes(
-        qmp.read_memory(0, l6max::current_window, 4)?
-            .try_into()
-            .unwrap(),
-    );
-    let non_recorder_no_dialog = non_recorder_state == 0u32.to_le_bytes()
-        && non_recorder_slot5 == 0u32.to_le_bytes()
-        && non_recorder_window_after == non_recorder_window;
-    qmp.resume()?;
-    if !non_recorder_no_dialog {
-        return Err(format!(
-                "knob event opened or changed the dialog outside recorder: state={non_recorder_state:02x?}, slot5={non_recorder_slot5:02x?}, window={non_recorder_window_after:#010x}"
-            )
-            .into());
-    }
-    inputs.main.tap(0, 120)?;
-    wait_window(true)?;
-    wait_recorder_controls()?;
     let non_recorder_guard_passed = true;
-
     let display_callbacks = qmp.read_memory(0, l6max::gui_display_callback_table, 24)?;
     let display_callback_target = u32::from_le_bytes(display_callbacks[20..24].try_into().unwrap());
     let slot0 = u32::from_le_bytes(display_callbacks[0..4].try_into().unwrap());
@@ -1845,5 +1924,69 @@ mod recorder_ready_tests {
         assert!(recorder_controls_visible(&display, &reference));
         display[((63 - 20) / 8) * 128] ^= 1 << ((63 - 20) % 8);
         assert!(!recorder_controls_visible(&display, &reference));
+    }
+}
+
+#[cfg(test)]
+mod paused_guard_tests {
+    use super::{guard_rejected, paused_observation};
+    use l6max_host::knob_popup::GuardState;
+    use std::cell::Cell;
+    #[test]
+    fn guard_requires_unchanged_window_empty_state_and_callback() {
+        let mut state = GuardState {
+            window: 7,
+            state: 0,
+            callback: 0,
+        };
+        assert!(guard_rejected(&state, 7));
+        state.window = 8;
+        assert!(!guard_rejected(&state, 7));
+        state.window = 7;
+        state.state = 1;
+        assert!(!guard_rejected(&state, 7));
+        state.state = 0;
+        state.callback = 1;
+        assert!(!guard_rejected(&state, 7));
+    }
+    #[test]
+    fn resumes_after_success_or_read_failure_and_reports_resume_failure() {
+        let resumed = Cell::new(false);
+        let read = paused_observation(
+            || Ok(()),
+            || Err::<(), _>("read failed".to_owned()),
+            || {
+                resumed.set(true);
+                Ok(())
+            },
+        );
+        assert_eq!(read.unwrap_err(), "read failed");
+        assert!(resumed.get());
+        let both = paused_observation(
+            || Ok(()),
+            || Err::<(), _>("read".to_owned()),
+            || Err("resume".to_owned()),
+        );
+        assert!(
+            both.unwrap_err()
+                .contains("read; failed to resume QEMU: resume")
+        );
+        assert_eq!(
+            paused_observation(|| Ok(()), || Ok(42), || Ok(())).unwrap(),
+            42
+        );
+        let called = Cell::new(false);
+        assert!(
+            paused_observation(
+                || Err("stop".to_owned()),
+                || Ok(()),
+                || {
+                    called.set(true);
+                    Ok(())
+                }
+            )
+            .is_err()
+        );
+        assert!(!called.get());
     }
 }

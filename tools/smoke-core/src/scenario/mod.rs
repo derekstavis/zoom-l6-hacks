@@ -418,6 +418,7 @@ pub enum Action {
     },
     AudioCallbacks,
     KnobDialogReady,
+    KnobDialogGuard,
     KnobDialog,
     /// Turn the channel 1 level knob once on the recorder screen and check
     /// that Knob Dialog shows the new value.

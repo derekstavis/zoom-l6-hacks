@@ -162,8 +162,9 @@ impl State {
             .snapshot()
             .guest_ms;
         let is_ready = matches!(operation, Operation::KnobDialogReady);
+        let is_guard = matches!(operation, Operation::KnobDialogGuard);
         let is_dialog = matches!(operation, Operation::KnobDialog);
-        let shared = if is_dialog {
+        let shared = if is_guard || is_dialog {
             Some(
                 self.knob_dialog_deadline
                     .take()
@@ -172,6 +173,11 @@ impl State {
         } else {
             None
         };
+        if let Some((_, _, _, _, guard_done)) = shared {
+            if guard_done != is_dialog {
+                return Err("knob-dialog steps are out of order".into());
+            }
+        }
         if is_ready {
             self.knob_dialog_deadline = None;
         }
@@ -195,7 +201,7 @@ impl State {
         if started.elapsed() > Duration::from_secs(wall_timeout_s) || elapsed > guest_timeout_ms {
             return Err("device operation exceeded its step deadline".into());
         }
-        if let Some((start, guest_start, guest_budget, wall_budget)) = shared {
+        if let Some((start, guest_start, guest_budget, wall_budget, _)) = shared {
             let now = session
                 .engine
                 .inputs
@@ -209,8 +215,16 @@ impl State {
             }
         }
         if is_ready {
-            self.knob_dialog_deadline =
-                Some((started, guest_start, guest_timeout_ms, wall_timeout_s));
+            self.knob_dialog_deadline = Some((
+                started,
+                guest_start,
+                guest_timeout_ms,
+                wall_timeout_s,
+                false,
+            ));
+        } else if is_guard {
+            let (start, guest_start, guest_budget, wall_budget, _) = shared.unwrap();
+            self.knob_dialog_deadline = Some((start, guest_start, guest_budget, wall_budget, true));
         }
         Ok(result)
     }
@@ -2081,6 +2095,9 @@ impl State {
             }
             Operation::KnobDialogReady => {
                 run_knob_dialog_ready(session, options, guest_timeout_ms, wall_timeout_s)
+            }
+            Operation::KnobDialogGuard => {
+                run_knob_dialog_guard(session, options, guest_timeout_ms, wall_timeout_s)
             }
             Operation::KnobDialog => {
                 run_knob_dialog(session, options, guest_timeout_ms, wall_timeout_s)

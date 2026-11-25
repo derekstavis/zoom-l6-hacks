@@ -205,7 +205,8 @@ fail even if the ring changed by that observation.
 | `l6max-din-mixer-control` | `expect_din_ring_change` | With Mixer Control via MIDI on, set by editor SysEx or a state, verify USB mixer control, stock/patched DIN response, and DIN mute-echo suppression. The USB reference uses the client of a preceding round trip when there is one, else USB cable 1 directly |
 | `usb-storage` | — | Enumerate storage, compare sector zero to the copied card, round-trip its last sector, then create/read/compare/delete a 1,537-byte FAT file through the USB disk |
 | `audio-callbacks` | — | First step only; arm revision-guarded breakpoints before boot and require every model callback |
-| `knob-dialog-ready` | — | Wait for the L6max recorder window, idle notification state and reviewed transport-control pixels before `knob-dialog`; both steps use matching deadlines shared across the pair |
+| `knob-dialog-ready` | — | Wait for the L6max recorder window, idle notification state and reviewed transport-control pixels before `knob-dialog-guard`; the three steps use matching deadlines shared across the sequence |
+| `knob-dialog-guard` | — | Verify first-use rejection outside the recorder screen and return to the recorder; retain a screenshot and read state while QEMU is stopped |
 | `knob-dialog` | — | Patched L6max only; compare all ten parameter scenes with reviewed display images, then verify heap lifetime, busy-aware expiry, display cleanup, widget restoration and exact encoder reports |
 | `knob-popup-open` | `first_steps`, `fallback_steps`, `attempt_guest_ms` | On the L6max recorder screen, try the channel 1 level knob by `first_steps`, then by `fallback_steps` if the popup does not open within `attempt_guest_ms`; retain the initial display and level as evidence |
 | `knob-popup-expect-open` | — | Require the dialog signature, callback and a changed display under the shared popup deadline |

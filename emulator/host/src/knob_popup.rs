@@ -41,6 +41,14 @@ pub struct RecorderState {
     pub notification_active: u8,
 }
 
+/// Read-only guard fields. Coherence requires the caller to stop the guest.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct GuardState {
+    pub window: u32,
+    pub state: u32,
+    pub callback: u32,
+}
+
 fn checked_sdram(address: u32, size: usize) -> Result<u32, String> {
     let end = address
         .checked_add(u32::try_from(size).map_err(|_| "invalid size")?)
@@ -125,6 +133,20 @@ pub struct Reader<'a> {
 }
 
 impl Reader<'_> {
+    /// The caller owns guest pause/resume; reads are coherent only while paused.
+    pub fn guard_state(&self) -> Result<GuardState, String> {
+        let mut read = |address, size| {
+            self.qmp
+                .read_memory(0, address, size)
+                .map_err(|error| error.to_string())
+        };
+        Ok(GuardState {
+            state: read_word(&mut read, l6max::gui_bitmap_table_entry_0)?,
+            callback: read_word(&mut read, l6max::gui_display_callback_table + 20)?,
+            window: read_word(&mut read, l6max::current_window)?,
+        })
+    }
+
     pub fn recorder_state(&self) -> Result<RecorderState, String> {
         let mut read = |address, size| {
             self.qmp

@@ -824,6 +824,9 @@ impl Runner {
                 Action::KnobDialogLevelDemo => {
                     return Ok(Progress::Device(devices::Operation::KnobDialogLevelDemo));
                 }
+                Action::KnobDialogTaskContexts => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogTaskContexts));
+                }
                 Action::KnobDialogActiveOverlay => {
                     return Ok(Progress::Device(
                         devices::Operation::KnobDialogActiveOverlay,

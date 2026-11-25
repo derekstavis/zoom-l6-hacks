@@ -218,7 +218,8 @@ fail even if the ring changed by that observation.
 | `knob-dialog-first-activation` | — | Wait for the display callback to return, then verify first activation and restore the notification semaphore |
 | `knob-dialog-active-display` | — | Turn the knob, capture the active display and preserve its frame and callback pointer |
 | `knob-dialog-level-demo` | — | Capture the bounded level sweep to at least 69% and back to 0% |
-| `knob-dialog-active-overlay` | — | Intermediate grouped step: check active overlay rendering, level demo captures, task contexts, descriptor/heap invariants and bitmap-zero drawing; its individual probes still need decomposition |
+| `knob-dialog-task-contexts` | — | Verify the input hook and display callback run in different FreeRTOS tasks, retaining their task IDs as evidence |
+| `knob-dialog-active-overlay` | — | Intermediate grouped step: check descriptor and heap invariants, active overlay pixels and bitmap-zero drawing; its individual probes still need decomposition |
 | `knob-dialog-locked-update` | — | Verify the dialog consumes and displays a level update while the notification semaphore is held, then restore the lock and check the mailbox |
 | `knob-dialog` | — | Patched L6max only; compare all ten parameter scenes with reviewed display images, then verify heap lifetime, busy-aware expiry, display cleanup, widget restoration and exact encoder reports |
 | `knob-popup-open` | `first_steps`, `fallback_steps`, `attempt_guest_ms` | On the L6max recorder screen, try the channel 1 level knob by `first_steps`, then by `fallback_steps` if the popup does not open within `attempt_guest_ms`; retain the initial display and level as evidence |

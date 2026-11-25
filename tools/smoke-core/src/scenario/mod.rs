@@ -430,6 +430,7 @@ pub enum Action {
     KnobDialogFirstActivation,
     KnobDialogActiveDisplay,
     KnobDialogLevelDemo,
+    KnobDialogTaskContexts,
     KnobDialogActiveOverlay,
     KnobDialogLockedUpdate,
     KnobDialog,

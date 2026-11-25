@@ -669,6 +669,7 @@ pub(super) struct PreflightContext {
     activation_callback: Option<u32>,
     active: Option<ActiveSnapshot>,
     opened: Option<OpenedOverlay>,
+    task_contexts: Option<TaskContexts>,
 }
 
 pub(super) fn begin_preflight(
@@ -803,6 +804,7 @@ pub(super) fn begin_preflight(
         activation_callback: None,
         active: None,
         opened: None,
+        task_contexts: None,
     })
 }
 
@@ -1527,7 +1529,26 @@ pub(super) fn run_level_demo(
     Ok(json!({"level_demo_peak_at_least_percent":69, "level_demo_final_percent":0}))
 }
 
-pub(super) fn run_active_overlay(
+#[derive(Clone, Copy)]
+struct TaskContexts {
+    hook_task: u32,
+    callback_task: u32,
+}
+
+fn verify_distinct_task_contexts(
+    hook_task: u32,
+    callback_task: u32,
+) -> Result<TaskContexts, String> {
+    if hook_task == callback_task {
+        return Err("mixer hook and DisplayCycle2 callback unexpectedly share a task; re-evaluate the atomic mailbox".into());
+    }
+    Ok(TaskContexts {
+        hook_task,
+        callback_task,
+    })
+}
+
+pub(super) fn run_task_contexts(
     session: &Session,
     options: &Options,
     context: &mut PreflightContext,
@@ -1536,6 +1557,133 @@ pub(super) fn run_active_overlay(
 ) -> Result<Value, Box<dyn std::error::Error>> {
     use std::time::Instant;
     if context.next != 9 {
+        return Err("knob-dialog task contexts step is out of order".into());
+    }
+    let inputs = session.engine.inputs.as_ref().unwrap();
+    let qmp = &session.engine.management[0];
+    let capture = |duration: u32, name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
+        let start = inputs.panel.snapshot().guest_ms;
+        let begin = Instant::now();
+        let raw = loop {
+            let data = session.poll()?;
+            let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(start);
+            if elapsed >= duration {
+                break data.display;
+            }
+            if elapsed > guest_timeout_ms || begin.elapsed() > Duration::from_secs(wall_timeout_s) {
+                return Err("knob-dialog display capture exceeded its deadline".into());
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+        let native = image::GrayImage::from_fn(128, 64, |x, y| {
+            let index = ((63 - y as usize) / 8) * 128 + x as usize;
+            image::Luma([if raw[index] & (1 << ((63 - y as usize) % 8)) != 0 {
+                255
+            } else {
+                0
+            }])
+        });
+        if let Some(scene) = name.strip_prefix("window-scene-")
+            && [
+                "high", "freq", "mid", "low", "aux1", "aux2", "efx", "sub-mix", "pan", "level",
+            ]
+            .contains(&scene)
+        {
+            let path = l6max_host::paths::repository_root()
+                .join(KNOB_DIALOG_REFERENCES)
+                .join(format!("{scene}.png"));
+            check_display_reference(&raw, &path, &options.logs, name)
+                .map_err(|error| format!("knob-dialog screen {scene}: {error}"))?;
+        }
+        image::DynamicImage::ImageLuma8(native)
+            .resize(768, 384, image::imageops::FilterType::Nearest)
+            .save(options.logs.join(format!("{name}.png")))?;
+        Ok(raw)
+    };
+    let debugger = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?;
+    let opened = context.opened.as_ref().ok_or("missing active overlay")?;
+    validate_opened_overlay(session, debugger, opened)?;
+    let active_slot5 = opened.callback;
+    // Observe the producer and consumer task contexts directly. The knob
+    // hook runs from the mixer update path; slot 5 runs from DisplayCycle2.
+    // This determines whether the atomic mailbox can be replaced safely.
+    use firmware_api::l6max::pxCurrentTCB;
+    // knob-dialog's call-site hook into `mixer_apply_channel_parameter`
+    // (patches/knob-dialog).
+    const KNOB_CALL_SITE: u32 = 0x8003_6c74;
+    let knob_hook_entry = thumb_bl_target(
+        KNOB_CALL_SITE,
+        qmp.read_memory(0, KNOB_CALL_SITE, 4)?
+            .try_into()
+            .map_err(|_| "patched mixer call is not four bytes")?,
+    )
+    .ok_or("patched mixer dispatcher call is not a Thumb BL")?;
+    let callback_probe_entry = active_slot5 & !1;
+    qmp.stop()?;
+    debugger.breakpoint(knob_hook_entry, true)?;
+    debugger.resume_guest()?;
+    inputs.knob(0, -1)?;
+    let task_probe_deadline = Instant::now() + Duration::from_secs(10);
+    while qmp.query_status()?.running {
+        session.poll()?;
+        if Instant::now() >= task_probe_deadline {
+            return Err("knob hook task-context breakpoint timed out".into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    let hook_pc = debugger.read_register(15)? & !1;
+    if hook_pc != knob_hook_entry {
+        return Err(format!(
+            "task probe stopped at {hook_pc:#010x}, not knob hook {knob_hook_entry:#010x}"
+        )
+        .into());
+    }
+    let hook_task = u32::from_le_bytes(qmp.read_memory(0, pxCurrentTCB, 4)?.try_into().unwrap());
+    debugger.breakpoint(knob_hook_entry, false)?;
+    debugger.breakpoint(callback_probe_entry, true)?;
+    debugger.resume_guest()?;
+
+    let task_probe_deadline = Instant::now() + Duration::from_secs(10);
+    while qmp.query_status()?.running {
+        session.poll()?;
+        if Instant::now() >= task_probe_deadline {
+            let _ = debugger.breakpoint(callback_probe_entry, false);
+            let _ = debugger.resume_guest();
+            return Err("DisplayCycle2 task-context breakpoint timed out".into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    let callback_pc = debugger.read_register(15)? & !1;
+    if callback_pc != callback_probe_entry {
+        return Err(format!(
+            "task probe stopped at {callback_pc:#010x}, not DisplayCycle2 callback"
+        )
+        .into());
+    }
+    let callback_task =
+        u32::from_le_bytes(qmp.read_memory(0, pxCurrentTCB, 4)?.try_into().unwrap());
+    let tasks = verify_distinct_task_contexts(hook_task, callback_task)?;
+    debugger.breakpoint(callback_probe_entry, false)?;
+    debugger.resume_guest()?;
+    capture(150, "window-scene-task-context-probe")?;
+
+    context.task_contexts = Some(tasks);
+    context.next = 10;
+    Ok(json!({"mixer_task":hook_task,"display_task":callback_task,"tasks_differ":true}))
+}
+
+pub(super) fn run_active_overlay(
+    session: &Session,
+    options: &Options,
+    context: &mut PreflightContext,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    use std::time::Instant;
+    if context.next != 10 {
         return Err("knob-dialog active overlay step is out of order".into());
     }
     let main = selected_main_image(options).map_err(std::io::Error::other)?;
@@ -1665,74 +1813,10 @@ pub(super) fn run_active_overlay(
     let opened = context.opened.as_ref().unwrap();
     let active = opened.frame;
     let active_slot5 = opened.callback;
-    // Observe the producer and consumer task contexts directly. The knob
-    // hook runs from the mixer update path; slot 5 runs from DisplayCycle2.
-    // This determines whether the atomic mailbox can be replaced safely.
-    use firmware_api::l6max::pxCurrentTCB;
-    // knob-dialog's call-site hook into `mixer_apply_channel_parameter`
-    // (patches/knob-dialog).
-    const KNOB_CALL_SITE: u32 = 0x8003_6c74;
-    let knob_hook_entry = thumb_bl_target(
-        KNOB_CALL_SITE,
-        qmp.read_memory(0, KNOB_CALL_SITE, 4)?
-            .try_into()
-            .map_err(|_| "patched mixer call is not four bytes")?,
-    )
-    .ok_or("patched mixer dispatcher call is not a Thumb BL")?;
-    let callback_probe_entry = active_slot5 & !1;
-    qmp.stop()?;
-    debugger.breakpoint(knob_hook_entry, true)?;
-    debugger.resume_guest()?;
-    inputs.knob(0, -1)?;
-    let task_probe_deadline = Instant::now() + Duration::from_secs(10);
-    while qmp.query_status()?.running {
-        session.poll()?;
-        if Instant::now() >= task_probe_deadline {
-            return Err("knob hook task-context breakpoint timed out".into());
-        }
-        thread::sleep(Duration::from_millis(5));
-    }
-    let hook_pc = debugger.read_register(15)? & !1;
-    if hook_pc != knob_hook_entry {
-        return Err(format!(
-            "task probe stopped at {hook_pc:#010x}, not knob hook {knob_hook_entry:#010x}"
-        )
-        .into());
-    }
-    let hook_task = u32::from_le_bytes(qmp.read_memory(0, pxCurrentTCB, 4)?.try_into().unwrap());
-    debugger.breakpoint(knob_hook_entry, false)?;
-    debugger.breakpoint(callback_probe_entry, true)?;
-    debugger.resume_guest()?;
-
-    let task_probe_deadline = Instant::now() + Duration::from_secs(10);
-    while qmp.query_status()?.running {
-        session.poll()?;
-        if Instant::now() >= task_probe_deadline {
-            let _ = debugger.breakpoint(callback_probe_entry, false);
-            let _ = debugger.resume_guest();
-            return Err("DisplayCycle2 task-context breakpoint timed out".into());
-        }
-        thread::sleep(Duration::from_millis(5));
-    }
-    let callback_pc = debugger.read_register(15)? & !1;
-    if callback_pc != callback_probe_entry {
-        return Err(format!(
-            "task probe stopped at {callback_pc:#010x}, not DisplayCycle2 callback"
-        )
-        .into());
-    }
-    let callback_task =
-        u32::from_le_bytes(qmp.read_memory(0, pxCurrentTCB, 4)?.try_into().unwrap());
-    if hook_task == callback_task {
-        return Err(
-        "mixer hook and DisplayCycle2 callback unexpectedly share a task; re-evaluate the atomic mailbox"
-            .into(),
-    );
-    }
-    debugger.breakpoint(callback_probe_entry, false)?;
-    debugger.resume_guest()?;
-    capture(150, "window-scene-task-context-probe")?;
-
+    let TaskContexts {
+        hook_task,
+        callback_task,
+    } = context.task_contexts.ok_or("missing task contexts")?;
     if u32::from_le_bytes(
         qmp.read_memory(0, l6max::current_window, 4)?
             .try_into()
@@ -1870,7 +1954,7 @@ pub(super) fn run_active_overlay(
         callback_task,
         refreshed,
     });
-    context.next = 10;
+    context.next = 11;
     Ok(
         json!({"active_overlay":true, "callback":active_slot5, "heap_bytes":state_heap_bytes, "mixer_task":hook_task, "display_task":callback_task}),
     )
@@ -1893,7 +1977,7 @@ pub(super) fn run_locked_value_update(
     wall_timeout_s: u64,
 ) -> Result<Value, Box<dyn std::error::Error>> {
     use std::time::Instant;
-    if context.next != 10 {
+    if context.next != 11 {
         return Err("knob-dialog locked update step is out of order".into());
     }
     let qmp = &session.engine.management[0];
@@ -2027,7 +2111,7 @@ pub(super) fn run_locked_value_update(
     .into());
     }
 
-    context.next = 11;
+    context.next = 12;
     Ok(
         json!({"notification_semaphore_not_required_for_refresh": true,
         "pending_during": pending_during_contention, "pending_after":pending_after_contention,
@@ -2174,7 +2258,7 @@ pub(super) fn run_knob_dialog(
     };
     if context_slot
         .as_ref()
-        .is_none_or(|context| context.next != 11)
+        .is_none_or(|context| context.next != 12)
     {
         return Err("knob-dialog preflight incomplete".into());
     }
@@ -3353,5 +3437,16 @@ mod opened_overlay_tests {
             &5u32.to_le_bytes(),
             3
         ));
+    }
+}
+
+#[cfg(test)]
+mod task_context_tests {
+    use super::verify_distinct_task_contexts;
+    #[test]
+    fn task_contexts_preserve_ids_and_reject_same_task() {
+        let tasks = verify_distinct_task_contexts(0x1000, 0x2000).unwrap();
+        assert_eq!((tasks.hook_task, tasks.callback_task), (0x1000, 0x2000));
+        assert!(verify_distinct_task_contexts(0x1000, 0x1000).is_err());
     }
 }

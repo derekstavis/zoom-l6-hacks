@@ -436,33 +436,115 @@ fn checks(text: &mut String, combination: &Combination, all: &Checks) -> Result<
     Ok(())
 }
 
+/// Expected state for one physical stock slot after selecting EFX mode.
+#[derive(Debug, PartialEq, Eq)]
+struct EffectSlotPlan<'a> {
+    slot_index: usize,
+    expected_effect_type: usize,
+    expected_processor_type: usize,
+    effect: Option<&'a str>,
+    require_output: bool,
+}
+
+fn effect_slot_plan(combination: &Combination) -> Vec<EffectSlotPlan<'_>> {
+    STOCK_EFFECT_SLOTS
+        .iter()
+        .enumerate()
+        .map(|(index, slot)| {
+            let effect = combination
+                .effects
+                .iter()
+                .find(|(assigned, _)| assigned == slot)
+                .map(|(_, effect)| effect.as_str());
+            EffectSlotPlan {
+                slot_index: index,
+                expected_effect_type: index + 1,
+                expected_processor_type: if effect.is_some() { index + 1 } else { 0 },
+                effect,
+                require_output: effect.is_some(),
+            }
+        })
+        .collect()
+}
+
 /// Each stock effect slot, in EFX mode, runs its assigned effect with output,
 /// or its stock effect.
 fn effect_slot_checks(text: &mut String, combination: &Combination) {
     step(text, "action = \"select-mode\"\nmode = \"efx\"");
-    for (index, slot) in STOCK_EFFECT_SLOTS.iter().enumerate() {
-        if index > 0 {
+    for slot in effect_slot_plan(combination) {
+        if slot.slot_index > 0 {
             press(text, "efx-select", 1);
         }
-        let effect = combination
-            .effects
-            .iter()
-            .find(|(assigned, _)| assigned == slot)
-            .map(|(_, effect)| effect);
         let mut body = format!(
             "action = \"effect-replacement-state\"\nwait_for_slot = true\nexpected_effect_type = {}\nexpected_processor_type = {}",
-            index + 1,
-            if effect.is_some() { index + 1 } else { 0 }
+            slot.expected_effect_type, slot.expected_processor_type
         );
-        if let Some(effect) = effect {
+        if let Some(effect) = slot.effect {
             let _ = write!(
                 body,
-                "\nexpected_effect = {effect:?}\nrequire_output = true"
+                "\nexpected_effect = {effect:?}\nrequire_output = {}",
+                slot.require_output
             );
         }
         step(text, &body);
     }
     step(text, "action = \"select-mode\"\nmode = \"level\"");
+}
+
+/// The menu items and ordered patch-specific actions for a combination.
+#[derive(Debug, PartialEq, Eq)]
+struct MenuPlan<'a> {
+    rows: Vec<String>,
+    items: Vec<String>,
+    patches_index: usize,
+    actions: Vec<MenuActionPlan<'a>>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct MenuActionPlan<'a> {
+    index: usize,
+    steps: &'a str,
+    send_midi_with_dump_rom: bool,
+    wait_for_dump_notification: bool,
+}
+
+fn menu_plan<'a>(
+    combination: &Combination,
+    all: &'a Checks,
+    stock_system_items: &[String],
+) -> Result<MenuPlan<'a>, String> {
+    let (rows, items) = menu_rows(combination, all, stock_system_items)?;
+    let patches_index = items
+        .iter()
+        .position(|item| item == "Patches")
+        .ok_or("System menu has no Patches")?;
+    let mut actions = Vec::new();
+    for (name, patch) in &all.order {
+        if !combination.installs(name) {
+            continue;
+        }
+        for action in &patch.menu_action {
+            let index = items
+                .iter()
+                .position(|item| *item == action.item)
+                .ok_or(format!("System menu has no {}", action.item))?;
+            actions.push(MenuActionPlan {
+                index,
+                steps: &action.steps,
+                send_midi_with_dump_rom: items[index] == "Send MIDI State"
+                    && combination.installs("dump-rom"),
+                wait_for_dump_notification: items[index] == "Dump ROM",
+            });
+        }
+    }
+    // Match the previous tuple sort, including its fragment-path tiebreaker.
+    actions.sort_by(|a, b| (a.index, a.steps).cmp(&(b.index, b.steps)));
+    Ok(MenuPlan {
+        rows,
+        items,
+        patches_index,
+        actions,
+    })
 }
 
 /// Open the System menu, expect its items and Patches rows, and run every
@@ -473,7 +555,9 @@ fn menu_checks(
     all: &Checks,
     stock_system_items: &[String],
 ) -> Result<(), String> {
-    let (rows, items) = menu_rows(combination, all, stock_system_items)?;
+    let plan = menu_plan(combination, all, stock_system_items)?;
+    let rows = &plan.rows;
+    let items = &plan.items;
     // Earlier input may have opened a Knob Dialog or notification. Wait for
     // the reviewed home screen to remain visible before opening the menu.
     step(
@@ -516,10 +600,7 @@ fn menu_checks(
     // Open System > Patches and compare its rows as drawn; back in System
     // the cursor stays on Patches. Each item a patch adds comes after
     // Patches, so the actions below move down from there.
-    let patches = items
-        .iter()
-        .position(|item| item == "Patches")
-        .ok_or("System menu has no Patches")?;
+    let patches = plan.patches_index;
     press(text, "recorder-function-3", patches);
     step(
         text,
@@ -545,25 +626,12 @@ fn menu_checks(
         ),
     );
     // Run each item's action in menu order, moving down from Patches.
-    let mut actions: Vec<(usize, &str)> = Vec::new();
-    for (name, patch) in &all.order {
-        if !combination.installs(name) {
-            continue;
-        }
-        for action in &patch.menu_action {
-            let index = items
-                .iter()
-                .position(|item| *item == action.item)
-                .ok_or(format!("System menu has no {}", action.item))?;
-            actions.push((index, &action.steps));
-        }
-    }
-    actions.sort();
     let mut cursor = patches;
-    for (index, steps) in actions {
+    for action in plan.actions {
+        let index = action.index;
         press(text, "recorder-function-3", index - cursor);
         delay(text, 500);
-        if items[index] == "Send MIDI State" && combination.installs("dump-rom") {
+        if action.send_midi_with_dump_rom {
             step(
                 text,
                 "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-patch-menu/system-send-midi-state-10.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 120",
@@ -571,8 +639,8 @@ fn menu_checks(
         }
         press(text, "recorder-function-4", 1);
         cursor = index;
-        include(text, steps);
-        if items[index] == "Dump ROM" {
+        include(text, action.steps);
+        if action.wait_for_dump_notification {
             // The dump's final file appears before its completion popup
             // clears. Do not let the next Down press dismiss that popup.
             step(
@@ -970,6 +1038,75 @@ pub fn generate() -> Result<Vec<GeneratedCase>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn effect_slot_plan_represents_stock_and_assigned_slots() {
+        let combination = Combination {
+            firmware: vec![],
+            sd: vec![],
+            effects: vec![("spring", "plateau".into())],
+        };
+        assert_eq!(
+            effect_slot_plan(&combination),
+            vec![
+                EffectSlotPlan {
+                    slot_index: 0,
+                    expected_effect_type: 1,
+                    expected_processor_type: 0,
+                    effect: None,
+                    require_output: false
+                },
+                EffectSlotPlan {
+                    slot_index: 1,
+                    expected_effect_type: 2,
+                    expected_processor_type: 2,
+                    effect: Some("plateau"),
+                    require_output: true
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn menu_plan_orders_mixed_placements_and_special_actions() {
+        let checks = Checks::load().unwrap();
+        let menu_checks = checks.get("menu-loader").unwrap();
+        let combination = Combination {
+            firmware: vec!["menu-loader".into(), "dump-rom".into()],
+            sd: vec!["knob-dialog".into(), "midi-sync".into()],
+            effects: vec![("spring", "plateau".into())],
+        };
+        let plan = menu_plan(&combination, &checks, &menu_checks.stock_system_items).unwrap();
+        assert!(plan.rows[0].starts_with("patch-loader "));
+        assert_eq!(plan.items[plan.patches_index], "Patches");
+        assert!(
+            plan.rows
+                .iter()
+                .any(|row| row.starts_with("dump-rom ") && !row.ends_with(" (SD)"))
+        );
+        assert!(
+            plan.rows
+                .iter()
+                .any(|row| row.starts_with("midi-sync ") && row.ends_with(" (SD)"))
+        );
+        assert_eq!(plan.actions.len(), 2);
+        let dump = &plan.actions[0];
+        let midi = &plan.actions[1];
+        assert_eq!(plan.items[dump.index], "Dump ROM");
+        assert!(dump.wait_for_dump_notification);
+        assert!(!dump.send_midi_with_dump_rom);
+        assert_eq!(plan.items[midi.index], "Send MIDI State");
+        assert!(midi.send_midi_with_dump_rom);
+        assert!(!midi.wait_for_dump_notification);
+        assert_eq!(
+            dump.steps,
+            "patches/dump-rom/tests/emulator/fragments/dump-files.toml"
+        );
+        assert_eq!(
+            midi.steps,
+            "patches/midi-sync/tests/emulator/fragments/send-midi-state.toml"
+        );
+    }
 
     #[test]
     fn pairwise_covers_every_pair_and_single_every_value() {

@@ -332,7 +332,7 @@
     "suites": [
       "full"
     ],
-    "definition": "8536082ef5a1fc8187e31db0874073d05de1bac753721d753b76db84248180bd"
+    "definition": "56d5906ef629cb6d2d7a972d3cd348f1debf353319d0bda6864365875615694a"
   },
   {
     "case": "host-midi",
@@ -341,7 +341,7 @@
     "suites": [
       "full"
     ],
-    "definition": "ada9a30b7cb3779b573dd58f6d82402f50fe7ce689a2f2d717bca9609c198a3d"
+    "definition": "2f3eb02c81a2b8343582edb280fcf6193fb38dab84abbefc1f8c427903b1a35c"
   },
   {
     "case": "host-midi-sync",

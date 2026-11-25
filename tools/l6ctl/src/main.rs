@@ -1,3 +1,5 @@
+mod midi_cli;
+
 use l6ctl::{ControlClient, Request, RtosKind};
 use l6fw::Model;
 use l6max_host::controls::control_target;
@@ -38,9 +40,12 @@ fn run() -> Result<(), String> {
     let command = args.first().map(String::as_str).unwrap_or("help");
     if matches!(command, "help" | "--help" | "-h") {
         println!(
-            "Usage: l6ctl [--socket PATH] info\n       l6ctl [--socket PATH] rtos heap|tasks|scheduler|objects|all [--pretty]\n       l6ctl [--socket PATH] button NAME|TARGET [--hold-ms MS]\n       l6ctl [--socket PATH] down NAME|TARGET DURATION_MS\n       l6ctl [--socket PATH] up NAME|TARGET\n       l6ctl [--socket PATH] encoder CHANNEL STEPS\n       l6ctl [--socket PATH] analog CHANNEL STEPS\n       l6ctl [--socket PATH] set-analog CHANNEL VALUE\n\nConnects to a running emulator started with --control-socket PATH. Button names use the semantic names documented by l6test; numeric targets 0..53 are also accepted. Encoder channels are one-based. Analog channels are 1..5."
+            "Usage: l6ctl [--socket PATH] info\n       l6ctl [--socket PATH] rtos heap|tasks|scheduler|objects|all [--pretty]\n       l6ctl [--socket PATH] button NAME|TARGET [--hold-ms MS]\n       l6ctl [--socket PATH] down NAME|TARGET DURATION_MS\n       l6ctl [--socket PATH] up NAME|TARGET\n       l6ctl [--socket PATH] encoder CHANNEL STEPS\n       l6ctl [--socket PATH] analog CHANNEL STEPS\n       l6ctl [--socket PATH] set-analog CHANNEL VALUE\n       l6ctl midi listen ENDPOINT [--timeout-ms MS]\n       l6ctl midi send ENDPOINT CHANNEL CONTROLLER VALUE\n\nConnects to a running emulator started with --control-socket PATH. Button names use the semantic names documented by l6test; numeric targets 0..53 are also accepted. Encoder channels are one-based. Analog channels are 1..5."
         );
         return Ok(());
+    }
+    if command == "midi" {
+        return midi_cli::run(&args[1..]).map_err(|error| error.json());
     }
     let socket = socket.ok_or("provide --socket PATH or set L6_CONTROL_SOCKET")?;
     let client = ControlClient::new(&socket);
@@ -188,16 +193,20 @@ fn run() -> Result<(), String> {
 fn main() {
     let mut arguments = env::args().skip(1);
     let mut rtos = false;
+    let mut midi = false;
     while let Some(arg) = arguments.next() {
         if arg == "--socket" {
             arguments.next();
         } else {
             rtos = arg == "rtos";
+            midi = arg == "midi";
             break;
         }
     }
     if let Err(error) = run() {
-        if rtos {
+        if midi {
+            eprintln!("{error}");
+        } else if rtos {
             eprintln!("{}", json!({"schema":1,"error":error}));
         } else {
             eprintln!("l6ctl: {error}");

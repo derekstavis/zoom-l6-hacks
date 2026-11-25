@@ -10,6 +10,7 @@ schemars.workspace = true
 sd-image.workspace = true
 tracing.workspace = true
 l6max-host.workspace = true
+l6ctl = { path = "../l6ctl" }
 l6fw = { workspace = true, features = ["schemars"] }
 firmware-api.workspace = true
 l6patch = { path = "../l6patch" }
@@ -24,12 +25,6 @@ l6max-diagnostics.workspace = true
 libc.workspace = true
 sha2.workspace = true
 aho-corasick = "1.1.5"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-coremidi = "0.9"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-alsa = "0.12"
 
 [lints]
 workspace = true

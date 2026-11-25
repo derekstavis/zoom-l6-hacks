@@ -119,3 +119,42 @@ Only the requested category is collected. Heap and Tasks read the full heap
 arena and are heavier than Scheduler or Objects; scripts should avoid rapid
 polling. Read-only diagnostics run independently of control requests, but
 share the emulator's serialized QEMU management connection.
+
+## MIDI sessions in Rust
+
+`l6ctl::midi::MidiSession` connects to a native CoreMIDI or ALSA endpoint by
+its full name, or to an in-process USB host and cable. Connect before sending
+the input whose MIDI output you want to observe, then retain the session to
+preserve its subscription and pending messages across operations.
+`send_control_change` and `poll_control_change` use a typed control change
+with zero-based MIDI channels; raw byte methods are also available. Native
+MIDI sessions do not require an emulator control socket. Native receive is
+intended for the emulator's endpoints: on CoreMIDI the control-change poller
+accepts complete three-byte messages in one packet and is not a general MIDI
+stream decoder. The direct USB
+transport receives mixer-control replies on cable 1, including when it sends
+on another cable. `release` disconnects subscriptions while preserving the
+endpoint presence observer, when available. The native transport is also available from the CLI without a control socket:
+
+```sh
+cargo l6ctl midi listen "L6max Mixer Control Port (Emulator)" --timeout-ms 30000
+cargo l6ctl midi send "L6max Mixer Control Port (Emulator)" 0 81 100
+```
+
+MIDI channels are zero-based. The listener writes JSON objects, one per line.
+It flushes a `ready` event after subscribing, so a script can wait for that
+event before stimulating the emulator; subsequent `control-change` events
+include `channel`, `controller`, and `value`. The listener exits successfully after the first control change. If no message
+arrives before the wall-clock timeout (default 30 seconds), it exits nonzero.
+Errors are JSON on stderr with `event: "error"`, a `kind` (`timeout`,
+`endpoint-unavailable`, `unsupported`, `transport`, `output`, or
+`invalid-argument`), and a `message`. `send` emits a `sent` event after the native
+backend accepts the message.
+
+The native MIDI integration test requires an available CoreMIDI or ALSA
+sequencer service and is explicitly ignored by the default test run. Run it
+on a host with that service using:
+
+```sh
+cargo test --offline --locked -p l6ctl --test midi -- --ignored
+```

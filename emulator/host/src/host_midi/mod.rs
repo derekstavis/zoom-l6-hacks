@@ -10,6 +10,8 @@
 //!
 //! Adding a platform means implementing [`HostMidi`] in one file and selecting it
 //! below; nothing else in the host crate changes.
+pub mod consumer;
+
 use std::io;
 
 /// Endpoint names for USB MIDI cables 0, 1 and 2, as the firmware's ports are

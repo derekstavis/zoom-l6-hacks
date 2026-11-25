@@ -237,3 +237,6 @@ impl<'a> OwnedControl<'a> {
         freertos::objects(self.main_qmp()?, self.engine.model()).map_err(ControlError::Rejected)
     }
 }
+
+/// Host and direct USB MIDI consumer sessions.
+pub mod midi;

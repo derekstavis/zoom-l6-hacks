@@ -554,7 +554,7 @@ impl State {
             )[1],
         );
         let mut client: Box<dyn crate::host_midi::Client> = if let Some(cable) = direct_cable {
-            Box::new(crate::host_midi::DirectUsbClient::connect(
+            Box::new(l6ctl::midi::MidiSession::connect_direct(
                 session.engine.usb.clone().ok_or("USB host unavailable")?,
                 cable,
             )?)
@@ -837,8 +837,7 @@ impl State {
                 .clone()
                 .ok_or("USB host unavailable for mixer-control reference path")?;
             direct = Some(
-                crate::host_midi::DirectUsbClient::connect(usb, 1)
-                    .map_err(std::io::Error::other)?,
+                l6ctl::midi::MidiSession::connect_direct(usb, 1).map_err(std::io::Error::other)?,
             );
         }
         let mixer: &mut dyn crate::host_midi::Client = match (&mut self.host_midi, &mut direct) {

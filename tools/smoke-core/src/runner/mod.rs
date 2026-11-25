@@ -906,10 +906,24 @@ impl Runner {
                         devices::Operation::KnobDialogFirstActivation,
                     ));
                 }
-                Action::KnobDialogActiveDisplay => {
+                Action::KnobActiveBegin => {
+                    return Ok(Progress::Device(devices::Operation::KnobActiveBegin));
+                }
+                Action::KnobActiveSampleCallbacks => {
                     return Ok(Progress::Device(
-                        devices::Operation::KnobDialogActiveDisplay,
+                        devices::Operation::KnobActiveSampleCallbacks,
                     ));
+                }
+                Action::KnobActiveCheckCallbacks => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobActiveCheckCallbacks,
+                    ));
+                }
+                Action::KnobActiveCheckFrame => {
+                    return Ok(Progress::Device(devices::Operation::KnobActiveCheckFrame));
+                }
+                Action::KnobActiveFinish => {
+                    return Ok(Progress::Device(devices::Operation::KnobActiveFinish));
                 }
                 Action::KnobDialogLevelDemo => {
                     return Ok(Progress::Device(devices::Operation::KnobDialogLevelDemo));

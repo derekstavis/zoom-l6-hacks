@@ -33,7 +33,9 @@ pub use lifecycle::*;
 use midi::*;
 use midi_probe::*;
 use mode_primitives::{
-    embedded_expiry_operations, embedded_invalid_signature_operations,
+    embedded_active_display_operations,
+    embedded_expiry_operations,
+    embedded_invalid_signature_operations,
     embedded_invalid_tag_operations,
     embedded_locked_update_operations,
     embedded_midi_sync_operations,
@@ -316,7 +318,11 @@ pub enum Operation {
     KnobDialogPreflightBackgroundLayer,
     KnobDialogCallbackRace,
     KnobDialogFirstActivation,
-    KnobDialogActiveDisplay,
+    KnobActiveBegin,
+    KnobActiveSampleCallbacks,
+    KnobActiveCheckCallbacks,
+    KnobActiveCheckFrame,
+    KnobActiveFinish,
     KnobDialogLevelDemo,
     KnobDialogTaskContexts,
     KnobOverlayBegin,

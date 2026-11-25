@@ -644,7 +644,11 @@ pub enum Action {
     KnobDialogPreflightBackgroundLayer,
     KnobDialogCallbackRace,
     KnobDialogFirstActivation,
-    KnobDialogActiveDisplay,
+    KnobActiveBegin,
+    KnobActiveSampleCallbacks,
+    KnobActiveCheckCallbacks,
+    KnobActiveCheckFrame,
+    KnobActiveFinish,
     KnobDialogLevelDemo,
     KnobDialogTaskContexts,
     KnobOverlayBegin,
@@ -1473,6 +1477,44 @@ mod locked_update_fragment_tests {
             panic!("expected capture");
         }
         assert!(!valid_locked_update_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+    }
+}
+
+pub(crate) fn valid_active_display_steps(steps: &[&Step]) -> bool {
+    matches!(steps, [begin, input, capture, sample, callbacks, frame, finish]
+        if matches!(begin.action, Action::KnobActiveBegin)
+        && matches!(input.action, Action::EnqueueEncoderNoAck { channel: 1, steps: 3 })
+        && matches!(&capture.action, Action::CaptureDisplay { guest_ms: 500, artifact } if artifact == "knob-dialog-active")
+        && matches!(sample.action, Action::KnobActiveSampleCallbacks)
+        && matches!(callbacks.action, Action::KnobActiveCheckCallbacks)
+        && matches!(frame.action, Action::KnobActiveCheckFrame)
+        && matches!(finish.action, Action::KnobActiveFinish))
+}
+
+#[cfg(test)]
+mod active_display_fragment_tests {
+    use super::*;
+    #[test]
+    fn preserves_encoder_direction_capture_and_assertion_order() {
+        let mut fragment: crate::Fragment = toml::from_str(include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/active-display.toml"
+        ))
+        .unwrap();
+        assert!(valid_active_display_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        if let Action::EnqueueEncoderNoAck { steps, .. } = &mut fragment.step[1].action {
+            *steps = -3;
+        } else {
+            panic!("expected encoder");
+        }
+        assert!(!valid_active_display_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(3, 4);
+        assert!(!valid_active_display_steps(
             &fragment.step.iter().collect::<Vec<_>>()
         ));
     }

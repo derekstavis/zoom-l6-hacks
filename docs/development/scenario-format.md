@@ -268,7 +268,7 @@ message delivered just after the interval.
 | `knob-dialog-preflight-background-layer` | — | Verify first use rejects a changed background layer |
 | `knob-dialog-callback-race` | — | Verify callback-side preflight rejects descriptor drift while retaining the notification semaphore in the owned debugger context |
 | `knob-dialog-first-activation` | — | Wait for the display callback to return, then verify first activation and restore the notification semaphore |
-| `knob-dialog-active-display` | — | Turn the knob, capture the active display and preserve its frame and callback pointer |
+| `knob-active-*` | — | Turn the knob, capture the active display and preserve its frame and callback pointer |
 | `knob-dialog-level-demo` | — | Capture the bounded level sweep to at least 69% and back to 0% |
 | `knob-dialog-task-contexts` | — | Verify the input hook and display callback run in different FreeRTOS tasks, retaining their task IDs as evidence |
 | `knob-overlay-*` | field for descriptor checks | Check the active window, saved descriptor snapshot, resource, background pixels, bitmap and heap against the baseline using the shared overlay fragment |

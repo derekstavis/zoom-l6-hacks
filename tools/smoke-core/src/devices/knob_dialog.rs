@@ -678,6 +678,7 @@ pub(super) struct PreflightContext {
     final_phase: u8,
     overlay_check: Option<OverlayEvidence>,
     overlay_refresh: bool,
+    active_display: Option<ActiveDisplayEvidence>,
     locked_update: Option<LockedUpdate>,
     navigation: Option<l6ctl::NavigationSnapshot>,
     restoration: Option<RestorationEvidence>,
@@ -825,6 +826,7 @@ pub(super) fn begin_preflight(
         final_phase: 0,
         overlay_check: None,
         overlay_refresh: false,
+        active_display: None,
         locked_update: None,
         navigation: None,
         restoration: None,
@@ -1349,88 +1351,84 @@ fn validate_opened_overlay(
     )
 }
 
-pub(super) fn run_active_display(
-    session: &Session,
+struct ActiveDisplayEvidence {
+    slots: Option<[u32; 6]>,
+}
+
+pub(super) fn expecting_active_display(context: &PreflightContext) -> bool {
+    context.active_display.is_some()
+}
+
+pub(super) fn begin_active_display(
     options: &Options,
     context: &mut PreflightContext,
-    baseline: &[u8; 1024],
-    guest_timeout_ms: u32,
-    wall_timeout_s: u64,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    use std::time::Instant;
-    if context.next != 7 {
+    if context.next != 7 || context.active_display.is_some() {
         return Err("knob-dialog active display step is out of order".into());
     }
     let main = selected_main_image(options).map_err(std::io::Error::other)?;
     if main.get(0x40c..0x410) != Some(&0x8007eea9u32.to_le_bytes()) {
         return Err("patched startup hook does not reserve popup RAM".into());
     }
-    let inputs = session.engine.inputs.as_ref().unwrap();
-    let qmp = &session.engine.management[0];
-    let capture = |duration: u32, name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
-        let start = inputs.panel.snapshot().guest_ms;
-        let begin = Instant::now();
-        let raw = loop {
-            let data = session.poll()?;
-            let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(start);
-            if elapsed >= duration {
-                break data.display;
-            }
-            if elapsed > guest_timeout_ms || begin.elapsed() > Duration::from_secs(wall_timeout_s) {
-                return Err("knob-dialog display capture exceeded its deadline".into());
-            }
-            thread::sleep(Duration::from_millis(5));
-        };
-        let native = image::GrayImage::from_fn(128, 64, |x, y| {
-            let index = ((63 - y as usize) / 8) * 128 + x as usize;
-            image::Luma([if raw[index] & (1 << ((63 - y as usize) % 8)) != 0 {
-                255
-            } else {
-                0
-            }])
-        });
-        if let Some(scene) = name.strip_prefix("window-scene-")
-            && [
-                "high", "freq", "mid", "low", "aux1", "aux2", "efx", "sub-mix", "pan", "level",
-            ]
-            .contains(&scene)
-        {
-            let path = l6max_host::paths::repository_root()
-                .join(KNOB_DIALOG_REFERENCES)
-                .join(format!("{scene}.png"));
-            check_display_reference(&raw, &path, &options.logs, name)
-                .map_err(|error| format!("knob-dialog screen {scene}: {error}"))?;
-        }
-        image::DynamicImage::ImageLuma8(native)
-            .resize(768, 384, image::imageops::FilterType::Nearest)
-            .save(options.logs.join(format!("{name}.png")))?;
-        Ok(raw)
-    };
-    inputs.knob(0, -3)?;
-    let active = capture(500, "knob-dialog-active")?;
-    let active_callbacks = qmp.read_memory(0, l6max::gui_display_callback_table, 24)?;
-    let active_slot5 = u32::from_le_bytes(active_callbacks[20..24].try_into().unwrap());
-    if active_slot5 & 1 == 0
-        || u32::from_le_bytes(active_callbacks[0..4].try_into().unwrap()) != 0
-        || u32::from_le_bytes(active_callbacks[8..12].try_into().unwrap()) != 0
-    {
-        return Err(format!(
-        "first knob event did not claim only free callback slot 5; slots0/2/5={:#010x}/{:#010x}/{active_slot5:#010x}",
-        u32::from_le_bytes(active_callbacks[0..4].try_into().unwrap()),
-        u32::from_le_bytes(active_callbacks[8..12].try_into().unwrap()),
-    )
-    .into());
+    context.active_display = Some(ActiveDisplayEvidence { slots: None });
+    Ok(json!({"guarded":true}))
+}
+
+pub(super) fn sample_active_callbacks(
+    session: &Session,
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let slots = control.knob_popup_reader()?.callback_slots()?;
+    context
+        .active_display
+        .as_mut()
+        .ok_or("missing active display scope")?
+        .slots = Some(slots);
+    Ok(json!({"slots":slots}))
+}
+
+pub(super) fn check_active_callbacks(
+    context: &PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let slots = context
+        .active_display
+        .as_ref()
+        .ok_or("missing active display scope")?
+        .slots
+        .ok_or("missing callback snapshot")?;
+    if slots[5] & 1 == 0 || slots[0] != 0 || slots[2] != 0 {
+        return Err(format!("first knob event did not claim only free callback slot 5; slots0/2/5={:#010x}/{:#010x}/{:#010x}",slots[0],slots[2],slots[5]).into());
     }
-    if active == *baseline {
+    Ok(json!({"callback":slots[5]}))
+}
+
+pub(super) fn check_active_frame(
+    frame: &[u8; 1024],
+    baseline: &[u8; 1024],
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if frame == baseline {
         return Err("custom overlay did not change the LCD".into());
     }
+    Ok(json!({"display_changed":true}))
+}
 
+pub(super) fn finish_active_display(
+    context: &mut PreflightContext,
+    frame: [u8; 1024],
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let slots = context
+        .active_display
+        .take()
+        .ok_or("missing active display scope")?
+        .slots
+        .ok_or("missing callback snapshot")?;
     context.opened = Some(OpenedOverlay {
-        frame: active,
-        callback: active_slot5,
+        frame,
+        callback: slots[5],
     });
     context.next = 8;
-    Ok(json!({"display_changed":true, "callback":active_slot5}))
+    Ok(json!({"display_changed":true,"callback":slots[5]}))
 }
 
 pub(super) fn run_level_demo(

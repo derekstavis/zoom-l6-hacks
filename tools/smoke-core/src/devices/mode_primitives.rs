@@ -206,6 +206,45 @@ pub(super) fn embedded_locked_update_operations() -> Result<Vec<(String, Operati
         .collect()
 }
 
+pub(super) fn embedded_active_display_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/active-display.toml"
+    ))
+    .map_err(|error| format!("invalid embedded active display fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_active_display_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded active display fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobActiveBegin => Operation::KnobActiveBegin,
+                crate::Action::KnobActiveSampleCallbacks => Operation::KnobActiveSampleCallbacks,
+                crate::Action::KnobActiveCheckCallbacks => Operation::KnobActiveCheckCallbacks,
+                crate::Action::KnobActiveCheckFrame => Operation::KnobActiveCheckFrame,
+                crate::Action::KnobActiveFinish => Operation::KnobActiveFinish,
+                crate::Action::EnqueueEncoderNoAck { channel, steps } => {
+                    Operation::EnqueueEncoderNoAck {
+                        channel: *channel,
+                        steps: *steps,
+                    }
+                }
+                crate::Action::CaptureDisplay { guest_ms, artifact } => Operation::CaptureDisplay {
+                    guest_ms: *guest_ms,
+                    artifact: artifact.clone(),
+                },
+                _ => return Err("unsupported embedded active display action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
 pub(super) fn embedded_mode_operations() -> Result<Vec<(String, Operation)>, String> {
     let fragment: crate::Fragment = toml::from_str(EMBEDDED_MODE_WALK)
         .map_err(|error| format!("invalid embedded knob mode fragment: {error}"))?;
@@ -777,7 +816,9 @@ impl State {
                 };
                 if self.knob_mode.is_none()
                     && self.knob_dialog_preflight.as_ref().is_some_and(|c| {
-                        expecting_overlay_refresh(c) || expecting_locked_capture(c)
+                        expecting_overlay_refresh(c)
+                            || expecting_locked_capture(c)
+                            || expecting_active_display(c)
                     })
                 {
                     save_captured_display(&capture, &options.logs)?;

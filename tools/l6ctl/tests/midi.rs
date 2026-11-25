@@ -99,6 +99,79 @@ fn native_listener_subscribes_before_stimulus_and_cleans_up() {
         assert!(wait(&mut child).success());
     }
 
+    // A single sync command keeps its subscription through drain, request,
+    // and a coalesced/running-status response plus a separate message.
+    let mut child = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .env_remove("L6_CONTROL_SOCKET")
+        .args([
+            "midi",
+            "sync",
+            &endpoint,
+            "--count",
+            "4",
+            "--quiet-ms",
+            "10",
+            "--timeout-ms",
+            "3000",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            if tx.send(line.unwrap()).is_err() {
+                break;
+            }
+        }
+    });
+    let mut child = Guard(child);
+    assert_eq!(event(&rx)["event"], "ready");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut device_stream = l6max_host::usb_midi::Encoder::default();
+    loop {
+        let messages = ports
+            .read(16)
+            .unwrap()
+            .into_iter()
+            .flat_map(|(_, bytes)| {
+                l6max_host::usb_midi::decode(&device_stream.push(0, &bytes)).unwrap()
+            })
+            .collect::<Vec<_>>();
+        if messages.iter().any(|(_, bytes)| bytes == &[0xb0, 127, 127]) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "sync request did not reach endpoint"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    ports.write(0, &[0xb0, 81, 45, 81, 46, 81, 47]).unwrap();
+    ports.write(0, &[0xb0, 81, 48]).unwrap();
+    for expected in [45, 46, 47, 48] {
+        let line = match rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(line) => line,
+            Err(error) => {
+                use std::io::Read;
+                let mut stderr = String::new();
+                child
+                    .0
+                    .stderr
+                    .take()
+                    .unwrap()
+                    .read_to_string(&mut stderr)
+                    .unwrap();
+                panic!("event {expected}: {error}; stderr={stderr}");
+            }
+        };
+        let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["value"], expected);
+    }
+    assert!(wait(&mut child).success());
+
     // An interrupted subscriber must release its native resources as well.
     let (mut interrupted, rx) = start(&endpoint, "3000");
     assert_eq!(event(&rx)["event"], "ready");
@@ -135,12 +208,15 @@ fn native_listener_subscribes_before_stimulus_and_cleans_up() {
     assert_eq!(sent["event"], "sent");
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        if ports
+        let messages = ports
             .read(16)
             .unwrap()
-            .iter()
-            .any(|(_, bytes)| bytes == &[0xb0, 81, 55])
-        {
+            .into_iter()
+            .flat_map(|(_, bytes)| {
+                l6max_host::usb_midi::decode(&device_stream.push(0, &bytes)).unwrap()
+            })
+            .collect::<Vec<_>>();
+        if messages.iter().any(|(_, bytes)| bytes == &[0xb0, 81, 55]) {
             break;
         }
         assert!(

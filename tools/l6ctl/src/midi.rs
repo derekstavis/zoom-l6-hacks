@@ -11,6 +11,13 @@ pub use l6max_host::host_midi::consumer::ControlChange;
 /// An active consumer with its own subscription and pending receive queue.
 pub struct MidiSession {
     client: Box<dyn consumer::Client>,
+    receive_mode: Option<ReceiveMode>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReceiveMode {
+    Control,
+    Bytes,
 }
 
 impl MidiSession {
@@ -18,6 +25,7 @@ impl MidiSession {
     pub fn connect_native(endpoint: &str) -> Result<Self, String> {
         Ok(Self {
             client: consumer::connect(endpoint)?,
+            receive_mode: None,
         })
     }
 
@@ -25,7 +33,16 @@ impl MidiSession {
     pub fn connect_direct(usb: Arc<UsbHost>, cable: u8) -> Result<Self, String> {
         Ok(Self {
             client: Box::new(consumer::DirectUsbClient::connect(usb, cable)?),
+            receive_mode: None,
         })
+    }
+
+    fn select_receive_mode(&mut self, mode: ReceiveMode) -> Result<(), String> {
+        if self.receive_mode.is_some_and(|previous| previous != mode) {
+            return Err("cannot mix raw MIDI bytes and control observations in one session".into());
+        }
+        self.receive_mode = Some(mode);
+        Ok(())
     }
 
     pub fn send_control_change(&mut self, message: ControlChange) -> Result<(), String> {
@@ -33,6 +50,7 @@ impl MidiSession {
     }
 
     pub fn poll_control_change(&mut self) -> Result<Option<ControlChange>, String> {
+        self.select_receive_mode(ReceiveMode::Control)?;
         self.client
             .poll_control_change()?
             .map(ControlChange::from_bytes)
@@ -43,6 +61,7 @@ impl MidiSession {
     /// state checks. On ALSA this also reflects other control-shaped events;
     /// use `poll_control_change` when strict CC filtering is required.
     pub fn poll_control_observation(&mut self) -> Result<Option<[u8; 3]>, String> {
+        self.select_receive_mode(ReceiveMode::Control)?;
         self.client.poll()
     }
 
@@ -51,6 +70,7 @@ impl MidiSession {
     }
 
     pub fn poll_bytes(&mut self) -> Result<Option<Vec<u8>>, String> {
+        self.select_receive_mode(ReceiveMode::Bytes)?;
         self.client.poll_bytes()
     }
 
@@ -71,10 +91,11 @@ impl consumer::Client for MidiSession {
     }
 
     fn poll(&mut self) -> Result<Option<[u8; 3]>, String> {
-        self.client.poll()
+        self.poll_control_observation()
     }
 
     fn poll_control_change(&mut self) -> Result<Option<[u8; 3]>, String> {
+        self.select_receive_mode(ReceiveMode::Control)?;
         self.client.poll_control_change()
     }
 
@@ -83,7 +104,7 @@ impl consumer::Client for MidiSession {
     }
 
     fn poll_bytes(&mut self) -> Result<Option<Vec<u8>>, String> {
-        self.client.poll_bytes()
+        MidiSession::poll_bytes(self)
     }
 
     fn release(&mut self) {
@@ -133,6 +154,7 @@ mod tests {
         }));
         let mut session = MidiSession {
             client: Box::new(FakeClient(state.clone())),
+            receive_mode: None,
         };
         let first = session.poll_control_change().unwrap().unwrap();
         session.send_control_change(first).unwrap();
@@ -159,6 +181,7 @@ mod tests {
         }
         let mut session = MidiSession {
             client: Box::new(StrictClient),
+            receive_mode: None,
         };
         assert_eq!(
             session.poll_control_change().unwrap().unwrap().controller,
@@ -168,6 +191,41 @@ mod tests {
             session.poll_control_observation().unwrap_err(),
             "legacy path called"
         );
+    }
+
+    #[test]
+    fn receive_modes_reject_mixing_before_consuming_more_data() {
+        let state = Rc::new(RefCell::new(FakeState {
+            incoming: [[0xb0, 81, 9], [0xf0, 1, 0xf7]].into(),
+            ..Default::default()
+        }));
+        let mut control = MidiSession {
+            client: Box::new(FakeClient(state.clone())),
+            receive_mode: None,
+        };
+        assert_eq!(
+            control.poll_control_change().unwrap().unwrap().controller,
+            81
+        );
+        assert!(control.poll_bytes().unwrap_err().contains("cannot mix"));
+        assert_eq!(state.borrow().incoming.front(), Some(&[0xf0, 1, 0xf7]));
+
+        let state = Rc::new(RefCell::new(FakeState {
+            incoming: [[0xb0, 81, 9], [0xf0, 1, 0xf7]].into(),
+            ..Default::default()
+        }));
+        let mut bytes = MidiSession {
+            client: Box::new(FakeClient(state.clone())),
+            receive_mode: None,
+        };
+        assert_eq!(bytes.poll_bytes().unwrap().unwrap(), vec![0xb0, 81, 9]);
+        assert!(
+            bytes
+                .poll_control_change()
+                .unwrap_err()
+                .contains("cannot mix")
+        );
+        assert_eq!(state.borrow().incoming.front(), Some(&[0xf0, 1, 0xf7]));
     }
 
     #[test]

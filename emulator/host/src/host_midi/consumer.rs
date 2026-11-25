@@ -30,6 +30,35 @@ impl ControlChange {
     }
 }
 
+/// Decode complete Control Change messages from arbitrary MIDI byte chunks.
+/// The shared USB-MIDI stream parser preserves running status, fragmented
+/// messages and interleaved realtime bytes; USB framing stays internal here.
+#[cfg(any(target_os = "macos", test))]
+#[derive(Default)]
+struct ControlChangeDecoder {
+    encoder: crate::usb_midi::Encoder,
+    pending: std::collections::VecDeque<[u8; 3]>,
+}
+
+#[cfg(any(target_os = "macos", test))]
+impl ControlChangeDecoder {
+    fn push(&mut self, bytes: &[u8]) {
+        let packets = self.encoder.push(0, bytes);
+        // The encoder emits complete four-byte packets.
+        for (_, message) in
+            crate::usb_midi::decode(&packets).expect("encoder emitted complete packets")
+        {
+            if let [status @ 0xb0..=0xbf, first, second] = message[..] {
+                self.pending.push_back([status, first, second]);
+            }
+        }
+    }
+
+    fn pop(&mut self) -> Option<[u8; 3]> {
+        self.pending.pop_front()
+    }
+}
+
 pub trait Client {
     fn send(&mut self, bytes: &[u8]) -> Result<(), String>;
     fn poll(&mut self) -> Result<Option<[u8; 3]>, String>;
@@ -57,11 +86,17 @@ pub trait Client {
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use super::Client;
+    use super::{Client, ControlChangeDecoder};
     use coremidi::{
         Client as CoreMidi, Destination, Destinations, InputPort, OutputPort, PacketBuffer, Source,
     };
     use std::sync::mpsc::{self, Receiver};
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum ReceiveMode {
+        Control,
+        Bytes,
+    }
 
     pub struct NativeClient {
         _client: CoreMidi,
@@ -70,6 +105,8 @@ mod platform {
         source: Source,
         destination: Destination,
         received: Receiver<Vec<u8>>,
+        control_changes: ControlChangeDecoder,
+        receive_mode: Option<ReceiveMode>,
         endpoint: String,
     }
 
@@ -84,6 +121,16 @@ mod platform {
     }
 
     impl NativeClient {
+        fn select_receive_mode(&mut self, mode: ReceiveMode) -> Result<(), String> {
+            if self.receive_mode.is_some_and(|previous| previous != mode) {
+                return Err(
+                    "cannot mix raw MIDI bytes and control observations in one session".into(),
+                );
+            }
+            self.receive_mode = Some(mode);
+            Ok(())
+        }
+
         pub fn connect(name: &str) -> Result<Self, String> {
             let source = Source::from_name(name).ok_or("missing native MIDI source")?;
             let destination = Destinations
@@ -109,6 +156,8 @@ mod platform {
                 source,
                 destination,
                 received,
+                control_changes: ControlChangeDecoder::default(),
+                receive_mode: None,
                 endpoint: name.to_owned(),
             })
         }
@@ -121,9 +170,17 @@ mod platform {
                 .map_err(status)
         }
         fn poll(&mut self) -> Result<Option<[u8; 3]>, String> {
+            self.poll_control_change()
+        }
+        fn poll_control_change(&mut self) -> Result<Option<[u8; 3]>, String> {
+            self.select_receive_mode(ReceiveMode::Control)?;
+            if let Some(message) = self.control_changes.pop() {
+                return Ok(Some(message));
+            }
             while let Ok(bytes) = self.received.try_recv() {
-                if let [status @ 0xb0..=0xbf, first, second] = bytes[..] {
-                    return Ok(Some([status, first, second]));
+                self.control_changes.push(&bytes);
+                if let Some(message) = self.control_changes.pop() {
+                    return Ok(Some(message));
                 }
             }
             Ok(None)
@@ -134,6 +191,7 @@ mod platform {
                 .map_err(status)
         }
         fn poll_bytes(&mut self) -> Result<Option<Vec<u8>>, String> {
+            self.select_receive_mode(ReceiveMode::Bytes)?;
             Ok(self.received.try_recv().ok())
         }
         fn release(&mut self) {
@@ -429,5 +487,32 @@ impl Client for DirectUsbClient {
             }
         }
         Ok(self.pending.pop_front())
+    }
+}
+
+#[cfg(test)]
+mod decoder_tests {
+    use super::ControlChangeDecoder;
+
+    #[test]
+    fn decodes_coalesced_and_fragmented_running_status() {
+        let mut decoder = ControlChangeDecoder::default();
+        decoder.push(&[0xb0, 81]);
+        assert_eq!(decoder.pop(), None);
+        decoder.push(&[1, 82, 2, 0xb1, 83, 3]);
+        assert_eq!(decoder.pop(), Some([0xb0, 81, 1]));
+        assert_eq!(decoder.pop(), Some([0xb0, 82, 2]));
+        assert_eq!(decoder.pop(), Some([0xb1, 83, 3]));
+        assert_eq!(decoder.pop(), None);
+    }
+
+    #[test]
+    fn ignores_other_messages_and_preserves_realtime_interleaving() {
+        let mut decoder = ControlChangeDecoder::default();
+        decoder.push(&[0x90, 60, 100, 0xb0, 81, 0xf8]);
+        decoder.push(&[42, 0xf0, 1, 2, 0xf7, 0xb2, 4, 5]);
+        assert_eq!(decoder.pop(), Some([0xb0, 81, 42]));
+        assert_eq!(decoder.pop(), Some([0xb2, 4, 5]));
+        assert_eq!(decoder.pop(), None);
     }
 }

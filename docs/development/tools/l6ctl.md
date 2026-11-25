@@ -165,5 +165,22 @@ legacy counting semantics: on ALSA it can synthesize control-shaped bytes for
 other control events and can hide ALSA input errors. It is an observation of
 the legacy client, not a raw MIDI byte stream.
 
-The current CLI listener exits after one strict Control Change; it cannot
-collect a MIDI-sync response as a single CLI session.
+For a MIDI-sync state response, use one retained native session:
+
+```sh
+cargo l6ctl midi sync "L6max Mixer Control Port (Emulator)" --count 94 --quiet-ms 500 --timeout-ms 30000
+```
+
+`sync` drains strict Control Changes until the declared wall-time quiet
+interval, emits `ready`, sends channel-0 CC 127 with value 127, then emits one
+JSON `control-change` per reply until the requested count. The timeout is a
+wall-clock bound across both phases. A caller supplies the expected count;
+this command does not infer L6 firmware's configurable channel or CC map.
+A session must choose control observations or raw byte reception; attempting to
+mix them returns an error. Sending bytes is independent of that choice.
+On CoreMIDI both strict and legacy control polling now decode coalesced
+messages, so legacy counting can observe CCs that it previously dropped.
+On CoreMIDI the strict listener handles coalesced messages, running status,
+and messages fragmented across delivered byte chunks. CoreMIDI may itself
+omit bytes sent as incomplete independent packets; omitted bytes cannot be
+recovered by the decoder.

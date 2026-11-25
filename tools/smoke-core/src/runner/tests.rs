@@ -1305,7 +1305,10 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
         include_str!(
             "../../../../patches/knob-dialog/tests/emulator/fragments/overlay-invariants.toml"
         ),
-        "\n[[step]]\naction='knob-dialog-bitmap-zero'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-active-overlay'\nguest_timeout_ms=180000\nwall_timeout_s=600\n"
+        "\n[[step]]\naction='knob-dialog-bitmap-zero'\nguest_timeout_ms=180000\nwall_timeout_s=600\n",
+        include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/refreshed-overlay.toml"
+        )
     );
     let locked = "[[step]]\naction='knob-dialog-locked-update'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let tags =

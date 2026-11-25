@@ -661,7 +661,10 @@ pub enum Action {
     KnobOverlayCheckHeap,
     KnobOverlayFinish,
     KnobDialogBitmapZero,
-    KnobDialogActiveOverlay,
+    KnobOverlayRefreshBegin,
+    KnobOverlayRefreshValue,
+    KnobOverlayRefreshPixels,
+    KnobOverlayRefreshFinish,
     KnobDialogLockedUpdate,
     KnobDialogModeBegin {
         scene: String,
@@ -1386,6 +1389,42 @@ mod overlay_fragment_tests {
         fragment.step.swap(3, 4);
         fragment.step.pop();
         assert!(!valid_overlay_invariant_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+    }
+}
+
+pub(crate) fn valid_refreshed_overlay_steps(steps: &[&Step]) -> bool {
+    matches!(steps, [begin, value, capture, pixels, finish]
+        if matches!(begin.action, Action::KnobOverlayRefreshBegin)
+        && matches!(value.action, Action::KnobOverlayRefreshValue)
+        && matches!(&capture.action, Action::CaptureDisplay { guest_ms: 500, artifact } if artifact == "window-scene-refreshed")
+        && matches!(pixels.action, Action::KnobOverlayRefreshPixels)
+        && matches!(finish.action, Action::KnobOverlayRefreshFinish))
+}
+
+#[cfg(test)]
+mod refreshed_overlay_fragment_tests {
+    use super::*;
+    #[test]
+    fn rejects_altered_duration_and_missing_pixel_check() {
+        let mut fragment: crate::Fragment = toml::from_str(include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/refreshed-overlay.toml"
+        ))
+        .unwrap();
+        assert!(valid_refreshed_overlay_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        if let Action::CaptureDisplay { guest_ms, .. } = &mut fragment.step[2].action {
+            *guest_ms = 499;
+        } else {
+            panic!("expected capture");
+        }
+        assert!(!valid_refreshed_overlay_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.remove(3);
+        assert!(!valid_refreshed_overlay_steps(
             &fragment.step.iter().collect::<Vec<_>>()
         ));
     }

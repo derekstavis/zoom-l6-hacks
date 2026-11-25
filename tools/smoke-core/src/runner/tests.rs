@@ -1527,6 +1527,25 @@ fn synthetic_valid_handoff_requires_all_semantic_checks() {
 }
 
 #[test]
+fn stock_checksum_rejection_requires_complete_observation() {
+    let source =
+        include_str!("../../../../tests/emulator/cases/boot/l6max-update-stock-bad-checksum.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    for changed in [
+        source.replace("guest_ms = 40000", "guest_ms = 1"),
+        source.replace("mode = 1", "mode = 6"),
+        source.replace("flags_mask = 9", "flags_mask = 1"),
+        source.replace(
+            "action = \"expect-update-marker-absent\"",
+            "action = \"lifecycle-stop\"",
+        ),
+        source.replace("models = [\"l6max\"]", "models = [\"l6\"]"),
+    ] {
+        assert!(Scenario::from_text(&changed).is_err());
+    }
+}
+
+#[test]
 fn l6_patched_update_requires_full_terminal_verification() {
     let source = include_str!("../../../../tests/emulator/cases/boot/l6-update-patched-midi.toml");
     assert!(Scenario::from_text(source).is_ok());

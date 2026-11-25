@@ -234,7 +234,7 @@ impl Scenario {
                         return Err("post-update MIDI verification needs the original guest and wall budgets".into());
                     }
                 }
-                UpdateFixture::BadChecksum => {
+                UpdateFixture::BadChecksum | UpdateFixture::BadChecksumStock => {
                     if value.update_goal.is_some() {
                         return Err("bad-checksum fixture has no install goal".into());
                     }
@@ -449,7 +449,7 @@ impl Scenario {
                     value.step.last().map(|s| &s.action),
                     Some(Action::ExpectUpdateMarkerAbsent)
                 ),
-                UpdateFixture::BadChecksum => matches!(
+                UpdateFixture::BadChecksum | UpdateFixture::BadChecksumStock => matches!(
                     value.step.last().map(|s| &s.action),
                     Some(Action::ExpectUpdateMarkerAbsent)
                 ),

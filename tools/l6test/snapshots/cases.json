@@ -836,6 +836,15 @@
     "definition": "1591b056d26bcd2ec1f4cd85fdff8d72546df6924ac6b4a7e6df8a36f11c7e52"
   },
   {
+    "case": "l6max-update-stock-bad-checksum",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "2a5d989a7052dddf9160e8488e1ac93ddaac8aac3de8273ca00d517baac6bd95"
+  },
+  {
     "case": "l6max-update-valid-handoff",
     "model": "l6max",
     "backend": "headless",

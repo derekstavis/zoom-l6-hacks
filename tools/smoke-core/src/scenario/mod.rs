@@ -60,6 +60,7 @@ pub enum MidiProbePort {
 #[serde(rename_all = "kebab-case")]
 pub enum UpdateFixture {
     BadChecksum,
+    BadChecksumStock,
     L6Stock,
     L6PatchedMidi,
     SyntheticValid,

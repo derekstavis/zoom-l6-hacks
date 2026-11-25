@@ -274,7 +274,7 @@ message delivered just after the interval.
 | `knob-overlay-*` | field for descriptor checks | Check the active window, saved descriptor snapshot, resource, background pixels, bitmap and heap against the baseline using the shared overlay fragment |
 | `knob-dialog-bitmap-zero` | — | Verify bitmap ID 0 safely short-circuits an injected display-task draw |
 | `knob-overlay-refresh-*` | — | Check the rendered value and stable overlay pixels after the bitmap probe |
-| `knob-dialog-locked-update` | — | Verify the dialog consumes and displays a level update while the notification semaphore is held, then restore the lock and check the mailbox |
+| `knob-lock-*` | — | Verify the dialog consumes and displays a level update while the notification semaphore is held, then restore the lock and check the mailbox |
 | `knob-dialog-mode-begin` / `knob-dialog-mode-end` | `scene` on begin | Scope each declared recorder scene inside the owned debugger transaction and its overall deadline. The subsequent Pan sweep requires the final declared parameter mode to be 8. |
 | `enqueue-tap` / `wait-input-applied` | `target`, `hold_ms` on enqueue | Enqueue a tap and wait for one aggregate APPLIED counter increment on the routed input channel, with a 10-second wall deadline. An increment is not proof of which client caused it. |
 | `wait-knob-parameter-mode` | `mode` | Wait for the guarded parameter selector with its 10,000-guest-ms / 180-second wall caps. |

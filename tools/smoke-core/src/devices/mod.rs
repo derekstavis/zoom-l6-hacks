@@ -35,6 +35,7 @@ use midi_probe::*;
 use mode_primitives::{
     embedded_expiry_operations, embedded_invalid_signature_operations,
     embedded_invalid_tag_operations,
+    embedded_locked_update_operations,
     embedded_midi_sync_operations,
     embedded_mode_operations,
     embedded_navigation_operations,
@@ -336,7 +337,15 @@ pub enum Operation {
     KnobOverlayRefreshValue,
     KnobOverlayRefreshPixels,
     KnobOverlayRefreshFinish,
-    KnobDialogLockedUpdate,
+    KnobLockAcquire,
+    KnobLockTrigger {
+        delta: i32,
+    },
+    KnobLockWait,
+    KnobLockSample,
+    KnobLockRestore,
+    KnobLockAssert,
+    KnobLockFinish,
     KnobDialogModeBegin {
         scene: String,
     },

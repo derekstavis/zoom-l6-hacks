@@ -678,6 +678,7 @@ pub(super) struct PreflightContext {
     final_phase: u8,
     overlay_check: Option<OverlayEvidence>,
     overlay_refresh: bool,
+    locked_update: Option<LockedUpdate>,
     navigation: Option<l6ctl::NavigationSnapshot>,
     restoration: Option<RestorationEvidence>,
     pending_notification: Option<PendingNotification>,
@@ -824,6 +825,7 @@ pub(super) fn begin_preflight(
         final_phase: 0,
         overlay_check: None,
         overlay_refresh: false,
+        locked_update: None,
         navigation: None,
         restoration: None,
         pending_notification: None,
@@ -2138,157 +2140,236 @@ fn locked_update_ready(pending: &[u8], displayed: Option<&str>, raw: u8) -> bool
             .is_some_and(|value| knob_display_matches(9, &locked_level_expected(raw), value))
 }
 
-pub(super) fn run_locked_value_update(
+struct LockedUpdate {
+    count: Vec<u8>,
+    guest_start: Option<u32>,
+    wall_start: Option<Instant>,
+    sample: Option<LockedSample>,
+    capture_ready: bool,
+}
+struct LockedSample {
+    pending: u8,
+    lock_held: bool,
+    text: String,
+    raw: u8,
+}
+
+pub(super) fn expecting_locked_capture(context: &PreflightContext) -> bool {
+    context
+        .locked_update
+        .as_ref()
+        .is_some_and(|v| v.capture_ready)
+}
+
+pub(super) fn acquire_locked_update(
     session: &Session,
-    options: &Options,
     context: &mut PreflightContext,
-    guest_timeout_ms: u32,
-    wall_timeout_s: u64,
+    reader: &l6max_host::knob_popup::OverlayReader,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    use std::time::Instant;
-    if context.next != 13 {
+    if context.next != 13 || context.locked_update.is_some() {
         return Err("knob-dialog locked update step is out of order".into());
     }
     let qmp = &session.engine.management[0];
-    let inputs = session.engine.inputs.as_ref().unwrap();
-    let notification_semaphore = context.notification_semaphore;
-    let text_table = context.text_table;
-    let state = l6max::gui_bitmap_table_entry_0;
     let debugger = context
         .debugger
         .as_mut()
         .ok_or("missing knob-dialog debugger")?;
-    let capture = |duration: u32, name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
-        let start = inputs.panel.snapshot().guest_ms;
-        let begin = Instant::now();
-        let raw = loop {
-            let data = session.poll()?;
-            let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(start);
-            if elapsed >= duration {
-                break data.display;
-            }
-            if elapsed > guest_timeout_ms || begin.elapsed() > Duration::from_secs(wall_timeout_s) {
-                return Err("knob-dialog display capture exceeded its deadline".into());
-            }
-            thread::sleep(Duration::from_millis(5));
-        };
-        let native = image::GrayImage::from_fn(128, 64, |x, y| {
-            let index = ((63 - y as usize) / 8) * 128 + x as usize;
-            image::Luma([if raw[index] & (1 << ((63 - y as usize) % 8)) != 0 {
-                255
-            } else {
-                0
-            }])
-        });
-        if let Some(scene) = name.strip_prefix("window-scene-")
-            && [
-                "high", "freq", "mid", "low", "aux1", "aux2", "efx", "sub-mix", "pan", "level",
-            ]
-            .contains(&scene)
-        {
-            let path = l6max_host::paths::repository_root()
-                .join(KNOB_DIALOG_REFERENCES)
-                .join(format!("{scene}.png"));
-            check_display_reference(&raw, &path, &options.logs, name)
-                .map_err(|error| format!("knob-dialog screen {scene}: {error}"))?;
-        }
-        image::DynamicImage::ImageLuma8(native)
-            .resize(768, 384, image::imageops::FilterType::Nearest)
-            .save(options.logs.join(format!("{name}.png")))?;
-        Ok(raw)
-    };
-    let decode_text = |address: u32| -> Result<String, Box<dyn std::error::Error>> {
-        let pointer = u32::from_le_bytes(qmp.read_memory(0, address, 4)?.try_into().unwrap());
-        let bytes = qmp.read_memory(0, pointer, 48)?;
-        let units = bytes
-            .chunks_exact(2)
-            .map(|b| u16::from_le_bytes([b[0], b[1]]))
-            .take_while(|c| *c != 0)
-            .collect::<Vec<_>>();
-        Ok(String::from_utf16(&units)?)
-    };
-    // Hold the notification semaphore while a second value is rendered.
-    // The patch's dedicated layer/widget resources and persistent bitmap
-    // descriptor must remain usable without taking this unrelated lock.
     qmp.stop()?;
-    let semaphore_count = qmp.read_memory(0, notification_semaphore + 56, 4)?;
-    if semaphore_count != 1u32.to_le_bytes() {
+    let count = reader.notification_count(context.notification_semaphore)?;
+    if count != 1u32.to_le_bytes() {
         debugger.resume_guest()?;
         return Err(
             "notification semaphore was not available before callback contention check".into(),
         );
     }
-    debugger.write(notification_semaphore + 56, &0u32.to_le_bytes())?;
+    debugger.write(context.notification_semaphore + 56, &0u32.to_le_bytes())?;
     debugger.resume_guest()?;
-    turn_and_wait_hook(session, debugger, -1, wall_timeout_s)?;
-    let callback_busy_start = inputs.panel.snapshot().guest_ms;
-    let callback_deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(180));
+    context.locked_update = Some(LockedUpdate {
+        count,
+        guest_start: None,
+        wall_start: None,
+        sample: None,
+        capture_ready: false,
+    });
+    Ok(json!({"notification_lock_held":true}))
+}
+
+pub(super) fn trigger_locked_update(
+    session: &Session,
+    context: &mut PreflightContext,
+    delta: i32,
+    wall_timeout_s: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let debugger = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?;
+    turn_and_wait_hook(session, debugger, delta, wall_timeout_s)?;
+    let guest_start = session
+        .engine
+        .inputs
+        .as_ref()
+        .ok_or("missing inputs")?
+        .panel
+        .snapshot()
+        .guest_ms;
+    let wall_start = Instant::now();
+    let locked = context
+        .locked_update
+        .as_mut()
+        .ok_or("missing locked update")?;
+    locked.guest_start = Some(guest_start);
+    locked.wall_start = Some(wall_start);
+    Ok(json!({"delta":delta}))
+}
+
+fn locked_poll_read(
+    mut level: impl FnMut() -> Result<u8, String>,
+    mut mailbox: impl FnMut() -> Result<u8, String>,
+    mut text: impl FnMut() -> Result<String, String>,
+) -> Result<(u8, u8, Option<String>), String> {
+    let raw = level()?;
+    let pending = mailbox()?;
+    let displayed = if pending == 255 { Some(text()?) } else { None };
+    Ok((raw, pending, displayed))
+}
+
+fn locked_wait_expired(
+    start: u32,
+    now: u32,
+    elapsed: Duration,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> bool {
+    now.wrapping_sub(start) >= guest_timeout_ms.min(10_000)
+        || elapsed >= Duration::from_secs(wall_timeout_s.min(180))
+}
+
+pub(super) fn wait_locked_update(
+    session: &Session,
+    context: &PreflightContext,
+    reader: &l6max_host::knob_popup::OverlayReader,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let locked = context
+        .locked_update
+        .as_ref()
+        .ok_or("missing locked update")?;
+    let start = locked
+        .guest_start
+        .ok_or("missing locked update guest start")?;
+    let wall = locked
+        .wall_start
+        .ok_or("missing locked update wall start")?;
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
     loop {
         session.poll()?;
-        let raw = qmp.read_memory(0, l6max::mixer_channel_levels, 1)?[0];
-        let pending = qmp.read_memory(0, state + 3, 1)?;
-        let displayed = if pending == u8::MAX.to_le_bytes() {
-            Some(decode_text(text_table + 179 * 4)?)
-        } else {
-            None
-        };
+        let (raw, pending, displayed) = locked_poll_read(
+            || reader.level(),
+            || reader.mailbox(),
+            || reader.text_at_table(context.text_table),
+        )?;
         let expected = locked_level_expected(raw);
-        if locked_update_ready(&pending, displayed.as_deref(), raw) {
-            break;
+        if locked_update_ready(&[pending], displayed.as_deref(), raw) {
+            return Ok(json!({"raw":raw,"displayed":displayed}));
         }
-        if inputs
-            .panel
-            .snapshot()
-            .guest_ms
-            .wrapping_sub(callback_busy_start)
-            >= guest_timeout_ms.min(10_000)
-            || Instant::now() >= callback_deadline
-        {
-            return Err(
-            format!("knob dialog did not update while the notification lock was held: pending={pending:02x?}, raw={raw}, displayed={displayed:?}, expected={expected:?}").into(),
-        );
+        if locked_wait_expired(
+            start,
+            inputs.panel.snapshot().guest_ms,
+            wall.elapsed(),
+            guest_timeout_ms,
+            wall_timeout_s,
+        ) {
+            return Err(format!("knob dialog did not update while the notification lock was held: pending={:02x?}, raw={raw}, displayed={displayed:?}, expected={expected:?}",[pending]).into());
         }
         thread::sleep(Duration::from_millis(5));
     }
-    qmp.stop()?;
-    let pending_during_contention = qmp.read_memory(0, state + 3, 1)?;
-    let lock_held_during_render =
-        qmp.read_memory(0, notification_semaphore + 56, 4)? == 0u32.to_le_bytes();
-    let dialog_value_during_lock = decode_text(text_table + 179 * 4)?;
-    let raw_during_lock = qmp.read_memory(0, l6max::mixer_channel_levels, 1)?[0];
-    debugger.write(notification_semaphore + 56, &semaphore_count)?;
-    debugger.resume_guest()?;
-    if pending_during_contention != u8::MAX.to_le_bytes()
-        || !lock_held_during_render
-        || !knob_display_matches(
-            9,
-            &locked_level_expected(raw_during_lock),
-            &dialog_value_during_lock,
-        )
-    {
-        return Err(format!(
-        "dialog did not process the latest update while the notification semaphore was unavailable: pending={pending_during_contention:02x?}, value={dialog_value_during_lock:?}"
-    )
-    .into());
-    }
-    capture(500, "window-scene-after-callback-contention")?;
-    let pending_after_contention = qmp.read_memory(0, state + 3, 1)?;
-    if pending_after_contention != u8::MAX.to_le_bytes() {
-        return Err(format!(
-        "display callback did not consume the pending update while the lock was held: pending={pending_after_contention:02x?}"
-    )
-    .into());
-    }
+}
 
-    context.next = 14;
+pub(super) fn sample_locked_update(
+    session: &Session,
+    context: &mut PreflightContext,
+    reader: &l6max_host::knob_popup::OverlayReader,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    session.engine.management[0].stop()?;
+    let pending = reader.mailbox()?;
+    let lock_held =
+        reader.notification_count(context.notification_semaphore)? == 0u32.to_le_bytes();
+    let text = reader.text_at_table(context.text_table)?;
+    let raw = reader.level()?;
+    context
+        .locked_update
+        .as_mut()
+        .ok_or("missing locked update")?
+        .sample = Some(LockedSample {
+        pending,
+        lock_held,
+        text,
+        raw,
+    });
+    Ok(json!({"sampled":true}))
+}
+
+pub(super) fn restore_locked_update(
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let count = &context
+        .locked_update
+        .as_ref()
+        .ok_or("missing locked update")?
+        .count;
+    let debugger = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?;
+    debugger.write(context.notification_semaphore + 56, count)?;
+    debugger.resume_guest()?;
+    Ok(json!({"notification_lock_restored":true}))
+}
+
+pub(super) fn assert_locked_update(
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let locked = context
+        .locked_update
+        .as_mut()
+        .ok_or("missing locked update")?;
+    let sample = locked
+        .sample
+        .as_ref()
+        .ok_or("missing locked update sample")?;
+    if sample.pending != 255
+        || !sample.lock_held
+        || !knob_display_matches(9, &locked_level_expected(sample.raw), &sample.text)
+    {
+        return Err(format!("dialog did not process the latest update while the notification semaphore was unavailable: pending={:02x?}, value={:?}",[sample.pending],sample.text).into());
+    }
+    locked.capture_ready = true;
     Ok(
-        json!({"notification_semaphore_not_required_for_refresh": true,
-        "pending_during": pending_during_contention, "pending_after":pending_after_contention,
-        "lock_held":lock_held_during_render, "raw":raw_during_lock, "displayed":dialog_value_during_lock}),
+        json!({"pending_during":[sample.pending],"lock_held":sample.lock_held,"raw":sample.raw,"displayed":sample.text}),
     )
 }
 
-/// Start one declared mode without transferring the live debugger out of State.
+pub(super) fn finish_locked_update(
+    context: &mut PreflightContext,
+    reader: &l6max_host::knob_popup::OverlayReader,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let pending = reader.mailbox()?;
+    if pending != 255 {
+        return Err(format!("display callback did not consume the pending update while the lock was held: pending={:02x?}",[pending]).into());
+    }
+    let locked = context
+        .locked_update
+        .take()
+        .ok_or("missing locked update")?;
+    let sample = locked.sample.ok_or("missing locked update sample")?;
+    context.next = 14;
+    Ok(
+        json!({"notification_semaphore_not_required_for_refresh":true,"pending_during":[sample.pending],"pending_after":[pending],"lock_held":sample.lock_held,"raw":sample.raw,"displayed":sample.text}),
+    )
+}
+
 pub(super) fn begin_knob_mode(context: &PreflightContext) -> Result<usize, String> {
     if context.next != 14 || context.mode_index >= 23 {
         return Err("knob-dialog mode scope is out of order or exceeds 23 modes".into());
@@ -4525,5 +4606,71 @@ mod refreshed_overlay_tests {
                 "pixel ({x},{y})"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod locked_update_decomposition_tests {
+    use super::*;
+    #[test]
+    fn reads_level_then_mailbox_and_decodes_text_only_when_cleared() {
+        let reads = std::cell::RefCell::new(Vec::new());
+        let result = locked_poll_read(
+            || {
+                reads.borrow_mut().push("level");
+                Ok(7)
+            },
+            || {
+                reads.borrow_mut().push("mailbox");
+                Ok(0)
+            },
+            || panic!("text read before mailbox cleared"),
+        )
+        .unwrap();
+        assert_eq!(result, (7, 0, None));
+        assert_eq!(*reads.borrow(), ["level", "mailbox"]);
+        reads.borrow_mut().clear();
+        let result = locked_poll_read(
+            || {
+                reads.borrow_mut().push("level");
+                Ok(7)
+            },
+            || {
+                reads.borrow_mut().push("mailbox");
+                Ok(255)
+            },
+            || {
+                reads.borrow_mut().push("text");
+                Ok("6%".into())
+            },
+        )
+        .unwrap();
+        assert_eq!(result, (7, 255, Some("6%".into())));
+        assert_eq!(*reads.borrow(), ["level", "mailbox", "text"]);
+    }
+    #[test]
+    fn original_wait_anchor_enforces_guest_wrap_and_wall_cap() {
+        let start = u32::MAX - 499;
+        assert!(!locked_wait_expired(
+            start,
+            9499,
+            Duration::from_secs(179),
+            180_000,
+            600
+        ));
+        assert!(locked_wait_expired(
+            start,
+            9500,
+            Duration::from_secs(1),
+            180_000,
+            600
+        ));
+        assert!(locked_wait_expired(
+            start,
+            start,
+            Duration::from_secs(180),
+            180_000,
+            600
+        ));
     }
 }

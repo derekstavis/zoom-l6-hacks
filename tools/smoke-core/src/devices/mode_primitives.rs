@@ -169,6 +169,43 @@ pub(super) fn embedded_refreshed_overlay_operations() -> Result<Vec<(String, Ope
         .collect()
 }
 
+pub(super) fn embedded_locked_update_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/locked-update.toml"
+    ))
+    .map_err(|error| format!("invalid embedded locked update fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_locked_update_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded locked update fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobLockAcquire => Operation::KnobLockAcquire,
+                crate::Action::KnobLockTrigger { delta } => {
+                    Operation::KnobLockTrigger { delta: *delta }
+                }
+                crate::Action::KnobLockWait => Operation::KnobLockWait,
+                crate::Action::KnobLockSample => Operation::KnobLockSample,
+                crate::Action::KnobLockRestore => Operation::KnobLockRestore,
+                crate::Action::KnobLockAssert => Operation::KnobLockAssert,
+                crate::Action::KnobLockFinish => Operation::KnobLockFinish,
+                crate::Action::CaptureDisplay { guest_ms, artifact } => Operation::CaptureDisplay {
+                    guest_ms: *guest_ms,
+                    artifact: artifact.clone(),
+                },
+                _ => return Err("unsupported embedded locked update action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
 pub(super) fn embedded_mode_operations() -> Result<Vec<(String, Operation)>, String> {
     let fragment: crate::Fragment = toml::from_str(EMBEDDED_MODE_WALK)
         .map_err(|error| format!("invalid embedded knob mode fragment: {error}"))?;
@@ -739,10 +776,9 @@ impl State {
                     artifact: artifact.clone(),
                 };
                 if self.knob_mode.is_none()
-                    && self
-                        .knob_dialog_preflight
-                        .as_ref()
-                        .is_some_and(expecting_overlay_refresh)
+                    && self.knob_dialog_preflight.as_ref().is_some_and(|c| {
+                        expecting_overlay_refresh(c) || expecting_locked_capture(c)
+                    })
                 {
                     save_captured_display(&capture, &options.logs)?;
                 } else if self.knob_mode.is_none()

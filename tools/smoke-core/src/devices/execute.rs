@@ -8,6 +8,7 @@ fn knob_dialog_phase(
     next_mode: Option<usize>,
     final_phase: Option<u8>,
     overlay_capture: bool,
+    locked_capture: bool,
 ) -> Option<u16> {
     let fixed = match operation {
         Operation::KnobDialogGuard => Some(0),
@@ -39,7 +40,14 @@ fn knob_dialog_phase(
         Operation::CaptureDisplay { .. } if scope.is_none() && overlay_capture => Some(31),
         Operation::KnobOverlayRefreshPixels => Some(32),
         Operation::KnobOverlayRefreshFinish => Some(33),
-        Operation::KnobDialogLockedUpdate => Some(34),
+        Operation::KnobLockAcquire => Some(34),
+        Operation::KnobLockTrigger { .. } => Some(35),
+        Operation::KnobLockWait => Some(36),
+        Operation::KnobLockSample => Some(37),
+        Operation::KnobLockRestore => Some(38),
+        Operation::KnobLockAssert => Some(39),
+        Operation::CaptureDisplay { .. } if scope.is_none() && locked_capture => Some(40),
+        Operation::KnobLockFinish => Some(41),
         Operation::KnobOverlayCheckDescriptor { field } => Some(
             16 + match field {
                 crate::scenario::OverlayDescriptorField::Widget7 => 0,
@@ -50,7 +58,7 @@ fn knob_dialog_phase(
             },
         ),
         Operation::KnobDialogModeBegin { .. } => {
-            next_mode.and_then(|index| u16::try_from(35 + index * 10).ok())
+            next_mode.and_then(|index| u16::try_from(42 + index * 10).ok())
         }
         Operation::KnobDialogAdaptive { .. }
         | Operation::KnobDialogInjectInvalidTag { .. }
@@ -79,12 +87,12 @@ fn knob_dialog_phase(
         | Operation::KnobDialogSnapshotNavigation
         | Operation::KnobDialogCheckNavigation { .. }
         | Operation::KnobDialog => next_mode
-            .and_then(|index| u16::try_from(35 + index * 10 + usize::from(final_phase?)).ok()),
+            .and_then(|index| u16::try_from(42 + index * 10 + usize::from(final_phase?)).ok()),
         Operation::CaptureDisplay { .. }
             if scope.is_none() && matches!(final_phase, Some(22 | 44 | 47)) =>
         {
             next_mode
-                .and_then(|index| u16::try_from(35 + index * 10 + usize::from(final_phase?)).ok())
+                .and_then(|index| u16::try_from(42 + index * 10 + usize::from(final_phase?)).ok())
         }
         _ => None,
     };
@@ -109,7 +117,7 @@ fn knob_dialog_phase(
         Operation::KnobDialogModeEnd => 9,
         _ => return None,
     };
-    Some(35 + scope.index as u16 * 10 + offset)
+    Some(42 + scope.index as u16 * 10 + offset)
 }
 
 type KnobDeadline = (Instant, u32, u32, u64, u16);
@@ -405,6 +413,9 @@ impl State {
             self.knob_dialog_preflight
                 .as_ref()
                 .is_some_and(expecting_overlay_refresh),
+            self.knob_dialog_preflight
+                .as_ref()
+                .is_some_and(expecting_locked_capture),
         );
         let deadline_operation = expected.map(|_| matches!(operation, Operation::KnobDialog));
         if expected.is_none() && self.has_knob_preflight() {
@@ -2723,12 +2734,69 @@ impl State {
                     capture.frame,
                 )
             }
-            Operation::KnobDialogLockedUpdate => {
-                let context = self
-                    .knob_dialog_preflight
+            Operation::KnobLockAcquire => {
+                self.overlay_reader =
+                    Some(l6ctl::OwnedControl::new(&session.engine).knob_overlay_reader()?);
+                acquire_locked_update(
+                    session,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing locked update reader")?,
+                )
+            }
+            Operation::KnobLockTrigger { delta } => trigger_locked_update(
+                session,
+                self.knob_dialog_preflight
                     .as_mut()
-                    .ok_or("missing knob-dialog preflight")?;
-                run_locked_value_update(session, options, context, guest_timeout_ms, wall_timeout_s)
+                    .ok_or("missing knob-dialog preflight")?,
+                delta,
+                wall_timeout_s,
+            ),
+            Operation::KnobLockWait => wait_locked_update(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                self.overlay_reader
+                    .as_ref()
+                    .ok_or("missing locked update reader")?,
+                guest_timeout_ms,
+                wall_timeout_s,
+            ),
+            Operation::KnobLockSample => sample_locked_update(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                self.overlay_reader
+                    .as_ref()
+                    .ok_or("missing locked update reader")?,
+            ),
+            Operation::KnobLockRestore => restore_locked_update(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobLockAssert => assert_locked_update(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobLockFinish => {
+                let result = finish_locked_update(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing locked update reader")?,
+                )?;
+                self.overlay_reader = None;
+                self.captured_display = None;
+                Ok(result)
             }
             operation @ (Operation::KnobDialogModeBegin { .. }
             | Operation::EnqueueTap { .. }
@@ -3088,7 +3156,17 @@ mod knob_phase_tests {
             },
             Operation::KnobOverlayRefreshPixels,
             Operation::KnobOverlayRefreshFinish,
-            Operation::KnobDialogLockedUpdate,
+            Operation::KnobLockAcquire,
+            Operation::KnobLockTrigger { delta: -1 },
+            Operation::KnobLockWait,
+            Operation::KnobLockSample,
+            Operation::KnobLockRestore,
+            Operation::KnobLockAssert,
+            Operation::CaptureDisplay {
+                guest_ms: 500,
+                artifact: "window-scene-after-callback-contention".into(),
+            },
+            Operation::KnobLockFinish,
         ];
         let start = Instant::now();
         let mut shared = Some((start, 17, 180_000, 600, 0));
@@ -3105,7 +3183,8 @@ mod knob_phase_tests {
                     pending,
                     next_mode,
                     Some(0),
-                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 31
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 31,
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 40
                 ),
                 Some(before.4)
             );
@@ -3342,7 +3421,7 @@ mod knob_phase_tests {
         {
             let before = shared.unwrap();
             assert_eq!(
-                knob_dialog_phase(&op, None, None, Some(3), Some(phase as u8), false),
+                knob_dialog_phase(&op, None, None, Some(3), Some(phase as u8), false, false),
                 Some(before.4)
             );
             shared = advance_knob_deadline(matches!(op, Operation::KnobDialog), before);

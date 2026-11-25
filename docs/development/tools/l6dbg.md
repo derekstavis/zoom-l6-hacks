@@ -29,6 +29,12 @@ state. `--logs` must name a new directory so previous evidence is preserved.
 Additional host engine options, such as `--sd-image` and
 `--trace-sd`, can follow the recipe path. Use `--help` for command usage.
 
+GDB clients in this repository acquire an advisory lease on the selected
+QEMU GDB socket. Concurrent repository debuggers cannot own the same stub;
+third-party GDB clients and unrelated QMP or input commands are outside that
+lease. If scoped debugger cleanup fails, the host retains the lease and leaves
+MAIN stopped until the emulator is restarted.
+
 ## TOML recipe schema
 
 Top-level fields:

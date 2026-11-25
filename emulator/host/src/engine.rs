@@ -390,6 +390,7 @@ pub struct Engine {
     pub midi: Option<crate::usb_midi::MidiBridge>,
     pub din_midi: Option<crate::din_midi::DinMidiBridge>,
     control_server: Option<crate::control::ControlServer>,
+    debugger: Option<crate::debug::Controller>,
 }
 
 impl Engine {
@@ -422,6 +423,7 @@ impl Engine {
             midi: None,
             din_midi: None,
             control_server: None,
+            debugger: None,
         };
         let Some(qemu) = &options.qemu else {
             return Ok(engine);
@@ -752,6 +754,18 @@ impl Engine {
             }
         }
         engine.inputs = Some(Arc::new(InputHub::new(main_input, panel_input, model)));
+        if let Some(path) = &options.gdb_socket {
+            let path = if path.is_absolute() {
+                path.clone()
+            } else {
+                logs.join(path)
+            };
+            engine.debugger = Some(crate::debug::Controller::new(
+                path,
+                engine.management[0].clone(),
+                model,
+            ));
+        }
         if let Some(path) = options.control_socket.clone() {
             engine.control_server = Some(crate::control::ControlServer::start(
                 path,
@@ -760,6 +774,7 @@ impl Engine {
                 engine.management[0].clone(),
                 engine.installer_outcome.clone(),
                 engine.usb_controller(),
+                engine.debugger.clone(),
             )?);
         }
         // The DIN MIDI bridge is always running, draining the UART socket so
@@ -781,6 +796,11 @@ impl Engine {
         }
         Ok(engine)
     }
+    /// Scoped debugger for the optional MAIN GDB stub.
+    pub fn debugger(&self) -> Option<&crate::debug::Controller> {
+        self.debugger.as_ref()
+    }
+
     /// Controller operations use the same host socket and respect bridge ownership.
     pub fn usb_controller(&self) -> Option<crate::usb::Controller> {
         self.usb

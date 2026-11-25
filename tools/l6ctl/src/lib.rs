@@ -3,6 +3,7 @@
 //! The socket interface is deliberately narrower than direct access. In
 //! particular its input replies confirm enqueueing, not guest acknowledgement.
 pub use l6max_host::control::Info;
+pub use l6max_host::debug::{Command as DebugCommand, Observation as DebugObservation};
 pub use l6max_host::heap::Counters as HeapCounters;
 pub use l6max_host::input::button_source;
 pub use l6max_host::input::{InputCounters, InputSource};
@@ -16,7 +17,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::{
     fmt,
-    io::{self, BufRead, BufReader, Write},
+    io::{self, BufRead, BufReader, Read, Write},
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
     time::Duration,
@@ -126,6 +127,61 @@ impl std::error::Error for ControlError {
     }
 }
 
+/// One persistent local control connection owns one debugger lease. Dropping
+/// the client closes the connection and causes the host to clean up.
+pub struct SocketDebugSession {
+    writer: UnixStream,
+    reader: BufReader<UnixStream>,
+    closed: bool,
+}
+impl SocketDebugSession {
+    fn read_reply(&mut self) -> Result<Value, ControlError> {
+        let mut line = String::new();
+        let bytes = (&mut self.reader)
+            .take(65537)
+            .read_line(&mut line)
+            .map_err(ControlError::Io)?;
+        if bytes == 0 || bytes > 65536 || !line.ends_with('\n') {
+            return Err(ControlError::Rejected(
+                "debug session reply ended or exceeded its limit".into(),
+            ));
+        }
+        let reply: Value = serde_json::from_str(&line).map_err(ControlError::Protocol)?;
+        if reply.get("ok").and_then(Value::as_bool) != Some(true) {
+            return Err(ControlError::Rejected(
+                reply
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("debug request failed")
+                    .to_owned(),
+            ));
+        }
+        Ok(reply.get("result").cloned().unwrap_or(Value::Null))
+    }
+    pub fn execute(&mut self, command: DebugCommand) -> Result<DebugObservation, ControlError> {
+        if self.closed {
+            return Err(ControlError::Rejected("debug session is closed".into()));
+        }
+        let close = matches!(command, DebugCommand::Close);
+        let result = (|| {
+            serde_json::to_writer(&mut self.writer, &command).map_err(ControlError::Protocol)?;
+            writeln!(self.writer).map_err(ControlError::Io)?;
+            let value = self.read_reply()?;
+            serde_json::from_value(value).map_err(ControlError::Protocol)
+        })();
+        if close || result.is_err() {
+            self.closed = true;
+            let _ = self.writer.shutdown(std::net::Shutdown::Both);
+        }
+        result
+    }
+}
+impl Drop for SocketDebugSession {
+    fn drop(&mut self) {
+        let _ = self.writer.shutdown(std::net::Shutdown::Both);
+    }
+}
+
 /// Client for an emulator explicitly started with `--control-socket`.
 #[derive(Clone, Debug)]
 pub struct ControlClient {
@@ -137,6 +193,32 @@ impl ControlClient {
         Self {
             socket: socket.into(),
         }
+    }
+
+    /// Pause MAIN and begin a scoped, exclusive debug session over this connection.
+    pub fn debug_session(&self) -> Result<SocketDebugSession, ControlError> {
+        let mut writer =
+            UnixStream::connect(&self.socket).map_err(|source| ControlError::Connect {
+                path: self.socket.clone(),
+                source,
+            })?;
+        // A maximum-length continue may need an interrupt plus bounded
+        // breakpoint/scratch cleanup before the host can return its error.
+        writer
+            .set_read_timeout(Some(Duration::from_secs(100)))
+            .map_err(ControlError::Io)?;
+        writer
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .map_err(ControlError::Io)?;
+        writeln!(writer, "{{\"command\":\"debug-begin\"}}").map_err(ControlError::Io)?;
+        let reader = BufReader::new(writer.try_clone().map_err(ControlError::Io)?);
+        let mut session = SocketDebugSession {
+            writer,
+            reader,
+            closed: false,
+        };
+        session.read_reply()?;
+        Ok(session)
     }
 
     pub fn socket(&self) -> &Path {
@@ -302,6 +384,16 @@ pub struct OwnedControl<'a> {
 impl<'a> OwnedControl<'a> {
     pub fn new(engine: &'a Engine) -> Self {
         Self { engine }
+    }
+
+    pub fn debug_session(&self) -> Result<l6max_host::debug::Session, ControlError> {
+        self.engine
+            .debugger()
+            .ok_or(ControlError::Unavailable(
+                "debugger unavailable; launch with --gdb-socket",
+            ))?
+            .begin()
+            .map_err(ControlError::Rejected)
     }
 
     pub fn info(&self) -> Result<Info, ControlError> {

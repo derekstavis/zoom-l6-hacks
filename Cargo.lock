@@ -3561,6 +3561,9 @@ dependencies = [
 [[package]]
 name = "l6max-diagnostics"
 version = "0.1.0"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "l6max-gui"
@@ -3595,6 +3598,7 @@ dependencies = [
  "coremidi",
  "firmware-api",
  "l6fw",
+ "l6max-diagnostics",
  "libc",
  "memmap2",
  "patch-core",

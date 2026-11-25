@@ -635,10 +635,20 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         if l6_verify {
                             // The legacy L6 probe boots the unpacked patched image in a fresh disposable session.
                             boot.state_dir = None;
-                        } else {
+                        } else if runner.scenario.update_fixture
+                            == Some(crate::scenario::UpdateFixture::PatchedMidi)
+                        {
                             boot.usb_cable_at_start = true;
                             boot.usb_enabled = false;
                             boot.midi_enabled = false;
+                        }
+                        if runner.scenario.update_fixture
+                            == Some(crate::scenario::UpdateFixture::PatchedKnob)
+                        {
+                            boot.gdb_socket = Some(crate::devices::gdb_socket_path(
+                                &options.logs,
+                                "post-update-knob",
+                            ));
                         }
                         let main = std::fs::read(boot.firmware_dir.join("main_firmware.bin"))
                             .map_err(|e| e.to_string())?;

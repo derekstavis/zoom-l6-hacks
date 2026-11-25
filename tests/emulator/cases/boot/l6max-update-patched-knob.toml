@@ -1,0 +1,229 @@
+version = 1
+name = "l6max-update-patched-knob"
+models = ["l6max"]
+backends = ["headless"]
+state = "none"
+card = "none"
+update_fixture = "patched-knob"
+update_patches.l6max = ["knob-dialog"]
+update_goal = "install"
+
+[case]
+suites = ["full"]
+wall_timeout_s = 1200
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/l6max-update-valid-handoff.toml"
+
+[[step]]
+action = "lifecycle-start"
+profile = "installer"
+
+[[step]]
+action = "expect-installer-outcome"
+expected = "installed"
+
+[[step]]
+action = "wait-update-panel-ready"
+require_programming = false
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "expect-trace"
+contains = ["l6 panel RTC response start"]
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "expect-update-mode"
+mode = 4
+
+[[step]]
+action = "lifecycle-stop"
+
+[[step]]
+action = "expect-update-comparison"
+field = "main-payload"
+
+[[step]]
+action = "expect-update-comparison"
+field = "boot-region"
+
+[[step]]
+action = "expect-update-comparison"
+field = "protected-region"
+
+[[step]]
+action = "expect-update-comparison"
+field = "panel-image"
+
+[[step]]
+action = "expect-update-marker-absent"
+
+[[step]]
+action = "capture-installed-panel"
+
+[[step]]
+action = "lifecycle-start"
+profile = "restart"
+
+[[step]]
+action = "expect-installer-outcome"
+expected = "no-pending"
+
+[[step]]
+action = "wait-panel-uptime"
+guest_ms = 40000
+guest_timeout_ms = 300000
+wall_timeout_s = 1200
+
+[[step]]
+action = "expect-trace"
+contains = []
+absent = ["l6 panel ROM erase", "l6 panel ROM mass erase"]
+
+[[step]]
+action = "lifecycle-stop"
+
+[[step]]
+action = "expect-panel-unchanged"
+
+[[step]]
+action = "lifecycle-start"
+profile = "verify"
+
+[[step]]
+action = "begin-wall-deadline"
+duration_s = 300
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/l6max-first-boot-no-sd.toml"
+
+[[step]]
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "end-wall-deadline"
+
+[[step]]
+action = "knob-dialog-ready"
+guest_timeout_ms = 180000
+wall_timeout_s = 300
+[[step]]
+action = "knob-dialog-guard"
+guest_timeout_ms = 180000
+wall_timeout_s = 300
+[[step]]
+action = "knob-dialog-baseline"
+guest_timeout_ms = 180000
+wall_timeout_s = 300
+[[step]]
+action = "knob-dialog-preflight-begin"
+guest_timeout_ms = 180000
+wall_timeout_s = 300
+[[step]]
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/preflight-probes.toml"
+include_guest_timeout_ms = 180000
+include_wall_timeout_s = 300
+[[step]]
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/callback-race.toml"
+include_guest_timeout_ms = 180000
+include_wall_timeout_s = 300
+[[step]]
+action = "knob-dialog-first-activation"
+guest_timeout_ms = 180000
+wall_timeout_s = 300
+[[step]]
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/active-display.toml"
+include_guest_timeout_ms = 180000
+include_wall_timeout_s = 300
+[[step]]
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/level-demo.toml"
+include_guest_timeout_ms = 180000
+include_wall_timeout_s = 300
+[[step]]
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/task-contexts.toml"
+include_guest_timeout_ms = 180000
+include_wall_timeout_s = 300
+[[step]]
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/overlay-invariants.toml"
+include_guest_timeout_ms = 180000
+include_wall_timeout_s = 300
+
+[[step]]
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/bitmap-zero.toml"
+include_guest_timeout_ms = 180000
+include_wall_timeout_s = 300
+
+[[step]]
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/refreshed-overlay.toml"
+include_guest_timeout_ms = 180000
+include_wall_timeout_s = 300
+[[step]]
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/locked-update.toml"
+include_guest_timeout_ms = 180000
+include_wall_timeout_s = 300
+[[step]]
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/mode-walk.toml"
+include_guest_timeout_ms = 180000
+include_wall_timeout_s = 300
+
+[[step]]
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/invalid-tags.toml"
+include_guest_timeout_ms = 180000
+include_wall_timeout_s = 300
+
+[[step]]
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/invalid-signature.toml"
+include_guest_timeout_ms = 180000
+include_wall_timeout_s = 300
+
+[[step]]
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/notification.toml"
+include_guest_timeout_ms = 180000
+include_wall_timeout_s = 300
+
+[[step]]
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/expiry.toml"
+include_guest_timeout_ms = 180000
+include_wall_timeout_s = 300
+
+[[step]]
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/restoration.toml"
+include_guest_timeout_ms = 180000
+include_wall_timeout_s = 300
+
+[[step]]
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/navigation.toml"
+include_guest_timeout_ms = 180000
+include_wall_timeout_s = 300
+
+[[step]]
+action = "knob-dialog"
+guest_timeout_ms = 180000
+wall_timeout_s = 300
+
+[[step]]
+action = "lifecycle-stop"

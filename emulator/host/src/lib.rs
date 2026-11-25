@@ -1,6 +1,7 @@
 pub mod debug;
 pub use sd_image as demo_sd;
 pub mod audio_input;
+pub mod audio_trace;
 pub mod config;
 pub mod control;
 pub mod din_midi;

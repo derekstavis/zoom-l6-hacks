@@ -908,7 +908,9 @@ pub(super) fn run_l6max_update(
                         run(operation, &label)?;
                     }
                     run(Operation::KnobDialogLevelDemo, "knob-dialog")?;
-                    run(Operation::KnobDialogTaskContexts, "knob-dialog")?;
+                    for (label, operation) in embedded_task_context_operations()? {
+                        run(operation, &label)?;
+                    }
                     for (label, operation) in embedded_overlay_operations()? {
                         run(operation, &label)?;
                     }

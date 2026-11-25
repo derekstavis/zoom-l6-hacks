@@ -925,8 +925,29 @@ impl Runner {
                 Action::KnobDialogLevelDemo => {
                     return Ok(Progress::Device(devices::Operation::KnobDialogLevelDemo));
                 }
-                Action::KnobDialogTaskContexts => {
-                    return Ok(Progress::Device(devices::Operation::KnobDialogTaskContexts));
+                Action::KnobTaskBegin => {
+                    return Ok(Progress::Device(devices::Operation::KnobTaskBegin));
+                }
+                Action::KnobTaskArmHook => {
+                    return Ok(Progress::Device(devices::Operation::KnobTaskArmHook));
+                }
+                Action::KnobTaskWaitHook => {
+                    return Ok(Progress::Device(devices::Operation::KnobTaskWaitHook));
+                }
+                Action::KnobTaskArmCallback => {
+                    return Ok(Progress::Device(devices::Operation::KnobTaskArmCallback));
+                }
+                Action::KnobTaskWaitCallback => {
+                    return Ok(Progress::Device(devices::Operation::KnobTaskWaitCallback));
+                }
+                Action::KnobTaskAssertDistinct => {
+                    return Ok(Progress::Device(devices::Operation::KnobTaskAssertDistinct));
+                }
+                Action::KnobTaskRelease => {
+                    return Ok(Progress::Device(devices::Operation::KnobTaskRelease));
+                }
+                Action::KnobTaskFinish => {
+                    return Ok(Progress::Device(devices::Operation::KnobTaskFinish));
                 }
                 Action::KnobOverlayBegin => {
                     return Ok(Progress::Device(devices::Operation::KnobOverlayBegin));

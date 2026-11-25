@@ -1310,7 +1310,8 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
         ),
         "\n[[step]]\naction='knob-dialog-level-demo'\nguest_timeout_ms=180000\nwall_timeout_s=600\n"
     );
-    let tasks = "[[step]]\naction='knob-dialog-task-contexts'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
+    let tasks =
+        include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/task-contexts.toml");
     let overlay = concat!(
         include_str!(
             "../../../../patches/knob-dialog/tests/emulator/fragments/overlay-invariants.toml"

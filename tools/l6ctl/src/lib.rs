@@ -687,6 +687,13 @@ impl<'a> OwnedControl<'a> {
             .map_err(ControlError::Rejected)
     }
 
+    /// Guard the kernel revision once for a bounded current-task observation.
+    /// Recreate this reader after guest restart or a firmware change.
+    pub fn current_task_reader(&self) -> Result<freertos::CurrentTaskReader, ControlError> {
+        freertos::current_task_reader(self.main_qmp()?, self.engine.model())
+            .map_err(ControlError::Rejected)
+    }
+
     pub fn rtos_heap(&self) -> Result<freertos::HeapSnapshot, ControlError> {
         freertos::heap(self.main_qmp()?, self.engine.model()).map_err(ControlError::Rejected)
     }

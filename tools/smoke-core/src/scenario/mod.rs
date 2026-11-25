@@ -137,6 +137,7 @@ pub enum UpdateFixture {
     L6PatchedMidi,
     SyntheticValid,
     PatchedMidi,
+    PatchedKnob,
 }
 
 impl UpdateFixture {
@@ -145,7 +146,10 @@ impl UpdateFixture {
     }
 
     pub fn is_patched(self) -> bool {
-        matches!(self, Self::PatchedMidi | Self::L6PatchedMidi)
+        matches!(
+            self,
+            Self::PatchedMidi | Self::L6PatchedMidi | Self::PatchedKnob
+        )
     }
 }
 

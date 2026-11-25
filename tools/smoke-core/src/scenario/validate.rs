@@ -23,17 +23,25 @@ impl Scenario {
                 || (fixture.is_patched()
                     && (value.update_patches.len() != 1
                         || value.update_patches.get(&fixture_model).map(Vec::as_slice)
-                            != Some(&["midi-sync".to_string()][..])))
+                            != Some(
+                                &[if fixture == UpdateFixture::PatchedKnob {
+                                    "knob-dialog".to_string()
+                                } else {
+                                    "midi-sync".to_string()
+                                }][..],
+                            )))
                 || !value.patches.is_empty()
                 || value.sd_patches.is_some()
                 || !value.installed_patches.is_empty()
                 || !value.installed_sd_patches.is_empty()
                 || !value.effect_replacements.is_empty()
-                || (fixture != UpdateFixture::PatchedMidi
-                    && value
-                        .step
-                        .iter()
-                        .any(|step| !step.models.is_empty() || step.setup_input))
+                || (!matches!(
+                    fixture,
+                    UpdateFixture::PatchedMidi | UpdateFixture::PatchedKnob
+                ) && value
+                    .step
+                    .iter()
+                    .any(|step| !step.models.is_empty() || step.setup_input))
             {
                 return Err(
                     "managed update needs a dedicated model-scoped headless stock fixture".into(),
@@ -137,7 +145,7 @@ impl Scenario {
                         }
                     }
                 }
-                UpdateFixture::PatchedMidi => {
+                UpdateFixture::PatchedMidi | UpdateFixture::PatchedKnob => {
                     if value.update_goal != Some(UpdateGoal::Install) {
                         return Err("patched update requires the full install goal".into());
                     }
@@ -147,7 +155,13 @@ impl Scenario {
                             !matches!(action, Action::WaitInputApplied | Action::Delay { .. })
                         })
                         .collect::<Vec<_>>();
-                    if !matches!(semantic.as_slice(), [
+                    let tail_start = semantic
+                        .iter()
+                        .position(|action| matches!(action, Action::EndWallDeadline))
+                        .map(|index| index + 1)
+                        .ok_or("missing patched verify setup deadline")?;
+                    let (common, tail) = semantic.split_at(tail_start);
+                    if !matches!(common, [
                         Action::LifecycleStart { profile: LifecycleBoot::Initial },
                         Action::ExpectDisplayImage { image: update_image, .. },
                         Action::ExpectUpdateState { mode: 6, flags_mask: 9, flags_value: 0 },
@@ -187,15 +201,7 @@ impl Scenario {
                         Action::Press { control: second_confirm },
                         Action::ExpectDisplayImage { image: home_image, .. },
                         Action::Wait { until: home_boot },
-                        Action::EndWallDeadline,
-                        Action::WaitUsbController,
-                        Action::DirectUsbMidiRoundTrip { cable: 1, expect_ring_change: true },
-                        Action::HostMidiSyncBegin,
-                        Action::HostMidiDrain { quiet_wall_ms: 500 },
-                        Action::HostMidiSendCc { channel: 0, controller: 127, value: 127 },
-                        Action::HostMidiExpectSync,
-                        Action::HostMidiEnd,
-                        Action::LifecycleStop
+                        Action::EndWallDeadline
                     ] if update_image == Path::new("tests/smoke/images/l6max-firmware-update-dialog.png")
                         && install_trace == &["l6 panel RTC response start"] && install_absent.is_empty()
                         && restart_contains.is_empty() && restart_absent == &["l6 panel ROM erase", "l6 panel ROM mass erase"]
@@ -206,6 +212,46 @@ impl Scenario {
                         && first_confirm == "recorder-function-4" && second_confirm == first_confirm)
                     {
                         return Err("patched update needs complete ordered handoff, installer, restart and MIDI verification checks".into());
+                    }
+                    let tail_valid = if fixture == UpdateFixture::PatchedMidi {
+                        matches!(
+                            tail,
+                            [
+                                Action::WaitUsbController,
+                                Action::DirectUsbMidiRoundTrip {
+                                    cable: 1,
+                                    expect_ring_change: true
+                                },
+                                Action::HostMidiSyncBegin,
+                                Action::HostMidiDrain { quiet_wall_ms: 500 },
+                                Action::HostMidiSendCc {
+                                    channel: 0,
+                                    controller: 127,
+                                    value: 127
+                                },
+                                Action::HostMidiExpectSync,
+                                Action::HostMidiEnd,
+                                Action::LifecycleStop
+                            ]
+                        )
+                    } else {
+                        matches!(
+                            tail,
+                            [
+                                Action::KnobDialogReady,
+                                Action::KnobDialogGuard,
+                                Action::KnobDialogBaseline,
+                                Action::KnobDialogPreflightBegin,
+                                ..,
+                                Action::KnobDialog,
+                                Action::LifecycleStop
+                            ]
+                        )
+                    };
+                    if !tail_valid {
+                        return Err(
+                            "patched update needs the complete patch-specific verification".into(),
+                        );
                     }
                     let verify = value
                         .step
@@ -232,6 +278,21 @@ impl Scenario {
                         ) && (step.guest_timeout_ms < 180000 || step.wall_timeout_s < 300)
                     }) {
                         return Err("post-update MIDI verification needs the original guest and wall budgets".into());
+                    }
+                    if fixture == UpdateFixture::PatchedKnob {
+                        let first = value.step[verify..]
+                            .iter()
+                            .position(|step| matches!(step.action, Action::KnobDialogReady))
+                            .ok_or("missing knob verification")?
+                            + verify;
+                        if value.step[first..value.step.len() - 1].iter().any(|step| {
+                            step.guest_timeout_ms != 180_000 || step.wall_timeout_s != 300
+                        }) {
+                            return Err(
+                                "post-update knob verification needs the original shared budgets"
+                                    .into(),
+                            );
+                        }
                     }
                 }
                 UpdateFixture::BadChecksum | UpdateFixture::BadChecksumStock => {
@@ -340,7 +401,10 @@ impl Scenario {
             let mut started = false;
             let mut last_profile = None;
             for step in &value.step {
-                if fixture == UpdateFixture::PatchedMidi {
+                if matches!(
+                    fixture,
+                    UpdateFixture::PatchedMidi | UpdateFixture::PatchedKnob
+                ) {
                     let entering_verify = matches!(
                         step.action,
                         Action::LifecycleStart {
@@ -441,7 +505,9 @@ impl Scenario {
                 }
             }
             let expected_end = match fixture {
-                UpdateFixture::PatchedMidi | UpdateFixture::L6PatchedMidi => matches!(
+                UpdateFixture::PatchedMidi
+                | UpdateFixture::PatchedKnob
+                | UpdateFixture::L6PatchedMidi => matches!(
                     value.step.last().map(|s| &s.action),
                     Some(Action::LifecycleStop)
                 ),

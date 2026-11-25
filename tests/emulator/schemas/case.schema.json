@@ -11917,7 +11917,8 @@
         "l6-stock",
         "l6-patched-midi",
         "synthetic-valid",
-        "patched-midi"
+        "patched-midi",
+        "patched-knob"
       ],
       "type": "string"
     },

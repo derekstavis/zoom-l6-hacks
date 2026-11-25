@@ -304,6 +304,55 @@ fn update_state_cli_and_client_preserve_raw_snapshot() {
 }
 
 #[test]
+fn update_gui_state_cli_and_client_preserve_raw_snapshot() {
+    let path = socket_path();
+    let sample = json!({"atomic":false,"revision_guard":"l6max_1_10_update_gui_routines","current_window":2149581748u32,"progress_flags":256});
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"update-gui-state"}),
+                json!({"ok":true,"result":sample}),
+            ),
+            (
+                json!({"command":"update-gui-state"}),
+                json!({"ok":true,"result":sample}),
+            ),
+            (
+                json!({"command":"update-gui-state"}),
+                json!({"ok":false,"error":"unsupported update GUI revision"}),
+            ),
+        ],
+    );
+    let client = ControlClient::new(&path);
+    let state = client.update_gui_state().unwrap();
+    assert_eq!(
+        (state.current_window, state.progress_flags, state.atomic),
+        (2149581748, 256, false)
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .arg("update-gui-state")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        sample
+    );
+    assert!(
+        matches!(client.update_gui_state(), Err(ControlError::Rejected(message)) if message == "unsupported update GUI revision")
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn cli_keeps_existing_one_based_encoder_and_output_contract() {
     let path = socket_path();
     let server = server(

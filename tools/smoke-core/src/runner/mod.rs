@@ -808,6 +808,14 @@ impl Runner {
                         devices::Operation::KnobDialogPreflightBackgroundLayer,
                     ));
                 }
+                Action::KnobDialogCallbackRace => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogCallbackRace));
+                }
+                Action::KnobDialogFirstActivation => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogFirstActivation,
+                    ));
+                }
                 Action::KnobDialog => {
                     return Ok(Progress::Device(devices::Operation::KnobDialog));
                 }

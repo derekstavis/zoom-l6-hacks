@@ -94,6 +94,8 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobDialogPreflightLayerCollision
         | Action::KnobDialogPreflightWidgetLayer
         | Action::KnobDialogPreflightBackgroundLayer
+        | Action::KnobDialogCallbackRace
+        | Action::KnobDialogFirstActivation
         | Action::KnobDialog
         | Action::KnobPopupOpen { .. }
         | Action::KnobPopupExpectOpen

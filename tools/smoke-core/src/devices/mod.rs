@@ -215,6 +215,8 @@ pub enum Operation {
     KnobDialogPreflightLayerCollision,
     KnobDialogPreflightWidgetLayer,
     KnobDialogPreflightBackgroundLayer,
+    KnobDialogCallbackRace,
+    KnobDialogFirstActivation,
     KnobDialog,
     KnobPopupOpen {
         first_steps: i32,

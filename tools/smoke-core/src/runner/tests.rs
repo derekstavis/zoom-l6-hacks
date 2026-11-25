@@ -1256,18 +1256,20 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
     let baseline =
         "[[step]]\naction='knob-dialog-baseline'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let preflight = ["begin", "descriptor", "text-alias", "layer-collision", "widget-layer", "background-layer"].iter().map(|name| format!("[[step]]\naction='knob-dialog-preflight-{name}'\nguest_timeout_ms=180000\nwall_timeout_s=600\n")).collect::<String>();
+    let activation = "[[step]]\naction='knob-dialog-callback-race'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-first-activation'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let dialog = "[[step]]\naction='knob-dialog'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     assert!(
         Scenario::parse(&format!(
-            "{prefix}{ready}{guard}{baseline}{preflight}{dialog}"
+            "{prefix}{ready}{guard}{baseline}{preflight}{activation}{dialog}"
         ))
         .is_ok()
     );
     assert!(Scenario::parse(&format!("{prefix}{ready}{guard}{baseline}{preflight}")).is_err());
-    let setup_pruned = format!("{prefix}{ready}{guard}{baseline}{preflight}{dialog}").replace(
-        "action='knob-dialog-preflight-widget-layer'",
-        "setup_input=true\naction='knob-dialog-preflight-widget-layer'",
-    );
+    let setup_pruned = format!("{prefix}{ready}{guard}{baseline}{preflight}{activation}{dialog}")
+        .replace(
+            "action='knob-dialog-preflight-widget-layer'",
+            "setup_input=true\naction='knob-dialog-preflight-widget-layer'",
+        );
     assert!(
         Scenario::parse(&setup_pruned)
             .unwrap()
@@ -1284,7 +1286,7 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
     );
     assert!(
         Scenario::parse(&format!(
-            "{prefix}{ready}{guard}{baseline}{preflight}{}",
+            "{prefix}{ready}{guard}{baseline}{preflight}{activation}{}",
             dialog.replace("wall_timeout_s=600", "wall_timeout_s=599")
         ))
         .is_err()

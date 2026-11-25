@@ -101,7 +101,9 @@ impl Scenario {
                 Action::KnobDialogPreflightLayerCollision => "knob-dialog-preflight-text-alias",
                 Action::KnobDialogPreflightWidgetLayer => "knob-dialog-preflight-layer-collision",
                 Action::KnobDialogPreflightBackgroundLayer => "knob-dialog-preflight-widget-layer",
-                Action::KnobDialog => "knob-dialog-preflight-background-layer",
+                Action::KnobDialogCallbackRace => "knob-dialog-preflight-background-layer",
+                Action::KnobDialogFirstActivation => "knob-dialog-callback-race",
+                Action::KnobDialog => "knob-dialog-first-activation",
                 _ => continue,
             };
             for model in &value.models {
@@ -134,7 +136,13 @@ impl Scenario {
                         "knob-dialog-preflight-widget-layer" => {
                             matches!(previous.action, Action::KnobDialogPreflightWidgetLayer)
                         }
-                        _ => matches!(previous.action, Action::KnobDialogPreflightBackgroundLayer),
+                        "knob-dialog-preflight-background-layer" => {
+                            matches!(previous.action, Action::KnobDialogPreflightBackgroundLayer)
+                        }
+                        "knob-dialog-callback-race" => {
+                            matches!(previous.action, Action::KnobDialogCallbackRace)
+                        }
+                        _ => matches!(previous.action, Action::KnobDialogFirstActivation),
                     };
                     correct
                         && previous.guest_timeout_ms == step.guest_timeout_ms
@@ -158,9 +166,9 @@ impl Scenario {
                 let subsequent = value.step[index + 1..]
                     .iter()
                     .filter(|next| next.applies_to(*model))
-                    .take(6)
+                    .take(8)
                     .collect::<Vec<_>>();
-                if subsequent.len() != 6
+                if subsequent.len() != 8
                     || !matches!(subsequent[0].action, Action::KnobDialogPreflightDescriptor)
                     || !matches!(subsequent[1].action, Action::KnobDialogPreflightTextAlias)
                     || !matches!(
@@ -172,7 +180,9 @@ impl Scenario {
                         subsequent[4].action,
                         Action::KnobDialogPreflightBackgroundLayer
                     )
-                    || !matches!(subsequent[5].action, Action::KnobDialog)
+                    || !matches!(subsequent[5].action, Action::KnobDialogCallbackRace)
+                    || !matches!(subsequent[6].action, Action::KnobDialogFirstActivation)
+                    || !matches!(subsequent[7].action, Action::KnobDialog)
                     || subsequent.iter().any(|next| {
                         next.guest_timeout_ms != step.guest_timeout_ms
                             || next.wall_timeout_s != step.wall_timeout_s

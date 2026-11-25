@@ -88,7 +88,7 @@ mod recorded_wav_tests {
     }
 }
 
-fn deadline_exceeded(
+pub(super) fn deadline_exceeded(
     wall_elapsed: Duration,
     guest_start: u32,
     guest_now: u32,
@@ -183,7 +183,9 @@ impl State {
             Operation::KnobDialogPreflightLayerCollision => Some(5),
             Operation::KnobDialogPreflightWidgetLayer => Some(6),
             Operation::KnobDialogPreflightBackgroundLayer => Some(7),
-            Operation::KnobDialog => Some(8),
+            Operation::KnobDialogCallbackRace => Some(8),
+            Operation::KnobDialogFirstActivation => Some(9),
+            Operation::KnobDialog => Some(10),
             _ => None,
         };
         if expected.is_none() && self.has_knob_preflight() {
@@ -225,6 +227,7 @@ impl State {
             operation,
             guest_timeout_ms,
             wall_timeout_s,
+            shared,
         );
         let result = match result {
             Ok(value) => value,
@@ -272,7 +275,7 @@ impl State {
         if is_ready {
             self.knob_dialog_deadline =
                 Some((started, guest_start, guest_timeout_ms, wall_timeout_s, 0));
-        } else if expected.is_some() && !matches!(expected, Some(8)) {
+        } else if expected.is_some() && !matches!(expected, Some(10)) {
             let (start, guest_start, guest_budget, wall_budget, phase) = shared.unwrap();
             self.knob_dialog_deadline =
                 Some((start, guest_start, guest_budget, wall_budget, phase + 1));
@@ -287,6 +290,7 @@ impl State {
         operation: Operation,
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
+        shared: Option<(Instant, u32, u32, u64, u8)>,
     ) -> Result<Value, Box<dyn std::error::Error>> {
         match operation {
             Operation::ExpectRecorder => {
@@ -2177,6 +2181,37 @@ impl State {
                     .as_mut()
                     .ok_or("missing knob-dialog preflight")?;
                 run_preflight_probe(session, context, index, wall_timeout_s)
+            }
+            Operation::KnobDialogCallbackRace => {
+                let baseline = self
+                    .knob_dialog_baseline
+                    .as_ref()
+                    .ok_or("missing knob-dialog baseline")?;
+                let context = self
+                    .knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?;
+                run_callback_race(
+                    session,
+                    options,
+                    context,
+                    baseline,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )
+            }
+            Operation::KnobDialogFirstActivation => {
+                let context = self
+                    .knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?;
+                run_first_activation(
+                    session,
+                    context,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                    shared.ok_or("missing shared deadline")?,
+                )
             }
             Operation::KnobDialog => {
                 let baseline = self

@@ -665,6 +665,8 @@ pub(super) struct PreflightContext {
     alias_widget: Option<u32>,
     alias_layer: Option<Vec<u8>>,
     next: usize,
+    activation_semaphore_count: Option<Vec<u8>>,
+    activation_callback: Option<u32>,
 }
 
 pub(super) fn begin_preflight(
@@ -795,6 +797,8 @@ pub(super) fn begin_preflight(
         alias_widget: None,
         alias_layer: None,
         next: 0,
+        activation_semaphore_count: None,
+        activation_callback: None,
     })
 }
 
@@ -919,6 +923,351 @@ fn callback_first_use_ready(state: &[u8], slot: u32, expected_callback: u32, run
         && running == 0
 }
 
+pub(super) fn run_callback_race(
+    session: &Session,
+    options: &Options,
+    context: &mut PreflightContext,
+    baseline: &[u8; 1024],
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    use std::time::Instant;
+    if context.next != 5 {
+        return Err("knob-dialog race step is out of order".into());
+    }
+    let qmp = &session.engine.management[0];
+    let inputs = session.engine.inputs.as_ref().unwrap();
+    let notification_semaphore = context.notification_semaphore;
+    let widget7 = context.widget7;
+    let background10 = context.background10;
+    let shared_resource_pointer = context.shared_resource_pointer;
+    let original_shared_resource = &context.original_shared_resource;
+    let alias_widget = context.alias_widget.ok_or("missing alias widget")?;
+    let original_alias_layer = context.alias_layer.as_ref().ok_or("missing alias layer")?;
+    let debugger = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?;
+    let capture = |duration: u32, name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
+        let start = inputs.panel.snapshot().guest_ms;
+        let begin = Instant::now();
+        let raw = loop {
+            let data = session.poll()?;
+            let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(start);
+            if elapsed >= duration {
+                break data.display;
+            }
+            if elapsed > guest_timeout_ms || begin.elapsed() > Duration::from_secs(wall_timeout_s) {
+                return Err("knob-dialog display capture exceeded its deadline".into());
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+        let native = image::GrayImage::from_fn(128, 64, |x, y| {
+            let index = ((63 - y as usize) / 8) * 128 + x as usize;
+            image::Luma([if raw[index] & (1 << ((63 - y as usize) % 8)) != 0 {
+                255
+            } else {
+                0
+            }])
+        });
+        if let Some(scene) = name.strip_prefix("window-scene-")
+            && [
+                "high", "freq", "mid", "low", "aux1", "aux2", "efx", "sub-mix", "pan", "level",
+            ]
+            .contains(&scene)
+        {
+            let path = l6max_host::paths::repository_root()
+                .join(KNOB_DIALOG_REFERENCES)
+                .join(format!("{scene}.png"));
+            check_display_reference(&raw, &path, &options.logs, name)
+                .map_err(|error| format!("knob-dialog screen {scene}: {error}"))?;
+        }
+        image::DynamicImage::ImageLuma8(native)
+            .resize(768, 384, image::imageops::FilterType::Nearest)
+            .save(options.logs.join(format!("{name}.png")))?;
+        Ok(raw)
+    };
+    // Simulate the notification manager owning its semaphore during first
+    // use. The scene must not depend on that unrelated lock.
+    qmp.stop()?;
+    let semaphore_count = qmp.read_memory(0, notification_semaphore + 56, 4)?;
+    if semaphore_count != 1u32.to_le_bytes() {
+        debugger.resume_guest()?;
+        return Err("notification semaphore was not available before contention check".into());
+    }
+    debugger.write(notification_semaphore + 56, &0u32.to_le_bytes())?;
+    // Stop at callback registration after the mixer-side scene preflight
+    // has passed. Change a borrowed descriptor before DisplayCycle2 can
+    // render so the callback-side preflight gets exercised deterministically.
+    use firmware_api::l6max::gui_display_callback_register;
+    debugger.breakpoint(gui_display_callback_register, true)?;
+    debugger.resume_guest()?;
+    inputs.knob(0, -1)?;
+    let registration_deadline = Instant::now() + Duration::from_secs(10);
+    while qmp.query_status()?.running {
+        session.poll()?;
+        if Instant::now() >= registration_deadline {
+            let _ = debugger.breakpoint(gui_display_callback_register, false);
+            let _ = debugger.resume_guest();
+            return Err("first-use callback registration breakpoint timed out".into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    let registration_pc = debugger.read_register(15)? & !1;
+    let callback_slot = debugger.read_register(0)?;
+    let callback_pointer = debugger.read_register(1)?;
+    if registration_pc != gui_display_callback_register
+        || callback_slot != 5
+        || callback_pointer & 1 == 0
+    {
+        let _ = debugger.breakpoint(gui_display_callback_register, false);
+        let _ = debugger.resume_guest();
+        return Err(format!(
+        "unexpected display callback registration: pc={registration_pc:#010x}, slot={callback_slot}, callback={callback_pointer:#010x}"
+    )
+    .into());
+    }
+    let callback_entry = callback_pointer & !1;
+    debugger.breakpoint(callback_entry, true)?;
+    debugger.breakpoint(gui_display_callback_register, false)?;
+    debugger.write(alias_widget, &4u16.to_le_bytes())?;
+    debugger.resume_guest()?;
+    let callback_deadline = Instant::now() + Duration::from_secs(10);
+    while qmp.query_status()?.running {
+        session.poll()?;
+        if Instant::now() >= callback_deadline {
+            let _ = debugger.breakpoint(callback_entry, false);
+            let _ = debugger.resume_guest();
+            return Err("first DisplayCycle2 callback breakpoint timed out".into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    let callback_pc = debugger.read_register(15)? & !1;
+    if callback_pc != callback_entry {
+        let _ = debugger.breakpoint(callback_entry, false);
+        let _ = debugger.resume_guest();
+        return Err(format!(
+        "first-use race probe stopped at {callback_pc:#010x}, not callback {callback_entry:#010x}"
+    )
+    .into());
+    }
+    debugger.breakpoint(callback_entry, false)?;
+    debugger.resume_guest()?;
+    let race_frame = capture(150, "window-scene-callback-preflight-race")?;
+    qmp.stop()?;
+    let race_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
+    let race_slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
+    let callback_preflight_race_rejected = race_frame == *baseline
+        && u16::from_le_bytes(race_state[..2].try_into().unwrap()) == 0x4b4e
+        && u32::from_le_bytes(race_slot5.clone().try_into().unwrap()) == callback_pointer
+        && qmp.read_memory(0, alias_widget, 1)? == [4]
+        && qmp.read_memory(0, widget7, 1)? == [1]
+        && qmp.read_memory(0, background10, 1)? == [0]
+        && qmp.read_memory(0, shared_resource_pointer, 512)? == *original_shared_resource;
+    debugger.write(alias_widget, &original_alias_layer)?;
+    debugger.resume_guest()?;
+    if !callback_preflight_race_rejected {
+        return Err(format!(
+        "callback-side scene preflight failed to reject descriptor drift: state={race_state:02x?}, slot5={race_slot5:02x?}, frame_unchanged={} ",
+        race_frame == *baseline
+    )
+    .into());
+    }
+
+    // Only DisplayCycle2 sets ticks; require an empty mailbox and zero
+    // ticks so neither a previous scene nor an old event can satisfy the
+    // subsequent callback-return check.
+    if race_state[2] != 0 || race_state[3] != u8::MAX {
+        return Err(format!(
+        "knob-dialog retry requires zero ticks and empty mailbox, found ticks={} pending={:#04x}",
+        race_state[2], race_state[3]
+    ).into());
+    }
+    if !supported_display_dispatcher(&qmp.read_memory(
+        0,
+        DISPLAY_CYCLE2_DISPATCH_GUARD,
+        DISPLAY_CYCLE2_RETURN_GUARD.len(),
+    )?) {
+        return Err("unsupported L6max DisplayCycle2 dispatcher revision".into());
+    }
+
+    context.activation_semaphore_count = Some(semaphore_count);
+    context.activation_callback = Some(callback_pointer);
+    context.next = 6;
+    Ok(
+        json!({"callback_preflight_race_rejected": true, "callback":callback_pointer, "race_state":race_state, "frame_unchanged":true}),
+    )
+}
+
+fn activation_baseline_ready(state: &[u8], slot: u32, callback: u32, semaphore: &[u8]) -> bool {
+    state.len() == 4
+        && u16::from_le_bytes([state[0], state[1]]) == 0x4b4e
+        && state[2] == 0
+        && state[3] == u8::MAX
+        && callback & 1 == 1
+        && slot == callback
+        && semaphore == 0u32.to_le_bytes()
+}
+
+pub(super) fn run_first_activation(
+    session: &Session,
+    context: &mut PreflightContext,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+    shared: (std::time::Instant, u32, u32, u64, u8),
+) -> Result<Value, Box<dyn std::error::Error>> {
+    use std::time::Instant;
+    if context.next != 6 {
+        return Err("knob-dialog activation step is out of order".into());
+    }
+    let qmp = &session.engine.management[0];
+    let inputs = session.engine.inputs.as_ref().unwrap();
+    let notification_semaphore = context.notification_semaphore;
+    let widget7 = context.widget7;
+    let widget33 = context.widget33;
+    let background10 = context.background10;
+    let original_widget7 = &context.original_widget7;
+    let original_background_layers = &context.original_background_layers;
+    let heap_before = &context.heap_before;
+    let semaphore_count = context
+        .activation_semaphore_count
+        .as_ref()
+        .ok_or("missing saved semaphore")?;
+    let callback_pointer = context
+        .activation_callback
+        .ok_or("missing callback pointer")?;
+    let debugger = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?;
+    let word = |address: u32| -> Result<u32, Box<dyn std::error::Error>> {
+        Ok(u32::from_le_bytes(
+            qmp.read_memory(0, address, 4)?.try_into().unwrap(),
+        ))
+    };
+    let heap = || -> Result<Vec<u32>, Box<dyn std::error::Error>> {
+        Ok(qmp
+            .read_memory(0, l6max::xFreeBytesRemaining, 16)?
+            .chunks_exact(4)
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+            .collect())
+    };
+    // Recheck the cross-step baseline while stopped: no previous event or
+    // callback can satisfy the return observation for this retry.
+    qmp.stop()?;
+    let before = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
+    let before_slot = word(l6max::gui_display_callback_table + 20)?;
+    let before_semaphore = qmp.read_memory(0, notification_semaphore + 56, 4)?;
+    if !activation_baseline_ready(&before, before_slot, callback_pointer, &before_semaphore) {
+        return Err(format!("knob-dialog activation baseline changed: state={before:02x?}, slot={before_slot:#010x}, semaphore={before_semaphore:02x?}").into());
+    }
+    if super::execute::deadline_exceeded(
+        shared.0.elapsed(),
+        shared.1,
+        inputs.panel.snapshot().guest_ms,
+        shared.2,
+        shared.3,
+    ) {
+        return Err("knob-dialog activation exceeded its shared deadline before retry".into());
+    }
+    // Enqueue while MAIN is stopped, then resume it. Panel/UART work may
+    // still be in flight independently.
+    inputs.knob(0, -1)?;
+    debugger.resume_guest()?;
+    let contention_start = inputs.panel.snapshot().guest_ms;
+    let contention_deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(180));
+    loop {
+        session.poll()?;
+        let state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
+        let slot = word(l6max::gui_display_callback_table + 20)?;
+        if state.len() == 4
+            && u16::from_le_bytes([state[0], state[1]]) == 0x4b4e
+            && state[2] != 0
+            && state[3] == u8::MAX
+            && slot & 1 == 1
+        {
+            // Coherently sample the running word after stopping QEMU. A
+            // zero here proves the callback that set ticks returned.
+            qmp.stop()?;
+            let stopped_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
+            let stopped_slot = word(l6max::gui_display_callback_table + 20)?;
+            let running = word(DISPLAY_CYCLE2_SLOT5_RUNNING)?;
+            if callback_first_use_ready(&stopped_state, stopped_slot, callback_pointer, running) {
+                break;
+            }
+            debugger.resume_guest()?;
+        }
+        if inputs
+            .panel
+            .snapshot()
+            .guest_ms
+            .wrapping_sub(contention_start)
+            >= guest_timeout_ms.min(10_000)
+            || Instant::now() >= contention_deadline
+        {
+            return Err("knob dialog did not render while the notification lock was held".into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    let first_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
+    let first_slot5 = u32::from_le_bytes(
+        qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?
+            .try_into()
+            .unwrap(),
+    );
+    let heap_while_locked = heap()?;
+    let notification_lock_still_held =
+        qmp.read_memory(0, notification_semaphore + 56, 4)? == 0u32.to_le_bytes();
+    let dialog_without_notification_lock = u16::from_le_bytes(first_state[..2].try_into().unwrap())
+== 0x4b4e
+&& first_slot5 & 1 == 1
+&& qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 3, 1)? == u8::MAX.to_le_bytes()
+// A nonzero timeout means a scene is showing; its descriptors are
+// already back on their stock layers.
+&& first_state[2] != 0
+&& qmp.read_memory(0, widget7, 16)? == *original_widget7
+&& qmp.read_memory(0, background10, 1)? == original_background_layers[0]
+&& notification_lock_still_held;
+    let first_use_failed = !dialog_without_notification_lock
+        || heap_while_locked[2] != heap_before[2]
+        || heap_while_locked[3] != heap_before[3];
+    // Preserve the stopped snapshot before releasing the lock: ticks and
+    // mailbox acknowledgement can become visible before rendering returns.
+    let diagnostic = if first_use_failed {
+        let widget7_read = qmp
+            .read_memory(0, widget7, 16)
+            .map_err(|error| error.to_string());
+        let widget33_read = qmp
+            .read_memory(0, widget33, 16)
+            .map_err(|error| error.to_string());
+        let background10_read = qmp
+            .read_memory(0, background10, 1)
+            .map_err(|error| error.to_string());
+        let pc = match debugger.read_register(15) {
+        Ok(pc) => pc,
+        Err(error) => return Err(format!(
+            "dialog first use failed: state={first_state:02x?}, slot5={first_slot5:#010x}, heap={heap_while_locked:?}, notification_lock_still_held={notification_lock_still_held}, actual_widget7={widget7_read:02x?}, actual_widget33={widget33_read:02x?}, actual_background10={background10_read:02x?}, stopped_pc_error={error}"
+        ).into()),
+    };
+        Some((widget7_read, widget33_read, background10_read, pc))
+    } else {
+        None
+    };
+    debugger.write(notification_semaphore + 56, semaphore_count)?;
+    debugger.resume_guest()?;
+    if first_use_failed {
+        return Err(format!(
+        "dialog first use failed: state={first_state:02x?}, slot5={first_slot5:#010x}, heap={heap_while_locked:?}, notification_lock_still_held={notification_lock_still_held}, actual_widget7_widget33_background10_pc={diagnostic:02x?}"
+    ).into());
+    }
+
+    context.activation_semaphore_count = None;
+    context.next = 7;
+    Ok(
+        json!({"dialog_without_notification_lock": true, "state": first_state, "callback":first_slot5, "heap":heap_while_locked, "notification_lock_still_held":notification_lock_still_held}),
+    )
+}
+
 pub(super) fn run_knob_dialog(
     session: &Session,
     options: &Options,
@@ -935,11 +1284,6 @@ pub(super) fn run_knob_dialog(
     }
     let inputs = session.engine.inputs.as_ref().unwrap();
     let qmp = &session.engine.management[0];
-    let word = |address: u32| -> Result<u32, Box<dyn std::error::Error>> {
-        Ok(u32::from_le_bytes(
-            qmp.read_memory(0, address, 4)?.try_into().unwrap(),
-        ))
-    };
     // MAIN 1.10's parameter selector writes this byte before returning;
     // the corresponding getter at 0x8000b4a8 reads it.
     const SELECTED_PARAMETER_MODE: u32 = 0x8046_2d2c;
@@ -1071,7 +1415,7 @@ pub(super) fn run_knob_dialog(
     };
     if context_slot
         .as_ref()
-        .is_none_or(|context| context.next != 5)
+        .is_none_or(|context| context.next != 7)
     {
         return Err("knob-dialog preflight incomplete".into());
     }
@@ -1081,8 +1425,7 @@ pub(super) fn run_knob_dialog(
         return Err("incomplete knob-dialog preflight context".into());
     }
     let mut context = context_slot.take().unwrap();
-    let alias_widget = context.alias_widget.unwrap();
-    let original_alias_layer = context.alias_layer.take().unwrap();
+
     let mut debugger = context.debugger.take().unwrap();
     let original_window = context.original_window;
     let original_bitmap = context.original_bitmap;
@@ -1106,204 +1449,8 @@ pub(super) fn run_knob_dialog(
     let heap_before = context.heap_before;
     let widget_layer_guard_rejected = true;
     let background_layer_guard_rejected = true;
+    let callback_preflight_race_rejected = true;
     let result = (|| -> Result<Value, Box<dyn std::error::Error>> {
-        // Simulate the notification manager owning its semaphore during first
-        // use. The scene must not depend on that unrelated lock.
-        qmp.stop()?;
-        let semaphore_count = qmp.read_memory(0, notification_semaphore + 56, 4)?;
-        if semaphore_count != 1u32.to_le_bytes() {
-            debugger.resume_guest()?;
-            return Err("notification semaphore was not available before contention check".into());
-        }
-        debugger.write(notification_semaphore + 56, &0u32.to_le_bytes())?;
-        // Stop at callback registration after the mixer-side scene preflight
-        // has passed. Change a borrowed descriptor before DisplayCycle2 can
-        // render so the callback-side preflight gets exercised deterministically.
-        use firmware_api::l6max::gui_display_callback_register;
-        debugger.breakpoint(gui_display_callback_register, true)?;
-        debugger.resume_guest()?;
-        inputs.knob(0, -1)?;
-        let registration_deadline = Instant::now() + Duration::from_secs(10);
-        while qmp.query_status()?.running {
-            session.poll()?;
-            if Instant::now() >= registration_deadline {
-                let _ = debugger.breakpoint(gui_display_callback_register, false);
-                let _ = debugger.resume_guest();
-                return Err("first-use callback registration breakpoint timed out".into());
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-        let registration_pc = debugger.read_register(15)? & !1;
-        let callback_slot = debugger.read_register(0)?;
-        let callback_pointer = debugger.read_register(1)?;
-        if registration_pc != gui_display_callback_register
-            || callback_slot != 5
-            || callback_pointer & 1 == 0
-        {
-            let _ = debugger.breakpoint(gui_display_callback_register, false);
-            let _ = debugger.resume_guest();
-            return Err(format!(
-                "unexpected display callback registration: pc={registration_pc:#010x}, slot={callback_slot}, callback={callback_pointer:#010x}"
-            )
-            .into());
-        }
-        let callback_entry = callback_pointer & !1;
-        debugger.breakpoint(callback_entry, true)?;
-        debugger.breakpoint(gui_display_callback_register, false)?;
-        debugger.write(alias_widget, &4u16.to_le_bytes())?;
-        debugger.resume_guest()?;
-        let callback_deadline = Instant::now() + Duration::from_secs(10);
-        while qmp.query_status()?.running {
-            session.poll()?;
-            if Instant::now() >= callback_deadline {
-                let _ = debugger.breakpoint(callback_entry, false);
-                let _ = debugger.resume_guest();
-                return Err("first DisplayCycle2 callback breakpoint timed out".into());
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-        let callback_pc = debugger.read_register(15)? & !1;
-        if callback_pc != callback_entry {
-            let _ = debugger.breakpoint(callback_entry, false);
-            let _ = debugger.resume_guest();
-            return Err(format!(
-                "first-use race probe stopped at {callback_pc:#010x}, not callback {callback_entry:#010x}"
-            )
-            .into());
-        }
-        debugger.breakpoint(callback_entry, false)?;
-        debugger.resume_guest()?;
-        let race_frame = capture(150, "window-scene-callback-preflight-race")?;
-        qmp.stop()?;
-        let race_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
-        let race_slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
-        let callback_preflight_race_rejected = race_frame == baseline
-            && u16::from_le_bytes(race_state[..2].try_into().unwrap()) == 0x4b4e
-            && u32::from_le_bytes(race_slot5.clone().try_into().unwrap()) == callback_pointer
-            && qmp.read_memory(0, alias_widget, 1)? == [4]
-            && qmp.read_memory(0, widget7, 1)? == [1]
-            && qmp.read_memory(0, background10, 1)? == [0]
-            && qmp.read_memory(0, shared_resource_pointer, 512)? == original_shared_resource;
-        debugger.write(alias_widget, &original_alias_layer)?;
-        debugger.resume_guest()?;
-        if !callback_preflight_race_rejected {
-            return Err(format!(
-                "callback-side scene preflight failed to reject descriptor drift: state={race_state:02x?}, slot5={race_slot5:02x?}, frame_unchanged={} ",
-                race_frame == baseline
-            )
-            .into());
-        }
-
-        // Only DisplayCycle2 sets ticks; require an empty mailbox and zero
-        // ticks so neither a previous scene nor an old event can satisfy the
-        // subsequent callback-return check.
-        if race_state[2] != 0 || race_state[3] != u8::MAX {
-            return Err(format!(
-                "knob-dialog retry requires zero ticks and empty mailbox, found ticks={} pending={:#04x}",
-                race_state[2], race_state[3]
-            ).into());
-        }
-        if !supported_display_dispatcher(&qmp.read_memory(
-            0,
-            DISPLAY_CYCLE2_DISPATCH_GUARD,
-            DISPLAY_CYCLE2_RETURN_GUARD.len(),
-        )?) {
-            return Err("unsupported L6max DisplayCycle2 dispatcher revision".into());
-        }
-        // Retry while the notification semaphore is still held. The scene
-        // should now pass its callback-side preflight and render without using
-        // the notification manager's lock.
-        inputs.knob(0, -1)?;
-        let contention_start = inputs.panel.snapshot().guest_ms;
-        let contention_deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(180));
-        loop {
-            session.poll()?;
-            let state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
-            let slot = word(l6max::gui_display_callback_table + 20)?;
-            if state.len() == 4
-                && u16::from_le_bytes([state[0], state[1]]) == 0x4b4e
-                && state[2] != 0
-                && state[3] == u8::MAX
-                && slot & 1 == 1
-            {
-                // Coherently sample the running word after stopping QEMU. A
-                // zero here proves the callback that set ticks returned.
-                qmp.stop()?;
-                let stopped_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
-                let stopped_slot = word(l6max::gui_display_callback_table + 20)?;
-                let running = word(DISPLAY_CYCLE2_SLOT5_RUNNING)?;
-                if callback_first_use_ready(&stopped_state, stopped_slot, callback_pointer, running)
-                {
-                    break;
-                }
-                debugger.resume_guest()?;
-            }
-            if inputs
-                .panel
-                .snapshot()
-                .guest_ms
-                .wrapping_sub(contention_start)
-                >= guest_timeout_ms.min(10_000)
-                || Instant::now() >= contention_deadline
-            {
-                return Err(
-                    "knob dialog did not render while the notification lock was held".into(),
-                );
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-        let first_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
-        let first_slot5 = u32::from_le_bytes(
-            qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?
-                .try_into()
-                .unwrap(),
-        );
-        let heap_while_locked = heap()?;
-        let notification_lock_still_held =
-            qmp.read_memory(0, notification_semaphore + 56, 4)? == 0u32.to_le_bytes();
-        let dialog_without_notification_lock = u16::from_le_bytes(first_state[..2].try_into().unwrap())
-        == 0x4b4e
-        && first_slot5 & 1 == 1
-        && qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 3, 1)? == u8::MAX.to_le_bytes()
-        // A nonzero timeout means a scene is showing; its descriptors are
-        // already back on their stock layers.
-        && first_state[2] != 0
-        && qmp.read_memory(0, widget7, 16)? == original_widget7
-        && qmp.read_memory(0, background10, 1)? == original_background_layers[0]
-        && notification_lock_still_held;
-        let first_use_failed = !dialog_without_notification_lock
-            || heap_while_locked[2] != heap_before[2]
-            || heap_while_locked[3] != heap_before[3];
-        // Preserve the stopped snapshot before releasing the lock: ticks and
-        // mailbox acknowledgement can become visible before rendering returns.
-        let diagnostic = if first_use_failed {
-            let widget7_read = qmp
-                .read_memory(0, widget7, 16)
-                .map_err(|error| error.to_string());
-            let widget33_read = qmp
-                .read_memory(0, widget33, 16)
-                .map_err(|error| error.to_string());
-            let background10_read = qmp
-                .read_memory(0, background10, 1)
-                .map_err(|error| error.to_string());
-            let pc = match debugger.read_register(15) {
-                Ok(pc) => pc,
-                Err(error) => return Err(format!(
-                    "dialog first use failed: state={first_state:02x?}, slot5={first_slot5:#010x}, heap={heap_while_locked:?}, notification_lock_still_held={notification_lock_still_held}, actual_widget7={widget7_read:02x?}, actual_widget33={widget33_read:02x?}, actual_background10={background10_read:02x?}, stopped_pc_error={error}"
-                ).into()),
-            };
-            Some((widget7_read, widget33_read, background10_read, pc))
-        } else {
-            None
-        };
-        debugger.write(notification_semaphore + 56, &semaphore_count)?;
-        debugger.resume_guest()?;
-        if first_use_failed {
-            return Err(format!(
-                "dialog first use failed: state={first_state:02x?}, slot5={first_slot5:#010x}, heap={heap_while_locked:?}, notification_lock_still_held={notification_lock_still_held}, actual_widget7_widget33_background10_pc={diagnostic:02x?}"
-            ).into());
-        }
-
         inputs.knob(0, -3)?;
         let active = capture(500, "knob-dialog-active")?;
         let active_callbacks = qmp.read_memory(0, l6max::gui_display_callback_table, 24)?;
@@ -2703,5 +2850,29 @@ mod first_use_callback_tests {
         assert!(!callback_first_use_ready(&ready, 0, 1, 0));
         assert!(!callback_first_use_ready(&ready, 3, 1, 0));
         assert!(!callback_first_use_ready(&[0; 3], 1, 1, 0));
+    }
+}
+
+#[cfg(test)]
+mod activation_baseline_tests {
+    use super::activation_baseline_ready;
+    #[test]
+    fn retry_requires_unchanged_empty_baseline_exact_callback_and_held_lock() {
+        let state = [0x4e, 0x4b, 0, 0xff];
+        assert!(activation_baseline_ready(&state, 3, 3, &[0; 4]));
+        assert!(!activation_baseline_ready(
+            &[0x4e, 0x4b, 1, 0xff],
+            3,
+            3,
+            &[0; 4]
+        ));
+        assert!(!activation_baseline_ready(
+            &[0x4e, 0x4b, 0, 9],
+            3,
+            3,
+            &[0; 4]
+        ));
+        assert!(!activation_baseline_ready(&state, 5, 3, &[0; 4]));
+        assert!(!activation_baseline_ready(&state, 3, 3, &[1, 0, 0, 0]));
     }
 }

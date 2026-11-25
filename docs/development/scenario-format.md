@@ -214,6 +214,8 @@ fail even if the ring changed by that observation.
 | `knob-dialog-preflight-layer-collision` | — | Verify first use rejects a conflicting scene layer |
 | `knob-dialog-preflight-widget-layer` | — | Verify first use rejects a changed widget layer |
 | `knob-dialog-preflight-background-layer` | — | Verify first use rejects a changed background layer |
+| `knob-dialog-callback-race` | — | Verify callback-side preflight rejects descriptor drift while retaining the notification semaphore in the owned debugger context |
+| `knob-dialog-first-activation` | — | Wait for the display callback to return, then verify first activation and restore the notification semaphore |
 | `knob-dialog` | — | Patched L6max only; compare all ten parameter scenes with reviewed display images, then verify heap lifetime, busy-aware expiry, display cleanup, widget restoration and exact encoder reports |
 | `knob-popup-open` | `first_steps`, `fallback_steps`, `attempt_guest_ms` | On the L6max recorder screen, try the channel 1 level knob by `first_steps`, then by `fallback_steps` if the popup does not open within `attempt_guest_ms`; retain the initial display and level as evidence |
 | `knob-popup-expect-open` | — | Require the dialog signature, callback and a changed display under the shared popup deadline |

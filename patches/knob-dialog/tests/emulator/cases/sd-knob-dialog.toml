@@ -73,6 +73,14 @@ action = "knob-dialog-preflight-background-layer"
 guest_timeout_ms = 180000
 wall_timeout_s = 600
 [[step]]
+action = "knob-dialog-callback-race"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+[[step]]
+action = "knob-dialog-first-activation"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+[[step]]
 action = "knob-dialog"
 guest_timeout_ms = 180000
 wall_timeout_s = 600

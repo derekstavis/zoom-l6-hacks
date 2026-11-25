@@ -109,7 +109,14 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobActiveCheckFrame
         | Action::KnobActiveFinish
         | Action::KnobDialogLevelDemo
-        | Action::KnobDialogTaskContexts
+        | Action::KnobTaskBegin
+        | Action::KnobTaskArmHook
+        | Action::KnobTaskWaitHook
+        | Action::KnobTaskArmCallback
+        | Action::KnobTaskWaitCallback
+        | Action::KnobTaskAssertDistinct
+        | Action::KnobTaskRelease
+        | Action::KnobTaskFinish
         | Action::KnobOverlayBegin
         | Action::KnobOverlayCheckWindow
         | Action::KnobOverlaySnapshotDescriptors

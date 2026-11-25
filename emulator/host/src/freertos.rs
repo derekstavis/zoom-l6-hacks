@@ -144,6 +144,28 @@ pub struct SchedulerSnapshot {
     pub next_wake: Option<u32>,
     pub critical_nesting: u32,
 }
+/// A revision-guarded current-task pointer sampler for a bounded observation.
+/// Recreate after guest restart or firmware changes; samples are not atomic.
+pub struct CurrentTaskReader {
+    qmp: QmpClient,
+    address: u32,
+}
+impl CurrentTaskReader {
+    pub fn read(&self) -> Result<u32, String> {
+        u32_at(&read(&self.qmp, self.address, 4)?, 0)
+    }
+}
+pub fn current_task_reader(q: &QmpClient, model: Model) -> Result<CurrentTaskReader, String> {
+    let k = kernel(model);
+    if !matches(q, k.create_task)? || !matches(q, k.tick)? {
+        return Err("Scheduler layout is unsupported for this firmware".into());
+    }
+    Ok(CurrentTaskReader {
+        qmp: q.clone(),
+        address: k.current_tcb,
+    })
+}
+
 pub fn scheduler(q: &QmpClient, model: Model) -> Result<SchedulerSnapshot, String> {
     let (_, k) = guard(q, model)?;
     if !matches(q, k.create_task)? || !matches(q, k.tick)? {

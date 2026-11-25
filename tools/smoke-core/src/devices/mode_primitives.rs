@@ -279,6 +279,48 @@ pub(super) fn embedded_preflight_probe_operations() -> Result<Vec<(String, Opera
         .collect()
 }
 
+pub(super) fn embedded_task_context_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/task-contexts.toml"
+    ))
+    .map_err(|error| format!("invalid embedded task contexts fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_task_context_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded task contexts fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobTaskBegin => Operation::KnobTaskBegin,
+                crate::Action::KnobTaskArmHook => Operation::KnobTaskArmHook,
+                crate::Action::KnobTaskWaitHook => Operation::KnobTaskWaitHook,
+                crate::Action::KnobTaskArmCallback => Operation::KnobTaskArmCallback,
+                crate::Action::KnobTaskWaitCallback => Operation::KnobTaskWaitCallback,
+                crate::Action::KnobTaskAssertDistinct => Operation::KnobTaskAssertDistinct,
+                crate::Action::KnobTaskRelease => Operation::KnobTaskRelease,
+                crate::Action::KnobTaskFinish => Operation::KnobTaskFinish,
+                crate::Action::EnqueueEncoderNoAck { channel, steps } => {
+                    Operation::EnqueueEncoderNoAck {
+                        channel: *channel,
+                        steps: *steps,
+                    }
+                }
+                crate::Action::CaptureDisplay { guest_ms, artifact } => Operation::CaptureDisplay {
+                    guest_ms: *guest_ms,
+                    artifact: artifact.clone(),
+                },
+                _ => return Err("unsupported embedded task contexts action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
 pub(super) fn embedded_mode_operations() -> Result<Vec<(String, Operation)>, String> {
     let fragment: crate::Fragment = toml::from_str(EMBEDDED_MODE_WALK)
         .map_err(|error| format!("invalid embedded knob mode fragment: {error}"))?;
@@ -853,6 +895,7 @@ impl State {
                         expecting_overlay_refresh(c)
                             || expecting_locked_capture(c)
                             || expecting_active_display(c)
+                            || expecting_task_capture(c)
                     })
                 {
                     save_captured_display(&capture, &options.logs)?;

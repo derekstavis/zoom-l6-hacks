@@ -748,8 +748,8 @@ impl Scenario {
                 Action::KnobDialogFirstActivation => "knob-dialog-callback-race",
                 Action::KnobActiveBegin => "knob-dialog-first-activation",
                 Action::KnobDialogLevelDemo => "knob-active-finish",
-                Action::KnobDialogTaskContexts => "knob-dialog-level-demo",
-                Action::KnobOverlayBegin => "knob-dialog-task-contexts",
+                Action::KnobTaskBegin => "knob-dialog-level-demo",
+                Action::KnobOverlayBegin => "knob-task-finish",
                 Action::KnobDialogBitmapZero => "knob-overlay-finish",
                 Action::KnobOverlayRefreshBegin => "knob-dialog-bitmap-zero",
                 Action::KnobLockAcquire => "knob-overlay-refresh-finish",
@@ -788,8 +788,8 @@ impl Scenario {
                         "knob-dialog-level-demo" => {
                             matches!(previous.action, Action::KnobDialogLevelDemo)
                         }
-                        "knob-dialog-task-contexts" => {
-                            matches!(previous.action, Action::KnobDialogTaskContexts)
+                        "knob-task-finish" => {
+                            matches!(previous.action, Action::KnobTaskFinish)
                         }
                         "knob-overlay-finish" => {
                             matches!(previous.action, Action::KnobOverlayFinish)
@@ -858,18 +858,18 @@ impl Scenario {
                     return Err("knob-dialog preflight must end with the diagnostic".into());
                 };
                 let subsequent = &applicable[..=end];
-                if subsequent.len() < 143
+                if subsequent.len() < 152
                     || !super::valid_preflight_probe_steps(&subsequent[0..30])
                     || !matches!(subsequent[30].action, Action::KnobDialogCallbackRace)
                     || !matches!(subsequent[31].action, Action::KnobDialogFirstActivation)
                     || !super::valid_active_display_steps(&subsequent[32..39])
                     || !matches!(subsequent[39].action, Action::KnobDialogLevelDemo)
-                    || !matches!(subsequent[40].action, Action::KnobDialogTaskContexts)
-                    || !super::valid_overlay_invariant_steps(&subsequent[41..56])
-                    || !matches!(subsequent[56].action, Action::KnobDialogBitmapZero)
-                    || !super::valid_refreshed_overlay_steps(&subsequent[57..62])
-                    || !super::valid_locked_update_steps(&subsequent[62..70])
-                    || !valid_knob_mode_steps(&subsequent[70..subsequent.len().saturating_sub(63)])
+                    || !super::valid_task_context_steps(&subsequent[40..50])
+                    || !super::valid_overlay_invariant_steps(&subsequent[50..65])
+                    || !matches!(subsequent[65].action, Action::KnobDialogBitmapZero)
+                    || !super::valid_refreshed_overlay_steps(&subsequent[66..71])
+                    || !super::valid_locked_update_steps(&subsequent[71..79])
+                    || !valid_knob_mode_steps(&subsequent[79..subsequent.len().saturating_sub(63)])
                     || !valid_invalid_tag_steps(
                         &subsequent[subsequent.len().saturating_sub(63)
                             ..subsequent.len().saturating_sub(56)],

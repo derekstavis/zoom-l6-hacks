@@ -724,6 +724,7 @@ pub(super) struct PreflightContext {
     active: Option<ActiveSnapshot>,
     opened: Option<OpenedOverlay>,
     task_contexts: Option<TaskContexts>,
+    task_probe: Option<TaskProbe>,
     overlay_heap: Option<(Vec<u32>, u32)>,
     mode_index: usize,
     last_mode: Option<u8>,
@@ -873,6 +874,7 @@ pub(super) fn begin_preflight(
         active: None,
         opened: None,
         task_contexts: None,
+        task_probe: None,
         overlay_heap: None,
         mode_index: 0,
         last_mode: None,
@@ -1713,131 +1715,255 @@ fn verify_distinct_task_contexts(
     })
 }
 
-pub(super) fn run_task_contexts(
+struct TaskProbe {
+    hook_entry: u32,
+    callback_entry: u32,
+    deadline: Option<Instant>,
+    hook_task: Option<u32>,
+    callback_task: Option<u32>,
+    capture_ready: bool,
+}
+
+pub(super) fn expecting_task_probe(context: &PreflightContext) -> bool {
+    context.task_probe.is_some()
+}
+pub(super) fn expecting_task_capture(context: &PreflightContext) -> bool {
+    context
+        .task_probe
+        .as_ref()
+        .is_some_and(|probe| probe.capture_ready)
+}
+
+pub(super) fn begin_task_probe(
     session: &Session,
-    options: &Options,
     context: &mut PreflightContext,
-    guest_timeout_ms: u32,
-    wall_timeout_s: u64,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    use std::time::Instant;
-    if context.next != 9 {
+    if context.next != 9 || context.task_probe.is_some() {
         return Err("knob-dialog task contexts step is out of order".into());
     }
-    let inputs = session.engine.inputs.as_ref().unwrap();
-    let qmp = &session.engine.management[0];
-    let capture = |duration: u32, name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
-        let start = inputs.panel.snapshot().guest_ms;
-        let begin = Instant::now();
-        let raw = loop {
-            let data = session.poll()?;
-            let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(start);
-            if elapsed >= duration {
-                break data.display;
-            }
-            if elapsed > guest_timeout_ms || begin.elapsed() > Duration::from_secs(wall_timeout_s) {
-                return Err("knob-dialog display capture exceeded its deadline".into());
-            }
-            thread::sleep(Duration::from_millis(5));
-        };
-        let native = image::GrayImage::from_fn(128, 64, |x, y| {
-            let index = ((63 - y as usize) / 8) * 128 + x as usize;
-            image::Luma([if raw[index] & (1 << ((63 - y as usize) % 8)) != 0 {
-                255
-            } else {
-                0
-            }])
-        });
-        if let Some(scene) = name.strip_prefix("window-scene-")
-            && [
-                "high", "freq", "mid", "low", "aux1", "aux2", "efx", "sub-mix", "pan", "level",
-            ]
-            .contains(&scene)
-        {
-            let path = l6max_host::paths::repository_root()
-                .join(KNOB_DIALOG_REFERENCES)
-                .join(format!("{scene}.png"));
-            check_display_reference(&raw, &path, &options.logs, name)
-                .map_err(|error| format!("knob-dialog screen {scene}: {error}"))?;
-        }
-        image::DynamicImage::ImageLuma8(native)
-            .resize(768, 384, image::imageops::FilterType::Nearest)
-            .save(options.logs.join(format!("{name}.png")))?;
-        Ok(raw)
-    };
+    let opened = context.opened.as_ref().ok_or("missing active overlay")?;
     let debugger = context
         .debugger
         .as_mut()
         .ok_or("missing knob-dialog debugger")?;
-    let opened = context.opened.as_ref().ok_or("missing active overlay")?;
     validate_opened_overlay(session, debugger, opened)?;
-    let active_slot5 = opened.callback;
-    // Observe the producer and consumer task contexts directly. The knob
-    // hook runs from the mixer update path; slot 5 runs from DisplayCycle2.
-    // This determines whether the atomic mailbox can be replaced safely.
-    use firmware_api::l6max::pxCurrentTCB;
-    // knob-dialog's call-site hook into `mixer_apply_channel_parameter`
-    // (patches/knob-dialog).
     const KNOB_CALL_SITE: u32 = 0x8003_6c74;
-    let knob_hook_entry = thumb_bl_target(
+    let call = session.engine.management[0].read_memory(0, KNOB_CALL_SITE, 4)?;
+    let hook_entry = thumb_bl_target(
         KNOB_CALL_SITE,
-        qmp.read_memory(0, KNOB_CALL_SITE, 4)?
-            .try_into()
+        call.try_into()
             .map_err(|_| "patched mixer call is not four bytes")?,
     )
     .ok_or("patched mixer dispatcher call is not a Thumb BL")?;
-    let callback_probe_entry = active_slot5 & !1;
-    qmp.stop()?;
-    debugger.breakpoint(knob_hook_entry, true)?;
+    context.task_probe = Some(TaskProbe {
+        hook_entry,
+        callback_entry: opened.callback & !1,
+        deadline: None,
+        hook_task: None,
+        callback_task: None,
+        capture_ready: false,
+    });
+    Ok(json!({"hook_entry":hook_entry,"callback_entry":opened.callback & !1}))
+}
+
+pub(super) fn arm_task_hook(
+    session: &Session,
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let entry = context
+        .task_probe
+        .as_ref()
+        .ok_or("missing task probe")?
+        .hook_entry;
+    let debugger = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?;
+    session.engine.management[0].stop()?;
+    debugger.breakpoint(entry, true)?;
     debugger.resume_guest()?;
-    inputs.knob(0, -1)?;
-    let task_probe_deadline = Instant::now() + Duration::from_secs(10);
+    Ok(json!({"hook_entry":entry}))
+}
+
+pub(super) fn mark_task_hook_input(
+    context: &mut PreflightContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    context
+        .task_probe
+        .as_mut()
+        .ok_or("missing task probe")?
+        .deadline = Some(Instant::now() + Duration::from_secs(10));
+    Ok(())
+}
+
+fn task_wait_expired(
+    now: Instant,
+    deadline: Instant,
+    guest: u32,
+    shared: (Instant, u32, u32, u64, u16),
+) -> bool {
+    now >= deadline
+        || super::execute::deadline_exceeded(
+            now.duration_since(shared.0),
+            shared.1,
+            guest,
+            shared.2,
+            shared.3,
+        )
+}
+
+fn wait_task_stop(
+    session: &Session,
+    deadline: Instant,
+    shared: (Instant, u32, u32, u64, u16),
+    timeout: &'static str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let qmp = &session.engine.management[0];
     while qmp.query_status()?.running {
         session.poll()?;
-        if Instant::now() >= task_probe_deadline {
-            return Err("knob hook task-context breakpoint timed out".into());
+        let now = Instant::now();
+        let guest = session
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or("missing inputs")?
+            .panel
+            .snapshot()
+            .guest_ms;
+        if task_wait_expired(now, deadline, guest, shared) {
+            if now >= deadline {
+                return Err(timeout.into());
+            }
+            return Err("knob-dialog shared deadline exceeded during task probe".into());
         }
         thread::sleep(Duration::from_millis(5));
     }
-    let hook_pc = debugger.read_register(15)? & !1;
-    if hook_pc != knob_hook_entry {
-        return Err(format!(
-            "task probe stopped at {hook_pc:#010x}, not knob hook {knob_hook_entry:#010x}"
-        )
-        .into());
-    }
-    let hook_task = u32::from_le_bytes(qmp.read_memory(0, pxCurrentTCB, 4)?.try_into().unwrap());
-    debugger.breakpoint(knob_hook_entry, false)?;
-    debugger.breakpoint(callback_probe_entry, true)?;
-    debugger.resume_guest()?;
-
-    let task_probe_deadline = Instant::now() + Duration::from_secs(10);
-    while qmp.query_status()?.running {
-        session.poll()?;
-        if Instant::now() >= task_probe_deadline {
-            let _ = debugger.breakpoint(callback_probe_entry, false);
-            let _ = debugger.resume_guest();
-            return Err("DisplayCycle2 task-context breakpoint timed out".into());
+    // Without a recorded breakpoint stop time, a delayed waiter cannot prove
+    // the stop happened before its deadline.
+    let now = Instant::now();
+    let guest = session
+        .engine
+        .inputs
+        .as_ref()
+        .ok_or("missing inputs")?
+        .panel
+        .snapshot()
+        .guest_ms;
+    if task_wait_expired(now, deadline, guest, shared) {
+        if now >= deadline {
+            return Err(timeout.into());
         }
-        thread::sleep(Duration::from_millis(5));
+        return Err("knob-dialog shared deadline exceeded during task probe".into());
     }
-    let callback_pc = debugger.read_register(15)? & !1;
-    if callback_pc != callback_probe_entry {
+    Ok(())
+}
+
+pub(super) fn wait_task_hook(
+    session: &Session,
+    context: &mut PreflightContext,
+    reader: &l6max_host::freertos::CurrentTaskReader,
+    shared: (Instant, u32, u32, u64, u16),
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let probe = context.task_probe.as_mut().ok_or("missing task probe")?;
+    wait_task_stop(
+        session,
+        probe.deadline.ok_or("missing hook deadline")?,
+        shared,
+        "knob hook task-context breakpoint timed out",
+    )?;
+    let pc = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?
+        .read_register(15)?
+        & !1;
+    if pc != probe.hook_entry {
         return Err(format!(
-            "task probe stopped at {callback_pc:#010x}, not DisplayCycle2 callback"
+            "task probe stopped at {pc:#010x}, not knob hook {:#010x}",
+            probe.hook_entry
         )
         .into());
     }
-    let callback_task =
-        u32::from_le_bytes(qmp.read_memory(0, pxCurrentTCB, 4)?.try_into().unwrap());
-    let tasks = verify_distinct_task_contexts(hook_task, callback_task)?;
-    debugger.breakpoint(callback_probe_entry, false)?;
-    debugger.resume_guest()?;
-    capture(150, "window-scene-task-context-probe")?;
+    let task = reader.read()?;
+    probe.hook_task = Some(task);
+    Ok(json!({"hook_task":task}))
+}
 
-    context.task_contexts = Some(tasks);
+pub(super) fn arm_task_callback(
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let probe = context.task_probe.as_mut().ok_or("missing task probe")?;
+    let debugger = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?;
+    debugger.breakpoint(probe.hook_entry, false)?;
+    debugger.breakpoint(probe.callback_entry, true)?;
+    debugger.resume_guest()?;
+    probe.deadline = Some(Instant::now() + Duration::from_secs(10));
+    Ok(json!({"callback_entry":probe.callback_entry}))
+}
+
+pub(super) fn wait_task_callback(
+    session: &Session,
+    context: &mut PreflightContext,
+    reader: &l6max_host::freertos::CurrentTaskReader,
+    shared: (Instant, u32, u32, u64, u16),
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let probe = context.task_probe.as_mut().ok_or("missing task probe")?;
+    wait_task_stop(
+        session,
+        probe.deadline.ok_or("missing callback deadline")?,
+        shared,
+        "DisplayCycle2 task-context breakpoint timed out",
+    )?;
+    let pc = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?
+        .read_register(15)?
+        & !1;
+    if pc != probe.callback_entry {
+        return Err(format!("task probe stopped at {pc:#010x}, not DisplayCycle2 callback").into());
+    }
+    let task = reader.read()?;
+    probe.callback_task = Some(task);
+    Ok(json!({"callback_task":task}))
+}
+
+pub(super) fn assert_task_distinct(
+    context: &PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let probe = context.task_probe.as_ref().ok_or("missing task probe")?;
+    let hook = probe.hook_task.ok_or("missing hook task")?;
+    let callback = probe.callback_task.ok_or("missing callback task")?;
+    verify_distinct_task_contexts(hook, callback)?;
+    Ok(json!({"mixer_task":hook,"display_task":callback,"tasks_differ":true}))
+}
+
+pub(super) fn release_task_probe(
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let probe = context.task_probe.as_mut().ok_or("missing task probe")?;
+    let debugger = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?;
+    debugger.breakpoint(probe.callback_entry, false)?;
+    debugger.resume_guest()?;
+    probe.capture_ready = true;
+    Ok(json!({"released":true}))
+}
+
+pub(super) fn finish_task_probe(
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let probe = context.task_probe.take().ok_or("missing task probe")?;
+    let hook = probe.hook_task.ok_or("missing hook task")?;
+    let callback = probe.callback_task.ok_or("missing callback task")?;
+    context.task_contexts = Some(verify_distinct_task_contexts(hook, callback)?);
     context.next = 10;
-    Ok(json!({"mixer_task":hook_task,"display_task":callback_task,"tasks_differ":true}))
+    Ok(json!({"mixer_task":hook,"display_task":callback,"tasks_differ":true}))
 }
 
 struct OverlayEvidence {
@@ -4854,5 +4980,34 @@ mod preflight_budget_tests {
         assert!(preflight_remaining_wait(shared, 9501, 600).is_err());
         let expired = (Instant::now() - Duration::from_secs(11), 0, 10_000, 10, 0);
         assert!(preflight_remaining_wait(expired, 0, 600).is_err());
+    }
+}
+
+#[cfg(test)]
+mod task_probe_deadline_tests {
+    use super::*;
+    #[test]
+    fn uses_anchored_wait_deadline_and_shared_guest_wrap() {
+        let start = Instant::now();
+        let shared = (start, u32::MAX - 499, 10_000, 100, 0);
+        assert!(!task_wait_expired(
+            start + Duration::from_secs(9),
+            start + Duration::from_secs(10),
+            1000,
+            shared
+        ));
+        // Applies equally when the first query observes an already-stopped guest.
+        assert!(task_wait_expired(
+            start + Duration::from_secs(10),
+            start + Duration::from_secs(10),
+            1000,
+            shared
+        ));
+        assert!(task_wait_expired(
+            start + Duration::from_secs(1),
+            start + Duration::from_secs(10),
+            9501,
+            shared
+        ));
     }
 }

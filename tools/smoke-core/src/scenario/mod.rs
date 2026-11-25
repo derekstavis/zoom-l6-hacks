@@ -676,7 +676,14 @@ pub enum Action {
     KnobActiveCheckFrame,
     KnobActiveFinish,
     KnobDialogLevelDemo,
-    KnobDialogTaskContexts,
+    KnobTaskBegin,
+    KnobTaskArmHook,
+    KnobTaskWaitHook,
+    KnobTaskArmCallback,
+    KnobTaskWaitCallback,
+    KnobTaskAssertDistinct,
+    KnobTaskRelease,
+    KnobTaskFinish,
     KnobOverlayBegin,
     KnobOverlayCheckWindow,
     KnobOverlaySnapshotDescriptors,
@@ -1585,6 +1592,47 @@ mod preflight_fragment_tests {
         fragment.step.swap(6, 12);
         fragment.step.swap(4, 5);
         assert!(!valid_preflight_probe_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+    }
+}
+
+pub(crate) fn valid_task_context_steps(steps: &[&Step]) -> bool {
+    matches!(steps, [begin, arm, input, hook, arm_cb, cb, distinct, release, capture, finish]
+        if matches!(begin.action, Action::KnobTaskBegin)
+        && matches!(arm.action, Action::KnobTaskArmHook)
+        && matches!(input.action, Action::EnqueueEncoderNoAck { channel: 1, steps: 1 })
+        && matches!(hook.action, Action::KnobTaskWaitHook)
+        && matches!(arm_cb.action, Action::KnobTaskArmCallback)
+        && matches!(cb.action, Action::KnobTaskWaitCallback)
+        && matches!(distinct.action, Action::KnobTaskAssertDistinct)
+        && matches!(release.action, Action::KnobTaskRelease)
+        && matches!(&capture.action, Action::CaptureDisplay { guest_ms: 150, artifact } if artifact == "window-scene-task-context-probe")
+        && matches!(finish.action, Action::KnobTaskFinish))
+}
+
+#[cfg(test)]
+mod task_context_fragment_tests {
+    use super::*;
+    #[test]
+    fn requires_correct_input_capture_and_order() {
+        let mut fragment: crate::Fragment = toml::from_str(include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/task-contexts.toml"
+        ))
+        .unwrap();
+        assert!(valid_task_context_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        if let Action::EnqueueEncoderNoAck { steps, .. } = &mut fragment.step[2].action {
+            *steps = -1;
+        } else {
+            panic!("expected encoder");
+        }
+        assert!(!valid_task_context_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(6, 7);
+        assert!(!valid_task_context_steps(
             &fragment.step.iter().collect::<Vec<_>>()
         ));
     }

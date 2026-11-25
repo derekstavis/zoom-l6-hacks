@@ -1,0 +1,53 @@
+[[step]]
+action = "knob-task-begin"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-task-arm-hook"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-encoder-no-ack"
+channel = 1
+steps = 1
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-task-wait-hook"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-task-arm-callback"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-task-wait-callback"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-task-assert-distinct"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-task-release"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "capture-display"
+guest_ms = 150
+artifact = "window-scene-task-context-probe"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-task-finish"
+guest_timeout_ms = 180000
+wall_timeout_s = 600

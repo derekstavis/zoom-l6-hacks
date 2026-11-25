@@ -252,6 +252,17 @@ impl State {
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
     ) -> Result<Value, String> {
+        if self.l6_midi_probe.is_some()
+            && !matches!(
+                operation,
+                Operation::L6MidiProbeInject
+                    | Operation::L6MidiProbeExpectHook
+                    | Operation::L6MidiProbeExpectReplies
+            )
+        {
+            self.l6_midi_probe.take();
+            return Err("L6 MIDI probe interrupted by another operation".into());
+        }
         if self.midi_sync.is_some()
             && !matches!(
                 operation,
@@ -1942,7 +1953,16 @@ impl State {
             Operation::L6DinUsbForwarding => {
                 self.run_l6_din_usb_forwarding(session, wall_timeout_s)
             }
-            Operation::L6MidiSync => Ok(self.run_l6_midi_sync(session, options)?),
+            operation @ (Operation::L6MidiProbeBegin
+            | Operation::L6MidiProbeInject
+            | Operation::L6MidiProbeExpectHook
+            | Operation::L6MidiProbeExpectReplies) => Ok(self.run_l6_midi_probe(
+                session,
+                options,
+                operation,
+                guest_timeout_ms,
+                wall_timeout_s,
+            )?),
             Operation::L6MidiRingPinSweep { cc } => {
                 self.run_l6_midi_ring_pin_sweep(session, cc, wall_timeout_s)
             }

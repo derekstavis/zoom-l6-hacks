@@ -33,7 +33,9 @@ L6 1.10 image. The `l6-midi-sync` driver case pauses
 the L6 guest at its Idle task, injects the request at the patched handler, and
 checks that every enabled CC-map entry reaches the stock mapped-CC queue sender
 with the configured channel and a valid value. The test lets the final sender
-call return successfully. It bypasses USB/DIN ingress, so host delivery and
+call return successfully, then leaves MAIN stopped and shuts down its disposable
+emulator because the injected CPU state cannot yet be fully restored. It
+bypasses USB/DIN ingress, so host delivery and
 physical-device behavior remain unverified. A separate DIN probe confirms
 the unattended L6 boot initializes LPUART2 after QEMU acknowledges the audio
 profile ramp handshake; bytes reach the raw MIDI ring and the stock handler.

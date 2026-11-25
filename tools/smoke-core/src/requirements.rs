@@ -143,7 +143,11 @@ pub fn of(action: &Action) -> Requirement {
         | Action::CaptureUpdateMarkerPending
         | Action::ExpectInstallerOutcome { .. }
         | Action::ExpectUpdateMarkerAbsent => ANY,
-        Action::MarkL6UpdatePending
+        Action::L6MidiProbeBegin
+        | Action::L6MidiProbeInject
+        | Action::L6MidiProbeExpectHook
+        | Action::L6MidiProbeExpectReplies
+        | Action::MarkL6UpdatePending
         | Action::ExpectL6UpdateResetVector
         | Action::ExpectL6UpdateComparison { .. } => on(L6),
         Action::SdCard { .. }
@@ -166,7 +170,6 @@ pub fn of(action: &Action) -> Requirement {
         | Action::HostMidiSendCc { .. }
         | Action::ExpectRingChanged { .. }
         | Action::DirectUsbMidiRoundTrip { .. }
-        | Action::L6MidiSync
         | Action::L6MidiRingPinSweep { .. }
         | Action::L6MidiMuteIndicators
         | Action::UsbSysex { .. }

@@ -590,9 +590,12 @@ pub(super) fn run_l6_update(options: &Options, main_image: &[u8]) -> Result<(), 
             }
             thread::sleep(Duration::from_millis(5));
         }
-        State::default()
-            .execute(&session, &verify, Operation::L6MidiSync, 120_000, 300)
-            .map_err(|error| format!("installed L6 midi-sync behavior failed: {error}"))?;
+        let mut state = State::default();
+        for operation in super::mode_primitives::embedded_l6_hook_operations()? {
+            state
+                .execute(&session, &verify, operation, 120_000, 300)
+                .map_err(|error| format!("installed L6 midi-sync behavior failed: {error}"))?;
+        }
     }
     fs::write(
         options.logs.join("firmware-update.json"),

@@ -62,6 +62,12 @@ pub enum Command {
     L6ScratchWrite {
         bytes: [u8; SCRATCH_LEN],
     },
+    L6MidiResolveSd {
+        dispatcher: u32,
+        site_index: u32,
+        entry_offset: u32,
+        timeout_ms: u64,
+    },
     L6MidiInject {
         expected_hook: u32,
         binding: L6MidiBinding,
@@ -69,6 +75,17 @@ pub enum Command {
         leave_stopped: bool,
     },
     L6MidiSender {
+        timeout_ms: u64,
+    },
+    L6MidiHook {
+        timeout_ms: u64,
+    },
+    L6MidiStep {
+        timeout_ms: u64,
+    },
+    L6MidiBreakpoint {
+        address: u32,
+        enabled: bool,
         timeout_ms: u64,
     },
     L6MidiFinish {
@@ -107,6 +124,9 @@ pub enum Observation {
         idle_xpsr: u32,
         requires_restart: bool,
     },
+    L6MidiResolved {
+        hook: u32,
+    },
     L6MidiSender {
         pc: u32,
         buffer: u32,
@@ -114,6 +134,10 @@ pub enum Observation {
         route: u32,
         return_pc: u32,
         bytes: Option<Vec<u8>>,
+    },
+    L6MidiHook {
+        pc: u32,
+        event: Vec<u8>,
     },
     L6MidiFinished {
         requires_restart: bool,
@@ -154,6 +178,13 @@ trait Guest: Send + Sync {
         hook: u32,
         binding: &L6MidiBinding,
     ) -> Result<midi_config::Config, String>;
+    fn resolve_l6_sd_hook(
+        &self,
+        deadline: Instant,
+        dispatcher: u32,
+        site_index: u32,
+        entry_offset: u32,
+    ) -> Result<u32, String>;
 }
 struct MainGuest {
     qmp: QmpClient,
@@ -205,13 +236,76 @@ impl Guest for MainGuest {
         })?;
         Ok(config)
     }
+    fn resolve_l6_sd_hook(
+        &self,
+        deadline: Instant,
+        dispatcher: u32,
+        site_index: u32,
+        entry_offset: u32,
+    ) -> Result<u32, String> {
+        if self.model != Model::L6 {
+            return Err("MIDI hook probe requires L6 1.10".into());
+        }
+        let mut read = |address, length| {
+            self.qmp
+                .read_memory_before(0, address, length, deadline)
+                .map_err(|e| e.to_string())
+        };
+        let hook = resolve_l6_sd_registry(site_index, entry_offset, &mut read)?;
+        validate_l6_hook_binding(
+            hook,
+            &L6MidiBinding::Sd {
+                dispatcher,
+                site_index,
+                entry_offset,
+            },
+            read,
+        )?;
+        Ok(hook)
+    }
+}
+fn resolve_l6_sd_registry(
+    site_index: u32,
+    entry_offset: u32,
+    read: &mut impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
+) -> Result<u32, String> {
+    use patch_abi::registry;
+    let mut word = |address| -> Result<u32, String> {
+        Ok(u32::from_le_bytes(
+            read(address, 4)?
+                .try_into()
+                .map_err(|_| "short SD registry read")?,
+        ))
+    };
+    let base = word(registry::L6_POINTER)?;
+    if base < 0x8000_0000
+        || base
+            .checked_add(registry::site_offset(registry::MAX_SITES))
+            .is_none_or(|v| v > 0x8420_0000)
+    {
+        return Err("invalid SD registry address".into());
+    }
+    if word(base)? != registry::MAGIC
+        || site_index >= registry::MAX_SITES
+        || site_index >= word(base + registry::SITE_COUNT_OFFSET)?
+    {
+        return Err("invalid SD registry identity or site".into());
+    }
+    let module = word(base + registry::MODULE_PTR_OFFSET)?;
+    let length = word(base + registry::MODULE_LEN_OFFSET)?;
+    let hook = module
+        .checked_add(entry_offset)
+        .ok_or("SD module entry overflow")?;
+    if entry_offset >= length || word(base + registry::site_offset(site_index))? != hook | 1 {
+        return Err("SD MIDI hook does not match loaded module and registry".into());
+    }
+    Ok(hook)
 }
 fn validate_l6_hook_binding(
     hook: u32,
     binding: &L6MidiBinding,
     mut read: impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
 ) -> Result<(), String> {
-    use patch_abi::registry;
     let target = match binding {
         L6MidiBinding::Firmware => hook,
         L6MidiBinding::Sd { dispatcher, .. } => *dispatcher,
@@ -231,33 +325,7 @@ fn validate_l6_hook_binding(
         ..
     } = binding
     {
-        let mut word = |address| -> Result<u32, String> {
-            let bytes = read(address, 4)?;
-            Ok(u32::from_le_bytes(
-                bytes.try_into().map_err(|_| "short SD registry read")?,
-            ))
-        };
-        let registry_base = word(registry::L6_POINTER)?;
-        let max_offset = registry::site_offset(registry::MAX_SITES);
-        if registry_base < 0x8000_0000
-            || registry_base
-                .checked_add(max_offset)
-                .is_none_or(|v| v > 0x8420_0000)
-        {
-            return Err("invalid SD registry address".into());
-        }
-        if word(registry_base)? != registry::MAGIC
-            || *site_index >= registry::MAX_SITES
-            || *site_index >= word(registry_base + registry::SITE_COUNT_OFFSET)?
-        {
-            return Err("invalid SD registry identity or site".into());
-        }
-        let module = word(registry_base + registry::MODULE_PTR_OFFSET)?;
-        let length = word(registry_base + registry::MODULE_LEN_OFFSET)?;
-        if *entry_offset >= length
-            || module.checked_add(*entry_offset) != Some(hook)
-            || word(registry_base + registry::site_offset(*site_index))? != hook | 1
-        {
+        if resolve_l6_sd_registry(*site_index, *entry_offset, &mut read)? != hook {
             return Err("SD MIDI hook does not match loaded module and registry".into());
         }
     }
@@ -407,6 +475,7 @@ impl Controller {
 }
 
 struct L6MidiContext {
+    expected_hook: u32,
     last_return: Option<u32>,
 }
 
@@ -513,6 +582,27 @@ impl Session {
             return Err("L6 MIDI injection is already active".into());
         }
         match command {
+            Command::L6MidiResolveSd {
+                dispatcher,
+                site_index,
+                entry_offset,
+                timeout_ms,
+            } => {
+                let deadline = l6_probe_deadline(timeout_ms)?;
+                if cancelled() {
+                    return Err("L6 MIDI probe cancelled".into());
+                }
+                let hook = self.guest.resolve_l6_sd_hook(
+                    deadline,
+                    dispatcher,
+                    site_index,
+                    entry_offset,
+                )?;
+                if cancelled() || Instant::now() >= deadline {
+                    return Err("L6 MIDI probe cancelled or deadline exceeded".into());
+                }
+                Ok(Observation::L6MidiResolved { hook })
+            }
             Command::Register { index } => {
                 if index > 15 {
                     return Err("register index must be 0..15".into());
@@ -649,7 +739,7 @@ impl Session {
                 let idle_pc = self.timed(deadline, &mut cancelled, |g| g.read_register(15))? & !1;
                 let idle_sp = self.timed(deadline, &mut cancelled, |g| g.read_register(13))?;
                 let idle_xpsr = self.timed(deadline, &mut cancelled, |g| g.read_register(XPSR))?;
-                if idle_pc != idle_loop || idle_xpsr & 0x1ff != 0 {
+                if idle_pc != idle_loop || idle_xpsr & 0x1ff != 0 || idle_xpsr & (1 << 24) == 0 {
                     return Err("L6 MIDI injection requires idle task thread mode".into());
                 }
                 let before =
@@ -661,7 +751,10 @@ impl Session {
                 if self.scratch.is_none() {
                     self.scratch = Some(before.clone());
                 }
-                self.l6_midi = Some(L6MidiContext { last_return: None });
+                self.l6_midi = Some(L6MidiContext {
+                    expected_hook,
+                    last_return: None,
+                });
                 let mut event = [0u8; SCRATCH_LEN];
                 event[4..7].copy_from_slice(&[0xb0 | config.channel, 127, 127]);
                 self.timed(deadline, &mut cancelled, |g| g.write(SCRATCH, &event))?;
@@ -677,6 +770,62 @@ impl Session {
                     idle_sp,
                     idle_xpsr,
                     requires_restart: true,
+                })
+            }
+            Command::L6MidiHook { timeout_ms } => {
+                let deadline = l6_probe_deadline(timeout_ms)?;
+                let expected = self
+                    .l6_midi
+                    .as_ref()
+                    .ok_or("L6 MIDI injection is not active")?
+                    .expected_hook;
+                let pc = self.timed(deadline, &mut cancelled, |g| g.read_register(15))? & !1;
+                if pc != expected {
+                    return Err("L6 MIDI hook did not reach the expected target".into());
+                }
+                let event = self.timed(deadline, &mut cancelled, |g| g.read(SCRATCH, 7))?;
+                if event.len() != 7 {
+                    return Err("short L6 MIDI hook event".into());
+                }
+                Ok(Observation::L6MidiHook { pc, event })
+            }
+            Command::L6MidiStep { timeout_ms } => {
+                if self.l6_midi.is_none() {
+                    return Err("L6 MIDI injection is not active".into());
+                }
+                let deadline = l6_probe_deadline(timeout_ms)?;
+                let reply = self.timed(deadline, &mut cancelled, |g| {
+                    g.step().and_then(validate_stop)
+                })?;
+                Ok(Observation::Stopped { reply })
+            }
+            Command::L6MidiBreakpoint {
+                address,
+                enabled,
+                timeout_ms,
+            } => {
+                if self.l6_midi.is_none() {
+                    return Err("L6 MIDI injection is not active".into());
+                }
+                if address & 1 != 0 || !(0x8000_0000..0x8420_0000).contains(&address) {
+                    return Err("breakpoint must be an aligned MAIN SDRAM address".into());
+                }
+                if enabled == self.breakpoints.contains(&address) {
+                    return Err("breakpoint ownership mismatch".into());
+                }
+                if enabled && self.breakpoints.len() >= MAX_BREAKPOINTS {
+                    return Err("too many debug breakpoints".into());
+                }
+                let deadline = l6_probe_deadline(timeout_ms)?;
+                self.timed(deadline, &mut cancelled, |g| g.breakpoint(address, enabled))?;
+                if enabled {
+                    self.breakpoints.insert(address);
+                } else {
+                    self.breakpoints.remove(&address);
+                }
+                Ok(Observation::Breakpoint {
+                    address,
+                    installed: enabled,
                 })
             }
             Command::L6MidiSender { timeout_ms } => {
@@ -885,6 +1034,10 @@ mod tests {
                 cc_map: vec![0xff; 54],
             })
         }
+        fn resolve_l6_sd_hook(&self, _: Instant, _: u32, _: u32, _: u32) -> Result<u32, String> {
+            self.guard_l6_scratch()?;
+            Ok(0x800b_6b14)
+        }
         fn guard_l6_scratch(&self) -> Result<(), String> {
             if self.0.lock().unwrap().guarded {
                 Ok(())
@@ -921,7 +1074,7 @@ mod tests {
         fn read(&mut self, address: u32, length: usize) -> Result<Vec<u8>, String> {
             self.record("read")?;
             if address == SCRATCH {
-                Ok(self.0.lock().unwrap().scratch.clone())
+                Ok(self.0.lock().unwrap().scratch[..length].to_vec())
             } else {
                 Ok(vec![0; length])
             }
@@ -1030,6 +1183,14 @@ mod tests {
             assert_eq!(state.registers[0], SCRATCH);
             assert_eq!(state.registers[14], firmware_api::l6::idle_loop | 1);
             assert_eq!(state.registers[15], firmware_api::l6::midi_in);
+            state.registers[15] = hook;
+        }
+        assert!(
+            matches!(session.execute(Command::L6MidiHook { timeout_ms: 1000 }).unwrap(),
+            Observation::L6MidiHook { pc, event } if pc == hook && event == [0, 0, 0, 0, 0xb0, 127, 127])
+        );
+        {
+            let mut state = state.lock().unwrap();
             state.registers[15] = firmware_api::l6::midi_send;
             state.registers[0] = 0x2000_1000;
             state.registers[1] = 3;

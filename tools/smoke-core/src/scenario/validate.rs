@@ -509,11 +509,49 @@ impl Scenario {
         let mut checkpoints = std::collections::BTreeSet::new();
         for model in &value.models {
             let mut sync: Option<(u8, u32, u64)> = None;
+            let mut l6_probe: Option<(u8, u32, u64)> = None;
+            let mut l6_probe_finished = false;
             let mut probe_budget = None;
             let mut probe_stimulus = None;
             let mut probe_ring = None;
             let mut probe_tap = None;
             for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                if l6_probe_finished {
+                    return Err(
+                        "L6 MIDI probe must be the final action for L6: it leaves MAIN stopped"
+                            .into(),
+                    );
+                }
+                match (&step.action, l6_probe) {
+                    (Action::L6MidiProbeBegin, None) if *model == l6fw::Model::L6 => {
+                        l6_probe = Some((1, step.guest_timeout_ms, step.wall_timeout_s))
+                    }
+                    (Action::L6MidiProbeInject, Some((1, guest, wall)))
+                        if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        l6_probe = Some((2, guest, wall))
+                    }
+                    (Action::L6MidiProbeExpectHook, Some((2, guest, wall)))
+                        if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        l6_probe = Some((3, guest, wall))
+                    }
+                    (Action::L6MidiProbeExpectReplies, Some((3, guest, wall)))
+                        if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        l6_probe = None;
+                        l6_probe_finished = true;
+                    }
+                    (
+                        Action::L6MidiProbeBegin
+                        | Action::L6MidiProbeInject
+                        | Action::L6MidiProbeExpectHook
+                        | Action::L6MidiProbeExpectReplies,
+                        _,
+                    ) => return Err("invalid L6 MIDI probe sequence, model, or timeouts".into()),
+                    (_, Some(_)) => return Err("L6 MIDI probe sequence was interrupted".into()),
+                    _ => {}
+                }
                 if let Action::HostMidiSyncBegin = step.action {
                     if sync
                         .replace((0, step.guest_timeout_ms, step.wall_timeout_s))
@@ -609,6 +647,9 @@ impl Scenario {
                     }
                     _ => {}
                 }
+            }
+            if l6_probe.is_some() {
+                return Err("L6 MIDI probe transaction is incomplete".into());
             }
             if probe_budget.is_some() {
                 return Err("MIDI probe transaction is not ended".into());
@@ -1452,5 +1493,41 @@ impl Scenario {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod l6_midi_probe_tests {
+    fn parse(steps: &str, model: &str) -> Result<super::super::Scenario, String> {
+        super::super::Scenario::from_text(&format!(
+            "version=1\nname='probe'\nmodels=['{model}']\nbackends=['headless']\n{steps}"
+        ))
+    }
+    fn step(action: &str) -> String {
+        format!("[[step]]\naction='{action}'\nguest_timeout_ms=15000\nwall_timeout_s=180\n")
+    }
+    #[test]
+    fn transaction_must_be_complete_ordered_and_terminal() {
+        let steps = [
+            "l6-midi-probe-begin",
+            "l6-midi-probe-inject",
+            "l6-midi-probe-expect-hook",
+            "l6-midi-probe-expect-replies",
+        ]
+        .map(step)
+        .concat();
+        assert!(parse(&steps, "l6").is_ok());
+        assert!(parse(&steps, "l6max").is_err());
+        assert!(parse(&steps.replace(&step("l6-midi-probe-expect-hook"), ""), "l6").is_err());
+        assert!(parse(&format!("{steps}{}", step("l6-midi-probe-begin")), "l6").is_err());
+        assert!(
+            parse(
+                &steps
+                    .replace("wall_timeout_s=180", "wall_timeout_s=179")
+                    .replacen("wall_timeout_s=179", "wall_timeout_s=180", 1),
+                "l6"
+            )
+            .is_err()
+        );
     }
 }

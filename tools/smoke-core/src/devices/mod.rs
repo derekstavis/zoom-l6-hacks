@@ -201,7 +201,10 @@ pub enum Operation {
         expect_ring_change: bool,
     },
     L6DinUsbForwarding,
-    L6MidiSync,
+    L6MidiProbeBegin,
+    L6MidiProbeInject,
+    L6MidiProbeExpectHook,
+    L6MidiProbeExpectReplies,
     L6MidiRingPinSweep {
         cc: u8,
     },
@@ -447,7 +450,7 @@ fn validate_native_midi_capabilities(
                     | crate::Action::EditorPadPlayback { .. }
                     | crate::Action::L6maxUiPadVerify { .. }
                     | crate::Action::L6DinSweep
-                    | crate::Action::L6MidiSync
+                    | crate::Action::L6MidiProbeBegin
                     | crate::Action::L6UsbStartup
                     | crate::Action::L6DinEventDispatch { .. }
                     | crate::Action::L6maxChannelSignalPwm
@@ -593,7 +596,7 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
     if scenario
         .step
         .iter()
-        .any(|s| s.applies_to(model) && matches!(s.action, crate::Action::L6MidiSync))
+        .any(|s| s.applies_to(model) && matches!(s.action, crate::Action::L6MidiProbeBegin))
     {
         options.usb_enabled = false;
         options.midi_enabled = false;
@@ -690,6 +693,7 @@ pub struct State {
     captured_display: Option<CapturedDisplay>,
     midi_round_trip: Option<MidiRoundTrip>,
     midi_sync: Option<midi::MidiSync>,
+    l6_midi_probe: Option<midi::L6MidiProbe>,
     native_midi: Option<l6ctl::midi::MidiSession>,
     midi_probe: Option<MidiProbeContext>,
 }
@@ -1023,7 +1027,7 @@ mod native_midi_capability_tests {
             crate::Action::EditorPadPlayback { pad: 1 },
             crate::Action::L6maxUiPadVerify { pad: 1 },
             crate::Action::L6DinSweep,
-            crate::Action::L6MidiSync,
+            crate::Action::L6MidiProbeBegin,
             crate::Action::L6UsbStartup,
             crate::Action::L6DinEventDispatch {
                 group: 0,

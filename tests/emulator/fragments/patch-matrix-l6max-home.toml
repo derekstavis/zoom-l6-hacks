@@ -1,0 +1,5 @@
+[[step]]
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
+guest_timeout_ms = 30000
+wall_timeout_s = 300

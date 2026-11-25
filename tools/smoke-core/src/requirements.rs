@@ -179,6 +179,8 @@ pub fn of(action: &Action) -> Requirement {
         | Action::SoundPadPlayback { .. }
         | Action::ExpectMemory { .. }
         | Action::WaitMemory { .. }
+        | Action::ExpectSdLoader
+        | Action::ExpectSdModule { .. }
         | Action::ExpectSdPatch { .. }
         | Action::EffectParameterEdit { .. }
         | Action::EffectReplacementState { .. }

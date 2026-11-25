@@ -742,6 +742,18 @@ impl Runner {
                         bytes,
                     }));
                 }
+                Action::ExpectSdLoader => {
+                    return Ok(Progress::Device(devices::Operation::ExpectSdLoader));
+                }
+                Action::ExpectSdModule {
+                    loaded,
+                    chain_count,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectSdModule {
+                        loaded,
+                        chain_count,
+                    }));
+                }
                 Action::ExpectSdPatch {
                     loaded,
                     chain_count,

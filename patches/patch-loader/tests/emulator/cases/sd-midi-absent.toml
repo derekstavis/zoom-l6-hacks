@@ -20,5 +20,8 @@ action = "wait"
 until = "sd-patch-empty"
 
 [[step]]
-action = "expect-sd-patch"
+action = "expect-sd-loader"
+
+[[step]]
+action = "expect-sd-module"
 loaded = false

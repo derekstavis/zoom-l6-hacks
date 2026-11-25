@@ -252,6 +252,27 @@ impl State {
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
     ) -> Result<Value, String> {
+        if self.sd_inspection.is_some() && !matches!(operation, Operation::ExpectSdModule { .. }) {
+            self.sd_inspection = None;
+            return Err("SD inspection interrupted before module assertion".into());
+        }
+        if let Some(context) = &self.sd_inspection {
+            if (context.guest_timeout_ms, context.wall_timeout_s)
+                != (guest_timeout_ms, wall_timeout_s)
+                || Instant::now() >= context.wall_deadline
+                || guest_now(session).wrapping_sub(context.guest_start) >= context.guest_timeout_ms
+            {
+                self.sd_inspection = None;
+                return Err("SD inspection exceeded its shared deadline or changed budgets".into());
+            }
+        }
+        let sd_shared = self.sd_inspection.as_ref().map(|context| {
+            (
+                context.wall_deadline,
+                context.guest_start,
+                context.guest_timeout_ms,
+            )
+        });
         if self.l6_midi_probe.is_some()
             && !matches!(
                 operation,
@@ -370,6 +391,13 @@ impl State {
                 };
             }
         };
+        if let Some((wall_deadline, guest_start, guest_budget)) = sd_shared {
+            if Instant::now() >= wall_deadline
+                || guest_now(session).wrapping_sub(guest_start) >= guest_budget
+            {
+                return Err("SD inspection exceeded its shared deadline".into());
+            }
+        }
         let elapsed = control
             .input_status(l6ctl::InputSource::Panel)
             .map_err(|e| e.to_string())?
@@ -561,14 +589,86 @@ impl State {
                 let registry = wait_sd_patch_empty(session, guest_timeout_ms, wall_timeout_s)?;
                 Ok(json!({"registry": format!("{registry:#010x}")}))
             }
-            Operation::ExpectSdPatch {
-                loaded,
-                chain_count,
-            } => {
+            Operation::ExpectSdLoader => {
+                if self.sd_inspection.is_some() {
+                    return Err("SD inspection already active".into());
+                }
+                let wall_deadline = operation_start
+                    .0
+                    .checked_add(Duration::from_secs(wall_timeout_s))
+                    .ok_or("SD inspection deadline overflow")?;
                 let main = selected_main_image(options).map_err(std::io::Error::other)?;
-                let (edits, link_base, payload, _, _relocations, module_hooks, module_images) =
-                    sd_fixture_edits(options, &main, session.engine.model())
+                let fixture = freeze_sd_fixture(options, &main, session.engine.model())
+                    .map_err(std::io::Error::other)?;
+                let guarded = verify_sd_loader_hooks(
+                    session,
+                    &main,
+                    &fixture.edits.0,
+                    wall_deadline,
+                    operation_start.1,
+                    guest_timeout_ms,
+                )
+                .map_err(std::io::Error::other)?;
+                self.sd_inspection = Some(sd::SdInspectionContext {
+                    main,
+                    fixture,
+                    wall_deadline,
+                    guest_start: operation_start.1,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                });
+                Ok(json!({"guarded_hooks":guarded}))
+            }
+            operation @ (Operation::ExpectSdPatch { .. } | Operation::ExpectSdModule { .. }) => {
+                let (loaded, chain_count, split) = match operation {
+                    Operation::ExpectSdPatch {
+                        loaded,
+                        chain_count,
+                    } => (loaded, chain_count, false),
+                    Operation::ExpectSdModule {
+                        loaded,
+                        chain_count,
+                    } => (loaded, chain_count, true),
+                    _ => unreachable!(),
+                };
+                let (
+                    main,
+                    fixture,
+                    inspection_deadline,
+                    inspection_guest_start,
+                    inspection_guest_budget,
+                ) = if split {
+                    let context = self
+                        .sd_inspection
+                        .take()
+                        .ok_or("SD module assertion needs preceding loader assertion")?;
+                    (
+                        context.main,
+                        context.fixture,
+                        context.wall_deadline,
+                        context.guest_start,
+                        context.guest_timeout_ms,
+                    )
+                } else {
+                    let main = selected_main_image(options).map_err(std::io::Error::other)?;
+                    let fixture = freeze_sd_fixture(options, &main, session.engine.model())
                         .map_err(std::io::Error::other)?;
+                    (
+                        main,
+                        fixture,
+                        operation_start.0 + Duration::from_secs(wall_timeout_s),
+                        operation_start.1,
+                        guest_timeout_ms,
+                    )
+                };
+                let sd::FrozenSdFixture {
+                    edits: fixture,
+                    loader_report: frozen_loader,
+                    patch_report: frozen_patch,
+                    chain_first: frozen_chain,
+                } = fixture;
+                let (edits, link_base, payload, _, _relocations, module_hooks, module_images) =
+                    fixture;
                 let qmp = &session.engine.management[0];
                 let image_base = session.engine.model().main_base();
                 // The patch loader's own hook sites (patches/patch-loader),
@@ -584,7 +684,7 @@ impl State {
                         0x8000_ebac,
                     ],
                 };
-                for &address in loader_calls {
+                for &address in if split { &[] } else { loader_calls } {
                     let offset = (address - image_base) as usize;
                     let expected = main
                         .get(offset..offset + 4)
@@ -595,7 +695,7 @@ impl State {
                         );
                     }
                 }
-                for (address, original, _entry_offset) in &edits {
+                for (address, original, _entry_offset) in if split { &[][..] } else { &edits[..] } {
                     let offset = (*address - image_base) as usize;
                     let expected = &main[offset..offset + original.len()];
                     let actual = qmp.read_memory(0, *address, expected.len())?;
@@ -612,7 +712,54 @@ impl State {
                 // scan and hook installation have finished. Wait for that
                 // signal when a module is expected; absence checks remain
                 // immediate and require their own observation window.
-                let registry = if loaded {
+                let control = l6ctl::OwnedControl::new(&session.engine);
+                let reader = if split {
+                    Some(
+                        control
+                            .sd_loader_reader(inspection_deadline)
+                            .map_err(std::io::Error::other)?,
+                    )
+                } else {
+                    None
+                };
+                let read_live = |address: u32,
+                                 length: usize|
+                 -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+                    if let Some(reader) = &reader {
+                        reader
+                            .read_chunk_cancellable(address, length, inspection_deadline, || {
+                                guest_now(session).wrapping_sub(inspection_guest_start)
+                                    >= inspection_guest_budget
+                            })
+                            .map_err(|e| std::io::Error::other(e).into())
+                    } else {
+                        Ok(qmp.read_memory(0, address, length)?)
+                    }
+                };
+                let typed_snapshot = if let Some(reader) = &reader {
+                    Some(if loaded {
+                        wait_sd_loader_snapshot(
+                            session,
+                            reader,
+                            inspection_deadline,
+                            inspection_guest_start,
+                            inspection_guest_budget,
+                        )
+                        .map_err(std::io::Error::other)?
+                    } else {
+                        reader
+                            .snapshot_cancellable(inspection_deadline, || {
+                                guest_now(session).wrapping_sub(inspection_guest_start)
+                                    >= inspection_guest_budget
+                            })
+                            .map_err(std::io::Error::other)?
+                    })
+                } else {
+                    None
+                };
+                let registry = if let Some(state) = &typed_snapshot {
+                    state.registry
+                } else if loaded {
                     Some(wait_sd_patch_loaded(
                         session,
                         guest_timeout_ms,
@@ -627,28 +774,61 @@ impl State {
                     }
                     return Ok(json!({"loaded":false,"registry":null,"guarded_hooks":edits.len()}));
                 };
-                let loaded_base =
-                    u32::from_le_bytes(qmp.read_memory(0, registry + 160, 4)?.try_into().unwrap());
-                let loaded_len =
-                    u32::from_le_bytes(qmp.read_memory(0, registry + 164, 4)?.try_into().unwrap());
+                let inspect_chain = |record| -> Result<_, Box<dyn std::error::Error>> {
+                    if let Some(reader) = &reader {
+                        sd_typed_site_chain(
+                            reader,
+                            session,
+                            registry,
+                            record,
+                            inspection_deadline,
+                            inspection_guest_start,
+                            inspection_guest_budget,
+                        )
+                        .map_err(|e| std::io::Error::other(e).into())
+                    } else {
+                        sd_site_chain(qmp, record)
+                    }
+                };
+                let slot_for = |address| {
+                    sd_frozen_handler_slot(&frozen_loader, registry, address)
+                        .map_err(std::io::Error::other)
+                };
+                let loaded_base = if let Some(state) = &typed_snapshot {
+                    state.module_base.ok_or("SD module base missing")?
+                } else {
+                    u32::from_le_bytes(read_live(registry + 160, 4)?.try_into().unwrap())
+                };
+                let loaded_len = if let Some(state) = &typed_snapshot {
+                    state.module_len.ok_or("SD module length missing")?
+                } else {
+                    u32::from_le_bytes(read_live(registry + 164, 4)?.try_into().unwrap())
+                };
                 let known_module_size = module_images
                     .iter()
                     .any(|(module_payload, _, _)| module_payload.len() == loaded_len as usize);
                 if loaded != (loaded_base != 0) || (loaded && !known_module_size) {
-                    let stage = u32::from_le_bytes(
-                        qmp.read_memory(0, registry + 4, 4)?.try_into().unwrap(),
-                    );
+                    let stage = if let Some(state) = &typed_snapshot {
+                        state.stage.unwrap_or_default()
+                    } else {
+                        u32::from_le_bytes(read_live(registry + 4, 4)?.try_into().unwrap())
+                    };
                     return Err(format!(
                         "SD allocation state loaded={loaded}, base={loaded_base:#010x}, len={loaded_len}, loader stage={stage:#x}"
                     )
                     .into());
                 }
-                let claim =
-                    u32::from_le_bytes(qmp.read_memory(0, registry + 8, 4)?.try_into().unwrap());
+                let claim = if let Some(state) = &typed_snapshot {
+                    state.claim.ok_or("SD claim missing")?
+                } else {
+                    u32::from_le_bytes(read_live(registry + 8, 4)?.try_into().unwrap())
+                };
                 if (claim == 1) != loaded {
-                    let stage = u32::from_le_bytes(
-                        qmp.read_memory(0, registry + 4, 4)?.try_into().unwrap(),
-                    );
+                    let stage = if let Some(state) = &typed_snapshot {
+                        state.stage.unwrap_or_default()
+                    } else {
+                        u32::from_le_bytes(read_live(registry + 4, 4)?.try_into().unwrap())
+                    };
                     return Err(format!(
                         "SD module loaded={loaded}, claim={claim:#x}, loader stage={stage:#x}"
                     )
@@ -674,10 +854,8 @@ impl State {
                     *expected_chains.entry(module_hook.address).or_default() += 1;
                 }
                 for (address, module_count) in expected_chains {
-                    let record =
-                        sd_dynamic_handler_slot(options, session.engine.model(), registry, address)
-                            .map_err(std::io::Error::other)?;
-                    let (chain, _) = sd_site_chain(qmp, record)?;
+                    let record = slot_for(address)?;
+                    let (chain, _) = inspect_chain(record)?;
                     let expected_count = if !loaded {
                         0
                     } else if Some(address) == expected_function {
@@ -694,17 +872,14 @@ impl State {
                     }
                 }
 
-                let (registered_count, chain_head, chain_links) = if let Some(address) =
-                    expected_function
-                {
-                    let record =
-                        sd_dynamic_handler_slot(options, session.engine.model(), registry, address)
-                            .map_err(std::io::Error::other)?;
-                    let (chain, links) = sd_site_chain(qmp, record)?;
-                    (chain.count, chain.handler, links)
-                } else {
-                    (0, 0, Vec::new())
-                };
+                let (registered_count, chain_head, chain_links) =
+                    if let Some(address) = expected_function {
+                        let record = slot_for(address)?;
+                        let (chain, links) = inspect_chain(record)?;
+                        (chain.count, chain.handler, links)
+                    } else {
+                        (0, 0, Vec::new())
+                    };
                 if loaded != (registered_count != 0)
                     || chain_count.is_some_and(|expected| registered_count != u32::from(expected))
                 {
@@ -733,15 +908,8 @@ impl State {
                     .collect();
                 for (address, _, _entry_offset) in &edits {
                     // Every edit is one of the module's hooks (sd_fixture_edits).
-                    let slot = sd_dynamic_handler_slot(
-                        options,
-                        session.engine.model(),
-                        registry,
-                        *address,
-                    )
-                    .map_err(std::io::Error::other)?;
-                    let handler =
-                        u32::from_le_bytes(qmp.read_memory(0, slot, 4)?.try_into().unwrap());
+                    let slot = slot_for(*address)?;
+                    let handler = u32::from_le_bytes(read_live(slot, 4)?.try_into().unwrap());
                     let valid = if !loaded {
                         handler == 0
                     } else if Some(*address) == expected_function {
@@ -761,12 +929,8 @@ impl State {
                         .iter()
                         .find(|hook| Some(hook.address) == expected_function)
                         .ok_or("dynamic patch bundle has no hook record")?;
-                    let root = sd_fixture_root(options).map_err(std::io::Error::other)?;
-                    let ordered_chain = root.join(crate::fixture_layout::CHAIN_FIRST).is_file();
-                    let patch_report: Value = serde_json::from_slice(&fs::read(
-                        root.join(crate::fixture_layout::SD_BUNDLE_BUILD)
-                            .join(crate::fixture_layout::PATCH_REPORT),
-                    )?)?;
+                    let ordered_chain = frozen_chain.is_some();
+                    let patch_report = frozen_patch.as_ref().ok_or("dynamic report missing")?;
                     let patch_for_size = |size: usize| {
                         patch_report["patches"]
                             .as_array()
@@ -811,10 +975,7 @@ impl State {
                     } else {
                         None
                     };
-                    let loader_report: Value = serde_json::from_slice(&fs::read(
-                        root.join(crate::fixture_layout::LOADER_BUILD)
-                            .join(crate::fixture_layout::PATCH_REPORT),
-                    )?)?;
+                    let loader_report = &frozen_loader;
                     let _loader_patch = loader_report["patches"]
                         .as_array()
                         .and_then(|patches| {
@@ -880,9 +1041,8 @@ impl State {
                         let mutable_symbol_ranges = mutable_ranges_for_size(module_payload.len());
                         let expected_next =
                             chain_links.get(index + 1).map_or(fallback, |next| next.0);
-                        let actual_next = u32::from_le_bytes(
-                            qmp.read_memory(0, *next_slot, 4)?.try_into().unwrap(),
-                        );
+                        let actual_next =
+                            u32::from_le_bytes(read_live(*next_slot, 4)?.try_into().unwrap());
                         if actual_next != expected_next {
                             return Err(format!(
                                 "hook {index} continues to {actual_next:#010x}, expected {expected_next:#010x}"
@@ -893,7 +1053,9 @@ impl State {
                         if ordered_chain && index == 0 {
                             // The first copy names its own package, so its
                             // code is the fixture file's, not the bundle's.
-                            let file = fs::read(root.join(crate::fixture_layout::CHAIN_FIRST))?;
+                            let file = frozen_chain
+                                .as_ref()
+                                .ok_or("ordered-chain fixture missing")?;
                             let start = patch_abi::dynamic::HEADER_LEN_V1;
                             expected = file
                                 .get(start..start + expected.len())
@@ -912,13 +1074,13 @@ impl State {
                                 continue;
                             }
                             let slot = *module + payload_hook.next_slot_offset;
-                            let target = qmp.read_memory(0, slot, 4)?;
+                            let target = read_live(slot, 4)?;
                             let slot_offset = payload_hook.next_slot_offset as usize;
                             expected[slot_offset..slot_offset + 4].copy_from_slice(&target);
                         }
                         for (chunk_index, chunk) in expected.chunks(4096).enumerate() {
                             let address = *module + (chunk_index * 4096) as u32;
-                            let actual = qmp.read_memory(0, address, chunk.len())?;
+                            let actual = read_live(address, chunk.len())?;
                             let mismatch = actual.iter().zip(chunk).enumerate().find(
                                 |(index, (actual, expected))| {
                                     let module_offset = chunk_index * 4096 + index;
@@ -961,13 +1123,13 @@ impl State {
                                 continue;
                             }
                             let slot = loaded_base + latest_hook.next_slot_offset;
-                            let target = qmp.read_memory(0, slot, 4)?;
+                            let target = read_live(slot, 4)?;
                             let offset = latest_hook.next_slot_offset as usize;
                             expected[offset..offset + 4].copy_from_slice(&target);
                         }
                         for (chunk_index, chunk) in expected.chunks(4096).enumerate() {
                             let address = loaded_base + (chunk_index * 4096) as u32;
-                            let actual = qmp.read_memory(0, address, chunk.len())?;
+                            let actual = read_live(address, chunk.len())?;
                             let mismatch = actual.iter().zip(chunk).enumerate().any(
                                 |(index, (actual, expected))| {
                                     let module_offset = chunk_index * 4096 + index;

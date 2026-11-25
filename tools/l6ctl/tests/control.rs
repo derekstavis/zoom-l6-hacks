@@ -91,6 +91,46 @@ fn input_status_client_and_cli_use_the_same_typed_wire_contract() {
 }
 
 #[test]
+fn sd_loader_status_and_site_use_typed_socket_and_cli() {
+    let path = socket_path();
+    let status = json!({"revision_guard":"l6_1_10","atomic":false,"registry":null,"stage":null,"claim":null,"module_base":null,"module_len":null,"site_count":null});
+    let site = json!({"atomic":false,"registry":2155876352u64,"index":1,"record":2155876624u64,"handler":0,"first":0,"last":0,"count":0,"links":[]});
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"sd-loader-status"}),
+                json!({"ok":true,"result":status}),
+            ),
+            (
+                json!({"command":"sd-loader-site","index":1}),
+                json!({"ok":true,"result":site}),
+            ),
+        ],
+    );
+    let actual = ControlClient::new(&path).sd_loader_status().unwrap();
+    assert_eq!(actual.registry, None);
+    assert!(!actual.atomic);
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["sd-loader", "site", "1"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        site
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn input_ack_client_and_cli_preserve_sequence_and_state() {
     let path = socket_path();
     let response = json!({"source":"panel", "sequence":17, "state":"applied"});

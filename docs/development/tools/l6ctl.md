@@ -35,6 +35,14 @@ cargo l6ctl --socket /tmp/l6-control.sock rtos tasks --pretty
 created with current-user-only permissions and is removed when the emulator
 exits. `info` reports model, guest time, power state, and indicator snapshots.
 
+`sd-loader status` reads the model-scoped L6/L6max 1.10 loader root and,
+when allocated, its stage, claim, latest module and site count. `sd-loader
+site INDEX` inspects one indexed dispatch chain, including its links. The
+site index comes from the loader build's dynamic-dispatch report. These reads
+are bounded and revision-guarded, but non-atomic: a concurrent loader update
+can make a snapshot inconsistent or cause an inspection to fail. Retry only
+when a caller's own readiness condition and deadline allow it.
+
 `input status main|panel` returns a compact JSON observation of one input
 channel: its `source`, `connected` state, `guest_ms`, `sent`, `applied`,
 `released`, `rejected`, and optional `error`. The counters aggregate all

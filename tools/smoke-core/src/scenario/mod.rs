@@ -508,6 +508,12 @@ pub enum Action {
         symbol: String,
         bytes: Vec<u8>,
     },
+    ExpectSdLoader,
+    ExpectSdModule {
+        loaded: bool,
+        #[serde(default)]
+        chain_count: Option<u8>,
+    },
     ExpectSdPatch {
         loaded: bool,
         #[serde(default)]

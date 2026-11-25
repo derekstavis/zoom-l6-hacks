@@ -10,6 +10,7 @@ pub use l6max_host::input::{InputAck, InputAckState, InputCounters, InputSource}
 pub use l6max_host::knob_popup::{ParameterState, RecorderState, Snapshot as KnobPopupSnapshot};
 pub use l6max_host::memory::MemoryRead;
 pub use l6max_host::midi_config::Config as MidiConfig;
+pub use l6max_host::sd_loader::{Site as SdLoaderSite, Snapshot as SdLoaderSnapshot};
 pub use l6max_host::update_bootloader::Outcome as InstallerOutcome;
 pub use l6max_host::update_state::{UpdateGuiState, UpdateState};
 use l6max_host::{control, engine::Engine, freertos, qmp};
@@ -41,6 +42,8 @@ pub enum Request {
     Info,
     InputStatus { source: InputSource },
     InputAck { source: InputSource, sequence: u32 },
+    SdLoaderStatus,
+    SdLoaderSite { index: u32 },
     HeapCounters,
     MemoryRead { address: u32, length: usize },
     MidiConfig,
@@ -237,6 +240,12 @@ impl ControlClient {
     pub fn input_ack(&self, source: InputSource, sequence: u32) -> Result<InputAck, ControlError> {
         self.request_as(&Request::InputAck { source, sequence })
     }
+    pub fn sd_loader_status(&self) -> Result<SdLoaderSnapshot, ControlError> {
+        self.request_as(&Request::SdLoaderStatus)
+    }
+    pub fn sd_loader_site(&self, index: u32) -> Result<SdLoaderSite, ControlError> {
+        self.request_as(&Request::SdLoaderSite { index })
+    }
 
     /// Send one typed request. RTOS response bodies are currently the host's
     /// versioned schema-1 JSON; their typed shared interpretation remains in
@@ -247,7 +256,14 @@ impl ControlClient {
                 path: self.socket.clone(),
                 source,
             })?;
+        // SD inspection itself owns a 30-second deadline; leave room to
+        // serialize and return its bounded error to this client.
         let timeout = if matches!(
+            request,
+            Request::SdLoaderStatus | Request::SdLoaderSite { .. }
+        ) {
+            35
+        } else if matches!(
             request,
             Request::Rtos { .. }
                 | Request::HeapCounters
@@ -430,12 +446,26 @@ impl<'a> OwnedControl<'a> {
             .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
         Ok(inputs.acknowledgement(source, sequence))
     }
-
     fn main_qmp(&self) -> Result<&qmp::QmpClient, ControlError> {
         self.engine
             .management
             .first()
             .ok_or(ControlError::Unavailable("QEMU management unavailable"))
+    }
+    pub fn sd_loader_reader(
+        &self,
+        deadline: std::time::Instant,
+    ) -> Result<l6max_host::sd_loader::Reader<'_>, ControlError> {
+        l6max_host::sd_loader::Reader::new(self.main_qmp()?, self.engine.model(), deadline)
+            .map_err(ControlError::Rejected)
+    }
+    pub fn sd_loader_status(&self) -> Result<SdLoaderSnapshot, ControlError> {
+        l6max_host::sd_loader::snapshot(self.main_qmp()?, self.engine.model())
+            .map_err(ControlError::Rejected)
+    }
+    pub fn sd_loader_site(&self, index: u32) -> Result<SdLoaderSite, ControlError> {
+        l6max_host::sd_loader::site(self.main_qmp()?, self.engine.model(), index)
+            .map_err(ControlError::Rejected)
     }
 
     /// Validate the allocator once for a bounded set of live counter reads.
@@ -451,6 +481,16 @@ impl<'a> OwnedControl<'a> {
         length: usize,
     ) -> Result<MemoryRead, ControlError> {
         l6max_host::memory::read_main(self.main_qmp()?, address, length)
+            .map_err(ControlError::Rejected)
+    }
+
+    pub fn read_main_memory_before(
+        &self,
+        address: u32,
+        length: usize,
+        deadline: std::time::Instant,
+    ) -> Result<MemoryRead, ControlError> {
+        l6max_host::memory::read_main_before(self.main_qmp()?, address, length, deadline)
             .map_err(ControlError::Rejected)
     }
 

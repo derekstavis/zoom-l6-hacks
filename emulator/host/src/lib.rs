@@ -15,6 +15,7 @@ pub mod memory;
 pub mod midi_config;
 pub mod protocol;
 pub mod qmp;
+pub mod sd_loader;
 pub mod sd_patches;
 pub mod shared_memory;
 

@@ -15,6 +15,87 @@ pub(super) type SdEdits = (
         Vec<patch_abi::dynamic::Hook>,
     )>,
 );
+
+pub(super) struct SdInspectionContext {
+    pub main: Vec<u8>,
+    pub fixture: FrozenSdFixture,
+    pub wall_deadline: Instant,
+    pub guest_start: u32,
+    pub guest_timeout_ms: u32,
+    pub wall_timeout_s: u64,
+}
+
+/// Compare the pinned loader image's persistent stubs with running MAIN.
+pub(super) fn verify_sd_loader_hooks(
+    session: &Session,
+    main: &[u8],
+    edits: &[(u32, Vec<u8>, u32)],
+    deadline: Instant,
+    guest_start: u32,
+    guest_timeout_ms: u32,
+) -> Result<usize, String> {
+    let model = session.engine.model();
+    let image_base = model.main_base();
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let check = || -> Result<(), String> {
+        if Instant::now() >= deadline
+            || guest_now(session).wrapping_sub(guest_start) >= guest_timeout_ms
+        {
+            Err("SD inspection exceeded its shared deadline".into())
+        } else {
+            Ok(())
+        }
+    };
+    let loader_calls: &[u32] = match model {
+        l6fw::Model::L6 => &[0x8000_9a60, 0x8000_9aa0],
+        l6fw::Model::L6max => &[
+            l6max::sys_main_startup_initialize,
+            0x8000_e9fa,
+            0x8000_ea24,
+            0x8001_0118,
+            0x8002_bc7e,
+            0x8000_ebac,
+        ],
+    };
+    for &address in loader_calls {
+        check()?;
+        let offset = address
+            .checked_sub(image_base)
+            .ok_or("loader address precedes image")? as usize;
+        let expected = main
+            .get(offset..offset + 4)
+            .ok_or("Patch loader image too short")?;
+        if control
+            .read_main_memory_before(address, 4, deadline)
+            .map_err(|e| e.to_string())?
+            .bytes
+            != expected
+        {
+            return Err(format!("persistent loader hook missing at {address:#010x}"));
+        }
+    }
+    for (address, original, _) in edits {
+        check()?;
+        let offset = address
+            .checked_sub(image_base)
+            .ok_or("dispatch address precedes image")? as usize;
+        let expected = main
+            .get(offset..offset + original.len())
+            .ok_or("Patch loader image too short")?;
+        if control
+            .read_main_memory_before(*address, expected.len(), deadline)
+            .map_err(|e| e.to_string())?
+            .bytes
+            != expected
+        {
+            return Err(format!(
+                "persistent SD dispatch stub missing at {address:#010x}"
+            ));
+        }
+    }
+    check()?;
+    Ok(edits.len())
+}
 pub(super) fn sd_fixture_root(options: &Options) -> Result<&std::path::Path, String> {
     options
         .logs
@@ -689,11 +770,26 @@ pub(super) fn effect_replacement_state(
     )
 }
 
+pub(super) struct FrozenSdFixture {
+    pub edits: SdEdits,
+    pub loader_report: Value,
+    pub patch_report: Option<Value>,
+    pub chain_first: Option<Vec<u8>>,
+}
+
 pub(super) fn sd_fixture_edits(
     options: &Options,
     main: &[u8],
     model: l6fw::Model,
 ) -> Result<SdEdits, String> {
+    Ok(freeze_sd_fixture(options, main, model)?.edits)
+}
+
+pub(super) fn freeze_sd_fixture(
+    options: &Options,
+    main: &[u8],
+    model: l6fw::Model,
+) -> Result<FrozenSdFixture, String> {
     use sha2::{Digest, Sha256};
     let root = sd_fixture_root(options)?;
     let stock = fs::read(
@@ -716,16 +812,26 @@ pub(super) fn sd_fixture_edits(
     }
     let patch_output = root.join(crate::fixture_layout::SD_BUNDLE_BUILD);
     let patch_report_path = patch_output.join("patch.json");
+    let chain_first = match fs::read(root.join(crate::fixture_layout::CHAIN_FIRST)) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.to_string()),
+    };
     if !patch_report_path.exists() {
-        return Ok((
-            Vec::new(),
-            0,
-            Vec::new(),
-            None,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        ));
+        return Ok(FrozenSdFixture {
+            edits: (
+                Vec::new(),
+                0,
+                Vec::new(),
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+            loader_report: loader,
+            patch_report: None,
+            chain_first,
+        });
     }
     let patch_report: Value =
         serde_json::from_slice(&fs::read(&patch_report_path).map_err(|e| e.to_string())?)
@@ -789,15 +895,20 @@ pub(super) fn sd_fixture_edits(
         last = Some((payload, init, relocations));
     }
     let (payload, init, relocations) = last.ok_or("dynamic report contains no modules")?;
-    Ok((
-        all_edits,
-        0,
-        payload,
-        init,
-        relocations,
-        all_hooks,
-        module_images,
-    ))
+    Ok(FrozenSdFixture {
+        edits: (
+            all_edits,
+            0,
+            payload,
+            init,
+            relocations,
+            all_hooks,
+            module_images,
+        ),
+        loader_report: loader,
+        patch_report: Some(patch_report),
+        chain_first,
+    })
 }
 
 /// The Patch loader's heap-allocated registry, read through its pointer word.
@@ -808,6 +919,47 @@ pub(super) fn wait_sd_patch_loaded(
     wall_timeout_s: u64,
 ) -> Result<u32, Box<dyn std::error::Error>> {
     wait_sd_patch_result(session, guest_timeout_ms, wall_timeout_s, true)
+}
+
+pub(super) fn wait_sd_loader_snapshot(
+    session: &Session,
+    reader: &l6max_host::sd_loader::Reader<'_>,
+    shared_wall: Instant,
+    shared_guest: u32,
+    shared_guest_budget: u32,
+) -> Result<l6max_host::sd_loader::Snapshot, String> {
+    let start = guest_now(session);
+    let deadline = shared_wall.min(Instant::now() + Duration::from_secs(180));
+    let mut last = String::from("registry not allocated");
+    loop {
+        if Instant::now() >= deadline
+            || guest_now(session).wrapping_sub(start) >= 10_000
+            || guest_now(session).wrapping_sub(shared_guest) >= shared_guest_budget
+        {
+            return Err(format!(
+                "SD patch loader did not finish within its deadline ({last})"
+            ));
+        }
+        session.poll().map_err(|e| e.to_string())?;
+        let state = reader.readiness_cancellable(deadline, || {
+            guest_now(session).wrapping_sub(start) >= 10_000
+                || guest_now(session).wrapping_sub(shared_guest) >= shared_guest_budget
+        })?;
+        if Instant::now() >= deadline
+            || guest_now(session).wrapping_sub(start) >= 10_000
+            || guest_now(session).wrapping_sub(shared_guest) >= shared_guest_budget
+        {
+            return Err("SD patch loader readiness exceeded its deadline".into());
+        }
+        if state.registry.is_some() && state.claim == Some(1) {
+            return reader.snapshot_cancellable(deadline, || {
+                guest_now(session).wrapping_sub(start) >= 10_000
+                    || guest_now(session).wrapping_sub(shared_guest) >= shared_guest_budget
+            });
+        }
+        last = format!("stage={:?}, claim={:?}", state.stage, state.claim);
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 /// Wait for a completed scan that installed no module. This requires a card
@@ -894,21 +1046,11 @@ pub(super) fn sd_registry_if_allocated(
     Ok(Some(base))
 }
 
-pub(super) fn sd_dynamic_handler_slot(
-    options: &Options,
-    _model: l6fw::Model,
+pub(super) fn sd_frozen_handler_slot(
+    report: &Value,
     registry: u32,
     function_address: u32,
 ) -> Result<u32, String> {
-    let root = sd_fixture_root(options)?;
-    let report: Value = serde_json::from_slice(
-        &fs::read(
-            root.join(crate::fixture_layout::LOADER_BUILD)
-                .join(crate::fixture_layout::PATCH_REPORT),
-        )
-        .map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
     let sites = report["patches"]
         .as_array()
         .and_then(|patches| {
@@ -985,5 +1127,57 @@ pub(super) fn sd_site_chain(
         )
         .into());
     }
+    Ok((chain, links))
+}
+
+/// Use the guarded host interpretation while retaining the existing assertion types.
+pub(super) fn sd_typed_site_chain(
+    reader: &l6max_host::sd_loader::Reader<'_>,
+    session: &Session,
+    registry: u32,
+    record: u32,
+    deadline: Instant,
+    guest_start: u32,
+    guest_budget: u32,
+) -> Result<
+    (
+        patch_abi::dynamic::SiteChain,
+        Vec<patch_abi::dynamic::HookLink>,
+    ),
+    String,
+> {
+    let offset = record
+        .checked_sub(registry)
+        .and_then(|n| n.checked_sub(patch_abi::registry::SITES_OFFSET))
+        .ok_or("SD site record precedes registry")?;
+    if offset % patch_abi::registry::SITE_RECORD_LEN != 0 {
+        return Err("misaligned SD site record".into());
+    }
+    let site = reader.site_cancellable(
+        offset / patch_abi::registry::SITE_RECORD_LEN,
+        deadline,
+        || guest_now(session).wrapping_sub(guest_start) >= guest_budget,
+    )?;
+    if site.registry != registry || site.record != record {
+        return Err("SD registry changed during inspection".into());
+    }
+    let chain = patch_abi::dynamic::SiteChain {
+        handler: site.handler,
+        first: site.first,
+        last: site.last,
+        count: site.count,
+    };
+    let links = site
+        .links
+        .into_iter()
+        .map(|v| patch_abi::dynamic::HookLink {
+            entry: v.entry,
+            next_slot: v.next_slot,
+            order: v.order,
+            module_base: v.module_base,
+            next: v.next,
+            site: v.site,
+        })
+        .collect();
     Ok((chain, links))
 }

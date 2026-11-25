@@ -285,6 +285,15 @@ fn execute(
         .and_then(Value::as_str)
         .ok_or("request needs a command")?;
     match command {
+        "sd-loader-status" => {
+            serde_json::to_value(crate::sd_loader::snapshot(qmp, model)?).map_err(|e| e.to_string())
+        }
+        "sd-loader-site" => {
+            let index =
+                u32::try_from(number(request, "index")?).map_err(|_| "invalid SD site index")?;
+            serde_json::to_value(crate::sd_loader::site(qmp, model, index)?)
+                .map_err(|e| e.to_string())
+        }
         "input-status" => {
             let source = match request.get("source").and_then(Value::as_str) {
                 Some("main") => InputSource::Main,

@@ -66,6 +66,18 @@ pub fn config(qmp: &QmpClient, model: Model) -> Result<Config, String> {
     })
 }
 
+/// Read the same guarded configuration within one shared wall deadline.
+pub fn config_before(
+    qmp: &QmpClient,
+    model: Model,
+    deadline: std::time::Instant,
+) -> Result<Config, String> {
+    sample(model, &GUARDS, |address, len| {
+        qmp.read_memory_before(0, address, len, deadline)
+            .map_err(|error| error.to_string())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

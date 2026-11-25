@@ -621,7 +621,10 @@ pub(crate) fn serve_debug(
         };
         let command =
             serde_json::from_str::<crate::debug::Command>(&line).map_err(|e| e.to_string());
-        let close = matches!(command, Ok(crate::debug::Command::Close));
+        let close = matches!(
+            command,
+            Ok(crate::debug::Command::Close | crate::debug::Command::L6MidiFinish { .. })
+        );
         let fd = stream.as_raw_fd();
         let result = command.and_then(|command| {
             session.execute_cancellable(command, || {

@@ -3601,6 +3601,7 @@ dependencies = [
  "l6max-diagnostics",
  "libc",
  "memmap2",
+ "patch-abi",
  "patch-core",
  "patch-wasm",
  "qapi",

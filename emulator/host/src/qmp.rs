@@ -97,6 +97,54 @@ impl QmpClient {
         }
     }
 
+    /// Execute a command within a caller-supplied deadline, including time
+    /// waiting for the shared QMP connection. I/O timeout still closes QMP to
+    /// prevent a late response being consumed by another request.
+    fn execute_before<C: Command>(&self, command: &C, deadline: Instant) -> io::Result<C::Ok> {
+        let mut management = loop {
+            match self.management.try_lock() {
+                Ok(guard) => break guard,
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    return Err(io::Error::other("QMP lock poisoned"));
+                }
+                Err(std::sync::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(1))
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "QMP deadline elapsed waiting for connection",
+                    ));
+                }
+            }
+        };
+        let now = Instant::now();
+        if now >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "QMP deadline elapsed",
+            ));
+        }
+        management.inner_mut().get_mut_read().get_mut().deadline =
+            deadline.min(now + REQUEST_TIMEOUT);
+        let write_timeout = deadline.saturating_duration_since(now).min(REQUEST_TIMEOUT);
+        management
+            .inner()
+            .get_ref_write()
+            .set_write_timeout(Some(write_timeout))?;
+        let result = management.execute(command);
+        let restore_timeout = management
+            .inner()
+            .get_ref_write()
+            .set_write_timeout(Some(REQUEST_TIMEOUT));
+        if matches!(result, Err(qapi::ExecuteError::Io(_))) {
+            let _ = management.inner().get_ref_write().shutdown(Shutdown::Both);
+        }
+        let result = result.map_err(io::Error::from)?;
+        restore_timeout?;
+        Ok(result)
+    }
+
     pub fn query_status(&self) -> io::Result<Status> {
         let result = self.execute(&qmp::query_status {})?;
         let status = serde_json::to_value(result.status)?;
@@ -113,6 +161,16 @@ impl QmpClient {
 
     pub fn stop(&self) -> io::Result<()> {
         self.execute(&qmp::stop {}).map(|_| ())
+    }
+
+    /// Stop and verify MAIN within one caller-owned deadline.
+    pub fn stop_before(&self, deadline: Instant) -> io::Result<()> {
+        self.execute_before(&qmp::stop {}, deadline)?;
+        let status = self.execute_before(&qmp::query_status {}, deadline)?;
+        if status.running {
+            return Err(io::Error::other("MAIN still running after stop"));
+        }
+        Ok(())
     }
 
     pub fn resume(&self) -> io::Result<()> {
@@ -186,6 +244,34 @@ impl QmpClient {
             command_line: format!("xp /{size}bx 0x{address:x}"),
             cpu_index: Some(cpu),
         })?;
+        Self::parse_memory_reply(reply, size)
+    }
+
+    /// Bounded read whose entire QMP transaction uses the shared deadline.
+    pub fn read_memory_before(
+        &self,
+        cpu: i64,
+        address: u32,
+        size: usize,
+        deadline: Instant,
+    ) -> io::Result<Vec<u8>> {
+        if size == 0 || size > 4096 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "memory diagnostic size must be 1..4096",
+            ));
+        }
+        let reply = self.execute_before(
+            &qmp::human_monitor_command {
+                command_line: format!("xp /{size}bx 0x{address:x}"),
+                cpu_index: Some(cpu),
+            },
+            deadline,
+        )?;
+        Self::parse_memory_reply(reply, size)
+    }
+
+    fn parse_memory_reply(reply: String, size: usize) -> io::Result<Vec<u8>> {
         let bytes = reply
             .lines()
             .filter_map(|line| line.split_once(':').map(|(_, data)| data))
@@ -238,6 +324,30 @@ mod tests {
         reader.read_line(&mut command).unwrap();
         let command: serde_json::Value = serde_json::from_str(&command).unwrap();
         assert_eq!(command["execute"], name);
+    }
+
+    #[test]
+    fn caller_deadline_includes_waiting_for_shared_connection() {
+        let (client, mut peer) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || {
+            let mut reader = BufReader::new(peer.try_clone().unwrap());
+            greeting(&mut peer);
+            expect_command(&mut reader, "qmp_capabilities");
+            peer.write_all(b"{\"return\":{}}\r\n").unwrap();
+            let mut line = String::new();
+            assert_eq!(reader.read_line(&mut line).unwrap(), 0);
+        });
+        let client = QmpClient::connect(client).unwrap();
+        let lock = client.management.lock().unwrap();
+        let started = Instant::now();
+        let error = client
+            .execute_before(&qmp::stop {}, started + Duration::from_millis(20))
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(1));
+        drop(lock);
+        drop(client);
+        server.join().unwrap();
     }
 
     #[test]

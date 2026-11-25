@@ -162,7 +162,10 @@ impl SocketDebugSession {
         if self.closed {
             return Err(ControlError::Rejected("debug session is closed".into()));
         }
-        let close = matches!(command, DebugCommand::Close);
+        let close = matches!(
+            command,
+            DebugCommand::Close | DebugCommand::L6MidiFinish { .. }
+        );
         let result = (|| {
             serde_json::to_writer(&mut self.writer, &command).map_err(ControlError::Protocol)?;
             writeln!(self.writer).map_err(ControlError::Io)?;

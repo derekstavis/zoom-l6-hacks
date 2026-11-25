@@ -803,115 +803,6 @@ impl State {
         )
     }
 
-    pub(super) fn run_host_midi_sync(
-        &mut self,
-        session: &Session,
-        request: bool,
-        guest_timeout_ms: u32,
-        wall_timeout_s: u64,
-    ) -> Result<Value, Box<dyn std::error::Error>> {
-        let model = session.engine.model();
-        let client = self
-            .host_midi_client()
-            .ok_or("host-midi-sync requires a preceding host-midi-round-trip action")?;
-        let start = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("MIDI test needs inputs")?
-            .panel
-            .snapshot()
-            .guest_ms;
-        let mut l6_remaining = Vec::new();
-        let (expected_count, expected_status) = if model == l6fw::Model::L6 {
-            let qmp = &session.engine.management[0];
-            let channel = qmp.read_memory(0, l6::midi_configured_channel, 1)?[0];
-            if channel > 15 {
-                return Err(std::io::Error::other(format!(
-                    "invalid configured L6 MIDI channel {channel}"
-                ))
-                .into());
-            }
-            for cc in qmp.read_memory(0, l6::midi_cc_map, 54)? {
-                if cc != 0xff {
-                    if let Some((_, count)) =
-                        l6_remaining.iter_mut().find(|(mapped, _)| *mapped == cc)
-                    {
-                        *count += 1;
-                    } else {
-                        l6_remaining.push((cc, 1usize));
-                    }
-                }
-            }
-            let count = l6_remaining.iter().map(|(_, count)| count).sum::<usize>();
-            if count == 0 {
-                return Err(std::io::Error::other("L6 MIDI CC map has no enabled entries").into());
-            }
-            (count, Some(0xb0 | channel))
-        } else {
-            (94, None)
-        };
-        // Leftover encoder CCs would otherwise count as replies. A reply to a
-        // request made another way may already be queued, so keep it.
-        if request {
-            let mut quiet_since = Instant::now();
-            while quiet_since.elapsed() < Duration::from_millis(500) {
-                session.poll()?;
-                while client.poll().map_err(std::io::Error::other)?.is_some() {
-                    quiet_since = Instant::now();
-                }
-                thread::sleep(Duration::from_millis(5));
-            }
-            client
-                .send(&[0xb0, 127, 127])
-                .map_err(std::io::Error::other)?;
-        }
-        let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
-        let mut replies = Vec::with_capacity(expected_count);
-        loop {
-            session.poll()?;
-            while let Some(message) = client.poll().map_err(std::io::Error::other)? {
-                if let Some(status) = expected_status {
-                    if message[0] != status {
-                        continue;
-                    }
-                    if let Some((_, count)) = l6_remaining
-                        .iter_mut()
-                        .find(|(mapped, count)| *mapped == message[1] && *count > 0)
-                    {
-                        *count -= 1;
-                        replies.push(message);
-                    }
-                } else {
-                    replies.push(message);
-                }
-                if replies.len() == expected_count {
-                    return Ok(
-                        json!({"request":request.then_some([0xb0,127,127]),"expected_replies":expected_count,"reply_count":replies.len(),"replies":replies}),
-                    );
-                }
-            }
-            let elapsed = session
-                .engine
-                .inputs
-                .as_ref()
-                .unwrap()
-                .panel
-                .snapshot()
-                .guest_ms
-                .wrapping_sub(start);
-            if elapsed > guest_timeout_ms || Instant::now() >= deadline {
-                return Err(std::io::Error::other(format!(
-                    "midi-sync returned {}/{} expected Control Change replies before deadline",
-                    replies.len(),
-                    expected_count
-                ))
-                .into());
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-    }
-
     pub(super) fn run_l6_midi_sync(
         &mut self,
         session: &Session,
@@ -1355,6 +1246,84 @@ fn collect_control_observations(
     }
 }
 
+/// One state-sync observation; the mixer session remains owned by the scenario.
+pub(super) struct MidiSync {
+    guest_start: u32,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+    overall_deadline: Instant,
+    reply_started: Instant,
+    expected_status: Option<u8>,
+    remaining: Vec<(u8, usize)>,
+    expected_count: usize,
+    completed: bool,
+    phase: SyncPhase,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SyncPhase {
+    Prepared,
+    Drained,
+    Sent,
+    Complete,
+}
+
+fn accept_sync_reply(status: Option<u8>, remaining: &mut [(u8, usize)], message: [u8; 3]) -> bool {
+    match status {
+        None => true,
+        Some(status) if message[0] == status => {
+            if let Some((_, count)) = remaining
+                .iter_mut()
+                .find(|(mapped, count)| *mapped == message[1] && *count > 0)
+            {
+                *count -= 1;
+                true
+            } else {
+                false
+            }
+        }
+        Some(_) => false,
+    }
+}
+
+fn collect_sync_replies(
+    scope: &mut MidiSync,
+    mut poll: impl FnMut() -> Result<Option<[u8; 3]>, String>,
+    mut pump: impl FnMut() -> Result<(), String>,
+    mut now: impl FnMut() -> Instant,
+    mut guest: impl FnMut() -> u32,
+    mut sleep: impl FnMut(Duration),
+) -> Result<Vec<[u8; 3]>, String> {
+    let deadline = (scope.reply_started + Duration::from_secs(scope.wall_timeout_s))
+        .min(scope.overall_deadline);
+    let mut replies = Vec::with_capacity(scope.expected_count);
+    loop {
+        pump()?;
+        while let Some(message) = poll()? {
+            if now() >= deadline || guest().wrapping_sub(scope.guest_start) > scope.guest_timeout_ms
+            {
+                return Err(
+                    "MIDI sync exceeded its shared deadline while collecting replies".into(),
+                );
+            }
+            if accept_sync_reply(scope.expected_status, &mut scope.remaining, message) {
+                replies.push(message);
+            }
+            if replies.len() == scope.expected_count {
+                return Ok(replies);
+            }
+        }
+        if now() >= deadline || guest().wrapping_sub(scope.guest_start) > scope.guest_timeout_ms {
+            return Err(format!(
+                "midi-sync returned {}/{} expected Control Change replies before deadline",
+                replies.len(),
+                scope.expected_count
+            ));
+        }
+        sleep(Duration::from_millis(5));
+    }
+}
+
 /// Timing shared by the native host MIDI scenario's individual steps.
 pub(super) struct MidiRoundTrip {
     guest_start: u32,
@@ -1495,6 +1464,175 @@ impl State {
                 midi_sent_at: None,
             });
             return Ok(json!({"endpoint": endpoint}));
+        }
+        if matches!(operation, Operation::HostMidiSyncBegin) {
+            let overall_deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
+            if self.midi_sync.is_some() || self.midi_round_trip.is_some() {
+                return Err("host MIDI transaction is already active".into());
+            }
+            if self.host_midi_client().is_none() {
+                return Err("MIDI sync requires a connected MIDI session".into());
+            }
+            let guest_start = inputs.panel.snapshot().guest_ms;
+            let mut remaining = Vec::new();
+            let (expected_count, expected_status) = if session.engine.model() == l6fw::Model::L6 {
+                let config = l6ctl::OwnedControl::new(&session.engine).midi_config()?;
+                for cc in config.cc_map.into_iter().filter(|cc| *cc != 0xff) {
+                    if let Some((_, count)) = remaining.iter_mut().find(|(mapped, _)| *mapped == cc)
+                    {
+                        *count += 1;
+                    } else {
+                        remaining.push((cc, 1usize));
+                    }
+                }
+                let count = remaining.iter().map(|(_, count)| count).sum::<usize>();
+                if count == 0 {
+                    return Err("L6 MIDI CC map has no enabled entries".into());
+                }
+                (count, Some(0xb0 | config.channel))
+            } else {
+                (94, None)
+            };
+            let transport = if self.native_midi.is_some() {
+                "retained-native"
+            } else {
+                "retained-legacy"
+            };
+            self.midi_sync = Some(MidiSync {
+                guest_start,
+                guest_timeout_ms,
+                wall_timeout_s,
+                overall_deadline,
+                reply_started: Instant::now(),
+                expected_status,
+                remaining,
+                expected_count,
+                completed: false,
+                phase: SyncPhase::Prepared,
+            });
+            return Ok(
+                json!({"expected_replies": expected_count, "expected_status": expected_status, "transport": transport}),
+            );
+        }
+        if self.midi_sync.is_some() {
+            let scope = self.midi_sync.as_ref().unwrap();
+            if Instant::now() >= scope.overall_deadline
+                || inputs
+                    .panel
+                    .snapshot()
+                    .guest_ms
+                    .wrapping_sub(scope.guest_start)
+                    > scope.guest_timeout_ms
+            {
+                self.midi_sync = None;
+                return Err("MIDI sync exceeded its shared deadline".into());
+            }
+            if matches!(operation, Operation::HostMidiEnd) {
+                let scope = self.midi_sync.take().unwrap();
+                if !scope.completed {
+                    return Err("MIDI sync ended before its reply assertion".into());
+                }
+                return Ok(json!({"transaction":"ended"}));
+            }
+            if matches!(operation, Operation::HostMidiDrain { .. }) {
+                if self.midi_sync.as_ref().unwrap().phase != SyncPhase::Prepared {
+                    return Err("MIDI sync drain is out of sequence".into());
+                }
+                let quiet = match operation {
+                    Operation::HostMidiDrain { quiet_wall_ms } => quiet_wall_ms,
+                    _ => unreachable!(),
+                };
+                let deadline = self.midi_sync.as_ref().unwrap().overall_deadline;
+                let start = self.midi_sync.as_ref().unwrap().guest_start;
+                let guest_budget = self.midi_sync.as_ref().unwrap().guest_timeout_ms;
+                let client = self
+                    .host_midi_client()
+                    .ok_or("host MIDI client unavailable")?;
+                let drained = drain_control_until_quiet(
+                    Duration::from_millis(u64::from(quiet)),
+                    || client.poll(),
+                    || session.poll().map(|_| ()),
+                    Instant::now,
+                    || {
+                        Instant::now() >= deadline
+                            || inputs.panel.snapshot().guest_ms.wrapping_sub(start) > guest_budget
+                    },
+                    thread::sleep,
+                )?;
+                if Instant::now() >= deadline
+                    || inputs.panel.snapshot().guest_ms.wrapping_sub(start) > guest_budget
+                {
+                    return Err("MIDI sync exceeded its shared deadline".into());
+                }
+                self.midi_sync.as_mut().unwrap().phase = SyncPhase::Drained;
+                return Ok(json!({"drained":drained,"quiet_wall_ms":quiet}));
+            }
+            if let Operation::HostMidiSendCc {
+                channel,
+                controller,
+                value,
+            } = operation
+            {
+                if self.midi_sync.as_ref().unwrap().phase != SyncPhase::Drained {
+                    return Err("MIDI sync send must follow a quiet drain".into());
+                }
+                let message = ControlChange {
+                    channel,
+                    controller,
+                    value,
+                }
+                .to_bytes()
+                .map_err(std::io::Error::other)?;
+                let scope = self.midi_sync.as_ref().unwrap();
+                if Instant::now() >= scope.overall_deadline
+                    || inputs
+                        .panel
+                        .snapshot()
+                        .guest_ms
+                        .wrapping_sub(scope.guest_start)
+                        > scope.guest_timeout_ms
+                {
+                    return Err("MIDI sync exceeded its shared deadline before send".into());
+                }
+                self.host_midi_client()
+                    .ok_or("host MIDI client unavailable")?
+                    .send(&message)
+                    .map_err(std::io::Error::other)?;
+                let scope = self.midi_sync.as_mut().unwrap();
+                scope.reply_started = Instant::now();
+                scope.phase = SyncPhase::Sent;
+                return Ok(json!({"midi_cc":message}));
+            }
+            if matches!(operation, Operation::HostMidiExpectSync) {
+                let mut scope = self.midi_sync.take().unwrap();
+                if !matches!(scope.phase, SyncPhase::Prepared | SyncPhase::Sent) {
+                    return Err("MIDI sync reply assertion is out of sequence".into());
+                }
+                let client = self
+                    .host_midi_client()
+                    .ok_or("host MIDI client unavailable")?;
+                let replies = collect_sync_replies(
+                    &mut scope,
+                    || client.poll(),
+                    || session.poll().map(|_| ()),
+                    Instant::now,
+                    || inputs.panel.snapshot().guest_ms,
+                    thread::sleep,
+                )?;
+                scope.completed = true;
+                scope.phase = SyncPhase::Complete;
+                let expected = scope.expected_count;
+                self.midi_sync = Some(scope);
+                return Ok(
+                    json!({"expected_replies":expected,"reply_count":replies.len(),"replies":replies}),
+                );
+            }
+
+            self.midi_sync = None;
+            return Err("MIDI sync transaction interrupted by another operation".into());
+        }
+        if matches!(operation, Operation::HostMidiExpectSync) {
+            return Err("MIDI sync reply assertion requires an active sync transaction".into());
         }
         if matches!(operation, Operation::HostMidiEnd) {
             self.end_midi_transaction()?;
@@ -1740,6 +1878,58 @@ impl State {
 #[cfg(test)]
 mod declarative_midi_tests {
     use super::*;
+
+    #[test]
+    fn sync_reply_filter_preserves_l6_multiset_and_l6max_count_semantics() {
+        let mut remaining = [(83, 2), (84, 1)];
+        assert!(!accept_sync_reply(
+            Some(0xb2),
+            &mut remaining,
+            [0xb1, 83, 4]
+        ));
+        assert!(accept_sync_reply(Some(0xb2), &mut remaining, [0xb2, 83, 4]));
+        assert!(accept_sync_reply(Some(0xb2), &mut remaining, [0xb2, 83, 4]));
+        assert!(!accept_sync_reply(
+            Some(0xb2),
+            &mut remaining,
+            [0xb2, 83, 4]
+        ));
+        assert!(accept_sync_reply(Some(0xb2), &mut remaining, [0xb2, 84, 5]));
+        assert!(accept_sync_reply(None, &mut [], [0xb9, 127, 0]));
+    }
+
+    #[test]
+    fn sync_stops_during_continuous_unmatched_traffic() {
+        let start = Instant::now();
+        let mut scope = MidiSync {
+            guest_start: 0,
+            guest_timeout_ms: 100,
+            wall_timeout_s: 2,
+            overall_deadline: start + Duration::from_secs(2),
+            reply_started: start,
+            expected_status: Some(0xb0),
+            remaining: vec![(83, 1)],
+            expected_count: 1,
+            completed: false,
+            phase: SyncPhase::Sent,
+        };
+        let polls = std::cell::Cell::new(0);
+        let result = collect_sync_replies(
+            &mut scope,
+            || {
+                let count = polls.get() + 1;
+                assert!(count < 10, "unmatched backlog was not bounded");
+                polls.set(count);
+                Ok(Some([0xb1, 83, 0]))
+            },
+            || Ok(()),
+            || start + Duration::from_secs(polls.get() as u64),
+            || 0,
+            |_| {},
+        );
+        assert!(result.unwrap_err().contains("deadline"));
+        assert_eq!(polls.get(), 2);
+    }
     use std::{
         collections::VecDeque,
         sync::{

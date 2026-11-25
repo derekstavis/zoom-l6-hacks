@@ -924,7 +924,9 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
                         },
                         patch,
                     )?;
-                    run(Operation::HostMidiSync { request: true }, patch)?;
+                    for (label, operation) in embedded_midi_sync_operations()? {
+                        run(operation, &label)?;
+                    }
                 }
             }
         } else {

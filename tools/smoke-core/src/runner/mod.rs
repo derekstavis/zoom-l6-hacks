@@ -637,10 +637,11 @@ impl Runner {
                 Action::L6DinUsbForwarding => {
                     return Ok(Progress::Device(devices::Operation::L6DinUsbForwarding));
                 }
-                Action::HostMidiSync { request } => {
-                    return Ok(Progress::Device(devices::Operation::HostMidiSync {
-                        request,
-                    }));
+                Action::HostMidiSyncBegin => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiSyncBegin));
+                }
+                Action::HostMidiExpectSync => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiExpectSync));
                 }
                 Action::L6MidiSync => {
                     return Ok(Progress::Device(devices::Operation::L6MidiSync));

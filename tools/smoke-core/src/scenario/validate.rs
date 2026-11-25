@@ -70,11 +70,41 @@ impl Scenario {
         }
         let mut checkpoints = std::collections::BTreeSet::new();
         for model in &value.models {
+            let mut sync: Option<(u8, u32, u64)> = None;
             let mut probe_budget = None;
             let mut probe_stimulus = None;
             let mut probe_ring = None;
             let mut probe_tap = None;
             for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                if let Action::HostMidiSyncBegin = step.action {
+                    if sync
+                        .replace((0, step.guest_timeout_ms, step.wall_timeout_s))
+                        .is_some()
+                    {
+                        return Err("MIDI sync transaction is already active".into());
+                    }
+                } else if let Some((phase, guest, wall)) = sync.as_mut() {
+                    if (*guest, *wall) != (step.guest_timeout_ms, step.wall_timeout_s) {
+                        return Err("MIDI sync actions need matching timeouts".into());
+                    }
+                    *phase = match (&step.action, *phase) {
+                        (Action::HostMidiDrain { .. }, 0) => 1,
+                        (Action::HostMidiSendCc { .. }, 1) => 2,
+                        (Action::HostMidiExpectSync, 0 | 2) => 3,
+                        (Action::HostMidiEnd, 3) => 4,
+                        _ => {
+                            return Err(
+                                "MIDI sync transaction has an invalid or interrupted sequence"
+                                    .into(),
+                            );
+                        }
+                    };
+                    if *phase == 4 {
+                        sync = None;
+                    }
+                } else if matches!(step.action, Action::HostMidiExpectSync) {
+                    return Err("MIDI sync assertion needs an active transaction".into());
+                }
                 match &step.action {
                     Action::MidiProbeBegin => {
                         if probe_budget
@@ -144,6 +174,9 @@ impl Scenario {
             }
             if probe_budget.is_some() {
                 return Err("MIDI probe transaction is not ended".into());
+            }
+            if sync.is_some() {
+                return Err("MIDI sync transaction is not ended".into());
             }
         }
         let mut usb_descriptors_seen = false;

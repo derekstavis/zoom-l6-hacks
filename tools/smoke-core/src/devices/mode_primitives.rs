@@ -6,6 +6,70 @@ use super::*;
 const EMBEDDED_MODE_WALK: &str =
     include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/mode-walk.toml");
 
+const EMBEDDED_MIDI_SYNC: &str =
+    include_str!("../../../../patches/midi-sync/tests/emulator/fragments/request-state.toml");
+
+pub(super) fn embedded_midi_sync_operations() -> Result<Vec<(String, Operation)>, String> {
+    midi_sync_operations(EMBEDDED_MIDI_SYNC)
+}
+
+fn midi_sync_operations(fragment: &str) -> Result<Vec<(String, Operation)>, String> {
+    // Use the normal scenario parser and semantic validation, including the
+    // sync transaction state machine and scalar checks.
+    let source = format!(
+        "version=1\nname='embedded-midi-sync'\nmodels=['l6max']\nbackends=['headless']\n{fragment}"
+    );
+    let scenario = crate::Scenario::parse(&source)
+        .map_err(|error| format!("invalid embedded MIDI sync fragment: {error}"))?;
+    let actions = scenario
+        .step
+        .iter()
+        .map(|step| &step.action)
+        .collect::<Vec<_>>();
+    if !matches!(
+        actions.as_slice(),
+        [
+            crate::Action::HostMidiSyncBegin,
+            crate::Action::HostMidiDrain { .. },
+            crate::Action::HostMidiSendCc {
+                channel: 0,
+                controller: 127,
+                value: 127
+            },
+            crate::Action::HostMidiExpectSync,
+            crate::Action::HostMidiEnd
+        ]
+    ) {
+        return Err("embedded MIDI sync must request and assert one complete state reply".into());
+    }
+    let mut operations = Vec::new();
+    for step in &scenario.step {
+        if !step.models.is_empty() || step.setup_input {
+            return Err("embedded MIDI sync has invalid scope".into());
+        }
+        let operation = match step.action {
+            crate::Action::HostMidiSyncBegin => Operation::HostMidiSyncBegin,
+            crate::Action::HostMidiDrain { quiet_wall_ms } => {
+                Operation::HostMidiDrain { quiet_wall_ms }
+            }
+            crate::Action::HostMidiSendCc {
+                channel,
+                controller,
+                value,
+            } => Operation::HostMidiSendCc {
+                channel,
+                controller,
+                value,
+            },
+            crate::Action::HostMidiExpectSync => Operation::HostMidiExpectSync,
+            crate::Action::HostMidiEnd => Operation::HostMidiEnd,
+            _ => return Err("unsupported embedded MIDI sync action".into()),
+        };
+        operations.push((crate::progress::step_label(&step.action), operation));
+    }
+    Ok(operations)
+}
+
 pub(super) fn embedded_mode_operations() -> Result<Vec<(String, Operation)>, String> {
     let fragment: crate::Fragment = toml::from_str(EMBEDDED_MODE_WALK)
         .map_err(|error| format!("invalid embedded knob mode fragment: {error}"))?;
@@ -324,6 +388,32 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedded_midi_sync_reuses_scenario_validation() {
+        assert_eq!(midi_sync_operations(EMBEDDED_MIDI_SYNC).unwrap().len(), 5);
+        assert!(midi_sync_operations("").is_err());
+        assert!(midi_sync_operations("[[step]]\naction='host-midi-end'\n").is_err());
+        assert!(
+            midi_sync_operations(&EMBEDDED_MIDI_SYNC.replace(
+                "action = \"host-midi-end\"",
+                "action = \"host-midi-expect-sync\""
+            ))
+            .is_err()
+        );
+        assert!(
+            midi_sync_operations(
+                &EMBEDDED_MIDI_SYNC.replace("quiet_wall_ms = 500", "quiet_wall_ms = 0")
+            )
+            .is_err()
+        );
+        assert!(
+            midi_sync_operations(
+                &EMBEDDED_MIDI_SYNC.replace("controller = 127", "controller = 255")
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn embedded_lifecycle_modes_do_not_read_a_source_file() {

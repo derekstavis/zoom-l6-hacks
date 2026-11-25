@@ -295,6 +295,8 @@ pub enum Action {
     MidiProbeEnd,
     HostMidiConnect,
     HostMidiBegin,
+    HostMidiSyncBegin,
+    HostMidiExpectSync,
     HostMidiDrain {
         quiet_wall_ms: u32,
     },
@@ -334,12 +336,6 @@ pub enum Action {
         expect_ring_change: bool,
     },
     L6DinUsbForwarding,
-    HostMidiSync {
-        /// Send the CC 127 state request. When false the step only collects
-        /// the reply to a request made another way, such as a menu item.
-        #[serde(default = "default_true")]
-        request: bool,
-    },
     L6MidiSync,
     L6MidiRingPinSweep {
         cc: u8,

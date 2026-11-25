@@ -524,10 +524,10 @@ shows every case.
   | Any SD module | `expect-sd-patch` |
   | knob-dialog | `knob-popup-open`, `knob-popup-expect-open`, `knob-popup-expect-value` |
   | Effect replacements | `expect-heap`, then for each slot `effect-replacement-state` with the assigned effect ID and nonzero output, or no replacement |
-  | midi-sync | `direct-usb-midi-round-trip`, then `host-midi-sync` |
+  | midi-sync | `direct-usb-midi-round-trip`, then the declarative MIDI state request fragment |
   | din-mixer-control | Declared mixer/DIN CC, ring and no-echo observations |
   | menu-loader | `expect-menu` for System and System > Patches, then System > Patches as drawn against `patches/menu-loader/tests/emulator/references/patches-suite/` (skipped with knob-dialog; see below) |
-  | midi-sync with menu-loader | **Send MIDI State**, then `host-midi-sync` with `request = false` |
+  | midi-sync with menu-loader | **Send MIDI State**, then the queued MIDI state reply fragment |
   | dump-rom | **Dump ROM**, then every file's size and the NOR file's contents |
 
   L6max cases boot from the `patch-matrix` state, which turns on Mixer

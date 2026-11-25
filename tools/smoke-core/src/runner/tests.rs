@@ -1394,3 +1394,29 @@ fn midi_probe_requires_complete_model_scoped_transaction_and_matching_deadlines(
             .is_err()
     );
 }
+
+#[test]
+fn midi_sync_requires_ordered_complete_scope_and_matching_deadlines() {
+    let prefix = "version=1\nname='sync'\nmodels=['l6','l6max']\nbackends=['headless']\n";
+    let begin = "[[step]]\naction='host-midi-sync-begin'\n";
+    let drain = "[[step]]\naction='host-midi-drain'\nquiet_wall_ms=500\n";
+    let send = "[[step]]\naction='host-midi-send-cc'\nchannel=0\ncontroller=127\nvalue=127\n";
+    let expect = "[[step]]\naction='host-midi-expect-sync'\n";
+    let end = "[[step]]\naction='host-midi-end'\n";
+    assert!(Scenario::parse(&format!("{prefix}{begin}{drain}{send}{expect}{end}")).is_ok());
+    assert!(Scenario::parse(&format!("{prefix}{begin}{expect}{end}")).is_ok());
+    assert!(Scenario::parse(&format!("{prefix}{begin}{drain}{expect}{end}")).is_err());
+    assert!(Scenario::parse(&format!("{prefix}{begin}{send}{expect}{end}")).is_err());
+    assert!(Scenario::parse(&format!("{prefix}{begin}{expect}")).is_err());
+    assert!(Scenario::parse(&format!("{prefix}{expect}{end}")).is_err());
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}{begin}{}{end}",
+            expect.replace(
+                "action='host-midi-expect-sync'",
+                "action='host-midi-expect-sync'\nwall_timeout_s=121"
+            )
+        ))
+        .is_err()
+    );
+}

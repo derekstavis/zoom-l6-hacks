@@ -205,6 +205,7 @@ impl State {
             client.release();
         }
         self.midi_round_trip = None;
+        self.midi_sync = None;
         self.knob_popup = None;
         self.knob_dialog_deadline = None;
         self.knob_dialog_baseline = None;
@@ -217,6 +218,12 @@ impl State {
     }
     pub fn has_midi_probe(&self) -> bool {
         self.midi_probe.is_some()
+    }
+    pub fn has_midi_sync(&self) -> bool {
+        self.midi_sync.is_some()
+    }
+    pub fn abort_midi_sync(&mut self) {
+        self.midi_sync = None;
     }
     pub fn abort_midi_probe(&mut self) {
         // Drop only sessions opened by the probe; a previously connected
@@ -241,6 +248,18 @@ impl State {
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
     ) -> Result<Value, String> {
+        if self.midi_sync.is_some()
+            && !matches!(
+                operation,
+                Operation::HostMidiDrain { .. }
+                    | Operation::HostMidiSendCc { .. }
+                    | Operation::HostMidiExpectSync
+                    | Operation::HostMidiEnd
+            )
+        {
+            self.abort_midi_sync();
+            return Err("MIDI sync transaction interrupted by another operation".into());
+        }
         if self.midi_probe.is_some()
             && !matches!(
                 operation,
@@ -1855,6 +1874,8 @@ impl State {
                 wall_timeout_s,
             ),
             operation @ (Operation::HostMidiBegin
+            | Operation::HostMidiSyncBegin
+            | Operation::HostMidiExpectSync
             | Operation::HostMidiDrain { .. }
             | Operation::HostMidiExpectCount { .. }
             | Operation::HostMidiEnd
@@ -1893,9 +1914,6 @@ impl State {
             ),
             Operation::L6DinUsbForwarding => {
                 self.run_l6_din_usb_forwarding(session, wall_timeout_s)
-            }
-            Operation::HostMidiSync { request } => {
-                self.run_host_midi_sync(session, request, guest_timeout_ms, wall_timeout_s)
             }
             Operation::L6MidiSync => Ok(self.run_l6_midi_sync(session, options)?),
             Operation::L6MidiRingPinSweep { cc } => {

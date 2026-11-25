@@ -1383,6 +1383,80 @@
           "additionalProperties": false,
           "properties": {
             "action": {
+              "const": "host-midi-sync-begin",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "host-midi-expect-sync",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
               "const": "host-midi-drain",
               "type": "string"
             },
@@ -1824,48 +1898,6 @@
                 "$ref": "#/definitions/Model"
               },
               "type": "array"
-            },
-            "setup_input": {
-              "default": false,
-              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
-              "type": "boolean"
-            },
-            "wall_timeout_s": {
-              "default": 180,
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "action"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "action": {
-              "const": "host-midi-sync",
-              "type": "string"
-            },
-            "guest_timeout_ms": {
-              "default": 10000,
-              "format": "uint32",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "models": {
-              "default": [],
-              "items": {
-                "$ref": "#/definitions/Model"
-              },
-              "type": "array"
-            },
-            "request": {
-              "default": true,
-              "description": "Send the CC 127 state request. When false the step only collects\nthe reply to a request made another way, such as a menu item.",
-              "type": "boolean"
             },
             "setup_input": {
               "default": false,
@@ -6898,6 +6930,8 @@
             "midi-probe-end",
             "host-midi-connect",
             "host-midi-begin",
+            "host-midi-sync-begin",
+            "host-midi-expect-sync",
             "host-midi-drain",
             "host-midi-expect-count",
             "host-midi-end",
@@ -6908,7 +6942,6 @@
             "expect-ring-changed",
             "direct-usb-midi-round-trip",
             "l6-din-usb-forwarding",
-            "host-midi-sync",
             "l6-midi-sync",
             "l6-midi-ring-pin-sweep",
             "l6-midi-mute-indicators",

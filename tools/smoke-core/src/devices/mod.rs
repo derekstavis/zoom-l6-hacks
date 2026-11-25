@@ -32,7 +32,7 @@ pub use knob_dialog::*;
 pub use lifecycle::*;
 use midi::*;
 use midi_probe::*;
-use mode_primitives::embedded_mode_operations;
+use mode_primitives::{embedded_midi_sync_operations, embedded_mode_operations};
 use panel::*;
 use sd::*;
 use usb::*;
@@ -116,6 +116,8 @@ pub enum Operation {
     MidiProbeEnd,
     HostMidiConnect,
     HostMidiBegin,
+    HostMidiSyncBegin,
+    HostMidiExpectSync,
     HostMidiDrain {
         quiet_wall_ms: u32,
     },
@@ -151,9 +153,6 @@ pub enum Operation {
         expect_ring_change: bool,
     },
     L6DinUsbForwarding,
-    HostMidiSync {
-        request: bool,
-    },
     L6MidiSync,
     L6MidiRingPinSweep {
         cc: u8,
@@ -620,6 +619,7 @@ pub struct State {
     pending_input: Option<PendingInput>,
     captured_display: Option<CapturedDisplay>,
     midi_round_trip: Option<MidiRoundTrip>,
+    midi_sync: Option<midi::MidiSync>,
     native_midi: Option<l6ctl::midi::MidiSession>,
     midi_probe: Option<MidiProbeContext>,
 }

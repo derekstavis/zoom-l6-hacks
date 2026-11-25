@@ -1,6 +1,15 @@
-# The State message the System menu item sends, without a host request.
+# Collect the queued response to the System menu action.
 [[step]]
-action = "host-midi-sync"
-request = false
+action = "host-midi-sync-begin"
+guest_timeout_ms = 30000
+wall_timeout_s = 120
+
+[[step]]
+action = "host-midi-expect-sync"
+guest_timeout_ms = 30000
+wall_timeout_s = 120
+
+[[step]]
+action = "host-midi-end"
 guest_timeout_ms = 30000
 wall_timeout_s = 120

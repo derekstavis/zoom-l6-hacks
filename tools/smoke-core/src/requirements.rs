@@ -132,6 +132,8 @@ pub fn of(action: &Action) -> Requirement {
         | Action::HostMidiRoundTrip
         | Action::HostMidiConnect
         | Action::HostMidiBegin
+        | Action::HostMidiSyncBegin
+        | Action::HostMidiExpectSync
         | Action::HostMidiDrain { .. }
         | Action::HostMidiExpectCount { .. }
         | Action::HostMidiEnd
@@ -143,7 +145,6 @@ pub fn of(action: &Action) -> Requirement {
         | Action::HostMidiSendCc { .. }
         | Action::ExpectRingChanged { .. }
         | Action::DirectUsbMidiRoundTrip { .. }
-        | Action::HostMidiSync { .. }
         | Action::L6MidiSync
         | Action::L6MidiRingPinSweep { .. }
         | Action::L6MidiMuteIndicators

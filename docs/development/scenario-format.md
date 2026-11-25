@@ -212,7 +212,8 @@ message delivered just after the interval.
 | `expect-ring-changed` | `channel`, `checkpoint`, optional `midi_transaction` | Wait for a ring to differ from a named checkpoint; when `midi_transaction` is true, anchor its deadline at the MIDI send |
 | `direct-usb-midi-round-trip` | optional `cable` (0–15), `expect_ring_change` (defaults to true) | Check the encoder report and channel-1 mixer CC on a selected USB MIDI cable; set `expect_ring_change = false` to verify other cables are ignored |
 | `l6-din-usb-forwarding` | — | Verify L6 DIN-to-USB forwarding behavior |
-| `host-midi-sync` | optional `request` (default `true`) | Send the CC 127 state request on the client of a preceding round trip and collect the model's full Control Change reply. With `request = false`, only collect a reply to a request made another way, such as the **Send MIDI State** menu item |
+| `host-midi-sync-begin` | — | Capture the L6 MIDI map and configured channel, or the L6max reply count, using a retained MIDI session. Begin the shared guest deadline. |
+| `host-midi-expect-sync` | — | Assert the captured L6 channel and CC multiset, including duplicate mappings, or 94 L6max Control Change replies. Follow with `host-midi-end`. |
 | `l6-midi-sync` | — | Exercise the L6 MIDI synchronization path |
 | `l6-midi-ring-pin-sweep` | `cc` | Sweep L6 MIDI CC values and compare ring-pin output |
 | `l6-midi-mute-indicators` | — | Check L6 MIDI mute-indicator responses |
@@ -355,3 +356,5 @@ Mapping scenarios use `changed = true` because presets and firmware processing
 can change the numerical value associated with detents. Use `mask` when an exact
 value is established by the state and firmware. Reverse movement in the
 quick scenario must restore channel 2's known initial mask `0x001`.
+
+The MIDI state request fragment begins a sync scope, drains until 500 ms of wall-time quiet, sends CC 127/127, asserts the reply, then ends the scope. The System menu fragment begins and asserts without a drain or request so a response queued by the menu action is preserved. Guest time is measured from scope start; the reply wall deadline begins after the send, or after preparation for a menu response. The shared guest and wall deadlines also bound preparation, the quiet drain and request.

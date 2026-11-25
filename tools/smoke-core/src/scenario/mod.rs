@@ -47,6 +47,14 @@ pub enum ObservationActivity {
     AudioOutput,
 }
 
+/// MIDI transport used by a bounded mixer/DIN observation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, schemars::JsonSchema, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MidiProbePort {
+    Mixer,
+    Din,
+}
+
 impl Backend {
     pub fn name(self) -> &'static str {
         match self {
@@ -256,6 +264,35 @@ pub enum Action {
         value: u8,
     },
     HostMidiRoundTrip,
+    MidiProbeBegin,
+    MidiProbeSendCc {
+        port: MidiProbePort,
+        channel: u8,
+        controller: u8,
+        value: u8,
+        capture_ring_channel: usize,
+    },
+    MidiProbeExpectRing {
+        channel: usize,
+        changed: bool,
+        guest_ms: Option<u32>,
+        wall_ms: u32,
+    },
+    MidiProbeWaitRingStable {
+        channel: usize,
+        guest_ms: u32,
+        wall_ms: u32,
+    },
+    MidiProbeDrainAndTap {
+        port: MidiProbePort,
+        target: u32,
+        hold_ms: u32,
+    },
+    MidiProbeExpectNoEvents {
+        port: MidiProbePort,
+        wall_ms: u32,
+    },
+    MidiProbeEnd,
     HostMidiConnect,
     HostMidiBegin,
     HostMidiDrain {
@@ -295,9 +332,6 @@ pub enum Action {
         cable: u8,
         #[serde(default = "default_true")]
         expect_ring_change: bool,
-    },
-    L6maxDinMixerControl {
-        expect_din_ring_change: bool,
     },
     L6DinUsbForwarding,
     HostMidiSync {

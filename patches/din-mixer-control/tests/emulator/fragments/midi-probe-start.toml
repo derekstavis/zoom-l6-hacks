@@ -1,0 +1,40 @@
+[[step]]
+action = "midi-probe-begin"
+guest_timeout_ms = 10000
+wall_timeout_s = 120
+
+[[step]]
+action = "midi-probe-send-cc"
+port = "mixer"
+channel = 0
+controller = 81
+value = 80
+capture_ring_channel = 1
+guest_timeout_ms = 10000
+wall_timeout_s = 120
+
+[[step]]
+action = "midi-probe-expect-ring"
+channel = 1
+changed = true
+wall_ms = 3000
+guest_timeout_ms = 10000
+wall_timeout_s = 120
+
+[[step]]
+action = "midi-probe-wait-ring-stable"
+channel = 1
+guest_ms = 200
+wall_ms = 6000
+guest_timeout_ms = 10000
+wall_timeout_s = 120
+
+[[step]]
+action = "midi-probe-send-cc"
+port = "din"
+channel = 0
+controller = 81
+value = 40
+capture_ring_channel = 1
+guest_timeout_ms = 10000
+wall_timeout_s = 120

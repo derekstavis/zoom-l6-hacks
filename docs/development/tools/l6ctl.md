@@ -166,6 +166,7 @@ endpoint presence observer, when available. The native transport is also availab
 
 ```sh
 cargo l6ctl midi listen "L6max Mixer Control Port (Emulator)" --timeout-ms 30000
+cargo l6ctl midi observe "L6max Mixer Control Port (Emulator)" --wall-ms 600
 cargo l6ctl midi send "L6max Mixer Control Port (Emulator)" 0 81 100
 ```
 
@@ -178,6 +179,14 @@ Errors are JSON on stderr with `event: "error"`, a `kind` (`timeout`,
 `endpoint-unavailable`, `unsupported`, `transport`, `output`, or
 `invalid-argument`), and a `message`. `send` emits a `sent` event after the native
 backend accepts the message.
+
+`observe` retains one native subscription for the entire requested wall-time
+window (1–60000 ms), even after receiving messages. It emits `ready` after
+subscribing, strict `control-change` events, and a `complete` event with the
+count; an empty interval succeeds with count zero. A final queue drain catches
+messages from the last polling gap. Since observations have no event timestamp,
+the drain can include a message delivered just after the window. This command
+does not expose direct USB tokens.
 
 The native MIDI integration test requires an available CoreMIDI or ALSA
 sequencer service and is explicitly ignored by the default test run. Run it

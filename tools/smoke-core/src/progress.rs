@@ -183,6 +183,42 @@ pub fn step_label(action: &crate::Action) -> String {
     use crate::Action;
     match action {
         Action::Wait { until } => format!("Wait for {}", until.replace('-', " ")),
+        Action::MidiProbeBegin => "Connect MIDI probe sessions".into(),
+        Action::MidiProbeSendCc {
+            port,
+            controller,
+            value,
+            ..
+        } => format!("Send {port:?} MIDI CC {controller} value {value}"),
+        Action::MidiProbeExpectRing {
+            channel,
+            changed,
+            guest_ms,
+            ..
+        } => {
+            if *changed {
+                format!("Wait for channel {channel} ring change")
+            } else {
+                format!(
+                    "Observe channel {channel} ring unchanged for {} ms guest time",
+                    guest_ms.unwrap_or(0)
+                )
+            }
+        }
+        Action::MidiProbeWaitRingStable {
+            channel, guest_ms, ..
+        } => format!("Wait for channel {channel} ring stable for {guest_ms} ms guest time"),
+        Action::MidiProbeDrainAndTap {
+            port,
+            target,
+            hold_ms,
+        } => {
+            format!("Drain {port:?} MIDI and tap button {target} ({hold_ms} ms)")
+        }
+        Action::MidiProbeExpectNoEvents { port, wall_ms } => {
+            format!("Observe {port:?} MIDI silence for {wall_ms} ms wall time")
+        }
+        Action::MidiProbeEnd => "Close MIDI probe sessions".into(),
         Action::ExpectDisplayAfterPress => "Wait for display change".into(),
         Action::Press { control } => format!("Press {}", control.replace(['-', '.'], " ")),
         Action::Hold { control, .. } => format!("Hold {}", control.replace(['-', '.'], " ")),

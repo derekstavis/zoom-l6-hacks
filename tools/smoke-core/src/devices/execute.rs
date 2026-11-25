@@ -197,6 +197,7 @@ mod carried_deadline_tests {
 
 impl State {
     pub fn restarted(&mut self) -> Result<(), String> {
+        self.abort_midi_probe();
         if let Some(mut client) = self.native_midi.take() {
             client.release();
         }
@@ -213,6 +214,14 @@ impl State {
     }
     pub fn has_knob_preflight(&self) -> bool {
         self.knob_dialog_preflight.is_some()
+    }
+    pub fn has_midi_probe(&self) -> bool {
+        self.midi_probe.is_some()
+    }
+    pub fn abort_midi_probe(&mut self) {
+        // Drop only sessions opened by the probe; a previously connected
+        // native mixer session remains owned by the scenario.
+        self.midi_probe = None;
     }
     pub fn abort_knob_preflight(&mut self) -> Result<(), String> {
         self.knob_mode = None;
@@ -232,6 +241,20 @@ impl State {
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
     ) -> Result<Value, String> {
+        if self.midi_probe.is_some()
+            && !matches!(
+                operation,
+                Operation::MidiProbeSendCc { .. }
+                    | Operation::MidiProbeExpectRing { .. }
+                    | Operation::MidiProbeWaitRingStable { .. }
+                    | Operation::MidiProbeDrainAndTap { .. }
+                    | Operation::MidiProbeExpectNoEvents { .. }
+                    | Operation::MidiProbeEnd
+            )
+        {
+            self.abort_midi_probe();
+            return Err("MIDI probe transaction interrupted by another operation".into());
+        }
         let started = Instant::now();
         let control = l6ctl::OwnedControl::new(&session.engine);
         let guest_start = control
@@ -301,6 +324,7 @@ impl State {
             guest_timeout_ms,
             wall_timeout_s,
             shared,
+            (started, guest_start),
         );
         let result = match result {
             Ok(value) => value,
@@ -354,6 +378,7 @@ impl State {
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
         shared: Option<(Instant, u32, u32, u64, u8)>,
+        operation_start: (Instant, u32),
     ) -> Result<Value, Box<dyn std::error::Error>> {
         match operation {
             Operation::ExpectRecorder => {
@@ -1843,6 +1868,19 @@ impl State {
             Operation::HostMidiRoundTrip => {
                 self.run_host_midi_round_trip(session, guest_timeout_ms, wall_timeout_s, None, true)
             }
+            operation @ (Operation::MidiProbeBegin
+            | Operation::MidiProbeSendCc { .. }
+            | Operation::MidiProbeExpectRing { .. }
+            | Operation::MidiProbeWaitRingStable { .. }
+            | Operation::MidiProbeDrainAndTap { .. }
+            | Operation::MidiProbeExpectNoEvents { .. }
+            | Operation::MidiProbeEnd) => self.run_midi_probe(
+                session,
+                operation,
+                guest_timeout_ms,
+                wall_timeout_s,
+                operation_start,
+            ),
             Operation::DirectUsbMidiRoundTrip {
                 cable,
                 expect_ring_change,
@@ -1852,14 +1890,6 @@ impl State {
                 wall_timeout_s,
                 Some(cable),
                 expect_ring_change,
-            ),
-            Operation::L6maxDinMixerControl {
-                expect_din_ring_change,
-            } => self.run_l6max_din_mixer_control(
-                session,
-                expect_din_ring_change,
-                guest_timeout_ms,
-                wall_timeout_s,
             ),
             Operation::L6DinUsbForwarding => {
                 self.run_l6_din_usb_forwarding(session, wall_timeout_s)

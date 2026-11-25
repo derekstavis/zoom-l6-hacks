@@ -171,6 +171,29 @@ retries honor the shared guest and wall limits while retaining the independent
 10-second discovery cap. Ring observations at or after the declared wall deadline
 fail even if the ring changed by that observation.
 
+The L6max mixer/DIN cases use a separate `midi-probe-begin` / `midi-probe-end`
+transaction. It owns a namespaced native DIN session and either reuses the
+preceding native mixer session or owns direct USB cable 1. All probe steps use
+the same guest/wall timeouts as the begin step; the total deadline starts before
+endpoint discovery. No unrelated device operation may interrupt the sequence.
+The probe releases its own sessions on completion, failure or restart, without
+discarding an earlier mixer session. DIN receive uses the existing legacy
+control-observation behavior, including its documented ALSA limitations.
+
+`midi-probe-send-cc` captures the declared ring channel immediately before the
+stimulus. `midi-probe-expect-ring` compares against that capture, with its wall
+window anchored to the send; a negative result requires the whole declared
+guest window. For parity with the former mixer/DIN action, a ring change is
+considered before that phase's deadline; the enclosing transaction deadline
+still applies. `midi-probe-wait-ring-stable` anchors its wall limit to the same
+send and restarts its guest-time stability clock whenever the ring changes.
+`midi-probe-expect-no-events` observes until the wall deadline anchored to the
+preceding `midi-probe-drain-and-tap`; it fails if that interval already elapsed before
+the observation starts. It also drains the receive queue at the boundary so
+messages from the final polling gap cannot be missed. Native MIDI observations
+have no event timestamps, so the boundary drain may conservatively count a
+message delivered just after the interval.
+
 | Action | Fields | Contract |
 | --- | --- | --- |
 | `sd-card` | `inserted` | QMP removal or insertion of the case's copied card |
@@ -202,7 +225,12 @@ fail even if the ring changed by that observation.
 | `wasm-patch` | — | Exercise a generated WebAssembly patch package through the firmware update path |
 | `l6-recorder-playback` | `target` | L6 only; GDB verifies event `0x20`, handler acceptance, and the mode-0 callback on MAIN target 4; after five guest seconds it requires a changed SAI1 TX signature and sample data in the channel-14 TCD source. Requires a mode-0 state, valid `MASTER.WAV`, GDB support, and `L6_AUDIO_SAMPLE_TRACE=1` |
 | `l6max-recorder-playback` | `target` | L6max only, MAIN target 4; GDB verifies Play event `0x2c`, event dispatch, callback slot 2, and the recorder action, then requires nonzero changed SAI1 TX windows and sample data in channel-14's TCD source. Requires a prepared playable recording, GDB support, and `L6_AUDIO_SAMPLE_TRACE=1` |
-| `l6max-din-mixer-control` | `expect_din_ring_change` | With Mixer Control via MIDI on, set by editor SysEx or a state, verify USB mixer control, stock/patched DIN response, and DIN mute-echo suppression. The USB reference uses the client of a preceding round trip when there is one, else USB cable 1 directly |
+| `midi-probe-begin` / `midi-probe-end` | — | Open/close a bounded L6max mixer/DIN observation; retain any previously opened native mixer session |
+| `midi-probe-send-cc` | `port`, `channel`, `controller`, `value`, `capture_ring_channel` | Capture the ring immediately before sending on `mixer` or `din` |
+| `midi-probe-expect-ring` | `channel`, `changed`, optional `guest_ms`, `wall_ms` | Observe change or a full unchanged guest window, anchored to the preceding send |
+| `midi-probe-wait-ring-stable` | `channel`, `guest_ms`, `wall_ms` | Require a ring to remain unchanged for guest time, bounded by wall time since the send |
+| `midi-probe-drain-and-tap` | `port`, `target`, `hold_ms` | Drain queued legacy control observations and immediately enqueue a tap to anchor the following wall-time observation |
+| `midi-probe-expect-no-events` | `port`, `wall_ms` | Observe the selected session for the complete wall-time interval after the tap |
 | `usb-storage` | — | Enumerate storage, compare sector zero to the copied card, round-trip its last sector, then create/read/compare/delete a 1,537-byte FAT file through the USB disk |
 | `audio-callbacks` | — | First step only; arm revision-guarded breakpoints before boot and require every model callback |
 | `knob-dialog-ready` | — | Wait for the L6max recorder window, idle notification state and reviewed transport-control pixels before `knob-dialog-guard`; all steps use matching deadlines shared across the sequence |

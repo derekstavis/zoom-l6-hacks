@@ -84,7 +84,13 @@ pub fn of(action: &Action) -> Requirement {
         Action::L6maxRecorderPlayback { .. }
         | Action::L6maxInputTiming
         | Action::L6maxPanelKeyMap
-        | Action::L6maxDinMixerControl { .. }
+        | Action::MidiProbeBegin
+        | Action::MidiProbeSendCc { .. }
+        | Action::MidiProbeExpectRing { .. }
+        | Action::MidiProbeWaitRingStable { .. }
+        | Action::MidiProbeDrainAndTap { .. }
+        | Action::MidiProbeExpectNoEvents { .. }
+        | Action::MidiProbeEnd
         | Action::KnobDialogReady
         | Action::KnobDialogGuard
         | Action::KnobDialogBaseline

@@ -48,7 +48,5 @@ action = "include"
 path = "tests/emulator/fragments/l6max-din-mixer-setup.toml"
 
 [[step]]
-action = "l6max-din-mixer-control"
-expect_din_ring_change = true
-guest_timeout_ms = 10000
-wall_timeout_s = 120
+action = "include"
+path = "patches/din-mixer-control/tests/emulator/fragments/check.toml"

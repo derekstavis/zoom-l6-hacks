@@ -1350,3 +1350,47 @@ fn completion_does_not_publish_pass_before_adapter_cleanup() {
     assert_eq!(report["outcome"], "FAIL");
     fs::remove_dir_all(&runner.logs).unwrap();
 }
+
+#[test]
+fn midi_probe_requires_complete_model_scoped_transaction_and_matching_deadlines() {
+    let prefix = "version=1\nname='probe'\nmodels=['l6max']\nbackends=['headless']\n";
+    let begin = "[[step]]\naction='midi-probe-begin'\nguest_timeout_ms=10000\nwall_timeout_s=120\n";
+    let send = "[[step]]\naction='midi-probe-send-cc'\nport='din'\nchannel=0\ncontroller=81\nvalue=40\ncapture_ring_channel=1\nguest_timeout_ms=10000\nwall_timeout_s=120\n";
+    let expect = "[[step]]\naction='midi-probe-expect-ring'\nchannel=1\nchanged=false\nguest_ms=500\nwall_ms=3000\nguest_timeout_ms=10000\nwall_timeout_s=120\n";
+    let end = "[[step]]\naction='midi-probe-end'\nguest_timeout_ms=10000\nwall_timeout_s=120\n";
+    assert!(Scenario::parse(&format!("{prefix}{begin}{send}{expect}{end}")).is_ok());
+    assert!(Scenario::parse(&format!("{prefix}{begin}{send}{expect}")).is_err());
+    assert!(Scenario::parse(&format!("{prefix}{send}{end}")).is_err());
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}{begin}{send}[[step]]\naction='delay'\nguest_ms=1\n{end}"
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}{begin}{send}{}",
+            end.replace("wall_timeout_s=120", "wall_timeout_s=121")
+        ))
+        .is_err()
+    );
+    let no_guest_window = expect.replace("guest_ms=500\n", "");
+    assert!(Scenario::parse(&format!("{prefix}{begin}{send}{no_guest_window}{end}")).is_err());
+    let tap = "[[step]]\naction='midi-probe-drain-and-tap'\nport='din'\ntarget=22\nhold_ms=50\nguest_timeout_ms=10000\nwall_timeout_s=120\n";
+    let observe = "[[step]]\naction='midi-probe-expect-no-events'\nport='mixer'\nwall_ms=600\nguest_timeout_ms=10000\nwall_timeout_s=120\n";
+    assert!(Scenario::parse(&format!("{prefix}{begin}{tap}{observe}{end}")).is_err());
+    let pruned = format!(
+        "{prefix}{begin}{}{expect}{}",
+        send.replace(
+            "action='midi-probe-send-cc'",
+            "setup_input=true\naction='midi-probe-send-cc'"
+        ),
+        end
+    );
+    assert!(
+        Scenario::parse(&pruned)
+            .unwrap()
+            .without_setup_input()
+            .is_err()
+    );
+}

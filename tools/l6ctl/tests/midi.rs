@@ -99,6 +99,37 @@ fn native_listener_subscribes_before_stimulus_and_cleans_up() {
         assert!(wait(&mut child).success());
     }
 
+    // A bounded observer stays subscribed through the entire interval,
+    // including after the first message. An empty interval is also success.
+    for messages in [vec![61, 62], vec![]] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+            .env_remove("L6_CONTROL_SOCKET")
+            .args(["midi", "observe", &endpoint, "--wall-ms", "200"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                if tx.send(line.unwrap()).is_err() {
+                    break;
+                }
+            }
+        });
+        let mut child = Guard(child);
+        assert_eq!(event(&rx)["event"], "ready");
+        for value in &messages {
+            ports.write(0, &[0xb0, 81, *value]).unwrap();
+            assert_eq!(event(&rx)["value"], *value);
+        }
+        let complete = event(&rx);
+        assert_eq!(complete["event"], "complete");
+        assert_eq!(complete["count"], messages.len());
+        assert!(wait(&mut child).success());
+    }
+
     // A single sync command keeps its subscription through drain, request,
     // and a coalesced/running-status response plus a separate message.
     let mut child = Command::new(env!("CARGO_BIN_EXE_l6ctl"))

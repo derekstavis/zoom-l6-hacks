@@ -1,0 +1,19 @@
+[[step]]
+action = "midi-probe-drain-and-tap"
+port = "din"
+target = 22
+hold_ms = 50
+guest_timeout_ms = 10000
+wall_timeout_s = 120
+
+[[step]]
+action = "midi-probe-expect-no-events"
+port = "din"
+wall_ms = 600
+guest_timeout_ms = 10000
+wall_timeout_s = 120
+
+[[step]]
+action = "midi-probe-end"
+guest_timeout_ms = 10000
+wall_timeout_s = 120

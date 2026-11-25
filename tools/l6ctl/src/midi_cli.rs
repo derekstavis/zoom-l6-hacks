@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const USAGE: &str = "Usage: l6ctl midi listen ENDPOINT [--timeout-ms MS] | l6ctl midi send ENDPOINT CHANNEL CONTROLLER VALUE | l6ctl midi sync ENDPOINT --count N [--quiet-ms MS] [--timeout-ms MS]";
+const USAGE: &str = "Usage: l6ctl midi listen ENDPOINT [--timeout-ms MS] | l6ctl midi observe ENDPOINT --wall-ms MS | l6ctl midi send ENDPOINT CHANNEL CONTROLLER VALUE | l6ctl midi sync ENDPOINT --count N [--quiet-ms MS] [--timeout-ms MS]";
 
 #[derive(Debug)]
 pub struct MidiCliError {
@@ -48,6 +48,10 @@ enum Command {
         endpoint: String,
         message: ControlChange,
     },
+    Observe {
+        endpoint: String,
+        duration: Duration,
+    },
     Sync {
         endpoint: String,
         count: usize,
@@ -58,6 +62,16 @@ enum Command {
 
 fn parse(args: &[String]) -> Result<Command, String> {
     match args.first().map(String::as_str) {
+        Some("observe") if args.len() == 4 && args[2] == "--wall-ms" => {
+            let ms: u64 = args[3].parse().map_err(|_| "invalid wall interval")?;
+            if !(1..=60_000).contains(&ms) {
+                return Err("wall interval must be 1..60000 milliseconds".into());
+            }
+            Ok(Command::Observe {
+                endpoint: args[1].clone(),
+                duration: Duration::from_millis(ms),
+            })
+        }
         Some("listen") if args.len() == 2 || (args.len() == 4 && args[2] == "--timeout-ms") => {
             let ms = if args.len() == 4 {
                 args[3]
@@ -126,6 +140,66 @@ fn parse(args: &[String]) -> Result<Command, String> {
         }
         _ => Err(USAGE.into()),
     }
+}
+
+/// Observe a complete wall-time window on one subscribed endpoint. An empty
+/// window is successful and explicitly reports zero messages.
+fn observe(
+    endpoint: &str,
+    duration: Duration,
+    mut poll: impl FnMut() -> Result<Option<ControlChange>, String>,
+    output: &mut impl Write,
+    mut now: impl FnMut() -> Instant,
+    mut sleep: impl FnMut(Duration),
+) -> Result<(), MidiCliError> {
+    writeln!(output, "{}", json!({"event":"ready", "endpoint":endpoint}))
+        .and_then(|()| output.flush())
+        .map_err(|e| MidiCliError::new("output", e.to_string()))?;
+    let deadline = now()
+        .checked_add(duration)
+        .ok_or_else(|| MidiCliError::new("invalid-argument", "wall interval is too large"))?;
+    let mut count = 0usize;
+    while now() < deadline {
+        match poll().map_err(|e| MidiCliError::new("transport", e))? {
+            Some(message) => {
+                writeln!(output, "{}", json!({"event":"control-change", "channel":message.channel, "controller":message.controller, "value":message.value}))
+                    .and_then(|()| output.flush())
+                    .map_err(|e| MidiCliError::new("output", e.to_string()))?;
+                count += 1;
+            }
+            None => sleep(Duration::from_millis(5).min(deadline.saturating_duration_since(now()))),
+        }
+    }
+    // Poll after the last sleep and drain the backlog. Native MIDI does not
+    // expose timestamps here, so the boundary is deliberately conservative.
+    let mut drained = false;
+    for _ in 0..4096 {
+        match poll().map_err(|e| MidiCliError::new("transport", e))? {
+            Some(message) => {
+                writeln!(output, "{}", json!({"event":"control-change", "channel":message.channel, "controller":message.controller, "value":message.value}))
+                    .and_then(|()| output.flush())
+                    .map_err(|e| MidiCliError::new("output", e.to_string()))?;
+                count += 1;
+            }
+            None => {
+                drained = true;
+                break;
+            }
+        }
+    }
+    if !drained {
+        return Err(MidiCliError::new(
+            "transport",
+            "MIDI observation queue did not drain at the window boundary",
+        ));
+    }
+    writeln!(
+        output,
+        "{}",
+        json!({"event":"complete", "count":count, "wall_ms":duration.as_millis()})
+    )
+    .and_then(|()| output.flush())
+    .map_err(|e| MidiCliError::new("output", e.to_string()))
 }
 
 fn listen(
@@ -278,6 +352,18 @@ fn sync(
 
 pub fn run(args: &[String]) -> Result<(), MidiCliError> {
     match parse(args).map_err(|e| MidiCliError::new("invalid-argument", e))? {
+        Command::Observe { endpoint, duration } => {
+            let mut session =
+                MidiSession::connect_native(&endpoint).map_err(MidiCliError::connection)?;
+            observe(
+                &endpoint,
+                duration,
+                || session.poll_control_change(),
+                &mut std::io::stdout().lock(),
+                Instant::now,
+                thread::sleep,
+            )
+        }
         Command::Listen { endpoint, timeout } => {
             let mut session =
                 MidiSession::connect_native(&endpoint).map_err(MidiCliError::connection)?;
@@ -339,6 +425,152 @@ mod tests {
         );
         assert!(parse(&args(&["send", "port", "16", "1", "2"])).is_err());
         assert!(parse(&args(&["listen", "port", "--timeout-ms", "abc"])).is_err());
+        assert!(parse(&args(&["observe", "port", "--wall-ms", "0"])).is_err());
+        assert_eq!(
+            parse(&args(&["observe", "port", "--wall-ms", "600"])),
+            Ok(Command::Observe {
+                endpoint: "port".into(),
+                duration: Duration::from_millis(600)
+            })
+        );
+    }
+
+    #[test]
+    fn observe_reports_messages_and_waits_the_entire_wall_window() {
+        let start = Instant::now();
+        let clock = std::cell::Cell::new(start);
+        let mut output = Vec::new();
+        let mut incoming = Some(ControlChange {
+            channel: 0,
+            controller: 81,
+            value: 40,
+        });
+        observe(
+            "port",
+            Duration::from_millis(600),
+            || Ok(incoming.take()),
+            &mut output,
+            || clock.get(),
+            |duration| clock.set(clock.get() + duration),
+        )
+        .unwrap();
+        assert_eq!(
+            clock.get().duration_since(start),
+            Duration::from_millis(600)
+        );
+        let events: Vec<serde_json::Value> = String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(events[0]["event"], "ready");
+        assert_eq!(events[1]["event"], "control-change");
+        assert_eq!(
+            events[2],
+            json!({"event":"complete", "count":1,"wall_ms":600})
+        );
+    }
+
+    #[test]
+    fn observe_empty_window_succeeds_and_transport_failures_are_errors() {
+        let start = Instant::now();
+        let clock = std::cell::Cell::new(start);
+        let mut output = Vec::new();
+        observe(
+            "port",
+            Duration::from_millis(10),
+            || Ok(None),
+            &mut output,
+            || clock.get(),
+            |duration| clock.set(clock.get() + duration),
+        )
+        .unwrap();
+        let event: serde_json::Value =
+            serde_json::from_str(String::from_utf8(output).unwrap().lines().last().unwrap())
+                .unwrap();
+        assert_eq!(event["count"], 0);
+        let error = observe(
+            "port",
+            Duration::from_millis(10),
+            || Err("disconnected".into()),
+            &mut Vec::new(),
+            Instant::now,
+            |_| {},
+        )
+        .unwrap_err();
+        assert_eq!(error.kind, "transport");
+    }
+
+    #[test]
+    fn observe_starts_its_window_after_ready_is_flushed() {
+        struct SlowOutput<'a>(&'a std::cell::Cell<Instant>);
+        impl Write for SlowOutput<'_> {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                self.0.set(self.0.get() + Duration::from_millis(50));
+                Ok(())
+            }
+        }
+        let start = Instant::now();
+        let clock = std::cell::Cell::new(start);
+        observe(
+            "port",
+            Duration::from_millis(10),
+            || Ok(None),
+            &mut SlowOutput(&clock),
+            || clock.get(),
+            |duration| clock.set(clock.get() + duration),
+        )
+        .unwrap();
+        // 50 ms for each of ready and complete, plus the full observation.
+        assert_eq!(
+            clock.get().duration_since(start),
+            Duration::from_millis(110)
+        );
+    }
+
+    #[test]
+    fn observe_drains_backlog_arriving_during_final_sleep() {
+        let start = Instant::now();
+        let clock = std::cell::Cell::new(start);
+        let mut queue = std::collections::VecDeque::from([
+            ControlChange {
+                channel: 0,
+                controller: 81,
+                value: 1,
+            },
+            ControlChange {
+                channel: 0,
+                controller: 81,
+                value: 2,
+            },
+        ]);
+        let mut output = Vec::new();
+        observe(
+            "port",
+            Duration::from_millis(10),
+            || {
+                if clock.get().duration_since(start) >= Duration::from_millis(10) {
+                    Ok(queue.pop_front())
+                } else {
+                    Ok(None)
+                }
+            },
+            &mut output,
+            || clock.get(),
+            |d| clock.set(clock.get() + d),
+        )
+        .unwrap();
+        let events: Vec<serde_json::Value> = String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(events[1]["value"], 1);
+        assert_eq!(events[2]["value"], 2);
+        assert_eq!(events[3]["count"], 2);
     }
 
     #[test]

@@ -19,6 +19,7 @@ mod execute;
 mod knob_dialog;
 mod lifecycle;
 mod midi;
+mod midi_probe;
 mod mode_primitives;
 mod panel;
 mod sd;
@@ -30,6 +31,7 @@ use editor::*;
 pub use knob_dialog::*;
 pub use lifecycle::*;
 use midi::*;
+use midi_probe::*;
 use mode_primitives::embedded_mode_operations;
 use panel::*;
 use sd::*;
@@ -83,6 +85,35 @@ pub enum Operation {
         value: u8,
     },
     HostMidiRoundTrip,
+    MidiProbeBegin,
+    MidiProbeSendCc {
+        port: crate::scenario::MidiProbePort,
+        channel: u8,
+        controller: u8,
+        value: u8,
+        capture_ring_channel: usize,
+    },
+    MidiProbeExpectRing {
+        channel: usize,
+        changed: bool,
+        guest_ms: Option<u32>,
+        wall_ms: u32,
+    },
+    MidiProbeWaitRingStable {
+        channel: usize,
+        guest_ms: u32,
+        wall_ms: u32,
+    },
+    MidiProbeDrainAndTap {
+        port: crate::scenario::MidiProbePort,
+        target: u32,
+        hold_ms: u32,
+    },
+    MidiProbeExpectNoEvents {
+        port: crate::scenario::MidiProbePort,
+        wall_ms: u32,
+    },
+    MidiProbeEnd,
     HostMidiConnect,
     HostMidiBegin,
     HostMidiDrain {
@@ -118,9 +149,6 @@ pub enum Operation {
     DirectUsbMidiRoundTrip {
         cable: u8,
         expect_ring_change: bool,
-    },
-    L6maxDinMixerControl {
-        expect_din_ring_change: bool,
     },
     L6DinUsbForwarding,
     HostMidiSync {
@@ -344,9 +372,10 @@ fn midi_bridge_options(scenario: &Scenario, model: l6fw::Model) -> Option<(bool,
         step.applies_to(model)
             && matches!(step.action, crate::Action::DirectUsbMidiRoundTrip { .. })
     });
-    let din = scenario.step.iter().any(|step| {
-        step.applies_to(model) && matches!(step.action, crate::Action::L6maxDinMixerControl { .. })
-    });
+    let din = scenario
+        .step
+        .iter()
+        .any(|step| step.applies_to(model) && matches!(step.action, crate::Action::MidiProbeBegin));
     (native || direct || din).then_some((native, din))
 }
 
@@ -525,8 +554,7 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
         options.usb_enabled = false;
         options.usb_cable_at_start = true;
         if !scenario.step.iter().any(|step| {
-            step.applies_to(model)
-                && matches!(step.action, crate::Action::L6maxDinMixerControl { .. })
+            step.applies_to(model) && matches!(step.action, crate::Action::MidiProbeBegin)
         }) {
             options.midi_enabled = false;
         }
@@ -593,6 +621,7 @@ pub struct State {
     captured_display: Option<CapturedDisplay>,
     midi_round_trip: Option<MidiRoundTrip>,
     native_midi: Option<l6ctl::midi::MidiSession>,
+    midi_probe: Option<MidiProbeContext>,
 }
 
 struct KnobModeScope {
@@ -883,11 +912,11 @@ mod native_midi_capability_tests {
                 Some((false, false)),
             ),
             (
-                "[[step]]\naction='l6max-din-mixer-control'\nexpect_din_ring_change=false\n",
+                "[[step]]\naction='midi-probe-begin'\n[[step]]\naction='midi-probe-end'\n",
                 Some((false, true)),
             ),
             (
-                "[[step]]\naction='host-midi-connect'\n[[step]]\naction='l6max-din-mixer-control'\nexpect_din_ring_change=false\n",
+                "[[step]]\naction='host-midi-connect'\n[[step]]\naction='midi-probe-begin'\n[[step]]\naction='midi-probe-end'\n",
                 Some((true, true)),
             ),
             ("[[step]]\naction='delay'\nguest_ms=1\n", None),

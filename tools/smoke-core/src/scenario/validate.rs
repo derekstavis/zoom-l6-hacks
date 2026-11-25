@@ -69,6 +69,83 @@ impl Scenario {
             return Err("backends must contain headless and/or gui".into());
         }
         let mut checkpoints = std::collections::BTreeSet::new();
+        for model in &value.models {
+            let mut probe_budget = None;
+            let mut probe_stimulus = None;
+            let mut probe_ring = None;
+            let mut probe_tap = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                match &step.action {
+                    Action::MidiProbeBegin => {
+                        if probe_budget
+                            .replace((step.guest_timeout_ms, step.wall_timeout_s))
+                            .is_some()
+                        {
+                            return Err("MIDI probe is already active".into());
+                        }
+                        probe_stimulus = None;
+                        probe_ring = None;
+                        probe_tap = None;
+                    }
+                    Action::MidiProbeEnd => {
+                        if probe_budget.take() != Some((step.guest_timeout_ms, step.wall_timeout_s))
+                        {
+                            return Err(
+                                "MIDI probe end needs a matching active transaction and timeouts"
+                                    .into(),
+                            );
+                        }
+                    }
+                    Action::MidiProbeSendCc { .. }
+                    | Action::MidiProbeExpectRing { .. }
+                    | Action::MidiProbeWaitRingStable { .. }
+                    | Action::MidiProbeDrainAndTap { .. }
+                    | Action::MidiProbeExpectNoEvents { .. } => {
+                        if probe_budget != Some((step.guest_timeout_ms, step.wall_timeout_s)) {
+                            return Err("MIDI probe action needs an active transaction with matching timeouts".into());
+                        }
+                        match &step.action {
+                            Action::MidiProbeSendCc {
+                                capture_ring_channel,
+                                ..
+                            } => {
+                                probe_stimulus = Some(*capture_ring_channel);
+                                probe_ring = None;
+                            }
+                            Action::MidiProbeExpectRing { channel, .. } => {
+                                if probe_stimulus != Some(*channel) {
+                                    return Err("MIDI ring observation needs a preceding stimulus capturing that channel".into());
+                                }
+                                probe_ring = Some(*channel);
+                            }
+                            Action::MidiProbeWaitRingStable { channel, .. } => {
+                                if probe_ring != Some(*channel) {
+                                    return Err("MIDI ring stability needs a preceding observation of that channel".into());
+                                }
+                            }
+                            Action::MidiProbeDrainAndTap { port, .. } => probe_tap = Some(*port),
+                            Action::MidiProbeExpectNoEvents { port, .. } => {
+                                if probe_tap != Some(*port) {
+                                    return Err(
+                                        "MIDI no-events observation needs a preceding tap for the same port".into()
+                                    );
+                                }
+                                probe_tap = None;
+                            }
+                            _ => {}
+                        }
+                    }
+                    Action::Checkpoint { .. } if probe_budget.is_some() => {}
+                    _ if probe_budget.is_some() => {
+                        return Err("MIDI probe transaction interrupted by another action".into());
+                    }
+                    _ => {}
+                }
+            }
+            if probe_budget.is_some() {
+                return Err("MIDI probe transaction is not ended".into());
+            }
+        }
         let mut usb_descriptors_seen = false;
         let mut pad_assignments_seen = false;
         // The display comparison borrows the immediately preceding applicable
@@ -321,6 +398,24 @@ impl Scenario {
             }
             if step.wall_timeout_s == 0 || step.guest_timeout_ms == 0 {
                 return Err("timeouts must be positive".into());
+            }
+            if let Action::MidiProbeExpectRing {
+                channel,
+                changed,
+                guest_ms,
+                wall_ms,
+                ..
+            } = &step.action
+                && (*channel == 0
+                    || *channel > 8
+                    || (!*changed && guest_ms.is_none())
+                    || guest_ms.is_some_and(|ms| ms == 0 || ms > step.guest_timeout_ms)
+                    || *wall_ms == 0
+                    || u64::from(*wall_ms) > step.wall_timeout_s.saturating_mul(1000))
+            {
+                return Err(
+                    "MIDI ring observation needs channel 1..8 and bounded positive windows".into(),
+                );
             }
             if let Action::ObserveDuration { guest_ms, .. } = &step.action
                 && (*guest_ms == 0 || *guest_ms > step.guest_timeout_ms)
@@ -739,6 +834,50 @@ impl Scenario {
                     value,
                 } if *channel > 15 || *controller > 127 || *value > 127 => {
                     return Err("MIDI channel must be 0..15 and controller/value 0..127".into());
+                }
+                Action::MidiProbeSendCc {
+                    channel,
+                    controller,
+                    value,
+                    capture_ring_channel,
+                    ..
+                } if *channel > 15
+                    || *controller > 127
+                    || *value > 127
+                    || *capture_ring_channel == 0
+                    || *capture_ring_channel > 8 =>
+                {
+                    return Err(
+                        "MIDI channel must be 0..15, controller/value 0..127 and ring channel 1..8"
+                            .into(),
+                    );
+                }
+                Action::MidiProbeWaitRingStable {
+                    channel,
+                    guest_ms,
+                    wall_ms,
+                } if *channel == 0
+                    || *channel > 8
+                    || *guest_ms == 0
+                    || *guest_ms > step.guest_timeout_ms
+                    || *wall_ms == 0
+                    || u64::from(*wall_ms) > step.wall_timeout_s.saturating_mul(1000) =>
+                {
+                    return Err(
+                        "MIDI ring stability needs channel 1..8 and bounded positive windows"
+                            .into(),
+                    );
+                }
+                Action::MidiProbeDrainAndTap {
+                    target, hold_ms, ..
+                } if l6ctl::button_source(*target).is_none() || !(1..=60_000).contains(hold_ms) => {
+                    return Err("MIDI probe tap needs valid target and hold duration".into());
+                }
+                Action::MidiProbeExpectNoEvents { wall_ms, .. }
+                    if *wall_ms == 0
+                        || u64::from(*wall_ms) > step.wall_timeout_s.saturating_mul(1000) =>
+                {
+                    return Err("MIDI no-events wall interval must fit within timeout".into());
                 }
                 Action::HostMidiDrain { quiet_wall_ms }
                     if *quiet_wall_ms == 0

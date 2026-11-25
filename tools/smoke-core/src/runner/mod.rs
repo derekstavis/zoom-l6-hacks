@@ -560,6 +560,69 @@ impl Runner {
                 Action::HostMidiRoundTrip => {
                     return Ok(Progress::Device(devices::Operation::HostMidiRoundTrip));
                 }
+                Action::MidiProbeBegin => {
+                    return Ok(Progress::Device(devices::Operation::MidiProbeBegin));
+                }
+                Action::MidiProbeSendCc {
+                    port,
+                    channel,
+                    controller,
+                    value,
+                    capture_ring_channel,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::MidiProbeSendCc {
+                        port,
+                        channel,
+                        controller,
+                        value,
+                        capture_ring_channel,
+                    }));
+                }
+                Action::MidiProbeExpectRing {
+                    channel,
+                    changed,
+                    guest_ms,
+                    wall_ms,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::MidiProbeExpectRing {
+                        channel,
+                        changed,
+                        guest_ms,
+                        wall_ms,
+                    }));
+                }
+                Action::MidiProbeWaitRingStable {
+                    channel,
+                    guest_ms,
+                    wall_ms,
+                } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::MidiProbeWaitRingStable {
+                            channel,
+                            guest_ms,
+                            wall_ms,
+                        },
+                    ));
+                }
+                Action::MidiProbeDrainAndTap {
+                    port,
+                    target,
+                    hold_ms,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::MidiProbeDrainAndTap {
+                        port,
+                        target,
+                        hold_ms,
+                    }));
+                }
+                Action::MidiProbeExpectNoEvents { port, wall_ms } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::MidiProbeExpectNoEvents { port, wall_ms },
+                    ));
+                }
+                Action::MidiProbeEnd => {
+                    return Ok(Progress::Device(devices::Operation::MidiProbeEnd));
+                }
                 Action::DirectUsbMidiRoundTrip {
                     cable,
                     expect_ring_change,
@@ -570,13 +633,6 @@ impl Runner {
                             expect_ring_change,
                         },
                     ));
-                }
-                Action::L6maxDinMixerControl {
-                    expect_din_ring_change,
-                } => {
-                    return Ok(Progress::Device(devices::Operation::L6maxDinMixerControl {
-                        expect_din_ring_change,
-                    }));
                 }
                 Action::L6DinUsbForwarding => {
                     return Ok(Progress::Device(devices::Operation::L6DinUsbForwarding));

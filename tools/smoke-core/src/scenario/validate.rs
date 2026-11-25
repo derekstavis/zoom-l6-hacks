@@ -884,6 +884,42 @@ impl Scenario {
                 }
             }
         }
+        for model in &value.models {
+            let mut scope = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                match &step.action {
+                    Action::UsbSysexBegin if scope.is_none() => {
+                        scope = Some((step.guest_timeout_ms, 0usize))
+                    }
+                    Action::UsbSysexExchange { request, .. } if scope.is_some() => {
+                        let (budget, count) = scope.as_mut().unwrap();
+                        if request.reply_timeout_ms.unwrap_or(400) > *budget {
+                            return Err(
+                                "USB SysEx reply window exceeds campaign guest deadline".into()
+                            );
+                        }
+                        *count += 1;
+                    }
+                    Action::UsbSysexEnd if scope.is_some_and(|(_, count)| count > 0) => {
+                        scope = None
+                    }
+                    _ if scope.is_some()
+                        || matches!(
+                            step.action,
+                            Action::UsbSysexBegin
+                                | Action::UsbSysexExchange { .. }
+                                | Action::UsbSysexEnd
+                        ) =>
+                    {
+                        return Err("invalid USB SysEx campaign sequence".into());
+                    }
+                    _ => {}
+                }
+            }
+            if scope.is_some() {
+                return Err("unterminated USB SysEx campaign".into());
+            }
+        }
         for step in &value.step {
             if matches!(step.action, Action::EditorPadAssignments) && !usb_descriptors_seen {
                 return Err(
@@ -1078,31 +1114,24 @@ impl Scenario {
             {
                 return Err("wasm-patch is a standalone L6/L6max scenario operation".into());
             }
-            if let Action::UsbSysex { requests, .. } = &step.action {
-                if requests.is_empty() {
-                    return Err("usb-sysex needs at least one request".into());
+            if let Action::UsbSysexExchange { request, .. } = &step.action {
+                if request.bytes.len() < 2
+                    || request.bytes.first() != Some(&0xf0)
+                    || request.bytes.last() != Some(&0xf7)
+                {
+                    return Err("usb-sysex bytes must be a complete F0..F7 message".into());
                 }
-                for request in requests {
-                    if request.bytes.len() < 2
-                        || request.bytes.first() != Some(&0xf0)
-                        || request.bytes.last() != Some(&0xf7)
-                    {
-                        return Err("usb-sysex bytes must be a complete F0..F7 message".into());
-                    }
-                    if request.expect_prefix.as_ref().is_some_and(Vec::is_empty) {
-                        return Err("usb-sysex expect_prefix must not be empty".into());
-                    }
-                    if request.reject_prefixes.iter().any(Vec::is_empty) {
-                        return Err(
-                            "usb-sysex reject_prefixes must not contain empty prefixes".into()
-                        );
-                    }
-                    if request
-                        .reply_timeout_ms
-                        .is_some_and(|timeout| timeout == 0 || timeout > step.guest_timeout_ms)
-                    {
-                        return Err("usb-sysex reply_timeout_ms must be positive and fit the step guest timeout".into());
-                    }
+                if request.expect_prefix.as_ref().is_some_and(Vec::is_empty) {
+                    return Err("usb-sysex expect_prefix must not be empty".into());
+                }
+                if request.reject_prefixes.iter().any(Vec::is_empty) {
+                    return Err("usb-sysex reject_prefixes must not contain empty prefixes".into());
+                }
+                if request
+                    .reply_timeout_ms
+                    .is_some_and(|timeout| timeout == 0 || timeout > step.guest_timeout_ms)
+                {
+                    return Err("usb-sysex reply_timeout_ms must be positive and fit the step guest timeout".into());
                 }
             }
             if let Action::ExpectHeap { minimum_free } = &step.action {

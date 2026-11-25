@@ -172,7 +172,9 @@ pub fn of(action: &Action) -> Requirement {
         | Action::DirectUsbMidiRoundTrip { .. }
         | Action::L6MidiRingPinSweep { .. }
         | Action::L6MidiMuteIndicators
-        | Action::UsbSysex { .. }
+        | Action::UsbSysexBegin
+        | Action::UsbSysexExchange { .. }
+        | Action::UsbSysexEnd
         | Action::EditorPadAssignments
         | Action::EditorPadPlayback { .. }
         | Action::L6maxUiPadVerify { .. }

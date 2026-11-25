@@ -361,3 +361,84 @@ mod tests {
         assert!(forward_usb_to_host(&mut ports, &packets[..3]).is_err());
     }
 }
+
+/// Reassembles complete SysEx messages from USB MIDI packets on one cable.
+/// A new F0 replaces an incomplete message, matching the device test protocol.
+#[derive(Default)]
+pub struct SysexDecoder {
+    pending: Vec<u8>,
+    replies: Vec<Vec<u8>>,
+}
+
+impl SysexDecoder {
+    pub fn push_usb(&mut self, bytes: &[u8], cable: u8) -> io::Result<()> {
+        for (source, fragment) in decode(bytes)? {
+            if source != cable {
+                continue;
+            }
+            for byte in fragment {
+                if byte == 0xf0 {
+                    self.pending.clear();
+                }
+                if byte == 0xf0 || !self.pending.is_empty() {
+                    self.pending.push(byte);
+                    if byte == 0xf7 {
+                        self.replies.push(std::mem::take(&mut self.pending));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+    pub fn pending(&self) -> &[u8] {
+        &self.pending
+    }
+    pub fn replies(&self) -> &[Vec<u8>] {
+        &self.replies
+    }
+}
+
+#[cfg(test)]
+mod sysex_decoder_tests {
+    use super::*;
+    #[test]
+    fn preserves_fragmentation_cable_filter_and_restarts() {
+        let mut encoder = Encoder::default();
+        let mut decoder = SysexDecoder::default();
+        decoder
+            .push_usb(&encoder.push(1, &[0xf0, 1, 0xf7]), 2)
+            .unwrap();
+        decoder.push_usb(&[0x24, 0xf0, 3, 4], 2).unwrap();
+        assert_eq!(decoder.pending(), &[0xf0, 3, 4]);
+        decoder.push_usb(&[0x27, 0xf0, 5, 0xf7], 2).unwrap();
+        assert_eq!(decoder.replies(), &[vec![0xf0, 5, 0xf7]]);
+        assert!(decoder.pending().is_empty());
+        assert!(decoder.push_usb(&[0], 2).is_err());
+    }
+}
+
+/// Send one complete SysEx request through an already-enumerated USB endpoint.
+/// The caller retains ownership of the USB connection and its receive queue.
+pub fn send_sysex(usb: &UsbHost, endpoint: u8, cable: u8, bytes: &[u8]) -> io::Result<()> {
+    if cable > 15 || bytes.first() != Some(&0xf0) || bytes.last() != Some(&0xf7) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid USB SysEx request",
+        ));
+    }
+    usb.send(endpoint, &Encoder::default().push(cable, bytes))
+}
+
+/// Read and decode one available USB packet batch; the caller owns scheduling.
+pub fn poll_sysex(
+    usb: &UsbHost,
+    endpoint: u8,
+    cable: u8,
+    decoder: &mut SysexDecoder,
+) -> io::Result<()> {
+    match usb.try_receive(endpoint, 16_384) {
+        Ok(bytes) => decoder.push_usb(&bytes, cable),
+        Err(error) if error.raw_os_error() == Some(libc::EAGAIN) => Ok(()),
+        Err(error) => Err(error),
+    }
+}

@@ -468,12 +468,14 @@ pub enum Action {
         cc: u8,
     },
     L6MidiMuteIndicators,
-    UsbSysex {
-        requests: Vec<UsbSysexRequest>,
-        /// Complete positive requests on a matching complete reply.
+    UsbSysexBegin,
+    UsbSysexExchange {
+        #[serde(flatten)]
+        request: UsbSysexRequest,
         #[serde(default)]
         complete_on_match: bool,
     },
+    UsbSysexEnd,
     EditorPadAssignments,
     EditorPadPlayback {
         pad: u8,

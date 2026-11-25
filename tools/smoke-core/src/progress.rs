@@ -190,6 +190,17 @@ pub fn step_label(action: &crate::Action) -> String {
         Action::EffectPacedTurn { channel, steps } => {
             format!("Apply {steps} paced effect edits on channel {channel}")
         }
+        Action::UsbSysexBegin => "Begin USB SysEx campaign".into(),
+        Action::UsbSysexExchange { request, .. } => format!(
+            "USB SysEx request {}",
+            request
+                .bytes
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+        Action::UsbSysexEnd => "End USB SysEx campaign".into(),
         Action::Wait { until } => format!("Wait for {}", until.replace('-', " ")),
         Action::MidiProbeBegin => "Connect MIDI probe sessions".into(),
         Action::MidiProbeSendCc {

@@ -16,6 +16,7 @@ pub use l6max_host::midi_config::Config as MidiConfig;
 pub use l6max_host::sd_loader::{Site as SdLoaderSite, Snapshot as SdLoaderSnapshot};
 pub use l6max_host::update_bootloader::Outcome as InstallerOutcome;
 pub use l6max_host::update_state::{UpdateGuiState, UpdateState};
+pub use l6max_host::usb_midi::SysexDecoder as UsbSysexDecoder;
 use l6max_host::{control, engine::Engine, freertos, qmp};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -504,6 +505,37 @@ impl<'a> OwnedControl<'a> {
     ) -> Result<MemoryRead, ControlError> {
         l6max_host::memory::read_main_before(self.main_qmp()?, address, length, deadline)
             .map_err(ControlError::Rejected)
+    }
+
+    /// Send through an already-enumerated USB endpoint owned by the caller.
+    pub fn usb_sysex_send(
+        &self,
+        endpoints: l6max_host::usb::Endpoints,
+        cable: u8,
+        bytes: &[u8],
+    ) -> Result<(), ControlError> {
+        let usb = self
+            .engine
+            .usb
+            .as_ref()
+            .ok_or_else(|| ControlError::Rejected("USB backend unavailable".into()))?;
+        l6max_host::usb_midi::send_sysex(usb, endpoints.output, cable, bytes)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+    /// Poll the same endpoint without reconnecting or taking ownership of it.
+    pub fn usb_sysex_poll(
+        &self,
+        endpoints: l6max_host::usb::Endpoints,
+        cable: u8,
+        decoder: &mut UsbSysexDecoder,
+    ) -> Result<(), ControlError> {
+        let usb = self
+            .engine
+            .usb
+            .as_ref()
+            .ok_or_else(|| ControlError::Rejected("USB backend unavailable".into()))?;
+        l6max_host::usb_midi::poll_sysex(usb, endpoints.input, cable, decoder)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
     }
 
     pub fn effect_editor_reader_before(

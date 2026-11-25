@@ -241,7 +241,7 @@
     "suites": [
       "full"
     ],
-    "definition": "4860e71eebd15b275394b40f390b01089050742275379675d9d23b07ac419da4"
+    "definition": "c2bcdd4656a76349878937e2575387205492edaaef51fdfcfe974691d19b6896"
   },
   {
     "case": "firmware-update",
@@ -687,7 +687,7 @@
     "suites": [
       "full"
     ],
-    "definition": "9e5083037f8458b5ae8b1382b78984764fb580dcabc70b0105698c77c3d4974d"
+    "definition": "7ce1d17fc453d0384bced64354d347e7c0c0d7fef05a7f723ada801b21b7d82c"
   },
   {
     "case": "l6max-din-mixer-control-fresh",
@@ -696,14 +696,14 @@
     "suites": [
       "full"
     ],
-    "definition": "f7b52f5fcd87f4895e795a68237affcbc102e9f3ac85a33574580abb6af88609"
+    "definition": "41fd0d88fc0dbc0c83d6aa1ea4d17fb21510c249f5fbac31ef8ee82aa7762c68"
   },
   {
     "case": "l6max-din-mixer-control-patched",
     "model": "l6max",
     "backend": "headless",
     "suites": [],
-    "definition": "c4436099fe945b037c72a55721ee889562ac1ca0bfd8dfa56eb4b4d7fda7d1a8"
+    "definition": "19df9021dafc165532f0edc1a0539955cc757f8c7373dcae39f6010e12929021"
   },
   {
     "case": "l6max-din-native-reuse",
@@ -2993,7 +2993,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "6b4effc7c2dacbf48037de6fc8c963e35aa7af6bced74e25a2f9786adf56336e"
+    "definition": "49bb5fe953461e857160cdbff8f2944df99dd2214a01c059a5484292a0e496c2"
   },
   {
     "case": "sd-din-mixer-control",
@@ -3002,7 +3002,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "9d919296a35940643716d2fe0f3e6fdaa638bfd4c648768eb449843c354dca37"
+    "definition": "c4ddf5c7737aa235fd05176ebc0b594aae72e8b77fcffa4ec74c57a221bf416a"
   },
   {
     "case": "sd-duplicate-bundle",
@@ -3199,7 +3199,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "48674b19476b2dd08df96a9c7b0171afdbb33d9c463c3751dcc56d45f9dea4c3"
+    "definition": "943f9338abc0368da459e694c239751740475749ec754253f669c3ff6d0b54b9"
   },
   {
     "case": "sd-older-module",
@@ -3217,7 +3217,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "04ff4113af711851f6789b86d9489947b36dfbb22ee53d78529397d426753310"
+    "definition": "95200b85b4bc904c37e9e58f8a1da2ccc7ed15cdbcf08babb83d718cbb4cf8b3"
   },
   {
     "case": "sd-warm-reset",

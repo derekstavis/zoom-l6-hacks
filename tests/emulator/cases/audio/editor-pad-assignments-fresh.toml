@@ -1,0 +1,29 @@
+version = 1
+name = "editor-pad-assignments-fresh"
+models = ["l6", "l6max"]
+card = "pad-files"
+state = "none"
+backends = ["headless"]
+
+[case]
+suites = ["full"]
+wall_timeout_s = 1200
+
+# Exercise the real first-boot prompts before the same Editor assignment
+# checks used by the prepared-state case.
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/l6-first-boot-setup.toml"
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/l6max-first-boot-setup.toml"
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/editor-pad-usb-ready.toml"
+
+[[step]]
+action = "editor-pad-assignments"
+guest_timeout_ms = 60000
+wall_timeout_s = 900

@@ -11,60 +11,52 @@ action = "include"
 path = "tests/emulator/fragments/prepared-home.toml"
 
 [[step]]
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
+
+[[step]]
 action = "press"
 control = "recorder.menu"
 
 [[step]]
-action = "delay"
-guest_ms = 1500
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/menu-project.png"
 
 [[step]]
 action = "press"
 control = "recorder.down"
 
 [[step]]
-action = "delay"
-guest_ms = 1000
+action = "press"
+control = "recorder.down"
 
 [[step]]
 action = "press"
 control = "recorder.down"
 
 [[step]]
-action = "delay"
-guest_ms = 1000
+action = "press"
+control = "recorder.down"
 
 [[step]]
 action = "press"
 control = "recorder.down"
 
 [[step]]
-action = "delay"
-guest_ms = 1000
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-usb-menu-selection.png"
 
 [[step]]
-action = "press"
-control = "recorder.down"
-
-[[step]]
-action = "delay"
-guest_ms = 1000
-
-[[step]]
-action = "press"
-control = "recorder.down"
-
-[[step]]
-action = "delay"
-guest_ms = 1000
+action = "checkpoint"
+name = "usb-menu-selection"
 
 [[step]]
 action = "press"
 control = "recorder.confirm"
 
 [[step]]
-action = "delay"
-guest_ms = 3000
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-usb-transfer-ready.png"
 
 [[step]]
 action = "usb-storage"

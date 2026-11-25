@@ -11,10 +11,14 @@ wall_timeout_s = 900
 environment = { L6_AUDIO_SAMPLE_TRACE = "1" }
 
 [[step]]
-action = "delay"
-guest_ms = 16000
-guest_timeout_ms = 21000
-wall_timeout_s = 900
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "wait-l6-sound-pad-file"
+path = "SOUND_PAD/PAD1/TONE220.WAV"
 
 # Confirm the saved Pad 1 WAV path was loaded into MAIN's active assignment
 # record before pressing the pad. A cleared assignment-pending flag alone does

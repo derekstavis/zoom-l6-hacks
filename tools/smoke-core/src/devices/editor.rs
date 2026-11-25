@@ -45,19 +45,19 @@ pub(super) fn run_editor_pad_assignments(
     // The firmware discards Editor commands until 2B advances its session
     // from identity-only state 1 to command state 2. Match the legacy
     // DeviceInitializationService sequence before querying pad file lists.
-    let global = editor_exchange(
+    let global = editor_exchange_expected(
         session,
         &usb,
         endpoints,
         &mut encoder,
         &[0xf0, 0x52, 0, 0, 0x2b, 0xf7],
-        500,
+        &[0xf0, 0x52, 0, 0, 0x2a],
         start_guest,
         guest_timeout_ms,
         deadline,
     )?;
     require_editor_reply(&global, &[0xf0, 0x52, 0, 0, 0x2a], "global settings")?;
-    let app_version = editor_exchange(
+    let app_version = editor_exchange_expected(
         session,
         &usb,
         endpoints,
@@ -65,7 +65,7 @@ pub(super) fn run_editor_pad_assignments(
         &[
             0xf0, 0x52, 0, 0, 0x45, 0x05, 0x02, 0, 0, 0, 0, 0, 0x27, 0, 0xf7,
         ],
-        500,
+        &[0xf0, 0x52, 0, 0, 0, 0x11],
         start_guest,
         guest_timeout_ms,
         deadline,
@@ -75,13 +75,13 @@ pub(super) fn run_editor_pad_assignments(
         &[0xf0, 0x52, 0, 0, 0, 0x11],
         "application version",
     )?;
-    let sd_info = editor_exchange(
+    let sd_info = editor_exchange_expected(
         session,
         &usb,
         endpoints,
         &mut encoder,
         &[0xf0, 0x52, 0, 0, 0x67, 0x01, 0xf7],
-        500,
+        &[0xf0, 0x52, 0, 0, 0x67, 0x00],
         start_guest,
         guest_timeout_ms,
         deadline,
@@ -95,13 +95,13 @@ pub(super) fn run_editor_pad_assignments(
     // Start keep-alive after initialization, matching the Editor's sequence.
     // The inspected L6 1.10 fixture does not reply to 31 0B; L6max does.
     if session.engine.model() == l6fw::Model::L6max {
-        let keep_alive = editor_exchange(
+        let keep_alive = editor_exchange_expected(
             session,
             &usb,
             endpoints,
             &mut encoder,
             &[0xf0, 0x52, 0, 0, 0x31, 0x0b, 0xf7],
-            500,
+            &[0xf0, 0x52, 0, 0, 0, 0x0b],
             start_guest,
             guest_timeout_ms,
             deadline,
@@ -122,7 +122,7 @@ pub(super) fn run_editor_pad_assignments(
         )?;
         let count_request = encoder.push(2, &[0xf0, 0x52, 0, 0, 0x46, 0, pad, 0xf7]);
         usb.send(endpoints.output, &count_request)?;
-        let count_replies = collect_editor_sysex(
+        let count_replies = collect_editor_sysex_inner(
             session,
             &usb,
             endpoints.input,
@@ -130,6 +130,7 @@ pub(super) fn run_editor_pad_assignments(
             start_guest,
             guest_timeout_ms,
             deadline,
+            Some(&|reply| reply.get(4..7) == Some(&[0x45, 0x00, pad]) && reply.len() >= 10),
         )?;
         let file_count = editor_pad_file_count(&count_replies, pad);
         let file_count = file_count.ok_or_else(|| {
@@ -155,7 +156,7 @@ pub(super) fn run_editor_pad_assignments(
             )?;
             let request = encoder.push(2, &[0xf0, 0x52, 0, 0, 0x46, 1, pad, 0, 0, 0xf7]);
             usb.send(endpoints.output, &request)?;
-            let replies = collect_editor_sysex(
+            let replies = collect_editor_sysex_inner(
                 session,
                 &usb,
                 endpoints.input,
@@ -163,6 +164,7 @@ pub(super) fn run_editor_pad_assignments(
                 start_guest,
                 guest_timeout_ms,
                 deadline,
+                Some(&|reply| editor_pad_filename_valid(reply, pad)),
             )?;
             filename_reply = replies
                 .into_iter()
@@ -390,7 +392,7 @@ pub(super) fn run_editor_pad_playback(
     Ok(evidence)
 }
 
-pub(super) fn run_l6max_ui_pad_assignment(
+pub(super) fn run_l6max_ui_pad_verify(
     session: &Session,
     options: &Options,
     endpoints: l6max_host::usb::Endpoints,
@@ -400,7 +402,7 @@ pub(super) fn run_l6max_ui_pad_assignment(
 ) -> Result<Value, Box<dyn std::error::Error>> {
     if session.engine.model() != l6fw::Model::L6max || pad > 3 {
         return Err(
-            std::io::Error::other("l6max-ui-pad-assignment requires L6max and pad 0..3").into(),
+            std::io::Error::other("l6max-ui-pad-verify requires L6max and pad 0..3").into(),
         );
     }
     let usb = session
@@ -416,82 +418,6 @@ pub(super) fn run_l6max_ui_pad_assignment(
         .ok_or("L6max UI pad assignment needs panel inputs")?;
     let start_guest = inputs.panel.snapshot().guest_ms;
     let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
-    let mut key_evidence = Vec::new();
-    let tap = |target: u32,
-               main: bool,
-               key_evidence: &mut Vec<Value>|
-     -> Result<(), Box<dyn std::error::Error>> {
-        let before = if main {
-            inputs.main.snapshot().applied
-        } else {
-            inputs.panel.snapshot().applied
-        };
-        let release_before = if main {
-            inputs.main.snapshot().released
-        } else {
-            inputs.panel.snapshot().released
-        };
-        if main {
-            inputs.main.tap(target, 120)?;
-        } else {
-            inputs.panel.tap(target, 120)?;
-        }
-        loop {
-            session.poll().map_err(std::io::Error::other)?;
-            let (applied, released) = if main {
-                let snapshot = inputs.main.snapshot();
-                (snapshot.applied, snapshot.released)
-            } else {
-                let snapshot = inputs.panel.snapshot();
-                (snapshot.applied, snapshot.released)
-            };
-            if applied > before && released > release_before {
-                key_evidence.push(
-                    json!({"target":target,"main":main,"applied":applied,"released":released}),
-                );
-                break;
-            }
-            let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(start_guest);
-            if Instant::now() >= deadline || elapsed >= guest_timeout_ms {
-                return Err(
-                    format!("L6max UI key {target} did not complete before its deadline").into(),
-                );
-            }
-            thread::sleep(Duration::from_millis(3));
-        }
-        wait_guest_duration(session, 1_500, deadline).map_err(std::io::Error::other)?;
-        Ok(())
-    };
-
-    // A "Data OK." popup can still be up, and it would swallow the Menu press.
-    wait_guest_duration(session, 5000, deadline)?;
-
-    // Sound Assign navigation: Menu, Confirm into Sound Pad, Confirm into Sound
-    // Assign, select the pad, Confirm into its file list, Down past its first row,
-    // None Assigned, and Confirm the first WAV. Menus keep their cursors between
-    // visits, so only the first pad moves down to Sound Pad, and each later pad moves
-    // one row from the last. A stray Down here reaches SD Card and its Format.
-    tap(0, true, &mut key_evidence)?;
-    let to_sound_pad: &[u32] = if pad == 0 { &[2, 2] } else { &[] };
-    let to_pad: &[u32] = if pad == 0 { &[] } else { &[2] };
-    for &button in to_sound_pad
-        .iter()
-        .chain(&[3, 3])
-        .chain(to_pad)
-        .chain(&[3, 2, 3])
-    {
-        // Each menu loads after its key, and the file list drops keys until then.
-        wait_guest_duration(session, 2000, deadline)?;
-        tap(button, false, &mut key_evidence)?;
-    }
-    // Back out through Sound Pad and Menu to the home screen, which saves the
-    // assignment and leaves the next visit starting from the same place.
-    for _ in 0..3 {
-        wait_guest_duration(session, 2000, deadline)?;
-        tap(0, true, &mut key_evidence)?;
-    }
-    wait_guest_duration(session, 2000, deadline)?;
-
     // Verify the UI assignment through the same Editor state query used by
     // the original probe, after opening an Editor session on cable 2.
     let mut encoder = l6max_host::usb_midi::Encoder::default();
@@ -515,25 +441,25 @@ pub(super) fn run_l6max_ui_pad_assignment(
         )
         .into());
     }
-    let global = editor_exchange(
+    let global = editor_exchange_expected(
         session,
         &usb,
         endpoints,
         &mut encoder,
         &[0xf0, 0x52, 0, 0, 0x2b, 0xf7],
-        500,
+        &[0xf0, 0x52, 0, 0, 0x2a],
         start_guest,
         guest_timeout_ms,
         deadline,
     )?;
     require_editor_reply(&global, &[0xf0, 0x52, 0, 0, 0x2a], "global settings")?;
-    let keep_alive = editor_exchange(
+    let keep_alive = editor_exchange_expected(
         session,
         &usb,
         endpoints,
         &mut encoder,
         &[0xf0, 0x52, 0, 0, 0x31, 0x0b, 0xf7],
-        250,
+        &[0xf0, 0x52, 0, 0, 0, 0x0b],
         start_guest,
         guest_timeout_ms,
         deadline,
@@ -569,7 +495,6 @@ pub(super) fn run_l6max_ui_pad_assignment(
     });
     let evidence = json!({
         "pad": pad + 1,
-        "ui_keys": key_evidence,
         "identity_replies": identity_replies,
         "assignment_replies": assignment_replies,
         "assigned": assigned,
@@ -578,7 +503,7 @@ pub(super) fn run_l6max_ui_pad_assignment(
     fs::write(
         options
             .logs
-            .join(format!("l6max-ui-pad-assignment-{}.json", pad + 1)),
+            .join(format!("l6max-ui-pad-verify-{}.json", pad + 1)),
         serde_json::to_vec_pretty(&evidence)?,
     )?;
     if !assigned {
@@ -616,6 +541,37 @@ pub(super) fn editor_exchange(
     )
 }
 
+/// An exchange whose caller expects one specific complete response. Unlike
+/// dialog and multi-message exchanges, it does not need a collection window.
+#[allow(clippy::too_many_arguments)]
+fn editor_exchange_expected(
+    session: &Session,
+    usb: &l6max_host::usb::UsbHost,
+    endpoints: l6max_host::usb::Endpoints,
+    encoder: &mut l6max_host::usb_midi::Encoder,
+    message: &[u8],
+    expected: &[u8],
+    start_guest: u32,
+    guest_timeout_ms: u32,
+    wall_deadline: Instant,
+) -> Result<Vec<Vec<u8>>, Box<dyn std::error::Error>> {
+    const RESPONSE_GUEST_TIMEOUT_MS: u32 = 2_000;
+    const RESPONSE_WALL_TIMEOUT_S: u64 = 30;
+    let wire = encoder.push(2, message);
+    usb.send(endpoints.output, &wire)?;
+    let matches = |reply: &[u8]| reply.starts_with(expected);
+    collect_editor_sysex_inner(
+        session,
+        usb,
+        endpoints.input,
+        RESPONSE_GUEST_TIMEOUT_MS,
+        start_guest,
+        guest_timeout_ms,
+        wall_deadline.min(Instant::now() + Duration::from_secs(RESPONSE_WALL_TIMEOUT_S)),
+        Some(&matches),
+    )
+}
+
 pub(super) fn refresh_editor_session(
     session: &Session,
     usb: &l6max_host::usb::UsbHost,
@@ -628,13 +584,13 @@ pub(super) fn refresh_editor_session(
     if session.engine.model() == l6fw::Model::L6 {
         return Ok(());
     }
-    let replies = editor_exchange(
+    let replies = editor_exchange_expected(
         session,
         usb,
         endpoints,
         encoder,
         &[0xf0, 0x52, 0, 0, 0x31, 0x0b, 0xf7],
-        250,
+        &[0xf0, 0x52, 0, 0, 0, 0x0b],
         start_guest,
         guest_timeout_ms,
         wall_deadline,
@@ -663,6 +619,29 @@ pub(super) fn collect_editor_sysex(
     start_guest: u32,
     guest_timeout_ms: u32,
     wall_deadline: Instant,
+) -> Result<Vec<Vec<u8>>, Box<dyn std::error::Error>> {
+    collect_editor_sysex_inner(
+        session,
+        usb,
+        input,
+        timeout_ms,
+        start_guest,
+        guest_timeout_ms,
+        wall_deadline,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_editor_sysex_inner(
+    session: &Session,
+    usb: &l6max_host::usb::UsbHost,
+    input: u8,
+    timeout_ms: u32,
+    start_guest: u32,
+    guest_timeout_ms: u32,
+    wall_deadline: Instant,
+    expected: Option<&dyn Fn(&[u8]) -> bool>,
 ) -> Result<Vec<Vec<u8>>, Box<dyn std::error::Error>> {
     let started = session
         .engine
@@ -697,6 +676,11 @@ pub(super) fn collect_editor_sysex(
             }
             Err(error) if error.raw_os_error() == Some(libc::EAGAIN) => {}
             Err(error) => return Err(error.into()),
+        }
+        if pending.is_empty()
+            && expected.is_some_and(|matches| replies.iter().any(|reply| matches(reply)))
+        {
+            return Ok(replies);
         }
         let now = session
             .engine

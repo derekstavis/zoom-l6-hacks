@@ -1,8 +1,10 @@
 [[step]]
-action = "delay"
-guest_ms = 40000
-guest_timeout_ms = 45000
-wall_timeout_s = 900
+setup_input = true
+models = ["l6"]
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
 
 # Mirror of the L6max startup confirmations; a state spec boots without them.
 [[step]]
@@ -15,6 +17,7 @@ wall_timeout_s = 60
 
 [[step]]
 setup_input = true
+models = ["l6"]
 action = "delay"
 guest_ms = 2000
 guest_timeout_ms = 5000

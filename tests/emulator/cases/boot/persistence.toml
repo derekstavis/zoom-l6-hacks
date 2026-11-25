@@ -16,20 +16,10 @@ guest_timeout_ms = 120000
 wall_timeout_s = 600
 
 [[step]]
-action = "include"
-path = "tests/emulator/fragments/recorder-next.toml"
-
-[[step]]
-action = "include"
-path = "tests/emulator/fragments/edit-date-field.toml"
-
-[[step]]
-action = "include"
-path = "tests/emulator/fragments/recorder-next.toml"
-
-[[step]]
-action = "include"
-path = "tests/emulator/fragments/edit-date-field.toml"
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-fresh-date-time.png"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
 
 [[step]]
 action = "include"
@@ -60,20 +50,28 @@ action = "include"
 path = "tests/emulator/fragments/recorder-next.toml"
 
 [[step]]
-action = "press"
+action = "include"
+path = "tests/emulator/fragments/edit-date-field.toml"
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/recorder-next.toml"
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/edit-date-field.toml"
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/recorder-next.toml"
+
+[[step]]
+action = "press-display-change"
 control = "recorder.confirm"
 
 [[step]]
-action = "delay"
-guest_ms = 1050
-
-[[step]]
-action = "press"
+action = "press-display-change"
 control = "recorder.confirm"
-
-[[step]]
-action = "delay"
-guest_ms = 1050
 
 [[step]]
 action = "delay"
@@ -97,14 +95,10 @@ action = "expect-settings"
 restored = true
 
 [[step]]
-action = "press"
+action = "press-display-change"
 control = "recorder.menu"
 
 [[step]]
-action = "delay"
-guest_ms = 1500
-
-[[step]]
 action = "include"
 path = "tests/emulator/fragments/recorder-next.toml"
 
@@ -133,14 +127,10 @@ action = "include"
 path = "tests/emulator/fragments/recorder-next.toml"
 
 [[step]]
-action = "press"
+action = "press-display-change"
 control = "recorder.confirm"
 
 [[step]]
-action = "delay"
-guest_ms = 1050
-
-[[step]]
 action = "include"
 path = "tests/emulator/fragments/recorder-next.toml"
 
@@ -161,9 +151,5 @@ action = "include"
 path = "tests/emulator/fragments/recorder-next.toml"
 
 [[step]]
-action = "press"
+action = "press-display-change"
 control = "recorder.confirm"
-
-[[step]]
-action = "delay"
-guest_ms = 1050

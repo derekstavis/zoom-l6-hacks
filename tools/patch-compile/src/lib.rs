@@ -134,7 +134,14 @@ fn immediate_abort_sysroot(rustc: &Path) -> Result<PathBuf, Box<dyn std::error::
 
     // Build in a private directory and rename it into place, so concurrent
     // builders never see a partial sysroot.
-    let staging = cache.join(format!("{}.{}.tmp", &key[..16], std::process::id()));
+    static NEXT_STAGING_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let staging_id = NEXT_STAGING_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let staging = cache.join(format!(
+        "{}.{}.{}.tmp",
+        &key[..16],
+        std::process::id(),
+        staging_id
+    ));
     let _ = fs::remove_dir_all(&staging);
     let lib = target_lib(&staging);
     fs::create_dir_all(&lib)?;

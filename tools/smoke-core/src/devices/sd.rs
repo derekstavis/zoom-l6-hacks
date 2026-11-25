@@ -248,6 +248,196 @@ pub(super) fn effect_parameter_edit(
     }
 }
 
+pub(super) fn wait_effect_slot(
+    options: &Options,
+    session: &Session,
+    expected_effect_type: Option<u8>,
+    expected_processor_type: Option<u8>,
+    expected_effect: Option<&str>,
+    require_output: bool,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<(), String> {
+    const GUEST_TIMEOUT_MS: u32 = 10_000;
+    const WALL_TIMEOUT_S: u64 = 180;
+    const POLL_INTERVAL_MS: u64 = 10;
+    if session.engine.model() != l6fw::Model::L6max {
+        return Err("effect slot readiness requires L6max".into());
+    }
+    let selected =
+        expected_effect_type.ok_or("effect slot readiness needs expected_effect_type")?;
+    let processor =
+        expected_processor_type.ok_or("effect slot readiness needs expected_processor_type")?;
+    let root = sd_fixture_root(options)?;
+    let report: Value = serde_json::from_slice(
+        &fs::read(
+            root.join(crate::fixture_layout::SD_BUNDLE_BUILD)
+                .join(crate::fixture_layout::PATCH_REPORT),
+        )
+        .map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let symbols = composed_module_report(&report)
+        .and_then(|patch| patch["exports"].as_object())
+        .ok_or("effect replacement debug symbols are missing")?;
+    let offset = |name: &str| -> Result<u32, String> {
+        symbols
+            .get(name)
+            .and_then(Value::as_u64)
+            .and_then(|v| u32::try_from(v).ok())
+            .ok_or_else(|| format!("effect replacement symbol {name} is missing"))
+    };
+    let qmp = &session.engine.management[0];
+    let read_u32 = |address: u32| -> Result<u32, String> {
+        Ok(u32::from_le_bytes(
+            qmp.read_memory(0, address, 4)
+                .map_err(|e| e.to_string())?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let registry = sd_registry(qmp, session.engine.model()).map_err(|e| e.to_string())?;
+    let base = read_u32(registry + patch_abi::registry::MODULE_PTR_OFFSET)?;
+    if base == 0 {
+        return Err("effect replacement module is not loaded".into());
+    }
+    let processor_address = base + offset("DUAL_EFFECT_PROCESSOR_TYPE")?;
+    let active = if expected_effect.is_some() {
+        Some((
+            base + offset("DUAL_EFFECT_ACTIVE_EFFECT")?,
+            base + offset("DUAL_EFFECT_ACTIVE_EFFECT_LEN")?,
+        ))
+    } else {
+        None
+    };
+    let counter = if require_output {
+        Some(
+            base + offset(match processor {
+                1 => "DUAL_EFFECT_ROOM_OUTPUT_NONZERO",
+                2 => "DUAL_EFFECT_SPRING_OUTPUT_NONZERO",
+                _ => return Err("output requires a replacement processor".into()),
+            })?,
+        )
+    } else {
+        None
+    };
+    let baseline = counter.map(read_u32).transpose()?;
+    let start = guest_now(session);
+    let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
+    loop {
+        session.poll()?;
+        let current = qmp
+            .read_memory(0, l6max::mixer_efx_type, 1)
+            .map_err(|e| e.to_string())?[0];
+        let current_processor = read_u32(processor_address)?;
+        let active_matches = if let Some((pointer_address, length_address)) = active {
+            let pointer = read_u32(pointer_address)?;
+            let length = read_u32(length_address)?;
+            if length > 64 {
+                return Err(format!("effect replacement ID claims {length} bytes"));
+            }
+            pointer != 0
+                && length != 0
+                && qmp
+                    .read_memory(0, pointer, length as usize)
+                    .map_err(|e| e.to_string())?
+                    == expected_effect.unwrap().as_bytes()
+        } else {
+            true
+        };
+        let output_ready = if let Some(address) = counter {
+            let value = read_u32(address)?;
+            value != 0 && Some(value) != baseline
+        } else {
+            true
+        };
+        if current == selected
+            && current_processor == u32::from(processor)
+            && active_matches
+            && output_ready
+        {
+            return Ok(());
+        }
+        if guest_now(session).wrapping_sub(start) >= guest_timeout_ms.min(GUEST_TIMEOUT_MS)
+            || Instant::now() >= deadline
+        {
+            return Err(format!(
+                "effect slot did not become ready: selected={current}, processor={current_processor}, active_matches={active_matches}, output_ready={output_ready}"
+            ));
+        }
+        thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+    }
+}
+
+/// Wait for the loaded effect module to publish the requested editor state.
+pub(super) fn wait_effect_mode(
+    options: &Options,
+    session: &Session,
+    panel_mode: Option<u8>,
+    edit_mode: Option<bool>,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<(), String> {
+    const GUEST_TIMEOUT_MS: u32 = 10_000;
+    const WALL_TIMEOUT_S: u64 = 180;
+    const POLL_INTERVAL_MS: u64 = 10;
+    let report: Value = serde_json::from_slice(
+        &fs::read(
+            sd_fixture_root(options)?
+                .join(crate::fixture_layout::SD_BUNDLE_BUILD)
+                .join(crate::fixture_layout::PATCH_REPORT),
+        )
+        .map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let symbols = composed_module_report(&report)
+        .and_then(|p| p["exports"].as_object())
+        .ok_or("effect replacement debug symbols are missing")?;
+    let offset = |name: &str| -> Result<u32, String> {
+        symbols
+            .get(name)
+            .and_then(Value::as_u64)
+            .and_then(|v| u32::try_from(v).ok())
+            .ok_or_else(|| format!("effect replacement symbol {name} is missing"))
+    };
+    let panel_offset = offset("DUAL_EFFECT_PANEL_MODE")?;
+    let edit_offset = offset("DUAL_EFFECT_PARAMETER_EDIT_MODE")?;
+    let qmp = &session.engine.management[0];
+    let registry = sd_registry(qmp, session.engine.model()).map_err(|e| e.to_string())?;
+    let read = |addr| -> Result<u32, String> {
+        Ok(u32::from_le_bytes(
+            qmp.read_memory(0, addr, 4)
+                .map_err(|e| e.to_string())?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let base = read(registry + patch_abi::registry::MODULE_PTR_OFFSET)?;
+    if base == 0 {
+        return Err("effect replacement module is not loaded".into());
+    }
+    let start = guest_now(session);
+    let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
+    loop {
+        session.poll()?;
+        let panel = read(base + panel_offset)?;
+        let edit = read(base + edit_offset)?;
+        if panel_mode.is_none_or(|v| panel == u32::from(v))
+            && edit_mode.is_none_or(|v| edit == u32::from(v))
+        {
+            return Ok(());
+        }
+        if Instant::now() >= deadline
+            || guest_now(session).wrapping_sub(start) >= guest_timeout_ms.min(GUEST_TIMEOUT_MS)
+        {
+            return Err(format!(
+                "effect editor did not reach panel={panel_mode:?}, edit={edit_mode:?}: panel={panel}, edit={edit}"
+            ));
+        }
+        thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+    }
+}
+
 pub(super) fn effect_replacement_state(
     options: &Options,
     session: &Session,
@@ -611,6 +801,68 @@ pub(super) fn sd_fixture_edits(
 }
 
 /// The Patch loader's heap-allocated registry, read through its pointer word.
+/// A successful claim is published after scanning and installing SD hooks.
+pub(super) fn wait_sd_patch_loaded(
+    session: &Session,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    wait_sd_patch_result(session, guest_timeout_ms, wall_timeout_s, true)
+}
+
+/// Wait for a completed scan that installed no module. This requires a card
+/// mount and a completed scan; an unallocated registry is not sufficient.
+pub(super) fn wait_sd_patch_empty(
+    session: &Session,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    wait_sd_patch_result(session, guest_timeout_ms, wall_timeout_s, false)
+}
+
+fn wait_sd_patch_result(
+    session: &Session,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+    loaded: bool,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    const GUEST_TIMEOUT_MS: u32 = 10_000;
+    const WALL_TIMEOUT_S: u64 = 180;
+    const POLL_INTERVAL_MS: u64 = 10;
+    let qmp = &session.engine.management[0];
+    let start = guest_now(session);
+    let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
+    let mut last_state = String::from("registry not allocated");
+    loop {
+        session.poll()?;
+        if let Some(base) = sd_registry_if_allocated(qmp, session.engine.model())? {
+            let claim = u32::from_le_bytes(
+                qmp.read_memory(0, base + patch_abi::registry::CLAIM_OFFSET, 4)?
+                    .try_into()
+                    .unwrap(),
+            );
+            let stage = u32::from_le_bytes(
+                qmp.read_memory(0, base + patch_abi::registry::DEBUG_OFFSET, 4)?
+                    .try_into()
+                    .unwrap(),
+            );
+            if (loaded && claim == 1) || (!loaded && claim == 0 && stage == 0x400) {
+                return Ok(base);
+            }
+            last_state = format!("stage={stage:#x}, claim={claim:#x}");
+        }
+        if Instant::now() >= deadline
+            || guest_now(session).wrapping_sub(start) >= guest_timeout_ms.min(GUEST_TIMEOUT_MS)
+        {
+            return Err(format!(
+                "SD patch loader did not finish within its deadline ({last_state})"
+            )
+            .into());
+        }
+        thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+    }
+}
+
 pub(super) fn sd_registry(
     qmp: &l6max_host::qmp::QmpClient,
     model: l6fw::Model,

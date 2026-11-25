@@ -30,13 +30,9 @@ action = "encoder"
 channel = 1
 steps = -20
 
-[[step]]
-action = "delay"
-guest_ms = 3000
-
 # The firmware's audio task applies this coefficient from its deferred update
 # ring, between audio blocks. These bytes are specific to 1.10.
 [[step]]
-action = "expect-memory"
+action = "wait-memory"
 symbol = "dsp_eq_coefficients"
 bytes = [250, 40, 135, 62, 72, 212, 94, 189, 199, 88, 74, 63]

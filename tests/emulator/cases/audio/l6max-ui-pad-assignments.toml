@@ -10,34 +10,391 @@ wall_timeout_s = 2400
 
 [[step]]
 action = "include"
-path = "tests/emulator/fragments/editor-pad-setup-l6max.toml"
+path = "tests/emulator/fragments/l6max-first-boot-setup.toml"
 
 [[step]]
 action = "include"
 path = "tests/emulator/fragments/editor-pad-usb-ready.toml"
 
-# Select the first WAV through the on-device Sound Assign menu, then verify
-# the assignment through Editor SysEx state readback.
+# Each expected image checks the rendered menu and cursor before the next
+# input. The fixture supplies the four named WAV files.
+
+# Assign Sound Pad 1.
+
 [[step]]
-action = "l6max-ui-pad-assignment"
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
+settle_ms = 500
+
+[[step]]
+action = "press"
+control = "recorder.menu"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/menu-project.png"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/menu-recorder.png"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/menu-sound-pad.png"
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/sound-pad-assign.png"
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/assign-pad-1.png"
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/pad-1-none.png"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/pad-1-file.png"
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/assign-pad-1.png"
+
+[[step]]
+action = "press"
+control = "recorder.menu"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/sound-pad-assign.png"
+
+[[step]]
+action = "press"
+control = "recorder.menu"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/menu-sound-pad.png"
+
+[[step]]
+action = "press"
+control = "recorder.menu"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
+
+[[step]]
+action = "l6max-ui-pad-verify"
 pad = 0
 guest_timeout_ms = 60000
 wall_timeout_s = 600
 
+# Assign Sound Pad 2.
+
 [[step]]
-action = "l6max-ui-pad-assignment"
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
+settle_ms = 500
+
+[[step]]
+action = "press"
+control = "recorder.menu"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/menu-sound-pad.png"
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/sound-pad-assign.png"
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/assign-pad-1.png"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/assign-pad-2.png"
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/pad-2-none.png"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/pad-2-file.png"
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/assign-pad-2.png"
+
+[[step]]
+action = "press"
+control = "recorder.menu"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/sound-pad-assign.png"
+
+[[step]]
+action = "press"
+control = "recorder.menu"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/menu-sound-pad.png"
+
+[[step]]
+action = "press"
+control = "recorder.menu"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
+
+[[step]]
+action = "l6max-ui-pad-verify"
 pad = 1
 guest_timeout_ms = 60000
 wall_timeout_s = 600
 
+# Assign Sound Pad 3.
+
 [[step]]
-action = "l6max-ui-pad-assignment"
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
+settle_ms = 500
+
+[[step]]
+action = "press"
+control = "recorder.menu"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/menu-sound-pad.png"
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/sound-pad-assign.png"
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/assign-pad-2.png"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/assign-pad-3.png"
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/pad-3-none.png"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/pad-3-file.png"
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/assign-pad-3.png"
+
+[[step]]
+action = "press"
+control = "recorder.menu"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/sound-pad-assign.png"
+
+[[step]]
+action = "press"
+control = "recorder.menu"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/menu-sound-pad.png"
+
+[[step]]
+action = "press"
+control = "recorder.menu"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
+
+[[step]]
+action = "l6max-ui-pad-verify"
 pad = 2
 guest_timeout_ms = 60000
 wall_timeout_s = 600
 
+# Assign Sound Pad 4.
+
 [[step]]
-action = "l6max-ui-pad-assignment"
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
+settle_ms = 500
+
+[[step]]
+action = "press"
+control = "recorder.menu"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/menu-sound-pad.png"
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/sound-pad-assign.png"
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/assign-pad-3.png"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/assign-pad-4.png"
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/pad-4-none.png"
+
+[[step]]
+action = "press"
+control = "recorder.down"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/pad-4-file.png"
+
+[[step]]
+action = "press"
+control = "recorder.confirm"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/assign-pad-4.png"
+
+[[step]]
+action = "press"
+control = "recorder.menu"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/sound-pad-assign.png"
+
+[[step]]
+action = "press"
+control = "recorder.menu"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/menu-sound-pad.png"
+
+[[step]]
+action = "press"
+control = "recorder.menu"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
+
+[[step]]
+action = "l6max-ui-pad-verify"
 pad = 3
 guest_timeout_ms = 60000
 wall_timeout_s = 600

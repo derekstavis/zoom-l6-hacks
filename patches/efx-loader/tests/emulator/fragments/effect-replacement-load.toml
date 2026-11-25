@@ -13,11 +13,21 @@ action = "expect-heap"
 minimum_free = 131072
 
 [[step]]
-action = "delay"
-guest_ms = 5000
-guest_timeout_ms = 10000
-wall_timeout_s = 60
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "wait"
+until = "sd-patch-loaded"
 
 [[step]]
 action = "select-mode"
 mode = "efx"
+
+[[step]]
+action = "effect-replacement-state"
+expected_effect_type = 1
+expected_processor_type = 1
+wait_for_slot = true

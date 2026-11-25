@@ -16,39 +16,12 @@ guest_timeout_ms = 120000
 wall_timeout_s = 600
 
 [[step]]
-setup_input = true
-models = ["l6"]
-action = "press"
-control = "ch4-mono"
-
-# L6max: complete first-boot setup. A state spec boots without it.
-[[step]]
-setup_input = true
-models = ["l6max"]
-action = "press"
-control = "recorder.confirm"
+action = "include"
+path = "tests/emulator/fragments/l6-first-boot-setup.toml"
 
 [[step]]
-setup_input = true
-action = "delay"
-guest_ms = 2000
-
-[[step]]
-setup_input = true
-models = ["l6"]
-action = "press"
-control = "ch4-mono"
-
-[[step]]
-setup_input = true
-models = ["l6max"]
-action = "press"
-control = "recorder.confirm"
-
-[[step]]
-setup_input = true
-action = "delay"
-guest_ms = 5000
+action = "include"
+path = "tests/emulator/fragments/l6max-first-boot-no-sd.toml"
 
 # Waits for firmware to start its USB controller after boot.
 [[step]]
@@ -67,7 +40,3 @@ action = "expect-encoder-reports"
 [[step]]
 action = "usb-midi"
 value = 32
-
-[[step]]
-action = "delay"
-guest_ms = 1000

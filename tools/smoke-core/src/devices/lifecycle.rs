@@ -279,6 +279,152 @@ pub(super) fn update_word(guest: &Headless, address: u32) -> Result<u32, String>
     ))
 }
 
+/// The updater owns a separate headless guest. Run the ordinary scenario
+/// image assertion against that guest so the confirmation screen is actually
+/// rendered before the following button presses.
+fn wait_l6max_update_dialog(guest: &Headless, logs: &Path) -> Result<(), String> {
+    const SCREEN_GUEST_TIMEOUT_MS: u32 = 60_000;
+    const SCREEN_WALL_TIMEOUT_S: u64 = 300;
+    const SCREEN_POLL_INTERVAL_MS: u64 = 5;
+    let scenario = Scenario::parse(&format!(
+        "version = 1\nname = \"l6max-update-dialog\"\nmodels = [\"l6max\"]\n\
+         [[step]]\naction = \"expect-display-image\"\n\
+         image = \"tests/smoke/images/l6max-firmware-update-dialog.png\"\n\
+         guest_timeout_ms = {SCREEN_GUEST_TIMEOUT_MS}\nwall_timeout_s = {SCREEN_WALL_TIMEOUT_S}\n"
+    ))?;
+    let mut runner = crate::Runner::with_progress(
+        scenario,
+        l6fw::Model::L6max,
+        logs.to_path_buf(),
+        crate::progress::CaseProgress::default(),
+    )?;
+    let inputs = guest
+        .engine
+        .inputs
+        .as_ref()
+        .ok_or("update guest has no inputs")?;
+    let wall = Instant::now() + Duration::from_secs(SCREEN_WALL_TIMEOUT_S);
+    loop {
+        let data = l6max_host::panel::PanelData {
+            display: guest
+                .sample_display()
+                .map_err(|e| e.to_string())?
+                .unwrap_or([0; 1024]),
+            powered: !inputs.main.snapshot().powered_off,
+            ..Default::default()
+        };
+        match runner.tick(data, inputs)? {
+            crate::Progress::Complete => return Ok(()),
+            crate::Progress::Waiting => {}
+            _ => return Err("update dialog image check requested an unexpected action".into()),
+        }
+        if !data.powered || Instant::now() >= wall {
+            return Err("update guest powered off or stopped before the dialog appeared".into());
+        }
+        thread::sleep(Duration::from_millis(SCREEN_POLL_INTERVAL_MS));
+    }
+}
+
+/// Drive the same reviewed first-boot scenario used by the regular tests in
+/// the fresh session created for post-update patch verification.
+fn complete_l6max_post_update_setup(session: &Session, logs: &Path) -> Result<(), String> {
+    const WALL_TIMEOUT_S: u64 = 300;
+    const POLL_INTERVAL_MS: u64 = 5;
+    let scenario = Scenario::from_text(
+        "version = 1\nname = \"l6max-post-update-setup\"\nmodels = [\"l6max\"]\n\
+         [[step]]\naction = \"include\"\npath = \"tests/emulator/fragments/l6max-first-boot-prompts.toml\"\n\
+         [[step]]\naction = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-recorder-no-sd.png\"\n\
+         guest_timeout_ms = 30000\nwall_timeout_s = 300\n\
+         [[step]]\naction = \"wait\"\nuntil = \"boot-ready\"\n\
+         guest_timeout_ms = 60000\nwall_timeout_s = 300\n",
+    )?;
+    let mut runner = crate::Runner::with_progress(
+        scenario,
+        l6fw::Model::L6max,
+        logs.to_path_buf(),
+        crate::progress::CaseProgress::default(),
+    )?;
+    let inputs = session
+        .engine
+        .inputs
+        .as_ref()
+        .ok_or("post-update guest has no inputs")?;
+    let deadline = Instant::now() + Duration::from_secs(WALL_TIMEOUT_S);
+    loop {
+        match runner.tick(session.poll()?, inputs)? {
+            crate::Progress::Complete => return Ok(()),
+            crate::Progress::Waiting => {}
+            crate::Progress::Dispatch(command) => session.dispatch(&command)?,
+            crate::Progress::Device(_) => {
+                return Err("post-update setup requested an unexpected device action".into());
+            }
+        }
+        if inputs.main.snapshot().powered_off || Instant::now() >= deadline {
+            return Err("post-update guest powered off or stopped during setup".into());
+        }
+        thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+    }
+}
+
+/// Wait for the expected panel image, update mode and a response from the
+/// running panel. The synthetic stock update also requires all panel writes
+/// and the emulator's image-verification marker.
+fn wait_l6max_panel_update(
+    guest: &Headless,
+    logs: &Path,
+    panel_path: &Path,
+    package: &[u8],
+    require_programming: bool,
+) -> Result<(), String> {
+    const GUEST_TIMEOUT_MS: u32 = 60_000;
+    const WALL_TIMEOUT_S: u64 = 300;
+    const POLL_INTERVAL_MS: u64 = 100;
+    let start = guest.guest_ms();
+    let deadline = Instant::now() + Duration::from_secs(WALL_TIMEOUT_S);
+    let expected = package
+        .get(0x1a3200..0x1a7200)
+        .ok_or("update has no panel image")?;
+    let inputs = guest
+        .engine
+        .inputs
+        .as_ref()
+        .ok_or("update guest has no inputs")?;
+    loop {
+        guest.sample_display().map_err(|e| e.to_string())?;
+        let mode = update_word(guest, l6max::system_mode)?;
+        let panel = match fs::read(panel_path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => return Err(error.to_string()),
+        };
+        let trace = match fs::read_to_string(logs.join("engine.trace")) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(error.to_string()),
+        };
+        let writes = trace
+            .lines()
+            .filter(|line| line.starts_with("l6 panel ROM write 080"))
+            .count();
+        let programmed = !require_programming
+            || (writes == 64 && trace.contains("l6 panel ROM 16 KiB image match: yes"));
+        let panel_responded = trace.contains("l6 panel RTC response start");
+        if mode == 4 && panel.get(..0x4000) == Some(expected) && panel_responded && programmed {
+            return Ok(());
+        }
+        if inputs.main.snapshot().powered_off
+            || guest.guest_ms().wrapping_sub(start) >= GUEST_TIMEOUT_MS
+            || Instant::now() >= deadline
+        {
+            return Err(format!(
+                "panel update did not finish: mode={mode}, writes={writes}, panel_responded={panel_responded}, panel_matches={}",
+                panel.get(..0x4000) == Some(expected)
+            ));
+        }
+        thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+    }
+}
+
 pub(super) fn run_l6_update(options: &Options, main_image: &[u8]) -> Result<(), String> {
     let package_path = options
         .update_package
@@ -560,7 +706,11 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
         local.update_bootloader = false;
         local.logs = directory.join("boot");
         let guest = Headless::start(&local).map_err(|e| e.to_string())?;
-        guest.until(40_000).map_err(|e| e.to_string())?;
+        if valid {
+            wait_l6max_update_dialog(&guest, &local.logs)?;
+        } else {
+            guest.until(40_000).map_err(|e| e.to_string())?;
+        }
         let mode = update_word(&guest, l6max::system_mode)?;
         let flags = guest.engine.management[0]
             .read_memory(0, l6max::update_package_flags, 1)
@@ -617,7 +767,13 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
             local.update_bootloader = true;
             local.logs = directory.join("installed");
             let installed = Headless::start(&local).map_err(|e| e.to_string())?;
-            installed.until(40_000).map_err(|e| e.to_string())?;
+            wait_l6max_panel_update(
+                &installed,
+                &local.logs,
+                &directory.join("state/panel-flash.bin"),
+                &package,
+                target_package.is_none(),
+            )?;
             if fs::read_to_string(local.logs.join("update-bootloader.log"))
                 .map_err(|e| e.to_string())?
                 != "Installed\n"
@@ -707,50 +863,7 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
                 )?;
                 verify.gdb_socket = Some(gdb_socket_path(&options.logs, "post-update-knob"));
                 let session = crate::Session::start(&verify)?;
-                let start = session
-                    .engine
-                    .inputs
-                    .as_ref()
-                    .unwrap()
-                    .panel
-                    .snapshot()
-                    .guest_ms;
-                let deadline = Instant::now() + Duration::from_secs(180);
-                while session
-                    .engine
-                    .inputs
-                    .as_ref()
-                    .unwrap()
-                    .panel
-                    .snapshot()
-                    .guest_ms
-                    .wrapping_sub(start)
-                    < 40_000
-                {
-                    session.poll()?;
-                    if Instant::now() >= deadline {
-                        return Err("patched L6max did not reach its post-update UI state".into());
-                    }
-                    thread::sleep(Duration::from_millis(5));
-                }
-                if patches.contains(&"midi-sync") {
-                    // This scenario owns a fresh, unconfigured device. Clear
-                    // the two first-run prompts before expecting USB MIDI,
-                    // matching the host-midi scenario's L6max setup sequence.
-                    let inputs = session
-                        .engine
-                        .inputs
-                        .as_ref()
-                        .ok_or("post-update MIDI check requires inputs")?;
-                    for settle_ms in [2_000, 5_000] {
-                        inputs.tap(3, 50).map_err(|error| error.to_string())?;
-                        wait_guest_duration(
-                            &session,
-                            settle_ms,
-                            Instant::now() + Duration::from_secs(120),
-                        )?;
-                    }
-                }
+                complete_l6max_post_update_setup(&session, &verify.logs)?;
                 // Check the behavior of each patch the update installs. The
                 // installed-patch cases check the same browser-built image
                 // in full; din-mixer-control needs a DIN port and Mixer

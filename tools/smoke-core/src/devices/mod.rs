@@ -99,12 +99,13 @@ pub enum Operation {
     L6MidiMuteIndicators,
     UsbSysex {
         requests: Vec<crate::scenario::UsbSysexRequest>,
+        complete_on_match: bool,
     },
     EditorPadAssignments,
     EditorPadPlayback {
         pad: u8,
     },
-    L6maxUiPadAssignment {
+    L6maxUiPadVerify {
         pad: u8,
     },
     SoundPadPlayback {
@@ -117,6 +118,9 @@ pub enum Operation {
         expect_source: Option<String>,
         max_residual_db: f64,
     },
+    WaitL6SoundPadFile {
+        path: String,
+    },
     L6RecorderPlayback {
         target: u32,
     },
@@ -128,6 +132,13 @@ pub enum Operation {
         address: u32,
         bytes: Vec<u8>,
     },
+    WaitMemory {
+        symbol: String,
+        address: u32,
+        bytes: Vec<u8>,
+    },
+    WaitSdPatchLoaded,
+    WaitSdPatchEmpty,
     ExpectSdPatch {
         loaded: bool,
         chain_count: Option<u8>,
@@ -135,6 +146,10 @@ pub enum Operation {
     EffectParameterEdit {
         encoder: usize,
         steps: i32,
+    },
+    WaitEffectMode {
+        panel_mode: Option<u8>,
+        edit_mode: Option<bool>,
     },
     EffectReplacementState {
         expected_effect_type: Option<u8>,
@@ -148,13 +163,15 @@ pub enum Operation {
         minimum_exit_ring_refreshes: Option<u32>,
         expected_effect: Option<String>,
         require_output: bool,
+        wait_for_slot: bool,
     },
     ExpectHeap {
         minimum_free: u32,
     },
     HoldChord {
         targets: Vec<u32>,
-        duration_ms: u32,
+        duration_ms: Option<u32>,
+        until: Option<crate::scenario::ChordCondition>,
     },
     AudioCallbacks,
     KnobDialog,
@@ -193,6 +210,9 @@ pub enum Operation {
         value: u8,
     },
     L6maxTapHandler,
+    WaitRecordedFiles {
+        files: Vec<String>,
+    },
     AudioInputTransport {
         command: String,
         position_ms: i32,
@@ -200,6 +220,11 @@ pub enum Operation {
     AudioInputLoad {
         channel: u32,
         loaded: bool,
+    },
+    WaitAudioInput {
+        playing: bool,
+        min_ms: u32,
+        max_ms: u32,
     },
     ExpectAudioInput {
         playing: bool,
@@ -379,7 +404,7 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
                 | crate::Action::UsbSysex { .. }
                 | crate::Action::EditorPadAssignments
                 | crate::Action::EditorPadPlayback { .. }
-                | crate::Action::L6maxUiPadAssignment { .. }
+                | crate::Action::L6maxUiPadVerify { .. }
         )
     }) {
         options.usb_enabled = false;

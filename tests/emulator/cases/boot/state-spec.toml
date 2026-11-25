@@ -18,10 +18,6 @@ guest_timeout_ms = 120000
 wall_timeout_s = 600
 
 [[step]]
-action = "delay"
-guest_ms = 3000
-
-[[step]]
 action = "checkpoint"
 name = "home"
 

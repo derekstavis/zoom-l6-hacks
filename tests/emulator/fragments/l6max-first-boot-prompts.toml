@@ -1,8 +1,16 @@
 [[step]]
-action = "delay"
-guest_ms = 40000
-guest_timeout_ms = 45000
-wall_timeout_s = 900
+setup_input = true
+models = ["l6max"]
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+setup_input = true
+models = ["l6max"]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-fresh-date-time.png"
 
 # Confirm the startup prompts. A state spec boots without them.
 [[step]]
@@ -15,10 +23,9 @@ wall_timeout_s = 60
 
 [[step]]
 setup_input = true
-action = "delay"
-guest_ms = 2000
-guest_timeout_ms = 5000
-wall_timeout_s = 30
+models = ["l6max"]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-fresh-battery-type.png"
 
 [[step]]
 setup_input = true

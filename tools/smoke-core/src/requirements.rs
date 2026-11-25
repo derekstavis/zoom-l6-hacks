@@ -64,9 +64,14 @@ pub fn of(action: &Action) -> Requirement {
             first: true,
             ..stock_on(&[])
         },
+        Action::HoldChord {
+            until: Some(crate::scenario::ChordCondition::FactoryMode),
+            ..
+        } => stock_on(L6MAX),
         Action::ExpectSettings { .. } | Action::ExpectRecorder => stock_on(L6MAX),
         Action::L6maxChannelSignalPwm | Action::L6maxTapHandler => stock_on(L6MAX),
-        Action::L6LevelMeterPwm
+        Action::WaitL6SoundPadFile { .. }
+        | Action::L6LevelMeterPwm
         | Action::L6DinSweep
         | Action::PanelEvent { .. }
         | Action::L6MainGpioEvent { .. }
@@ -82,7 +87,12 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6maxDinMixerControl { .. }
         | Action::KnobDialog
         | Action::KnobDialogPopup
-        | Action::ExpectMenu { .. } => on(L6MAX),
+        | Action::ExpectMenu { .. }
+        | Action::WaitEffectMode { .. } => on(L6MAX),
+        Action::PressDisplayChange { .. } => Requirement {
+            models: L6MAX,
+            ..ANY
+        },
         Action::SdCard { .. }
         | Action::UsbDescriptors
         | Action::UsbStorage
@@ -96,9 +106,10 @@ pub fn of(action: &Action) -> Requirement {
         | Action::UsbSysex { .. }
         | Action::EditorPadAssignments
         | Action::EditorPadPlayback { .. }
-        | Action::L6maxUiPadAssignment { .. }
+        | Action::L6maxUiPadVerify { .. }
         | Action::SoundPadPlayback { .. }
         | Action::ExpectMemory { .. }
+        | Action::WaitMemory { .. }
         | Action::ExpectSdPatch { .. }
         | Action::EffectParameterEdit { .. }
         | Action::EffectReplacementState { .. }
@@ -112,8 +123,10 @@ pub fn of(action: &Action) -> Requirement {
         | Action::AudioInputTransport { .. }
         | Action::AudioInputLoad { .. }
         | Action::ExpectAudioInput { .. }
+        | Action::WaitAudioInput { .. }
         | Action::ExpectOutputTone { .. }
-        | Action::ExpectRecordedTone { .. } => HEADLESS,
+        | Action::ExpectRecordedTone { .. }
+        | Action::WaitRecordedFiles { .. } => HEADLESS,
         // Panel input and observation every backend can drive.
         Action::Include { .. }
         | Action::Checkpoint { .. }
@@ -128,6 +141,7 @@ pub fn of(action: &Action) -> Requirement {
         | Action::ExpectPowered { .. }
         | Action::Wait { .. }
         | Action::Delay { .. }
+        | Action::ObserveDuration { .. }
         | Action::Press { .. }
         | Action::Hold { .. }
         | Action::SaveScene { .. }

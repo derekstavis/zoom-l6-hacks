@@ -1,6 +1,93 @@
 //! Executing operations against a running session.
 use super::*;
 
+/// Only positive, single-reply checks can end early. An explicit reply window
+/// or a rejected prefix needs the whole observation interval.
+fn sysex_reply_complete(
+    request: &crate::scenario::UsbSysexRequest,
+    pending: &[u8],
+    replies: &[Vec<u8>],
+) -> bool {
+    pending.is_empty()
+        && request.reject_prefixes.is_empty()
+        && request.reply_timeout_ms.is_none()
+        && request.expect_prefix.as_ref().is_some_and(|prefix| {
+            replies.iter().any(|reply| {
+                reply.starts_with(prefix)
+                    && reply.last() == Some(&0xf7)
+                    && request
+                        .min_reply_bytes
+                        .is_none_or(|minimum| reply.len() >= minimum)
+            })
+        })
+}
+
+/// Require a complete RIFF container and enough audio for the tone checks.
+fn recorded_wav_ready(bytes: &[u8]) -> Result<(), String> {
+    if bytes.len() < 12 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return Err("missing WAV header".into());
+    }
+    let declared = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
+    if declared.saturating_add(8) != bytes.len() {
+        return Err(format!(
+            "length is {}, RIFF declares {}",
+            bytes.len(),
+            declared.saturating_add(8)
+        ));
+    }
+    let mut offset = 12usize;
+    while offset + 8 <= bytes.len() {
+        let size = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
+        let end = offset
+            .checked_add(8)
+            .and_then(|start| start.checked_add(size))
+            .ok_or("WAV chunk length overflow")?;
+        if end > bytes.len() {
+            return Err("truncated WAV chunk".into());
+        }
+        offset = end
+            .checked_add(size & 1)
+            .ok_or("WAV chunk length overflow")?;
+    }
+    if offset != bytes.len() {
+        return Err("incomplete WAV chunk padding".into());
+    }
+    let frames = waveform::decode_wav(bytes)?;
+    if frames.len() < 96_000 {
+        return Err(format!("only {} frames", frames.len()));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod recorded_wav_tests {
+    use super::recorded_wav_ready;
+
+    #[test]
+    fn requires_complete_container_and_two_seconds_of_audio() {
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36u32 + 192_000).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&48_000u32.to_le_bytes());
+        wav.extend_from_slice(&96_000u32.to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&192_000u32.to_le_bytes());
+        wav.resize(wav.len() + 192_000, 0);
+        assert!(recorded_wav_ready(&wav).is_ok());
+        let mut truncated = wav.clone();
+        truncated.pop();
+        assert!(recorded_wav_ready(&truncated).is_err());
+        wav[40..44].copy_from_slice(&192_001u32.to_le_bytes());
+        assert!(recorded_wav_ready(&wav).is_err());
+    }
+}
+
 impl State {
     pub fn restarted(&mut self) {
         self.midi = None;
@@ -77,9 +164,53 @@ impl State {
                 }
                 Ok(json!({"symbol":symbol,"address":format!("{address:#010x}"),"bytes":actual}))
             }
+            Operation::WaitMemory {
+                symbol,
+                address,
+                bytes,
+            } => {
+                const GUEST_TIMEOUT_MS: u32 = 10_000;
+                const WALL_TIMEOUT_S: u64 = 180;
+                const POLL_INTERVAL_MS: u64 = 10;
+                let start = guest_now(session);
+                let deadline =
+                    Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
+                loop {
+                    session.poll()?;
+                    let actual =
+                        session.engine.management[0].read_memory(0, address, bytes.len())?;
+                    if actual == bytes {
+                        break Ok(
+                            json!({"symbol":symbol,"address":format!("{address:#010x}"),"bytes":actual}),
+                        );
+                    }
+                    if Instant::now() >= deadline
+                        || guest_now(session).wrapping_sub(start)
+                            >= guest_timeout_ms.min(GUEST_TIMEOUT_MS)
+                    {
+                        break Err(format!("{symbol} ({address:#010x}) did not match: {actual:02x?}, expected {bytes:02x?}").into());
+                    }
+                    thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+                }
+            }
             Operation::EffectParameterEdit { encoder, steps } => {
                 Ok(effect_parameter_edit(options, session, encoder, steps)
                     .map_err(std::io::Error::other)?)
+            }
+            Operation::WaitEffectMode {
+                panel_mode,
+                edit_mode,
+            } => {
+                wait_effect_mode(
+                    options,
+                    session,
+                    panel_mode,
+                    edit_mode,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )
+                .map_err(std::io::Error::other)?;
+                Ok(json!({"panel_mode": panel_mode, "edit_mode": edit_mode}))
             }
             Operation::EffectReplacementState {
                 expected_effect_type,
@@ -93,22 +224,46 @@ impl State {
                 minimum_exit_ring_refreshes,
                 expected_effect,
                 require_output,
-            } => Ok(effect_replacement_state(
-                options,
-                session,
-                expected_effect_type,
-                expected_processor_type,
-                expected_panel_mode,
-                expected_edit_mode,
-                minimum_parameter_edits,
-                expected_parameter_id,
-                expected_parameter_value,
-                expected_dialog_active,
-                minimum_exit_ring_refreshes,
-                expected_effect.as_deref(),
-                require_output,
-            )
-            .map_err(std::io::Error::other)?),
+                wait_for_slot,
+            } => {
+                if wait_for_slot {
+                    wait_effect_slot(
+                        options,
+                        session,
+                        expected_effect_type,
+                        expected_processor_type,
+                        expected_effect.as_deref(),
+                        require_output,
+                        guest_timeout_ms,
+                        wall_timeout_s,
+                    )
+                    .map_err(std::io::Error::other)?;
+                }
+                Ok(effect_replacement_state(
+                    options,
+                    session,
+                    expected_effect_type,
+                    expected_processor_type,
+                    expected_panel_mode,
+                    expected_edit_mode,
+                    minimum_parameter_edits,
+                    expected_parameter_id,
+                    expected_parameter_value,
+                    expected_dialog_active,
+                    minimum_exit_ring_refreshes,
+                    expected_effect.as_deref(),
+                    require_output,
+                )
+                .map_err(std::io::Error::other)?)
+            }
+            Operation::WaitSdPatchLoaded => {
+                let registry = wait_sd_patch_loaded(session, guest_timeout_ms, wall_timeout_s)?;
+                Ok(json!({"registry": format!("{registry:#010x}")}))
+            }
+            Operation::WaitSdPatchEmpty => {
+                let registry = wait_sd_patch_empty(session, guest_timeout_ms, wall_timeout_s)?;
+                Ok(json!({"registry": format!("{registry:#010x}")}))
+            }
             Operation::ExpectSdPatch {
                 loaded,
                 chain_count,
@@ -156,7 +311,20 @@ impl State {
                 }
                 // Without a card mount since the last reset the loader has no
                 // registry, so every dispatch stub takes the stock path.
-                let Some(registry) = sd_registry_if_allocated(qmp, session.engine.model())? else {
+                // A successful loader claim is published only after the SD
+                // scan and hook installation have finished. Wait for that
+                // signal when a module is expected; absence checks remain
+                // immediate and require their own observation window.
+                let registry = if loaded {
+                    Some(wait_sd_patch_loaded(
+                        session,
+                        guest_timeout_ms,
+                        wall_timeout_s,
+                    )?)
+                } else {
+                    sd_registry_if_allocated(qmp, session.engine.model())?
+                };
+                let Some(registry) = registry else {
                     if loaded {
                         return Err("the Patch loader has not allocated its registry".into());
                     }
@@ -541,14 +709,39 @@ impl State {
             Operation::HoldChord {
                 targets,
                 duration_ms,
+                until,
             } => {
                 let inputs = session.engine.inputs.as_ref().unwrap();
                 let start = inputs.panel.snapshot().guest_ms;
-                let hold = duration_ms.saturating_add(1000).min(60_000);
+                let factory_mode =
+                    matches!(until, Some(crate::scenario::ChordCondition::FactoryMode));
+                if factory_mode {
+                    let initial =
+                        session.engine.management[0].read_memory(0, l6max::system_mode, 4)?;
+                    if initial == 7u32.to_le_bytes() {
+                        return Err("factory mode was already active before the chord".into());
+                    }
+                }
+                // DOWN duration is a minimum hold in the emulator; a
+                // condition-based chord requests the normal button minimum.
+                let hold =
+                    duration_ms.map_or(0, |duration| duration.saturating_add(1000).min(60_000));
                 for target in &targets {
                     inputs.down(*target, hold)?;
                 }
-                let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
+                let deadline = Instant::now()
+                    + Duration::from_secs(if factory_mode {
+                        wall_timeout_s.min(180)
+                    } else {
+                        wall_timeout_s
+                    });
+                let guest_limit = if factory_mode {
+                    guest_timeout_ms.min(10_000)
+                } else {
+                    guest_timeout_ms
+                };
+                let mut next_mode_poll = Instant::now();
+                let mut factory_reached = false;
                 loop {
                     session.poll()?;
                     let main = inputs.main.snapshot();
@@ -557,13 +750,20 @@ impl State {
                         return Err("guest powered off during held chord".into());
                     }
                     let elapsed = panel.guest_ms.wrapping_sub(start);
+                    if factory_mode && !factory_reached && Instant::now() >= next_mode_poll {
+                        factory_reached =
+                            session.engine.management[0].read_memory(0, l6max::system_mode, 4)?
+                                == 7u32.to_le_bytes();
+                        next_mode_poll = Instant::now() + Duration::from_millis(10);
+                    }
                     if main.applied >= main.sent
                         && panel.applied >= panel.sent
-                        && elapsed >= duration_ms
+                        && (factory_reached
+                            || duration_ms.is_some_and(|duration| elapsed >= duration))
                     {
                         break;
                     }
-                    if Instant::now() > deadline || elapsed > guest_timeout_ms {
+                    if Instant::now() > deadline || elapsed > guest_limit {
                         return Err("held chord was not applied within its deadline".into());
                     }
                     thread::sleep(Duration::from_millis(5));
@@ -608,34 +808,54 @@ impl State {
                 let gdb = self.gdb.as_mut().unwrap();
                 qmp.stop()?;
                 gdb.breakpoint(panel_event_dispatcher, true)?;
+                let mut dispatcher_armed = true;
                 gdb.breakpoint(main_event_submit, true)?;
                 inputs.down(target, 0)?;
-                gdb.continue_until_stop(Duration::from_secs(15))?;
-                let pc = gdb.read_register(15)? & !1;
-                if pc == panel_event_dispatcher {
-                    gdb.breakpoint(panel_event_dispatcher, false)?;
-                    gdb.continue_until_stop(Duration::from_secs(15))?;
-                    let pc = gdb.read_register(15)? & !1;
-                    if pc != main_event_submit {
+                let deadline = Instant::now() + Duration::from_secs(15);
+                let mut skipped_reports = 0u32;
+                let bytes = loop {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
                         return Err(format!(
-                            "panel target {target} reached {pc:#x}, not event submit"
+                            "panel target {target} did not submit a button report after {skipped_reports} unrelated submissions"
                         )
                         .into());
                     }
-                } else if pc != main_event_submit {
-                    return Err(format!(
-                        "panel target {target} stopped at {pc:#x}, not dispatcher or event submit"
-                    )
-                    .into());
-                }
-                let response = gdb.request(&format!("m{panel_report:x},3"))?;
-                if response.len() != 6 {
-                    return Err(format!("unexpected panel report bytes: {response}").into());
-                }
-                let bytes = (0..3)
-                    .map(|index| u8::from_str_radix(&response[index * 2..index * 2 + 2], 16))
-                    .collect::<Result<Vec<_>, _>>()?;
-                if !matches!(bytes[0], 0x90 | 0x91) || (bytes[1], bytes[2]) != (column, row) {
+                    gdb.continue_until_stop(remaining)?;
+                    let pc = gdb.read_register(15)? & !1;
+                    if pc == panel_event_dispatcher {
+                        gdb.breakpoint(panel_event_dispatcher, false)?;
+                        dispatcher_armed = false;
+                        continue;
+                    }
+                    if pc != main_event_submit {
+                        return Err(format!(
+                            "panel target {target} stopped at {pc:#x}, not dispatcher or event submit"
+                        )
+                        .into());
+                    }
+                    let response = gdb.request(&format!("m{panel_report:x},3"))?;
+                    if response.len() != 6 {
+                        return Err(format!("unexpected panel report bytes: {response}").into());
+                    }
+                    let bytes = (0..3)
+                        .map(|index| u8::from_str_radix(&response[index * 2..index * 2 + 2], 16))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    // Other panel activity can submit events between input
+                    // injection and the button report, especially at boot.
+                    if !matches!(bytes[0], 0x90 | 0x91) {
+                        skipped_reports += 1;
+                        // Continuing from a software breakpoint can stop on
+                        // the same instruction again. Step over the unrelated
+                        // submission before waiting for the next one.
+                        gdb.breakpoint(main_event_submit, false)?;
+                        gdb.request("s")?;
+                        gdb.breakpoint(main_event_submit, true)?;
+                        continue;
+                    }
+                    break bytes;
+                };
+                if (bytes[1], bytes[2]) != (column, row) {
                     return Err(format!(
                         "panel target {target} report {bytes:02x?}, expected ({column},{row})"
                     )
@@ -659,6 +879,9 @@ impl State {
                     )
                     .into());
                 }
+                if dispatcher_armed {
+                    gdb.breakpoint(panel_event_dispatcher, false)?;
+                }
                 gdb.breakpoint(main_event_submit, false)?;
                 qmp.resume()?;
                 inputs.up(target)?;
@@ -674,7 +897,54 @@ impl State {
                     }
                     thread::sleep(Duration::from_millis(5));
                 }
-                Ok(json!({"target":target,"column":column,"row":row,"event":event,"report":bytes}))
+                Ok(
+                    json!({"target":target,"column":column,"row":row,"event":event,"report":bytes,"skipped_reports":skipped_reports}),
+                )
+            }
+            Operation::WaitRecordedFiles { files } => {
+                const GUEST_TIMEOUT_MS: u32 = 20_000;
+                const WALL_TIMEOUT_S: u64 = 180;
+                const POLL_INTERVAL_MS: u64 = 100;
+                let card = options
+                    .sd_image
+                    .as_ref()
+                    .ok_or("wait-recorded-files requires an SD card")?;
+                let start = guest_now(session);
+                let deadline =
+                    Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
+                loop {
+                    session.poll()?;
+                    let status = (|| -> Result<String, String> {
+                        let mut volume = sd_image::open(card).map_err(|e| e.to_string())?;
+                        let project = volume
+                            .entries("RECORDER")
+                            .map_err(|e| e.to_string())?
+                            .into_iter()
+                            .filter(|entry| entry.directory && !entry.name.starts_with('.'))
+                            .map(|entry| entry.name)
+                            .max()
+                            .ok_or("the card has no recorder project")?;
+                        for file in &files {
+                            let bytes = volume
+                                .read(&format!("RECORDER/{project}/{file}"))
+                                .map_err(|e| e.to_string())?;
+                            recorded_wav_ready(&bytes)
+                                .map_err(|error| format!("{file}: {error}"))?;
+                        }
+                        Ok(project)
+                    })();
+                    match status {
+                        Ok(project) => break Ok(json!({"project": project, "files": files})),
+                        Err(error)
+                            if Instant::now() >= deadline
+                                || guest_now(session).wrapping_sub(start)
+                                    >= guest_timeout_ms.min(GUEST_TIMEOUT_MS) =>
+                        {
+                            break Err(format!("recorded files did not finalize: {error}").into());
+                        }
+                        Err(_) => thread::sleep(Duration::from_millis(POLL_INTERVAL_MS)),
+                    }
+                }
             }
             Operation::AudioInputTransport {
                 command,
@@ -712,6 +982,36 @@ impl State {
                     return Err(format!("channel {channel} has no prepared audio").into());
                 }
                 Ok(json!({"channel": channel, "loaded": loaded}))
+            }
+            Operation::WaitAudioInput {
+                playing,
+                min_ms,
+                max_ms,
+            } => {
+                const GUEST_TIMEOUT_MS: u32 = 10_000;
+                const WALL_TIMEOUT_S: u64 = 180;
+                const POLL_INTERVAL_MS: u64 = 10;
+                let start = guest_now(session);
+                let deadline =
+                    Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
+                loop {
+                    session.poll()?;
+                    let status = session.engine.inputs.as_ref().unwrap().main.snapshot();
+                    if status.audio_input_playing == playing
+                        && (min_ms..=max_ms).contains(&status.audio_input_position_ms)
+                    {
+                        break Ok(
+                            json!({"playing": playing, "position_ms": status.audio_input_position_ms}),
+                        );
+                    }
+                    if Instant::now() >= deadline
+                        || guest_now(session).wrapping_sub(start)
+                            >= guest_timeout_ms.min(GUEST_TIMEOUT_MS)
+                    {
+                        break Err(format!("audio input did not reach playing={playing}, {min_ms}..={max_ms} ms: playing={}, position={} ms",status.audio_input_playing,status.audio_input_position_ms).into());
+                    }
+                    thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+                }
             }
             Operation::ExpectAudioInput {
                 playing,
@@ -1260,7 +1560,42 @@ impl State {
                     thread::sleep(Duration::from_millis(5));
                 }
                 fs::write(options.logs.join("usb-midi.bin"), &midi)?;
-                usb.send(endpoints.output, &[0x1b, 0xb0, cc, value])?;
+                // Confirm that MAIN consumed the incoming CC. If the mixer is
+                // already at the requested value, first send a different one
+                // so the final check cannot succeed on stale state.
+                let level_address = match session.engine.model() {
+                    l6fw::Model::L6 => l6::mixer_state_tail,
+                    l6fw::Model::L6max => l6max::mixer_channel_levels,
+                };
+                let qmp = &session.engine.management[0];
+                let send_and_wait = |level: u8| -> Result<(), Box<dyn std::error::Error>> {
+                    const GUEST_TIMEOUT_MS: u32 = 10_000;
+                    const WALL_TIMEOUT_S: u64 = 180;
+                    const POLL_INTERVAL_MS: u64 = 10;
+                    let start = guest_now(session);
+                    let deadline =
+                        Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
+                    usb.send(endpoints.output, &[0x1b, 0xb0, cc, level])?;
+                    loop {
+                        session.poll()?;
+                        if qmp.read_memory(0, level_address, 1)? == [level] {
+                            return Ok(());
+                        }
+                        if guest_now(session).wrapping_sub(start)
+                            >= guest_timeout_ms.min(GUEST_TIMEOUT_MS)
+                            || Instant::now() >= deadline
+                        {
+                            return Err(
+                                format!("USB MIDI channel level did not become {level}").into()
+                            );
+                        }
+                        thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+                    }
+                };
+                if qmp.read_memory(0, level_address, 1)? == [value] {
+                    send_and_wait(if value == 0 { 127 } else { 0 })?;
+                }
+                send_and_wait(value)?;
                 Ok(json!({"received":midi,"sent":[0x1b,0xb0,cc,value]}))
             }
             Operation::HostMidiRoundTrip => {
@@ -1297,7 +1632,10 @@ impl State {
             Operation::L6MidiMuteIndicators => {
                 self.run_l6_midi_mute_indicators(session, wall_timeout_s)
             }
-            Operation::UsbSysex { requests } => {
+            Operation::UsbSysex {
+                requests,
+                complete_on_match,
+            } => {
                 let usb = session
                     .engine
                     .usb
@@ -1363,6 +1701,9 @@ impl State {
                             .snapshot()
                             .guest_ms
                             .wrapping_sub(request_start);
+                        if complete_on_match && sysex_reply_complete(&request, &pending, &replies) {
+                            break;
+                        }
                         if elapsed >= reply_timeout_ms {
                             break;
                         }
@@ -1455,11 +1796,11 @@ impl State {
                     wall_timeout_s,
                 )
             }
-            Operation::L6maxUiPadAssignment { pad } => {
+            Operation::L6maxUiPadVerify { pad } => {
                 let endpoints = self
                     .midi
-                    .ok_or("l6max-ui-pad-assignment needs preceding USB MIDI enumeration")?;
-                run_l6max_ui_pad_assignment(
+                    .ok_or("l6max-ui-pad-verify needs preceding USB MIDI enumeration")?;
+                run_l6max_ui_pad_verify(
                     session,
                     options,
                     endpoints,
@@ -1467,6 +1808,9 @@ impl State {
                     guest_timeout_ms,
                     wall_timeout_s,
                 )
+            }
+            Operation::WaitL6SoundPadFile { path } => {
+                wait_l6_sound_pad_file(session, &path, guest_timeout_ms, wall_timeout_s)
             }
             Operation::SoundPadPlayback {
                 pad,
@@ -1651,5 +1995,38 @@ impl State {
                 Err("wasm-patch scenario must run at the host lifecycle boundary".into())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod sysex_completion_tests {
+    use super::sysex_reply_complete;
+    use crate::scenario::UsbSysexRequest;
+
+    #[test]
+    fn early_completion_requires_a_complete_positive_reply_without_observation_constraints() {
+        let mut request = UsbSysexRequest {
+            bytes: vec![0xf0, 0xf7],
+            expect_prefix: Some(vec![0xf0, 0x52]),
+            reject_prefixes: vec![],
+            expect_reply: true,
+            min_reply_bytes: Some(3),
+            reply_timeout_ms: None,
+        };
+        let reply = vec![vec![0xf0, 0x52, 0xf7]];
+        assert!(sysex_reply_complete(&request, &[], &reply));
+        assert!(!sysex_reply_complete(&request, &[0xf0], &reply));
+        assert!(!sysex_reply_complete(&request, &[], &[vec![0xf0, 0x52]]));
+        request.min_reply_bytes = Some(4);
+        assert!(!sysex_reply_complete(&request, &[], &reply));
+        request.min_reply_bytes = None;
+        request.reject_prefixes.push(vec![0xf0, 0x53]);
+        assert!(!sysex_reply_complete(&request, &[], &reply));
+        request.reject_prefixes.clear();
+        request.reply_timeout_ms = Some(500);
+        assert!(!sysex_reply_complete(&request, &[], &reply));
+        request.reply_timeout_ms = None;
+        request.expect_prefix = None;
+        assert!(!sysex_reply_complete(&request, &[], &reply));
     }
 }

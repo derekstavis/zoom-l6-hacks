@@ -300,7 +300,7 @@ impl Runner {
             if now.duration_since(entered) > Duration::from_secs(step.wall_timeout_s)
                 || elapsed > step.guest_timeout_ms
             {
-                if let Action::ExpectDisplayImage { image } = &step.action {
+                if let Action::ExpectDisplayImage { image, .. } = &step.action {
                     let path = crate::scenario::spec_path(image)?;
                     return Err(format!(
                         "step {}: {}",
@@ -347,7 +347,7 @@ impl Runner {
                         .ok_or("checkpoint not executed for this model")?;
                     (base.data.display != obs.data.display) == changed
                 }
-                Action::ExpectDisplayImage { image } => {
+                Action::ExpectDisplayImage { image, settle_ms } => {
                     if self.model == Model::L6 {
                         return Err("L6 has no display".into());
                     }
@@ -357,7 +357,20 @@ impl Runner {
                     let path = crate::scenario::spec_path(&image)?;
                     let display = obs.data.display;
                     if devices::reference_differences(&display, &path) == Some(0) {
-                        true
+                        if settle_ms == 0 {
+                            true
+                        } else {
+                            let guest = obs.panel.guest_ms;
+                            match self.settling {
+                                Some((frame, since)) if frame == display => {
+                                    guest.wrapping_sub(since) >= settle_ms
+                                }
+                                _ => {
+                                    self.settling = Some((display, guest));
+                                    false
+                                }
+                            }
+                        }
                     } else if devices::updating_references() {
                         let guest = obs.panel.guest_ms;
                         match self.settling {
@@ -379,6 +392,7 @@ impl Runner {
                             }
                         }
                     } else {
+                        self.settling = None;
                         false
                     }
                 }
@@ -504,8 +518,14 @@ impl Runner {
                 Action::L6MidiMuteIndicators => {
                     return Ok(Progress::Device(devices::Operation::L6MidiMuteIndicators));
                 }
-                Action::UsbSysex { requests } => {
-                    return Ok(Progress::Device(devices::Operation::UsbSysex { requests }));
+                Action::UsbSysex {
+                    requests,
+                    complete_on_match,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::UsbSysex {
+                        requests,
+                        complete_on_match,
+                    }));
                 }
                 Action::EditorPadAssignments => {
                     return Ok(Progress::Device(devices::Operation::EditorPadAssignments));
@@ -515,8 +535,8 @@ impl Runner {
                         pad,
                     }));
                 }
-                Action::L6maxUiPadAssignment { pad } => {
-                    return Ok(Progress::Device(devices::Operation::L6maxUiPadAssignment {
+                Action::L6maxUiPadVerify { pad } => {
+                    return Ok(Progress::Device(devices::Operation::L6maxUiPadVerify {
                         pad,
                     }));
                 }
@@ -541,6 +561,11 @@ impl Runner {
                         max_residual_db,
                     }));
                 }
+                Action::WaitL6SoundPadFile { path } => {
+                    return Ok(Progress::Device(devices::Operation::WaitL6SoundPadFile {
+                        path,
+                    }));
+                }
                 Action::L6RecorderPlayback { target } => {
                     return Ok(Progress::Device(devices::Operation::L6RecorderPlayback {
                         target,
@@ -555,6 +580,15 @@ impl Runner {
                     let address = crate::firmware::symbol(self.model, &symbol)
                         .ok_or_else(|| format!("{symbol} is not declared for this model"))?;
                     return Ok(Progress::Device(devices::Operation::ExpectMemory {
+                        symbol,
+                        address,
+                        bytes,
+                    }));
+                }
+                Action::WaitMemory { symbol, bytes } => {
+                    let address = crate::firmware::symbol(self.model, &symbol)
+                        .ok_or_else(|| format!("{symbol} is not declared for this model"))?;
+                    return Ok(Progress::Device(devices::Operation::WaitMemory {
                         symbol,
                         address,
                         bytes,
@@ -575,6 +609,15 @@ impl Runner {
                         steps,
                     }));
                 }
+                Action::WaitEffectMode {
+                    panel_mode,
+                    edit_mode,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::WaitEffectMode {
+                        panel_mode,
+                        edit_mode,
+                    }));
+                }
                 Action::EffectReplacementState {
                     expected_effect_type,
                     expected_processor_type,
@@ -587,6 +630,7 @@ impl Runner {
                     minimum_exit_ring_refreshes,
                     expected_effect,
                     require_output,
+                    wait_for_slot,
                 } => {
                     return Ok(Progress::Device(
                         devices::Operation::EffectReplacementState {
@@ -601,6 +645,7 @@ impl Runner {
                             minimum_exit_ring_refreshes,
                             expected_effect,
                             require_output,
+                            wait_for_slot,
                         },
                     ));
                 }
@@ -612,6 +657,7 @@ impl Runner {
                 Action::HoldChord {
                     controls,
                     duration_ms,
+                    until,
                 } => {
                     let targets = controls
                         .iter()
@@ -620,6 +666,7 @@ impl Runner {
                     return Ok(Progress::Device(devices::Operation::HoldChord {
                         targets,
                         duration_ms,
+                        until,
                     }));
                 }
                 Action::UsbStorage => return Ok(Progress::Device(devices::Operation::UsbStorage)),
@@ -692,6 +739,11 @@ impl Runner {
                         matches_state,
                     }));
                 }
+                Action::WaitRecordedFiles { files } => {
+                    return Ok(Progress::Device(devices::Operation::WaitRecordedFiles {
+                        files,
+                    }));
+                }
                 Action::AudioInputTransport {
                     command,
                     position_ms,
@@ -705,6 +757,17 @@ impl Runner {
                     return Ok(Progress::Device(devices::Operation::AudioInputLoad {
                         channel,
                         loaded,
+                    }));
+                }
+                Action::WaitAudioInput {
+                    playing,
+                    min_ms,
+                    max_ms,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::WaitAudioInput {
+                        playing,
+                        min_ms,
+                        max_ms,
                     }));
                 }
                 Action::ExpectAudioInput {
@@ -777,6 +840,12 @@ impl Runner {
                     return Ok(Progress::Device(devices::Operation::L6LevelMeterPwm));
                 }
                 Action::Wait { until } => {
+                    if until == "sd-patch-loaded" {
+                        return Ok(Progress::Device(devices::Operation::WaitSdPatchLoaded));
+                    }
+                    if until == "sd-patch-empty" {
+                        return Ok(Progress::Device(devices::Operation::WaitSdPatchEmpty));
+                    }
                     if until == "boot-ready" {
                         // Without the setup floor, L6max also needs its screen
                         // to have held one frame for a guest second.
@@ -830,7 +899,9 @@ impl Runner {
                         leds(obs.data.indicators)[17 + index]
                     }
                 }
-                Action::Delay { guest_ms } => elapsed >= guest_ms,
+                Action::Delay { guest_ms } | Action::ObserveDuration { guest_ms, .. } => {
+                    elapsed >= guest_ms
+                }
                 Action::Switch { control, enabled } => {
                     if !self.dispatched {
                         return self.dispatch(
@@ -844,6 +915,21 @@ impl Runner {
                     self.acknowledged(&obs)?
                         && obs.data.switches[control_target(self.model, &control)? as usize]
                             == enabled
+                }
+                Action::PressDisplayChange { control } => {
+                    if !self.dispatched {
+                        return self.dispatch(
+                            Command::Press {
+                                target: control_target(self.model, &control)?,
+                            },
+                            obs,
+                        );
+                    }
+                    self.acknowledged(&obs)?
+                        && self
+                            .baseline
+                            .as_ref()
+                            .is_some_and(|baseline| baseline.data.display != obs.data.display)
                 }
                 Action::Press { control } => {
                     if !self.dispatched {

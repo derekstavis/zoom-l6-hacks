@@ -43,26 +43,29 @@ guest_timeout_ms = 60000
 wall_timeout_s = 300
 
 [[step]]
-action = "delay"
-guest_ms = 8000
-guest_timeout_ms = 20000
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 60000
 wall_timeout_s = 300
+
+[[step]]
+action = "wait-audio-input"
+playing = true
+min_ms = 250
+max_ms = 999
 
 [[step]]
 action = "press"
 control = "rec-record"
 
 [[step]]
-action = "delay"
-guest_ms = 500
-
-[[step]]
-action = "expect-memory"
+action = "wait-memory"
 symbol = "rec_record_lamp"
 bytes = [16, 0, 0, 0]
 
 [[step]]
-action = "delay"
+action = "observe-duration"
+activity = "recording"
 guest_ms = 5000
 guest_timeout_ms = 20000
 wall_timeout_s = 300
@@ -72,19 +75,13 @@ action = "press"
 control = "rec-record"
 
 [[step]]
-action = "delay"
-guest_ms = 500
-
-[[step]]
-action = "expect-memory"
+action = "wait-memory"
 symbol = "rec_record_lamp"
 bytes = [0, 0, 0, 0]
 
 [[step]]
-action = "delay"
-guest_ms = 5000
-guest_timeout_ms = 20000
-wall_timeout_s = 300
+action = "wait-recorded-files"
+files = ["TRACK01.WAV", "TRACK02.WAV", "TRACK03_ST.WAV", "TRACK04_ST.WAV", "TRACK05_ST.WAV", "TRACK06_ST.WAV"]
 
 # Tracks hold each channel before its fader, alone, on the matching track number.
 [[step]]

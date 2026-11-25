@@ -1,0 +1,88 @@
+# Emulator test readiness investigation
+
+The figures below are diagnostic observations, not a benchmark or proof of
+physical-device behavior. Guest-time waits do not necessarily equal host wall
+time. Machine load can change the wall-time measurements. All compared runs
+used externally supplied QEMU SHA-256
+`d33f3853e30115234b1deb9c4b727dfed13a234fcdece2fa18ffe05e7d692a62`;
+the driver pins that binary but does not attest its source. Stock firmware
+packages were L6 `64f1f36b8383176b5d841911fbf3c16205139a313ee88be906f313b1a98a33fb`
+and L6max `4e20f92c9c5131ed082c0feec2b2d7d0445fb576296f11f6dace56a4fc0c9b47`.
+See the run reports for scenario, runner, state and card identities.
+
+## Editor startup
+
+The `editor-pad-assignments` case includes both model-specific setup fragments.
+Each previously began with an unscoped 40-second guest-time delay. Consequently
+both models waited twice, even when a state spec had already completed setup.
+The USB fragment added a further five seconds. In a prior L6max run the
+completed-step records show 40,012 ms, 80,087 ms and 85,137 ms before USB
+enumeration. The earlier full suite passed Editor assignment in 101.1 seconds
+on L6 and 105.3 seconds on L6max, including fixture creation.
+
+`usb-descriptors` already attaches the cable and polls the emulated USB
+controller until it runs, bounded by guest and wall deadlines. An experiment
+that removed the waits and relied only on this signal passed on L6 but failed
+on L6max: enumeration and the Editor identity exchange succeeded, yet the
+global-settings request received no response. USB controller readiness alone
+is not sufficient to prove that the Editor service is ready.
+
+A second experiment waited for the existing `boot-ready` panel signal before
+USB enumeration. With setup-complete state, both Editor assignment models
+passed: L6 in 20.7 seconds and L6max in 25.8 seconds, including fixtures. A
+repeat passed in 20.8 and 25.8 seconds. L6 Editor-assigned pad playback passed
+in 26.3 seconds, versus 67.3 seconds in the earlier suite. The L6max
+on-device assignment case passed in 187.9 seconds, versus 227.1 seconds in
+the earlier suite; that experiment did not check rendered pixels.
+These are individual runs, not a statistically controlled performance comparison. The tests still
+check the complete Editor exchange and assignment readback; the readiness
+check is an additional prerequisite, not a substitute for those assertions.
+A temporary fresh-state variant also passed once per model, in 61.2 seconds
+on L6 and 65.5 seconds on L6max. It exercised the retained prompt sequence.
+After rebasing onto `main` `ffb935b8`, the four affected prepared-state
+cases passed again: Editor assignment in 20.9 seconds on L6 and 26.0 seconds
+on L6max, L6 playback in 26.5 seconds, and L6max on-device assignment in
+186.8 seconds. The temporary fresh-state variant passed again in 60.6 seconds
+on L6 and 65.4 seconds on L6max. These runs are not a controlled performance
+benchmark or proof of real-device startup timing and behavior.
+
+Those experiments retained the 40-second fresh-boot delay. A later probe
+waited for model-specific boot readiness and completed the original Editor
+assignment checks on both models. On L6max the Date/Time prompt was visible
+at 12 seconds of guest time, followed by Battery Type after the first press;
+both screens were captured and reviewed. The setup fragments now wait for
+those exact screens, while L6 uses its boot sweep and mode lamp. A permanent
+`editor-pad-assignments-fresh` case covers both models. In a focused run the
+fresh cases passed in 16.7 seconds on L6 and 23.4 seconds on L6max, and both
+prepared-state controls also passed. The L6 delay between its confirmation
+presses remains because a suitable signal has not yet been established.
+The probe and final reports are in `/private/tmp/l6-editor-fresh-boot-probe/`
+and `/private/tmp/l6-editor-fresh-ready-trial/` on the testing machine.
+
+## Other candidates
+
+The L6max on-device assignment previously waited 1.5 guest seconds after
+each acknowledged key, added two seconds before navigation keys and five
+seconds for a possible popup. Those waits have since been replaced by
+declarative button steps and reviewed rendered-screen checks; see
+[test readiness results](test-readiness-results.md) for the captures,
+measurements and validation.
+
+A prior static scan found 84 checked-in `delay` steps of at least five guest seconds
+across case and fragment TOML files. This is a count of declarations, not of
+executed steps or measured suite duration: includes, model scopes and skipped
+setup steps change what runs. Triage candidates against actual case timings:
+
+- MIDI and SD-patch cases have 40-second startup waits; evaluate boot readiness,
+  USB controller readiness and the relevant protocol or patch-loaded response
+  separately. The Editor result shows why USB readiness alone is insufficient.
+- Fresh-boot and power cases wait for startup prompts. Look for model-specific
+  prompt state or rendered display evidence before replacing their waits.
+- Audio and recorder cases may use waits to collect a required waveform or
+  observation window. Do not remove those solely because they are long;
+  investigate an output or state predicate that still proves the assertion.
+
+Preserve the original timing for the cases being investigated, compare with
+identical firmware and executable identities, exercise both models and relevant
+backends, and report failures or retries as such. A faster pass under one set
+of host conditions is insufficient evidence of reliability.

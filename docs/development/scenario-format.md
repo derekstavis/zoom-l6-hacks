@@ -81,8 +81,14 @@ card-reader mode), stays unmarked.
 
 | Action | Fields | Meaning |
 | --- | --- | --- |
-| `wait` | `until = "boot-ready"`, `"mixer-ready"` or `"panel-settled"` | Boot waits for the full LED sweep, then an L6 mode lamp or L6max pixels; prepared mixer readiness requires nonzero values on every visible ring and, on L6, a lit mode lamp; settling waits for one guest second of unchanged output |
+| `wait` | `until = "boot-ready"`, `"mixer-ready"`, `"panel-settled"`, `"sd-patch-loaded"` or `"sd-patch-empty"` | Boot waits for the full LED sweep, then an L6 mode lamp or L6max pixels; prepared mixer readiness requires nonzero values on every visible ring and, on L6, a lit mode lamp; settling waits for one guest second of unchanged output; SD readiness waits for either the loader’s successful claim after installation or its completed scan without a module. Both use 10 guest seconds, 180 wall seconds and 10 ms wall-time polling. A separate assertion must check the expected module state or behavior |
+| `press-display-change` | `control` | Press an L6max control, wait for its acknowledgement and for the display to change from its pre-press state. Use a reviewed image assertion when verifying a specific screen |
+| `wait-effect-mode` | `panel_mode`, `edit_mode` (at least one) | Wait for the loaded L6max effect module’s published editor state, bounded by 10 guest seconds and 180 wall seconds with 10 ms wall-time polling |
+| `wait-recorded-files` | `files` | Wait for each named WAV in the newest recorder project to have a complete RIFF container and at least two seconds of audio (20 guest seconds maximum, 180 wall seconds maximum, 100 ms wall-time polling). Check the audio contents separately |
+| `wait-audio-input` | `playing`, `min_ms`, `max_ms` | Wait for the input transport’s reported state and position, bounded by 10 guest seconds and 180 wall seconds with 10 ms wall-time polling |
+| `wait-memory` | `symbol`, `bytes` | Poll a model-declared firmware symbol until its bytes match, bounded by 10 guest seconds and 180 wall seconds with 10 ms wall-time polling. `expect-memory` remains an immediate assertion |
 | `delay` | `guest_ms` | Wait on guest time, not host time |
+| `observe-duration` | `activity` (`recording`, `playback` or `audio-output`), `guest_ms` | Observe an already-started activity for a test-defined duration in guest time; start and verify the activity separately |
 | `include` | `path` | Expand a strict `[[step]]` fragment named from the repository root; cycles and depth (eight) are checked |
 | `select-mode` | `mode` | Pass if the mode lamp is lit; otherwise wait for one guest second of stable panel output and press the mode button |
 | `switch` | `control`, `enabled` | Set a latching switch using its real GUI toggle or one headless electrical edge |
@@ -101,7 +107,7 @@ card-reader mode), stays unmarked.
 | `expect-mode` | `mode` | Verify the model-specific mode lamp before taking ring baselines |
 | `expect-mute` | `channel` | Verify the model-specific mute lamp toggled relative to the preceding action |
 | `hold` | `control`, `duration_ms` | Keep a semantic control held for a bounded duration |
-| `hold-chord` | `controls`, `duration_ms` | Hold multiple semantic controls together |
+| `hold-chord` | `controls` and either `duration_ms` or `until = "factory-mode"` | Hold multiple semantic controls together for the specified guest time or until L6max factory mode is entered. Factory-mode readiness is polled every 10 ms of wall time, bounded by 10 guest seconds and 180 wall seconds |
 | `save-scene` | `scene` | Save the current assignment to a scene |
 | `expect-scene` | `scene`, `lit`, optional `checkpoint`, `changed` | Check a scene indicator, optionally against a checkpoint |
 | `expect-button-led` | `control`, optional `lit`, `checkpoint`, `changed` | Check a mapped button lamp's level or change |
@@ -125,11 +131,14 @@ motion is additionally covered by production gesture unit tests.
 
 For UI behavior, use `expect-display-image` to compare the rendered 128×64
 L6max pixels with a reviewed PNG, named from the repository root (normally
-under `tests/emulator/references/`, or a patch's
+under `tests/smoke/images/`, or an existing `tests/emulator/references/` or patch's
 `tests/emulator/references/` for its own UI). Comparison is exact after converting the reference to
 black-and-white pixels. Review the screenshot before updating a reference;
 memory and firmware-state assertions may supplement image comparisons but do
-not establish that the UI rendered correctly.
+not establish that the UI rendered correctly. Set `settle_ms` when the
+matching image must remain visible for a guest-time interval before the next
+step; it defaults to zero. This is a stability requirement, not a polling
+interval or wall-time timeout.
 
 Supported semantic controls include each physical channel mute, modes
 `eq-high`, `freq`, `mid`, `low`, `aux1`, `aux2`, `efx`, `pan`, `level` and L6max
@@ -156,10 +165,11 @@ is rejected when it loads.
 | `l6-midi-sync` | — | Exercise the L6 MIDI synchronization path |
 | `l6-midi-ring-pin-sweep` | `cc` | Sweep L6 MIDI CC values and compare ring-pin output |
 | `l6-midi-mute-indicators` | — | Check L6 MIDI mute-indicator responses |
-| `usb-sysex` | `requests` with `bytes`, optional `expect_prefix`, `expect_reply`, `min_reply_bytes` | Send cable-2 SysEx requests, reassemble replies, and check presence, length, or prefix as declared |
+| `usb-sysex` | `requests` with `bytes`, optional `expect_prefix`, `expect_reply`, `min_reply_bytes`; optional `complete_on_match` | Send cable-2 SysEx requests and check replies. When `complete_on_match` is true, a positive request completes on its matching complete reply; no-reply requests, rejected-prefix checks and explicit reply windows still observe the full interval |
 | `editor-pad-assignments` | — | Initialize the Editor session, enumerate WAV files, assign the first file on all four pads and verify assignment state through SysEx readback; requires a preceding `usb-descriptors` step |
 | `editor-pad-playback` | `pad` | L6-only assigned-pad playback check; requires preceding `editor-pad-assignments` |
 | `l6max-ui-pad-assignment` | `pad` | L6max UI assignment check; requires preceding `usb-descriptors` and an L6max-scoped scenario |
+| `wait-l6-sound-pad-file` | `path` (relative SD card path) | On supported stock L6 firmware, wait until pad 1's active UTF-16 path matches the file and its assignment is no longer pending; bounded by 10 guest seconds and 180 wall seconds, polled every 10 ms of wall time |
 | `sound-pad-playback` | `pad`, `target`, optional `assignment` (`editor` by default or `saved-state`), optional `require_pad_led_change` (default `true`), optional `require_stereo_meter` (default `false`), optional `playback_window_ms` (default `6000`, range `1000..120000`), optional `expect_source` (WAV path on the card; requires `L6_AUDIO_RAW_CAPTURE`) and `max_residual_db` (default `-60`) | Press one L6 or L6max MAIN pad input and require nonzero SAI1 TX samples; require its model-specific pad LED response unless `require_pad_led_change = false`; `editor` requires a preceding Editor assignment step, while `saved-state` uses the assignment already present in the state; capture indicator PWM levels throughout playback; when `require_stereo_meter = true`, require two distinct levels of at least two bars on each side independently using a stereo isolation WAV; enable `L6_AUDIO_SAMPLE_TRACE=1` in the case environment |
 | `wasm-patch` | — | Exercise a generated WebAssembly patch package through the firmware update path |
 | `l6-recorder-playback` | `target` | L6 only; GDB verifies event `0x20`, handler acceptance, and the mode-0 callback on MAIN target 4; after five guest seconds it requires a changed SAI1 TX signature and sample data in the channel-14 TCD source. Requires a mode-0 state, valid `MASTER.WAV`, GDB support, and `L6_AUDIO_SAMPLE_TRACE=1` |
@@ -170,7 +180,7 @@ is rejected when it loads.
 | `knob-dialog` | — | Patched L6max only; compare all ten parameter scenes with reviewed display images, then verify heap lifetime, busy-aware expiry, display cleanup, widget restoration and exact encoder reports |
 | `knob-dialog-popup` | — | L6max with Knob Dialog, on the recorder screen; turn the channel 1 level knob and require the dialog's state, display callback and value text for the new level, then let the window close |
 | `expect-menu` | `menu`, optional `path`, `items` | L6max; read a menu's children from guest memory and require exactly the titles in `items`. `menu` is `main`, `project`, `sound-pad`, `mixer` or `system`; `path` descends through child titles. Menu Loader adds its rows when the menu is first entered |
-| `effect-replacement-state` | optional `expected_effect_type`, `expected_processor_type`, `expected_effect`, `require_output` and other module fields | L6max effect replacement bundle; compare the selected stock slot and the loader's state with the expectations. `expected_effect` is the effect ID running in the selected slot; `require_output` requires that slot's replacement to have produced nonzero output |
+| `effect-replacement-state` | optional `expected_effect_type`, `expected_processor_type`, `expected_effect`, `require_output`, `wait_for_slot` and other module fields | L6max effect replacement bundle; compare the selected stock slot and the loader's state with the expectations. `expected_effect` is the effect ID running in the selected slot; `require_output` requires that slot's replacement to have produced nonzero output; `wait_for_slot` waits for the selected slot and processor and, when output is required, a fresh nonzero output count |
 | `firmware-update` | — | L6 and L6max disposable-state update lifecycle, corrupt-checksum rejection, NOR segment install, L6max panel programming, protected-region preservation and clean restart; an `update_patches` package additionally checks model-specific post-install behavior |
 | `power-press` | `hold_ms`, `powered` | Check expected power result, model cutoff timing and stopped clock |
 | `restart` | — | Retire the session before reopening its isolated persistent state; reset readiness, trace counters and action baselines |

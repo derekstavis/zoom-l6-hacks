@@ -51,17 +51,31 @@ guest_timeout_ms = 60000
 wall_timeout_s = 900
 
 [[step]]
-action = "delay"
-guest_ms = 8000
-guest_timeout_ms = 20000
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 60000
 wall_timeout_s = 300
+
+[[step]]
+models = ["l6max"]
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "wait-audio-input"
+playing = true
+min_ms = 250
+max_ms = 999
 
 [[step]]
 action = "press"
 control = "rec-record"
 
 [[step]]
-action = "delay"
+action = "observe-duration"
+activity = "recording"
 guest_ms = 5000
 guest_timeout_ms = 20000
 wall_timeout_s = 300
@@ -71,10 +85,8 @@ action = "press"
 control = "rec-play-stop"
 
 [[step]]
-action = "delay"
-guest_ms = 5000
-guest_timeout_ms = 20000
-wall_timeout_s = 300
+action = "wait-recorded-files"
+files = ["TRACK01_01.wav", "TRACK02_01.wav", "TRACK03_01.wav", "TRACK04_01.wav", "TRACK05_ST_01.wav", "TRACK06_ST_01.wav", "TRACK07_ST_01.wav", "TRACK08_ST_01.wav", "MASTER_01.wav"]
 
 # Tracks hold each channel before its fader, alone, on the matching track number.
 [[step]]

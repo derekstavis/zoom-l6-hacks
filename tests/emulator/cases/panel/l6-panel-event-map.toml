@@ -11,10 +11,10 @@ no_sd = true
 wall_timeout_s = 1800
 
 [[step]]
-action = "delay"
-guest_ms = 42000
-guest_timeout_ms = 45000
-wall_timeout_s = 600
+action = "wait"
+until = "boot-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
 
 [[step]]
 action = "panel-event"

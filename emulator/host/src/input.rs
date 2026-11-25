@@ -47,6 +47,17 @@ pub enum InputSource {
     Panel,
 }
 
+/// Input channel receiving a button target. Rejects targets outside the protocol.
+pub fn button_source(target: u32) -> Option<InputSource> {
+    if target >= crate::controls::INPUT_COUNT as u32 {
+        None
+    } else if matches!(target, 0 | 4 | 5 | 48..=53) {
+        Some(InputSource::Main)
+    } else {
+        Some(InputSource::Panel)
+    }
+}
+
 /// Host-maintained input counters sampled from one channel's status lock.
 /// Counters aggregate all clients on that channel and do not attribute an
 /// acknowledgement to a particular input command.
@@ -416,7 +427,7 @@ impl InputHub {
         }
     }
     fn button_engine(&self, button: u32) -> &EngineInput {
-        if matches!(button, 0 | 4 | 5 | 48..=53) {
+        if button_source(button) == Some(InputSource::Main) {
             &self.main
         } else {
             &self.panel

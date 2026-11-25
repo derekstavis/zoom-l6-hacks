@@ -3807,13 +3807,135 @@
           "additionalProperties": false,
           "properties": {
             "action": {
-              "const": "knob-dialog-mode",
+              "const": "knob-dialog-mode-begin",
               "type": "string"
             },
-            "button": {
+            "guest_timeout_ms": {
+              "default": 10000,
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "scene": {
+              "type": "string"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "scene"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "enqueue-tap",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "hold_ms": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "hold_ms"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "wait-input-applied",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "wait-knob-parameter-mode",
+              "type": "string"
             },
             "guest_timeout_ms": {
               "default": 10000,
@@ -3834,8 +3956,51 @@
               },
               "type": "array"
             },
-            "reference": {
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "capture-display",
               "type": "string"
+            },
+            "artifact": {
+              "type": "string"
+            },
+            "guest_ms": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
             },
             "setup_input": {
               "default": false,
@@ -3851,9 +4016,123 @@
           },
           "required": [
             "action",
-            "button",
-            "mode",
-            "reference"
+            "guest_ms",
+            "artifact"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "expect-captured-display-image",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "image": {
+              "type": "string"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "image"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "knob-dialog-expect-heap",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "knob-dialog-mode-end",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
           ],
           "type": "object"
         },
@@ -6337,7 +6616,14 @@
             "knob-dialog-bitmap-zero",
             "knob-dialog-active-overlay",
             "knob-dialog-locked-update",
-            "knob-dialog-mode",
+            "knob-dialog-mode-begin",
+            "enqueue-tap",
+            "wait-input-applied",
+            "wait-knob-parameter-mode",
+            "capture-display",
+            "expect-captured-display-image",
+            "knob-dialog-expect-heap",
+            "knob-dialog-mode-end",
             "knob-dialog",
             "knob-popup-open",
             "knob-popup-expect-open",

@@ -194,9 +194,26 @@ pub fn step_label(action: &crate::Action) -> String {
             duration_ms: Some(ms),
             ..
         } => format!("Hold chord for {ms} ms guest time"),
-        Action::KnobDialogMode { reference, .. } => {
-            format!("Check knob dialog {} scene", reference.replace('-', " "))
+        Action::KnobDialogModeBegin { scene } => {
+            format!("Check knob dialog {} scene", scene.replace('-', " "))
         }
+        Action::EnqueueTap { target, hold_ms } => {
+            format!("Enqueue button {target} tap ({hold_ms} ms)")
+        }
+        Action::WaitInputApplied => "Wait for input applied".into(),
+        Action::WaitKnobParameterMode { mode } => format!("Wait for knob parameter mode {mode}"),
+        Action::CaptureDisplay { guest_ms, artifact } => {
+            format!("Capture {artifact} after {guest_ms} ms guest time")
+        }
+        Action::ExpectCapturedDisplayImage { image } => format!(
+            "Check captured {} screen",
+            image
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("expected")
+        ),
+        Action::KnobDialogExpectHeap => "Check persistent heap counters".into(),
+        Action::KnobDialogModeEnd => "Finish knob dialog mode".into(),
         Action::SelectMode { mode } => format!("Select {} mode", mode.replace('-', " ")),
         Action::ExpectMode { mode } => format!("Check {} mode", mode.replace('-', " ")),
         Action::ExpectRing { channel, .. } => format!("Check channel {channel} ring"),

@@ -1,0 +1,379 @@
+//! Reusable input, capture and observation primitives for bounded scenarios.
+use super::*;
+
+// Embedded at build time so the staged binary's hash identifies the lifecycle
+// sequence even if the checkout changes or disappears during the run.
+const EMBEDDED_MODE_WALK: &str =
+    include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/mode-walk.toml");
+
+pub(super) fn embedded_mode_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(EMBEDDED_MODE_WALK)
+        .map_err(|error| format!("invalid embedded knob mode fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_knob_mode_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded knob mode fragment has an invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation =
+                mode_step_operation(&step.action).ok_or("unsupported embedded knob mode action")?;
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
+/// Convert a mode-fragment action for the post-update lifecycle. Scenario
+/// loading validates the complete sequence before this conversion.
+pub(super) fn mode_step_operation(action: &crate::Action) -> Option<Operation> {
+    Some(match action {
+        crate::Action::KnobDialogModeBegin { scene } => Operation::KnobDialogModeBegin {
+            scene: scene.clone(),
+        },
+        crate::Action::EnqueueTap { target, hold_ms } => Operation::EnqueueTap {
+            target: *target,
+            hold_ms: *hold_ms,
+        },
+        crate::Action::WaitInputApplied => Operation::WaitInputApplied,
+        crate::Action::WaitKnobParameterMode { mode } => {
+            Operation::WaitKnobParameterMode { mode: *mode }
+        }
+        crate::Action::EnqueueEncoder {
+            channel,
+            steps,
+            midi_transaction,
+        } => Operation::EnqueueEncoder {
+            channel: *channel,
+            steps: *steps,
+            midi_transaction: *midi_transaction,
+        },
+        crate::Action::CaptureDisplay { guest_ms, artifact } => Operation::CaptureDisplay {
+            guest_ms: *guest_ms,
+            artifact: artifact.clone(),
+        },
+        crate::Action::ExpectCapturedDisplayImage { image } => {
+            Operation::ExpectCapturedDisplayImage {
+                image: image.clone(),
+            }
+        }
+        crate::Action::KnobDialogExpectHeap => Operation::KnobDialogExpectHeap,
+        crate::Action::KnobDialogModeEnd => Operation::KnobDialogModeEnd,
+        _ => return None,
+    })
+}
+
+fn valid_artifact(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum InputWait {
+    Applied,
+    Pending,
+    Expired,
+}
+
+fn input_wait(applied_before: u64, applied_now: u64, expired: bool) -> InputWait {
+    if applied_now > applied_before {
+        InputWait::Applied
+    } else if expired {
+        InputWait::Expired
+    } else {
+        InputWait::Pending
+    }
+}
+
+fn mode_operation_matches(operation: &Operation) -> bool {
+    matches!(
+        operation,
+        Operation::EnqueueTap { .. }
+            | Operation::WaitInputApplied
+            | Operation::WaitKnobParameterMode { .. }
+            | Operation::EnqueueEncoder {
+                midi_transaction: false,
+                ..
+            }
+            | Operation::CaptureDisplay { .. }
+            | Operation::ExpectCapturedDisplayImage { .. }
+            | Operation::KnobDialogExpectHeap
+            | Operation::KnobDialogModeEnd
+    )
+}
+
+impl State {
+    pub(super) fn run_mode_primitive(
+        &mut self,
+        session: &Session,
+        options: &Options,
+        operation: Operation,
+        guest_timeout_ms: u32,
+        wall_timeout_s: u64,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        if let Some(scope) = &self.knob_mode {
+            if !mode_operation_matches(&operation) {
+                return Err(format!(
+                    "unexpected operation in knob-dialog mode {}: {operation:?}",
+                    scope.scene
+                )
+                .into());
+            }
+        }
+        let control = l6ctl::OwnedControl::new(&session.engine);
+        match operation {
+            Operation::KnobDialogModeBegin { scene } => {
+                if self.knob_mode.is_some()
+                    || self.pending_input.is_some()
+                    || self.captured_display.is_some()
+                {
+                    return Err("a mode or input/display observation is already active".into());
+                }
+                if !valid_artifact(&scene) {
+                    return Err("invalid mode scene name".into());
+                }
+                let context = self
+                    .knob_dialog_preflight
+                    .as_ref()
+                    .ok_or("missing knob-dialog preflight")?;
+                let index = begin_knob_mode(context)?;
+                if index == 0 {
+                    self.knob_heap_reader = Some(control.heap_counter_reader()?);
+                } else if self.knob_heap_reader.is_none() {
+                    return Err("missing guarded heap reader".into());
+                }
+                self.knob_mode = Some(KnobModeScope {
+                    index,
+                    scene: scene.clone(),
+                    selected_mode: None,
+                });
+                Ok(json!({"scene":scene}))
+            }
+            Operation::EnqueueTap { target, hold_ms } => {
+                if self.pending_input.is_some() {
+                    return Err("input acknowledgement already pending".into());
+                }
+                let source = l6ctl::button_source(target).ok_or("invalid button target")?;
+                let before = control.input_status(source)?;
+                control.tap(target, hold_ms)?;
+                self.pending_input = Some(PendingInput {
+                    source,
+                    applied: before.applied,
+                    deadline: Instant::now() + Duration::from_secs(10),
+                    kind: PendingInputKind::Tap,
+                });
+                Ok(json!({"target":target, "hold_ms":hold_ms, "applied_before":before.applied}))
+            }
+            Operation::EnqueueEncoder {
+                channel,
+                steps,
+                midi_transaction: false,
+            } => {
+                if self.pending_input.is_some() {
+                    return Err("input acknowledgement already pending".into());
+                }
+                let source = l6ctl::InputSource::Panel;
+                let before = control.input_status(source)?;
+                control.encoder(channel as u32, steps)?;
+                self.pending_input = Some(PendingInput {
+                    source,
+                    applied: before.applied,
+                    deadline: Instant::now() + Duration::from_secs(10),
+                    kind: PendingInputKind::Encoder,
+                });
+                Ok(json!({"channel":channel, "steps":steps, "applied_before":before.applied}))
+            }
+            Operation::WaitInputApplied => {
+                let pending = self
+                    .pending_input
+                    .as_ref()
+                    .ok_or("no input acknowledgement pending")?;
+                loop {
+                    session.poll()?;
+                    let status = control.input_status(pending.source)?;
+                    match input_wait(pending.applied, status.applied, Instant::now() >= pending.deadline) {
+                        InputWait::Applied => {
+                            let evidence = json!({"source":pending.source, "applied_before":pending.applied, "applied_after":status.applied});
+                            self.pending_input = None;
+                            return Ok(evidence);
+                        }
+                        InputWait::Expired => return Err(format!("timed out waiting for input applied: source={:?}, before={}, observed={}", pending.source, pending.applied, status.applied).into()),
+                        InputWait::Pending => {}
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
+            Operation::WaitKnobParameterMode { mode } => {
+                let reader = control.knob_parameter_reader()?;
+                let start = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
+                let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(180));
+                loop {
+                    session.poll()?;
+                    let actual = reader.parameter_mode()?;
+                    if actual == mode {
+                        if let Some(scope) = self.knob_mode.as_mut() {
+                            scope.selected_mode = Some(mode);
+                        }
+                        return Ok(json!({"mode":mode}));
+                    }
+                    let now = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
+                    if now.wrapping_sub(start) >= guest_timeout_ms.min(10_000)
+                        || Instant::now() >= deadline
+                    {
+                        return Err(format!(
+                            "parameter mode did not become {mode}; found {actual}"
+                        )
+                        .into());
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
+            Operation::CaptureDisplay { guest_ms, artifact } => {
+                if guest_ms == 0 || !valid_artifact(&artifact) {
+                    return Err("invalid display capture duration or artifact name".into());
+                }
+                if self.captured_display.is_some() {
+                    return Err("captured display has not been checked".into());
+                }
+                let start = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
+                let wall = Instant::now();
+                let frame = loop {
+                    let data = session.poll()?;
+                    let elapsed = control
+                        .input_status(l6ctl::InputSource::Panel)?
+                        .guest_ms
+                        .wrapping_sub(start);
+                    if elapsed >= guest_ms {
+                        break data.display;
+                    }
+                    if elapsed > guest_timeout_ms
+                        || wall.elapsed() > Duration::from_secs(wall_timeout_s)
+                    {
+                        return Err("display capture exceeded its deadline".into());
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                };
+                self.captured_display = Some(CapturedDisplay {
+                    frame,
+                    artifact: artifact.clone(),
+                });
+                Ok(json!({"guest_ms":guest_ms,"artifact":artifact}))
+            }
+            Operation::ExpectCapturedDisplayImage { image } => {
+                let capture = self
+                    .captured_display
+                    .as_ref()
+                    .ok_or("no display capture to check")?;
+                let path = crate::scenario::spec_path(&image)?;
+                check_display_reference(&capture.frame, &path, &options.logs, &capture.artifact)?;
+                let native = image::GrayImage::from_fn(128, 64, |x, y| {
+                    let index = ((63 - y as usize) / 8) * 128 + x as usize;
+                    image::Luma([
+                        if capture.frame[index] & (1 << ((63 - y as usize) % 8)) != 0 {
+                            255
+                        } else {
+                            0
+                        },
+                    ])
+                });
+                image::DynamicImage::ImageLuma8(native)
+                    .resize(768, 384, image::imageops::FilterType::Nearest)
+                    .save(options.logs.join(format!("{}.png", capture.artifact)))?;
+                let artifact = capture.artifact.clone();
+                self.captured_display = None;
+                Ok(json!({"image":image,"artifact":artifact}))
+            }
+            Operation::KnobDialogExpectHeap => {
+                let context = self
+                    .knob_dialog_preflight
+                    .as_ref()
+                    .ok_or("missing knob-dialog preflight")?;
+                let counters = self
+                    .knob_heap_reader
+                    .as_ref()
+                    .ok_or("missing guarded heap reader")?
+                    .read()?;
+                expect_mode_heap(context, &counters)?;
+                Ok(json!({"allocations":counters.allocations,"frees":counters.frees}))
+            }
+            Operation::KnobDialogModeEnd => {
+                if self.pending_input.is_some() || self.captured_display.is_some() {
+                    return Err("mode has unfinished observations".into());
+                }
+                let scope = self.knob_mode.take().ok_or("no knob-dialog mode active")?;
+                let selected = scope
+                    .selected_mode
+                    .ok_or("mode selector was not observed")?;
+                let context = self
+                    .knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?;
+                end_knob_mode(context, selected);
+                Ok(json!({"mode":selected,"scene":scope.scene}))
+            }
+            _ => Err("not a mode observation primitive".into()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_lifecycle_modes_do_not_read_a_source_file() {
+        let operations = embedded_mode_operations().unwrap();
+        assert_eq!(operations.len(), 100);
+        assert!(
+            matches!(&operations[0].1, Operation::KnobDialogModeBegin { scene } if scene == "level")
+        );
+        assert!(matches!(
+            &operations[93].1,
+            Operation::WaitKnobParameterMode { mode: 8 }
+        ));
+        assert!(matches!(&operations[99].1, Operation::KnobDialogModeEnd));
+    }
+
+    #[test]
+    fn acknowledgement_uses_one_applied_event_and_is_bounded() {
+        assert_eq!(input_wait(4, 4, false), InputWait::Pending);
+        assert_eq!(input_wait(4, 5, false), InputWait::Applied);
+        assert_eq!(input_wait(4, 4, true), InputWait::Expired);
+        // Preserve the original completion-before-timeout ordering.
+        assert_eq!(input_wait(4, 5, true), InputWait::Applied);
+    }
+
+    #[test]
+    fn scope_admits_only_mode_primitives() {
+        assert!(mode_operation_matches(&Operation::EnqueueTap {
+            target: 35,
+            hold_ms: 50
+        }));
+        assert!(!mode_operation_matches(&Operation::HostMidiConnect));
+        assert!(!valid_artifact("../escape"));
+    }
+
+    #[test]
+    fn comparison_uses_the_captured_frame_even_if_the_live_frame_changes() {
+        let root = std::env::temp_dir().join(format!("l6-captured-image-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let reference = root.join("reference.png");
+        image::GrayImage::new(128, 64).save(&reference).unwrap();
+        let mut live = [0; 1024];
+        let capture = CapturedDisplay {
+            frame: live,
+            artifact: "captured".into(),
+        };
+        live[0] = 1;
+        assert!(
+            check_display_reference(&capture.frame, &reference, &root, &capture.artifact).is_ok()
+        );
+        assert!(check_display_reference(&live, &reference, &root, "changed").is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

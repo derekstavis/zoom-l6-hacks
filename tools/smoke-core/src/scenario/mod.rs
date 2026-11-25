@@ -9,20 +9,6 @@ use std::{
 };
 
 mod validate;
-/// Ordered recorder scenes and their physical panel inputs.
-pub const KNOB_DIALOG_MODES: [(&str, u32, u8); 10] = [
-    ("level", 35, 9),
-    ("high", 28, 0),
-    ("freq", 33, 1),
-    ("mid", 38, 2),
-    ("low", 43, 3),
-    ("aux1", 10, 4),
-    ("aux2", 15, 5),
-    ("efx", 20, 6),
-    ("sub-mix", 25, 7),
-    ("pan", 30, 8),
-];
-
 /// How a case drives the emulator.
 #[derive(
     Clone,
@@ -449,11 +435,26 @@ pub enum Action {
     KnobDialogBitmapZero,
     KnobDialogActiveOverlay,
     KnobDialogLockedUpdate,
-    KnobDialogMode {
-        button: u32,
-        mode: u8,
-        reference: String,
+    KnobDialogModeBegin {
+        scene: String,
     },
+    EnqueueTap {
+        target: u32,
+        hold_ms: u32,
+    },
+    WaitInputApplied,
+    WaitKnobParameterMode {
+        mode: u8,
+    },
+    CaptureDisplay {
+        guest_ms: u32,
+        artifact: String,
+    },
+    ExpectCapturedDisplayImage {
+        image: PathBuf,
+    },
+    KnobDialogExpectHeap,
+    KnobDialogModeEnd,
     KnobDialog,
     /// Turn the channel 1 level knob once on the recorder screen and check
     /// that Knob Dialog shows the new value.
@@ -771,6 +772,31 @@ pub const STATE_SPEC_ENV: &str = "SMOKE_STATE_SPEC";
 pub struct Fragment {
     pub step: Vec<Step>,
 }
+/// Validate a bounded mode transaction without embedding scene test data in Rust.
+/// The final Pan selector is required by the diagnostic's subsequent Pan sweep.
+pub(crate) fn valid_knob_mode_steps(steps: &[&Step]) -> bool {
+    if steps.is_empty() || steps.len() % 10 != 0 || steps.len() / 10 > 23 {
+        return false;
+    }
+    let valid = steps.chunks_exact(10).all(|group| {
+        matches!(&group[0].action, Action::KnobDialogModeBegin { scene } if !scene.is_empty() && scene.len() <= 64 && scene.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+        && matches!(group[1].action, Action::EnqueueTap { target, hold_ms } if l6ctl::button_source(target).is_some() && (1..=60_000).contains(&hold_ms))
+        && matches!(group[2].action, Action::WaitInputApplied)
+        && matches!(group[3].action, Action::WaitKnobParameterMode { mode } if mode <= 9)
+        && matches!(group[4].action, Action::EnqueueEncoder { channel, steps, midi_transaction: false } if (1..=8).contains(&channel) && steps != 0 && steps.unsigned_abs() <= 1000)
+        && matches!(group[5].action, Action::WaitInputApplied)
+        && matches!(&group[6].action, Action::CaptureDisplay { guest_ms, artifact } if *guest_ms > 0 && *guest_ms <= group[6].guest_timeout_ms && !artifact.is_empty() && artifact.len() <= 64 && artifact.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+        && matches!(&group[7].action, Action::ExpectCapturedDisplayImage { image } if spec_path(image).is_ok() && image.extension().is_some_and(|extension| extension == "png"))
+        && matches!(group[8].action, Action::KnobDialogExpectHeap)
+        && matches!(group[9].action, Action::KnobDialogModeEnd)
+    });
+    valid
+        && matches!(
+            steps[steps.len() - 7].action,
+            Action::WaitKnobParameterMode { mode: 8 }
+        )
+}
+
 /// Expand includes. A fragment is shared, so its steps scoped only to models
 /// the scenario does not run (`scope`) are left out.
 fn expand_steps(

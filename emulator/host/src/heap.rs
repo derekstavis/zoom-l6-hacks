@@ -107,12 +107,12 @@ impl Counters {
 
 /// Guarded access to heap counters for a bounded observation in one guest.
 /// Recreate the reader after a restart or a firmware change.
-pub struct CounterReader<'a> {
-    qmp: &'a QmpClient,
+pub struct CounterReader {
+    qmp: QmpClient,
     model: Model,
 }
 
-impl CounterReader<'_> {
+impl CounterReader {
     /// Perform one QMP read of the four consecutive counter words.
     pub fn read(&self) -> Result<Counters, String> {
         let bytes = self
@@ -140,12 +140,15 @@ fn verify_allocator(
 
 /// Verify both allocator routines before trusting the model-specific counter
 /// addresses. A patch replacing either routine is not supported.
-pub fn counter_reader(qmp: &QmpClient, model: Model) -> Result<CounterReader<'_>, String> {
+pub fn counter_reader(qmp: &QmpClient, model: Model) -> Result<CounterReader, String> {
     verify_allocator(model, |address, length| {
         qmp.read_memory(0, address, length)
             .map_err(|error| error.to_string())
     })?;
-    Ok(CounterReader { qmp, model })
+    Ok(CounterReader {
+        qmp: qmp.clone(),
+        model,
+    })
 }
 
 /// Verify the allocator and take a single live counter sample.
@@ -297,7 +300,7 @@ mod tests {
         // Construct directly to isolate the per-sample contract; guard rejection
         // is tested separately above.
         let reader = CounterReader {
-            qmp: &qmp,
+            qmp: qmp.clone(),
             model: Model::L6max,
         };
         let counters = reader.read().unwrap();

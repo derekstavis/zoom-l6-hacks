@@ -1,8 +1,13 @@
 //! Executing operations against a running session.
 use super::*;
 
-fn knob_dialog_phase(operation: &Operation) -> Option<u8> {
-    match operation {
+fn knob_dialog_phase(
+    operation: &Operation,
+    scope: Option<&KnobModeScope>,
+    pending: Option<&PendingInput>,
+    next_mode: Option<usize>,
+) -> Option<u8> {
+    let fixed = match operation {
         Operation::KnobDialogGuard => Some(0),
         Operation::KnobDialogBaseline => Some(1),
         Operation::KnobDialogPreflightBegin => Some(2),
@@ -20,17 +25,33 @@ fn knob_dialog_phase(operation: &Operation) -> Option<u8> {
         Operation::KnobDialogBitmapZero => Some(14),
         Operation::KnobDialogActiveOverlay => Some(15),
         Operation::KnobDialogLockedUpdate => Some(16),
-        Operation::KnobDialogMode {
-            button,
-            mode,
-            reference,
-        } => crate::scenario::KNOB_DIALOG_MODES
-            .iter()
-            .position(|(name, b, m)| *name == reference && b == button && m == mode)
-            .map(|index| 17 + index as u8),
-        Operation::KnobDialog => Some(27),
+        Operation::KnobDialogModeBegin { .. } | Operation::KnobDialog => {
+            next_mode.and_then(|index| u8::try_from(17 + index * 10).ok())
+        }
         _ => None,
+    };
+    if fixed.is_some() {
+        return fixed;
     }
+    let scope = scope?;
+    let offset = match operation {
+        Operation::EnqueueTap { .. } => 1,
+        Operation::WaitInputApplied => match pending?.kind {
+            PendingInputKind::Tap => 2,
+            PendingInputKind::Encoder => 5,
+        },
+        Operation::WaitKnobParameterMode { .. } => 3,
+        Operation::EnqueueEncoder {
+            midi_transaction: false,
+            ..
+        } => 4,
+        Operation::CaptureDisplay { .. } => 6,
+        Operation::ExpectCapturedDisplayImage { .. } => 7,
+        Operation::KnobDialogExpectHeap => 8,
+        Operation::KnobDialogModeEnd => 9,
+        _ => return None,
+    };
+    Some(17 + scope.index as u8 * 10 + offset)
 }
 
 type KnobDeadline = (Instant, u32, u32, u64, u8);
@@ -194,6 +215,10 @@ impl State {
         self.knob_dialog_preflight.is_some()
     }
     pub fn abort_knob_preflight(&mut self) -> Result<(), String> {
+        self.knob_mode = None;
+        self.knob_heap_reader = None;
+        self.pending_input = None;
+        self.captured_display = None;
         match self.knob_dialog_preflight.take() {
             Some(context) => super::knob_dialog::abort_preflight(context),
             None => Ok(()),
@@ -208,18 +233,19 @@ impl State {
         wall_timeout_s: u64,
     ) -> Result<Value, String> {
         let started = Instant::now();
-        let guest_start = session
-            .engine
-            .inputs
-            .as_ref()
-            .unwrap()
-            .panel
-            .snapshot()
+        let control = l6ctl::OwnedControl::new(&session.engine);
+        let guest_start = control
+            .input_status(l6ctl::InputSource::Panel)
+            .map_err(|e| e.to_string())?
             .guest_ms;
         let is_ready = matches!(operation, Operation::KnobDialogReady);
-        let deadline_operation =
-            knob_dialog_phase(&operation).map(|_| matches!(operation, Operation::KnobDialog));
-        let expected = knob_dialog_phase(&operation);
+        let expected = knob_dialog_phase(
+            &operation,
+            self.knob_mode.as_ref(),
+            self.pending_input.as_ref(),
+            self.knob_dialog_preflight.as_ref().map(knob_mode_index),
+        );
+        let deadline_operation = expected.map(|_| matches!(operation, Operation::KnobDialog));
         if expected.is_none() && self.has_knob_preflight() {
             let error = "knob-dialog preflight interrupted by another operation";
             return match self.abort_knob_preflight() {
@@ -286,13 +312,9 @@ impl State {
                 };
             }
         };
-        let elapsed = session
-            .engine
-            .inputs
-            .as_ref()
-            .unwrap()
-            .panel
-            .snapshot()
+        let elapsed = control
+            .input_status(l6ctl::InputSource::Panel)
+            .map_err(|e| e.to_string())?
             .guest_ms
             .wrapping_sub(guest_start);
         if started.elapsed() > Duration::from_secs(wall_timeout_s) || elapsed > guest_timeout_ms {
@@ -303,13 +325,9 @@ impl State {
             };
         }
         if let Some((start, guest_start, guest_budget, wall_budget, _)) = shared {
-            let now = session
-                .engine
-                .inputs
-                .as_ref()
-                .unwrap()
-                .panel
-                .snapshot()
+            let now = control
+                .input_status(l6ctl::InputSource::Panel)
+                .map_err(|e| e.to_string())?
                 .guest_ms;
             if deadline_exceeded(start.elapsed(), guest_start, now, guest_budget, wall_budget) {
                 let error = "device operation exceeded its step deadline";
@@ -1801,6 +1819,16 @@ impl State {
                 guest_timeout_ms,
                 wall_timeout_s,
             ),
+            operation @ Operation::EnqueueEncoder {
+                midi_transaction: false,
+                ..
+            } if self.knob_mode.is_some() => self.run_mode_primitive(
+                session,
+                options,
+                operation,
+                guest_timeout_ms,
+                wall_timeout_s,
+            ),
             operation @ (Operation::HostMidiBegin
             | Operation::HostMidiDrain { .. }
             | Operation::HostMidiExpectCount { .. }
@@ -2319,27 +2347,22 @@ impl State {
                     .ok_or("missing knob-dialog preflight")?;
                 run_locked_value_update(session, options, context, guest_timeout_ms, wall_timeout_s)
             }
-            Operation::KnobDialogMode {
-                button,
-                mode,
-                reference,
-            } => {
-                let context = self
-                    .knob_dialog_preflight
-                    .as_mut()
-                    .ok_or("missing knob-dialog preflight")?;
-                run_knob_dialog_mode(
-                    session,
-                    options,
-                    context,
-                    button,
-                    mode,
-                    &reference,
-                    guest_timeout_ms,
-                    wall_timeout_s,
-                )
-            }
+            operation @ (Operation::KnobDialogModeBegin { .. }
+            | Operation::EnqueueTap { .. }
+            | Operation::WaitInputApplied
+            | Operation::WaitKnobParameterMode { .. }
+            | Operation::CaptureDisplay { .. }
+            | Operation::ExpectCapturedDisplayImage { .. }
+            | Operation::KnobDialogExpectHeap
+            | Operation::KnobDialogModeEnd) => self.run_mode_primitive(
+                session,
+                options,
+                operation,
+                guest_timeout_ms,
+                wall_timeout_s,
+            ),
             Operation::KnobDialog => {
+                self.knob_heap_reader = None;
                 let _baseline = self
                     .knob_dialog_baseline
                     .take()
@@ -2408,7 +2431,7 @@ mod knob_phase_tests {
     use super::*;
     #[test]
     fn shared_budget_carries_through_every_intermediate_phase() {
-        let mut phases = vec![
+        let phases = vec![
             Operation::KnobDialogGuard,
             Operation::KnobDialogBaseline,
             Operation::KnobDialogPreflightBegin,
@@ -2427,22 +2450,85 @@ mod knob_phase_tests {
             Operation::KnobDialogActiveOverlay,
             Operation::KnobDialogLockedUpdate,
         ];
-        phases.extend(crate::scenario::KNOB_DIALOG_MODES.iter().map(
-            |(reference, button, mode)| Operation::KnobDialogMode {
-                button: *button,
-                mode: *mode,
-                reference: (*reference).into(),
-            },
-        ));
-        phases.push(Operation::KnobDialog);
         let start = Instant::now();
         let mut shared = Some((start, 17, 180_000, 600, 0));
-        for (index, op) in phases.iter().enumerate() {
-            assert_eq!(knob_dialog_phase(op), Some(index as u8));
+        let check = |operation: &Operation,
+                     scope: Option<&KnobModeScope>,
+                     pending: Option<&PendingInput>,
+                     next_mode: Option<usize>,
+                     shared: &mut Option<KnobDeadline>| {
             let before = shared.expect("deadline lost before the final operation");
-            assert_eq!(before.4, index as u8);
-            shared = advance_knob_deadline(matches!(op, Operation::KnobDialog), before);
+            assert_eq!(
+                knob_dialog_phase(operation, scope, pending, next_mode),
+                Some(before.4)
+            );
+            *shared = advance_knob_deadline(matches!(operation, Operation::KnobDialog), before);
+        };
+        for op in &phases {
+            check(op, None, None, None, &mut shared);
         }
+        for index in 0..3 {
+            let begin = Operation::KnobDialogModeBegin {
+                scene: format!("scene-{index}"),
+            };
+            check(&begin, None, None, Some(index), &mut shared);
+            let scope = KnobModeScope {
+                index,
+                scene: format!("scene-{index}"),
+                selected_mode: None,
+            };
+            let tap = PendingInput {
+                source: l6ctl::InputSource::Panel,
+                applied: 0,
+                deadline: start,
+                kind: PendingInputKind::Tap,
+            };
+            let encoder = PendingInput {
+                source: l6ctl::InputSource::Panel,
+                applied: 0,
+                deadline: start,
+                kind: PendingInputKind::Encoder,
+            };
+            let ops = [
+                (
+                    Operation::EnqueueTap {
+                        target: 35,
+                        hold_ms: 50,
+                    },
+                    None,
+                ),
+                (Operation::WaitInputApplied, Some(&tap)),
+                (Operation::WaitKnobParameterMode { mode: 8 }, None),
+                (
+                    Operation::EnqueueEncoder {
+                        channel: 1,
+                        steps: 1,
+                        midi_transaction: false,
+                    },
+                    None,
+                ),
+                (Operation::WaitInputApplied, Some(&encoder)),
+                (
+                    Operation::CaptureDisplay {
+                        guest_ms: 400,
+                        artifact: "screen".into(),
+                    },
+                    None,
+                ),
+                (
+                    Operation::ExpectCapturedDisplayImage {
+                        image: Path::new(KNOB_DIALOG_REFERENCES).join("pan.png"),
+                    },
+                    None,
+                ),
+                (Operation::KnobDialogExpectHeap, None),
+                (Operation::KnobDialogModeEnd, None),
+            ];
+            for (op, pending) in &ops {
+                check(op, Some(&scope), *pending, Some(index), &mut shared);
+            }
+        }
+        check(&Operation::KnobDialog, None, None, Some(3), &mut shared);
         assert!(shared.is_none());
     }
 }

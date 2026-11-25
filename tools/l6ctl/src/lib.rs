@@ -4,6 +4,7 @@
 //! particular its input replies confirm enqueueing, not guest acknowledgement.
 pub use l6max_host::control::Info;
 pub use l6max_host::heap::Counters as HeapCounters;
+pub use l6max_host::input::button_source;
 pub use l6max_host::input::{InputCounters, InputSource};
 pub use l6max_host::knob_popup::{ParameterState, RecorderState, Snapshot as KnobPopupSnapshot};
 use l6max_host::{control, engine::Engine, freertos, qmp};
@@ -270,7 +271,7 @@ impl<'a> OwnedControl<'a> {
 
     /// Validate the allocator once for a bounded set of live counter reads.
     /// Recreate this reader after a guest restart or firmware change.
-    pub fn heap_counter_reader(&self) -> Result<l6max_host::heap::CounterReader<'_>, ControlError> {
+    pub fn heap_counter_reader(&self) -> Result<l6max_host::heap::CounterReader, ControlError> {
         l6max_host::heap::counter_reader(self.main_qmp()?, self.engine.model())
             .map_err(ControlError::Rejected)
     }

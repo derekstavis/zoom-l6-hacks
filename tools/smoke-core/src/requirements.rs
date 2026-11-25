@@ -103,7 +103,12 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobDialogBitmapZero
         | Action::KnobDialogActiveOverlay
         | Action::KnobDialogLockedUpdate
-        | Action::KnobDialogMode { .. }
+        | Action::KnobDialogModeBegin { .. }
+        | Action::WaitKnobParameterMode { .. }
+        | Action::KnobDialogExpectHeap
+        | Action::KnobDialogModeEnd
+        | Action::CaptureDisplay { .. }
+        | Action::ExpectCapturedDisplayImage { .. }
         | Action::KnobDialog
         | Action::KnobPopupOpen { .. }
         | Action::KnobPopupExpectOpen
@@ -125,6 +130,8 @@ pub fn of(action: &Action) -> Requirement {
         | Action::HostMidiExpectCount { .. }
         | Action::HostMidiEnd
         | Action::EnqueueEncoder { .. }
+        | Action::EnqueueTap { .. }
+        | Action::WaitInputApplied
         | Action::HostMidiExpectCc { .. }
         | Action::HostMidiSettle { .. }
         | Action::HostMidiSendCc { .. }

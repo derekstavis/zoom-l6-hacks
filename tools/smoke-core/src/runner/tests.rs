@@ -1262,7 +1262,8 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
     let overlay = "[[step]]\naction='knob-dialog-overlay-invariants'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-bitmap-zero'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-active-overlay'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let locked = "[[step]]\naction='knob-dialog-locked-update'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let dialog = "[[step]]\naction='knob-dialog'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
-    let modes = crate::scenario::KNOB_DIALOG_MODES.iter().map(|(reference, button, mode)| format!("[[step]]\naction='knob-dialog-mode'\nbutton={button}\nmode={mode}\nreference='{reference}'\nguest_timeout_ms=180000\nwall_timeout_s=600\n")).collect::<String>();
+    let modes =
+        include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/mode-walk.toml");
     assert!(
         Scenario::parse(&format!(
             "{prefix}{ready}{guard}{baseline}{preflight}{activation}{active_demo}{tasks}{overlay}{locked}{modes}{dialog}"
@@ -1273,12 +1274,18 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
     let complete = format!(
         "{prefix}{ready}{guard}{baseline}{preflight}{activation}{active_demo}{tasks}{overlay}{locked}{modes}{dialog}"
     );
-    assert!(Scenario::parse(&complete.replace("reference='freq'", "reference='wrong'")).is_err());
-    assert!(Scenario::parse(&complete.replace("button=33", "button=34")).is_err());
+    // The fragment supplies parameters; changing a valid input is permitted,
+    // but the scoped sequence and final Pan mode remain required.
+    assert!(Scenario::parse(&complete.replacen("hold_ms = 50", "hold_ms = 100", 1)).is_ok());
     assert!(
-        Scenario::parse(&complete.replace("mode=1\nreference='freq'", "mode=2\nreference='freq'"))
-            .is_err()
+        Scenario::parse(&complete.replacen(
+            "action = \"wait-input-applied\"",
+            "action = \"knob-dialog-expect-heap\"",
+            1
+        ))
+        .is_err()
     );
+    assert!(Scenario::parse(&complete.replace("mode = 8", "mode = 7")).is_err());
 
     let setup_pruned =
         format!("{prefix}{ready}{guard}{baseline}{preflight}{activation}{active_demo}{tasks}{overlay}{locked}{modes}{dialog}")
@@ -1307,6 +1314,18 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
         ))
         .is_err()
     );
+}
+
+#[test]
+fn captured_display_primitives_reject_screenless_l6() {
+    let prefix = "version=1\nname='display'\nmodels=['l6']\nbackends=['headless']\n";
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}[[step]]\naction='capture-display'\nguest_ms=400\nartifact='capture'\n"
+        ))
+        .is_err()
+    );
+    assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='expect-captured-display-image'\nimage='tests/emulator/references/l6max-recorder-home.png'\n")).is_err());
 }
 
 #[test]

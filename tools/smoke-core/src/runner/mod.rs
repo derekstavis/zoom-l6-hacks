@@ -843,16 +843,43 @@ impl Runner {
                 Action::KnobDialogLockedUpdate => {
                     return Ok(Progress::Device(devices::Operation::KnobDialogLockedUpdate));
                 }
-                Action::KnobDialogMode {
-                    button,
-                    mode,
-                    reference,
-                } => {
-                    return Ok(Progress::Device(devices::Operation::KnobDialogMode {
-                        button,
-                        mode,
-                        reference: reference.clone(),
+                Action::KnobDialogModeBegin { scene } => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogModeBegin {
+                        scene: scene.clone(),
                     }));
+                }
+                Action::EnqueueTap { target, hold_ms } => {
+                    return Ok(Progress::Device(devices::Operation::EnqueueTap {
+                        target,
+                        hold_ms,
+                    }));
+                }
+                Action::WaitInputApplied => {
+                    return Ok(Progress::Device(devices::Operation::WaitInputApplied));
+                }
+                Action::WaitKnobParameterMode { mode } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::WaitKnobParameterMode { mode },
+                    ));
+                }
+                Action::CaptureDisplay { guest_ms, artifact } => {
+                    return Ok(Progress::Device(devices::Operation::CaptureDisplay {
+                        guest_ms,
+                        artifact: artifact.clone(),
+                    }));
+                }
+                Action::ExpectCapturedDisplayImage { image } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectCapturedDisplayImage {
+                            image: image.clone(),
+                        },
+                    ));
+                }
+                Action::KnobDialogExpectHeap => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogExpectHeap));
+                }
+                Action::KnobDialogModeEnd => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogModeEnd));
                 }
                 Action::KnobDialog => {
                     return Ok(Progress::Device(devices::Operation::KnobDialog));

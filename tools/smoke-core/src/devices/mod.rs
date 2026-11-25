@@ -19,6 +19,7 @@ mod execute;
 mod knob_dialog;
 mod lifecycle;
 mod midi;
+mod mode_primitives;
 mod panel;
 mod sd;
 mod usb;
@@ -29,6 +30,7 @@ use editor::*;
 pub use knob_dialog::*;
 pub use lifecycle::*;
 use midi::*;
+use mode_primitives::embedded_mode_operations;
 use panel::*;
 use sd::*;
 use usb::*;
@@ -224,11 +226,26 @@ pub enum Operation {
     KnobDialogBitmapZero,
     KnobDialogActiveOverlay,
     KnobDialogLockedUpdate,
-    KnobDialogMode {
-        button: u32,
-        mode: u8,
-        reference: String,
+    KnobDialogModeBegin {
+        scene: String,
     },
+    EnqueueTap {
+        target: u32,
+        hold_ms: u32,
+    },
+    WaitInputApplied,
+    WaitKnobParameterMode {
+        mode: u8,
+    },
+    CaptureDisplay {
+        guest_ms: u32,
+        artifact: String,
+    },
+    ExpectCapturedDisplayImage {
+        image: PathBuf,
+    },
+    KnobDialogExpectHeap,
+    KnobDialogModeEnd,
     KnobDialog,
     KnobPopupOpen {
         first_steps: i32,
@@ -570,8 +587,36 @@ pub struct State {
     knob_dialog_baseline: Option<[u8; 1024]>,
     knob_dialog_preflight: Option<knob_dialog::PreflightContext>,
     knob_dialog_deadline: Option<(std::time::Instant, u32, u32, u64, u8)>,
+    knob_mode: Option<KnobModeScope>,
+    knob_heap_reader: Option<l6max_host::heap::CounterReader>,
+    pending_input: Option<PendingInput>,
+    captured_display: Option<CapturedDisplay>,
     midi_round_trip: Option<MidiRoundTrip>,
     native_midi: Option<l6ctl::midi::MidiSession>,
+}
+
+struct KnobModeScope {
+    index: usize,
+    scene: String,
+    selected_mode: Option<u8>,
+}
+
+struct PendingInput {
+    source: l6ctl::InputSource,
+    applied: u64,
+    deadline: Instant,
+    kind: PendingInputKind,
+}
+
+#[derive(Clone, Copy)]
+enum PendingInputKind {
+    Tap,
+    Encoder,
+}
+
+struct CapturedDisplay {
+    frame: [u8; 1024],
+    artifact: String,
 }
 
 impl State {

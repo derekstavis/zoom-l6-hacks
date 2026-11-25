@@ -110,7 +110,7 @@ impl Scenario {
                 Action::KnobDialogBitmapZero => "knob-dialog-overlay-invariants",
                 Action::KnobDialogActiveOverlay => "knob-dialog-bitmap-zero",
                 Action::KnobDialogLockedUpdate => "knob-dialog-active-overlay",
-                Action::KnobDialog => "knob-dialog-mode",
+                Action::KnobDialog => "knob-dialog-mode-end",
                 _ => continue,
             };
             for model in &value.models {
@@ -170,7 +170,9 @@ impl Scenario {
                         "knob-dialog-active-overlay" => {
                             matches!(previous.action, Action::KnobDialogActiveOverlay)
                         }
-                        "knob-dialog-mode" => matches!(&previous.action, Action::KnobDialogMode { button: 30, mode: 8, reference } if reference == "pan"),
+                        "knob-dialog-mode-end" => {
+                            matches!(previous.action, Action::KnobDialogModeEnd)
+                        }
                         _ => matches!(previous.action, Action::KnobDialogLockedUpdate),
                     };
                     correct
@@ -192,12 +194,18 @@ impl Scenario {
                 if !step.applies_to(*model) {
                     continue;
                 }
-                let subsequent = value.step[index + 1..]
+                let applicable = value.step[index + 1..]
                     .iter()
                     .filter(|next| next.applies_to(*model))
-                    .take(25)
                     .collect::<Vec<_>>();
-                if subsequent.len() != 25
+                let Some(end) = applicable
+                    .iter()
+                    .position(|next| matches!(next.action, Action::KnobDialog))
+                else {
+                    return Err("knob-dialog preflight must end with the diagnostic".into());
+                };
+                let subsequent = &applicable[..=end];
+                if subsequent.len() < 25
                     || !matches!(subsequent[0].action, Action::KnobDialogPreflightDescriptor)
                     || !matches!(subsequent[1].action, Action::KnobDialogPreflightTextAlias)
                     || !matches!(
@@ -218,8 +226,7 @@ impl Scenario {
                     || !matches!(subsequent[11].action, Action::KnobDialogBitmapZero)
                     || !matches!(subsequent[12].action, Action::KnobDialogActiveOverlay)
                     || !matches!(subsequent[13].action, Action::KnobDialogLockedUpdate)
-                    || !subsequent[14..24].iter().zip(super::KNOB_DIALOG_MODES.iter()).all(|(step, (name, button, mode))| matches!(&step.action, Action::KnobDialogMode { button: b, mode: m, reference } if b == button && m == mode && reference == name))
-                    || !matches!(subsequent[24].action, Action::KnobDialog)
+                    || !valid_knob_mode_steps(&subsequent[14..subsequent.len() - 1])
                     || subsequent.iter().any(|next| {
                         next.guest_timeout_ms != step.guest_timeout_ms
                             || next.wall_timeout_s != step.wall_timeout_s
@@ -534,6 +541,45 @@ impl Scenario {
                 }
             }
             match &step.action {
+                Action::KnobDialogModeBegin { scene } => {
+                    if scene.is_empty()
+                        || scene.len() > 64
+                        || !scene
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                    {
+                        return Err("knob-dialog-mode-begin requires a simple scene name".into());
+                    }
+                }
+                Action::EnqueueTap { target, hold_ms } => {
+                    if l6ctl::button_source(*target).is_none() || *hold_ms == 0 || *hold_ms > 60_000
+                    {
+                        return Err(
+                            "enqueue-tap requires a valid target and hold_ms in 1..=60000".into(),
+                        );
+                    }
+                }
+                Action::WaitKnobParameterMode { mode } if *mode > 9 => {
+                    return Err("wait-knob-parameter-mode requires mode 0..9".into());
+                }
+                Action::CaptureDisplay { guest_ms, artifact } => {
+                    if *guest_ms == 0
+                        || *guest_ms > step.guest_timeout_ms
+                        || artifact.is_empty()
+                        || artifact.len() > 64
+                        || !artifact
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                    {
+                        return Err("capture-display requires a positive duration within its deadline and a simple artifact name".into());
+                    }
+                }
+                Action::ExpectCapturedDisplayImage { image } => {
+                    spec_path(image)?;
+                    if image.extension().is_none_or(|extension| extension != "png") {
+                        return Err("expect-captured-display-image needs a PNG image".into());
+                    }
+                }
                 Action::ExpectDisplayImage { image, settle_ms } => {
                     spec_path(image)?;
                     if image.extension().is_none_or(|extension| extension != "png") {

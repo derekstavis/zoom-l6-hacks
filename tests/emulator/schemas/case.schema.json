@@ -3630,13 +3630,10 @@
         },
         {
           "additionalProperties": false,
-          "description": "Press an L6max control and wait until the display changes.",
+          "description": "Wait for the display to differ from the preceding press's baseline.",
           "properties": {
             "action": {
-              "const": "press-display-change",
-              "type": "string"
-            },
-            "control": {
+              "const": "expect-display-after-press",
               "type": "string"
             },
             "guest_timeout_ms": {
@@ -3665,8 +3662,7 @@
             }
           },
           "required": [
-            "action",
-            "control"
+            "action"
           ],
           "type": "object"
         },
@@ -5439,7 +5435,7 @@
             "wait",
             "delay",
             "observe-duration",
-            "press-display-change",
+            "expect-display-after-press",
             "press",
             "hold",
             "save-scene",

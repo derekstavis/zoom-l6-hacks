@@ -71,6 +71,26 @@ impl Scenario {
         let mut checkpoints = std::collections::BTreeSet::new();
         let mut usb_descriptors_seen = false;
         let mut pad_assignments_seen = false;
+        // The display comparison borrows the immediately preceding applicable
+        // press's frame and deadline. Do not let unrelated steps reuse it.
+        for (index, step) in value.step.iter().enumerate() {
+            if !matches!(step.action, Action::ExpectDisplayAfterPress) {
+                continue;
+            }
+            for model in &value.models {
+                if !step.applies_to(*model) {
+                    continue;
+                }
+                let previous = value.step[..index]
+                    .iter()
+                    .rev()
+                    .find(|previous| previous.applies_to(*model));
+                if !previous.is_some_and(|previous| matches!(previous.action, Action::Press { .. }))
+                {
+                    return Err("expect-display-after-press requires an immediately preceding press for each model".into());
+                }
+            }
+        }
         for step in &value.step {
             if matches!(step.action, Action::EditorPadAssignments) && !usb_descriptors_seen {
                 return Err(
@@ -487,7 +507,6 @@ impl Scenario {
                     return Err(format!("unknown wait condition: {until}"));
                 }
                 Action::Press { control }
-                | Action::PressDisplayChange { control }
                 | Action::Hold { control, .. }
                 | Action::Switch { control, .. }
                 | Action::ExpectButtonReport { control }
@@ -500,12 +519,8 @@ impl Scenario {
                             {
                                 return Err("switch action requires a latching switch".into());
                             }
-                            if matches!(
-                                step.action,
-                                Action::Press { .. }
-                                    | Action::PressDisplayChange { .. }
-                                    | Action::Hold { .. }
-                            ) && is_switch(*model, target)
+                            if matches!(step.action, Action::Press { .. } | Action::Hold { .. })
+                                && is_switch(*model, target)
                             {
                                 return Err("use switch action for a latching switch".into());
                             }

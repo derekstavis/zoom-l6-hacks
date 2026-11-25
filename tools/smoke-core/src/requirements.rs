@@ -89,7 +89,7 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobDialogPopup
         | Action::ExpectMenu { .. }
         | Action::WaitEffectMode { .. } => on(L6MAX),
-        Action::PressDisplayChange { .. } => Requirement {
+        Action::ExpectDisplayAfterPress => Requirement {
             models: L6MAX,
             ..ANY
         },

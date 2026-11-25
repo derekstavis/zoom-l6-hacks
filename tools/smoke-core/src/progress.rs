@@ -183,10 +183,7 @@ pub fn step_label(action: &crate::Action) -> String {
     use crate::Action;
     match action {
         Action::Wait { until } => format!("Wait for {}", until.replace('-', " ")),
-        Action::PressDisplayChange { control } => format!(
-            "Press {} and wait for display",
-            control.replace(['-', '.'], " ")
-        ),
+        Action::ExpectDisplayAfterPress => "Wait for display change".into(),
         Action::Press { control } => format!("Press {}", control.replace(['-', '.'], " ")),
         Action::Hold { control, .. } => format!("Hold {}", control.replace(['-', '.'], " ")),
         Action::HoldChord {

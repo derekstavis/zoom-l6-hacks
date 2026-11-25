@@ -450,10 +450,8 @@ pub enum Action {
         activity: ObservationActivity,
         guest_ms: u32,
     },
-    /// Press an L6max control and wait until the display changes.
-    PressDisplayChange {
-        control: String,
-    },
+    /// Wait for the display to differ from the preceding press's baseline.
+    ExpectDisplayAfterPress,
     Press {
         control: String,
     },

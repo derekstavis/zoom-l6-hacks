@@ -75,6 +75,8 @@ pub struct Runner {
     dispatched: bool,
     baseline: Option<Observation>,
     last_command: Option<Command>,
+    /// The previous press's start and budgets, shared with its display check.
+    last_press_deadline: Option<(Instant, u32, u64, u32)>,
     startup: BootReadiness,
     trace: TraceCursor,
     trace_path: PathBuf,
@@ -165,6 +167,7 @@ impl Runner {
             dispatched: false,
             baseline: None,
             last_command: None,
+            last_press_deadline: None,
             startup: BootReadiness::new(no_setup_screens),
             trace,
             history: Default::default(),
@@ -297,8 +300,9 @@ impl Runner {
                 (now, obs.panel.guest_ms)
             });
             let elapsed = obs.panel.guest_ms.wrapping_sub(guest_start);
-            if now.duration_since(entered) > Duration::from_secs(step.wall_timeout_s)
-                || elapsed > step.guest_timeout_ms
+            if !matches!(step.action, Action::ExpectDisplayAfterPress)
+                && (now.duration_since(entered) > Duration::from_secs(step.wall_timeout_s)
+                    || elapsed > step.guest_timeout_ms)
             {
                 if let Action::ExpectDisplayImage { image, .. } = &step.action {
                     let path = crate::scenario::spec_path(image)?;
@@ -978,14 +982,22 @@ impl Runner {
                         && obs.data.switches[control_target(self.model, &control)? as usize]
                             == enabled
                 }
-                Action::PressDisplayChange { control } => {
-                    if !self.dispatched {
-                        return self.dispatch(
-                            Command::Press {
-                                target: control_target(self.model, &control)?,
-                            },
-                            obs,
-                        );
+                Action::ExpectDisplayAfterPress => {
+                    let (press_started, press_guest, wall_timeout, guest_timeout) = self
+                        .last_press_deadline
+                        .ok_or("display change requires a preceding press")?;
+                    if !matches!(self.last_command, Some(Command::Press { .. })) {
+                        return Err("display change requires a preceding press".into());
+                    }
+                    if now.duration_since(press_started) > Duration::from_secs(wall_timeout)
+                        || obs.panel.guest_ms.wrapping_sub(press_guest) > guest_timeout
+                    {
+                        return Err(format!(
+                            "step {} timed out: display did not change before the press deadline; observed {}; startup={:?}",
+                            self.step + 1,
+                            obs.summary(),
+                            self.startup
+                        ));
                     }
                     self.acknowledged(&obs)?
                         && self
@@ -1367,6 +1379,7 @@ impl Runner {
         self.startup = BootReadiness::new(self.scenario.spec_state);
         self.entered = None;
         self.settling = None;
+        self.last_press_deadline = None;
         self.panel_quiet = None;
         self.ring_quiet = None;
         self.last_report_guest = 0;
@@ -1395,6 +1408,17 @@ impl Runner {
         self.dispatched = false;
     }
     fn dispatch(&mut self, command: Command, obs: Observation) -> Result<Progress, String> {
+        self.last_press_deadline = match (
+            &command,
+            &self.scenario.step[self.step].action,
+            self.entered,
+        ) {
+            (Command::Press { .. }, Action::Press { .. }, Some((started, guest))) => {
+                let step = &self.scenario.step[self.step];
+                Some((started, guest, step.wall_timeout_s, step.guest_timeout_ms))
+            }
+            _ => None,
+        };
         self.record(json!({"event":"dispatch","step":self.step+1,"command":format!("{command:?}"),"observation":obs.summary()}));
         self.baseline = Some(obs);
         self.last_command = Some(command.clone());

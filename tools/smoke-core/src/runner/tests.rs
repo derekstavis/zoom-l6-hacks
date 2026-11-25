@@ -129,8 +129,8 @@ fn direct_usb_midi_cable_is_configurable_and_range_checked() {
     .is_err());
 }
 #[test]
-fn press_display_change_requires_ack_and_new_display() {
-    let scenario = Scenario::parse("version=1\nname='press-screen'\nmodels=['l6max']\n[[step]]\naction='press-display-change'\ncontrol='recorder.down'\n").unwrap();
+fn display_after_press_requires_ack_and_new_display() {
+    let scenario = Scenario::parse("version=1\nname='press-screen'\nmodels=['l6max']\n[[step]]\naction='press'\ncontrol='recorder.down'\n[[step]]\naction='expect-display-after-press'\n").unwrap();
     let logs = std::env::temp_dir().join(format!(
         "smoke-press-screen-{}-{}",
         std::process::id(),
@@ -163,7 +163,179 @@ fn press_display_change_requires_ack_and_new_display() {
         Progress::Complete
     ));
     fs::remove_dir_all(logs).unwrap();
-    assert!(Scenario::parse("version=1\nname='invalid'\nmodels=['l6']\n[[step]]\naction='press-display-change'\ncontrol='recorder.down'\n").is_err());
+    assert!(Scenario::parse("version=1\nname='invalid'\nmodels=['l6']\n[[step]]\naction='expect-display-after-press'\n").is_err());
+}
+
+#[test]
+fn display_after_press_accepts_the_changed_frame_when_ack_arrives() {
+    let scenario = Scenario::parse("version=1\nname='ack-frame'\nmodels=['l6max']\n[[step]]\naction='press'\ncontrol='recorder.down'\n[[step]]\naction='expect-display-after-press'\n").unwrap();
+    let logs = std::env::temp_dir().join(format!(
+        "smoke-press-ack-frame-{}-{}",
+        std::process::id(),
+        NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let mut runner = Runner::new(scenario, Model::L6max, logs.clone()).unwrap();
+    let now = Instant::now();
+    assert!(matches!(
+        runner.advance(sample(0), now).unwrap(),
+        Progress::Dispatch(_)
+    ));
+    let mut changed = sample(20);
+    changed.data.display[0] = 1;
+    assert!(matches!(
+        runner.advance(changed.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    changed.main.sent = 2;
+    changed.main.applied = 2;
+    changed.panel.sent = 2;
+    changed.panel.applied = 2;
+    assert!(matches!(
+        runner.advance(changed, now).unwrap(),
+        Progress::Complete
+    ));
+    fs::remove_dir_all(logs).unwrap();
+}
+
+#[test]
+fn display_after_press_keeps_the_press_guest_and_wall_deadlines() {
+    for wall in [false, true] {
+        let scenario = Scenario::parse("version=1\nname='deadline'\nmodels=['l6max']\n[[step]]\naction='press'\ncontrol='recorder.down'\nguest_timeout_ms=100\nwall_timeout_s=1\n[[step]]\naction='expect-display-after-press'\nguest_timeout_ms=1000\nwall_timeout_s=10\n").unwrap();
+        let logs = std::env::temp_dir().join(format!(
+            "smoke-press-deadline-{}-{}",
+            std::process::id(),
+            NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let mut runner = Runner::new(scenario, Model::L6max, logs.clone()).unwrap();
+        let now = Instant::now();
+        assert!(matches!(
+            runner.advance(sample(0), now).unwrap(),
+            Progress::Dispatch(_)
+        ));
+        let mut ack = sample(50);
+        ack.main.sent = 2;
+        ack.main.applied = 2;
+        ack.panel.sent = 2;
+        ack.panel.applied = 2;
+        assert!(matches!(
+            runner
+                .advance(ack.clone(), now + Duration::from_millis(500))
+                .unwrap(),
+            Progress::Waiting
+        ));
+        ack.data.display[0] = 1;
+        if wall {
+            assert!(
+                runner
+                    .advance(ack, now + Duration::from_millis(1001))
+                    .unwrap_err()
+                    .contains("press deadline")
+            );
+        } else {
+            ack.panel.guest_ms = 101;
+            assert!(
+                runner
+                    .advance(ack, now + Duration::from_millis(501))
+                    .unwrap_err()
+                    .contains("press deadline")
+            );
+        }
+        fs::remove_dir_all(logs).unwrap();
+    }
+}
+
+#[test]
+fn display_after_press_does_not_start_a_shorter_new_deadline() {
+    let scenario = Scenario::parse("version=1\nname='long-press-budget'\nmodels=['l6max']\n[[step]]\naction='press'\ncontrol='recorder.down'\nguest_timeout_ms=2000\nwall_timeout_s=10\n[[step]]\naction='expect-display-after-press'\nguest_timeout_ms=100\nwall_timeout_s=1\n").unwrap();
+    let logs = std::env::temp_dir().join(format!(
+        "smoke-press-long-{}-{}",
+        std::process::id(),
+        NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let mut runner = Runner::new(scenario, Model::L6max, logs.clone()).unwrap();
+    let now = Instant::now();
+    runner.advance(sample(0), now).unwrap();
+    let mut ack = sample(50);
+    ack.main.sent = 2;
+    ack.main.applied = 2;
+    ack.panel.sent = 2;
+    ack.panel.applied = 2;
+    assert!(matches!(
+        runner.advance(ack.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    ack.panel.guest_ms = 500;
+    assert!(matches!(
+        runner
+            .advance(ack.clone(), now + Duration::from_secs(2))
+            .unwrap(),
+        Progress::Waiting
+    ));
+    ack.data.display[0] = 1;
+    assert!(matches!(
+        runner.advance(ack, now + Duration::from_secs(3)).unwrap(),
+        Progress::Complete
+    ));
+    fs::remove_dir_all(logs).unwrap();
+}
+
+#[test]
+fn display_after_press_requires_adjacent_press_for_each_model() {
+    let prefix = "version=1\nname='adjacent'\nmodels=['l6max']\n";
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}[[step]]\naction='expect-display-after-press'\n"
+        ))
+        .is_err()
+    );
+    assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='press'\ncontrol='recorder.down'\n[[step]]\naction='delay'\nguest_ms=1\n[[step]]\naction='expect-display-after-press'\n")).is_err());
+    assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='press'\ncontrol='recorder.down'\n[[step]]\naction='expect-display-after-press'\n")).is_ok());
+}
+
+#[test]
+fn display_after_press_rejects_new_input_and_restart_invalidates_baseline() {
+    let make_runner = || {
+        let scenario = Scenario::parse("version=1\nname='baseline'\nmodels=['l6max']\n[[step]]\naction='press'\ncontrol='recorder.down'\n[[step]]\naction='expect-display-after-press'\n").unwrap();
+        Runner::new(
+            scenario,
+            Model::L6max,
+            std::env::temp_dir().join(format!(
+                "smoke-press-baseline-{}-{}",
+                std::process::id(),
+                NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            )),
+        )
+        .unwrap()
+    };
+    let now = Instant::now();
+    let mut runner = make_runner();
+    runner.advance(sample(0), now).unwrap();
+    let mut ack = sample(1);
+    ack.panel.sent = 2;
+    ack.panel.applied = 2;
+    ack.main.sent = 2;
+    ack.main.applied = 2;
+    assert!(matches!(
+        runner.advance(ack.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    ack.panel.sent = 3;
+    ack.main.sent = 3;
+    assert!(
+        runner
+            .advance(ack.clone(), now)
+            .unwrap_err()
+            .contains("unexpected concurrent input")
+    );
+    let logs = runner.logs.clone();
+    runner.guest_restarted(&logs);
+    assert!(
+        runner
+            .advance(ack, now)
+            .unwrap_err()
+            .contains("preceding press")
+    );
+    fs::remove_dir_all(logs).unwrap();
 }
 
 #[test]

@@ -66,12 +66,18 @@ action = "include"
 path = "tests/emulator/fragments/recorder-next.toml"
 
 [[step]]
-action = "press-display-change"
+action = "press"
 control = "recorder.confirm"
 
 [[step]]
-action = "press-display-change"
+action = "expect-display-after-press"
+
+[[step]]
+action = "press"
 control = "recorder.confirm"
+
+[[step]]
+action = "expect-display-after-press"
 
 [[step]]
 action = "delay"
@@ -95,12 +101,11 @@ action = "expect-settings"
 restored = true
 
 [[step]]
-action = "press-display-change"
+action = "press"
 control = "recorder.menu"
 
 [[step]]
-action = "include"
-path = "tests/emulator/fragments/recorder-next.toml"
+action = "expect-display-after-press"
 
 [[step]]
 action = "include"
@@ -127,12 +132,15 @@ action = "include"
 path = "tests/emulator/fragments/recorder-next.toml"
 
 [[step]]
-action = "press-display-change"
+action = "include"
+path = "tests/emulator/fragments/recorder-next.toml"
+
+[[step]]
+action = "press"
 control = "recorder.confirm"
 
 [[step]]
-action = "include"
-path = "tests/emulator/fragments/recorder-next.toml"
+action = "expect-display-after-press"
 
 [[step]]
 action = "include"
@@ -151,5 +159,12 @@ action = "include"
 path = "tests/emulator/fragments/recorder-next.toml"
 
 [[step]]
-action = "press-display-change"
+action = "include"
+path = "tests/emulator/fragments/recorder-next.toml"
+
+[[step]]
+action = "press"
 control = "recorder.confirm"
+
+[[step]]
+action = "expect-display-after-press"

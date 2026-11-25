@@ -287,6 +287,15 @@ pub fn step_label(action: &crate::Action) -> String {
             format!("Observe invalid signature for {guest_ms} ms guest time")
         }
         Action::KnobDialogSampleInvalidSignature => "Sample invalid signature rejection".into(),
+        Action::EnqueueEncoderNoAck { channel, steps } => {
+            format!("Enqueue encoder {channel} turn {steps}")
+        }
+        Action::EnqueueTapNoAck { target, hold_ms } => {
+            format!("Enqueue button {target} tap ({hold_ms} ms)")
+        }
+        Action::ReleaseCapturedDisplay => "Release captured display".into(),
+        Action::KnobDialogSnapshotNavigation => "Capture navigation restoration state".into(),
+        Action::KnobDialogCheckNavigation { field } => format!("Check navigation {field:?}"),
         Action::KnobDialogSnapshotRestoration => "Capture restored dialog resources".into(),
         Action::KnobDialogCheckRestoration { field } => format!("Check restored {field:?}"),
         Action::KnobDialogFinishRestoration => "Assert dialog resources restored".into(),

@@ -52,6 +52,24 @@ pub enum RestorationField {
     Callback,
 }
 
+/// Individual navigation restoration fields in original check order.
+#[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum NavigationField {
+    Window,
+    Signature,
+    Bitmap,
+    BitmapDescriptor,
+    NotificationSemaphore,
+    SharedContents,
+    Widget7,
+    Widget33,
+    Background10,
+    Background37,
+    Background48,
+    Callback,
+}
+
 /// A condition that ends a held chord.
 #[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -684,6 +702,19 @@ pub enum Action {
     },
     KnobDialogFinishRestoration,
     KnobDialogExpectRestoredHeap,
+    EnqueueEncoderNoAck {
+        channel: u32,
+        steps: i32,
+    },
+    EnqueueTapNoAck {
+        target: u32,
+        hold_ms: u32,
+    },
+    ReleaseCapturedDisplay,
+    KnobDialogSnapshotNavigation,
+    KnobDialogCheckNavigation {
+        field: crate::scenario::NavigationField,
+    },
     KnobDialog,
     /// Turn the channel 1 level knob once on the recorder screen and check
     /// that Knob Dialog shows the new value.
@@ -1104,6 +1135,40 @@ pub(crate) fn valid_knob_restoration_steps(steps: &[&Step]) -> bool {
         && steps[1..16].iter().zip(FIELDS).all(|(step, expected)| matches!(step.action, Action::KnobDialogCheckRestoration { field } if field == expected))
         && matches!(steps[16].action, Action::KnobDialogFinishRestoration)
         && matches!(steps[17].action, Action::KnobDialogExpectRestoredHeap)
+}
+
+pub(crate) fn valid_knob_navigation_steps(steps: &[&Step]) -> bool {
+    use NavigationField as F;
+    const FIELDS: [F; 12] = [
+        F::Window,
+        F::Signature,
+        F::Bitmap,
+        F::BitmapDescriptor,
+        F::NotificationSemaphore,
+        F::SharedContents,
+        F::Widget7,
+        F::Widget33,
+        F::Background10,
+        F::Background37,
+        F::Background48,
+        F::Callback,
+    ];
+    let artifact = |name: &str| {
+        !name.is_empty()
+            && name.len() <= 64
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    };
+    steps.len() == 19
+        && matches!(steps[0].action, Action::EnqueueEncoderNoAck { channel: 1, steps: 3 })
+        && matches!(&steps[1].action, Action::CaptureDisplay { guest_ms, artifact: name } if *guest_ms > 0 && *guest_ms <= steps[1].guest_timeout_ms && artifact(name))
+        && matches!(steps[2].action, Action::ReleaseCapturedDisplay)
+        && matches!(steps[3].action, Action::EnqueueTapNoAck { target: 0, hold_ms } if (1..=60_000).contains(&hold_ms))
+        && matches!(&steps[4].action, Action::CaptureDisplay { guest_ms, artifact: name } if *guest_ms > 0 && *guest_ms <= steps[4].guest_timeout_ms && artifact(name))
+        && matches!(steps[5].action, Action::ReleaseCapturedDisplay)
+        && matches!(steps[6].action, Action::KnobDialogSnapshotNavigation)
+        && steps[7..].iter().zip(FIELDS).all(|(step, expected)| matches!(step.action, Action::KnobDialogCheckNavigation { field } if field == expected))
 }
 
 /// Expand includes. A fragment is shared, so its steps scoped only to models

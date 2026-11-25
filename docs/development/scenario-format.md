@@ -291,6 +291,9 @@ message delivered just after the interval.
 | `knob-dialog-expect-expiry-frame` | `after` | Compare the retained expiry capture against the saved post-notification scene (`true`) or notification (`false`) frame. Both comparisons use the same capture. |
 | `knob-dialog-snapshot-restoration` / `knob-dialog-check-restoration` / `knob-dialog-finish-restoration` | `field` on check | Take one ordered, non-atomic restoration snapshot; compare its individual fields with the saved preflight evidence and report all mismatches together. |
 | `knob-dialog-expect-restored-heap` | — | Check free bytes, allocation count and free count against the active-dialog heap baseline using the guarded allocator reader. |
+| `enqueue-encoder-no-ack` / `enqueue-tap-no-ack` | `channel`, `steps` / `target`, `hold_ms` | Enqueue navigation inputs without waiting for guest acknowledgement, preserving the diagnostic's original input timing. |
+| `release-captured-display` | — | Release a retained navigation capture after its artifact has been written, so the next capture can begin. |
+| `knob-dialog-snapshot-navigation` / `knob-dialog-check-navigation` | `field` on check | Capture the ordered, non-atomic navigation state, stopping at the first failed check, then assert each recorded field against the saved baseline. The window must have changed. |
 | `knob-dialog` | — | Finish the L6max diagnostic: check heap lifetime, notification expiry, display cleanup, widget restoration and exact encoder reports. The preceding mode walk checks reviewed display images. |
 | `knob-popup-open` | `first_steps`, `fallback_steps`, `attempt_guest_ms` | On the L6max recorder screen, try the channel 1 level knob by `first_steps`, then by `fallback_steps` if the popup does not open within `attempt_guest_ms`; retain the initial display and level as evidence |
 | `knob-popup-expect-open` | — | Require the dialog signature, callback and a changed display under the shared popup deadline |

@@ -63,6 +63,23 @@ pub struct RestorationSnapshot {
     pub callback: Vec<u8>,
 }
 
+/// Ordered navigation checks, sampled while the guest runs (not atomic).
+#[derive(Clone, Debug, Default)]
+pub struct NavigationSnapshot {
+    pub window: Vec<u8>,
+    pub signature: Vec<u8>,
+    pub bitmap: Vec<u8>,
+    pub bitmap_descriptor: Vec<u8>,
+    pub notification_semaphore: Vec<u8>,
+    pub shared_contents: Vec<u8>,
+    pub widget7: Vec<u8>,
+    pub widget33: Vec<u8>,
+    pub background10: Vec<u8>,
+    pub background37: Vec<u8>,
+    pub background48: Vec<u8>,
+    pub callback: Vec<u8>,
+}
+
 /// Non-atomic GUI state; display pixels are sampled separately by PanelFeed.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct RecorderState {
@@ -204,6 +221,38 @@ fn read_restoration(
     })
 }
 
+fn read_navigation(
+    p: &RestorationPointers,
+    expected: &NavigationSnapshot,
+    read: &mut impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
+) -> Result<NavigationSnapshot, String> {
+    let mut out = NavigationSnapshot::default();
+    out.window = read(l6max::current_window, 4)?;
+    if out.window == expected.window {
+        return Ok(out);
+    }
+    macro_rules! field {
+        ($field:ident, $address:expr, $length:expr) => {{
+            out.$field = read($address, $length)?;
+            if out.$field != expected.$field {
+                return Ok(out);
+            }
+        }};
+    }
+    field!(signature, l6max::gui_bitmap_table_entry_0, 2);
+    field!(bitmap, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4);
+    field!(bitmap_descriptor, p.bitmap_descriptor, 8);
+    field!(notification_semaphore, l6max::notification_slot, 4);
+    field!(shared_contents, p.shared_resource, 512);
+    field!(widget7, p.widget7, 16);
+    field!(widget33, p.widget33, 16);
+    field!(background10, p.backgrounds[0], 1);
+    field!(background37, p.backgrounds[1], 1);
+    field!(background48, p.backgrounds[2], 1);
+    field!(callback, l6max::gui_display_callback_table + 20, 4);
+    Ok(out)
+}
+
 /// A revision-checked reader for one uninterrupted observation step.
 pub struct Reader<'a> {
     qmp: &'a QmpClient,
@@ -259,6 +308,19 @@ impl Reader<'_> {
         pointers: &RestorationPointers,
     ) -> Result<RestorationSnapshot, String> {
         read_restoration(pointers, &mut |address, len| {
+            self.qmp
+                .read_memory(0, address, len)
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    /// Capture navigation fields in firmware check order while the guest runs.
+    pub fn navigation(
+        &self,
+        pointers: &RestorationPointers,
+        expected: &NavigationSnapshot,
+    ) -> Result<NavigationSnapshot, String> {
+        read_navigation(pointers, expected, &mut |address, len| {
             self.qmp
                 .read_memory(0, address, len)
                 .map_err(|error| error.to_string())
@@ -456,6 +518,81 @@ mod tests {
 #[cfg(test)]
 mod restoration_tests {
     use super::*;
+    #[test]
+    fn reads_navigation_fields_in_original_order() {
+        let p = RestorationPointers {
+            bitmap_descriptor: 0x100,
+            text_table: 0x200,
+            shared_resource: 0x300,
+            lengths_table: 0x400,
+            widget7: 0x500,
+            widget33: 0x600,
+            backgrounds: [0x700, 0x800, 0x900],
+        };
+        let expected = NavigationSnapshot {
+            window: vec![1; 4],
+            signature: vec![0; 2],
+            bitmap: vec![0; 4],
+            bitmap_descriptor: vec![0; 8],
+            notification_semaphore: vec![0; 4],
+            shared_contents: vec![0; 512],
+            widget7: vec![0; 16],
+            widget33: vec![0; 16],
+            background10: vec![0; 1],
+            background37: vec![0; 1],
+            background48: vec![0; 1],
+            callback: vec![0; 4],
+        };
+        let mut calls = Vec::new();
+        let snapshot = read_navigation(&p, &expected, &mut |address, len| {
+            calls.push((address, len));
+            Ok(vec![0; len])
+        })
+        .unwrap();
+        assert_eq!(
+            calls,
+            vec![
+                (l6max::current_window, 4),
+                (l6max::gui_bitmap_table_entry_0, 2),
+                (l6max::gui_bitmap_table_entry_0 + 36 * 4, 4),
+                (0x100, 8),
+                (l6max::notification_slot, 4),
+                (0x300, 512),
+                (0x500, 16),
+                (0x600, 16),
+                (0x700, 1),
+                (0x800, 1),
+                (0x900, 1),
+                (l6max::gui_display_callback_table + 20, 4)
+            ]
+        );
+        assert_eq!(snapshot.window, vec![0; 4]);
+        assert_eq!(snapshot.shared_contents, vec![0; 512]);
+        assert_eq!(snapshot.callback, vec![0; 4]);
+    }
+    #[test]
+    fn navigation_stops_reading_at_first_failed_check() {
+        let p = RestorationPointers {
+            bitmap_descriptor: 1,
+            text_table: 2,
+            shared_resource: 3,
+            lengths_table: 4,
+            widget7: 5,
+            widget33: 6,
+            backgrounds: [7, 8, 9],
+        };
+        let expected = NavigationSnapshot {
+            window: vec![0; 4],
+            ..Default::default()
+        };
+        let mut calls = Vec::new();
+        let _ = read_navigation(&p, &expected, &mut |address, len| {
+            calls.push((address, len));
+            Ok(vec![0; len])
+        })
+        .unwrap();
+        assert_eq!(calls, [(l6max::current_window, 4)]);
+    }
     #[test]
     fn reads_all_baselines_in_original_order() {
         let p = RestorationPointers {

@@ -316,6 +316,51 @@ pub(super) fn embedded_restoration_operations() -> Result<Vec<(String, Operation
         .collect()
 }
 
+pub(super) fn embedded_navigation_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/navigation.toml"
+    ))
+    .map_err(|error| format!("invalid embedded navigation fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_knob_navigation_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded navigation fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::EnqueueEncoderNoAck { channel, steps } => {
+                    Operation::EnqueueEncoderNoAck {
+                        channel: *channel,
+                        steps: *steps,
+                    }
+                }
+                crate::Action::EnqueueTapNoAck { target, hold_ms } => Operation::EnqueueTapNoAck {
+                    target: *target,
+                    hold_ms: *hold_ms,
+                },
+                crate::Action::CaptureDisplay { guest_ms, artifact } => Operation::CaptureDisplay {
+                    guest_ms: *guest_ms,
+                    artifact: artifact.clone(),
+                },
+                crate::Action::ReleaseCapturedDisplay => Operation::ReleaseCapturedDisplay,
+                crate::Action::KnobDialogSnapshotNavigation => {
+                    Operation::KnobDialogSnapshotNavigation
+                }
+                crate::Action::KnobDialogCheckNavigation { field } => {
+                    Operation::KnobDialogCheckNavigation { field: *field }
+                }
+                _ => return Err("unsupported embedded navigation action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
 /// Convert a mode-fragment action for the post-update lifecycle. Scenario
 /// loading validates the complete sequence before this conversion.
 pub(super) fn mode_step_operation(action: &crate::Action) -> Option<Operation> {
@@ -417,6 +462,27 @@ fn save_captured_display(
 }
 
 impl State {
+    pub(super) fn release_navigation_capture(
+        &mut self,
+        _options: &Options,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        let capture = self
+            .captured_display
+            .as_ref()
+            .ok_or("no display capture to save")?;
+        let context = self
+            .knob_dialog_preflight
+            .as_mut()
+            .ok_or("missing knob preflight")?;
+        if !matches!(final_phase(context), 45 | 48) {
+            return Err("navigation save out of order".into());
+        }
+        let artifact = capture.artifact.clone();
+        note_navigation_save(context)?;
+        self.captured_display = None;
+        Ok(json!({"artifact":artifact}))
+    }
+
     pub(super) fn run_mode_primitive(
         &mut self,
         session: &Session,
@@ -579,6 +645,14 @@ impl State {
                 {
                     save_captured_display(&capture, &options.logs)?;
                     note_expiry_capture(self.knob_dialog_preflight.as_mut().unwrap())?;
+                } else if self.knob_mode.is_none()
+                    && self
+                        .knob_dialog_preflight
+                        .as_ref()
+                        .is_some_and(|context| matches!(final_phase(context), 44 | 47))
+                {
+                    save_captured_display(&capture, &options.logs)?;
+                    note_navigation_capture(self.knob_dialog_preflight.as_mut().unwrap())?;
                 }
                 self.captured_display = Some(capture);
                 Ok(json!({"guest_ms":guest_ms,"artifact":artifact}))

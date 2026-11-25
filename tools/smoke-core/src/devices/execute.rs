@@ -50,10 +50,18 @@ fn knob_dialog_phase(
         | Operation::KnobDialogCheckRestoration { .. }
         | Operation::KnobDialogFinishRestoration
         | Operation::KnobDialogExpectRestoredHeap
+        | Operation::EnqueueEncoderNoAck { .. }
+        | Operation::EnqueueTapNoAck { .. }
+        | Operation::ReleaseCapturedDisplay
+        | Operation::KnobDialogSnapshotNavigation
+        | Operation::KnobDialogCheckNavigation { .. }
         | Operation::KnobDialog => next_mode
             .and_then(|index| u16::try_from(17 + index * 10 + usize::from(final_phase?)).ok()),
-        Operation::CaptureDisplay { .. } if scope.is_none() && final_phase == Some(22) => {
-            next_mode.and_then(|index| u16::try_from(17 + index * 10 + 22).ok())
+        Operation::CaptureDisplay { .. }
+            if scope.is_none() && matches!(final_phase, Some(22 | 44 | 47)) =>
+        {
+            next_mode
+                .and_then(|index| u16::try_from(17 + index * 10 + usize::from(final_phase?)).ok())
         }
         _ => None,
     };
@@ -2753,6 +2761,35 @@ impl State {
                     .as_mut()
                     .ok_or("missing knob preflight")?,
             ),
+            Operation::EnqueueEncoderNoAck { channel, steps } => enqueue_navigation_encoder(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                channel,
+                steps,
+            ),
+            Operation::EnqueueTapNoAck { target, hold_ms } => enqueue_navigation_tap(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                target,
+                hold_ms,
+            ),
+            Operation::ReleaseCapturedDisplay => self.release_navigation_capture(options),
+            Operation::KnobDialogSnapshotNavigation => snapshot_navigation(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
+            Operation::KnobDialogCheckNavigation { field } => check_navigation_field(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                field,
+            ),
             Operation::KnobDialog => {
                 self.knob_heap_reader = None;
                 let _baseline = self
@@ -3043,6 +3080,61 @@ mod knob_phase_tests {
             },
             Operation::KnobDialogFinishRestoration,
             Operation::KnobDialogExpectRestoredHeap,
+            Operation::EnqueueEncoderNoAck {
+                channel: 1,
+                steps: 3,
+            },
+            Operation::CaptureDisplay {
+                guest_ms: 400,
+                artifact: "before-nav".into(),
+            },
+            Operation::ReleaseCapturedDisplay,
+            Operation::EnqueueTapNoAck {
+                target: 0,
+                hold_ms: 120,
+            },
+            Operation::CaptureDisplay {
+                guest_ms: 500,
+                artifact: "after-nav".into(),
+            },
+            Operation::ReleaseCapturedDisplay,
+            Operation::KnobDialogSnapshotNavigation,
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::Window,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::Signature,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::Bitmap,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::BitmapDescriptor,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::NotificationSemaphore,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::SharedContents,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::Widget7,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::Widget33,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::Background10,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::Background37,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::Background48,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::Callback,
+            },
             Operation::KnobDialog,
         ]
         .into_iter()

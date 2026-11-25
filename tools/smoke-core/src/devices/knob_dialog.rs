@@ -674,6 +674,7 @@ pub(super) struct PreflightContext {
     mode_index: usize,
     last_mode: Option<u8>,
     final_phase: u8,
+    navigation: Option<l6ctl::NavigationSnapshot>,
     restoration: Option<RestorationEvidence>,
     pending_notification: Option<PendingNotification>,
     pending_invalid_signature: Option<PendingInvalidSignature>,
@@ -817,6 +818,7 @@ pub(super) fn begin_preflight(
         mode_index: 0,
         last_mode: None,
         final_phase: 0,
+        navigation: None,
         restoration: None,
         pending_notification: None,
         pending_invalid_signature: None,
@@ -2403,7 +2405,7 @@ pub(super) fn run_knob_dialog(
         return Err("knob-dialog preflight incomplete".into());
     }
     let context = context_slot.as_ref().unwrap();
-    if context.final_phase != if prefix { 0 } else { 43 } {
+    if context.final_phase != if prefix { 0 } else { 62 } {
         return Err("knob-dialog final phases out of order".into());
     }
     if context.alias_widget.is_none()
@@ -2417,21 +2419,7 @@ pub(super) fn run_knob_dialog(
 
     let active_snapshot = context.active.as_ref().unwrap().clone();
     let debugger = context.debugger.take().unwrap();
-    let original_window = context.original_window.clone();
-    let original_bitmap = context.original_bitmap.clone();
-    let original_bitmap_descriptor = context.original_bitmap_descriptor.clone();
-    let original_notification_semaphore = context.original_notification_semaphore.clone();
     let text_table = context.text_table;
-    let shared_resource_pointer = context.shared_resource_pointer;
-    let original_shared_resource = context.original_shared_resource.clone();
-    let widget7 = context.widget7;
-    let widget33 = context.widget33;
-    let original_widget7 = context.original_widget7.clone();
-    let original_widget33 = context.original_widget33.clone();
-    let background10 = context.background10;
-    let background37 = context.background37;
-    let background48 = context.background48;
-    let original_background_layers = context.original_background_layers.clone();
     let widget_layer_guard_rejected = true;
     let background_layer_guard_rejected = true;
     let callback_preflight_race_rejected = true;
@@ -2444,7 +2432,6 @@ pub(super) fn run_knob_dialog(
             callback_task,
             refreshed: _,
         } = active_snapshot;
-        let state = l6max::gui_bitmap_table_entry_0;
         if prefix {
             // The preceding mode walk ends on Pan with a verified live scene.
             // Sweep from center through left 50% to right 50%, capturing at 20 fps.
@@ -2578,38 +2565,6 @@ pub(super) fn run_knob_dialog(
         }
         let invalid_metadata_rejected = true;
         let invalid_tag_discarded = true;
-        // Prove that the DisplayCycle2 callback restores borrowed global
-        // descriptors on navigation, rather than relying on expiry cleanup.
-        inputs.knob(0, -3)?;
-        capture(400, "window-scene-before-navigation")?;
-        inputs.main.tap(0, 120)?;
-        capture(500, "window-scene-navigation-returned")?;
-        let navigated_window = qmp.read_memory(0, l6max::current_window, 4)?;
-        if navigated_window == original_window
-            || u16::from_le_bytes(qmp.read_memory(0, state, 2)?.try_into().unwrap()) != 0x4b4e
-            || qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)? != original_bitmap
-            || qmp.read_memory(
-                0,
-                u32::from_le_bytes(original_bitmap.clone().try_into().unwrap()),
-                8,
-            )? != original_bitmap_descriptor
-            || qmp.read_memory(0, l6max::notification_slot, 4)? != original_notification_semaphore
-            || qmp.read_memory(0, shared_resource_pointer, 512)? != original_shared_resource
-            || qmp.read_memory(0, widget7, 16)? != original_widget7
-            || qmp.read_memory(0, widget33, 16)? != original_widget33
-            || qmp.read_memory(0, background10, 1)? != original_background_layers[0]
-            || qmp.read_memory(0, background37, 1)? != original_background_layers[1]
-            || qmp.read_memory(0, background48, 1)? != original_background_layers[2]
-            || u32::from_le_bytes(
-                qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?
-                    .try_into()
-                    .unwrap(),
-            ) != active_slot5
-        {
-            return Err(
-                "window-push cleanup did not restore the dialog's borrowed resources".into(),
-            );
-        }
         return Ok(json!({
             "overlay_layer": 4,
             "black_background": true,
@@ -2653,6 +2608,179 @@ pub(super) fn run_knob_dialog(
     } else {
         debugger.finish(result)
     }
+}
+
+pub(super) fn enqueue_navigation_encoder(
+    session: &Session,
+    context: &mut PreflightContext,
+    channel: u32,
+    steps: i32,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.final_phase != 43 {
+        return Err("navigation encoder out of order".into());
+    }
+    l6ctl::OwnedControl::new(&session.engine).encoder(channel, steps)?;
+    context.final_phase += 1;
+    Ok(json!({"channel":channel,"steps":steps}))
+}
+
+pub(super) fn enqueue_navigation_tap(
+    session: &Session,
+    context: &mut PreflightContext,
+    target: u32,
+    hold_ms: u32,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.final_phase != 46 {
+        return Err("navigation tap out of order".into());
+    }
+    l6ctl::OwnedControl::new(&session.engine).tap(target, hold_ms)?;
+    context.final_phase += 1;
+    Ok(json!({"target":target,"hold_ms":hold_ms}))
+}
+
+pub(super) fn note_navigation_capture(
+    context: &mut PreflightContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !matches!(context.final_phase, 44 | 47) {
+        return Err("navigation capture out of order".into());
+    }
+    context.final_phase += 1;
+    Ok(())
+}
+
+pub(super) fn note_navigation_save(
+    context: &mut PreflightContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !matches!(context.final_phase, 45 | 48) {
+        return Err("navigation save out of order".into());
+    }
+    context.final_phase += 1;
+    Ok(())
+}
+
+pub(super) fn snapshot_navigation(
+    session: &Session,
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.final_phase != 49 {
+        return Err("navigation snapshot out of order".into());
+    }
+    let pointers = l6ctl::RestorationPointers {
+        bitmap_descriptor: u32::from_le_bytes(
+            context
+                .original_bitmap
+                .clone()
+                .try_into()
+                .map_err(|_| "short bitmap pointer")?,
+        ),
+        text_table: context.text_table,
+        shared_resource: context.shared_resource_pointer,
+        lengths_table: context.original_lengths_table,
+        widget7: context.widget7,
+        widget33: context.widget33,
+        backgrounds: [
+            context.background10,
+            context.background37,
+            context.background48,
+        ],
+    };
+    let active = context.active.as_ref().ok_or("missing active snapshot")?;
+    let expected = l6ctl::NavigationSnapshot {
+        window: context.original_window.clone(),
+        signature: 0x4b4eu16.to_le_bytes().to_vec(),
+        bitmap: context.original_bitmap.clone(),
+        bitmap_descriptor: context.original_bitmap_descriptor.clone(),
+        notification_semaphore: context.original_notification_semaphore.clone(),
+        shared_contents: context.original_shared_resource.clone(),
+        widget7: context.original_widget7.clone(),
+        widget33: context.original_widget33.clone(),
+        background10: context.original_background_layers[0].clone(),
+        background37: context.original_background_layers[1].clone(),
+        background48: context.original_background_layers[2].clone(),
+        callback: active.active_slot5.to_le_bytes().to_vec(),
+    };
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    context.navigation = Some(
+        control
+            .knob_popup_reader()?
+            .navigation(&pointers, &expected)?,
+    );
+    context.final_phase += 1;
+    Ok(json!({"atomic":false}))
+}
+
+pub(super) fn check_navigation_field(
+    context: &mut PreflightContext,
+    field: crate::scenario::NavigationField,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    use crate::scenario::NavigationField as F;
+    if usize::from(context.final_phase) != 50 + field as usize {
+        return Err("navigation field out of order".into());
+    }
+    let s = context
+        .navigation
+        .as_ref()
+        .ok_or("missing navigation snapshot")?;
+    let active = context.active.as_ref().ok_or("missing active snapshot")?;
+    let (name, actual, expected): (&str, &[u8], Vec<u8>) = match field {
+        F::Window => ("window", &s.window, context.original_window.clone()),
+        F::Signature => (
+            "state signature",
+            &s.signature,
+            0x4b4eu16.to_le_bytes().to_vec(),
+        ),
+        F::Bitmap => ("bitmap table", &s.bitmap, context.original_bitmap.clone()),
+        F::BitmapDescriptor => (
+            "bitmap descriptor",
+            &s.bitmap_descriptor,
+            context.original_bitmap_descriptor.clone(),
+        ),
+        F::NotificationSemaphore => (
+            "notification semaphore",
+            &s.notification_semaphore,
+            context.original_notification_semaphore.clone(),
+        ),
+        F::SharedContents => (
+            "shared resource contents",
+            &s.shared_contents,
+            context.original_shared_resource.clone(),
+        ),
+        F::Widget7 => ("widget 7", &s.widget7, context.original_widget7.clone()),
+        F::Widget33 => ("widget 33", &s.widget33, context.original_widget33.clone()),
+        F::Background10 => (
+            "background layer 10",
+            &s.background10,
+            context.original_background_layers[0].clone(),
+        ),
+        F::Background37 => (
+            "background layer 37",
+            &s.background37,
+            context.original_background_layers[1].clone(),
+        ),
+        F::Background48 => (
+            "background layer 48",
+            &s.background48,
+            context.original_background_layers[2].clone(),
+        ),
+        F::Callback => (
+            "display callback slot 5",
+            &s.callback,
+            active.active_slot5.to_le_bytes().to_vec(),
+        ),
+    };
+    let matches = if field == F::Window {
+        actual != expected
+    } else {
+        actual == expected
+    };
+    if !matches {
+        return Err(format!(
+            "window-push cleanup did not restore the dialog's borrowed resources: {name}"
+        )
+        .into());
+    }
+    context.final_phase += 1;
+    Ok(json!({"field":name}))
 }
 
 struct RestorationEvidence {

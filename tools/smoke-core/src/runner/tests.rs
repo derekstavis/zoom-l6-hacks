@@ -779,31 +779,35 @@ fn parser_rejects_typos_and_unavailable_model_controls() {
 }
 
 #[test]
-fn usb_sysex_scenario_requires_complete_messages_and_accepts_reply_prefixes() {
-    let valid = Scenario::parse(
-        "version=1\nname='sysex'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='usb-descriptors'\n[[step]]\naction='usb-sysex'\nrequests=[{bytes=[240,126,127,6,1,247],expect_prefix=[240,126,127,6,2],reject_prefixes=[[240,82]]}]\n",
-    )
-    .unwrap();
-    assert!(matches!(valid.step[1].action, Action::UsbSysex { .. }));
-    let invalid = Scenario::parse(
-        "version=1\nname='sysex'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='usb-sysex'\nrequests=[{bytes=[240,1,2]}]\n",
+fn usb_sysex_scenario_requires_scoped_complete_messages() {
+    let prefix = "version=1\nname='sysex'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='usb-descriptors'\n[[step]]\naction='usb-sysex-begin'\nguest_timeout_ms=1000\n";
+    let suffix = "[[step]]\naction='usb-sysex-end'\n";
+    let good = format!(
+        "{prefix}[[step]]\naction='usb-sysex-exchange'\nbytes=[240,1,247]\nexpect_prefix=[240,1]\n{suffix}"
     );
-    assert!(invalid.unwrap_err().contains("complete F0..F7"));
-    let invalid_reject = Scenario::parse(
-        "version=1\nname='sysex'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='usb-sysex'\nrequests=[{bytes=[240,1,247],reject_prefixes=[[]]}]\n",
+    assert!(Scenario::parse(&good).is_ok());
+    let invalid = good.replace("[240,1,247]", "[240,1,2]");
+    assert!(
+        Scenario::parse(&invalid)
+            .unwrap_err()
+            .contains("complete F0..F7")
+    );
+    let invalid = good.replace("expect_prefix=[240,1]", "reject_prefixes=[[]]");
+    assert!(
+        Scenario::parse(&invalid)
+            .unwrap_err()
+            .contains("reject_prefixes")
     );
     assert!(
-        invalid_reject
+        Scenario::parse(&good.replace(suffix, ""))
             .unwrap_err()
-            .contains("reject_prefixes must not contain empty prefixes")
+            .contains("unterminated")
     );
-    let invalid_timeout = Scenario::parse(
-        "version=1\nname='sysex'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='usb-sysex'\nguest_timeout_ms=100\nrequests=[{bytes=[240,1,247],reply_timeout_ms=101}]\n",
-    );
+    let invalid = good.replace("expect_prefix=[240,1]", "reply_timeout_ms=1001");
     assert!(
-        invalid_timeout
+        Scenario::parse(&invalid)
             .unwrap_err()
-            .contains("reply_timeout_ms must be positive and fit")
+            .contains("exceeds campaign")
     );
 }
 #[test]

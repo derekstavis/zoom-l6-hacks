@@ -65,6 +65,16 @@ fn advance_knob_deadline(is_terminal: bool, shared: KnobDeadline) -> Option<Knob
     }
 }
 
+fn sysex_deadline_expired(
+    elapsed: Duration,
+    guest_start: u32,
+    guest_now: u32,
+    guest_budget: u32,
+    wall_budget: u64,
+) -> bool {
+    elapsed > Duration::from_secs(wall_budget) || guest_now.wrapping_sub(guest_start) > guest_budget
+}
+
 /// Only positive, single-reply checks can end early. An explicit reply window
 /// or a rejected prefix needs the whole observation interval.
 fn sysex_reply_complete(
@@ -215,6 +225,7 @@ impl State {
         self.knob_dialog_baseline = None;
         self.abort_knob_preflight()?;
         self.midi = None;
+        self.sysex_deadline = None;
         Ok(())
     }
     pub fn has_knob_preflight(&self) -> bool {
@@ -273,6 +284,15 @@ impl State {
                 context.guest_timeout_ms,
             )
         });
+        if self.sysex_deadline.is_some()
+            && !matches!(
+                operation,
+                Operation::UsbSysexExchange { .. } | Operation::UsbSysexEnd
+            )
+        {
+            self.sysex_deadline = None;
+            return Err("USB SysEx campaign interrupted by another operation".into());
+        }
         if self.l6_midi_probe.is_some()
             && !matches!(
                 operation,
@@ -385,6 +405,7 @@ impl State {
             Ok(value) => value,
             Err(error) => {
                 let primary = error.to_string();
+                self.sysex_deadline = None;
                 return match self.abort_knob_preflight() {
                     Ok(()) => Err(primary),
                     Err(cleanup) => Err(format!("{primary}; debugger cleanup failed: {cleanup}")),
@@ -2024,19 +2045,87 @@ impl State {
             Operation::L6MidiMuteIndicators => {
                 self.run_l6_midi_mute_indicators(session, wall_timeout_s)
             }
-            Operation::UsbSysex {
-                requests,
+            Operation::UsbSysexBegin => {
+                if self.midi.is_none() {
+                    return Err("usb-sysex needs a preceding USB MIDI enumeration".into());
+                }
+                let guest = session
+                    .engine
+                    .inputs
+                    .as_ref()
+                    .ok_or("panel input unavailable")?
+                    .panel
+                    .snapshot()
+                    .guest_ms;
+                self.sysex_deadline =
+                    Some((Instant::now(), guest, guest_timeout_ms, wall_timeout_s));
+                Ok(json!({"started": true}))
+            }
+            Operation::UsbSysexEnd => {
+                let (start, guest, budget, wall) = self
+                    .sysex_deadline
+                    .take()
+                    .ok_or("USB SysEx campaign is not active")?;
+                if sysex_deadline_expired(
+                    start.elapsed(),
+                    guest,
+                    session
+                        .engine
+                        .inputs
+                        .as_ref()
+                        .ok_or("panel input unavailable")?
+                        .panel
+                        .snapshot()
+                        .guest_ms,
+                    budget,
+                    wall,
+                ) {
+                    return Err("USB SysEx deadline exceeded".into());
+                }
+                Ok(json!({"finished": true}))
+            }
+            Operation::UsbSysexExchange {
+                request,
                 complete_on_match,
             } => {
-                let usb = session
-                    .engine
-                    .usb
-                    .as_ref()
-                    .ok_or("USB backend unavailable")?;
+                let control = l6ctl::OwnedControl::new(&session.engine);
                 let endpoints = self
                     .midi
                     .ok_or("usb-sysex needs a preceding USB MIDI enumeration")?;
-                let start = session
+                let (started, start, guest_timeout_ms, wall_timeout_s) = self
+                    .sysex_deadline
+                    .ok_or("USB SysEx campaign is not active")?;
+                let check = || -> Result<(), Box<dyn std::error::Error>> {
+                    let now = session
+                        .engine
+                        .inputs
+                        .as_ref()
+                        .ok_or("panel input unavailable")?
+                        .panel
+                        .snapshot()
+                        .guest_ms;
+                    if sysex_deadline_expired(
+                        started.elapsed(),
+                        start,
+                        now,
+                        guest_timeout_ms,
+                        wall_timeout_s,
+                    ) {
+                        return Err(format!(
+                            "USB SysEx deadline exceeded for request {:02x?}",
+                            request.bytes
+                        )
+                        .into());
+                    }
+                    Ok(())
+                };
+                check()?;
+                let reply_timeout_ms = request.reply_timeout_ms.unwrap_or(400);
+                control
+                    .usb_sysex_send(endpoints, 2, &request.bytes)
+                    .map_err(|error| error.to_string())?;
+                check()?;
+                let request_start = session
                     .engine
                     .inputs
                     .as_ref()
@@ -2044,124 +2133,75 @@ impl State {
                     .panel
                     .snapshot()
                     .guest_ms;
-                let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
-                let mut evidence = Vec::new();
-                for request in requests {
-                    let reply_timeout_ms = request.reply_timeout_ms.unwrap_or(400);
-                    let wire = l6max_host::usb_midi::Encoder::default().push(2, &request.bytes);
-                    usb.send(endpoints.output, &wire)?;
-                    let request_start = session
+                let mut decoder = l6ctl::UsbSysexDecoder::default();
+                loop {
+                    check()?;
+                    session.poll()?;
+                    check()?;
+                    control
+                        .usb_sysex_poll(endpoints, 2, &mut decoder)
+                        .map_err(|error| error.to_string())?;
+                    check()?;
+                    let elapsed = session
                         .engine
                         .inputs
                         .as_ref()
                         .unwrap()
                         .panel
                         .snapshot()
-                        .guest_ms;
-                    let mut pending = Vec::new();
-                    let mut replies: Vec<Vec<u8>> = Vec::new();
-                    loop {
-                        session.poll()?;
-                        match usb.try_receive(endpoints.input, 16_384) {
-                            Ok(data) => {
-                                for (cable, fragment) in l6max_host::usb_midi::decode(&data)? {
-                                    if cable != 2 {
-                                        continue;
-                                    }
-                                    for byte in fragment {
-                                        if byte == 0xf0 {
-                                            pending.clear();
-                                        }
-                                        if byte == 0xf0 || !pending.is_empty() {
-                                            pending.push(byte);
-                                            if byte == 0xf7 {
-                                                replies.push(std::mem::take(&mut pending));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            Err(e) if e.raw_os_error() == Some(libc::EAGAIN) => {}
-                            Err(e) => return Err(e.into()),
-                        }
-                        let elapsed = session
-                            .engine
-                            .inputs
-                            .as_ref()
-                            .unwrap()
-                            .panel
-                            .snapshot()
-                            .guest_ms
-                            .wrapping_sub(request_start);
-                        if complete_on_match && sysex_reply_complete(&request, &pending, &replies) {
-                            break;
-                        }
-                        if elapsed >= reply_timeout_ms {
-                            break;
-                        }
-                        if Instant::now() > deadline
-                            || session
-                                .engine
-                                .inputs
-                                .as_ref()
-                                .unwrap()
-                                .panel
-                                .snapshot()
-                                .guest_ms
-                                .wrapping_sub(start)
-                                > guest_timeout_ms
-                        {
-                            return Err(format!(
-                                "USB SysEx deadline exceeded for request {:02x?}",
-                                request.bytes
-                            )
-                            .into());
-                        }
-                        thread::sleep(Duration::from_millis(2));
+                        .guest_ms
+                        .wrapping_sub(request_start);
+                    if complete_on_match
+                        && sysex_reply_complete(&request, decoder.pending(), decoder.replies())
+                    {
+                        break;
                     }
-                    if !pending.is_empty() {
-                        return Err(format!("truncated USB SysEx reply: {pending:02x?}").into());
+                    if elapsed >= reply_timeout_ms {
+                        break;
                     }
-                    if request.expect_reply && replies.is_empty() {
+                    thread::sleep(Duration::from_millis(2));
+                }
+                let pending = decoder.pending();
+                let replies = decoder.replies();
+                if !pending.is_empty() {
+                    return Err(format!("truncated USB SysEx reply: {pending:02x?}").into());
+                }
+                if request.expect_reply && replies.is_empty() {
+                    return Err(
+                        format!("missing SysEx reply for request {:02x?}", request.bytes).into(),
+                    );
+                }
+                if let Some(minimum) = request.min_reply_bytes {
+                    if !replies.iter().any(|reply| reply.len() >= minimum) {
                         return Err(format!(
-                            "missing SysEx reply for request {:02x?}",
-                            request.bytes
-                        )
-                        .into());
-                    }
-                    if let Some(minimum) = request.min_reply_bytes {
-                        if !replies.iter().any(|reply| reply.len() >= minimum) {
-                            return Err(format!(
                                 "SysEx reply for {:02x?} was shorter than {minimum} bytes: {replies:02x?}",
                                 request.bytes
                             )
                             .into());
-                        }
                     }
-                    if let Some(prefix) = &request.expect_prefix {
-                        if !replies
-                            .iter()
-                            .any(|reply| reply.starts_with(prefix) && reply.last() == Some(&0xf7))
-                        {
-                            return Err(format!(
-                                "missing SysEx reply {prefix:02x?}; got {replies:02x?}"
-                            )
-                            .into());
-                        }
-                    } else if !request.expect_reply && !replies.is_empty() {
-                        return Err(format!("unexpected SysEx reply: {replies:02x?}").into());
-                    }
-                    for prefix in &request.reject_prefixes {
-                        if replies.iter().any(|reply| reply.starts_with(prefix)) {
-                            return Err(format!(
-                                "SysEx reply matched rejected prefix {prefix:02x?}: {replies:02x?}"
-                            )
-                            .into());
-                        }
-                    }
-                    evidence.push(json!({"sent":request.bytes,"replies":replies}));
                 }
-                Ok(json!({"exchanges":evidence}))
+                if let Some(prefix) = &request.expect_prefix {
+                    if !replies
+                        .iter()
+                        .any(|reply| reply.starts_with(prefix) && reply.last() == Some(&0xf7))
+                    {
+                        return Err(format!(
+                            "missing SysEx reply {prefix:02x?}; got {replies:02x?}"
+                        )
+                        .into());
+                    }
+                } else if !request.expect_reply && !replies.is_empty() {
+                    return Err(format!("unexpected SysEx reply: {replies:02x?}").into());
+                }
+                for prefix in &request.reject_prefixes {
+                    if replies.iter().any(|reply| reply.starts_with(prefix)) {
+                        return Err(format!(
+                            "SysEx reply matched rejected prefix {prefix:02x?}: {replies:02x?}"
+                        )
+                        .into());
+                    }
+                }
+                Ok(json!({"sent":request.bytes,"replies":replies}))
             }
             Operation::EditorPadAssignments => {
                 let endpoints = self
@@ -2550,6 +2590,32 @@ mod sysex_completion_tests {
     use super::sysex_reply_complete;
     use crate::scenario::UsbSysexRequest;
 
+    #[test]
+    fn shared_deadline_handles_guest_wrap_and_wall_expiry() {
+        use super::sysex_deadline_expired;
+        use std::time::Duration;
+        assert!(!sysex_deadline_expired(
+            Duration::from_secs(1),
+            u32::MAX - 2,
+            2,
+            5,
+            2
+        ));
+        assert!(sysex_deadline_expired(
+            Duration::from_secs(1),
+            u32::MAX - 2,
+            3,
+            5,
+            2
+        ));
+        assert!(sysex_deadline_expired(
+            Duration::from_millis(2001),
+            0,
+            1,
+            5,
+            2
+        ));
+    }
     #[test]
     fn early_completion_requires_a_complete_positive_reply_without_observation_constraints() {
         let mut request = UsbSysexRequest {

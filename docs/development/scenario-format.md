@@ -240,7 +240,7 @@ message delivered just after the interval.
 | `l6-midi-probe-expect-replies` | — | Check the ordered configured CC replies, wait for the last sender return, and leave MAIN stopped |
 | `l6-midi-ring-pin-sweep` | `cc` | Sweep L6 MIDI CC values and compare ring-pin output |
 | `l6-midi-mute-indicators` | — | Check L6 MIDI mute-indicator responses |
-| `usb-sysex` | `requests` with `bytes`, optional `expect_prefix`, `expect_reply`, `min_reply_bytes`; optional `complete_on_match` | Send cable-2 SysEx requests and check replies. When `complete_on_match` is true, a positive request completes on its matching complete reply; no-reply requests, rejected-prefix checks and explicit reply windows still observe the full interval |
+| `usb-sysex-begin`, `usb-sysex-exchange`, `usb-sysex-end` | Begin carries the shared guest/wall timeout; exchanges carry `bytes` and optional `expect_prefix`, `expect_reply`, `min_reply_bytes`, `reject_prefixes`, `reply_timeout_ms`, and `complete_on_match` | Send cable-2 requests over the previously enumerated USB connection. Each exchange is reported separately; no-reply requests, rejected-prefix checks and explicit reply windows observe the full interval. |
 | `editor-pad-assignments` | — | Initialize the Editor session, enumerate WAV files, assign the first file on all four pads and verify assignment state through SysEx readback; requires a preceding `usb-descriptors` step |
 | `editor-pad-playback` | `pad` | L6-only assigned-pad playback check; requires preceding `editor-pad-assignments` |
 | `l6max-ui-pad-assignment` | `pad` | L6max UI assignment check; requires preceding `usb-descriptors` and an L6max-scoped scenario |

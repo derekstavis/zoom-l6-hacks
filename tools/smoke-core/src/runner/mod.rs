@@ -666,14 +666,20 @@ impl Runner {
                 Action::L6MidiMuteIndicators => {
                     return Ok(Progress::Device(devices::Operation::L6MidiMuteIndicators));
                 }
-                Action::UsbSysex {
-                    requests,
+                Action::UsbSysexBegin => {
+                    return Ok(Progress::Device(devices::Operation::UsbSysexBegin));
+                }
+                Action::UsbSysexExchange {
+                    request,
                     complete_on_match,
                 } => {
-                    return Ok(Progress::Device(devices::Operation::UsbSysex {
-                        requests,
+                    return Ok(Progress::Device(devices::Operation::UsbSysexExchange {
+                        request,
                         complete_on_match,
                     }));
+                }
+                Action::UsbSysexEnd => {
+                    return Ok(Progress::Device(devices::Operation::UsbSysexEnd));
                 }
                 Action::EditorPadAssignments => {
                     return Ok(Progress::Device(devices::Operation::EditorPadAssignments));

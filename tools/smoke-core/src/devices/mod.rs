@@ -209,10 +209,12 @@ pub enum Operation {
         cc: u8,
     },
     L6MidiMuteIndicators,
-    UsbSysex {
-        requests: Vec<crate::scenario::UsbSysexRequest>,
+    UsbSysexBegin,
+    UsbSysexExchange {
+        request: crate::scenario::UsbSysexRequest,
         complete_on_match: bool,
     },
+    UsbSysexEnd,
     EditorPadAssignments,
     EditorPadPlayback {
         pad: u8,
@@ -450,7 +452,9 @@ fn validate_native_midi_capabilities(
                     | crate::Action::UsbDescriptors
                     | crate::Action::UsbStorage
                     | crate::Action::UsbMidi { .. }
-                    | crate::Action::UsbSysex { .. }
+                    | crate::Action::UsbSysexBegin
+                    | crate::Action::UsbSysexExchange { .. }
+                    | crate::Action::UsbSysexEnd
                     | crate::Action::EditorPadAssignments
                     | crate::Action::EditorPadPlayback { .. }
                     | crate::Action::L6maxUiPadVerify { .. }
@@ -633,7 +637,9 @@ pub(crate) fn prepare_with_report(
                 crate::Action::UsbDescriptors
                     | crate::Action::UsbStorage
                     | crate::Action::UsbMidi { .. }
-                    | crate::Action::UsbSysex { .. }
+                    | crate::Action::UsbSysexBegin
+                    | crate::Action::UsbSysexExchange { .. }
+                    | crate::Action::UsbSysexEnd
                     | crate::Action::EditorPadAssignments
                     | crate::Action::EditorPadPlayback { .. }
                     | crate::Action::L6maxUiPadVerify { .. }
@@ -698,6 +704,7 @@ pub struct State {
     paced_index: usize,
     saved: Option<(Vec<u8>, usize)>,
     midi: Option<l6max_host::usb::Endpoints>,
+    sysex_deadline: Option<(Instant, u32, u32, u64)>,
     gdb: Option<l6max_diagnostics::gdb::Gdb>,
     host_midi: Option<Box<dyn crate::host_midi::Client>>,
     encoder_turned_up: bool,
@@ -1066,10 +1073,7 @@ mod native_midi_capability_tests {
             crate::Action::UsbDescriptors,
             crate::Action::UsbStorage,
             crate::Action::UsbMidi { value: 1 },
-            crate::Action::UsbSysex {
-                requests: vec![],
-                complete_on_match: false,
-            },
+            crate::Action::UsbSysexBegin,
             crate::Action::DirectUsbMidiRoundTrip {
                 cable: 1,
                 expect_ring_change: true,

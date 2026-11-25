@@ -21,6 +21,51 @@ action = "include"
 path = "tests/emulator/fragments/l6-first-boot-setup.toml"
 
 [[step]]
-action = "l6-din-usb-forwarding"
-guest_timeout_ms = 2000
+action = "din-usb-begin"
+
+[[step]]
+action = "delay"
+guest_ms = 300
 wall_timeout_s = 180
+
+[[step]]
+action = "din-usb-attach"
+
+[[step]]
+action = "din-usb-send"
+bytes = [179, 16, 32]
+
+[[step]]
+action = "din-usb-expect"
+bytes = [179, 16, 32]
+cable = 0
+
+[[step]]
+action = "din-usb-send"
+bytes = [147, 69, 100]
+
+[[step]]
+action = "din-usb-expect"
+bytes = [147, 69, 100]
+cable = 0
+
+[[step]]
+action = "din-usb-send"
+bytes = [248]
+
+[[step]]
+action = "din-usb-expect"
+bytes = [248]
+cable = 0
+
+[[step]]
+action = "din-usb-send"
+bytes = [240, 125, 1, 247]
+
+[[step]]
+action = "din-usb-expect"
+bytes = [240, 125, 1, 247]
+cable = 0
+
+[[step]]
+action = "din-usb-end"

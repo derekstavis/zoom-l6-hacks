@@ -209,11 +209,20 @@ pub enum Operation {
         cable: u8,
         expect_ring_change: bool,
     },
-    L6DinUsbForwarding,
     L6MidiProbeBegin,
     L6MidiProbeInject,
     L6MidiProbeExpectHook,
     L6MidiProbeExpectReplies,
+    DinUsbBegin,
+    DinUsbAttach,
+    DinUsbSend {
+        bytes: Vec<u8>,
+    },
+    DinUsbExpect {
+        bytes: Vec<u8>,
+        cable: u8,
+    },
+    DinUsbEnd,
     L6MidiRingPinSweep {
         cc: u8,
     },
@@ -603,6 +612,7 @@ fn validate_native_midi_capabilities(
             && matches!(
                 step.action,
                 crate::Action::DirectUsbMidiRoundTrip { .. }
+                    | crate::Action::DinUsbBegin
                     | crate::Action::HostMidiRoundTrip
                     | crate::Action::UsbDescriptors
                     | crate::Action::UsbStorage
@@ -860,6 +870,7 @@ pub struct State {
     adaptive_progress: crate::progress::CaseProgress,
     adaptive_index: usize,
 
+    din_usb: Option<midi::DinUsbScope>,
     panel_keys: Option<PanelKeyScope>,
     saved: Option<(Vec<u8>, usize)>,
     midi: Option<l6max_host::usb::Endpoints>,
@@ -1261,6 +1272,7 @@ mod native_midi_capability_tests {
             crate::Action::L6maxUiPadVerify { pad: 1 },
             crate::Action::L6DinSweep,
             crate::Action::L6MidiProbeBegin,
+            crate::Action::DinUsbBegin,
             crate::Action::L6UsbStartup,
             crate::Action::L6DinEventDispatch {
                 group: 0,

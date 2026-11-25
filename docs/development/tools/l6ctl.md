@@ -405,3 +405,5 @@ Rust callers use `OwnedControl::debug_session()` for an owned engine or
 The in-process `OwnedControl` API offers USB SysEx send and poll against an already enumerated endpoint. The caller owns its connection, receive queue and deadlines. These operations are not exposed through the control socket or CLI.
 
 `l6ctl panel-key CODE` reads the L6max 1.10 sound-pad key lookup and six state words for codes 25–28. The revision guard is checked before reading. The table and state reads are non-atomic; the returned input state is not evidence of an OLED rendering.
+
+`l6ctl midi send-bytes ENDPOINT HEX_BYTE...` sends raw MIDI to a native endpoint; bytes are two hexadecimal digits. In-process callers can also reserve USB with `l6ctl::midi::RawUsbReceiver`, enumerate it with their own timeout policy, and poll complete USB transfers with cable and packet boundaries preserved. The raw USB receiver is unavailable through the control socket.

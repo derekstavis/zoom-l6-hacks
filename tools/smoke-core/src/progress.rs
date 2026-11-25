@@ -233,6 +233,13 @@ pub fn step_label(action: &crate::Action) -> String {
         ),
         Action::UsbSysexEnd => "End USB SysEx campaign".into(),
         Action::Wait { until } => format!("Wait for {}", until.replace('-', " ")),
+        Action::DinUsbBegin => "Connect DIN MIDI endpoint".into(),
+        Action::DinUsbAttach => "Attach and enumerate USB MIDI".into(),
+        Action::DinUsbSend { bytes } => format!("Send DIN MIDI {bytes:02x?}"),
+        Action::DinUsbExpect { bytes, cable } => {
+            format!("Wait for USB cable {cable} MIDI {bytes:02x?}")
+        }
+        Action::DinUsbEnd => "Close DIN and USB MIDI sessions".into(),
         Action::MidiProbeBegin => "Connect MIDI probe sessions".into(),
         Action::MidiProbeSendCc {
             port,

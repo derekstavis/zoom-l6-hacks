@@ -80,7 +80,12 @@ pub fn of(action: &Action) -> Requirement {
             first: true,
             ..stock_on(L6)
         },
-        Action::L6DinUsbForwarding | Action::L6InputSweep => on(L6),
+        Action::DinUsbBegin
+        | Action::DinUsbAttach
+        | Action::DinUsbSend { .. }
+        | Action::DinUsbExpect { .. }
+        | Action::DinUsbEnd
+        | Action::L6InputSweep => on(L6),
         Action::L6maxRecorderPlayback { .. }
         | Action::L6maxInputTiming
         | Action::L6maxPanelKeyBegin

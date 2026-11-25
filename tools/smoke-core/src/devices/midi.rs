@@ -671,143 +671,6 @@ impl State {
         )
     }
 
-    pub(super) fn run_l6_din_usb_forwarding(
-        &mut self,
-        session: &Session,
-        wall_timeout_s: u64,
-    ) -> Result<Value, Box<dyn std::error::Error>> {
-        use l6max_host::host_midi::endpoint_name;
-
-        if session.engine.model() != l6fw::Model::L6 {
-            return Err("l6-din-usb-forwarding requires L6 firmware".into());
-        }
-        let inputs = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("L6 DIN forwarding needs panel inputs")?;
-        session.engine.connect_midi();
-        let endpoint = endpoint_name(
-            &l6max_host::host_midi::din_port_name_for_model_with_namespace(
-                l6fw::Model::L6,
-                midi_namespace().as_deref(),
-            ),
-        );
-        let endpoint_deadline = Instant::now() + Duration::from_secs(10);
-        let mut din = loop {
-            match crate::host_midi::connect(&endpoint) {
-                Ok(client) => break client,
-                Err(error)
-                    if error.contains("missing native MIDI")
-                        && Instant::now() < endpoint_deadline =>
-                {
-                    session.poll()?;
-                    thread::sleep(Duration::from_millis(25));
-                }
-                Err(error) => return Err(error.into()),
-            }
-        };
-        wait_guest_duration(
-            session,
-            300,
-            Instant::now() + Duration::from_secs(wall_timeout_s),
-        )?;
-        let usb = session
-            .engine
-            .usb
-            .as_ref()
-            .ok_or("L6 USB MIDI host is unavailable")?;
-        usb.connect(true)
-            .map_err(|error| format!("cannot connect L6 USB device: {error}"))?;
-        let usb_deadline = Instant::now() + Duration::from_secs(15);
-        let endpoints = loop {
-            match usb.enumerate() {
-                Ok(configuration) => {
-                    break configuration
-                        .midi
-                        .ok_or("L6 USB device has no MIDI endpoints")?;
-                }
-                Err(error)
-                    if (error.raw_os_error() == Some(libc::ENODEV)
-                        || error.raw_os_error() == Some(libc::EAGAIN)
-                        || error.kind() == std::io::ErrorKind::InvalidData)
-                        && Instant::now() < usb_deadline =>
-                {
-                    session.poll()?;
-                    thread::sleep(Duration::from_millis(250));
-                }
-                Err(error) => {
-                    return Err(format!("cannot enumerate L6 USB MIDI: {error}").into());
-                }
-            }
-        };
-        let _ = usb.try_receive(endpoints.input, 16_384);
-        let probes: [&[u8]; 4] = [
-            &[0xb3, 0x10, 0x20],
-            &[0x93, 0x45, 0x64],
-            &[0xf8],
-            &[0xf0, 0x7d, 0x01, 0xf7],
-        ];
-        let start_guest_ms = inputs.panel.snapshot().guest_ms;
-        for probe in probes {
-            din.send_bytes(probe).map_err(std::io::Error::other)?;
-            let deadline = Instant::now() + Duration::from_secs(3);
-            let mut forwarded_bytes = Vec::new();
-            let mut forwarded = false;
-            while Instant::now() < deadline {
-                session.poll()?;
-                match usb.try_receive(endpoints.input, 16_384) {
-                    Ok(bytes) => {
-                        let messages = l6max_host::usb_midi::decode(&bytes)
-                            .map_err(|error| format!("cannot decode USB MIDI: {error}"))?;
-                        for (cable, data) in messages {
-                            if cable != 0
-                                || (forwarded_bytes.is_empty() && data.first() != probe.first())
-                            {
-                                continue;
-                            }
-                            forwarded_bytes.extend(data);
-                            if forwarded_bytes == probe {
-                                forwarded = true;
-                                break;
-                            }
-                            if !probe.starts_with(&forwarded_bytes) {
-                                forwarded_bytes.clear();
-                            }
-                        }
-                        if forwarded {
-                            break;
-                        }
-                    }
-                    Err(error) if error.raw_os_error() == Some(libc::EAGAIN) => {}
-                    Err(error) => return Err(format!("USB MIDI receive failed: {error}").into()),
-                }
-                thread::sleep(Duration::from_millis(5));
-            }
-            if !forwarded {
-                return Err(format!(
-                    "L6 DIN-to-USB forwarding mismatch: no USB cable-0 message matched {probe:02x?} (received {forwarded_bytes:02x?})"
-                )
-                .into());
-            }
-            tracing::info!(
-                event = "l6_din_usb_forwarded",
-                bytes = ?probe,
-                guest_ms = inputs.panel.snapshot().guest_ms,
-                "L6 DIN message reached USB MIDI IN unchanged"
-            );
-        }
-        let guest_elapsed = inputs
-            .panel
-            .snapshot()
-            .guest_ms
-            .wrapping_sub(start_guest_ms);
-        din.release();
-        Ok(
-            json!({"probes":probes.iter().map(|probe| probe.to_vec()).collect::<Vec<_>>(),"forwarded_count":probes.len(),"guest_elapsed_ms":guest_elapsed,"din_endpoint":endpoint,"usb_cable":0}),
-        )
-    }
-
     pub(super) fn run_l6_midi_ring_pin_sweep(
         &mut self,
         session: &Session,
@@ -2470,5 +2333,186 @@ mod l6_hook_probe_tests {
         assert!(l6_accept_ordered_cc(&expected, &mut index, 8));
         assert!(l6_midi_expected_ccs(&[0xff; 54]).is_err());
         assert!(l6_midi_expected_ccs(&[0; 53]).is_err());
+    }
+}
+
+fn match_usb_forward(
+    expected: &[u8],
+    cable: u8,
+    accumulated: &mut Vec<u8>,
+    packets: Vec<(u8, Vec<u8>)>,
+) -> bool {
+    for (received_cable, data) in packets {
+        if received_cable != cable || (accumulated.is_empty() && data.first() != expected.first()) {
+            continue;
+        }
+        accumulated.extend(data);
+        if accumulated == expected {
+            return true;
+        }
+        if !expected.starts_with(accumulated) {
+            accumulated.clear();
+        }
+    }
+    false
+}
+
+/// DIN and direct USB are held together for the entire forwarding transaction.
+pub(super) struct DinUsbScope {
+    din: l6ctl::midi::MidiSession,
+    usb: Option<l6ctl::midi::RawUsbReceiver>,
+    pending: Option<(Vec<u8>, Instant)>,
+}
+impl Drop for DinUsbScope {
+    fn drop(&mut self) {
+        self.din.release();
+    }
+}
+
+impl State {
+    pub(super) fn run_din_usb(
+        &mut self,
+        session: &Session,
+        operation: Operation,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        if matches!(operation, Operation::DinUsbBegin) {
+            if self.din_usb.is_some() || session.engine.model() != l6fw::Model::L6 {
+                return Err("DIN USB forwarding requires a fresh L6 scope".into());
+            }
+            l6ctl::OwnedControl::new(&session.engine).connect_din()?;
+            let endpoint = l6max_host::host_midi::endpoint_name(
+                &l6max_host::host_midi::din_port_name_for_model_with_namespace(
+                    l6fw::Model::L6,
+                    midi_namespace().as_deref(),
+                ),
+            );
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let din = loop {
+                match l6ctl::midi::MidiSession::connect_native(&endpoint) {
+                    Ok(value) => break value,
+                    Err(error)
+                        if error.contains("missing native MIDI") && Instant::now() < deadline =>
+                    {
+                        session.poll()?;
+                        thread::sleep(Duration::from_millis(25));
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            };
+            self.din_usb = Some(DinUsbScope {
+                din,
+                usb: None,
+                pending: None,
+            });
+            return Ok(json!({"endpoint":endpoint}));
+        }
+        let scope = self.din_usb.as_mut().ok_or("missing DIN USB scope")?;
+        match operation {
+            Operation::DinUsbAttach if scope.usb.is_none() => {
+                let mut usb = l6ctl::OwnedControl::new(&session.engine).raw_usb_midi()?;
+                let deadline = Instant::now() + Duration::from_secs(15);
+                loop {
+                    match usb.enumerate() {
+                        Ok(()) => break,
+                        Err(error)
+                            if (error.raw_os_error() == Some(libc::ENODEV)
+                                || error.raw_os_error() == Some(libc::EAGAIN)
+                                || error.kind() == std::io::ErrorKind::InvalidData)
+                                && Instant::now() < deadline =>
+                        {
+                            session.poll()?;
+                            thread::sleep(Duration::from_millis(250));
+                        }
+                        Err(error) => {
+                            return Err(format!("cannot enumerate L6 USB MIDI: {error}").into());
+                        }
+                    }
+                }
+                let _ = usb.poll();
+                scope.usb = Some(usb);
+                Ok(json!({"enumerated":true}))
+            }
+            Operation::DinUsbSend { bytes } if scope.usb.is_some() && scope.pending.is_none() => {
+                if bytes.is_empty() || bytes.len() > 256 {
+                    return Err("MIDI bytes must have length 1..256".into());
+                }
+                scope
+                    .din
+                    .send_bytes(&bytes)
+                    .map_err(std::io::Error::other)?;
+                scope.pending = Some((bytes.clone(), Instant::now() + Duration::from_secs(3)));
+                Ok(json!({"sent":bytes}))
+            }
+            Operation::DinUsbExpect { bytes, cable } if scope.usb.is_some() => {
+                let (expected, deadline) = scope
+                    .pending
+                    .as_ref()
+                    .ok_or("missing pending MIDI message")?;
+                if *expected != bytes || cable > 15 {
+                    return Err("MIDI expectation does not match pending message".into());
+                }
+                let mut forwarded = Vec::new();
+                while Instant::now() < *deadline {
+                    session.poll()?;
+                    if let Some(packets) = scope.usb.as_mut().unwrap().poll()? {
+                        if match_usb_forward(&bytes, cable, &mut forwarded, packets) {
+                            scope.pending = None;
+                            return Ok(json!({"cable":cable,"bytes":bytes}));
+                        }
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(format!(
+                    "DIN to USB forwarding mismatch for {bytes:02x?}: received {forwarded:02x?}"
+                )
+                .into())
+            }
+            Operation::DinUsbEnd if scope.usb.is_some() && scope.pending.is_none() => {
+                self.din_usb.take();
+                Ok(json!({"released":true}))
+            }
+            _ => Err("DIN USB forwarding actions are out of order".into()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod din_usb_forward_tests {
+    use super::match_usb_forward;
+    #[test]
+    fn preserves_cable_and_fragment_matching() {
+        let mut seen = Vec::new();
+        let expected = [0xf0, 0x7d, 1, 0xf7];
+        assert!(!match_usb_forward(
+            &expected,
+            0,
+            &mut seen,
+            vec![
+                (1, expected.to_vec()),
+                (0, vec![0x90, 1, 2]),
+                (0, vec![0xf0, 0x7d])
+            ]
+        ));
+        assert_eq!(seen, [0xf0, 0x7d]);
+        assert!(match_usb_forward(
+            &expected,
+            0,
+            &mut seen,
+            vec![(0, vec![1, 0xf7])]
+        ));
+        seen.clear();
+        assert!(!match_usb_forward(
+            &expected,
+            0,
+            &mut seen,
+            vec![(0, vec![0xf0, 0x7d]), (0, vec![9])]
+        ));
+        assert!(seen.is_empty());
+        assert!(match_usb_forward(
+            &[0xf8],
+            0,
+            &mut seen,
+            vec![(0, vec![0xf8])]
+        ));
     }
 }

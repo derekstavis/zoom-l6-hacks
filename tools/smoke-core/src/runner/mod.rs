@@ -635,9 +635,22 @@ impl Runner {
                         },
                     ));
                 }
-                Action::L6DinUsbForwarding => {
-                    return Ok(Progress::Device(devices::Operation::L6DinUsbForwarding));
+                Action::DinUsbBegin => {
+                    return Ok(Progress::Device(devices::Operation::DinUsbBegin));
                 }
+                Action::DinUsbAttach => {
+                    return Ok(Progress::Device(devices::Operation::DinUsbAttach));
+                }
+                Action::DinUsbSend { bytes } => {
+                    return Ok(Progress::Device(devices::Operation::DinUsbSend { bytes }));
+                }
+                Action::DinUsbExpect { bytes, cable } => {
+                    return Ok(Progress::Device(devices::Operation::DinUsbExpect {
+                        bytes,
+                        cable,
+                    }));
+                }
+                Action::DinUsbEnd => return Ok(Progress::Device(devices::Operation::DinUsbEnd)),
                 Action::HostMidiSyncBegin => {
                     return Ok(Progress::Device(devices::Operation::HostMidiSyncBegin));
                 }

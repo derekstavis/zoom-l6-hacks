@@ -537,11 +537,20 @@ pub enum Action {
         #[serde(default = "default_true")]
         expect_ring_change: bool,
     },
-    L6DinUsbForwarding,
     L6MidiProbeBegin,
     L6MidiProbeInject,
     L6MidiProbeExpectHook,
     L6MidiProbeExpectReplies,
+    DinUsbBegin,
+    DinUsbAttach,
+    DinUsbSend {
+        bytes: Vec<u8>,
+    },
+    DinUsbExpect {
+        bytes: Vec<u8>,
+        cable: u8,
+    },
+    DinUsbEnd,
     L6MidiRingPinSweep {
         cc: u8,
     },

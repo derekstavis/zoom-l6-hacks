@@ -435,6 +435,25 @@ impl<'a> OwnedControl<'a> {
         Self { engine }
     }
 
+    /// Enable the in-process guest's DIN/TRS MIDI bridge.
+    pub fn connect_din(&self) -> Result<(), ControlError> {
+        if self.engine.din_midi.is_none() {
+            return Err(ControlError::Unavailable("DIN MIDI unavailable"));
+        }
+        self.engine.connect_midi();
+        Ok(())
+    }
+    /// Reserve the owned guest's USB controller for raw USB-MIDI observation.
+    pub fn raw_usb_midi(&self) -> Result<l6max_host::usb_midi::RawReceiver, ControlError> {
+        let usb = self
+            .engine
+            .usb
+            .as_ref()
+            .ok_or(ControlError::Unavailable("USB host unavailable"))?
+            .clone();
+        l6max_host::usb_midi::RawReceiver::attach(usb).map_err(ControlError::Rejected)
+    }
+
     pub fn debug_session(&self) -> Result<l6max_host::debug::Session, ControlError> {
         self.engine
             .debugger()

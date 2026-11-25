@@ -276,6 +276,10 @@ fn execute(
             };
             serde_json::to_value(inputs.counters(source)).map_err(|error| error.to_string())
         }
+        "heap-counters" => {
+            let counters = crate::heap::counters(qmp, model)?;
+            serde_json::to_value(counters).map_err(|error| error.to_string())
+        }
         "rtos" => {
             let kind = request
                 .get("kind")

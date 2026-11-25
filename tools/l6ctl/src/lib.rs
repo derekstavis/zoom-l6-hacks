@@ -3,6 +3,7 @@
 //! The socket interface is deliberately narrower than direct access. In
 //! particular its input replies confirm enqueueing, not guest acknowledgement.
 pub use l6max_host::control::Info;
+pub use l6max_host::heap::Counters as HeapCounters;
 pub use l6max_host::input::{InputCounters, InputSource};
 pub use l6max_host::knob_popup::{ParameterState, RecorderState, Snapshot as KnobPopupSnapshot};
 use l6max_host::{control, engine::Engine, freertos, qmp};
@@ -33,6 +34,7 @@ pub enum RtosKind {
 pub enum Request {
     Info,
     InputStatus { source: InputSource },
+    HeapCounters,
     KnobPopup { with_text: bool },
     RecorderState,
     KnobParameterState,
@@ -134,6 +136,7 @@ impl ControlClient {
         let timeout = if matches!(
             request,
             Request::Rtos { .. }
+                | Request::HeapCounters
                 | Request::KnobPopup { .. }
                 | Request::RecorderState
                 | Request::KnobParameterState
@@ -166,6 +169,11 @@ impl ControlClient {
 
     pub fn info(&self) -> Result<Info, ControlError> {
         self.request_as(&Request::Info)
+    }
+
+    /// One guarded, non-atomic live counter read (no heap traversal).
+    pub fn heap_counters(&self) -> Result<HeapCounters, ControlError> {
+        self.request_as(&Request::HeapCounters)
     }
 
     /// Request the host's existing versioned RTOS JSON snapshot.
@@ -258,6 +266,13 @@ impl<'a> OwnedControl<'a> {
             .management
             .first()
             .ok_or(ControlError::Unavailable("QEMU management unavailable"))
+    }
+
+    /// Validate the allocator once for a bounded set of live counter reads.
+    /// Recreate this reader after a guest restart or firmware change.
+    pub fn heap_counter_reader(&self) -> Result<l6max_host::heap::CounterReader<'_>, ControlError> {
+        l6max_host::heap::counter_reader(self.main_qmp()?, self.engine.model())
+            .map_err(ControlError::Rejected)
     }
 
     /// Enqueue a one-based encoder input, without waiting for guest acknowledgment.

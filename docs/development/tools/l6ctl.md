@@ -14,6 +14,7 @@ Then run commands in another terminal:
 ```sh
 cargo l6ctl --socket /tmp/l6-control.sock info
 cargo l6ctl --socket /tmp/l6-control.sock input status panel
+cargo l6ctl --socket /tmp/l6-control.sock heap-counters
 cargo l6ctl --socket /tmp/l6-control.sock button channel.1.mute
 cargo l6ctl --socket /tmp/l6-control.sock down play 500
 cargo l6ctl --socket /tmp/l6-control.sock up play
@@ -66,6 +67,21 @@ Code that already owns an `l6max_host::engine::Engine` can borrow it with
 existing snapshots directly; it does not create a second guest or open a
 control socket. RTOS decoding and model/revision guards remain in
 `l6max-host`, and the two transports do not yet expose identical capabilities.
+
+`ControlClient::heap_counters()` returns one guarded, non-atomic sample of the
+four allocator counters. In-process callers can create
+`OwnedControl::heap_counter_reader()` once for a bounded observation, then
+call `read()` for each sample; recreate the reader after guest restart or a
+firmware change. The reader verifies both model-specific 1.10 allocator
+routines before trusting the addresses. Patches that replace either routine
+are rejected, even if some other guest state still appears compatible.
+
+`l6ctl heap-counters` prints the same typed JSON snapshot (`model`, `atomic`,
+`revision_guard`, `free`, `minimum_ever_free`, `allocations`, and `frees`).
+The counter sample is one live guest-memory read; it neither traverses the heap
+nor validates a stable or plausible heap snapshot. Successful allocation and
+free counters are 32-bit unsigned values and may wrap. Use `rtos heap` when
+the heavier, consistency-checked block inventory is needed.
 
 ## FreeRTOS snapshots
 

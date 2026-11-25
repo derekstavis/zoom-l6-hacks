@@ -1,5 +1,9 @@
 # Working in the tooling repository
 
+For a guarded single-read sample of live allocator counters, use
+`l6ctl heap-counters` or `OwnedControl::heap_counter_reader()`; `rtos heap`
+also traverses and validates the full heap and has different costs and semantics.
+
 This repository owns the simulator, package/patch tools and executable tests.
 Keep changes on a feature branch until the user approves a merge.
 

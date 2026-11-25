@@ -156,6 +156,60 @@ fn missing_socket_reports_connection_failure() {
 }
 
 #[test]
+fn heap_counters_cli_and_client_use_typed_guarded_snapshot() {
+    let path = socket_path();
+    let sample = json!({"model":"l6max","atomic":false,"revision_guard":"1.10_pvPortMalloc_vPortFree","free":100,"minimum_ever_free":200,"allocations":5,"frees":3});
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"heap-counters"}),
+                json!({"ok":true,"result":sample}),
+            ),
+            (
+                json!({"command":"heap-counters"}),
+                json!({"ok":true,"result":sample}),
+            ),
+            (
+                json!({"command":"heap-counters"}),
+                json!({"ok":false,"error":"allocator differs from 1.10"}),
+            ),
+        ],
+    );
+    let client = ControlClient::new(&path);
+    let counters = client.heap_counters().unwrap();
+    assert_eq!(
+        (
+            counters.free,
+            counters.minimum_ever_free,
+            counters.allocations,
+            counters.frees
+        ),
+        (100, 200, 5, 3)
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .arg("heap-counters")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        sample
+    );
+    assert!(
+        matches!(client.heap_counters(), Err(ControlError::Rejected(message)) if message == "allocator differs from 1.10")
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn cli_keeps_existing_one_based_encoder_and_output_contract() {
     let path = socket_path();
     let server = server(

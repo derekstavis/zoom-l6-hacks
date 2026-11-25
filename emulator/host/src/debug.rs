@@ -7,6 +7,7 @@ use crate::{midi_config, qmp::QmpClient};
 use l6fw::Model;
 use l6max_diagnostics::gdb::Gdb;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
     path::PathBuf,
@@ -14,37 +15,119 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const SCRATCH: u32 = 0x841f_f000;
 const SCRATCH_LEN: usize = 8;
 const MAX_BREAKPOINTS: usize = 4;
 const MAX_CONTINUE_MS: u64 = 60_000;
+const IDLE_GUARD: &str = "f4870ac4ce0c3cb238f92e437a9f5511912eee645168943b43a0166622b85ba2";
+const SENDER_GUARD: &str = "f07c456c512bff15fb7112a0f8ad5993dab518b4fbfd4ed1544de2208681c27d";
+const XPSR: u32 = 25;
+
+/// Identity derived from the selected patch report and, for SD, its module.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum L6MidiBinding {
+    Firmware,
+    Sd {
+        dispatcher: u32,
+        site_index: u32,
+        entry_offset: u32,
+    },
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "command", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Command {
-    Register { index: u32 },
-    Read { address: u32, length: usize },
-    AddBreakpoint { address: u32 },
-    RemoveBreakpoint { address: u32 },
-    Continue { timeout_ms: u64 },
+    Register {
+        index: u32,
+    },
+    Read {
+        address: u32,
+        length: usize,
+    },
+    AddBreakpoint {
+        address: u32,
+    },
+    RemoveBreakpoint {
+        address: u32,
+    },
+    Continue {
+        timeout_ms: u64,
+    },
     Step,
     L6ScratchRead,
-    L6ScratchWrite { bytes: [u8; SCRATCH_LEN] },
+    L6ScratchWrite {
+        bytes: [u8; SCRATCH_LEN],
+    },
+    L6MidiInject {
+        expected_hook: u32,
+        binding: L6MidiBinding,
+        timeout_ms: u64,
+        leave_stopped: bool,
+    },
+    L6MidiSender {
+        timeout_ms: u64,
+    },
+    L6MidiFinish {
+        timeout_ms: u64,
+    },
     Close,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Observation {
-    Register { index: u32, value: u32 },
-    Memory { address: u32, bytes: Vec<u8> },
-    Breakpoint { address: u32, installed: bool },
-    Stopped { reply: String },
-    Scratch { address: u32, bytes: Vec<u8> },
+    Register {
+        index: u32,
+        value: u32,
+    },
+    Memory {
+        address: u32,
+        bytes: Vec<u8>,
+    },
+    Breakpoint {
+        address: u32,
+        installed: bool,
+    },
+    Stopped {
+        reply: String,
+    },
+    Scratch {
+        address: u32,
+        bytes: Vec<u8>,
+    },
+    L6MidiInjected {
+        expected_hook: u32,
+        event: Vec<u8>,
+        config: midi_config::Config,
+        idle_sp: u32,
+        idle_xpsr: u32,
+        requires_restart: bool,
+    },
+    L6MidiSender {
+        pc: u32,
+        buffer: u32,
+        length: u32,
+        route: u32,
+        return_pc: u32,
+        bytes: Option<Vec<u8>>,
+    },
+    L6MidiFinished {
+        requires_restart: bool,
+    },
     Closed,
+}
+
+fn l6_probe_deadline(timeout_ms: u64) -> Result<Instant, String> {
+    if timeout_ms == 0 || timeout_ms > MAX_CONTINUE_MS {
+        return Err("L6 MIDI probe timeout must be 1..60000 ms".into());
+    }
+    Instant::now()
+        .checked_add(Duration::from_millis(timeout_ms))
+        .ok_or("L6 MIDI probe deadline overflow".into())
 }
 
 fn validate_stop(reply: String) -> Result<String, String> {
@@ -64,6 +147,13 @@ trait Guest: Send + Sync {
     fn stop(&self) -> Result<(), String>;
     fn resume(&self) -> Result<(), String>;
     fn guard_l6_scratch(&self) -> Result<(), String>;
+    fn stop_before(&self, deadline: Instant) -> Result<(), String>;
+    fn guard_l6_midi_probe(
+        &self,
+        deadline: Instant,
+        hook: u32,
+        binding: &L6MidiBinding,
+    ) -> Result<midi_config::Config, String>;
 }
 struct MainGuest {
     qmp: QmpClient,
@@ -90,12 +180,114 @@ impl Guest for MainGuest {
         }
         Ok(())
     }
+    fn stop_before(&self, deadline: Instant) -> Result<(), String> {
+        self.qmp.stop_before(deadline).map_err(|e| e.to_string())
+    }
     fn guard_l6_scratch(&self) -> Result<(), String> {
         midi_config::config(&self.qmp, self.model).map(|_| ())
     }
+    fn guard_l6_midi_probe(
+        &self,
+        deadline: Instant,
+        hook: u32,
+        binding: &L6MidiBinding,
+    ) -> Result<midi_config::Config, String> {
+        let config = midi_config::config_before(&self.qmp, self.model, deadline)?;
+        validate_l6_probe_guards(self.model, |address, length| {
+            self.qmp
+                .read_memory_before(0, address, length, deadline)
+                .map_err(|e| e.to_string())
+        })?;
+        validate_l6_hook_binding(hook, binding, |address, length| {
+            self.qmp
+                .read_memory_before(0, address, length, deadline)
+                .map_err(|e| e.to_string())
+        })?;
+        Ok(config)
+    }
 }
+fn validate_l6_hook_binding(
+    hook: u32,
+    binding: &L6MidiBinding,
+    mut read: impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
+) -> Result<(), String> {
+    use patch_abi::registry;
+    let target = match binding {
+        L6MidiBinding::Firmware => hook,
+        L6MidiBinding::Sd { dispatcher, .. } => *dispatcher,
+    };
+    let displacement = i64::from(target) - i64::from(firmware_api::l6::midi_in + 4);
+    if target & 1 != 0 || !(-16_777_216..16_777_216).contains(&displacement) {
+        return Err("invalid L6 MIDI branch target".into());
+    }
+    if read(firmware_api::l6::midi_in, 4)?
+        != patch_core::branch(firmware_api::l6::midi_in, target, false)
+    {
+        return Err("installed L6 MIDI branch does not match selected patch".into());
+    }
+    if let L6MidiBinding::Sd {
+        site_index,
+        entry_offset,
+        ..
+    } = binding
+    {
+        let mut word = |address| -> Result<u32, String> {
+            let bytes = read(address, 4)?;
+            Ok(u32::from_le_bytes(
+                bytes.try_into().map_err(|_| "short SD registry read")?,
+            ))
+        };
+        let registry_base = word(registry::L6_POINTER)?;
+        let max_offset = registry::site_offset(registry::MAX_SITES);
+        if registry_base < 0x8000_0000
+            || registry_base
+                .checked_add(max_offset)
+                .is_none_or(|v| v > 0x8420_0000)
+        {
+            return Err("invalid SD registry address".into());
+        }
+        if word(registry_base)? != registry::MAGIC
+            || *site_index >= registry::MAX_SITES
+            || *site_index >= word(registry_base + registry::SITE_COUNT_OFFSET)?
+        {
+            return Err("invalid SD registry identity or site".into());
+        }
+        let module = word(registry_base + registry::MODULE_PTR_OFFSET)?;
+        let length = word(registry_base + registry::MODULE_LEN_OFFSET)?;
+        if *entry_offset >= length
+            || module.checked_add(*entry_offset) != Some(hook)
+            || word(registry_base + registry::site_offset(*site_index))? != hook | 1
+        {
+            return Err("SD MIDI hook does not match loaded module and registry".into());
+        }
+    }
+    Ok(())
+}
+fn validate_l6_probe_guards(
+    model: Model,
+    mut read: impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
+) -> Result<(), String> {
+    if model != Model::L6 {
+        return Err("MIDI hook probe requires L6 1.10".into());
+    }
+    for (address, expected) in [
+        (firmware_api::l6::idle_loop, IDLE_GUARD),
+        (firmware_api::l6::midi_send, SENDER_GUARD),
+    ] {
+        let bytes = read(address, 64)?;
+        if bytes.len() != 64 || format!("{:x}", Sha256::digest(&bytes)) != expected {
+            return Err(format!(
+                "unsupported L6 MIDI probe routine at {address:#010x}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 trait Transport: Send {
+    fn set_timeout(&mut self, timeout: Duration) -> Result<(), String>;
     fn read_register(&mut self, index: u32) -> Result<u32, String>;
+    fn write_register(&mut self, index: u32, value: u32) -> Result<(), String>;
     fn read(&mut self, address: u32, length: usize) -> Result<Vec<u8>, String>;
     fn write(&mut self, address: u32, bytes: &[u8]) -> Result<(), String>;
     fn breakpoint(&mut self, address: u32, enable: bool) -> Result<(), String>;
@@ -106,8 +298,14 @@ trait Transport: Send {
     fn disconnect(&mut self) -> Result<(), String>;
 }
 impl Transport for Gdb {
+    fn set_timeout(&mut self, timeout: Duration) -> Result<(), String> {
+        Gdb::set_request_timeout(self, timeout).map_err(|e| e.to_string())
+    }
     fn read_register(&mut self, index: u32) -> Result<u32, String> {
         Gdb::read_register(self, index).map_err(|e| e.to_string())
+    }
+    fn write_register(&mut self, index: u32, value: u32) -> Result<(), String> {
+        Gdb::register(self, index, value).map_err(|e| e.to_string())
     }
     fn read(&mut self, address: u32, length: usize) -> Result<Vec<u8>, String> {
         Gdb::read(self, address, length).map_err(|e| e.to_string())
@@ -208,6 +406,10 @@ impl Controller {
     }
 }
 
+struct L6MidiContext {
+    last_return: Option<u32>,
+}
+
 pub struct Session {
     transport: Option<Box<dyn Transport>>,
     guest: Arc<dyn Guest>,
@@ -215,6 +417,7 @@ pub struct Session {
     poisoned: bool,
     breakpoints: BTreeSet<u32>,
     scratch: Option<Vec<u8>>,
+    l6_midi: Option<L6MidiContext>,
     unusable: Arc<AtomicBool>,
     lease: Option<l6max_diagnostics::gdb::Lease>,
     retained_lease: Arc<Mutex<Option<l6max_diagnostics::gdb::Lease>>>,
@@ -235,6 +438,7 @@ impl Session {
             poisoned: false,
             breakpoints: BTreeSet::new(),
             scratch: None,
+            l6_midi: None,
             unusable,
             lease,
             retained_lease,
@@ -256,6 +460,38 @@ impl Session {
         }
         result
     }
+    fn timed<T>(
+        &mut self,
+        deadline: Instant,
+        cancelled: &mut impl FnMut() -> bool,
+        f: impl FnOnce(&mut dyn Transport) -> Result<T, String>,
+    ) -> Result<T, String> {
+        if cancelled() {
+            return Err("L6 MIDI probe cancelled".into());
+        }
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|d| !d.is_zero())
+            .ok_or("L6 MIDI probe deadline exceeded")?;
+        let result = self.transact(|g| {
+            g.set_timeout(remaining.min(Duration::from_secs(5)))?;
+            let result = f(g);
+            let reset = g.set_timeout(Duration::from_secs(5));
+            match (result, reset) {
+                (Ok(value), Ok(())) => Ok(value),
+                (Err(error), _) | (_, Err(error)) => Err(error),
+            }
+        });
+        let value = result?;
+        if cancelled() {
+            return Err("L6 MIDI probe cancelled".into());
+        }
+        if Instant::now() >= deadline {
+            return Err("L6 MIDI probe deadline exceeded".into());
+        }
+        Ok(value)
+    }
+
     pub fn execute(&mut self, command: Command) -> Result<Observation, String> {
         self.execute_cancellable(command, || false)
     }
@@ -266,6 +502,16 @@ impl Session {
         command: Command,
         mut cancelled: impl FnMut() -> bool,
     ) -> Result<Observation, String> {
+        if self.l6_midi.is_some()
+            && matches!(
+                command,
+                Command::L6ScratchRead
+                    | Command::L6ScratchWrite { .. }
+                    | Command::L6MidiInject { .. }
+            )
+        {
+            return Err("L6 MIDI injection is already active".into());
+        }
         match command {
             Command::Register { index } => {
                 if index > 15 {
@@ -370,6 +616,150 @@ impl Session {
                     bytes: bytes.to_vec(),
                 })
             }
+            Command::L6MidiInject {
+                expected_hook,
+                binding,
+                timeout_ms,
+                leave_stopped,
+            } => {
+                let deadline = l6_probe_deadline(timeout_ms)?;
+                if !leave_stopped {
+                    return Err("L6 MIDI injection requires explicit leave_stopped=true".into());
+                }
+                if cancelled() {
+                    return Err("L6 MIDI probe cancelled".into());
+                }
+                use firmware_api::l6::{idle_loop, midi_in, midi_send};
+                if expected_hook & 1 != 0
+                    || !(0x8000_1000..0x8420_0000).contains(&expected_hook)
+                    || !self.breakpoints.contains(&idle_loop)
+                    || !self.breakpoints.contains(&midi_send)
+                    || !self.breakpoints.contains(&expected_hook)
+                    || expected_hook == idle_loop
+                    || expected_hook == midi_send
+                {
+                    return Err("L6 MIDI injection requires owned idle, sender and distinct hook breakpoints".into());
+                }
+                let config = self
+                    .guest
+                    .guard_l6_midi_probe(deadline, expected_hook, &binding)?;
+                if cancelled() || Instant::now() >= deadline {
+                    return Err("L6 MIDI probe cancelled or deadline exceeded".into());
+                }
+                let idle_pc = self.timed(deadline, &mut cancelled, |g| g.read_register(15))? & !1;
+                let idle_sp = self.timed(deadline, &mut cancelled, |g| g.read_register(13))?;
+                let idle_xpsr = self.timed(deadline, &mut cancelled, |g| g.read_register(XPSR))?;
+                if idle_pc != idle_loop || idle_xpsr & 0x1ff != 0 {
+                    return Err("L6 MIDI injection requires idle task thread mode".into());
+                }
+                let before =
+                    self.timed(deadline, &mut cancelled, |g| g.read(SCRATCH, SCRATCH_LEN))?;
+                if before.len() != SCRATCH_LEN {
+                    self.poisoned = true;
+                    return Err("short scratch read".into());
+                }
+                if self.scratch.is_none() {
+                    self.scratch = Some(before.clone());
+                }
+                self.l6_midi = Some(L6MidiContext { last_return: None });
+                let mut event = [0u8; SCRATCH_LEN];
+                event[4..7].copy_from_slice(&[0xb0 | config.channel, 127, 127]);
+                self.timed(deadline, &mut cancelled, |g| g.write(SCRATCH, &event))?;
+                self.timed(deadline, &mut cancelled, |g| g.write_register(0, SCRATCH))?;
+                self.timed(deadline, &mut cancelled, |g| {
+                    g.write_register(14, idle_loop | 1)
+                })?;
+                self.timed(deadline, &mut cancelled, |g| g.write_register(15, midi_in))?;
+                Ok(Observation::L6MidiInjected {
+                    expected_hook,
+                    event: event.to_vec(),
+                    config,
+                    idle_sp,
+                    idle_xpsr,
+                    requires_restart: true,
+                })
+            }
+            Command::L6MidiSender { timeout_ms } => {
+                let deadline = l6_probe_deadline(timeout_ms)?;
+                if self.l6_midi.is_none() {
+                    return Err("L6 MIDI injection is not active".into());
+                }
+                let pc = self.timed(deadline, &mut cancelled, |g| g.read_register(15))? & !1;
+                if pc != firmware_api::l6::midi_send {
+                    return Err(format!("not stopped at L6 MIDI sender: {pc:#x}"));
+                }
+                let buffer = self.timed(deadline, &mut cancelled, |g| g.read_register(0))?;
+                let length = self.timed(deadline, &mut cancelled, |g| g.read_register(1))?;
+                let route = self.timed(deadline, &mut cancelled, |g| g.read_register(2))?;
+                let return_pc = self.timed(deadline, &mut cancelled, |g| g.read_register(14))? & !1;
+                let bytes = if length == 3 {
+                    let end = buffer.checked_add(3).ok_or("MIDI sender buffer overflow")?;
+                    if !((buffer >= 0x2000_0000 && end <= 0x2030_0000)
+                        || (buffer >= 0x8000_0000 && end <= 0x8420_0000))
+                    {
+                        return Err("L6 MIDI sender buffer is outside mapped RAM".into());
+                    }
+                    Some(self.timed(deadline, &mut cancelled, |g| g.read(buffer, 3))?)
+                } else {
+                    None
+                };
+                self.l6_midi.as_mut().unwrap().last_return = Some(return_pc);
+                Ok(Observation::L6MidiSender {
+                    pc,
+                    buffer,
+                    length,
+                    route,
+                    return_pc,
+                    bytes,
+                })
+            }
+            Command::L6MidiFinish { timeout_ms } => {
+                let deadline = l6_probe_deadline(timeout_ms)?;
+                let context = self
+                    .l6_midi
+                    .as_ref()
+                    .ok_or("L6 MIDI injection is not active")?;
+                let expected_return = context
+                    .last_return
+                    .ok_or("no L6 MIDI sender was observed")?;
+                let scratch = self
+                    .scratch
+                    .as_ref()
+                    .ok_or("missing original debug scratch")?
+                    .clone();
+                let pc = self.timed(deadline, &mut cancelled, |g| g.read_register(15))? & !1;
+                if pc != expected_return {
+                    return Err("the last L6 MIDI sender has not returned".into());
+                }
+                self.timed(deadline, &mut cancelled, |g| g.write(SCRATCH, &scratch))?;
+                for address in self.breakpoints.clone() {
+                    self.timed(deadline, &mut cancelled, |g| g.breakpoint(address, false))?;
+                    self.breakpoints.remove(&address);
+                }
+                self.timed(deadline, &mut cancelled, |g| g.disconnect())?;
+                if cancelled() || Instant::now() >= deadline {
+                    return Err("L6 MIDI finish cancelled or deadline exceeded".into());
+                }
+                self.guest.stop_before(deadline)?;
+                if cancelled() || Instant::now() >= deadline {
+                    return Err("L6 MIDI finish cancelled or deadline exceeded".into());
+                }
+                // The injected execution cannot yet be proven to restore all
+                // CPU/scheduler state. Keep MAIN paused and reserve the lease
+                // until the engine is destroyed, even after a successful probe.
+                self.unusable.store(true, Ordering::Release);
+                if let Some(lease) = self.lease.take() {
+                    *self
+                        .retained_lease
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner()) = Some(lease);
+                }
+                self.transport.take();
+                self.l6_midi = None;
+                Ok(Observation::L6MidiFinished {
+                    requires_restart: true,
+                })
+            }
             Command::Close => {
                 self.close()?;
                 Ok(Observation::Closed)
@@ -386,7 +776,10 @@ impl Session {
         if self.poisoned {
             errors.push("debug transport desynchronized".to_owned());
         }
-        if !self.poisoned {
+        if self.l6_midi.is_some() {
+            errors.push("L6 MIDI injection did not return and restore context".to_owned());
+        }
+        if !self.poisoned && self.l6_midi.is_none() {
             if let Some(bytes) = self.scratch.take() {
                 if let Err(error) = self.transact(|g| g.write(SCRATCH, &bytes)) {
                     errors.push(format!("restore scratch: {error}"));
@@ -457,6 +850,7 @@ mod tests {
     struct FakeState {
         operations: Vec<String>,
         scratch: Vec<u8>,
+        registers: [u32; 26],
         fail: Option<&'static str>,
         guarded: bool,
         pending: bool,
@@ -473,6 +867,23 @@ mod tests {
         fn resume(&self) -> Result<(), String> {
             self.0.lock().unwrap().operations.push("resume".into());
             Ok(())
+        }
+        fn stop_before(&self, _deadline: Instant) -> Result<(), String> {
+            self.stop()
+        }
+        fn guard_l6_midi_probe(
+            &self,
+            _deadline: Instant,
+            _hook: u32,
+            _binding: &L6MidiBinding,
+        ) -> Result<midi_config::Config, String> {
+            self.guard_l6_scratch()?;
+            Ok(midi_config::Config {
+                revision_guard: "fake".into(),
+                atomic: false,
+                channel: 0,
+                cc_map: vec![0xff; 54],
+            })
         }
         fn guard_l6_scratch(&self) -> Result<(), String> {
             if self.0.lock().unwrap().guarded {
@@ -495,9 +906,17 @@ mod tests {
         }
     }
     impl Transport for FakeTransport {
-        fn read_register(&mut self, _: u32) -> Result<u32, String> {
+        fn set_timeout(&mut self, _timeout: Duration) -> Result<(), String> {
+            Ok(())
+        }
+        fn read_register(&mut self, index: u32) -> Result<u32, String> {
             self.record("register")?;
-            Ok(42)
+            Ok(self.0.lock().unwrap().registers[index as usize])
+        }
+        fn write_register(&mut self, index: u32, value: u32) -> Result<(), String> {
+            self.record("write-register")?;
+            self.0.lock().unwrap().registers[index as usize] = value;
+            Ok(())
         }
         fn read(&mut self, address: u32, length: usize) -> Result<Vec<u8>, String> {
             self.record("read")?;
@@ -542,6 +961,7 @@ mod tests {
     fn fake(running: bool, guarded: bool) -> (Session, Arc<Mutex<FakeState>>) {
         let state = Arc::new(Mutex::new(FakeState {
             scratch: vec![9; SCRATCH_LEN],
+            registers: [42; 26],
             guarded,
             ..Default::default()
         }));
@@ -557,6 +977,218 @@ mod tests {
             ),
             state,
         )
+    }
+    fn prepared_midi() -> (Session, Arc<Mutex<FakeState>>, u32) {
+        let (mut session, state) = fake(true, true);
+        let hook = 0x800b_6b14;
+        for address in [
+            firmware_api::l6::idle_loop,
+            firmware_api::l6::midi_send,
+            hook,
+        ] {
+            session.execute(Command::AddBreakpoint { address }).unwrap();
+        }
+        {
+            let mut state = state.lock().unwrap();
+            state.registers[15] = firmware_api::l6::idle_loop;
+            state.registers[13] = 0x2000_1000;
+            state.registers[XPSR as usize] = 0x0100_0000;
+        }
+        (session, state, hook)
+    }
+    #[test]
+    fn l6_midi_probe_finishes_stopped_after_sender_returns() {
+        let (mut session, state, hook) = prepared_midi();
+        assert!(
+            session
+                .execute(Command::L6MidiInject {
+                    expected_hook: hook,
+                    binding: L6MidiBinding::Firmware,
+                    timeout_ms: 1000,
+                    leave_stopped: false,
+                })
+                .is_err()
+        );
+        let result = session
+            .execute(Command::L6MidiInject {
+                expected_hook: hook,
+                binding: L6MidiBinding::Firmware,
+                timeout_ms: 1000,
+                leave_stopped: true,
+            })
+            .unwrap();
+        assert!(matches!(
+            result,
+            Observation::L6MidiInjected {
+                requires_restart: true,
+                ..
+            }
+        ));
+        {
+            let mut state = state.lock().unwrap();
+            assert_eq!(state.scratch, [0, 0, 0, 0, 0xb0, 127, 127, 0]);
+            assert_eq!(state.registers[0], SCRATCH);
+            assert_eq!(state.registers[14], firmware_api::l6::idle_loop | 1);
+            assert_eq!(state.registers[15], firmware_api::l6::midi_in);
+            state.registers[15] = firmware_api::l6::midi_send;
+            state.registers[0] = 0x2000_1000;
+            state.registers[1] = 3;
+            state.registers[2] = 1;
+            state.registers[14] = 0x8003_1801;
+        }
+        assert!(matches!(
+            session
+                .execute(Command::L6MidiSender { timeout_ms: 1000 })
+                .unwrap(),
+            Observation::L6MidiSender {
+                length: 3,
+                route: 1,
+                return_pc: 0x8003_1800,
+                bytes: Some(_),
+                ..
+            }
+        ));
+        assert!(
+            session
+                .execute(Command::L6MidiFinish { timeout_ms: 1000 })
+                .is_err()
+        );
+        state.lock().unwrap().registers[15] = 0x8003_1800;
+        assert!(matches!(
+            session
+                .execute(Command::L6MidiFinish { timeout_ms: 1000 })
+                .unwrap(),
+            Observation::L6MidiFinished {
+                requires_restart: true
+            }
+        ));
+        assert!(session.unusable.load(Ordering::Acquire));
+        assert!(session.execute(Command::Close).is_ok());
+        let state = state.lock().unwrap();
+        assert_eq!(state.scratch, vec![9; SCRATCH_LEN]);
+        assert!(state.operations.contains(&"stop".to_owned()));
+        assert!(!state.operations.contains(&"resume".to_owned()));
+    }
+    #[test]
+    fn l6_midi_failed_injection_stops_instead_of_resuming() {
+        let (mut session, state, hook) = prepared_midi();
+        state.lock().unwrap().fail = Some("write-register");
+        assert!(
+            session
+                .execute(Command::L6MidiInject {
+                    expected_hook: hook,
+                    binding: L6MidiBinding::Firmware,
+                    timeout_ms: 1000,
+                    leave_stopped: true,
+                })
+                .is_err()
+        );
+        assert!(session.execute(Command::Close).is_err());
+        assert!(session.unusable.load(Ordering::Acquire));
+        let state = state.lock().unwrap();
+        assert!(state.operations.contains(&"stop".to_owned()));
+        assert!(!state.operations.contains(&"resume".to_owned()));
+    }
+    #[test]
+    fn l6_midi_rejects_exception_mode_before_mutating_guest() {
+        let (mut session, state, hook) = prepared_midi();
+        state.lock().unwrap().registers[XPSR as usize] = 0x0100_0001;
+        assert!(
+            session
+                .execute(Command::L6MidiInject {
+                    expected_hook: hook,
+                    binding: L6MidiBinding::Firmware,
+                    timeout_ms: 1000,
+                    leave_stopped: true,
+                })
+                .is_err()
+        );
+        session.execute(Command::Close).unwrap();
+        let state = state.lock().unwrap();
+        assert!(!state.operations.contains(&"write".to_owned()));
+        assert!(state.operations.contains(&"resume".to_owned()));
+    }
+    #[test]
+    fn l6_midi_probe_guards_reject_wrong_model_and_bad_code() {
+        assert!(validate_l6_probe_guards(Model::L6max, |_, _| unreachable!()).is_err());
+        assert!(validate_l6_probe_guards(Model::L6, |_, n| Ok(vec![0; n])).is_err());
+        assert!(validate_l6_probe_guards(Model::L6, |_, _| Ok(vec![])).is_err());
+    }
+    #[test]
+    fn hook_binding_checks_actual_branch_and_sd_registry() {
+        use patch_abi::registry;
+        let hook = 0x800b_6b14;
+        let dispatcher = 0x800b_1000;
+        let base = 0x8020_0000;
+        let module = 0x800b_6b00;
+        let site = 3;
+        let branch = patch_core::branch(firmware_api::l6::midi_in, hook, false);
+        assert!(
+            validate_l6_hook_binding(hook, &L6MidiBinding::Firmware, |_, _| Ok(branch.to_vec()))
+                .is_ok()
+        );
+        assert!(
+            validate_l6_hook_binding(hook + 2, &L6MidiBinding::Firmware, |_, _| Ok(
+                branch.to_vec()
+            ))
+            .is_err()
+        );
+        let binding = L6MidiBinding::Sd {
+            dispatcher,
+            site_index: site,
+            entry_offset: hook - module,
+        };
+        let read = |address, _| -> Result<Vec<u8>, String> {
+            if address == firmware_api::l6::midi_in {
+                return Ok(patch_core::branch(address, dispatcher, false).to_vec());
+            }
+            let value = if address == registry::L6_POINTER {
+                base
+            } else if address == base {
+                registry::MAGIC
+            } else if address == base + registry::SITE_COUNT_OFFSET {
+                4
+            } else if address == base + registry::MODULE_PTR_OFFSET {
+                module
+            } else if address == base + registry::MODULE_LEN_OFFSET {
+                64
+            } else if address == base + registry::site_offset(site) {
+                hook | 1
+            } else {
+                return Err("unexpected address".into());
+            };
+            Ok(value.to_le_bytes().to_vec())
+        };
+        assert!(validate_l6_hook_binding(hook, &binding, read).is_ok());
+        assert!(validate_l6_hook_binding(hook + 2, &binding, read).is_err());
+    }
+    #[test]
+    #[ignore = "requires unpacked L6 1.10 MAIN in L6_MIDI_TEST_MAIN"]
+    fn real_l6_midi_probe_guards() {
+        let path = std::env::var_os("L6_MIDI_TEST_MAIN").expect("L6_MIDI_TEST_MAIN");
+        let image = std::fs::read(path).unwrap();
+        validate_l6_probe_guards(Model::L6, |address, length| {
+            let offset = (address - 0x8000_1000) as usize;
+            image
+                .get(offset..offset + length)
+                .map(|b| b.to_vec())
+                .ok_or_else(|| "short image".into())
+        })
+        .unwrap();
+    }
+    #[test]
+    #[ignore = "requires patched L6 MAIN in L6_MIDI_PATCHED_MAIN"]
+    fn real_l6_firmware_midi_hook() {
+        let path = std::env::var_os("L6_MIDI_PATCHED_MAIN").expect("L6_MIDI_PATCHED_MAIN");
+        let image = std::fs::read(path).unwrap();
+        validate_l6_hook_binding(0x800b_6b14, &L6MidiBinding::Firmware, |address, length| {
+            let offset = (address - 0x8000_1000) as usize;
+            image
+                .get(offset..offset + length)
+                .map(|b| b.to_vec())
+                .ok_or_else(|| "short image".into())
+        })
+        .unwrap();
     }
     #[test]
     fn close_restores_scratch_and_owned_breakpoints_before_detach_and_resume() {

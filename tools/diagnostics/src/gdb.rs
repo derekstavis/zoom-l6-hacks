@@ -15,6 +15,7 @@ pub struct Gdb {
     // Every in-repository GDB client shares this process-safe lease. The OS
     // releases it on crash or disconnect; the sidecar itself stays in place.
     _lease: Option<Lease>,
+    request_timeout: Duration,
 }
 /// QEMU's GDB register number for xPSR on M-profile cores.
 const XPSR: u32 = 25;
@@ -71,6 +72,7 @@ impl Gdb {
         let mut client = Self {
             stream: socket,
             _lease: Some(lease),
+            request_timeout: Duration::from_secs(5),
         };
         let reply = client.request("Hg1")?;
         if reply != "OK" {
@@ -85,8 +87,18 @@ impl Gdb {
         self.stream.shutdown(Shutdown::Both)
     }
 
+    pub fn set_request_timeout(&mut self, timeout: Duration) -> io::Result<()> {
+        if timeout.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "GDB request deadline exceeded",
+            ));
+        }
+        self.request_timeout = timeout;
+        Ok(())
+    }
     pub fn request(&mut self, command: &str) -> io::Result<String> {
-        self.request_with_timeout(command, Duration::from_secs(5))
+        self.request_with_timeout(command, self.request_timeout)
     }
 
     fn request_with_timeout(&mut self, command: &str, timeout: Duration) -> io::Result<String> {
@@ -511,6 +523,7 @@ mod tests {
         let mut gdb = Gdb {
             stream: client,
             _lease: None,
+            request_timeout: Duration::from_secs(5),
         };
         let server = thread::spawn(move || {
             let mut request = [0; 5];
@@ -538,6 +551,7 @@ mod tests {
         let mut gdb = Gdb {
             stream: client,
             _lease: None,
+            request_timeout: Duration::from_secs(5),
         };
         stub.write_all(b"$}#7d").unwrap();
         assert!(
@@ -554,6 +568,7 @@ mod tests {
         let mut gdb = Gdb {
             stream: client,
             _lease: None,
+            request_timeout: Duration::from_secs(5),
         };
         gdb.resume().unwrap();
         let mut request = [0; 5];

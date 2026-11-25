@@ -335,6 +335,30 @@ The L6 scratch operations verify the supported L6 1.10 MIDI code before using
 the legacy emulator probe page at `0x841ff000`. This is a scoped diagnostic
 buffer, not evidence that physical firmware reserves that address.
 
+The L6 1.10 MIDI hook probe additionally provides `l6-midi-inject`
+(`expected_hook`, a firmware or SD `binding`, `timeout_ms`, and explicit
+`leave_stopped: true`),
+`l6-midi-sender` (`timeout_ms`), and `l6-midi-finish` (`timeout_ms`). The
+caller must first own breakpoints at the idle routine, MIDI sender, and the
+hook target verified from the matching patch report. Injection checks the
+supported firmware routines, installed hook branch, and for SD the registry and
+module entry; it requires the idle task in thread mode. The
+sender command returns a bounded three-byte observation, and finish requires
+the observed sender to have returned. The caller remains responsible for
+checking the hook and interpreting the ordered MIDI output.
+
+For a firmware patch the binding is `{"kind":"firmware"}`. For an SD patch
+it is `{"kind":"sd","dispatcher":ADDRESS,"site_index":INDEX,"entry_offset":OFFSET}`;
+derive those values from the matching loader report and module, and verify
+the staged fixture identities. All addresses and offsets are JSON numbers.
+
+Injection changes CPU execution state that this API cannot fully restore.
+Finish restores scratch and removes breakpoints but deliberately leaves MAIN
+stopped, closes the debug session, and reserves the debugger until the engine
+is destroyed. Failed or cancelled injection also attempts to stop MAIN and
+requires a restart; a failed stop leaves its state unknown. Use this probe on a
+disposable emulator, and explicitly shut it down after collecting results.
+
 The session owns at most four breakpoints. Closing or disconnecting restores
 the scratch bytes, removes owned breakpoints, and restores MAIN's prior run
 state. A socket session expires after 300 seconds. A disconnect during

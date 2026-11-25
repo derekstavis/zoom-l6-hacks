@@ -110,7 +110,7 @@ impl Scenario {
                 Action::KnobDialogBitmapZero => "knob-dialog-overlay-invariants",
                 Action::KnobDialogActiveOverlay => "knob-dialog-bitmap-zero",
                 Action::KnobDialogLockedUpdate => "knob-dialog-active-overlay",
-                Action::KnobDialog => "knob-dialog-locked-update",
+                Action::KnobDialog => "knob-dialog-mode",
                 _ => continue,
             };
             for model in &value.models {
@@ -170,6 +170,7 @@ impl Scenario {
                         "knob-dialog-active-overlay" => {
                             matches!(previous.action, Action::KnobDialogActiveOverlay)
                         }
+                        "knob-dialog-mode" => matches!(&previous.action, Action::KnobDialogMode { button: 30, mode: 8, reference } if reference == "pan"),
                         _ => matches!(previous.action, Action::KnobDialogLockedUpdate),
                     };
                     correct
@@ -194,9 +195,9 @@ impl Scenario {
                 let subsequent = value.step[index + 1..]
                     .iter()
                     .filter(|next| next.applies_to(*model))
-                    .take(15)
+                    .take(25)
                     .collect::<Vec<_>>();
-                if subsequent.len() != 15
+                if subsequent.len() != 25
                     || !matches!(subsequent[0].action, Action::KnobDialogPreflightDescriptor)
                     || !matches!(subsequent[1].action, Action::KnobDialogPreflightTextAlias)
                     || !matches!(
@@ -217,7 +218,8 @@ impl Scenario {
                     || !matches!(subsequent[11].action, Action::KnobDialogBitmapZero)
                     || !matches!(subsequent[12].action, Action::KnobDialogActiveOverlay)
                     || !matches!(subsequent[13].action, Action::KnobDialogLockedUpdate)
-                    || !matches!(subsequent[14].action, Action::KnobDialog)
+                    || !subsequent[14..24].iter().zip(super::KNOB_DIALOG_MODES.iter()).all(|(step, (name, button, mode))| matches!(&step.action, Action::KnobDialogMode { button: b, mode: m, reference } if b == button && m == mode && reference == name))
+                    || !matches!(subsequent[24].action, Action::KnobDialog)
                     || subsequent.iter().any(|next| {
                         next.guest_timeout_ms != step.guest_timeout_ms
                             || next.wall_timeout_s != step.wall_timeout_s

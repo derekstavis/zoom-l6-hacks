@@ -1262,15 +1262,26 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
     let overlay = "[[step]]\naction='knob-dialog-overlay-invariants'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-bitmap-zero'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-active-overlay'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let locked = "[[step]]\naction='knob-dialog-locked-update'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let dialog = "[[step]]\naction='knob-dialog'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
+    let modes = crate::scenario::KNOB_DIALOG_MODES.iter().map(|(reference, button, mode)| format!("[[step]]\naction='knob-dialog-mode'\nbutton={button}\nmode={mode}\nreference='{reference}'\nguest_timeout_ms=180000\nwall_timeout_s=600\n")).collect::<String>();
     assert!(
         Scenario::parse(&format!(
-            "{prefix}{ready}{guard}{baseline}{preflight}{activation}{active_demo}{tasks}{overlay}{locked}{dialog}"
+            "{prefix}{ready}{guard}{baseline}{preflight}{activation}{active_demo}{tasks}{overlay}{locked}{modes}{dialog}"
         ))
         .is_ok()
     );
     assert!(Scenario::parse(&format!("{prefix}{ready}{guard}{baseline}{preflight}")).is_err());
+    let complete = format!(
+        "{prefix}{ready}{guard}{baseline}{preflight}{activation}{active_demo}{tasks}{overlay}{locked}{modes}{dialog}"
+    );
+    assert!(Scenario::parse(&complete.replace("reference='freq'", "reference='wrong'")).is_err());
+    assert!(Scenario::parse(&complete.replace("button=33", "button=34")).is_err());
+    assert!(
+        Scenario::parse(&complete.replace("mode=1\nreference='freq'", "mode=2\nreference='freq'"))
+            .is_err()
+    );
+
     let setup_pruned =
-        format!("{prefix}{ready}{guard}{baseline}{preflight}{activation}{active_demo}{tasks}{overlay}{locked}{dialog}")
+        format!("{prefix}{ready}{guard}{baseline}{preflight}{activation}{active_demo}{tasks}{overlay}{locked}{modes}{dialog}")
             .replace(
                 "action='knob-dialog-preflight-widget-layer'",
                 "setup_input=true\naction='knob-dialog-preflight-widget-layer'",
@@ -1291,7 +1302,7 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
     );
     assert!(
         Scenario::parse(&format!(
-            "{prefix}{ready}{guard}{baseline}{preflight}{activation}{active_demo}{tasks}{overlay}{locked}{}",
+            "{prefix}{ready}{guard}{baseline}{preflight}{activation}{active_demo}{tasks}{overlay}{locked}{modes}{}",
             dialog.replace("wall_timeout_s=600", "wall_timeout_s=599")
         ))
         .is_err()

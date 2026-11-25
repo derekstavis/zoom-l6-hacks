@@ -20,7 +20,15 @@ fn knob_dialog_phase(operation: &Operation) -> Option<u8> {
         Operation::KnobDialogBitmapZero => Some(14),
         Operation::KnobDialogActiveOverlay => Some(15),
         Operation::KnobDialogLockedUpdate => Some(16),
-        Operation::KnobDialog => Some(17),
+        Operation::KnobDialogMode {
+            button,
+            mode,
+            reference,
+        } => crate::scenario::KNOB_DIALOG_MODES
+            .iter()
+            .position(|(name, b, m)| *name == reference && b == button && m == mode)
+            .map(|index| 17 + index as u8),
+        Operation::KnobDialog => Some(27),
         _ => None,
     }
 }
@@ -2311,6 +2319,26 @@ impl State {
                     .ok_or("missing knob-dialog preflight")?;
                 run_locked_value_update(session, options, context, guest_timeout_ms, wall_timeout_s)
             }
+            Operation::KnobDialogMode {
+                button,
+                mode,
+                reference,
+            } => {
+                let context = self
+                    .knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?;
+                run_knob_dialog_mode(
+                    session,
+                    options,
+                    context,
+                    button,
+                    mode,
+                    &reference,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )
+            }
             Operation::KnobDialog => {
                 let _baseline = self
                     .knob_dialog_baseline
@@ -2380,7 +2408,7 @@ mod knob_phase_tests {
     use super::*;
     #[test]
     fn shared_budget_carries_through_every_intermediate_phase() {
-        let phases = [
+        let mut phases = vec![
             Operation::KnobDialogGuard,
             Operation::KnobDialogBaseline,
             Operation::KnobDialogPreflightBegin,
@@ -2398,8 +2426,15 @@ mod knob_phase_tests {
             Operation::KnobDialogBitmapZero,
             Operation::KnobDialogActiveOverlay,
             Operation::KnobDialogLockedUpdate,
-            Operation::KnobDialog,
         ];
+        phases.extend(crate::scenario::KNOB_DIALOG_MODES.iter().map(
+            |(reference, button, mode)| Operation::KnobDialogMode {
+                button: *button,
+                mode: *mode,
+                reference: (*reference).into(),
+            },
+        ));
+        phases.push(Operation::KnobDialog);
         let start = Instant::now();
         let mut shared = Some((start, 17, 180_000, 600, 0));
         for (index, op) in phases.iter().enumerate() {

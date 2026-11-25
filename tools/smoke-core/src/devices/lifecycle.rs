@@ -902,6 +902,16 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
                     run(Operation::KnobDialogBitmapZero, "knob-dialog")?;
                     run(Operation::KnobDialogActiveOverlay, "knob-dialog")?;
                     run(Operation::KnobDialogLockedUpdate, "knob-dialog")?;
+                    for (reference, button, mode) in crate::scenario::KNOB_DIALOG_MODES {
+                        run(
+                            Operation::KnobDialogMode {
+                                button,
+                                mode,
+                                reference: reference.into(),
+                            },
+                            "knob-dialog",
+                        )?;
+                    }
                     run(Operation::KnobDialog, "knob-dialog")?;
                 }
                 if let Some(patch) = patches.iter().find(|patch| **patch == "midi-sync") {

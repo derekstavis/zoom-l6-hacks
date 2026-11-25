@@ -103,6 +103,7 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobDialogBitmapZero
         | Action::KnobDialogActiveOverlay
         | Action::KnobDialogLockedUpdate
+        | Action::KnobDialogMode { .. }
         | Action::KnobDialog
         | Action::KnobPopupOpen { .. }
         | Action::KnobPopupExpectOpen

@@ -671,6 +671,7 @@ pub(super) struct PreflightContext {
     opened: Option<OpenedOverlay>,
     task_contexts: Option<TaskContexts>,
     overlay_heap: Option<(Vec<u32>, u32)>,
+    mode_index: usize,
 }
 
 pub(super) fn begin_preflight(
@@ -807,6 +808,7 @@ pub(super) fn begin_preflight(
         opened: None,
         task_contexts: None,
         overlay_heap: None,
+        mode_index: 0,
     })
 }
 
@@ -2149,6 +2151,108 @@ pub(super) fn run_locked_value_update(
     )
 }
 
+/// Check one declared recorder scene while retaining the shared debugger and
+/// original heap baseline for the rest of the diagnostic.
+pub(super) fn run_knob_dialog_mode(
+    session: &Session,
+    options: &Options,
+    context: &mut PreflightContext,
+    button: u32,
+    mode: u8,
+    reference: &str,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let expected = crate::scenario::KNOB_DIALOG_MODES.get(context.mode_index);
+    if context.next != 14 || expected != Some(&(reference, button, mode)) {
+        return Err(format!("knob-dialog scene {reference:?} is out of order").into());
+    }
+    let heap_live = &context
+        .active
+        .as_ref()
+        .ok_or("missing active scene baseline")?
+        .heap_live;
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    let qmp = &session.engine.management[0];
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let parameter = control.knob_parameter_reader()?;
+    let selection_applied = inputs.panel.snapshot().applied;
+    control.tap(button, 50)?;
+    wait_l6_input(
+        session,
+        || inputs.panel.snapshot().applied > selection_applied,
+        "knob-dialog parameter-selection input acknowledgement",
+    )?;
+    let start = inputs.panel.snapshot().guest_ms;
+    let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(180));
+    loop {
+        session.poll()?;
+        let actual = parameter.parameter_mode()?;
+        if actual == mode {
+            break;
+        }
+        if inputs.panel.snapshot().guest_ms.wrapping_sub(start) >= guest_timeout_ms.min(10_000)
+            || Instant::now() >= deadline
+        {
+            return Err(format!("parameter mode did not become {mode}; found {actual}").into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    let encoder_applied = inputs.panel.snapshot().applied;
+    // The panel knob API reverses polarity relative to the one-based encoder API.
+    control.encoder(1, 1)?;
+    wait_l6_input(
+        session,
+        || inputs.panel.snapshot().applied > encoder_applied,
+        "knob-dialog parameter encoder acknowledgement",
+    )?;
+    let capture_start = inputs.panel.snapshot().guest_ms;
+    let capture_wall = Instant::now();
+    let raw = loop {
+        let data = session.poll()?;
+        let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(capture_start);
+        if elapsed >= 400 {
+            break data.display;
+        }
+        if elapsed > guest_timeout_ms
+            || capture_wall.elapsed() > Duration::from_secs(wall_timeout_s)
+        {
+            return Err("knob-dialog display capture exceeded its deadline".into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    };
+    let name = format!("window-scene-{reference}");
+    let path = l6max_host::paths::repository_root()
+        .join(KNOB_DIALOG_REFERENCES)
+        .join(format!("{reference}.png"));
+    check_display_reference(&raw, &path, &options.logs, &name)
+        .map_err(|error| format!("knob-dialog screen {reference}: {error}"))?;
+    let native = image::GrayImage::from_fn(128, 64, |x, y| {
+        let index = ((63 - y as usize) / 8) * 128 + x as usize;
+        image::Luma([if raw[index] & (1 << ((63 - y as usize) % 8)) != 0 {
+            255
+        } else {
+            0
+        }])
+    });
+    image::DynamicImage::ImageLuma8(native)
+        .resize(768, 384, image::imageops::FilterType::Nearest)
+        .save(options.logs.join(format!("{name}.png")))?;
+    let mode_heap: Vec<u32> = qmp
+        .read_memory(0, l6max::xFreeBytesRemaining, 16)?
+        .chunks_exact(4)
+        .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+        .collect();
+    if mode_heap[2] != heap_live[2] || mode_heap[3] != heap_live[3] {
+        return Err(format!(
+            "mode {reference} changed the persistent heap allocation: {mode_heap:?}"
+        )
+        .into());
+    }
+    context.mode_index += 1;
+    Ok(json!({"button":button,"mode":mode,"reference":reference,"heap":mode_heap}))
+}
+
 pub(super) fn run_knob_dialog(
     session: &Session,
     options: &Options,
@@ -2286,10 +2390,9 @@ pub(super) fn run_knob_dialog(
         }
         Err(format!("demo frame {name} stayed blank").into())
     };
-    if context_slot
-        .as_ref()
-        .is_none_or(|context| context.next != 14)
-    {
+    if context_slot.as_ref().is_none_or(|context| {
+        context.next != 14 || context.mode_index != crate::scenario::KNOB_DIALOG_MODES.len()
+    }) {
         return Err("knob-dialog preflight incomplete".into());
     }
     let context = context_slot.as_ref().unwrap();
@@ -2335,42 +2438,6 @@ pub(super) fn run_knob_dialog(
             refreshed,
         } = active_snapshot;
         let state = l6max::gui_bitmap_table_entry_0;
-        for (button, name, mode) in [
-            (35, "level", 9),
-            (28, "high", 0),
-            (33, "freq", 1),
-            (38, "mid", 2),
-            (43, "low", 3),
-            (10, "aux1", 4),
-            (15, "aux2", 5),
-            (20, "efx", 6),
-            (25, "sub-mix", 7),
-            (30, "pan", 8),
-        ] {
-            let selection_applied = inputs.panel.snapshot().applied;
-            inputs.tap(button, 50)?;
-            wait_l6_input(
-                session,
-                || inputs.panel.snapshot().applied > selection_applied,
-                "knob-dialog parameter-selection input acknowledgement",
-            )?;
-            wait_parameter_mode(mode)?;
-            let encoder_applied = inputs.panel.snapshot().applied;
-            inputs.knob(0, -1)?;
-            wait_l6_input(
-                session,
-                || inputs.panel.snapshot().applied > encoder_applied,
-                "knob-dialog parameter encoder acknowledgement",
-            )?;
-            capture(400, &format!("window-scene-{name}"))?;
-            let mode_heap = heap()?;
-            if mode_heap[2] != heap_live[2] || mode_heap[3] != heap_live[3] {
-                return Err(format!(
-                    "mode {name} changed the persistent heap allocation: {mode_heap:?}"
-                )
-                .into());
-            }
-        }
         // The preceding mode walk ends on Pan with a verified live scene.
         // Sweep from center through left 50% to right 50%, capturing at 20 fps.
         capture_demo("knob-dialog-demo-pan-center")?;

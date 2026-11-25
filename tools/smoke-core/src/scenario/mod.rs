@@ -9,6 +9,20 @@ use std::{
 };
 
 mod validate;
+/// Ordered recorder scenes and their physical panel inputs.
+pub const KNOB_DIALOG_MODES: [(&str, u32, u8); 10] = [
+    ("level", 35, 9),
+    ("high", 28, 0),
+    ("freq", 33, 1),
+    ("mid", 38, 2),
+    ("low", 43, 3),
+    ("aux1", 10, 4),
+    ("aux2", 15, 5),
+    ("efx", 20, 6),
+    ("sub-mix", 25, 7),
+    ("pan", 30, 8),
+];
+
 /// How a case drives the emulator.
 #[derive(
     Clone,
@@ -435,6 +449,11 @@ pub enum Action {
     KnobDialogBitmapZero,
     KnobDialogActiveOverlay,
     KnobDialogLockedUpdate,
+    KnobDialogMode {
+        button: u32,
+        mode: u8,
+        reference: String,
+    },
     KnobDialog,
     /// Turn the channel 1 level knob once on the recorder screen and check
     /// that Knob Dialog shows the new value.

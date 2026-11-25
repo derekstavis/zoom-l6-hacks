@@ -843,6 +843,17 @@ impl Runner {
                 Action::KnobDialogLockedUpdate => {
                     return Ok(Progress::Device(devices::Operation::KnobDialogLockedUpdate));
                 }
+                Action::KnobDialogMode {
+                    button,
+                    mode,
+                    reference,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogMode {
+                        button,
+                        mode,
+                        reference: reference.clone(),
+                    }));
+                }
                 Action::KnobDialog => {
                     return Ok(Progress::Device(devices::Operation::KnobDialog));
                 }

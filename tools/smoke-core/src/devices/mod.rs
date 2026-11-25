@@ -224,6 +224,11 @@ pub enum Operation {
     KnobDialogBitmapZero,
     KnobDialogActiveOverlay,
     KnobDialogLockedUpdate,
+    KnobDialogMode {
+        button: u32,
+        mode: u8,
+        reference: String,
+    },
     KnobDialog,
     KnobPopupOpen {
         first_steps: i32,

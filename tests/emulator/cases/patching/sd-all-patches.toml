@@ -152,6 +152,10 @@ guest_timeout_ms = 180000
 wall_timeout_s = 600
 
 [[step]]
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/mode-walk.toml"
+
+[[step]]
 action = "knob-dialog"
 guest_timeout_ms = 180000
 wall_timeout_s = 600

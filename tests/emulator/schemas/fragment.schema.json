@@ -3471,6 +3471,60 @@
           "additionalProperties": false,
           "properties": {
             "action": {
+              "const": "knob-dialog-mode",
+              "type": "string"
+            },
+            "button": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "mode": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "reference": {
+              "type": "string"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "button",
+            "mode",
+            "reference"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
               "const": "knob-dialog",
               "type": "string"
             },
@@ -5947,6 +6001,7 @@
             "knob-dialog-bitmap-zero",
             "knob-dialog-active-overlay",
             "knob-dialog-locked-update",
+            "knob-dialog-mode",
             "knob-dialog",
             "knob-popup-open",
             "knob-popup-expect-open",

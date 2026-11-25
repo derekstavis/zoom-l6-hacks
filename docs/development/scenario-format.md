@@ -223,6 +223,7 @@ fail even if the ring changed by that observation.
 | `knob-dialog-bitmap-zero` | — | Verify bitmap ID 0 safely short-circuits an injected display-task draw |
 | `knob-dialog-active-overlay` | — | Check the rendered value and stable overlay pixels after the bitmap probe |
 | `knob-dialog-locked-update` | — | Verify the dialog consumes and displays a level update while the notification semaphore is held, then restore the lock and check the mailbox |
+| `knob-dialog-mode` | `button`, `mode`, `reference` | Check one declared recorder mode's panel input acknowledgements, guarded selector, reviewed image and persistent heap counters. The full diagnostic uses the ordered mode fragment and retains its debugger and overall deadline across the steps. |
 | `knob-dialog` | — | Patched L6max only; compare all ten parameter scenes with reviewed display images, then verify heap lifetime, busy-aware expiry, display cleanup, widget restoration and exact encoder reports |
 | `knob-popup-open` | `first_steps`, `fallback_steps`, `attempt_guest_ms` | On the L6max recorder screen, try the channel 1 level knob by `first_steps`, then by `fallback_steps` if the popup does not open within `attempt_guest_ms`; retain the initial display and level as evidence |
 | `knob-popup-expect-open` | — | Require the dialog signature, callback and a changed display under the shared popup deadline |

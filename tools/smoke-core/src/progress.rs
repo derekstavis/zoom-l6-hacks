@@ -194,6 +194,9 @@ pub fn step_label(action: &crate::Action) -> String {
             duration_ms: Some(ms),
             ..
         } => format!("Hold chord for {ms} ms guest time"),
+        Action::KnobDialogMode { reference, .. } => {
+            format!("Check knob dialog {} scene", reference.replace('-', " "))
+        }
         Action::SelectMode { mode } => format!("Select {} mode", mode.replace('-', " ")),
         Action::ExpectMode { mode } => format!("Check {} mode", mode.replace('-', " ")),
         Action::ExpectRing { channel, .. } => format!("Check channel {channel} ring"),

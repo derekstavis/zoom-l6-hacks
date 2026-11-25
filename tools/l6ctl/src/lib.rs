@@ -255,6 +255,20 @@ impl<'a> OwnedControl<'a> {
         Ok(AxisReceipt { channel, steps })
     }
 
+    /// Enqueue a tap without waiting for the guest to apply it.
+    pub fn tap(&self, target: u32, hold_ms: u32) -> Result<ButtonReceipt, ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
+        control::enqueue_tap(inputs, target, hold_ms).map_err(ControlError::Rejected)?;
+        Ok(ButtonReceipt {
+            target,
+            command: "tap".into(),
+        })
+    }
+
     /// Verify the GUI and parameter getter revisions for one bounded observation.
     pub fn knob_parameter_reader(
         &self,

@@ -365,7 +365,8 @@
       "enum": [
         "initial",
         "installer",
-        "restart"
+        "restart",
+        "verify"
       ],
       "type": "string"
     },
@@ -753,6 +754,127 @@
               },
               "type": "array"
             },
+            "require_programming": {
+              "type": "boolean"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "require_programming"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "wait-usb-controller",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "begin-wall-deadline",
+              "type": "string"
+            },
+            "duration_s": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "duration_s"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "end-wall-deadline",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
             "setup_input": {
               "default": false,
               "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
@@ -1048,6 +1170,22 @@
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "include_guest_timeout_ms": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "include_wall_timeout_s": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "models": {
               "default": [],
@@ -7566,6 +7704,9 @@
             "capture-update-marker-pending",
             "expect-installer-outcome",
             "wait-update-panel-ready",
+            "wait-usb-controller",
+            "begin-wall-deadline",
+            "end-wall-deadline",
             "expect-update-mode",
             "expect-main-memory",
             "expect-update-comparison",
@@ -7726,7 +7867,8 @@
       "description": "Case-local synthetic L6max update card variant.",
       "enum": [
         "bad-checksum",
-        "synthetic-valid"
+        "synthetic-valid",
+        "patched-midi"
       ],
       "type": "string"
     },

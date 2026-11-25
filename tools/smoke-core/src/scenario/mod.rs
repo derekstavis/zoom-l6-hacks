@@ -61,6 +61,7 @@ pub enum MidiProbePort {
 pub enum UpdateFixture {
     BadChecksum,
     SyntheticValid,
+    PatchedMidi,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, schemars::JsonSchema, Serialize)]
@@ -77,6 +78,7 @@ pub enum LifecycleBoot {
     Initial,
     Installer,
     Restart,
+    Verify,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, schemars::JsonSchema, Serialize)]
@@ -284,7 +286,14 @@ pub enum Action {
     ExpectInstallerOutcome {
         expected: InstallerExpected,
     },
-    WaitUpdatePanelReady,
+    WaitUpdatePanelReady {
+        require_programming: bool,
+    },
+    WaitUsbController,
+    BeginWallDeadline {
+        duration_s: u64,
+    },
+    EndWallDeadline,
     ExpectUpdateMode {
         mode: u32,
     },
@@ -304,6 +313,10 @@ pub enum Action {
     },
     Include {
         path: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        include_guest_timeout_ms: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        include_wall_timeout_s: Option<u64>,
     },
     Checkpoint {
         name: String,
@@ -918,7 +931,12 @@ fn expand_steps(
 ) -> Result<Vec<Step>, String> {
     let mut expanded = vec![];
     for step in steps {
-        if let Action::Include { path } = &step.action {
+        if let Action::Include {
+            path,
+            include_guest_timeout_ms,
+            include_wall_timeout_s,
+        } = &step.action
+        {
             if stack.len() >= 8 {
                 return Err("scenario include depth exceeds eight".into());
             }
@@ -953,6 +971,34 @@ fn expand_steps(
             nested.retain(|child| {
                 child.models.is_empty() || child.models.iter().any(|m| scope.contains(m))
             });
+            if let Some(timeout) = include_guest_timeout_ms {
+                if *timeout == 0
+                    || nested.first().is_some_and(|first| {
+                        nested
+                            .iter()
+                            .any(|child| child.guest_timeout_ms != first.guest_timeout_ms)
+                    })
+                {
+                    return Err("include guest timeout override requires a positive value and uniform child guest deadlines".into());
+                }
+                for child in &mut nested {
+                    child.guest_timeout_ms = *timeout;
+                }
+            }
+            if let Some(timeout) = include_wall_timeout_s {
+                if *timeout == 0
+                    || nested.first().is_some_and(|first| {
+                        nested
+                            .iter()
+                            .any(|child| child.wall_timeout_s != first.wall_timeout_s)
+                    })
+                {
+                    return Err("include wall timeout override requires a positive value and uniform child wall deadlines".into());
+                }
+                for child in &mut nested {
+                    child.wall_timeout_s = *timeout;
+                }
+            }
             expanded.extend(nested);
         } else {
             expanded.push(step);

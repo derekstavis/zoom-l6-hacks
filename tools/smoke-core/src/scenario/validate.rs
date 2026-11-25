@@ -14,16 +14,21 @@ impl Scenario {
                 || value.backends != [Backend::Headless]
                 || value.state.is_some()
                 || value.card.is_some()
-                || !value.update_patches.is_empty()
+                || (fixture != UpdateFixture::PatchedMidi && !value.update_patches.is_empty())
+                || (fixture == UpdateFixture::PatchedMidi
+                    && (value.update_patches.len() != 1
+                        || value.update_patches.get(&Model::L6max).map(Vec::as_slice)
+                            != Some(&["midi-sync".to_string()][..])))
                 || !value.patches.is_empty()
                 || value.sd_patches.is_some()
                 || !value.installed_patches.is_empty()
                 || !value.installed_sd_patches.is_empty()
                 || !value.effect_replacements.is_empty()
-                || value
-                    .step
-                    .iter()
-                    .any(|step| !step.models.is_empty() || step.setup_input)
+                || (fixture != UpdateFixture::PatchedMidi
+                    && value
+                        .step
+                        .iter()
+                        .any(|step| !step.models.is_empty() || step.setup_input))
             {
                 return Err(
                     "synthetic update needs a dedicated L6max headless stock fixture".into(),
@@ -35,6 +40,103 @@ impl Scenario {
                 .map(|step| &step.action)
                 .collect::<Vec<_>>();
             match fixture {
+                UpdateFixture::PatchedMidi => {
+                    if value.update_goal != Some(UpdateGoal::Install) {
+                        return Err("patched update requires the full install goal".into());
+                    }
+                    let semantic = actions
+                        .into_iter()
+                        .filter(|action| {
+                            !matches!(action, Action::WaitInputApplied | Action::Delay { .. })
+                        })
+                        .collect::<Vec<_>>();
+                    if !matches!(semantic.as_slice(), [
+                        Action::LifecycleStart { profile: LifecycleBoot::Initial },
+                        Action::ExpectDisplayImage { image: update_image, .. },
+                        Action::ExpectUpdateState { mode: 6, flags_mask: 9, flags_value: 0 },
+                        Action::ExpectUpdateGui { window: 0x802003b4, progress_mask: 0, progress_value: 0 },
+                        Action::EnqueueTap { target: 2, hold_ms: 50 },
+                        Action::EnqueueTap { target: 3, hold_ms: 50 },
+                        Action::ExpectUpdateGui { window: 0x8020029c, progress_mask: 0x100, progress_value: 0x100 },
+                        Action::ExpectLiveUpdateMarkerAbsent,
+                        Action::EnqueueTap { target: 53, hold_ms: 3500 },
+                        Action::ExpectPowered { powered: false },
+                        Action::LifecycleStop,
+                        Action::CaptureUpdateMarkerPending,
+                        Action::LifecycleStart { profile: LifecycleBoot::Installer },
+                        Action::ExpectInstallerOutcome { expected: InstallerExpected::Installed },
+                        Action::WaitUpdatePanelReady { require_programming: false },
+                        Action::ExpectTrace { contains: install_trace, absent: install_absent },
+                        Action::ExpectUpdateMode { mode: 4 },
+                        Action::LifecycleStop,
+                        Action::ExpectUpdateComparison { field: UpdateComparisonField::MainPayload },
+                        Action::ExpectUpdateComparison { field: UpdateComparisonField::BootRegion },
+                        Action::ExpectUpdateComparison { field: UpdateComparisonField::ProtectedRegion },
+                        Action::ExpectUpdateComparison { field: UpdateComparisonField::PanelImage },
+                        Action::ExpectUpdateMarkerAbsent,
+                        Action::CaptureInstalledPanel,
+                        Action::LifecycleStart { profile: LifecycleBoot::Restart },
+                        Action::ExpectInstallerOutcome { expected: InstallerExpected::NoPending },
+                        Action::WaitPanelUptime { guest_ms: 40000.. },
+                        Action::ExpectTrace { contains: restart_contains, absent: restart_absent },
+                        Action::LifecycleStop,
+                        Action::ExpectPanelUnchanged,
+                        Action::LifecycleStart { profile: LifecycleBoot::Verify },
+                        Action::BeginWallDeadline { duration_s: 300 },
+                        Action::Wait { until: first_boot },
+                        Action::ExpectDisplayImage { image: date_image, .. },
+                        Action::Press { control: first_confirm },
+                        Action::ExpectDisplayImage { image: battery_image, .. },
+                        Action::Press { control: second_confirm },
+                        Action::ExpectDisplayImage { image: home_image, .. },
+                        Action::Wait { until: home_boot },
+                        Action::EndWallDeadline,
+                        Action::WaitUsbController,
+                        Action::DirectUsbMidiRoundTrip { cable: 1, expect_ring_change: true },
+                        Action::HostMidiSyncBegin,
+                        Action::HostMidiDrain { quiet_wall_ms: 500 },
+                        Action::HostMidiSendCc { channel: 0, controller: 127, value: 127 },
+                        Action::HostMidiExpectSync,
+                        Action::HostMidiEnd,
+                        Action::LifecycleStop
+                    ] if update_image == Path::new("tests/smoke/images/l6max-firmware-update-dialog.png")
+                        && install_trace == &["l6 panel RTC response start"] && install_absent.is_empty()
+                        && restart_contains.is_empty() && restart_absent == &["l6 panel ROM erase", "l6 panel ROM mass erase"]
+                        && first_boot == "boot-ready" && home_boot == "boot-ready"
+                        && date_image == Path::new("tests/smoke/images/l6max-fresh-date-time.png")
+                        && battery_image == Path::new("tests/smoke/images/l6max-fresh-battery-type.png")
+                        && home_image == Path::new("tests/smoke/images/l6max-recorder-no-sd.png")
+                        && first_confirm == "recorder-function-4" && second_confirm == first_confirm)
+                    {
+                        return Err("patched update needs complete ordered handoff, installer, restart and MIDI verification checks".into());
+                    }
+                    let verify = value
+                        .step
+                        .iter()
+                        .position(|step| {
+                            matches!(
+                                step.action,
+                                Action::LifecycleStart {
+                                    profile: LifecycleBoot::Verify
+                                }
+                            )
+                        })
+                        .unwrap();
+                    if value.step[verify..].iter().any(|step| {
+                        matches!(
+                            step.action,
+                            Action::WaitUsbController
+                                | Action::DirectUsbMidiRoundTrip { .. }
+                                | Action::HostMidiSyncBegin
+                                | Action::HostMidiDrain { .. }
+                                | Action::HostMidiSendCc { .. }
+                                | Action::HostMidiExpectSync
+                                | Action::HostMidiEnd
+                        ) && (step.guest_timeout_ms < 180000 || step.wall_timeout_s < 300)
+                    }) {
+                        return Err("post-update MIDI verification needs the original guest and wall budgets".into());
+                    }
+                }
                 UpdateFixture::BadChecksum => {
                     if value.update_goal.is_some() {
                         return Err("bad-checksum fixture has no install goal".into());
@@ -109,7 +211,7 @@ impl Scenario {
                         && !matches!(tail, [
                         Action::LifecycleStart { profile: LifecycleBoot::Installer },
                         Action::ExpectInstallerOutcome { expected: InstallerExpected::Installed },
-                        Action::WaitUpdatePanelReady,
+                        Action::WaitUpdatePanelReady { require_programming: true },
                         Action::ExpectTrace { contains: install_traces, absent: install_absent },
                         Action::ExpectTraceCount { pattern, count: 64, at_least: false, checkpoint: None },
                         Action::ExpectUpdateMode { mode: 4 },
@@ -141,6 +243,33 @@ impl Scenario {
             let mut started = false;
             let mut last_profile = None;
             for step in &value.step {
+                if fixture == UpdateFixture::PatchedMidi {
+                    let entering_verify = matches!(
+                        step.action,
+                        Action::LifecycleStart {
+                            profile: LifecycleBoot::Verify
+                        }
+                    );
+                    if (!step.models.is_empty() || step.setup_input)
+                        && last_profile != Some(LifecycleBoot::Verify)
+                        && !entering_verify
+                    {
+                        return Err(
+                            "patched update scopes and setup inputs belong only to the verify boot"
+                                .into(),
+                        );
+                    }
+                    if !step.models.is_empty() && step.models != [Model::L6max] {
+                        return Err("patched verify step must target L6max".into());
+                    }
+                    if matches!(step.action, Action::WaitUpdatePanelReady { .. })
+                        && (step.guest_timeout_ms != 60000 || step.wall_timeout_s != 300)
+                    {
+                        return Err(
+                            "patched panel readiness needs the original joint deadline".into()
+                        );
+                    }
+                }
                 match &step.action {
                     Action::LifecycleStart { profile }
                         if !active
@@ -151,6 +280,9 @@ impl Scenario {
                                 }
                                 LifecycleBoot::Restart => {
                                     last_profile == Some(LifecycleBoot::Installer)
+                                }
+                                LifecycleBoot::Verify => {
+                                    last_profile == Some(LifecycleBoot::Restart)
                                 }
                             } =>
                     {
@@ -203,6 +335,10 @@ impl Scenario {
                 }
             }
             let expected_end = match fixture {
+                UpdateFixture::PatchedMidi => matches!(
+                    value.step.last().map(|s| &s.action),
+                    Some(Action::LifecycleStop)
+                ),
                 UpdateFixture::BadChecksum => matches!(
                     value.step.last().map(|s| &s.action),
                     Some(Action::ExpectUpdateMarkerAbsent)
@@ -228,7 +364,10 @@ impl Scenario {
                         | Action::CaptureUpdateMarkerPending
                         | Action::ExpectUpdateGui { .. }
                         | Action::ExpectInstallerOutcome { .. }
-                        | Action::WaitUpdatePanelReady
+                        | Action::WaitUpdatePanelReady { .. }
+                        | Action::WaitUsbController
+                        | Action::BeginWallDeadline { .. }
+                        | Action::EndWallDeadline
                         | Action::ExpectUpdateMode { .. }
                         | Action::ExpectMainMemory { .. }
                         | Action::ExpectUpdateComparison { .. }

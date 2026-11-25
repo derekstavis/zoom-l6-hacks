@@ -809,6 +809,15 @@
     "definition": "a8386e89ed52bb0c567bff8df41bfcee3551cfb7cefd43323692a9dae97fab3c"
   },
   {
+    "case": "l6max-update-patched-midi",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "1591b056d26bcd2ec1f4cd85fdff8d72546df6924ac6b4a7e6df8a36f11c7e52"
+  },
+  {
     "case": "l6max-update-valid-handoff",
     "model": "l6max",
     "backend": "headless",
@@ -824,7 +833,7 @@
     "suites": [
       "full"
     ],
-    "definition": "d4a0bf1e113cb41cdf0f290da018382315622554f5d7053b69c936f3947e3fb5"
+    "definition": "00758694118ba9ca33e95d35121f5644370340d9e59189d1576c2de5aa4ea030"
   },
   {
     "case": "l6max-volume-meter-sweep",

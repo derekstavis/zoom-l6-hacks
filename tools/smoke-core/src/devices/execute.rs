@@ -413,7 +413,10 @@ impl State {
             | Operation::CaptureUpdateMarkerPending
             | Operation::ExpectUpdateGui { .. }
             | Operation::ExpectInstallerOutcome { .. }
-            | Operation::WaitUpdatePanelReady
+            | Operation::WaitUpdatePanelReady { .. }
+            | Operation::WaitUsbController
+            | Operation::BeginWallDeadline { .. }
+            | Operation::EndWallDeadline
             | Operation::ExpectUpdateMode { .. }
             | Operation::ExpectMainMemory { .. }
             | Operation::ExpectUpdateComparison { .. }

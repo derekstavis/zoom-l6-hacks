@@ -134,7 +134,10 @@ pub fn of(action: &Action) -> Requirement {
         | Action::CaptureUpdateMarkerPending
         | Action::ExpectUpdateGui { .. }
         | Action::ExpectInstallerOutcome { .. }
-        | Action::WaitUpdatePanelReady
+        | Action::WaitUpdatePanelReady { .. }
+        | Action::WaitUsbController
+        | Action::BeginWallDeadline { .. }
+        | Action::EndWallDeadline
         | Action::ExpectUpdateMode { .. }
         | Action::ExpectMainMemory { .. }
         | Action::ExpectUpdateComparison { .. }

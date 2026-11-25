@@ -922,8 +922,25 @@ impl Runner {
                 Action::KnobActiveFinish => {
                     return Ok(Progress::Device(devices::Operation::KnobActiveFinish));
                 }
-                Action::KnobDialogLevelDemo => {
-                    return Ok(Progress::Device(devices::Operation::KnobDialogLevelDemo));
+                Action::KnobLevelBegin => {
+                    return Ok(Progress::Device(devices::Operation::KnobLevelBegin));
+                }
+                Action::KnobLevelStart { demo, artifact } => {
+                    return Ok(Progress::Device(devices::Operation::KnobLevelStart {
+                        demo: demo.clone(),
+                        artifact: artifact.clone(),
+                    }));
+                }
+                Action::KnobLevelSweep { sweep } => {
+                    return Ok(Progress::Device(devices::Operation::KnobLevelSweep {
+                        sweep: sweep.clone(),
+                    }));
+                }
+                Action::KnobLevelExpectZero => {
+                    return Ok(Progress::Device(devices::Operation::KnobLevelExpectZero));
+                }
+                Action::KnobLevelFinish => {
+                    return Ok(Progress::Device(devices::Operation::KnobLevelFinish));
                 }
                 Action::KnobTaskBegin => {
                     return Ok(Progress::Device(devices::Operation::KnobTaskBegin));

@@ -675,7 +675,16 @@ pub enum Action {
     KnobActiveCheckCallbacks,
     KnobActiveCheckFrame,
     KnobActiveFinish,
-    KnobDialogLevelDemo,
+    KnobLevelBegin,
+    KnobLevelStart {
+        demo: crate::scenario::adaptive::DemoCapture,
+        artifact: String,
+    },
+    KnobLevelSweep {
+        sweep: crate::scenario::adaptive::LevelSweep,
+    },
+    KnobLevelExpectZero,
+    KnobLevelFinish,
     KnobTaskBegin,
     KnobTaskArmHook,
     KnobTaskWaitHook,
@@ -1633,6 +1642,53 @@ mod task_context_fragment_tests {
         ));
         fragment.step.swap(6, 7);
         assert!(!valid_task_context_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+    }
+}
+
+pub(crate) fn valid_level_demo_steps(steps: &[&Step]) -> bool {
+    use adaptive::LevelDirection as D;
+    matches!(steps, [begin, start, up, peak, down, zero_check, zero, finish]
+        if matches!(begin.action, Action::KnobLevelBegin)
+        && matches!(&start.action, Action::KnobLevelStart { demo, artifact } if adaptive::demo(demo) && artifact == "knob-dialog-demo-level-start")
+        && matches!(&up.action, Action::KnobLevelSweep { sweep } if sweep.direction == D::Up && sweep.validate().is_ok())
+        && matches!(&peak.action, Action::CaptureDisplay { guest_ms: 500, artifact } if artifact == "knob-dialog-demo-level-peak")
+        && matches!(&down.action, Action::KnobLevelSweep { sweep } if sweep.direction == D::Down && sweep.validate().is_ok())
+        && matches!(zero_check.action, Action::KnobLevelExpectZero)
+        && matches!(&zero.action, Action::CaptureDisplay { guest_ms: 500, artifact } if artifact == "knob-dialog-demo-level-zero")
+        && matches!(finish.action, Action::KnobLevelFinish))
+}
+
+#[cfg(test)]
+mod level_demo_fragment_tests {
+    use super::*;
+    #[test]
+    fn requires_bounded_ordered_sweeps_and_final_zero_assertion() {
+        let mut fragment: crate::Fragment = toml::from_str(include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/level-demo.toml"
+        ))
+        .unwrap();
+        assert!(valid_level_demo_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        if let Action::KnobLevelSweep { sweep } = &mut fragment.step[2].action {
+            sweep.max_attempts = 129;
+        } else {
+            panic!("expected sweep");
+        }
+        assert!(!valid_level_demo_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        if let Action::KnobLevelSweep { sweep } = &mut fragment.step[2].action {
+            sweep.max_attempts = 128;
+            sweep.children.swap(1, 2);
+        }
+        assert!(!valid_level_demo_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.remove(5);
+        assert!(!valid_level_demo_steps(
             &fragment.step.iter().collect::<Vec<_>>()
         ));
     }

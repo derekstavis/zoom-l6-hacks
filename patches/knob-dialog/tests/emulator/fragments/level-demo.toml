@@ -1,0 +1,47 @@
+[[step]]
+action = "knob-level-begin"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-level-start"
+artifact = "knob-dialog-demo-level-start"
+demo = { guest_ms = 100, min_lit = 100, checked_frames = 6 }
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-level-sweep"
+sweep = { direction = "up", children = ["read-text", "check-target", "turn", "capture-demo"], min_percent = 69, max_attempts = 128, artifact_prefix = "knob-dialog-demo-level-up", demo = { guest_ms = 100, min_lit = 100, checked_frames = 6 } }
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "capture-display"
+guest_ms = 500
+artifact = "knob-dialog-demo-level-peak"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-level-sweep"
+sweep = { direction = "down", children = ["read-text", "check-target", "turn", "capture-demo"], min_percent = 0, max_attempts = 128, artifact_prefix = "knob-dialog-demo-level-down", demo = { guest_ms = 100, min_lit = 100, checked_frames = 6 } }
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-level-expect-zero"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "capture-display"
+guest_ms = 500
+artifact = "knob-dialog-demo-level-zero"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-level-finish"
+guest_timeout_ms = 180000
+wall_timeout_s = 600

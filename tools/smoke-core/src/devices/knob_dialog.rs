@@ -1,7 +1,9 @@
 //! The knob-dialog patch: its window and popup.
 use super::*;
 mod adaptive_demo;
-pub(super) use adaptive_demo::run as run_adaptive_demo;
+pub(super) use adaptive_demo::{
+    run as run_adaptive_demo, run_level_demo_frame, run_level_expect_zero, run_level_sweep,
+};
 
 /// Reviewed knob-dialog window images, from the repository root. The
 /// knob-dialog window check compares the display with these by scene name.
@@ -732,6 +734,8 @@ pub(super) struct PreflightContext {
     overlay_check: Option<OverlayEvidence>,
     overlay_refresh: bool,
     active_display: Option<ActiveDisplayEvidence>,
+    level_phase: Option<u8>,
+    level_peak: Option<u8>,
     pending_preflight_probe: Option<PendingPreflightProbe>,
     locked_update: Option<LockedUpdate>,
     navigation: Option<l6ctl::NavigationSnapshot>,
@@ -882,6 +886,8 @@ pub(super) fn begin_preflight(
         overlay_check: None,
         overlay_refresh: false,
         active_display: None,
+        level_phase: None,
+        level_peak: None,
         pending_preflight_probe: None,
         locked_update: None,
         navigation: None,
@@ -1574,15 +1580,15 @@ pub(super) fn finish_active_display(
     Ok(json!({"display_changed":true,"callback":slots[5]}))
 }
 
-pub(super) fn run_level_demo(
+pub(super) fn level_phase(context: &PreflightContext) -> Option<u8> {
+    context.level_phase
+}
+
+pub(super) fn begin_level_demo(
     session: &Session,
-    options: &Options,
     context: &mut PreflightContext,
-    guest_timeout_ms: u32,
-    wall_timeout_s: u64,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    use std::time::Instant;
-    if context.next != 8 {
+    if context.next != 8 || context.level_phase.is_some() {
         return Err("knob-dialog level demo step is out of order".into());
     }
     validate_opened_overlay(
@@ -1593,107 +1599,32 @@ pub(super) fn run_level_demo(
             .ok_or("missing knob-dialog debugger")?,
         context.opened.as_ref().ok_or("missing active overlay")?,
     )?;
-    let inputs = session.engine.inputs.as_ref().unwrap();
-    let qmp = &session.engine.management[0];
-    let text_table = context.text_table;
-    let capture = |duration: u32, name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
-        let start = inputs.panel.snapshot().guest_ms;
-        let begin = Instant::now();
-        let raw = loop {
-            let data = session.poll()?;
-            let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(start);
-            if elapsed >= duration {
-                break data.display;
-            }
-            if elapsed > guest_timeout_ms || begin.elapsed() > Duration::from_secs(wall_timeout_s) {
-                return Err("knob-dialog display capture exceeded its deadline".into());
-            }
-            thread::sleep(Duration::from_millis(5));
-        };
-        let native = image::GrayImage::from_fn(128, 64, |x, y| {
-            let index = ((63 - y as usize) / 8) * 128 + x as usize;
-            image::Luma([if raw[index] & (1 << ((63 - y as usize) % 8)) != 0 {
-                255
-            } else {
-                0
-            }])
-        });
-        if let Some(scene) = name.strip_prefix("window-scene-")
-            && [
-                "high", "freq", "mid", "low", "aux1", "aux2", "efx", "sub-mix", "pan", "level",
-            ]
-            .contains(&scene)
-        {
-            let path = l6max_host::paths::repository_root()
-                .join(KNOB_DIALOG_REFERENCES)
-                .join(format!("{scene}.png"));
-            check_display_reference(&raw, &path, &options.logs, name)
-                .map_err(|error| format!("knob-dialog screen {scene}: {error}"))?;
-        }
-        image::DynamicImage::ImageLuma8(native)
-            .resize(768, 384, image::imageops::FilterType::Nearest)
-            .save(options.logs.join(format!("{name}.png")))?;
-        Ok(raw)
-    };
-    let decode_text = |address: u32| -> Result<String, Box<dyn std::error::Error>> {
-        let pointer = u32::from_le_bytes(qmp.read_memory(0, address, 4)?.try_into().unwrap());
-        let bytes = qmp.read_memory(0, pointer, 48)?;
-        let units = bytes
-            .chunks_exact(2)
-            .map(|b| u16::from_le_bytes([b[0], b[1]]))
-            .take_while(|c| *c != 0)
-            .collect::<Vec<_>>();
-        Ok(String::from_utf16(&units)?)
-    };
-    let capture_demo = |name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
-        let mut frame = capture(100, name)?;
-        for _ in 0..6 {
-            if frame.iter().map(|byte| byte.count_ones()).sum::<u32>() >= 100 {
-                return Ok(frame);
-            }
-            frame = capture(100, name)?;
-        }
-        Err(format!("demo frame {name} stayed blank").into())
-    };
-    // Capture emulator frames while the web demo values move in both
-    // directions. The web animation plays these captures at 20 fps.
-    capture_demo("knob-dialog-demo-level-start")?;
-    let mut level_peak_reached = false;
-    // Encoder samples can coalesce while the guest is busy. Keep the target
-    // value assertion, but allow enough bounded attempts to reach it.
-    for index in 0..128 {
-        let displayed = decode_text(text_table + 179 * 4)?;
-        let value = displayed
-            .strip_suffix('%')
-            .and_then(|value| value.parse::<u8>().ok())
-            .unwrap_or(0);
-        if value >= 69 {
-            level_peak_reached = true;
-            break;
-        }
-        inputs.knob(0, 1)?;
-        capture_demo(&format!("knob-dialog-demo-level-up-{index:02}"))?;
-    }
-    if !level_peak_reached {
-        return Err("demo level sweep did not reach 69%".into());
-    }
-    capture(500, "knob-dialog-demo-level-peak")?;
-    // The displayed percentage is rounded from a 0..127 firmware value,
-    // so 60 encoder steps are not always enough to return to zero.
-    for index in 0..128 {
-        if decode_text(text_table + 179 * 4)? == "0%" {
-            break;
-        }
-        inputs.knob(0, -1)?;
-        capture_demo(&format!("knob-dialog-demo-level-down-{index:02}"))?;
-    }
-    if decode_text(text_table + 179 * 4)? != "0%" {
-        return Err("demo level sweep did not return to zero".into());
-    }
-    capture(500, "knob-dialog-demo-level-zero")?;
+    context.level_phase = Some(0);
+    Ok(json!({"overlay_validated":true}))
+}
 
+pub(super) fn note_level_capture(
+    context: &mut PreflightContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    context.level_phase = match context.level_phase {
+        Some(2) => Some(3),
+        Some(5) => Some(6),
+        _ => return Err("level capture out of order".into()),
+    };
+    Ok(())
+}
+
+pub(super) fn finish_level_demo(
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.level_phase != Some(6) {
+        return Err("level demo finish out of order".into());
+    }
+    context.level_phase = None;
     context.next = 9;
-    Ok(json!({"level_demo_peak_at_least_percent":69, "level_demo_final_percent":0}))
+    Ok(
+        json!({"level_demo_peak_at_least_percent":context.level_peak.take().ok_or("missing level peak")?,"level_demo_final_percent":0}),
+    )
 }
 
 #[derive(Clone, Copy)]

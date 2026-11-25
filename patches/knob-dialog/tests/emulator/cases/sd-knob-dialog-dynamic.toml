@@ -55,9 +55,8 @@ wall_timeout_s = 600
 action = "include"
 path = "patches/knob-dialog/tests/emulator/fragments/active-display.toml"
 [[step]]
-action = "knob-dialog-level-demo"
-guest_timeout_ms = 180000
-wall_timeout_s = 600
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/level-demo.toml"
 [[step]]
 action = "include"
 path = "patches/knob-dialog/tests/emulator/fragments/task-contexts.toml"

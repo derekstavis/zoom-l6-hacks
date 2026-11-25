@@ -280,6 +280,8 @@ pub fn step_label(action: &crate::Action) -> String {
             duration_ms: Some(ms),
             ..
         } => format!("Hold chord for {ms} ms guest time"),
+        Action::KnobLevelStart { .. } => "Capture initial level demo".into(),
+        Action::KnobLevelSweep { sweep } => format!("Sweep level {:?}", sweep.direction),
         Action::KnobProbePrepare { probe } => format!("Prepare {probe:?} preflight probe"),
         Action::KnobOverlayCheckDescriptor { field } => {
             format!("Check overlay {field:?} descriptor")

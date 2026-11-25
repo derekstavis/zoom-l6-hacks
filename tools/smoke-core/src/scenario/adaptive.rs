@@ -93,14 +93,58 @@ pub enum Block {
     },
 }
 
-fn artifact(name: &str) -> bool {
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum LevelDirection {
+    Up,
+    Down,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum LevelChild {
+    ReadText,
+    CheckTarget,
+    Turn,
+    CaptureDemo,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct LevelSweep {
+    pub direction: LevelDirection,
+    pub children: Vec<LevelChild>,
+    pub min_percent: u8,
+    pub max_attempts: u32,
+    pub artifact_prefix: String,
+    pub demo: DemoCapture,
+}
+impl LevelSweep {
+    pub fn validate(&self) -> Result<(), String> {
+        use LevelChild as C;
+        if self.children != [C::ReadText, C::CheckTarget, C::Turn, C::CaptureDemo]
+            || self.max_attempts == 0
+            || self.max_attempts > 128
+            || !artifact(&self.artifact_prefix)
+            || self.artifact_prefix.len() > 60
+            || !demo(&self.demo)
+            || (self.direction == LevelDirection::Up && !(1..=100).contains(&self.min_percent))
+            || (self.direction == LevelDirection::Down && self.min_percent != 0)
+        {
+            return Err("invalid bounded level sweep".into());
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn artifact(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
         && name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
-fn demo(value: &DemoCapture) -> bool {
+pub(crate) fn demo(value: &DemoCapture) -> bool {
     value.guest_ms > 0
         && value.guest_ms <= 180_000
         && value.min_lit > 0

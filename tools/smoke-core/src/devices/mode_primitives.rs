@@ -321,6 +321,44 @@ pub(super) fn embedded_task_context_operations() -> Result<Vec<(String, Operatio
         .collect()
 }
 
+pub(super) fn embedded_level_demo_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/level-demo.toml"
+    ))
+    .map_err(|error| format!("invalid embedded level demo fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_level_demo_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded level demo fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobLevelBegin => Operation::KnobLevelBegin,
+                crate::Action::KnobLevelStart { demo, artifact } => Operation::KnobLevelStart {
+                    demo: demo.clone(),
+                    artifact: artifact.clone(),
+                },
+                crate::Action::KnobLevelSweep { sweep } => Operation::KnobLevelSweep {
+                    sweep: sweep.clone(),
+                },
+                crate::Action::KnobLevelExpectZero => Operation::KnobLevelExpectZero,
+                crate::Action::KnobLevelFinish => Operation::KnobLevelFinish,
+                crate::Action::CaptureDisplay { guest_ms, artifact } => Operation::CaptureDisplay {
+                    guest_ms: *guest_ms,
+                    artifact: artifact.clone(),
+                },
+                _ => return Err("unsupported embedded level demo action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
 pub(super) fn embedded_mode_operations() -> Result<Vec<(String, Operation)>, String> {
     let fragment: crate::Fragment = toml::from_str(EMBEDDED_MODE_WALK)
         .map_err(|error| format!("invalid embedded knob mode fragment: {error}"))?;
@@ -712,6 +750,17 @@ pub(super) fn wait_parameter_mode_checked(
     }
 }
 
+fn commit_level_capture(
+    mut check: impl FnMut() -> Result<(), Box<dyn std::error::Error>>,
+    save: impl FnOnce() -> Result<(), Box<dyn std::error::Error>>,
+    advance: impl FnOnce() -> Result<(), Box<dyn std::error::Error>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    check()?;
+    save()?;
+    check()?;
+    advance()
+}
+
 fn save_captured_display(
     capture: &CapturedDisplay,
     logs: &Path,
@@ -761,6 +810,7 @@ impl State {
         operation: Operation,
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
+        shared: Option<(Instant, u32, u32, u64, u16)>,
     ) -> Result<Value, Box<dyn std::error::Error>> {
         if let Some(scope) = &self.knob_mode {
             if !mode_operation_matches(&operation) {
@@ -870,12 +920,29 @@ impl State {
                 }
                 let start = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
                 let wall = Instant::now();
+                let check_shared = |guest: u32| -> Result<(), Box<dyn std::error::Error>> {
+                    if let Some((begin, guest_begin, guest_budget, wall_budget, _)) = shared {
+                        if super::execute::deadline_exceeded(
+                            begin.elapsed(),
+                            guest_begin,
+                            guest,
+                            guest_budget,
+                            wall_budget,
+                        ) {
+                            return Err(
+                                "knob-dialog shared deadline exceeded during display capture"
+                                    .into(),
+                            );
+                        }
+                    }
+                    Ok(())
+                };
+                check_shared(start)?;
                 let frame = loop {
                     let data = session.poll()?;
-                    let elapsed = control
-                        .input_status(l6ctl::InputSource::Panel)?
-                        .guest_ms
-                        .wrapping_sub(start);
+                    let now = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
+                    check_shared(now)?;
+                    let elapsed = now.wrapping_sub(start);
                     if elapsed >= guest_ms {
                         break data.display;
                     }
@@ -886,11 +953,24 @@ impl State {
                     }
                     thread::sleep(Duration::from_millis(5));
                 };
+                check_shared(control.input_status(l6ctl::InputSource::Panel)?.guest_ms)?;
                 let capture = CapturedDisplay {
                     frame,
                     artifact: artifact.clone(),
                 };
                 if self.knob_mode.is_none()
+                    && self
+                        .knob_dialog_preflight
+                        .as_ref()
+                        .and_then(level_phase)
+                        .is_some_and(|phase| matches!(phase, 2 | 5))
+                {
+                    commit_level_capture(
+                        || check_shared(control.input_status(l6ctl::InputSource::Panel)?.guest_ms),
+                        || save_captured_display(&capture, &options.logs),
+                        || note_level_capture(self.knob_dialog_preflight.as_mut().unwrap()),
+                    )?;
+                } else if self.knob_mode.is_none()
                     && self.knob_dialog_preflight.as_ref().is_some_and(|c| {
                         expecting_overlay_refresh(c)
                             || expecting_locked_capture(c)
@@ -1044,5 +1124,51 @@ mod tests {
         );
         assert!(check_display_reference(&live, &reference, &root, "changed").is_err());
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod level_capture_deadline_tests {
+    use super::*;
+    #[test]
+    fn does_not_save_or_advance_if_deadline_expired() {
+        let saved = std::cell::Cell::new(false);
+        let advanced = std::cell::Cell::new(false);
+        let result = commit_level_capture(
+            || Err("expired".into()),
+            || {
+                saved.set(true);
+                Ok(())
+            },
+            || {
+                advanced.set(true);
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert!(!saved.get());
+        assert!(!advanced.get());
+    }
+    #[test]
+    fn does_not_advance_if_save_consumes_remaining_budget() {
+        let checks = std::cell::Cell::new(0);
+        let advanced = std::cell::Cell::new(false);
+        let result = commit_level_capture(
+            || {
+                checks.set(checks.get() + 1);
+                if checks.get() == 1 {
+                    Ok(())
+                } else {
+                    Err("expired".into())
+                }
+            },
+            || Ok(()),
+            || {
+                advanced.set(true);
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert!(!advanced.get());
     }
 }

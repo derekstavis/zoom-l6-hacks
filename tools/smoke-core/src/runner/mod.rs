@@ -965,6 +965,33 @@ impl Runner {
                         items,
                     }));
                 }
+                Action::LifecycleStart => {
+                    return Ok(Progress::Device(devices::Operation::LifecycleStart));
+                }
+                Action::LifecycleStop => {
+                    return Ok(Progress::Device(devices::Operation::LifecycleStop));
+                }
+                Action::WaitPanelUptime { guest_ms } => {
+                    return Ok(Progress::Device(devices::Operation::WaitPanelUptime {
+                        guest_ms,
+                    }));
+                }
+                Action::ExpectUpdateState {
+                    mode,
+                    flags_mask,
+                    flags_value,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectUpdateState {
+                        mode,
+                        flags_mask,
+                        flags_value,
+                    }));
+                }
+                Action::ExpectUpdateMarkerAbsent => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectUpdateMarkerAbsent,
+                    ));
+                }
                 Action::FirmwareUpdate => {
                     return Ok(Progress::Device(devices::Operation::FirmwareUpdate));
                 }

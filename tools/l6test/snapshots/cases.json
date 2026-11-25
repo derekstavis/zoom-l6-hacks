@@ -800,6 +800,15 @@
     "definition": "4747738e8b97d1cbaab4180165fa59fd288e15768b28458899c27a8c9a5d49dd"
   },
   {
+    "case": "l6max-update-bad-checksum",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "4de950ad1f6739ab06f747b61caba8b7fc52a6c0beb0f7185b6dc1151e6442e1"
+  },
+  {
     "case": "l6max-volume-meter-sweep",
     "model": "l6max",
     "backend": "headless",

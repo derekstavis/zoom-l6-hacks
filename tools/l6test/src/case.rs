@@ -28,6 +28,35 @@ use std::{
     time::Instant,
 };
 
+/// The same synthetic bad-checksum package used by the legacy L6max lifecycle.
+fn bad_checksum_update(mut package: Vec<u8>) -> Result<Vec<u8>, String> {
+    l6fw::update::validate(&package).map_err(|error| error.to_string())?;
+    for offset in [0x1a31fc, 0x1a81fc] {
+        package[offset..offset + 4].copy_from_slice(&l6fw::PATCHED_VERSION);
+    }
+    package[0x1a71fc..0x1a7200].copy_from_slice(b"0101");
+    package[0x21c..0x220].copy_from_slice(&0x13579bdfu32.to_le_bytes());
+    package[0x1a321c..0x1a3220].copy_from_slice(&0x2468ace0u32.to_le_bytes());
+    if !l6fw::update::validate(&package).is_err_and(|error| error.to_string().contains("checksum"))
+    {
+        return Err("synthetic update did not have the intended checksum failure".into());
+    }
+    Ok(package)
+}
+
+fn checked_bad_checksum_update(
+    source_bytes: Vec<u8>,
+    recorded: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let source_hash = format!("{:x}", Sha256::digest(&source_bytes));
+    if source_hash != smoke_core::firmware::STOCK_L6MAX_PACKAGE_SHA256
+        || recorded != Some(source_hash.as_str())
+    {
+        return Err("bad-checksum update needs the hash-pinned L6max 1.10 package matching its staged identity".into());
+    }
+    bad_checksum_update(source_bytes)
+}
+
 /// What every case of a run shares.
 pub(crate) struct Context<'a> {
     pub(crate) root: &'a Path,
@@ -261,6 +290,56 @@ fn build_fixture(
     drop(timer);
     let (mut options, mut inputs) =
         fixture_options(ctx.config, &selected, dir, ctx.cache, stages).failed_in(Phase::Fixture)?;
+    if scenario
+        .as_ref()
+        .is_some_and(|s| s.update_bad_checksum_card)
+    {
+        if case.no_sd
+            || case.volatile
+            || selected.state_spec.is_some()
+            || selected.card_spec.is_some()
+        {
+            return Err(failed(
+                "bad-checksum update needs an isolated persistent state and its own card".into(),
+            ));
+        }
+        if inputs.firmware.get("main_firmware.bin").map(String::as_str)
+            != Some(Model::L6max.stock_main_sha256())
+        {
+            return Err(failed(
+                "bad-checksum update needs hash-pinned stock L6max MAIN".into(),
+            ));
+        }
+        let source = selected
+            .firmware_package
+            .as_ref()
+            .ok_or_else(|| failed("update card needs a firmware package".into()))?;
+        let source_bytes = fs::read(source).failed_in(Phase::Fixture)?;
+        let package = checked_bad_checksum_update(source_bytes, inputs.package_sha256.as_deref())
+            .map_err(failed)?;
+        let update = dir.join("bad-checksum-update.bin");
+        fs::write(&update, &package).failed_in(Phase::Fixture)?;
+        let card = dir.join("bad-checksum-card.img");
+        let mut volume =
+            sd_image::create_empty(&card, "L6MAX").map_err(|e| failed(e.to_string()))?;
+        volume
+            .write("L6max.BIN", &package)
+            .and_then(|()| volume.flush())
+            .map_err(|e| failed(e.to_string()))?;
+        drop(volume);
+        if sd_image::read_file(&card, "L6max.BIN", package.len() as u64 + 1)
+            .map_err(|error| failed(error.to_string()))?
+            != package
+        {
+            return Err(failed(
+                "update card content differs from staged package".into(),
+            ));
+        }
+        inputs.update_card_package_sha256 = Some(hash(&update).failed_in(Phase::Fixture)?);
+        inputs.sd_sha256 = Some(hash_sparse(&card).failed_in(Phase::Fixture)?);
+        options.sd_image = Some(card);
+        options.no_sd = false;
+    }
     let timer = stages.start(Stage::ScenarioPreparation);
     if case.volatile && selected.state_spec.is_none() {
         options.state_dir = None;
@@ -470,6 +549,8 @@ fn identify(ctx: &Context, prepared: &Prepared, invocation: &Invocation) -> Opti
         qemu_sha256: ctx.config.qemu_sha256.clone(),
         runner_sha256: invocation.binary_sha256.clone(),
         firmware_package_sha256: inputs.package_sha256.clone(),
+        update_package_sha256: inputs.update_package_sha256.clone(),
+        update_card_package_sha256: inputs.update_card_package_sha256.clone(),
         firmware: digest(&json!(inputs.firmware)),
         card_sha256: execution.sd_sha256.clone(),
         state: digest(&json!(execution.state_sha256)),
@@ -568,6 +649,49 @@ fn apply_expected(result: &mut CaseResult, scenario: &Value, expected: &[Expecte
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bad_checksum_fixture_rejects_invalid_source() {
+        assert!(bad_checksum_update(vec![0; 100]).is_err());
+        assert!(
+            checked_bad_checksum_update(
+                vec![0; 100],
+                Some(smoke_core::firmware::STOCK_L6MAX_PACKAGE_SHA256)
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    #[ignore = "requires L6MAX_UPDATE_TEST_PACKAGE pointing at stock 1.10"]
+    fn bad_checksum_fixture_matches_legacy_mutations() {
+        let path = std::env::var_os("L6MAX_UPDATE_TEST_PACKAGE").unwrap();
+        let original = fs::read(path).unwrap();
+        assert!(checked_bad_checksum_update(original.clone(), Some("incorrect identity")).is_err());
+        let mut changed = original.clone();
+        changed[0x300] ^= 1;
+        assert!(
+            checked_bad_checksum_update(
+                changed,
+                Some(smoke_core::firmware::STOCK_L6MAX_PACKAGE_SHA256)
+            )
+            .is_err()
+        );
+        let mutated = bad_checksum_update(original.clone()).unwrap();
+        let mut expected = original;
+        for offset in [0x1a31fc, 0x1a81fc] {
+            expected[offset..offset + 4].copy_from_slice(&l6fw::PATCHED_VERSION);
+        }
+        expected[0x1a71fc..0x1a7200].copy_from_slice(b"0101");
+        expected[0x21c..0x220].copy_from_slice(&0x13579bdfu32.to_le_bytes());
+        expected[0x1a321c..0x1a3220].copy_from_slice(&0x2468ace0u32.to_le_bytes());
+        assert_eq!(mutated, expected);
+        assert!(
+            l6fw::update::validate(&mutated)
+                .unwrap_err()
+                .to_string()
+                .contains("checksum")
+        );
+    }
     #[test]
     fn expected_failures_match_the_exact_step_and_error_and_expose_unexpected_passes() {
         let failures = [

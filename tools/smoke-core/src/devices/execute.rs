@@ -400,6 +400,13 @@ impl State {
         operation_start: (Instant, u32),
     ) -> Result<Value, Box<dyn std::error::Error>> {
         match operation {
+            Operation::LifecycleStart
+            | Operation::LifecycleStop
+            | Operation::WaitPanelUptime { .. }
+            | Operation::ExpectUpdateState { .. }
+            | Operation::ExpectUpdateMarkerAbsent => {
+                Err("managed lifecycle operation must run at the session boundary".into())
+            }
             Operation::ExpectRecorder => {
                 let mode = session.engine.management[0].read_memory(0, l6max::system_mode, 4)?;
                 if mode != 0u32.to_le_bytes() {

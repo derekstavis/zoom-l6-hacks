@@ -76,6 +76,17 @@ fn midi_namespace() -> Option<String> {
 
 #[derive(Clone, Debug)]
 pub enum Operation {
+    LifecycleStart,
+    LifecycleStop,
+    WaitPanelUptime {
+        guest_ms: u32,
+    },
+    ExpectUpdateState {
+        mode: u32,
+        flags_mask: u8,
+        flags_value: u8,
+    },
+    ExpectUpdateMarkerAbsent,
     SdCard {
         inserted: bool,
     },

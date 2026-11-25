@@ -3649,6 +3649,7 @@ dependencies = [
  "libc",
  "notify",
  "patch-abi",
+ "patch-compile",
  "patch-core",
  "patch-wasm",
  "qemu-build",
@@ -4844,6 +4845,8 @@ dependencies = [
  "patch-abi",
  "patch-core",
  "patch-hook-macros",
+ "serde",
+ "serde_json",
  "sha2 0.10.9",
 ]
 

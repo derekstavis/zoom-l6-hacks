@@ -11,6 +11,8 @@ l6fw.workspace = true
 patch-hook-macros = { path = "../patch-hook-macros" }
 patch-abi = { path = "../patch-abi" }
 sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

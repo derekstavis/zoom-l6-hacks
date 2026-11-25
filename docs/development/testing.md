@@ -254,8 +254,8 @@ The printed artifact directory contains:
   identity.
 - `generated/`: the generated scenarios this run wrote, such as the `patches`
   suite's.
-- `cache/`: fixtures built once for the run and copied into each case. See
-  [Fixture cache](#fixture-cache).
+- `cache/`: the default run-local fixture cache. An opt-in persistent cache
+  lives separately. See [Fixture cache](#fixture-cache).
 - Per-case `inputs.json` and `invocation.json`: selected fixture content hashes,
   execution options, executable hash, exact arguments and declared environment.
 - `scenario.json`: shared assertions, failed step, last state and bounded events.
@@ -363,8 +363,25 @@ every case that uses it; stock firmware is booted read-only from the shared
 unpack. When the run directory's volume clones files (APFS), copies cost no
 data; otherwise card images are built per case. Keys name every input of a
 build except repository sources, which a run assumes do not change while it
-runs. The cache lives only as long as its run. `summary.md` lists hits and
-builds per kind.
+runs. By default the cache lives only as long as its run. `summary.md` lists
+hits and builds per kind.
+
+For an experimental cache reused across runs in the same checkout, pass
+`--persistent-cache target/l6test-fixtures`. Different checkouts have separate
+partitions, even if they specify the same parent. Runs in the same checkout
+coordinate builds and hold a lease until they exit. Clean this checkout's
+partition with:
+
+```sh
+cargo l6test cache clean --persistent-cache target/l6test-fixtures
+```
+
+Cleaning refuses while a run uses that partition. Cache contents include
+firmware and generated SD/NOR images: keep them local and ignored. The
+prototype verifies native toolchain inputs and reuses a metadata-checked
+identity snapshot, but remains experimental pending full validation. See the
+[experiment](persistent-fixture-cache-experiment.md) and
+[design](persistent-fixture-cache-design.md) for evidence and limitations.
 
 `--fixtures-only` builds every selected case's fixture and records its
 identity without booting a guest; results are PASS in the `fixture` phase. `--no-cache` builds every fixture per case. Comparing the

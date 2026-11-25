@@ -5,8 +5,9 @@
 //! `<run>/cache/<kind>/<digest>` (its key beside it in `<digest>.key`), and
 //! cases copy the result into their own directory, so every case still owns
 //! and records its inputs. A key names every input of a build except the
-//! repository sources, which a run assumes do not change while it runs; the
-//! cache never outlives its run.
+//! repository sources, which a run assumes do not change while it runs.
+//! The opt-in persistent experiment additionally fingerprints the checkout
+//! and isolates it from other checkouts.
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -29,6 +30,10 @@ struct Stats {
 
 pub struct RunCache {
     root: PathBuf,
+    persistent: bool,
+    // A run may keep using cached firmware after fixture preparation.
+    _checkout_lease: Option<CacheLock>,
+    native_toolchain: OnceLock<Result<patch_compile::PayloadToolchain, String>>,
     /// When false every request builds afresh, for comparing cached and
     /// uncached fixtures.
     enabled: bool,
@@ -47,6 +52,9 @@ impl RunCache {
         let clones = clones_files(&root);
         Self {
             root,
+            persistent: false,
+            _checkout_lease: None,
+            native_toolchain: OnceLock::new(),
             enabled: true,
             clones,
             builds: AtomicU64::new(0),
@@ -62,6 +70,96 @@ impl RunCache {
         Self {
             enabled: false,
             ..Self::new(root)
+        }
+    }
+
+    /// Opt-in experiment: isolate entries by the executable, checkout and
+    /// toolchain, including uncommitted source changes.
+    pub fn persistent(root: &Path, repository: &Path) -> Result<Self, String> {
+        use std::os::unix::ffi::OsStrExt;
+        let checkout_id = checkout_id(repository)?;
+        fs::create_dir_all(root).map_err(|e| e.to_string())?;
+        // Keep this lock outside the removable tree for the life of the run.
+        let lease = CacheLock::shared(&root.join(format!("{checkout_id}.lock")))?;
+        let mut sha = Sha256::new();
+        sha.update(b"l6test-persistent-experiment-v2\0");
+        sha.update(crate::hashing::hash(
+            &std::env::current_exe().map_err(|e| e.to_string())?,
+        )?);
+        let files = std::process::Command::new("git")
+            .current_dir(repository)
+            .args([
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+            ])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !files.status.success() {
+            return Err("cannot enumerate checkout for fixture cache".into());
+        }
+        for name in files.stdout.split(|b| *b == 0).filter(|s| !s.is_empty()) {
+            sha.update((name.len() as u64).to_le_bytes());
+            sha.update(name);
+            let path = repository.join(std::ffi::OsStr::from_bytes(name));
+            if path.is_file() {
+                sha.update(crate::hashing::hash(&path)?);
+            } else {
+                sha.update(b"missing");
+            }
+        }
+        let rustc = std::process::Command::new("rustc")
+            .arg("-vV")
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !rustc.status.success() {
+            return Err("cannot identify rustc for fixture cache".into());
+        }
+        sha.update(rustc.stdout);
+        let mut environment: Vec<_> = std::env::vars()
+            .filter(|(n, _)| {
+                n.starts_with("L6_")
+                    || n.starts_with("RUST")
+                    || n.starts_with("LD_")
+                    || n.starts_with("DYLD_")
+            })
+            .collect();
+        environment.sort();
+        for (name, value) in environment {
+            sha.update(name.as_bytes());
+            sha.update([0]);
+            sha.update(value.as_bytes());
+            sha.update([0]);
+        }
+        let mut cache = Self::new(root.join(checkout_id).join(format!("{:x}", sha.finalize())));
+        cache.persistent = true;
+        cache._checkout_lease = Some(lease);
+        Ok(cache)
+    }
+
+    /// Remove only this checkout's persistent cache. Never wait for a run:
+    /// a cached firmware file may still be in use until its lease is dropped.
+    pub fn clean(root: &Path, repository: &Path) -> Result<bool, String> {
+        let checkout_id = checkout_id(repository)?;
+        if !root.exists() {
+            return Ok(false);
+        }
+        let _lease = CacheLock::exclusive_nonblocking(&root.join(format!("{checkout_id}.lock")))?;
+        let checkout_root = root.join(checkout_id);
+        match fs::symlink_metadata(&checkout_root) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+                fs::remove_dir_all(&checkout_root)
+                    .map_err(|e| format!("{}: {e}", checkout_root.display()))?;
+                Ok(true)
+            }
+            Ok(_) => Err(format!(
+                "cache path is not a directory: {}",
+                checkout_root.display()
+            )),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(format!("{}: {error}", checkout_root.display())),
         }
     }
 
@@ -83,7 +181,30 @@ impl RunCache {
         key: &str,
         build: impl FnOnce(&Path) -> Result<(), String>,
     ) -> Result<PathBuf, String> {
-        let mut digest = format!("{:x}", Sha256::digest(format!("{kind}\0{key}").as_bytes()));
+        let toolchain = if self.persistent && kind == "l6patch" {
+            let identity = self
+                .native_toolchain
+                .get_or_init(|| {
+                    fs::create_dir_all(&self.root).map_err(|e| e.to_string())?;
+                    let _lock = CacheLock::acquire(&self.root.join("toolchain.lock"))?;
+                    patch_compile::payload_toolchain_identity(Some(
+                        &self.root.join("toolchain.json"),
+                    ))
+                    .map_err(|e| format!("identify native patch toolchain: {e}"))
+                })
+                .as_ref()
+                .map_err(Clone::clone)?;
+            patch_compile::verify_payload_toolchain(identity)
+                .map_err(|e| format!("native patch toolchain changed: {e}"))?;
+            Some(identity)
+        } else {
+            None
+        };
+        let cache_key = match toolchain {
+            Some(identity) => format!("{kind}\0{key}\0{}", identity.digest),
+            None => format!("{kind}\0{key}"),
+        };
+        let mut digest = format!("{:x}", Sha256::digest(cache_key.as_bytes()));
         if !self.enabled {
             let n = self.builds.fetch_add(1, Ordering::Relaxed);
             digest = format!("{:x}", Sha256::digest(format!("{digest}\0{n}").as_bytes()));
@@ -99,17 +220,59 @@ impl RunCache {
         let result = entry.get_or_init(|| {
             built = true;
             let directory = self.root.join(kind);
-            let name = &digest[..16];
+            let name = if self.persistent {
+                &digest[..]
+            } else {
+                &digest[..16]
+            };
             let target = directory.join(name);
-            let staging = directory.join(format!("{name}.building"));
-            let _ = fs::remove_dir_all(&staging);
+            let staging = directory.join(format!("{name}.{}.building", std::process::id()));
             fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+            let _lock = if self.persistent {
+                Some(CacheLock::acquire(&directory.join(format!("{name}.lock")))?)
+            } else {
+                None
+            };
+            let manifest = directory.join(format!("{name}.manifest.json"));
+            if self.persistent && target.is_dir() {
+                let expected = fs::read(&manifest)
+                    .ok()
+                    .and_then(|b| serde_json::from_slice::<BTreeMap<String, String>>(&b).ok());
+                if expected.is_some_and(|expected| {
+                    cache_contents(&target).is_ok_and(|actual| actual == expected)
+                }) {
+                    if let Some(identity) = toolchain {
+                        patch_compile::verify_payload_toolchain(identity)
+                            .map_err(|e| format!("native patch toolchain changed: {e}"))?;
+                    }
+                    built = false;
+                    return Ok(target);
+                }
+                fs::remove_dir_all(&target).map_err(|e| e.to_string())?;
+            }
+            let _ = fs::remove_dir_all(&staging);
             fs::write(directory.join(format!("{name}.key")), key).map_err(|e| e.to_string())?;
             // Builders such as `l6patch` and `l6fw::unpack` create their
             // output directory, so `build` receives a path that does not exist.
             build(&staging)?;
+            if let Some(identity) = toolchain {
+                patch_compile::verify_payload_toolchain(identity)
+                    .map_err(|e| format!("native patch toolchain changed: {e}"))?;
+            }
             fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
+            let hashes = if self.persistent {
+                Some(cache_contents(&staging)?)
+            } else {
+                None
+            };
             fs::rename(&staging, &target).map_err(|e| e.to_string())?;
+            if let Some(hashes) = hashes {
+                fs::write(
+                    &manifest,
+                    serde_json::to_vec(&hashes).map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
+            }
             Ok(target)
         });
         let mut stats = self.stats.lock().unwrap();
@@ -168,6 +331,87 @@ impl RunCache {
     }
 }
 
+struct CacheLock(fs::File);
+impl CacheLock {
+    fn acquire(path: &Path) -> Result<Self, String> {
+        Self::lock(path, libc::LOCK_EX)
+    }
+    fn shared(path: &Path) -> Result<Self, String> {
+        Self::lock(path, libc::LOCK_SH)
+    }
+    fn exclusive_nonblocking(path: &Path) -> Result<Self, String> {
+        Self::lock(path, libc::LOCK_EX | libc::LOCK_NB)
+    }
+    fn lock(path: &Path, mode: i32) -> Result<Self, String> {
+        use std::os::fd::AsRawFd;
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(path)
+            .map_err(|e| e.to_string())?;
+        if unsafe { libc::flock(file.as_raw_fd(), mode) } != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::WouldBlock {
+                return Err("cache is in use by an active run; try again after it finishes".into());
+            }
+            return Err(format!("{}: {error}", path.display()));
+        }
+        Ok(Self(file))
+    }
+}
+
+fn checkout_id(repository: &Path) -> Result<String, String> {
+    use std::os::unix::ffi::OsStrExt;
+    let checkout = repository.canonicalize().map_err(|e| e.to_string())?;
+    Ok(format!(
+        "{:x}",
+        Sha256::digest(checkout.as_os_str().as_bytes())
+    ))
+}
+impl Drop for CacheLock {
+    fn drop(&mut self) {
+        use std::os::fd::AsRawFd;
+        unsafe {
+            libc::flock(self.0.as_raw_fd(), libc::LOCK_UN);
+        }
+    }
+}
+
+fn cache_contents(root: &Path) -> Result<BTreeMap<String, String>, String> {
+    fn visit(root: &Path, dir: &Path, out: &mut BTreeMap<String, String>) -> Result<(), String> {
+        for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let kind = entry.file_type().map_err(|e| e.to_string())?;
+            let path = entry.path();
+            if kind.is_symlink() {
+                return Err(format!("cache output contains symlink: {}", path.display()));
+            }
+            if kind.is_dir() {
+                visit(root, &path, out)?;
+            } else if kind.is_file() {
+                let hash = if path.extension().is_some_and(|x| x == "img") {
+                    crate::hashing::hash_sparse(&path)?
+                } else {
+                    crate::hashing::hash(&path)?
+                };
+                out.insert(
+                    path.strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
+                    hash,
+                );
+            } else {
+                return Err(format!("unsupported cache output: {}", path.display()));
+            }
+        }
+        Ok(())
+    }
+    let mut result = BTreeMap::new();
+    visit(root, root, &mut result)?;
+    Ok(result)
+}
+
 /// Copy a tree. On a volume that clones (APFS), `fs::copy` clones each file,
 /// so a copy costs no data.
 pub fn copy_tree(source: &Path, target: &Path) -> Result<(), String> {
@@ -195,8 +439,11 @@ fn clones_files(root: &Path) -> bool {
     if fs::create_dir_all(root).is_err() {
         return false;
     }
-    let source = root.join(".clone-probe");
-    let target = root.join(".clone-probe.copy");
+    static NEXT_PROBE: AtomicU64 = AtomicU64::new(0);
+    let id = NEXT_PROBE.fetch_add(1, Ordering::Relaxed);
+    let name = format!(".clone-probe-{}-{id}", std::process::id());
+    let source = root.join(&name);
+    let target = root.join(format!("{name}.copy"));
     let _ = fs::remove_file(&target);
     if fs::write(&source, b"probe").is_err() {
         return false;
@@ -229,6 +476,152 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn persistent_entries_survive_runs_and_rebuild_after_corruption() {
+        let dir = temp("persistent");
+        let builds = AtomicUsize::new(0);
+        let new_cache = || {
+            let mut c = RunCache::new(dir.clone());
+            c.persistent = true;
+            c
+        };
+        let build = |path: &Path| {
+            builds.fetch_add(1, Ordering::Relaxed);
+            fs::create_dir_all(path).map_err(|e| e.to_string())?;
+            fs::write(path.join("fixture"), b"expected").map_err(|e| e.to_string())
+        };
+        let first = new_cache().directory("test", "key", build).unwrap();
+        let second = new_cache().directory("test", "key", build).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(builds.load(Ordering::Relaxed), 1);
+        fs::write(first.join("fixture"), b"corrupt").unwrap();
+        new_cache().directory("test", "key", build).unwrap();
+        assert_eq!(builds.load(Ordering::Relaxed), 2);
+        assert_eq!(fs::read(first.join("fixture")).unwrap(), b"expected");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn changing_nor_or_patching_source_invalidates_persistent_namespace() {
+        let dir = temp("nor-fingerprint");
+        fs::create_dir_all(dir.join("tools/l6nor/src")).unwrap();
+        assert!(
+            std::process::Command::new("git")
+                .current_dir(&dir)
+                .args(["init", "-q"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let source = dir.join("tools/l6nor/src/lib.rs");
+        fs::create_dir_all(dir.join("tools/l6patch/src")).unwrap();
+        let patch_source = dir.join("tools/l6patch/src/lib.rs");
+        fs::write(&source, b"before").unwrap();
+        fs::write(&patch_source, b"before").unwrap();
+        assert!(
+            std::process::Command::new("git")
+                .current_dir(&dir)
+                .args(["add", "tools/l6nor/src/lib.rs", "tools/l6patch/src/lib.rs"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let first = RunCache::persistent(&dir.join("cache"), &dir).unwrap().root;
+        fs::write(&source, b"after").unwrap();
+        let second = RunCache::persistent(&dir.join("cache"), &dir).unwrap().root;
+        assert_ne!(first, second);
+        fs::write(&patch_source, b"after").unwrap();
+        let third = RunCache::persistent(&dir.join("cache"), &dir).unwrap().root;
+        assert_ne!(second, third);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn identical_checkouts_have_independent_cache_roots() {
+        let dir = temp("checkout-isolation");
+        let parent = dir.join("shared-parent");
+        let mut roots = Vec::new();
+        for name in ["checkout-a", "checkout-b"] {
+            let checkout = dir.join(name);
+            fs::create_dir_all(&checkout).unwrap();
+            assert!(
+                std::process::Command::new("git")
+                    .current_dir(&checkout)
+                    .args(["init", "-q"])
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            fs::write(checkout.join("same.rs"), b"same contents").unwrap();
+            roots.push(RunCache::persistent(&parent, &checkout).unwrap().root);
+        }
+        assert_ne!(roots[0].parent(), roots[1].parent());
+        let a = RunCache {
+            root: roots[0].clone(),
+            persistent: true,
+            ..RunCache::new(roots[0].clone())
+        };
+        let b = RunCache {
+            root: roots[1].clone(),
+            persistent: true,
+            ..RunCache::new(roots[1].clone())
+        };
+        let first = a
+            .directory("test", "same", |path| {
+                fs::create_dir_all(path).map_err(|e| e.to_string())
+            })
+            .unwrap();
+        let second = b
+            .directory("test", "same", |path| {
+                fs::create_dir_all(path).map_err(|e| e.to_string())
+            })
+            .unwrap();
+        assert_ne!(first, second);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn clean_refuses_active_checkout_and_preserves_other_checkouts() {
+        let dir = temp("clean-checkout");
+        let parent = dir.join("cache");
+        let a = dir.join("a");
+        let b = dir.join("b");
+        for checkout in [&a, &b] {
+            fs::create_dir_all(checkout).unwrap();
+            assert!(
+                std::process::Command::new("git")
+                    .current_dir(checkout)
+                    .args(["init", "-q"])
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            fs::write(checkout.join("source"), b"source").unwrap();
+        }
+        let a_cache = RunCache::persistent(&parent, &a).unwrap();
+        let b_cache = RunCache::persistent(&parent, &b).unwrap();
+        for cache in [&a_cache, &b_cache] {
+            cache
+                .directory("test", "fixture", |path| {
+                    fs::create_dir_all(path).map_err(|e| e.to_string())?;
+                    fs::write(path.join("fixture"), b"cached").map_err(|e| e.to_string())
+                })
+                .unwrap();
+        }
+        let a_root = a_cache.root.clone();
+        let b_root = b_cache.root.clone();
+        let err = RunCache::clean(&parent, &a).unwrap_err();
+        assert!(err.contains("active run"), "{err}");
+        assert!(a_root.exists());
+        drop(a_cache);
+        assert!(RunCache::clean(&parent, &a).unwrap());
+        assert!(!a_root.exists());
+        assert!(b_root.exists());
+        assert!(!RunCache::clean(&parent, &a).unwrap());
+        drop(b_cache);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

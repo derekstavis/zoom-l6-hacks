@@ -14,6 +14,8 @@ cargo l6test run --config config.toml --suite quick
 cargo l6test run --config config.toml --case boot --model l6
 cargo l6test run --config config.toml --suite quick --backend both
 cargo l6test watch /tmp/l6smk-RUN
+cargo l6test run --case boot --persistent-cache target/l6test-fixtures
+cargo l6test cache clean --persistent-cache target/l6test-fixtures
 ```
 
 `cargo l6test` is an alias for `cargo run --offline --locked -p l6test --`.
@@ -40,6 +42,11 @@ cargo l6test watch /tmp/l6smk-RUN
   [reference images](../testing.md#reference-images).
 - `--fixtures-only` builds each case's fixture and identity without booting;
   `--no-cache` builds fixtures per case instead of once per run.
+- `--persistent-cache DIRECTORY` opts into experimental reuse across runs in
+  the same checkout. `cache clean --persistent-cache DIRECTORY` removes only
+  that checkout's entries and refuses while a run is using them. Keep this
+  cache local and ignored; see [fixture cache](../testing.md#fixture-cache)
+  for its current tool-identity limitations.
 - `--output NEW_DIRECTORY` chooses an artifact directory. It must not already
   exist. By default the driver creates a unique directory under `/tmp`.
 - `--no-build` uses existing emulator binaries instead of building them.

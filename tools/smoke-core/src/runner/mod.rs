@@ -689,13 +689,44 @@ impl Runner {
                         devices::Operation::L6MidiProbeExpectReplies,
                     ));
                 }
-                Action::L6MidiRingPinSweep { cc } => {
-                    return Ok(Progress::Device(devices::Operation::L6MidiRingPinSweep {
+                Action::L6IndicatorBegin => {
+                    return Ok(Progress::Device(devices::Operation::L6IndicatorBegin));
+                }
+                Action::L6RingSample {
+                    cc,
+                    value,
+                    guest_ms,
+                    ring,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::L6RingSample {
                         cc,
+                        value,
+                        guest_ms,
+                        ring,
                     }));
                 }
-                Action::L6MidiMuteIndicators => {
-                    return Ok(Progress::Device(devices::Operation::L6MidiMuteIndicators));
+                Action::L6RingCoverage { mask } => {
+                    return Ok(Progress::Device(devices::Operation::L6RingCoverage {
+                        mask,
+                    }));
+                }
+                Action::L6MuteSample {
+                    cc,
+                    value,
+                    guest_ms,
+                    expected,
+                    reuse_previous,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::L6MuteSample {
+                        cc,
+                        value,
+                        guest_ms,
+                        expected,
+                        reuse_previous,
+                    }));
+                }
+                Action::L6IndicatorEnd => {
+                    return Ok(Progress::Device(devices::Operation::L6IndicatorEnd));
                 }
                 Action::UsbSysexBegin => {
                     return Ok(Progress::Device(devices::Operation::UsbSysexBegin));

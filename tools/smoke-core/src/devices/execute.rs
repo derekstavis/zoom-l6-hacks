@@ -344,6 +344,7 @@ impl State {
         self.knob_dialog_baseline = None;
         self.abort_knob_preflight()?;
         self.midi = None;
+        self.l6_indicator = None;
         self.sysex_deadline = None;
         self.usb_midi = None;
         Ok(())
@@ -359,6 +360,9 @@ impl State {
     }
     pub fn abort_usb_midi(&mut self) {
         self.usb_midi = None;
+    }
+    pub fn abort_l6_indicator(&mut self) {
+        self.l6_indicator = None;
     }
     pub fn abort_midi_sync(&mut self) {
         self.midi_sync = None;
@@ -388,6 +392,30 @@ impl State {
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
     ) -> Result<Value, String> {
+        if self.l6_indicator.is_some()
+            && !matches!(
+                operation,
+                Operation::L6RingSample { .. }
+                    | Operation::L6MuteSample { .. }
+                    | Operation::L6RingCoverage { .. }
+                    | Operation::L6IndicatorEnd
+            )
+        {
+            self.l6_indicator = None;
+            return Err("L6 indicator campaign interrupted by another operation".into());
+        }
+        if let Some(scope) = &self.l6_indicator {
+            if indicator_deadline_expired(
+                scope.start.elapsed(),
+                scope.guest_start,
+                guest_now(session),
+                scope.guest_budget,
+                scope.wall_budget,
+            ) {
+                self.l6_indicator = None;
+                return Err("L6 indicator campaign exceeded its shared deadline".into());
+            }
+        }
         if self.sd_inspection.is_some() && !matches!(operation, Operation::ExpectSdModule { .. }) {
             self.sd_inspection = None;
             return Err("SD inspection interrupted before module assertion".into());
@@ -576,6 +604,7 @@ impl State {
             Ok(value) => value,
             Err(error) => {
                 let primary = error.to_string();
+                self.l6_indicator = None;
                 self.sysex_deadline = None;
                 self.abort_usb_midi();
                 return match self.abort_knob_preflight() {
@@ -2224,11 +2253,65 @@ impl State {
             | Operation::DinUsbSend { .. }
             | Operation::DinUsbExpect { .. }
             | Operation::DinUsbEnd) => self.run_din_usb(session, operation),
-            Operation::L6MidiRingPinSweep { cc } => {
-                self.run_l6_midi_ring_pin_sweep(session, cc, wall_timeout_s)
+            Operation::L6IndicatorBegin => {
+                if session.engine.model() != l6fw::Model::L6 {
+                    return Err("L6 indicator campaign requires L6".into());
+                }
+                if self.host_midi_client().is_none() {
+                    return Err(
+                        "L6 indicator campaign requires a retained direct USB MIDI session".into(),
+                    );
+                }
+                self.l6_indicator = Some(L6IndicatorScope {
+                    start: operation_start.0,
+                    guest_start: operation_start.1,
+                    guest_budget: guest_timeout_ms,
+                    wall_budget: wall_timeout_s,
+                    changed_segments: 0,
+                    last_mute: None,
+                });
+                Ok(json!({"started":true}))
             }
-            Operation::L6MidiMuteIndicators => {
-                self.run_l6_midi_mute_indicators(session, wall_timeout_s)
+            Operation::L6RingSample {
+                cc,
+                value,
+                guest_ms,
+                ring,
+            } => Ok(self.run_l6_indicator_sample(session, cc, value, guest_ms, ring, None, false)?),
+            Operation::L6MuteSample {
+                cc,
+                value,
+                guest_ms,
+                expected,
+                reuse_previous,
+            } => Ok(self.run_l6_indicator_sample(
+                session,
+                cc,
+                value,
+                guest_ms,
+                None,
+                Some(expected),
+                reuse_previous,
+            )?),
+            Operation::L6RingCoverage { mask } => {
+                let actual = self
+                    .l6_indicator
+                    .as_ref()
+                    .ok_or("L6 indicator campaign is not active")?
+                    .changed_segments;
+                if actual != mask {
+                    return Err(format!(
+                        "L6 changed ring segments {actual:#05x}, expected {mask:#05x}"
+                    )
+                    .into());
+                }
+                Ok(json!({"changed_segments":actual}))
+            }
+            Operation::L6IndicatorEnd => {
+                self.l6_indicator
+                    .take()
+                    .ok_or("L6 indicator campaign is not active")?;
+                Ok(json!({"finished":true}))
             }
             Operation::UsbSysexBegin => {
                 if self.midi.is_none() {

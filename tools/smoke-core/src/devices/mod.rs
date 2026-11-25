@@ -229,10 +229,24 @@ pub enum Operation {
         cable: u8,
     },
     DinUsbEnd,
-    L6MidiRingPinSweep {
+    L6IndicatorBegin,
+    L6RingSample {
         cc: u8,
+        value: u8,
+        guest_ms: u32,
+        ring: Option<usize>,
     },
-    L6MidiMuteIndicators,
+    L6RingCoverage {
+        mask: u32,
+    },
+    L6MuteSample {
+        cc: u8,
+        value: u8,
+        guest_ms: u32,
+        expected: [u32; 8],
+        reuse_previous: bool,
+    },
+    L6IndicatorEnd,
     UsbSysexBegin,
     UsbSysexExchange {
         request: crate::scenario::UsbSysexRequest,
@@ -882,6 +896,7 @@ pub struct State {
     saved: Option<(Vec<u8>, usize)>,
     midi: Option<l6max_host::usb::Endpoints>,
     sysex_deadline: Option<(Instant, u32, u32, u64)>,
+    l6_indicator: Option<L6IndicatorScope>,
     gdb: Option<l6max_diagnostics::gdb::Gdb>,
     host_midi: Option<Box<dyn crate::host_midi::Client>>,
     encoder_turned_up: bool,
@@ -914,6 +929,15 @@ impl Drop for PanelKeyScope {
             let _ = self.inputs.up(target);
         }
     }
+}
+
+struct L6IndicatorScope {
+    start: Instant,
+    guest_start: u32,
+    guest_budget: u32,
+    wall_budget: u64,
+    changed_segments: u32,
+    last_mute: Option<(u8, [u32; 8])>,
 }
 
 struct KnobModeScope {

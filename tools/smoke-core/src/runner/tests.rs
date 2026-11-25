@@ -1890,3 +1890,17 @@ fn paced_turn_preserves_ring_baseline_and_exact_report_count() {
     );
     fs::remove_dir_all(&runner.logs).unwrap();
 }
+
+#[test]
+fn l6_indicator_campaign_requires_scope_coverage_and_previous_mute_snapshot() {
+    let source = "version=1\nname='l6-indicators'\nmodels=['l6']\nbackends=['headless']\n[[step]]\naction='l6-indicator-begin'\nguest_timeout_ms=7000\nwall_timeout_s=30\n[[step]]\naction='l6-ring-sample'\ncc=83\nvalue=16\nguest_ms=500\nring=1\n[[step]]\naction='l6-ring-coverage'\nmask=510\n[[step]]\naction='l6-indicator-end'\n";
+    assert!(Scenario::parse(source).is_ok());
+    assert!(Scenario::parse(&source.replace("ring=1", "ring=7")).is_err());
+    assert!(
+        Scenario::parse(&source.replace("action='l6-ring-coverage'\nmask=510\n[[step]]\n", ""))
+            .is_err()
+    );
+    assert!(Scenario::parse(&source.replace("models=['l6']", "models=['l6max']")).is_err());
+    let mute = "version=1\nname='mute'\nmodels=['l6']\nbackends=['headless']\n[[step]]\naction='l6-indicator-begin'\n[[step]]\naction='l6-mute-sample'\ncc=93\nvalue=0\nguest_ms=500\nexpected=[0,0,0,0,2048,0,0,0]\nreuse_previous=true\n[[step]]\naction='l6-indicator-end'\n";
+    assert!(Scenario::parse(mute).is_err());
+}

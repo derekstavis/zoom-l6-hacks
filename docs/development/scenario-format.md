@@ -238,8 +238,9 @@ message delivered just after the interval.
 | `l6-midi-probe-inject` | — | Inject the guarded sync request; the guest must be restarted afterwards |
 | `l6-midi-probe-expect-hook` | — | Verify the request reaches the selected firmware or SD hook unchanged |
 | `l6-midi-probe-expect-replies` | — | Check the ordered configured CC replies, wait for the last sender return, and leave MAIN stopped |
-| `l6-midi-ring-pin-sweep` | `cc` | Sweep L6 MIDI CC values and compare ring-pin output |
-| `l6-midi-mute-indicators` | — | Check L6 MIDI mute-indicator responses |
+| `l6-indicator-begin`, `l6-indicator-end` | Begin carries shared guest/wall deadline | Bound an L6 MIDI indicator campaign using the retained direct MIDI session. |
+| `l6-ring-sample`, `l6-ring-coverage` | `cc`, `value`, `guest_ms`, optional `ring`; coverage `mask` | Send a CC, observe for the declared guest duration, reject unrelated ring changes, and check the accumulated segment mask. |
+| `l6-mute-sample` | `cc`, `value`, `guest_ms`, `expected`, optional `reuse_previous` | Compare all eight panel indicator rows; `reuse_previous` uses the preceding sample as the baseline for a release edge. |
 | `usb-sysex-begin`, `usb-sysex-exchange`, `usb-sysex-end` | Begin carries the shared guest/wall timeout; exchanges carry `bytes` and optional `expect_prefix`, `expect_reply`, `min_reply_bytes`, `reject_prefixes`, `reply_timeout_ms`, and `complete_on_match` | Send cable-2 requests over the previously enumerated USB connection. Each exchange is reported separately; no-reply requests, rejected-prefix checks and explicit reply windows observe the full interval. |
 | `editor-pad-assignments` | — | Initialize the Editor session, enumerate WAV files, assign the first file on all four pads and verify assignment state through SysEx readback; requires a preceding `usb-descriptors` step |
 | `editor-pad-playback` | `pad` | L6-only assigned-pad playback check; requires preceding `editor-pad-assignments` |

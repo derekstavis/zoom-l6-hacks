@@ -236,7 +236,12 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6MidiProbeExpectReplies
         | Action::MarkL6UpdatePending
         | Action::ExpectL6UpdateResetVector
-        | Action::ExpectL6UpdateComparison { .. } => on(L6),
+        | Action::ExpectL6UpdateComparison { .. }
+        | Action::L6IndicatorBegin
+        | Action::L6RingSample { .. }
+        | Action::L6RingCoverage { .. }
+        | Action::L6MuteSample { .. }
+        | Action::L6IndicatorEnd => on(L6),
         Action::SdCard { .. }
         | Action::UsbDescriptors
         | Action::UsbStorage
@@ -263,8 +268,6 @@ pub fn of(action: &Action) -> Requirement {
         | Action::HostMidiSendCc { .. }
         | Action::ExpectRingChanged { .. }
         | Action::DirectUsbMidiRoundTrip { .. }
-        | Action::L6MidiRingPinSweep { .. }
-        | Action::L6MidiMuteIndicators
         | Action::UsbSysexBegin
         | Action::UsbSysexExchange { .. }
         | Action::UsbSysexEnd

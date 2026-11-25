@@ -218,6 +218,16 @@ impl CaseProgress {
 pub fn step_label(action: &crate::Action) -> String {
     use crate::Action;
     match action {
+        Action::L6IndicatorBegin => "Begin L6 indicator campaign".into(),
+        Action::L6RingSample {
+            cc, value, ring, ..
+        } => match ring {
+            Some(ring) => format!("Observe L6 ring {ring} CC {cc} value {value}"),
+            None => format!("Initialize L6 ring CC {cc} value {value}"),
+        },
+        Action::L6RingCoverage { mask } => format!("Check L6 ring segment coverage {mask:#05x}"),
+        Action::L6MuteSample { cc, value, .. } => format!("Observe L6 mute CC {cc} value {value}"),
+        Action::L6IndicatorEnd => "End L6 indicator campaign".into(),
         Action::EffectPacedTurn { channel, steps } => {
             format!("Apply {steps} paced effect edits on channel {channel}")
         }

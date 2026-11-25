@@ -270,6 +270,7 @@ mod tests {
     #[test]
     fn guarded_reader_samples_four_words_in_one_qmp_read() {
         let (client, mut peer) = UnixStream::pair().unwrap();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
         let server = thread::spawn(move || {
             let mut input = BufReader::new(peer.try_clone().unwrap());
             peer.write_all(b"{\"QMP\":{\"version\":{\"qemu\":{\"major\":10,\"minor\":0,\"micro\":0},\"package\":\"\"},\"capabilities\":[]}}\r\n").unwrap();
@@ -290,6 +291,7 @@ mod tests {
             );
             let response = serde_json::json!({"return":"00000000: 0x01 0x00 0x00 0x00 0x02 0x00 0x00 0x00 0x03 0x00 0x00 0x00 0x04 0x00 0x00 0x00\n"});
             writeln!(peer, "{response}").unwrap();
+            done_rx.recv().unwrap();
         });
         let qmp = QmpClient::connect(client).unwrap();
         // Construct directly to isolate the per-sample contract; guard rejection
@@ -308,6 +310,7 @@ mod tests {
             ),
             (1, 2, 3, 4)
         );
+        done_tx.send(()).unwrap();
         server.join().unwrap();
     }
 }

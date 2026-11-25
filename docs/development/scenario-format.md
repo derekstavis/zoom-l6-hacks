@@ -48,7 +48,7 @@ tables. Unknown header fields fail parsing.
 | `installed_patches` | no | Patches the engine installs on a device seeded with the model's stock package, as `--patch` does. |
 | `installed_sd_patches` | no | Patches the engine delivers on the case's card, as `--sd-patch` does: it installs the Patch loader and writes the hosted modules to `PATCHES/`. Requires `card`; cannot combine with `sd_patches`. |
 | `update_patches` | no | Patches per model for the case's update package, built from the model's package. |
-| `update_bad_checksum_card` | no | Build a case-local L6max 1.10 card containing the synthetic bad-checksum update before execution. Requires the dedicated headless, isolated lifecycle sequence. |
+| `update_fixture` | no | Build a case-local L6max 1.10 synthetic update card: `bad-checksum` or `synthetic-valid`. Managed update scenarios require an isolated headless lifecycle. |
 | `gdb` | no | Enable the debugger socket. |
 | `audio_device` | no | QEMU audio-device syntax; `{logs}` expands to the case's log directory. |
 | `audio_input` | no | Array of tables assigning audio to input channels: `channel` plus one card-file source such as `loop-tone` or `copy`. Nothing plays until an `audio-input-transport` step. See [audio input](../emulator/audio.md#input). |
@@ -270,6 +270,9 @@ message delivered just after the interval.
 | `expect-update-state` | `mode`, `flags_mask`, `flags_value` | Require the guarded L6max update mode and masked package flags. |
 | `lifecycle-stop` | — | Request QMP shutdown and require successful child exits before reading persistent state. |
 | `expect-update-marker-absent` | — | With the guest stopped, use `l6nor` to assert that neither a pending nor failed update marker exists. |
+| `expect-live-update-marker-absent` | — | Assert the marker is absent from the live state file before power handoff; this sample is non-atomic. |
+| `expect-update-gui` | `window`, `progress_mask`, `progress_value` | Assert the guarded current update window and masked progress flags. |
+| `capture-update-marker-pending` | — | Require the stopped guest's pending marker and save/hash its case-local MAIN NOR snapshot. |
 | `power-press` | `hold_ms`, `powered` | Check expected power result, model cutoff timing and stopped clock |
 | `restart` | — | Retire the session before reopening its isolated persistent state; reset readiness, trace counters and action baselines |
 | `expect-recorder` | — | L6max startup mode restored after restart |

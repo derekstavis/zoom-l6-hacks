@@ -12,8 +12,14 @@ fn run() -> Result<(), String> {
         [command, input, output, flag] if command == "repack" && flag == "--recompute-checksum" => {
             repack(Path::new(input), Path::new(output), true)
         }
+        [command, input, output] if command == "update-checksum" => {
+            let mut package = std::fs::read(input).map_err(|error| error.to_string())?;
+            l6fw::update::recompute_checksum(&mut package).map_err(|error| error.to_string())?;
+            l6fw::update::validate(&package).map_err(|error| error.to_string())?;
+            std::fs::write(output, package).map_err(|error| error.to_string())
+        }
         _ => Err(
-            "usage: cargo run --bin l6fw -- <unpack PACKAGE DIR | repack DIR PACKAGE [--recompute-checksum]> (L6 and L6max are detected from the package header)"
+            "usage: cargo run --bin l6fw -- <unpack PACKAGE DIR | repack DIR PACKAGE [--recompute-checksum] | update-checksum INPUT OUTPUT> (L6 and L6max are detected from the package header)"
                 .into(),
         ),
     }

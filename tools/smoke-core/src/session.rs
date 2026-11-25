@@ -260,7 +260,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
         phase: crate::progress::CasePhase::StartingEmulator,
         started_unix_ms: crate::progress::unix_ms(),
     });
-    let managed = scenario.update_bad_checksum_card;
+    let managed = scenario.update_fixture.is_some();
     let mut session = if managed {
         None
     } else {
@@ -348,6 +348,46 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     use sha2::{Digest, Sha256};
                     runner.device_finished(json!({"update_marker":"none", "main_nor_sha256":format!("{:x}", Sha256::digest(nor.bytes()))}));
                 }
+                Progress::Device(devices::Operation::ExpectLiveUpdateMarkerAbsent) => {
+                    if session.is_none() {
+                        return Err("live update marker requires an active guest".into());
+                    }
+                    let state = options
+                        .state_dir
+                        .as_ref()
+                        .ok_or("update marker requires persistent state")?;
+                    let nor = l6nor::MainNor::read(&state.join("main-nor.bin"))?;
+                    if nor.update_marker() != l6nor::nor::UpdateMarker::None {
+                        return Err("update marker set before power handoff".into());
+                    }
+                    runner.device_finished(json!({"update_marker":"none", "atomic":false}));
+                }
+                Progress::Device(devices::Operation::CaptureUpdateMarkerPending) => {
+                    if session.is_some() {
+                        return Err("pending marker requires a stopped guest".into());
+                    }
+                    let state = options
+                        .state_dir
+                        .as_ref()
+                        .ok_or("update marker requires persistent state")?;
+                    let nor = l6nor::MainNor::read(&state.join("main-nor.bin"))?;
+                    let marker = nor.update_marker();
+                    if marker == l6nor::nor::UpdateMarker::None {
+                        return Err("power handoff did not save update marker".into());
+                    }
+                    let path = options.logs.join("pending-main-nor.bin");
+                    use std::io::Write;
+                    let mut file = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&path)
+                        .map_err(|e| e.to_string())?;
+                    file.write_all(nor.bytes())
+                        .and_then(|()| file.sync_all())
+                        .map_err(|e| e.to_string())?;
+                    use sha2::{Digest, Sha256};
+                    runner.device_finished(json!({"update_marker":format!("{marker:?}"), "main_nor_sha256":format!("{:x}", Sha256::digest(nor.bytes())), "snapshot":"pending-main-nor.bin"}));
+                }
                 Progress::Device(devices::Operation::WaitPanelUptime { guest_ms }) => {
                     let current = session
                         .as_ref()
@@ -376,6 +416,27 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         ));
                     }
                     runner.device_finished(json!({"mode":sample.mode,"flags":sample.flags,"revision_guard":sample.revision_guard,"atomic":sample.atomic}));
+                }
+                Progress::Device(devices::Operation::ExpectUpdateGui {
+                    window,
+                    progress_mask,
+                    progress_value,
+                }) => {
+                    let current = session
+                        .as_ref()
+                        .ok_or("update GUI requires an active guest")?;
+                    let sample = l6ctl::OwnedControl::new(&current.engine)
+                        .update_gui_state()
+                        .map_err(|e| e.to_string())?;
+                    if sample.current_window != window
+                        || sample.progress_flags & progress_mask != progress_value
+                    {
+                        return Err(format!(
+                            "update GUI mismatch: window={:#x}, progress={:#x}",
+                            sample.current_window, sample.progress_flags
+                        ));
+                    }
+                    runner.device_finished(json!({"window":sample.current_window,"progress_flags":sample.progress_flags,"atomic":sample.atomic,"revision_guard":sample.revision_guard}));
                 }
                 Progress::Device(devices::Operation::Restart) => {
                     if options.state_dir.is_none() {

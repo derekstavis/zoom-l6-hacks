@@ -7,6 +7,18 @@ fn invalid(message: &str) -> io::Error {
 fn le32(bytes: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
 }
+/// Recompute the L6max MAIN-only package byte-sum. The caller can validate
+/// the remaining layout with `validate`; this only changes the checksum.
+pub fn recompute_checksum(package: &mut [u8]) -> io::Result<u32> {
+    if package.len() != PACKAGE_SIZE {
+        return Err(invalid("unsupported package length"));
+    }
+    let sum = package[0x200..]
+        .iter()
+        .fold(0u32, |sum, &b| sum.wrapping_add(b as u32));
+    package[0x1fc..0x200].copy_from_slice(&sum.to_be_bytes());
+    Ok(sum)
+}
 /// Validate before changing any installed bytes. Extra restrictions describe
 /// this model's supported layout, not additional checks proved in ZOOM's code.
 pub fn validate(package: &[u8]) -> io::Result<&[u8]> {
@@ -44,4 +56,20 @@ pub fn validate(package: &[u8]) -> io::Result<&[u8]> {
         return Err(invalid("inconsistent image trailers"));
     }
     Ok(payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn checksum_recompute_is_bounded_and_changes_only_checksum() {
+        assert!(recompute_checksum(&mut [0; 10]).is_err());
+        let mut package = vec![0u8; PACKAGE_SIZE];
+        package[0x200] = 2;
+        package[PACKAGE_SIZE - 1] = 3;
+        assert_eq!(recompute_checksum(&mut package).unwrap(), 5);
+        assert_eq!(&package[0x1fc..0x200], &5u32.to_be_bytes());
+        assert_eq!(package[0x200], 2);
+        assert_eq!(package[PACKAGE_SIZE - 1], 3);
+    }
 }

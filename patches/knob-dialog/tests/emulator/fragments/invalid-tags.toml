@@ -1,7 +1,65 @@
 [[step]]
-action = "knob-dialog-final-begin"
+action = "knob-dialog-adaptive"
 guest_timeout_ms = 180000
 wall_timeout_s = 600
+
+[[step.plan.blocks]]
+kind = "center"
+children = ["capture-demo", "assert-center", "save-pan"]
+artifact = "knob-dialog-demo-pan-center"
+demo = { guest_ms = 100, min_lit = 100, checked_frames = 6 }
+
+[[step.plan.blocks]]
+kind = "pan-sweep"
+children = ["read-pan", "read-text", "check-target", "turn-pan", "capture-demo"]
+after = ["capture"]
+direction = "left"
+target = 32
+min_percent = 48
+max_attempts = 100
+exhaustion = "fail"
+artifact_prefix = "knob-dialog-demo-pan-left"
+endpoint_artifact = "knob-dialog-demo-pan-left-end"
+endpoint_guest_ms = 500
+demo = { guest_ms = 100, min_lit = 100, checked_frames = 6 }
+
+[[step.plan.blocks]]
+kind = "pan-sweep"
+children = ["read-pan", "read-text", "check-target", "turn-pan", "capture-demo"]
+after = ["capture"]
+direction = "right"
+target = 95
+min_percent = 48
+max_attempts = 100
+exhaustion = "fail"
+artifact_prefix = "knob-dialog-demo-pan-right"
+endpoint_artifact = "knob-dialog-demo-pan-right-end"
+endpoint_guest_ms = 500
+demo = { guest_ms = 100, min_lit = 100, checked_frames = 6 }
+
+[[step.plan.blocks]]
+kind = "pan-reset"
+children = ["read-pan", "check-target", "turn-pan", "capture"]
+max_attempts = 100
+exhaustion = "continue"
+artifact = "knob-dialog-demo-pan-reset"
+guest_ms = 50
+
+[[step.plan.blocks]]
+kind = "select-level"
+children = ["tap", "wait-mode"]
+target = 35
+hold_ms = 50
+mode = 9
+
+[[step.plan.blocks]]
+kind = "channel2"
+before = ["read-channel1", "read-channel2"]
+attempt = ["turn-channel2", "capture", "read-channel2", "check-channel2"]
+after = ["read-text", "assert-level"]
+deltas = [-1, 1, -2, 2]
+artifact = "window-scene-channel-2-level"
+guest_ms = 250
 
 [[step]]
 action = "knob-dialog-inject-invalid-tag"

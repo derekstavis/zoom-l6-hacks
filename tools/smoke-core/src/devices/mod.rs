@@ -33,14 +33,10 @@ pub use lifecycle::*;
 use midi::*;
 use midi_probe::*;
 use mode_primitives::{
-    embedded_expiry_operations,
-    embedded_invalid_signature_operations,
-    embedded_invalid_tag_operations,
-    embedded_midi_sync_operations,
-    embedded_mode_operations,
-    embedded_navigation_operations,
-    embedded_notification_operations,
-    embedded_restoration_operations,
+    embedded_expiry_operations, embedded_invalid_signature_operations,
+    embedded_invalid_tag_operations, embedded_midi_sync_operations, embedded_mode_operations,
+    embedded_navigation_operations, embedded_notification_operations,
+    embedded_restoration_operations, wait_parameter_mode_checked,
 };
 use panel::*;
 use sd::*;
@@ -340,7 +336,9 @@ pub enum Operation {
     },
     KnobDialogExpectHeap,
     KnobDialogModeEnd,
-    KnobDialogFinalBegin,
+    KnobDialogAdaptive {
+        plan: crate::scenario::adaptive::Plan,
+    },
     KnobDialogInjectInvalidTag {
         tag: u8,
     },
@@ -767,6 +765,8 @@ fn thumb_bl_target(address: u32, instruction: [u8; 4]) -> Option<u32> {
 pub struct State {
     paced_progress: crate::progress::CaseProgress,
     paced_index: usize,
+    adaptive_progress: crate::progress::CaseProgress,
+    adaptive_index: usize,
     saved: Option<(Vec<u8>, usize)>,
     midi: Option<l6max_host::usb::Endpoints>,
     sysex_deadline: Option<(Instant, u32, u32, u64)>,
@@ -817,6 +817,10 @@ impl State {
     pub fn set_paced_progress(&mut self, progress: crate::progress::CaseProgress, index: usize) {
         self.paced_progress = progress;
         self.paced_index = index;
+    }
+    pub fn set_adaptive_progress(&mut self, progress: crate::progress::CaseProgress, index: usize) {
+        self.adaptive_progress = progress;
+        self.adaptive_index = index;
     }
     pub fn take_host_midi(&mut self) -> Option<Box<dyn crate::host_midi::Client>> {
         self.native_midi

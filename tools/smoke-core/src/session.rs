@@ -349,7 +349,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
         });
         devices::prepare(&scenario, &mut options)?;
         let started = std::time::Instant::now();
-        let result = devices::run_firmware_update(&options);
+        let result = devices::run_firmware_update(&options, progress.clone());
         let model = std::fs::read(options.firmware_dir.join("main_firmware.bin"))
             .map_err(|error| error.to_string())
             .and_then(|main| l6fw::model_from_main(&main).map_err(|error| error.to_string()))?;
@@ -1163,6 +1163,10 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     device_state
                         .set_paced_progress(case_progress.clone(), runner.current_display_index());
                     let step = &runner.scenario.step[runner.current_step()];
+                    device_state.set_adaptive_progress(
+                        case_progress.clone(),
+                        runner.current_progress_index(),
+                    );
                     let evidence = device_state.execute(
                         session.as_ref().unwrap(),
                         device_options(managed, &options, lifecycle_boot_options.as_ref())?,

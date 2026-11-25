@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const VERSION: u32 = 6;
+pub const VERSION: u32 = 7;
 pub const PATH_ENV: &str = "L6_TEST_PROGRESS";
 pub const RUN_ENV: &str = "L6_TEST_PROGRESS_RUN";
 pub const ATTEMPT_ENV: &str = "L6_TEST_PROGRESS_ATTEMPT";
@@ -109,6 +109,37 @@ pub enum CaseEvent {
         index: usize,
         completed: u32,
         total: u32,
+    },
+    AdaptiveScopeStarted {
+        index: usize,
+        block: String,
+        attempt: Option<u32>,
+        max_attempts: u32,
+        started_unix_ms: u64,
+    },
+    AdaptiveScopeFinished {
+        index: usize,
+        block: String,
+        attempt: Option<u32>,
+        outcome: Outcome,
+        matched: Option<bool>,
+        finished_unix_ms: u64,
+    },
+    AdaptiveChildStarted {
+        index: usize,
+        block: String,
+        attempt: u32,
+        max_attempts: u32,
+        child: String,
+        started_unix_ms: u64,
+    },
+    AdaptiveChildFinished {
+        index: usize,
+        block: String,
+        attempt: u32,
+        child: String,
+        outcome: Outcome,
+        finished_unix_ms: u64,
     },
     ScenarioFinished {
         outcome: Outcome,
@@ -269,7 +300,7 @@ pub fn step_label(action: &crate::Action) -> String {
         ),
         Action::KnobDialogExpectHeap => "Check persistent heap counters".into(),
         Action::KnobDialogModeEnd => "Finish knob dialog mode".into(),
-        Action::KnobDialogFinalBegin => "Check Pan sweep and channel 2 level".into(),
+        Action::KnobDialogAdaptive { .. } => "Run adaptive Pan and channel-2 plan".into(),
         Action::KnobDialogInjectInvalidTag { tag } => {
             if tag & 0x0f >= 10 {
                 format!("Inject invalid mode {}", tag & 0x0f)

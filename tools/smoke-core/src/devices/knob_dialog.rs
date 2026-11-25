@@ -1,5 +1,7 @@
 //! The knob-dialog patch: its window and popup.
 use super::*;
+mod adaptive_demo;
+pub(super) use adaptive_demo::run as run_adaptive_demo;
 
 /// Reviewed knob-dialog window images, from the repository root. The
 /// knob-dialog window check compares the display with these by scene name.
@@ -2241,10 +2243,31 @@ fn capture_knob_frame(
     guest_timeout_ms: u32,
     wall_timeout_s: u64,
 ) -> Result<[u8; 1024], Box<dyn std::error::Error>> {
+    capture_knob_frame_checked(
+        session,
+        options,
+        duration,
+        name,
+        guest_timeout_ms,
+        wall_timeout_s,
+        || Ok(()),
+    )
+}
+
+fn capture_knob_frame_checked(
+    session: &Session,
+    options: &Options,
+    duration: u32,
+    name: &str,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+    mut check: impl FnMut() -> Result<(), Box<dyn std::error::Error>>,
+) -> Result<[u8; 1024], Box<dyn std::error::Error>> {
     let inputs = session.engine.inputs.as_ref().unwrap();
     let start = inputs.panel.snapshot().guest_ms;
     let begin = Instant::now();
     let raw = loop {
+        check()?;
         let data = session.poll()?;
         let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(start);
         if elapsed >= duration {
@@ -2281,134 +2304,22 @@ fn capture_knob_frame(
     Ok(raw)
 }
 
-pub(super) fn run_knob_dialog(
-    prefix: bool,
-    session: &Session,
+pub(super) fn finish_knob_dialog(
     options: &Options,
     context_slot: &mut Option<PreflightContext>,
-    guest_timeout_ms: u32,
-    wall_timeout_s: u64,
-    shared: Option<(Instant, u32, u32, u64, u16)>,
-    operation_start: (Instant, u32),
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    use std::time::Instant;
-
     let main = selected_main_image(options).map_err(std::io::Error::other)?;
     if main.get(0x40c..0x410) != Some(&0x8007eea9u32.to_le_bytes()) {
         return Err("patched startup hook does not reserve popup RAM".into());
     }
-    let inputs = session.engine.inputs.as_ref().unwrap();
-    let qmp = &session.engine.management[0];
-    let input_control = l6ctl::OwnedControl::new(&session.engine);
-    let check_deadline = || -> Result<(), Box<dyn std::error::Error>> {
-        let guest_now = inputs.panel.snapshot().guest_ms;
-        if operation_start.0.elapsed() > Duration::from_secs(wall_timeout_s)
-            || guest_now.wrapping_sub(operation_start.1) > guest_timeout_ms
-            || shared.is_some_and(|(start, guest, budget, wall, _)| {
-                start.elapsed() > Duration::from_secs(wall)
-                    || guest_now.wrapping_sub(guest) > budget
-            })
-        {
-            return Err("knob-dialog shared deadline exceeded while awaiting channel value".into());
-        }
-        Ok(())
-    };
-    // MAIN 1.10's parameter selector writes this byte before returning;
-    // the corresponding getter at 0x8000b4a8 reads it.
-    const SELECTED_PARAMETER_MODE: u32 = 0x8046_2d2c;
-    let wait_parameter_mode = |expected: u8| -> Result<(), Box<dyn std::error::Error>> {
-        let start = inputs.panel.snapshot().guest_ms;
-        let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(180));
-        loop {
-            session.poll()?;
-            let actual = qmp.read_memory(0, SELECTED_PARAMETER_MODE, 1)?[0];
-            if actual == expected {
-                return Ok(());
-            }
-            if inputs.panel.snapshot().guest_ms.wrapping_sub(start) >= guest_timeout_ms.min(10_000)
-                || Instant::now() >= deadline
-            {
-                return Err(
-                    format!("parameter mode did not become {expected}; found {actual}").into(),
-                );
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-    };
-    let capture = |duration: u32, name: &str| {
-        capture_knob_frame(
-            session,
-            options,
-            duration,
-            name,
-            guest_timeout_ms,
-            wall_timeout_s,
-        )
-    };
-    let expected_value = |mode: u32, raw: u8| -> String {
-        let table = |offset: usize| {
-            f32::from_le_bytes(
-                main[offset + raw as usize * 4..offset + raw as usize * 4 + 4]
-                    .try_into()
-                    .unwrap(),
-            )
-        };
-        match mode {
-            0 | 2 | 3 => {
-                let db = table(0xa5138);
-                if db > 0.0 {
-                    format!("+{db:.2} dB")
-                } else {
-                    format!("{db:.2} dB")
-                }
-            }
-            1 => {
-                let hz = table(0xa5738);
-                if hz < 1000.0 {
-                    format!("{hz:.0} Hz")
-                } else {
-                    format!("{:.2} kHz", hz / 1000.0)
-                }
-            }
-            8 => match raw {
-                63 | 64 => "CENTER".into(),
-                0..=62 => format!("L {}%", ((63 - raw as u32) * 100 + 31) / 63),
-                _ => format!("R {}%", ((raw as u32 - 64) * 100 + 31) / 63),
-            },
-            _ => format!("{}%", (raw as u32 * 100 + 63) / 127),
-        }
-    };
-    let non_recorder_guard_passed = true;
-    let decode_text = |address: u32| -> Result<String, Box<dyn std::error::Error>> {
-        let pointer = u32::from_le_bytes(qmp.read_memory(0, address, 4)?.try_into().unwrap());
-        let bytes = qmp.read_memory(0, pointer, 48)?;
-        let units = bytes
-            .chunks_exact(2)
-            .map(|b| u16::from_le_bytes([b[0], b[1]]))
-            .take_while(|c| *c != 0)
-            .collect::<Vec<_>>();
-        Ok(String::from_utf16(&units)?)
-    };
-    let capture_demo = |name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
-        let mut frame = capture(100, name)?;
-        for _ in 0..6 {
-            if frame.iter().map(|byte| byte.count_ones()).sum::<u32>() >= 100 {
-                return Ok(frame);
-            }
-            frame = capture(100, name)?;
-        }
-        Err(format!("demo frame {name} stayed blank").into())
-    };
-    if context_slot.as_ref().is_none_or(|context| {
-        context.next != 14 || context.mode_index == 0 || context.last_mode != Some(8)
-    }) {
-        return Err("knob-dialog preflight incomplete".into());
-    }
-    let context = context_slot.as_ref().unwrap();
-    if context.final_phase != if prefix { 0 } else { 62 } {
-        return Err("knob-dialog final phases out of order".into());
-    }
-    if context.alias_widget.is_none()
+    let context = context_slot
+        .as_ref()
+        .ok_or("missing knob-dialog preflight")?;
+    if context.next != 14
+        || context.mode_index == 0
+        || context.last_mode != Some(8)
+        || context.final_phase != 62
+        || context.alias_widget.is_none()
         || context.alias_layer.is_none()
         || context.debugger.is_none()
         || context.active.is_none()
@@ -2416,153 +2327,20 @@ pub(super) fn run_knob_dialog(
         return Err("incomplete knob-dialog preflight context".into());
     }
     let mut context = context_slot.take().unwrap();
-
-    let active_snapshot = context.active.as_ref().unwrap().clone();
+    let active_snapshot = context.active.take().unwrap();
     let debugger = context.debugger.take().unwrap();
-    let text_table = context.text_table;
     let widget_layer_guard_rejected = true;
     let background_layer_guard_rejected = true;
     let callback_preflight_race_rejected = true;
+    let non_recorder_guard_passed = true;
     let result = (|| -> Result<Value, Box<dyn std::error::Error>> {
         let ActiveSnapshot {
             active_slot5,
-            heap_live: _,
             state_heap_bytes,
             hook_task,
             callback_task,
-            refreshed: _,
+            ..
         } = active_snapshot;
-        if prefix {
-            // The preceding mode walk ends on Pan with a verified live scene.
-            // Sweep from center through left 50% to right 50%, capturing at 20 fps.
-            capture_demo("knob-dialog-demo-pan-center")?;
-            if decode_text(text_table + 179 * 4)? != "CENTER" {
-                return Err("demo pan sweep did not start at center".into());
-            }
-            use firmware_api::l6max::mixer_first_channel_pan;
-            let pan_start = qmp.read_memory(0, mixer_first_channel_pan, 1)?[0];
-            for name in ["left", "right"] {
-                let mut reached_target = false;
-                for index in 0..100 {
-                    let raw = qmp.read_memory(0, mixer_first_channel_pan, 1)?[0];
-                    let displayed = decode_text(text_table + 179 * 4)?;
-                    let target_reached = if name == "left" {
-                        displayed
-                            .strip_prefix("L ")
-                            .and_then(|value| value.strip_suffix('%'))
-                            .and_then(|value| value.parse::<u8>().ok())
-                            .is_some_and(|value| value >= 48)
-                    } else {
-                        displayed
-                            .strip_prefix("R ")
-                            .and_then(|value| value.strip_suffix('%'))
-                            .and_then(|value| value.parse::<u8>().ok())
-                            .is_some_and(|value| value >= 48)
-                    };
-                    if target_reached {
-                        reached_target = true;
-                        break;
-                    }
-                    let target = if name == "left" { 32 } else { 95 };
-                    inputs.knob(0, if raw < target { 1 } else { -1 })?;
-                    capture_demo(&format!("knob-dialog-demo-pan-{name}-{index:02}"))?;
-                }
-                if !reached_target {
-                    return Err(format!("demo pan sweep did not reach {name} 50%").into());
-                }
-                capture(500, &format!("knob-dialog-demo-pan-{name}-end"))?;
-            }
-            for _ in 0..100 {
-                let raw = qmp.read_memory(0, mixer_first_channel_pan, 1)?[0];
-                if raw == pan_start {
-                    break;
-                }
-                inputs.knob(0, if raw < pan_start { 1 } else { -1 })?;
-                capture(50, "knob-dialog-demo-pan-reset")?;
-            }
-            inputs.tap(35, 50)?;
-            wait_parameter_mode(9)?;
-            let channel0_level = l6max::mixer_channel_levels;
-            let channel1_level = l6max::mixer_channel_levels + 1;
-            let channel0_raw = qmp.read_memory(0, channel0_level, 1)?[0];
-            let mut channel1_raw = qmp.read_memory(0, channel1_level, 1)?[0];
-        let mut observed_change = false;
-        for delta in [-1, 1, -2, 2] {
-            check_deadline()?;
-            let before = channel1_raw;
-            // Gesture polarity is the inverse of the encoder's wire steps.
-            let receipt = input_control.encoder(2, -delta)?;
-            loop {
-                session.poll()?;
-                check_deadline()?;
-                match input_control
-                    .input_ack(l6ctl::InputSource::Panel, receipt.sequence)?
-                    .state
-                {
-                    l6ctl::InputAckState::Applied => break,
-                    l6ctl::InputAckState::Pending => thread::sleep(Duration::from_millis(5)),
-                    l6ctl::InputAckState::Rejected => {
-                        return Err("channel-2 encoder input rejected".into());
-                    }
-                    l6ctl::InputAckState::Unknown => {
-                        return Err("channel-2 encoder acknowledgement unavailable".into());
-                    }
-                }
-            }
-            // A clamped negative (or positive at the top) is an intentional
-            // no-change probe: wait for its receipt but do not require a new value.
-            let clamped = channel_level_turn_clamped(before, delta);
-            if !clamped {
-                loop {
-                    session.poll()?;
-                    check_deadline()?;
-                    channel1_raw = qmp.read_memory(0, channel1_level, 1)?[0];
-                    if channel1_raw != before {
-                        observed_change = true;
-                        break;
-                    }
-                    thread::sleep(Duration::from_millis(5));
-                }
-            }
-            capture(250, "window-scene-channel-2-level")?;
-            channel1_raw = qmp.read_memory(0, channel1_level, 1)?[0];
-            if clamped {
-                continue;
-            }
-            // Different raw values can round to the same displayed text.
-            if expected_value(9, channel1_raw) == expected_value(9, channel0_raw) {
-                continue;
-            }
-            if channel1_raw != channel0_raw {
-                channel1_raw = wait_for_channel_level(
-                    channel0_raw,
-                    || {
-                        session.poll().map_err(|e| e.to_string())?;
-                        let raw = qmp
-                            .read_memory(0, channel1_level, 1)
-                            .map_err(|e| e.to_string())?[0];
-                        let text = decode_text(text_table + 179 * 4).map_err(|e| e.to_string())?;
-                        Ok((raw, text))
-                    },
-                    || check_deadline().is_err(),
-                    || thread::sleep(Duration::from_millis(5)),
-                )?;
-                break;
-            }
-        }
-        let channel1_display = decode_text(text_table + 179 * 4)?;
-        if !observed_change
-            || channel1_raw == channel0_raw
-            || expected_value(9, channel1_raw) == expected_value(9, channel0_raw)
-            || !knob_display_matches(9, &expected_value(9, channel1_raw), &channel1_display)
-        {
-            return Err(format!(
-                "channel-2 event did not display its own LEVEL value: channel0={channel0_raw}, channel1={channel1_raw}, displayed={channel1_display:?}"
-            )
-            .into());
-            }
-            return Ok(json!({"pan_and_level_checked": true}));
-        }
         let invalid_metadata_rejected = true;
         let invalid_tag_discarded = true;
         return Ok(json!({
@@ -2600,14 +2378,7 @@ pub(super) fn run_knob_dialog(
             "display_callback_remains_registered": true
         }));
     })();
-    if prefix && result.is_ok() {
-        context.final_phase = 1;
-        context.debugger = Some(debugger);
-        *context_slot = Some(context);
-        result
-    } else {
-        debugger.finish(result)
-    }
+    debugger.finish(result)
 }
 
 pub(super) fn enqueue_navigation_encoder(

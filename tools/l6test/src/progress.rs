@@ -126,6 +126,7 @@ struct Active {
     total: Option<usize>,
     step: Option<(usize, String, u64)>,
     subprogress: Option<(u32, u32)>,
+    adaptive: Option<(usize, String, u32, u32, String, u64)>,
     phase: Option<progress::Phase>,
     case_phase: Option<(progress::CasePhase, u64)>,
     error: Option<String>,
@@ -173,6 +174,7 @@ impl View {
                         total: None,
                         step: None,
                         subprogress: None,
+                        adaptive: None,
                         phase: None,
                         case_phase: None,
                         error: None,
@@ -250,6 +252,7 @@ impl View {
                     } => {
                         active.step = Some((index, label, started_unix_ms));
                         active.subprogress = None;
+                        active.adaptive = None;
                     }
                     CaseEvent::StepProgress {
                         index,
@@ -264,6 +267,32 @@ impl View {
                             break;
                         }
                         active.subprogress = Some((completed, total));
+                    }
+                    CaseEvent::AdaptiveScopeStarted { .. }
+                    | CaseEvent::AdaptiveScopeFinished { .. } => {}
+                    CaseEvent::AdaptiveChildStarted {
+                        index,
+                        block,
+                        attempt,
+                        max_attempts,
+                        child,
+                        started_unix_ms,
+                    } => {
+                        active.adaptive =
+                            Some((index, block, attempt, max_attempts, child, started_unix_ms));
+                    }
+                    CaseEvent::AdaptiveChildFinished {
+                        index,
+                        block,
+                        attempt,
+                        child,
+                        ..
+                    } => {
+                        if active.adaptive.as_ref().is_some_and(|(i, b, a, _, c, _)| {
+                            *i == index && *b == block && *a == attempt && *c == child
+                        }) {
+                            active.adaptive = None;
+                        }
                     }
                     CaseEvent::ScenarioFinished { .. } => {}
                     CaseEvent::Header { .. } => {
@@ -373,6 +402,12 @@ fn render(view: &View, color: bool) -> String {
                 .unwrap_or_default();
             s.push_str(&format!(
                 "\n    Step {index}/{total} · {label}{count} · {seconds}s"
+            ));
+        }
+        if let Some((_, block, attempt, max_attempts, child, started)) = &a.adaptive {
+            let seconds = progress::unix_ms().saturating_sub(*started) / 1000;
+            s.push_str(&format!(
+                "\n      {block} · attempt {attempt}/{max_attempts} · {child} · {seconds}s"
             ));
         }
     }
@@ -774,6 +809,155 @@ mod tests {
         .unwrap();
         view.read_cases(&dir).unwrap();
         assert!(render(&view, false).contains("Step 3/5 · press control · 17/47 · 12s"));
+        drop(writer);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn late_attach_replays_adaptive_child_without_replacing_parent_step() {
+        let dir = std::env::temp_dir().join(format!("l6-progress-adaptive-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let attempt = AttemptId {
+            case: id(),
+            attempt: 1,
+        };
+        let mut writer = Writer::create(&dir.join("attempt.jsonl")).unwrap();
+        writer
+            .emit(&CaseEvent::Header {
+                version: progress::VERSION,
+                run_id: "run".into(),
+                id: attempt.clone(),
+            })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::ScenarioStarted { total_steps: 7 })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::StepStarted {
+                index: 4,
+                label: "adaptive".into(),
+                started_unix_ms: progress::unix_ms(),
+            })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::AdaptiveChildStarted {
+                index: 4,
+                block: "pan left".into(),
+                attempt: 3,
+                max_attempts: 100,
+                child: "read pan".into(),
+                started_unix_ms: progress::unix_ms(),
+            })
+            .unwrap();
+        let mut view = View::default();
+        view.suite(SuiteEvent::Header {
+            version: progress::VERSION,
+            run_id: "run".into(),
+        })
+        .unwrap();
+        view.suite(SuiteEvent::AttemptStarted {
+            id: attempt,
+            progress_path: "attempt.jsonl".into(),
+        })
+        .unwrap();
+        view.read_cases(&dir).unwrap();
+        let output = render(&view, false);
+        assert!(output.contains("Step 4/7 · adaptive"));
+        assert!(output.contains("pan left · attempt 3/100 · read pan"));
+        writer
+            .emit(&CaseEvent::AdaptiveChildFinished {
+                index: 4,
+                block: "pan left".into(),
+                attempt: 3,
+                child: "read pan".into(),
+                outcome: Outcome::Pass,
+                finished_unix_ms: progress::unix_ms(),
+            })
+            .unwrap();
+        view.read_cases(&dir).unwrap();
+        assert!(!render(&view, false).contains("attempt 3/100"));
+        drop(writer);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn late_attach_replays_paced_and_adaptive_steps_in_one_stream() {
+        let dir = std::env::temp_dir().join(format!("l6-progress-combined-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let attempt = AttemptId {
+            case: id(),
+            attempt: 1,
+        };
+        let mut writer = Writer::create(&dir.join("attempt.jsonl")).unwrap();
+        writer
+            .emit(&CaseEvent::Header {
+                version: progress::VERSION,
+                run_id: "run".into(),
+                id: attempt.clone(),
+            })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::ScenarioStarted { total_steps: 2 })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::StepStarted {
+                index: 1,
+                label: "effect".into(),
+                started_unix_ms: progress::unix_ms(),
+            })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::StepProgress {
+                index: 1,
+                completed: 17,
+                total: 47,
+            })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::StepStarted {
+                index: 2,
+                label: "adaptive".into(),
+                started_unix_ms: progress::unix_ms(),
+            })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::AdaptiveChildStarted {
+                index: 2,
+                block: "channel 2".into(),
+                attempt: 2,
+                max_attempts: 4,
+                child: "wait for text".into(),
+                started_unix_ms: progress::unix_ms(),
+            })
+            .unwrap();
+        let mut view = View::default();
+        view.suite(SuiteEvent::Header {
+            version: progress::VERSION,
+            run_id: "run".into(),
+        })
+        .unwrap();
+        view.suite(SuiteEvent::RunStarted { total_cases: 1 })
+            .unwrap();
+        view.suite(SuiteEvent::AttemptStarted {
+            id: attempt,
+            progress_path: "attempt.jsonl".into(),
+        })
+        .unwrap();
+        view.read_cases(&dir).unwrap();
+        let output = render(&view, false);
+        assert!(output.contains("Step 2/2 · adaptive"));
+        assert!(output.contains("channel 2 · attempt 2/4 · wait for text"));
+        assert!(!output.contains("17/47"));
+        writer
+            .emit(&CaseEvent::AdaptiveChildFinished {
+                index: 2,
+                block: "channel 2".into(),
+                attempt: 2,
+                child: "wait for text".into(),
+                outcome: Outcome::Pass,
+                finished_unix_ms: progress::unix_ms(),
+            })
+            .unwrap();
+        view.read_cases(&dir).unwrap();
+        assert!(!render(&view, false).contains("attempt 2/4"));
         drop(writer);
         std::fs::remove_dir_all(dir).unwrap();
     }

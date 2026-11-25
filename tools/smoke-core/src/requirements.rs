@@ -113,7 +113,7 @@ pub fn of(action: &Action) -> Requirement {
         | Action::WaitKnobParameterMode { .. }
         | Action::KnobDialogExpectHeap
         | Action::KnobDialogModeEnd
-        | Action::KnobDialogFinalBegin
+        | Action::KnobDialogAdaptive { .. }
         | Action::KnobDialogInjectInvalidTag { .. }
         | Action::KnobDialogWaitInvalidTag
         | Action::KnobDialogConfirmInvalidTag

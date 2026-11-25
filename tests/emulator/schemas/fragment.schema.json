@@ -2,10 +2,306 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
   "definitions": {
+    "Block": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "artifact": {
+              "type": "string"
+            },
+            "children": {
+              "items": {
+                "$ref": "#/definitions/Child"
+              },
+              "type": "array"
+            },
+            "demo": {
+              "$ref": "#/definitions/DemoCapture"
+            },
+            "kind": {
+              "const": "center",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "children",
+            "artifact",
+            "demo"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "after": {
+              "items": {
+                "$ref": "#/definitions/Child"
+              },
+              "type": "array"
+            },
+            "artifact_prefix": {
+              "type": "string"
+            },
+            "children": {
+              "items": {
+                "$ref": "#/definitions/Child"
+              },
+              "type": "array"
+            },
+            "demo": {
+              "$ref": "#/definitions/DemoCapture"
+            },
+            "direction": {
+              "$ref": "#/definitions/Direction"
+            },
+            "endpoint_artifact": {
+              "type": "string"
+            },
+            "endpoint_guest_ms": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "exhaustion": {
+              "$ref": "#/definitions/Exhaustion"
+            },
+            "kind": {
+              "const": "pan-sweep",
+              "type": "string"
+            },
+            "max_attempts": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "min_percent": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "target": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "children",
+            "after",
+            "direction",
+            "target",
+            "min_percent",
+            "max_attempts",
+            "exhaustion",
+            "artifact_prefix",
+            "endpoint_artifact",
+            "endpoint_guest_ms",
+            "demo"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "artifact": {
+              "type": "string"
+            },
+            "children": {
+              "items": {
+                "$ref": "#/definitions/Child"
+              },
+              "type": "array"
+            },
+            "exhaustion": {
+              "$ref": "#/definitions/Exhaustion"
+            },
+            "guest_ms": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "pan-reset",
+              "type": "string"
+            },
+            "max_attempts": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "children",
+            "max_attempts",
+            "exhaustion",
+            "artifact",
+            "guest_ms"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "children": {
+              "items": {
+                "$ref": "#/definitions/Child"
+              },
+              "type": "array"
+            },
+            "hold_ms": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "select-level",
+              "type": "string"
+            },
+            "mode": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "children",
+            "target",
+            "hold_ms",
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "after": {
+              "items": {
+                "$ref": "#/definitions/Child"
+              },
+              "type": "array"
+            },
+            "artifact": {
+              "type": "string"
+            },
+            "attempt": {
+              "items": {
+                "$ref": "#/definitions/Child"
+              },
+              "type": "array"
+            },
+            "before": {
+              "items": {
+                "$ref": "#/definitions/Child"
+              },
+              "type": "array"
+            },
+            "deltas": {
+              "items": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "guest_ms": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "channel2",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "before",
+            "attempt",
+            "after",
+            "deltas",
+            "artifact",
+            "guest_ms"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Child": {
+      "enum": [
+        "capture-demo",
+        "assert-center",
+        "save-pan",
+        "read-pan",
+        "read-text",
+        "check-target",
+        "turn-pan",
+        "capture",
+        "tap",
+        "wait-mode",
+        "read-channel1",
+        "read-channel2",
+        "turn-channel2",
+        "check-channel2",
+        "assert-level"
+      ],
+      "type": "string"
+    },
     "ChordCondition": {
       "description": "A condition that ends a held chord.",
       "enum": [
         "factory-mode"
+      ],
+      "type": "string"
+    },
+    "DemoCapture": {
+      "additionalProperties": false,
+      "properties": {
+        "checked_frames": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "guest_ms": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_lit": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "guest_ms",
+        "min_lit",
+        "checked_frames"
+      ],
+      "type": "object"
+    },
+    "Direction": {
+      "enum": [
+        "left",
+        "right"
+      ],
+      "type": "string"
+    },
+    "Exhaustion": {
+      "enum": [
+        "fail",
+        "continue"
       ],
       "type": "string"
     },
@@ -95,6 +391,21 @@
         "saved-state"
       ],
       "type": "string"
+    },
+    "Plan": {
+      "additionalProperties": false,
+      "properties": {
+        "blocks": {
+          "items": {
+            "$ref": "#/definitions/Block"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "blocks"
+      ],
+      "type": "object"
     },
     "RestorationField": {
       "description": "Named fields in the ordered, non-atomic dialog restoration snapshot.",
@@ -5432,7 +5743,7 @@
           "additionalProperties": false,
           "properties": {
             "action": {
-              "const": "knob-dialog-final-begin",
+              "const": "knob-dialog-adaptive",
               "type": "string"
             },
             "guest_timeout_ms": {
@@ -5448,6 +5759,9 @@
               },
               "type": "array"
             },
+            "plan": {
+              "$ref": "#/definitions/Plan"
+            },
             "setup_input": {
               "default": false,
               "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
@@ -5461,7 +5775,8 @@
             }
           },
           "required": [
-            "action"
+            "action",
+            "plan"
           ],
           "type": "object"
         },
@@ -9007,7 +9322,7 @@
             "expect-captured-display-image",
             "knob-dialog-expect-heap",
             "knob-dialog-mode-end",
-            "knob-dialog-final-begin",
+            "knob-dialog-adaptive",
             "knob-dialog-inject-invalid-tag",
             "knob-dialog-wait-invalid-tag",
             "knob-dialog-confirm-invalid-tag",

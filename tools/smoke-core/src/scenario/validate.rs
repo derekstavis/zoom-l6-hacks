@@ -94,7 +94,8 @@ impl Scenario {
         for (index, step) in value.step.iter().enumerate() {
             let expected = match step.action {
                 Action::KnobDialogGuard => "knob-dialog-ready",
-                Action::KnobDialog => "knob-dialog-guard",
+                Action::KnobDialogBaseline => "knob-dialog-guard",
+                Action::KnobDialog => "knob-dialog-baseline",
                 _ => continue,
             };
             for model in &value.models {
@@ -108,7 +109,8 @@ impl Scenario {
                 if !previous.is_some_and(|previous| {
                     let correct = match expected {
                         "knob-dialog-ready" => matches!(previous.action, Action::KnobDialogReady),
-                        _ => matches!(previous.action, Action::KnobDialogGuard),
+                        "knob-dialog-guard" => matches!(previous.action, Action::KnobDialogGuard),
+                        _ => matches!(previous.action, Action::KnobDialogBaseline),
                     };
                     correct
                         && previous.guest_timeout_ms == step.guest_timeout_ms

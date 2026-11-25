@@ -289,9 +289,87 @@ pub(super) fn run_knob_dialog_guard(
     Ok(json!({"non_recorder_first_use_rejected": non_recorder_guard_passed}))
 }
 
+pub(super) fn run_knob_dialog_baseline(
+    session: &Session,
+    options: &Options,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<[u8; 1024], Box<dyn std::error::Error>> {
+    use std::time::Instant;
+    let main = selected_main_image(options).map_err(std::io::Error::other)?;
+    if main.get(0x40c..0x410) != Some(&0x8007eea9u32.to_le_bytes()) {
+        return Err("patched startup hook does not reserve popup RAM".into());
+    }
+    let inputs = session.engine.inputs.as_ref().unwrap();
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let reader = control.knob_parameter_reader()?;
+    let capture = |duration: u32, name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
+        let start = inputs.panel.snapshot().guest_ms;
+        let begin = Instant::now();
+        let raw = loop {
+            let data = session.poll()?;
+            let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(start);
+            if elapsed >= duration {
+                break data.display;
+            }
+            if elapsed > guest_timeout_ms || begin.elapsed() > Duration::from_secs(wall_timeout_s) {
+                return Err("knob-dialog display capture exceeded its deadline".into());
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+        let native = image::GrayImage::from_fn(128, 64, |x, y| {
+            let index = ((63 - y as usize) / 8) * 128 + x as usize;
+            image::Luma([if raw[index] & (1 << ((63 - y as usize) % 8)) != 0 {
+                255
+            } else {
+                0
+            }])
+        });
+        if let Some(scene) = name.strip_prefix("window-scene-")
+            && [
+                "high", "freq", "mid", "low", "aux1", "aux2", "efx", "sub-mix", "pan", "level",
+            ]
+            .contains(&scene)
+        {
+            let path = l6max_host::paths::repository_root()
+                .join(KNOB_DIALOG_REFERENCES)
+                .join(format!("{scene}.png"));
+            check_display_reference(&raw, &path, &options.logs, name)
+                .map_err(|error| format!("knob-dialog screen {scene}: {error}"))?;
+        }
+        image::DynamicImage::ImageLuma8(native)
+            .resize(768, 384, image::imageops::FilterType::Nearest)
+            .save(options.logs.join(format!("{name}.png")))?;
+        Ok(raw)
+    };
+    let observed = reader.parameter_state()?;
+    let [slot0, slot2, display_callback_target] = observed.callback_slots;
+    if display_callback_target != 0 || slot0 != 0 || slot2 != 0 {
+        return Err(format!("expected an empty slot 5 before the first knob event; slot0={slot0:#010x}, slot2={slot2:#010x}, slot5={display_callback_target:#010x}").into());
+    }
+    inputs.tap(35, 50)?;
+    let start = inputs.panel.snapshot().guest_ms;
+    let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(180));
+    loop {
+        session.poll()?;
+        let actual = reader.parameter_mode()?;
+        if actual == 9 {
+            break;
+        }
+        if inputs.panel.snapshot().guest_ms.wrapping_sub(start) >= guest_timeout_ms.min(10_000)
+            || Instant::now() >= deadline
+        {
+            return Err(format!("parameter mode did not become 9; found {actual}").into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    capture(100, "window-scene-before")
+}
+
 pub(super) fn run_knob_dialog(
     session: &Session,
     options: &Options,
+    baseline: [u8; 1024],
     guest_timeout_ms: u32,
     wall_timeout_s: u64,
 ) -> Result<Value, Box<dyn std::error::Error>> {
@@ -410,19 +488,6 @@ pub(super) fn run_knob_dialog(
         }
     };
     let non_recorder_guard_passed = true;
-    let display_callbacks = qmp.read_memory(0, l6max::gui_display_callback_table, 24)?;
-    let display_callback_target = u32::from_le_bytes(display_callbacks[20..24].try_into().unwrap());
-    let slot0 = u32::from_le_bytes(display_callbacks[0..4].try_into().unwrap());
-    let slot2 = u32::from_le_bytes(display_callbacks[8..12].try_into().unwrap());
-    if display_callback_target != 0 || slot0 != 0 || slot2 != 0 {
-        return Err(format!(
-                "expected an empty slot 5 before the first knob event; slot0={slot0:#010x}, slot2={slot2:#010x}, slot5={display_callback_target:#010x}"
-            )
-            .into());
-    }
-    inputs.tap(35, 50)?;
-    wait_parameter_mode(9)?;
-    let baseline = capture(100, "window-scene-before")?;
     let original_window = qmp.read_memory(0, l6max::current_window, 4)?;
     let original_bitmap = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)?;
     let original_bitmap_descriptor = qmp.read_memory(0, l6max::GUI_BITMAP_36_DESCRIPTOR, 8)?;

@@ -218,3 +218,33 @@ fn recorder_state_cli_reports_window_and_notification_flags() {
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn knob_parameter_state_cli_reports_mode_and_slots() {
+    let path = socket_path();
+    let sample = json!({"revision_guard":"l6max_1_10_gui_and_parameter_getter","atomic":false,"mode":9,"callback_slots":[0,0,0]});
+    let server = server(
+        &path,
+        vec![(
+            json!({"command":"knob-parameter-state"}),
+            json!({"ok":true,"result":sample}),
+        )],
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .arg("knob-parameter-state")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["mode"], 9);
+    assert_eq!(result["callback_slots"], json!([0, 0, 0]));
+    assert_eq!(result["atomic"], false);
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}

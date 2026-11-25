@@ -3,7 +3,7 @@
 //! The socket interface is deliberately narrower than direct access. In
 //! particular its input replies confirm enqueueing, not guest acknowledgement.
 pub use l6max_host::control::Info;
-pub use l6max_host::knob_popup::{RecorderState, Snapshot as KnobPopupSnapshot};
+pub use l6max_host::knob_popup::{ParameterState, RecorderState, Snapshot as KnobPopupSnapshot};
 use l6max_host::{control, engine::Engine, freertos, qmp};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -33,6 +33,7 @@ pub enum Request {
     Info,
     KnobPopup { with_text: bool },
     RecorderState,
+    KnobParameterState,
     Rtos { kind: RtosKind },
     Tap { target: u32, hold_ms: u32 },
     Down { target: u32, duration_ms: u32 },
@@ -125,7 +126,10 @@ impl ControlClient {
             })?;
         let timeout = if matches!(
             request,
-            Request::Rtos { .. } | Request::KnobPopup { .. } | Request::RecorderState
+            Request::Rtos { .. }
+                | Request::KnobPopup { .. }
+                | Request::RecorderState
+                | Request::KnobParameterState
         ) {
             30
         } else {
@@ -160,6 +164,10 @@ impl ControlClient {
     /// Request the host's existing versioned RTOS JSON snapshot.
     pub fn rtos(&self, kind: RtosKind) -> Result<Value, ControlError> {
         self.request(&Request::Rtos { kind })
+    }
+
+    pub fn knob_parameter_state(&self) -> Result<ParameterState, ControlError> {
+        self.request_as(&Request::KnobParameterState)
     }
 
     pub fn recorder_state(&self) -> Result<RecorderState, ControlError> {
@@ -245,6 +253,14 @@ impl<'a> OwnedControl<'a> {
         control::enqueue_encoder(inputs, self.engine.model(), channel, steps)
             .map_err(ControlError::Rejected)?;
         Ok(AxisReceipt { channel, steps })
+    }
+
+    /// Verify the GUI and parameter getter revisions for one bounded observation.
+    pub fn knob_parameter_reader(
+        &self,
+    ) -> Result<l6max_host::knob_popup::ParameterReader<'_>, ControlError> {
+        l6max_host::knob_popup::parameter_reader(self.main_qmp()?, self.engine.model())
+            .map_err(ControlError::Rejected)
     }
 
     /// Verify the GUI revision once for a bounded in-process observation step.

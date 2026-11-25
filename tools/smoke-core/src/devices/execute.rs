@@ -142,6 +142,7 @@ impl State {
         self.midi_round_trip = None;
         self.knob_popup = None;
         self.knob_dialog_deadline = None;
+        self.knob_dialog_baseline = None;
         self.midi = None;
     }
     pub fn execute(
@@ -163,8 +164,9 @@ impl State {
             .guest_ms;
         let is_ready = matches!(operation, Operation::KnobDialogReady);
         let is_guard = matches!(operation, Operation::KnobDialogGuard);
+        let is_baseline = matches!(operation, Operation::KnobDialogBaseline);
         let is_dialog = matches!(operation, Operation::KnobDialog);
-        let shared = if is_guard || is_dialog {
+        let shared = if is_guard || is_baseline || is_dialog {
             Some(
                 self.knob_dialog_deadline
                     .take()
@@ -173,13 +175,21 @@ impl State {
         } else {
             None
         };
-        if let Some((_, _, _, _, guard_done)) = shared {
-            if guard_done != is_dialog {
+        if let Some((_, _, _, _, phase)) = shared {
+            let expected = if is_guard {
+                0
+            } else if is_baseline {
+                1
+            } else {
+                2
+            };
+            if phase != expected {
                 return Err("knob-dialog steps are out of order".into());
             }
         }
         if is_ready {
             self.knob_dialog_deadline = None;
+            self.knob_dialog_baseline = None;
         }
         let result = self.execute_inner(
             session,
@@ -215,16 +225,12 @@ impl State {
             }
         }
         if is_ready {
-            self.knob_dialog_deadline = Some((
-                started,
-                guest_start,
-                guest_timeout_ms,
-                wall_timeout_s,
-                false,
-            ));
-        } else if is_guard {
-            let (start, guest_start, guest_budget, wall_budget, _) = shared.unwrap();
-            self.knob_dialog_deadline = Some((start, guest_start, guest_budget, wall_budget, true));
+            self.knob_dialog_deadline =
+                Some((started, guest_start, guest_timeout_ms, wall_timeout_s, 0));
+        } else if is_guard || is_baseline {
+            let (start, guest_start, guest_budget, wall_budget, phase) = shared.unwrap();
+            self.knob_dialog_deadline =
+                Some((start, guest_start, guest_budget, wall_budget, phase + 1));
         }
         Ok(result)
     }
@@ -2099,8 +2105,18 @@ impl State {
             Operation::KnobDialogGuard => {
                 run_knob_dialog_guard(session, options, guest_timeout_ms, wall_timeout_s)
             }
+            Operation::KnobDialogBaseline => {
+                let frame =
+                    run_knob_dialog_baseline(session, options, guest_timeout_ms, wall_timeout_s)?;
+                self.knob_dialog_baseline = Some(frame);
+                Ok(json!({"baseline_captured": true}))
+            }
             Operation::KnobDialog => {
-                run_knob_dialog(session, options, guest_timeout_ms, wall_timeout_s)
+                let baseline = self
+                    .knob_dialog_baseline
+                    .take()
+                    .ok_or("knob-dialog requires baseline frame")?;
+                run_knob_dialog(session, options, baseline, guest_timeout_ms, wall_timeout_s)
             }
             operation @ (Operation::KnobPopupOpen { .. }
             | Operation::KnobPopupExpectOpen

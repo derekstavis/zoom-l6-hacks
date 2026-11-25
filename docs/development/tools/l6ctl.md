@@ -201,3 +201,6 @@ include display pixels and does not by itself prove that the screen rendered.
 The first-use knob guard uses an in-process snapshot while its test owns the
 paused guest. The CLI does not offer an atomic version: `knob-popup` and
 `recorder-state` are non-atomic observations and do not acquire pause ownership.
+
+`l6ctl --socket PATH knob-parameter-state` reads the L6max 1.10 parameter
+selector and callback slots 0, 2 and 5. The sample is non-atomic.

@@ -87,6 +87,7 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6maxDinMixerControl { .. }
         | Action::KnobDialogReady
         | Action::KnobDialogGuard
+        | Action::KnobDialogBaseline
         | Action::KnobDialog
         | Action::KnobPopupOpen { .. }
         | Action::KnobPopupExpectOpen

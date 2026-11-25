@@ -1252,8 +1252,10 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
         "[[step]]\naction='knob-dialog-ready'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let guard =
         "[[step]]\naction='knob-dialog-guard'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
+    let baseline =
+        "[[step]]\naction='knob-dialog-baseline'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let dialog = "[[step]]\naction='knob-dialog'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
-    assert!(Scenario::parse(&format!("{prefix}{ready}{guard}{dialog}")).is_ok());
+    assert!(Scenario::parse(&format!("{prefix}{ready}{guard}{baseline}{dialog}")).is_ok());
     assert!(Scenario::parse(&format!("{prefix}{ready}{dialog}")).is_err());
     assert!(Scenario::parse(&format!("{prefix}{dialog}")).is_err());
     assert!(
@@ -1264,7 +1266,7 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
     );
     assert!(
         Scenario::parse(&format!(
-            "{prefix}{ready}{guard}{}",
+            "{prefix}{ready}{guard}{baseline}{}",
             dialog.replace("wall_timeout_s=600", "wall_timeout_s=599")
         ))
         .is_err()

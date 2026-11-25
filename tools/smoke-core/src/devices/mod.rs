@@ -208,6 +208,7 @@ pub enum Operation {
     AudioCallbacks,
     KnobDialogReady,
     KnobDialogGuard,
+    KnobDialogBaseline,
     KnobDialog,
     KnobPopupOpen {
         first_steps: i32,
@@ -546,7 +547,8 @@ pub struct State {
     host_midi: Option<Box<dyn crate::host_midi::Client>>,
     encoder_turned_up: bool,
     knob_popup: Option<knob_dialog::PopupContext>,
-    knob_dialog_deadline: Option<(std::time::Instant, u32, u32, u64, bool)>,
+    knob_dialog_baseline: Option<[u8; 1024]>,
+    knob_dialog_deadline: Option<(std::time::Instant, u32, u32, u64, u8)>,
     midi_round_trip: Option<MidiRoundTrip>,
     native_midi: Option<l6ctl::midi::MidiSession>,
 }

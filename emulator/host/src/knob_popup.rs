@@ -49,6 +49,15 @@ pub struct GuardState {
     pub callback: u32,
 }
 
+/// Non-atomic L6max 1.10 parameter selector and display callback slots.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ParameterState {
+    pub revision_guard: String,
+    pub atomic: bool,
+    pub mode: u8,
+    pub callback_slots: [u32; 3],
+}
+
 fn checked_sdram(address: u32, size: usize) -> Result<u32, String> {
     let end = address
         .checked_add(u32::try_from(size).map_err(|_| "invalid size")?)
@@ -176,6 +185,67 @@ impl Reader<'_> {
     }
 }
 
+/// GUI reader additionally guarded by the parameter-mode getter code.
+pub struct ParameterReader<'a> {
+    qmp: &'a QmpClient,
+}
+
+impl ParameterReader<'_> {
+    pub fn parameter_mode(&self) -> Result<u8, String> {
+        self.qmp
+            .read_memory(0, 0x8046_2d2c, 1)
+            .map_err(|error| error.to_string())?
+            .first()
+            .copied()
+            .ok_or("short parameter mode".into())
+    }
+
+    pub fn parameter_state(&self) -> Result<ParameterState, String> {
+        let callback = self
+            .qmp
+            .read_memory(0, l6max::gui_display_callback_table, 24)
+            .map_err(|error| error.to_string())?;
+        if callback.len() != 24 {
+            return Err("short callback table".into());
+        }
+        let mode = self
+            .qmp
+            .read_memory(0, 0x8046_2d2c, 1)
+            .map_err(|error| error.to_string())?;
+        Ok(ParameterState {
+            revision_guard: "l6max_1_10_gui_and_parameter_getter".into(),
+            atomic: false,
+            mode: *mode.first().ok_or("short parameter mode")?,
+            callback_slots: [
+                u32::from_le_bytes(callback[0..4].try_into().unwrap()),
+                u32::from_le_bytes(callback[8..12].try_into().unwrap()),
+                u32::from_le_bytes(callback[20..24].try_into().unwrap()),
+            ],
+        })
+    }
+}
+
+fn verify_parameter_getter(
+    read: &mut impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
+) -> Result<(), String> {
+    let actual = read(0x8000_b4a8, 64)?;
+    if format!("{:x}", Sha256::digest(actual))
+        != "9994530d6e08e423209efa0bfc2e17c32a10eaf2290f1313ae05337b076e9a42"
+    {
+        return Err("unsupported L6max parameter getter revision".into());
+    }
+    Ok(())
+}
+
+pub fn parameter_reader(qmp: &QmpClient, model: Model) -> Result<ParameterReader<'_>, String> {
+    reader(qmp, model)?;
+    verify_parameter_getter(&mut |address, size| {
+        qmp.read_memory(0, address, size)
+            .map_err(|error| error.to_string())
+    })?;
+    Ok(ParameterReader { qmp })
+}
+
 /// Verify the GUI layout before observing it during a single guest step.
 pub fn reader(qmp: &QmpClient, model: Model) -> Result<Reader<'_>, String> {
     verify(model, &mut |address, size| {
@@ -193,6 +263,15 @@ pub fn snapshot(qmp: &QmpClient, model: Model, with_text: bool) -> Result<Snapsh
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn parameter_getter_rejects_a_mismatched_revision() {
+        let error = verify_parameter_getter(&mut |address, size| {
+            assert_eq!(address, 0x8000_b4a8);
+            Ok(vec![0; size])
+        })
+        .unwrap_err();
+        assert!(error.contains("getter revision"));
+    }
     #[test]
     fn bounds_and_model_are_checked_before_indirect_reads() {
         assert!(checked_sdram(0x7fff_ffff, 4).is_err());

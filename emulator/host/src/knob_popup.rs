@@ -358,6 +358,20 @@ impl Reader<'_> {
             .ok_or("short mixer level".into())
     }
 
+    /// Sample the six callback slots in one non-atomic guest read.
+    pub fn callback_slots(&self) -> Result<[u32; 6], String> {
+        let bytes = self
+            .qmp
+            .read_memory(0, l6max::gui_display_callback_table, 24)
+            .map_err(|e| e.to_string())?;
+        if bytes.len() != 24 {
+            return Err("short callback table".into());
+        }
+        Ok(std::array::from_fn(|i| {
+            u32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap())
+        }))
+    }
+
     /// Current recorder window as its raw word.
     pub fn window(&self) -> Result<Vec<u8>, String> {
         self.qmp

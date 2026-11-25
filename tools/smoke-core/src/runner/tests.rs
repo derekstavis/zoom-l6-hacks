@@ -1299,7 +1299,12 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
         "[[step]]\naction='knob-dialog-baseline'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let preflight = ["begin", "descriptor", "text-alias", "layer-collision", "widget-layer", "background-layer"].iter().map(|name| format!("[[step]]\naction='knob-dialog-preflight-{name}'\nguest_timeout_ms=180000\nwall_timeout_s=600\n")).collect::<String>();
     let activation = "[[step]]\naction='knob-dialog-callback-race'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-first-activation'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
-    let active_demo = "[[step]]\naction='knob-dialog-active-display'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-level-demo'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
+    let active_demo = concat!(
+        include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/active-display.toml"
+        ),
+        "\n[[step]]\naction='knob-dialog-level-demo'\nguest_timeout_ms=180000\nwall_timeout_s=600\n"
+    );
     let tasks = "[[step]]\naction='knob-dialog-task-contexts'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let overlay = concat!(
         include_str!(

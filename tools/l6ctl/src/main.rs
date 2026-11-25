@@ -41,7 +41,7 @@ fn run() -> Result<(), String> {
     let command = args.first().map(String::as_str).unwrap_or("help");
     if matches!(command, "help" | "--help" | "-h") {
         println!(
-            "Usage: l6ctl [--socket PATH] info\n       l6ctl [--socket PATH] debug-session\n       l6ctl [--socket PATH] sd-loader status|site INDEX\n       l6ctl [--socket PATH] input status main|panel\n       l6ctl [--socket PATH] input ack main|panel SEQUENCE\n       l6ctl [--socket PATH] heap-counters\n       l6ctl [--socket PATH] memory-read ADDRESS LENGTH\n       l6ctl [--socket PATH] midi-config\n       l6ctl [--socket PATH] effect-editor REPORT MODULE\n       l6ctl [--socket PATH] update-state\n       l6ctl [--socket PATH] installer-outcome\n       l6ctl [--socket PATH] usb attach|release|controller\n       l6ctl [--socket PATH] update-gui-state\n       l6ctl [--socket PATH] knob-popup [--text]\n       l6ctl [--socket PATH] recorder-state\n       l6ctl [--socket PATH] knob-parameter-state\n       l6ctl [--socket PATH] rtos heap|tasks|scheduler|objects|all [--pretty]\n       l6ctl [--socket PATH] button NAME|TARGET [--hold-ms MS]\n       l6ctl [--socket PATH] down NAME|TARGET DURATION_MS\n       l6ctl [--socket PATH] up NAME|TARGET\n       l6ctl [--socket PATH] encoder CHANNEL STEPS\n       l6ctl [--socket PATH] analog CHANNEL STEPS\n       l6ctl [--socket PATH] set-analog CHANNEL VALUE\n       l6ctl midi listen ENDPOINT [--timeout-ms MS]\n       l6ctl midi observe ENDPOINT --wall-ms MS\n       l6ctl midi send ENDPOINT CHANNEL CONTROLLER VALUE\n       l6ctl midi sync ENDPOINT --count N [--quiet-ms MS] [--timeout-ms MS]\n\nConnects to a running emulator started with --control-socket PATH. Button names use the semantic names documented by l6test; numeric targets 0..53 are also accepted. Encoder channels are one-based. Analog channels are 1..5."
+            "Usage: l6ctl [--socket PATH] info\n       l6ctl [--socket PATH] debug-session\n       l6ctl [--socket PATH] sd-loader status|site INDEX\n       l6ctl [--socket PATH] input status main|panel\n       l6ctl [--socket PATH] input ack main|panel SEQUENCE\n       l6ctl [--socket PATH] heap-counters\n       l6ctl [--socket PATH] memory-read ADDRESS LENGTH\n       l6ctl [--socket PATH] midi-config\n       l6ctl [--socket PATH] panel-key CODE\n       l6ctl [--socket PATH] effect-editor REPORT MODULE\n       l6ctl [--socket PATH] update-state\n       l6ctl [--socket PATH] installer-outcome\n       l6ctl [--socket PATH] usb attach|release|controller\n       l6ctl [--socket PATH] update-gui-state\n       l6ctl [--socket PATH] knob-popup [--text]\n       l6ctl [--socket PATH] recorder-state\n       l6ctl [--socket PATH] knob-parameter-state\n       l6ctl [--socket PATH] rtos heap|tasks|scheduler|objects|all [--pretty]\n       l6ctl [--socket PATH] button NAME|TARGET [--hold-ms MS]\n       l6ctl [--socket PATH] down NAME|TARGET DURATION_MS\n       l6ctl [--socket PATH] up NAME|TARGET\n       l6ctl [--socket PATH] encoder CHANNEL STEPS\n       l6ctl [--socket PATH] analog CHANNEL STEPS\n       l6ctl [--socket PATH] set-analog CHANNEL VALUE\n       l6ctl midi listen ENDPOINT [--timeout-ms MS]\n       l6ctl midi observe ENDPOINT --wall-ms MS\n       l6ctl midi send ENDPOINT CHANNEL CONTROLLER VALUE\n       l6ctl midi sync ENDPOINT --count N [--quiet-ms MS] [--timeout-ms MS]\n\nConnects to a running emulator started with --control-socket PATH. Button names use the semantic names documented by l6test; numeric targets 0..53 are also accepted. Encoder channels are one-based. Analog channels are 1..5."
         );
         return Ok(());
     }
@@ -150,6 +150,18 @@ fn run() -> Result<(), String> {
         let module = std::fs::read(&args[2]).map_err(|e| e.to_string())?;
         let binding = l6ctl::EffectEditorBinding::from_fixture(&report, &module)?;
         let snapshot = client.effect_editor(binding).map_err(|e| e.to_string())?;
+        println!(
+            "{}",
+            serde_json::to_string(&snapshot).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    if command == "panel-key" {
+        if args.len() != 2 {
+            return Err("Usage: l6ctl panel-key CODE".into());
+        }
+        let code: u32 = args[1].parse().map_err(|_| "invalid key code")?;
+        let snapshot = client.panel_key(code).map_err(|e| e.to_string())?;
         println!(
             "{}",
             serde_json::to_string(&snapshot).map_err(|e| e.to_string())?
@@ -404,6 +416,7 @@ fn run() -> Result<(), String> {
         | Request::MemoryRead { .. }
         | Request::MidiConfig
         | Request::EffectEditor { .. }
+        | Request::PanelKey { .. }
         | Request::UpdateState
         | Request::UpdateGuiState
         | Request::InstallerOutcome

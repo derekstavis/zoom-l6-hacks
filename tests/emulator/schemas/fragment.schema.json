@@ -10898,7 +10898,154 @@
           "additionalProperties": false,
           "properties": {
             "action": {
-              "const": "l6max-panel-key-map",
+              "const": "l6max-panel-key-begin",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "l6max-panel-key-check",
+              "type": "string"
+            },
+            "active": {
+              "type": "boolean"
+            },
+            "bit": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "code": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wait": {
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "word_index": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "code",
+            "bit",
+            "word_index",
+            "active",
+            "wait"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "l6max-panel-key-input",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "pressed": {
+              "type": "boolean"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "target": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "pressed"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "l6max-panel-key-end",
               "type": "string"
             },
             "guest_timeout_ms": {
@@ -11546,7 +11693,10 @@
             "l6-input-sweep",
             "l6-din-sweep",
             "l6max-input-timing",
-            "l6max-panel-key-map",
+            "l6max-panel-key-begin",
+            "l6max-panel-key-check",
+            "l6max-panel-key-input",
+            "l6max-panel-key-end",
             "l6max-channel-signal-pwm",
             "l6-level-meter-pwm",
             "expect-encoder-reports",

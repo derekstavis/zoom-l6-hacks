@@ -403,3 +403,5 @@ Rust callers use `OwnedControl::debug_session()` for an owned engine or
 `l6ctl effect-editor REPORT MODULE` inspects a running L6max effect editor using a composed SD build report and its matching module file. The response reports a non-atomic mailbox/counter snapshot and the supplied fixture module hash; it checks the loaded module's bounds and a hash of immutable module code with relocation and continuation words masked; writable state is not hashed. This read-only operation is also available to owned guests through `EffectEditorBinding` and `effect_editor_reader_before`.
 
 The in-process `OwnedControl` API offers USB SysEx send and poll against an already enumerated endpoint. The caller owns its connection, receive queue and deadlines. These operations are not exposed through the control socket or CLI.
+
+`l6ctl panel-key CODE` reads the L6max 1.10 sound-pad key lookup and six state words for codes 25–28. The revision guard is checked before reading. The table and state reads are non-atomic; the returned input state is not evidence of an OLED rendering.

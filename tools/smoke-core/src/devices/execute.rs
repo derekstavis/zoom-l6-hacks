@@ -425,6 +425,17 @@ impl State {
             self.l6_midi_probe.take();
             return Err("L6 MIDI probe interrupted by another operation".into());
         }
+        if self.panel_keys.is_some()
+            && !matches!(
+                operation,
+                Operation::L6maxPanelKeyCheck { .. }
+                    | Operation::L6maxPanelKeyInput { .. }
+                    | Operation::L6maxPanelKeyEnd
+            )
+        {
+            self.panel_keys.take();
+            return Err("panel key scope interrupted by another operation".into());
+        }
         if self.midi_sync.is_some()
             && !matches!(
                 operation,
@@ -1818,9 +1829,99 @@ impl State {
             Operation::L6maxInputTiming => {
                 Ok(run_l6max_input_timing(session, options).map_err(std::io::Error::other)?)
             }
-            Operation::L6maxPanelKeyMap => {
-                Ok(run_l6max_panel_key_map(session, wall_timeout_s)
-                    .map_err(std::io::Error::other)?)
+            Operation::L6maxPanelKeyBegin => {
+                if session.engine.model() != l6fw::Model::L6max || self.panel_keys.is_some() {
+                    return Err("panel key scope requires a fresh L6max".into());
+                }
+                let inputs = session
+                    .engine
+                    .inputs
+                    .as_ref()
+                    .ok_or("panel inputs unavailable")?
+                    .clone();
+                self.panel_keys = Some(PanelKeyScope {
+                    deadline: Instant::now() + Duration::from_secs(wall_timeout_s),
+                    held: None,
+                    inputs,
+                });
+                Ok(json!({"started":true}))
+            }
+            Operation::L6maxPanelKeyInput { target, pressed } => {
+                let scope = self.panel_keys.as_mut().ok_or("missing panel key scope")?;
+                if Instant::now() >= scope.deadline {
+                    return Err("panel key scope deadline exceeded".into());
+                }
+                if (pressed && scope.held.is_some()) || (!pressed && scope.held != Some(target)) {
+                    return Err("panel key held state mismatch".into());
+                }
+                let before = scope.inputs.panel.snapshot().applied;
+                let control = l6ctl::OwnedControl::new(&session.engine);
+                if pressed {
+                    scope.held = Some(target);
+                    control.down(target, 0)?;
+                } else {
+                    control.up(target)?;
+                }
+                let deadline = scope.deadline.min(Instant::now() + Duration::from_secs(10));
+                loop {
+                    session.poll()?;
+                    if Instant::now() >= deadline {
+                        return Err("panel key input acknowledgement timed out".into());
+                    }
+                    if scope.inputs.panel.snapshot().applied > before {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+                if !pressed {
+                    scope.held = None;
+                }
+                Ok(json!({"target":target,"pressed":pressed}))
+            }
+            Operation::L6maxPanelKeyCheck {
+                code,
+                bit,
+                word_index,
+                active,
+                wait,
+            } => {
+                let scope = self.panel_keys.as_ref().ok_or("missing panel key scope")?;
+                let control = l6ctl::OwnedControl::new(&session.engine);
+                let start = guest_now(session);
+                loop {
+                    if Instant::now() >= scope.deadline {
+                        return Err("panel key scope deadline exceeded".into());
+                    }
+                    session.poll()?;
+                    let snapshot = control.panel_key(code)?;
+                    if Instant::now() >= scope.deadline {
+                        return Err("panel key scope deadline exceeded".into());
+                    }
+                    let mask = 1u32.checked_shl(snapshot.bit).unwrap_or(0);
+                    if bit >= 32
+                        || snapshot.bit != bit
+                        || snapshot.word_index != word_index
+                        || word_index >= 6
+                    {
+                        return Err("unexpected panel key lookup".into());
+                    }
+                    let observed = snapshot.words[word_index as usize] & mask != 0;
+                    if observed == active {
+                        break Ok(serde_json::to_value(snapshot)?);
+                    }
+                    if !wait || guest_now(session).wrapping_sub(start) >= 5_000 {
+                        return Err(format!("panel key {code:#x} did not become {active}").into());
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
+            Operation::L6maxPanelKeyEnd => {
+                let scope = self.panel_keys.as_ref().ok_or("missing panel key scope")?;
+                if scope.held.is_some() || Instant::now() >= scope.deadline {
+                    return Err("panel key scope incomplete or expired".into());
+                }
+                self.panel_keys.take();
+                Ok(json!({"complete":true}))
             }
             Operation::L6maxChannelSignalPwm => Ok(run_l6max_channel_signal_pwm(
                 session,

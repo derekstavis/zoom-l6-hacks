@@ -551,7 +551,19 @@ pub enum Operation {
     L6InputSweep,
     L6DinSweep,
     L6maxInputTiming,
-    L6maxPanelKeyMap,
+    L6maxPanelKeyBegin,
+    L6maxPanelKeyCheck {
+        code: u32,
+        bit: u32,
+        word_index: u32,
+        active: bool,
+        wait: bool,
+    },
+    L6maxPanelKeyInput {
+        target: u32,
+        pressed: bool,
+    },
+    L6maxPanelKeyEnd,
     L6maxChannelSignalPwm,
     L6LevelMeterPwm,
 }
@@ -847,6 +859,8 @@ pub struct State {
     paced_index: usize,
     adaptive_progress: crate::progress::CaseProgress,
     adaptive_index: usize,
+
+    panel_keys: Option<PanelKeyScope>,
     saved: Option<(Vec<u8>, usize)>,
     midi: Option<l6max_host::usb::Endpoints>,
     sysex_deadline: Option<(Instant, u32, u32, u64)>,
@@ -869,6 +883,19 @@ pub struct State {
     sd_inspection: Option<sd::SdInspectionContext>,
     native_midi: Option<l6ctl::midi::MidiSession>,
     midi_probe: Option<MidiProbeContext>,
+}
+
+struct PanelKeyScope {
+    deadline: Instant,
+    held: Option<u32>,
+    inputs: std::sync::Arc<l6max_host::input::InputHub>,
+}
+impl Drop for PanelKeyScope {
+    fn drop(&mut self) {
+        if let Some(target) = self.held.take() {
+            let _ = self.inputs.up(target);
+        }
+    }
 }
 
 struct KnobModeScope {

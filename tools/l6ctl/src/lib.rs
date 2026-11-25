@@ -17,6 +17,8 @@ pub use l6max_host::knob_popup::{
 pub use l6max_host::memory::MemoryRead;
 pub use l6max_host::midi_config::Config as MidiConfig;
 pub use l6max_host::sd_loader::{Site as SdLoaderSite, Snapshot as SdLoaderSnapshot};
+
+pub use l6max_host::panel_keys::Snapshot as PanelKeySnapshot;
 pub use l6max_host::update_bootloader::Outcome as InstallerOutcome;
 pub use l6max_host::update_state::{UpdateGuiState, UpdateState};
 pub use l6max_host::usb_midi::SysexDecoder as UsbSysexDecoder;
@@ -55,6 +57,8 @@ pub enum Request {
     MemoryRead { address: u32, length: usize },
     MidiConfig,
     EffectEditor { binding: EffectEditorBinding },
+
+    PanelKey { code: u32 },
     UpdateState,
     UpdateGuiState,
     InstallerOutcome,
@@ -278,6 +282,7 @@ impl ControlClient {
                 | Request::MemoryRead { .. }
                 | Request::MidiConfig
                 | Request::EffectEditor { .. }
+                | Request::PanelKey { .. }
                 | Request::UpdateState
                 | Request::UpdateGuiState
                 | Request::KnobPopup { .. }
@@ -332,6 +337,10 @@ impl ControlClient {
         binding: EffectEditorBinding,
     ) -> Result<EffectEditorSnapshot, ControlError> {
         self.request_as(&Request::EffectEditor { binding })
+    }
+
+    pub fn panel_key(&self, code: u32) -> Result<PanelKeySnapshot, ControlError> {
+        self.request_as(&Request::PanelKey { code })
     }
 
     pub fn midi_config(&self) -> Result<MidiConfig, ControlError> {
@@ -576,6 +585,43 @@ impl<'a> OwnedControl<'a> {
         binding: EffectEditorBinding,
     ) -> Result<l6max_host::effect_editor::Reader, ControlError> {
         l6max_host::effect_editor::Reader::new(self.main_qmp()?, self.engine.model(), binding)
+            .map_err(ControlError::Rejected)
+    }
+
+    /// Enqueue a held button without waiting for guest acknowledgement.
+    pub fn down(&self, target: u32, duration_ms: u32) -> Result<ButtonReceipt, ControlError> {
+        if target >= l6max_host::controls::INPUT_COUNT as u32 || duration_ms > 60_000 {
+            return Err(ControlError::Rejected("invalid held button".into()));
+        }
+        self.engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .down(target, duration_ms)
+            .map_err(|e| ControlError::Rejected(e.to_string()))?;
+        Ok(ButtonReceipt {
+            target,
+            command: "down".into(),
+        })
+    }
+    pub fn up(&self, target: u32) -> Result<ButtonReceipt, ControlError> {
+        if target >= l6max_host::controls::INPUT_COUNT as u32 {
+            return Err(ControlError::Rejected("invalid held button".into()));
+        }
+        self.engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .up(target)
+            .map_err(|e| ControlError::Rejected(e.to_string()))?;
+        Ok(ButtonReceipt {
+            target,
+            command: "up".into(),
+        })
+    }
+
+    pub fn panel_key(&self, code: u32) -> Result<PanelKeySnapshot, ControlError> {
+        l6max_host::panel_keys::snapshot(self.main_qmp()?, self.engine.model(), code)
             .map_err(ControlError::Rejected)
     }
 

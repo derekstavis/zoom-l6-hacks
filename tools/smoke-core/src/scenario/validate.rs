@@ -657,6 +657,76 @@ impl Scenario {
         let mut checkpoints = std::collections::BTreeSet::new();
         for model in &value.models {
             let mut sd_inspection: Option<(u32, u64)> = None;
+
+            let panel_steps: Vec<_> = value
+                .step
+                .iter()
+                .filter(|step| step.applies_to(*model))
+                .collect();
+            let mut panel_index = 0;
+            while panel_index < panel_steps.len() {
+                if matches!(panel_steps[panel_index].action, Action::L6maxPanelKeyBegin) {
+                    if *model != l6fw::Model::L6max {
+                        return Err("panel-key scope requires L6max".into());
+                    }
+                    panel_index += 1;
+                    let mut groups = 0;
+                    while panel_index < panel_steps.len()
+                        && !matches!(panel_steps[panel_index].action, Action::L6maxPanelKeyEnd)
+                    {
+                        if panel_index + 4 >= panel_steps.len() {
+                            return Err("incomplete panel-key check sequence".into());
+                        }
+                        let group = &panel_steps[panel_index..panel_index + 5];
+                        let (code, bit, word_index) = match group[0].action {
+                            Action::L6maxPanelKeyCheck {
+                                code,
+                                bit,
+                                word_index,
+                                active: false,
+                                wait: false,
+                            } if (25..=28).contains(&code) && bit < 32 && word_index < 6 => {
+                                (code, bit, word_index)
+                            }
+                            _ => return Err("invalid panel-key initial check".into()),
+                        };
+                        let target = match group[1].action {
+                            Action::L6maxPanelKeyInput {
+                                target,
+                                pressed: true,
+                            } if target < 54 => target,
+                            _ => return Err("invalid panel-key press".into()),
+                        };
+                        let same = |action: &Action, expected_active| {
+                            matches!(action,
+                            Action::L6maxPanelKeyCheck { code: c, bit: b, word_index: w, active, wait: true }
+                            if (*c,*b,*w,*active) == (code,bit,word_index,expected_active))
+                        };
+                        if !same(&group[2].action, true)
+                            || !matches!(group[3].action, Action::L6maxPanelKeyInput { target: t, pressed: false } if t == target)
+                            || !same(&group[4].action, false)
+                        {
+                            return Err("invalid panel-key check sequence".into());
+                        }
+                        groups += 1;
+                        panel_index += 5;
+                    }
+                    if groups == 0 || panel_index == panel_steps.len() {
+                        return Err("panel-key scope missing end or checks".into());
+                    }
+                    panel_index += 1;
+                } else {
+                    if matches!(
+                        panel_steps[panel_index].action,
+                        Action::L6maxPanelKeyCheck { .. }
+                            | Action::L6maxPanelKeyInput { .. }
+                            | Action::L6maxPanelKeyEnd
+                    ) {
+                        return Err("panel-key action outside scope".into());
+                    }
+                    panel_index += 1;
+                }
+            }
             let mut sync: Option<(u8, u32, u64)> = None;
             let mut l6_probe: Option<(u8, u32, u64)> = None;
             let mut l6_probe_finished = false;
@@ -1811,6 +1881,32 @@ mod sd_inspection_tests {
                 fixture
             )
             .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod panel_key_scope_tests {
+    #[test]
+    fn rejects_incomplete_or_modified_panel_key_scope() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/emulator/cases/panel/l6max-input-smoke.toml");
+        let source = std::fs::read_to_string(path).unwrap();
+        assert!(crate::Scenario::parse(&source).is_ok());
+        assert!(crate::Scenario::parse(&source.replace("target = 15", "target = 16")).is_ok());
+        assert!(
+            crate::Scenario::parse(&source.replace("word_index = 4", "word_index = 6")).is_err()
+        );
+        assert!(
+            crate::Scenario::parse(&source.replace(
+                "action = \"l6max-panel-key-end\"",
+                "action = \"l6max-panel-key-begin\""
+            ))
+            .is_err()
+        );
+        assert!(
+            crate::Scenario::parse(&source.replacen("pressed = false", "pressed = true", 1))
+                .is_err()
         );
     }
 }

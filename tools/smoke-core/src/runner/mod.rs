@@ -1578,8 +1578,32 @@ impl Runner {
                 Action::L6maxInputTiming => {
                     return Ok(Progress::Device(devices::Operation::L6maxInputTiming));
                 }
-                Action::L6maxPanelKeyMap => {
-                    return Ok(Progress::Device(devices::Operation::L6maxPanelKeyMap));
+                Action::L6maxPanelKeyBegin => {
+                    return Ok(Progress::Device(devices::Operation::L6maxPanelKeyBegin));
+                }
+                Action::L6maxPanelKeyCheck {
+                    code,
+                    bit,
+                    word_index,
+                    active,
+                    wait,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::L6maxPanelKeyCheck {
+                        code,
+                        bit,
+                        word_index,
+                        active,
+                        wait,
+                    }));
+                }
+                Action::L6maxPanelKeyInput { target, pressed } => {
+                    return Ok(Progress::Device(devices::Operation::L6maxPanelKeyInput {
+                        target,
+                        pressed,
+                    }));
+                }
+                Action::L6maxPanelKeyEnd => {
+                    return Ok(Progress::Device(devices::Operation::L6maxPanelKeyEnd));
                 }
                 Action::L6maxChannelSignalPwm => {
                     return Ok(Progress::Device(devices::Operation::L6maxChannelSignalPwm));

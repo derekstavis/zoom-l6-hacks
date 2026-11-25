@@ -508,6 +508,7 @@ impl Scenario {
         }
         let mut checkpoints = std::collections::BTreeSet::new();
         for model in &value.models {
+            let mut sd_inspection: Option<(u32, u64)> = None;
             let mut sync: Option<(u8, u32, u64)> = None;
             let mut l6_probe: Option<(u8, u32, u64)> = None;
             let mut l6_probe_finished = false;
@@ -516,6 +517,13 @@ impl Scenario {
             let mut probe_ring = None;
             let mut probe_tap = None;
             for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                match (&step.action, sd_inspection) {
+                    (Action::ExpectSdLoader, None) => sd_inspection = Some((step.guest_timeout_ms, step.wall_timeout_s)),
+                    (Action::ExpectSdModule { .. }, Some((guest, wall))) if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = None,
+                    (Action::ExpectSdLoader | Action::ExpectSdModule { .. }, _) => return Err("SD inspection requires adjacent loader/module steps with matching timeouts".into()),
+                    (_, Some(_)) => return Err("SD inspection cannot be interrupted".into()),
+                    _ => {},
+                }
                 if l6_probe_finished {
                     return Err(
                         "L6 MIDI probe must be the final action for L6: it leaves MAIN stopped"
@@ -647,6 +655,9 @@ impl Scenario {
                     }
                     _ => {}
                 }
+            }
+            if sd_inspection.is_some() {
+                return Err("SD inspection is incomplete".into());
             }
             if l6_probe.is_some() {
                 return Err("L6 MIDI probe transaction is incomplete".into());
@@ -1113,12 +1124,19 @@ impl Scenario {
             if let Action::ExpectSdPatch {
                 loaded,
                 chain_count,
+            }
+            | Action::ExpectSdModule {
+                loaded,
+                chain_count,
             } = &step.action
                 && (value.sd_patches.is_none()
                     || *loaded && value.sd_patches.as_ref().is_some_and(Vec::is_empty)
                     || chain_count.is_some_and(|count| count == 0 || count > 8))
             {
                 return Err("expect-patch-loader requires an Patch loader fixture (and a selected patch when loaded=true)".into());
+            }
+            if matches!(step.action, Action::ExpectSdLoader) && value.sd_patches.is_none() {
+                return Err("SD inspection requires a Patch loader fixture".into());
             }
             if let Action::HoldChord {
                 controls,
@@ -1526,6 +1544,53 @@ mod l6_midi_probe_tests {
                     .replace("wall_timeout_s=180", "wall_timeout_s=179")
                     .replacen("wall_timeout_s=179", "wall_timeout_s=180", 1),
                 "l6"
+            )
+            .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod sd_inspection_tests {
+    fn parse(steps: &str, fixture: &str) -> Result<super::super::Scenario, String> {
+        super::super::Scenario::from_text(&format!(
+            "version=1\nname='sd-inspection'\nmodels=['l6','l6max']\nbackends=['headless']\n{fixture}\n{steps}"
+        ))
+    }
+    #[test]
+    fn phases_are_adjacent_and_share_budget_and_fixture() {
+        let begin =
+            "[[step]]\naction='expect-sd-loader'\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
+        let end = "[[step]]\naction='expect-sd-module'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
+        let fixture = "sd_patches=['midi-sync']";
+        assert!(parse(&format!("{begin}{end}"), fixture).is_ok());
+        assert!(parse(begin, fixture).is_err());
+        assert!(parse(end, fixture).is_err());
+        assert!(parse(&format!("{begin}{end}"), "").is_err());
+        assert!(
+            parse(
+                &format!("{begin}[[step]]\naction='wait'\nuntil='boot-ready'\n{end}"),
+                fixture
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                &format!(
+                    "{begin}{}",
+                    end.replace("wall_timeout_s=30", "wall_timeout_s=29")
+                ),
+                fixture
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                &format!(
+                    "{begin}{}",
+                    end.replace("loaded=true", "loaded=true\nchain_count=9")
+                ),
+                fixture
             )
             .is_err()
         );

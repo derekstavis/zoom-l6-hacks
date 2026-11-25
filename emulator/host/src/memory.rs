@@ -35,6 +35,24 @@ pub fn read_main(qmp: &QmpClient, address: u32, length: usize) -> Result<MemoryR
     })
 }
 
+/// The same bounded read under a caller-owned wall deadline, including QMP lock contention.
+pub fn read_main_before(
+    qmp: &QmpClient,
+    address: u32,
+    length: usize,
+    deadline: std::time::Instant,
+) -> Result<MemoryRead, String> {
+    validate(address, length)?;
+    let bytes = qmp
+        .read_memory_before(0, address, length, deadline)
+        .map_err(|e| e.to_string())?;
+    Ok(MemoryRead {
+        address,
+        bytes,
+        atomic: false,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

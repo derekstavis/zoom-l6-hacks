@@ -251,6 +251,11 @@ pub enum Operation {
     },
     WaitSdPatchLoaded,
     WaitSdPatchEmpty,
+    ExpectSdLoader,
+    ExpectSdModule {
+        loaded: bool,
+        chain_count: Option<u8>,
+    },
     ExpectSdPatch {
         loaded: bool,
         chain_count: Option<u8>,
@@ -694,6 +699,7 @@ pub struct State {
     midi_round_trip: Option<MidiRoundTrip>,
     midi_sync: Option<midi::MidiSync>,
     l6_midi_probe: Option<midi::L6MidiProbe>,
+    sd_inspection: Option<sd::SdInspectionContext>,
     native_midi: Option<l6ctl::midi::MidiSession>,
     midi_probe: Option<MidiProbeContext>,
 }

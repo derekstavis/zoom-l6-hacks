@@ -836,6 +836,15 @@
     "definition": "c7de3bb2fa63ff47a007b3d3eb9f7936024c81e6dc2c10f92c2025eab175a5e9"
   },
   {
+    "case": "l6max-update-patched-knob-midi",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "22ea205c6bf2f612975609742550d16b8b89e5cbd8991712d298e88aa7d402e6"
+  },
+  {
     "case": "l6max-update-patched-midi",
     "model": "l6max",
     "backend": "headless",

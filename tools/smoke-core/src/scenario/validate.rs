@@ -15,6 +15,13 @@ impl Scenario {
             } else {
                 Model::L6max
             };
+            let expected_patches = match fixture {
+                UpdateFixture::PatchedKnob => vec!["knob-dialog".to_string()],
+                UpdateFixture::PatchedKnobMidi => {
+                    vec!["knob-dialog".to_string(), "midi-sync".to_string()]
+                }
+                _ => vec!["midi-sync".to_string()],
+            };
             if value.models != [fixture_model]
                 || value.backends != [Backend::Headless]
                 || value.state.is_some()
@@ -23,13 +30,7 @@ impl Scenario {
                 || (fixture.is_patched()
                     && (value.update_patches.len() != 1
                         || value.update_patches.get(&fixture_model).map(Vec::as_slice)
-                            != Some(
-                                &[if fixture == UpdateFixture::PatchedKnob {
-                                    "knob-dialog".to_string()
-                                } else {
-                                    "midi-sync".to_string()
-                                }][..],
-                            )))
+                            != Some(expected_patches.as_slice())))
                 || !value.patches.is_empty()
                 || value.sd_patches.is_some()
                 || !value.installed_patches.is_empty()
@@ -37,7 +38,9 @@ impl Scenario {
                 || !value.effect_replacements.is_empty()
                 || (!matches!(
                     fixture,
-                    UpdateFixture::PatchedMidi | UpdateFixture::PatchedKnob
+                    UpdateFixture::PatchedMidi
+                        | UpdateFixture::PatchedKnob
+                        | UpdateFixture::PatchedKnobMidi
                 ) && value
                     .step
                     .iter()
@@ -145,7 +148,9 @@ impl Scenario {
                         }
                     }
                 }
-                UpdateFixture::PatchedMidi | UpdateFixture::PatchedKnob => {
+                UpdateFixture::PatchedMidi
+                | UpdateFixture::PatchedKnob
+                | UpdateFixture::PatchedKnobMidi => {
                     if value.update_goal != Some(UpdateGoal::Install) {
                         return Err("patched update requires the full install goal".into());
                     }
@@ -234,6 +239,33 @@ impl Scenario {
                                 Action::LifecycleStop
                             ]
                         )
+                    } else if fixture == UpdateFixture::PatchedKnobMidi {
+                        matches!(
+                            tail,
+                            [
+                                Action::KnobDialogReady,
+                                Action::KnobDialogGuard,
+                                Action::KnobDialogBaseline,
+                                Action::KnobDialogPreflightBegin,
+                                ..,
+                                Action::KnobDialog,
+                                Action::WaitUsbController,
+                                Action::DirectUsbMidiRoundTrip {
+                                    cable: 1,
+                                    expect_ring_change: true
+                                },
+                                Action::HostMidiSyncBegin,
+                                Action::HostMidiDrain { quiet_wall_ms: 500 },
+                                Action::HostMidiSendCc {
+                                    channel: 0,
+                                    controller: 127,
+                                    value: 127
+                                },
+                                Action::HostMidiExpectSync,
+                                Action::HostMidiEnd,
+                                Action::LifecycleStop
+                            ]
+                        )
                     } else {
                         matches!(
                             tail,
@@ -279,7 +311,10 @@ impl Scenario {
                     }) {
                         return Err("post-update MIDI verification needs the original guest and wall budgets".into());
                     }
-                    if fixture == UpdateFixture::PatchedKnob {
+                    if matches!(
+                        fixture,
+                        UpdateFixture::PatchedKnob | UpdateFixture::PatchedKnobMidi
+                    ) {
                         let first = value.step[verify..]
                             .iter()
                             .position(|step| matches!(step.action, Action::KnobDialogReady))
@@ -403,7 +438,9 @@ impl Scenario {
             for step in &value.step {
                 if matches!(
                     fixture,
-                    UpdateFixture::PatchedMidi | UpdateFixture::PatchedKnob
+                    UpdateFixture::PatchedMidi
+                        | UpdateFixture::PatchedKnob
+                        | UpdateFixture::PatchedKnobMidi
                 ) {
                     let entering_verify = matches!(
                         step.action,
@@ -507,6 +544,7 @@ impl Scenario {
             let expected_end = match fixture {
                 UpdateFixture::PatchedMidi
                 | UpdateFixture::PatchedKnob
+                | UpdateFixture::PatchedKnobMidi
                 | UpdateFixture::L6PatchedMidi => matches!(
                     value.step.last().map(|s| &s.action),
                     Some(Action::LifecycleStop)

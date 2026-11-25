@@ -475,7 +475,7 @@
     "suites": [
       "full"
     ],
-    "definition": "8746d2fd01091b770f045fe942ce43af7f41c8a60d533adcef42b2f005182916"
+    "definition": "c192d1afb48ecd0df0f1848554d135c3ec0ee650943a58bf0d17590e173207d1"
   },
   {
     "case": "l6-direct-midi-sync",

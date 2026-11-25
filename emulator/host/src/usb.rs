@@ -680,6 +680,54 @@ mod tests {
     }
 
     #[test]
+    fn raw_midi_receiver_retains_exclusive_lease_until_drop() {
+        let (socket, mut peer) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || {
+            let mut request = [0; 20];
+            peer.read_exact(&mut request).unwrap();
+            let word = |i: usize| u32::from_le_bytes(request[i * 4..i * 4 + 4].try_into().unwrap());
+            assert_eq!((word(1), word(3)), (1, 1));
+            let mut reply = Vec::new();
+            for value in [MAGIC, 0x8000_0000, word(2), 0, 0] {
+                reply.extend(value.to_le_bytes());
+            }
+            peer.write_all(&reply).unwrap();
+        });
+        let host = Arc::new(UsbHost::new(socket).unwrap());
+        let controller = Controller::new(host.clone());
+        let mut receiver = crate::usb_midi::RawReceiver::attach(host.clone()).unwrap();
+        assert!(receiver.poll().is_err());
+        assert!(host.acquire_direct().is_err());
+        assert!(controller.attach().is_err());
+        drop(receiver);
+        assert!(host.acquire_direct().is_ok());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn failed_raw_midi_receiver_attach_rolls_back_and_releases_lease() {
+        let (socket, mut peer) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || {
+            for (endpoint, status) in [(1u32, -libc::ENODEV), (0, 0)] {
+                let mut request = [0; 20];
+                peer.read_exact(&mut request).unwrap();
+                let word =
+                    |i: usize| u32::from_le_bytes(request[i * 4..i * 4 + 4].try_into().unwrap());
+                assert_eq!((word(1), word(3)), (1, endpoint));
+                let mut reply = Vec::new();
+                for value in [MAGIC, 0x8000_0000, word(2), status as u32, 0] {
+                    reply.extend(value.to_le_bytes());
+                }
+                peer.write_all(&reply).unwrap();
+            }
+        });
+        let host = Arc::new(UsbHost::new(socket).unwrap());
+        assert!(crate::usb_midi::RawReceiver::attach(host.clone()).is_err());
+        assert!(host.acquire_direct().is_ok());
+        server.join().unwrap();
+    }
+
+    #[test]
     fn direct_reservation_blocks_controller_and_restores_raw_owner() {
         let (socket, _peer) = UnixStream::pair().unwrap();
         let host = Arc::new(UsbHost::new(socket).unwrap());

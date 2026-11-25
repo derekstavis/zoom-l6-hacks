@@ -727,6 +727,46 @@ impl Scenario {
                     panel_index += 1;
                 }
             }
+            let mut din_scope = 0u8;
+            let mut din_pending: Option<&[u8]> = None;
+            let mut din_pairs = 0usize;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                match (&step.action, din_scope) {
+                    (Action::DinUsbBegin, 0) if *model == l6fw::Model::L6 => {
+                        din_scope = 1;
+                        din_pairs = 0;
+                    }
+                    (Action::Delay { guest_ms }, 1) if *guest_ms > 0 => din_scope = 2,
+                    (Action::DinUsbAttach, 2) => din_scope = 3,
+                    (Action::DinUsbSend { bytes }, 3)
+                        if !bytes.is_empty() && bytes.len() <= 256 =>
+                    {
+                        din_pending = Some(bytes);
+                        din_scope = 4;
+                    }
+                    (Action::DinUsbExpect { bytes, cable }, 4)
+                        if *cable <= 15 && Some(bytes.as_slice()) == din_pending =>
+                    {
+                        din_pending = None;
+                        din_pairs += 1;
+                        din_scope = 3;
+                    }
+                    (Action::DinUsbEnd, 3) if din_pairs > 0 => din_scope = 0,
+                    (
+                        Action::DinUsbBegin
+                        | Action::DinUsbAttach
+                        | Action::DinUsbSend { .. }
+                        | Action::DinUsbExpect { .. }
+                        | Action::DinUsbEnd,
+                        _,
+                    ) => return Err("invalid DIN USB forwarding sequence or model".into()),
+                    (_, 0) => (),
+                    _ => return Err("DIN USB forwarding scope interrupted".into()),
+                }
+            }
+            if din_scope != 0 {
+                return Err("DIN USB forwarding scope incomplete".into());
+            }
             let mut sync: Option<(u8, u32, u64)> = None;
             let mut l6_probe: Option<(u8, u32, u64)> = None;
             let mut l6_probe_finished = false;
@@ -1907,6 +1947,38 @@ mod panel_key_scope_tests {
         assert!(
             crate::Scenario::parse(&source.replacen("pressed = false", "pressed = true", 1))
                 .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod din_usb_scope_tests {
+    #[test]
+    fn requires_bounded_paired_messages_and_complete_scope() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/emulator/cases/midi/l6-din-usb-forwarding.toml");
+        let source = std::fs::read_to_string(path).unwrap();
+        // Scenario::parse does not expand includes, so keep just the scope.
+        let tail = source
+            .split("[[step]]\naction = \"din-usb-begin\"")
+            .nth(1)
+            .unwrap();
+        let text = format!(
+            "version=1\nname='din'\nmodels=['l6']\nbackends=['headless']\n[[step]]\naction='din-usb-begin'\n{tail}"
+        );
+        assert!(crate::Scenario::parse(&text).is_ok());
+        assert!(crate::Scenario::parse(&text.replace("cable = 0", "cable = 16")).is_err());
+        assert!(
+            crate::Scenario::parse(&text.replacen(
+                "bytes = [179, 16, 32]",
+                "bytes = [179, 16, 33]",
+                1
+            ))
+            .is_err()
+        );
+        assert!(crate::Scenario::parse(&text.replace("din-usb-end", "din-usb-begin")).is_err());
+        assert!(
+            crate::Scenario::parse(&text.replace("models=['l6']", "models=['l6max']")).is_err()
         );
     }
 }

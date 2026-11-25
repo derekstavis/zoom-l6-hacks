@@ -425,6 +425,18 @@ impl State {
             self.l6_midi_probe.take();
             return Err("L6 MIDI probe interrupted by another operation".into());
         }
+        if self.din_usb.is_some()
+            && !matches!(
+                operation,
+                Operation::DinUsbAttach
+                    | Operation::DinUsbSend { .. }
+                    | Operation::DinUsbExpect { .. }
+                    | Operation::DinUsbEnd
+            )
+        {
+            self.din_usb.take();
+            return Err("DIN USB forwarding scope interrupted".into());
+        }
         if self.panel_keys.is_some()
             && !matches!(
                 operation,
@@ -2272,9 +2284,6 @@ impl State {
                 Some(cable),
                 expect_ring_change,
             ),
-            Operation::L6DinUsbForwarding => {
-                self.run_l6_din_usb_forwarding(session, wall_timeout_s)
-            }
             operation @ (Operation::L6MidiProbeBegin
             | Operation::L6MidiProbeInject
             | Operation::L6MidiProbeExpectHook
@@ -2285,6 +2294,11 @@ impl State {
                 guest_timeout_ms,
                 wall_timeout_s,
             )?),
+            operation @ (Operation::DinUsbBegin
+            | Operation::DinUsbAttach
+            | Operation::DinUsbSend { .. }
+            | Operation::DinUsbExpect { .. }
+            | Operation::DinUsbEnd) => self.run_din_usb(session, operation),
             Operation::L6MidiRingPinSweep { cc } => {
                 self.run_l6_midi_ring_pin_sweep(session, cc, wall_timeout_s)
             }

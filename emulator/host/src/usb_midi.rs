@@ -442,3 +442,54 @@ pub fn poll_sysex(
         Err(error) => Err(error),
     }
 }
+
+/// Exclusive, in-process USB-MIDI receiver preserving USB cable and packet chunks.
+/// Attaching reserves the cable; enumeration can be retried without detaching it.
+/// Dropping releases the exclusive lease but leaves the cable attached, like
+/// the direct MIDI client. This API is not available through the control socket.
+pub struct RawReceiver {
+    host: Arc<UsbHost>,
+    _lease: crate::usb::DirectLease,
+    input: Option<u8>,
+}
+
+impl RawReceiver {
+    pub fn attach(host: Arc<UsbHost>) -> Result<Self, String> {
+        let lease = host.acquire_direct()?;
+        if let Err(error) = host.connect(true) {
+            return Err(match lease.rollback(&host) {
+                Ok(()) => error.to_string(),
+                Err(cleanup) => format!("{error}; USB detach after failed setup: {cleanup}"),
+            });
+        }
+        Ok(Self {
+            host,
+            _lease: lease,
+            input: None,
+        })
+    }
+
+    /// Enumerate once. The caller owns retry policy and deadlines.
+    pub fn enumerate(&mut self) -> io::Result<()> {
+        let configuration = self.host.enumerate()?;
+        self.input = Some(
+            configuration
+                .midi
+                .ok_or_else(|| io::Error::other("USB device has no MIDI interface"))?
+                .input,
+        );
+        Ok(())
+    }
+
+    /// Return one USB transfer's MIDI packets, preserving cable and payload.
+    pub fn poll(&mut self) -> io::Result<Option<Vec<(u8, Vec<u8>)>>> {
+        let input = self
+            .input
+            .ok_or_else(|| io::Error::other("USB MIDI is not enumerated"))?;
+        match self.host.try_receive(input, 16_384) {
+            Ok(bytes) => decode(&bytes).map(Some),
+            Err(error) if error.raw_os_error() == Some(libc::EAGAIN) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+}

@@ -31,42 +31,5 @@ action = "include"
 path = "patches/midi-sync/tests/emulator/fragments/request-state.toml"
 
 [[step]]
-action = "l6-midi-ring-pin-sweep"
-cc = 83
-guest_timeout_ms = 7000
-wall_timeout_s = 30
-
-[[step]]
-action = "l6-midi-ring-pin-sweep"
-cc = 84
-guest_timeout_ms = 7000
-wall_timeout_s = 30
-
-[[step]]
-action = "l6-midi-ring-pin-sweep"
-cc = 85
-guest_timeout_ms = 7000
-wall_timeout_s = 30
-
-[[step]]
-action = "l6-midi-ring-pin-sweep"
-cc = 86
-guest_timeout_ms = 7000
-wall_timeout_s = 30
-
-[[step]]
-action = "l6-midi-ring-pin-sweep"
-cc = 87
-guest_timeout_ms = 7000
-wall_timeout_s = 30
-
-[[step]]
-action = "l6-midi-ring-pin-sweep"
-cc = 88
-guest_timeout_ms = 7000
-wall_timeout_s = 30
-
-[[step]]
-action = "l6-midi-mute-indicators"
-guest_timeout_ms = 7000
-wall_timeout_s = 30
+action = "include"
+path = "patches/midi-sync/tests/emulator/fragments/l6-indicators.toml"

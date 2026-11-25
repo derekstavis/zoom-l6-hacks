@@ -1174,6 +1174,87 @@ impl Scenario {
             }
         }
         for model in &value.models {
+            let mut indicator_scope: Option<(u32, bool, Option<u8>, bool)> = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                match &step.action {
+                    Action::L6IndicatorBegin
+                        if indicator_scope.is_none() && *model == l6fw::Model::L6 =>
+                    {
+                        indicator_scope = Some((step.guest_timeout_ms, false, None, false))
+                    }
+                    Action::L6RingSample {
+                        cc,
+                        value,
+                        guest_ms,
+                        ring,
+                    } if indicator_scope.is_some() => {
+                        let (budget, checked, previous, coverage) =
+                            indicator_scope.as_mut().unwrap();
+                        if !(0x53..=0x58).contains(cc)
+                            || *value > 127
+                            || *guest_ms == 0
+                            || *guest_ms > *budget
+                            || ring.is_some_and(|ring| !(1..=6).contains(&ring))
+                        {
+                            return Err("invalid L6 ring sample".into());
+                        }
+                        *previous = None;
+                        if ring.is_some() {
+                            *checked = true;
+                            *coverage = true;
+                        }
+                    }
+                    Action::L6MuteSample {
+                        cc,
+                        value,
+                        guest_ms,
+                        reuse_previous,
+                        ..
+                    } if indicator_scope.is_some() => {
+                        let (budget, checked, previous, _) = indicator_scope.as_mut().unwrap();
+                        if *cc > 127
+                            || *value > 127
+                            || *guest_ms == 0
+                            || *guest_ms > *budget
+                            || (*reuse_previous && *previous != Some(*cc))
+                        {
+                            return Err("invalid L6 mute sample or baseline".into());
+                        }
+                        *checked = true;
+                        *previous = Some(*cc);
+                    }
+                    Action::L6RingCoverage { mask }
+                        if indicator_scope.is_some_and(|(_, _, _, coverage)| coverage)
+                            && *mask <= 0x1ff =>
+                    {
+                        indicator_scope.as_mut().unwrap().3 = false;
+                    }
+                    Action::L6IndicatorEnd
+                        if indicator_scope
+                            .is_some_and(|(_, checked, _, coverage)| checked && !coverage) =>
+                    {
+                        indicator_scope = None
+                    }
+                    _ if indicator_scope.is_some()
+                        || matches!(
+                            step.action,
+                            Action::L6IndicatorBegin
+                                | Action::L6RingSample { .. }
+                                | Action::L6MuteSample { .. }
+                                | Action::L6RingCoverage { .. }
+                                | Action::L6IndicatorEnd
+                        ) =>
+                    {
+                        return Err("invalid L6 indicator campaign sequence".into());
+                    }
+                    _ => {}
+                }
+            }
+            if indicator_scope.is_some() {
+                return Err("unterminated L6 indicator campaign".into());
+            }
+        }
+        for model in &value.models {
             let mut scope = None;
             for step in value.step.iter().filter(|step| step.applies_to(*model)) {
                 match &step.action {

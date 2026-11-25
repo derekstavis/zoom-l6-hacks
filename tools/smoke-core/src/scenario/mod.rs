@@ -557,10 +557,25 @@ pub enum Action {
         cable: u8,
     },
     DinUsbEnd,
-    L6MidiRingPinSweep {
+    L6IndicatorBegin,
+    L6RingSample {
         cc: u8,
+        value: u8,
+        guest_ms: u32,
+        ring: Option<usize>,
     },
-    L6MidiMuteIndicators,
+    L6RingCoverage {
+        mask: u32,
+    },
+    L6MuteSample {
+        cc: u8,
+        value: u8,
+        guest_ms: u32,
+        expected: [u32; 8],
+        #[serde(default)]
+        reuse_previous: bool,
+    },
+    L6IndicatorEnd,
     UsbSysexBegin,
     UsbSysexExchange {
         #[serde(flatten)]

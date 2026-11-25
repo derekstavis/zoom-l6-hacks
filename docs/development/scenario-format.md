@@ -189,6 +189,15 @@ The probe releases its own sessions on completion, failure or restart, without
 discarding an earlier mixer session. DIN receive uses the existing legacy
 control-observation behavior, including its documented ALSA limitations.
 
+The L6 firmware and SD MIDI hook checks use the shared
+`patches/midi-sync/tests/emulator/fragments/l6-hook-probe.toml` fragment.
+Its four actions resolve and verify the selected hook, inject a request, check
+the hook input, and compare sender output against the configured CC map in
+channel-major order, including duplicates. They share one guest/wall deadline.
+The injected execution cannot yet be fully restored, so the final action leaves
+MAIN stopped and the disposable emulator must be restarted. It must be the last
+L6 action; mixed-model scenarios can scope the include to L6.
+
 `midi-probe-send-cc` captures the declared ring channel immediately before the
 stimulus. `midi-probe-expect-ring` compares against that capture, with its wall
 window anchored to the send; a negative result requires the whole declared
@@ -223,7 +232,10 @@ message delivered just after the interval.
 | `l6-din-usb-forwarding` | — | Verify L6 DIN-to-USB forwarding behavior |
 | `host-midi-sync-begin` | — | Capture the L6 MIDI map and configured channel, or the L6max reply count, using a retained MIDI session. Begin the shared guest deadline. |
 | `host-midi-expect-sync` | — | Assert the captured L6 channel and CC multiset, including duplicate mappings, or 94 L6max Control Change replies. Follow with `host-midi-end`. |
-| `l6-midi-sync` | — | Exercise the L6 MIDI synchronization path |
+| `l6-midi-probe-begin` | — | Verify fixture identity, acquire a scoped debugger, and wait for L6 idle |
+| `l6-midi-probe-inject` | — | Inject the guarded sync request; the guest must be restarted afterwards |
+| `l6-midi-probe-expect-hook` | — | Verify the request reaches the selected firmware or SD hook unchanged |
+| `l6-midi-probe-expect-replies` | — | Check the ordered configured CC replies, wait for the last sender return, and leave MAIN stopped |
 | `l6-midi-ring-pin-sweep` | `cc` | Sweep L6 MIDI CC values and compare ring-pin output |
 | `l6-midi-mute-indicators` | — | Check L6 MIDI mute-indicator responses |
 | `usb-sysex` | `requests` with `bytes`, optional `expect_prefix`, `expect_reply`, `min_reply_bytes`; optional `complete_on_match` | Send cable-2 SysEx requests and check replies. When `complete_on_match` is true, a positive request completes on its matching complete reply; no-reply requests, rejected-prefix checks and explicit reply windows still observe the full interval |

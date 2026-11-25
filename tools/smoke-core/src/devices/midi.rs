@@ -808,191 +808,6 @@ impl State {
         )
     }
 
-    pub(super) fn run_l6_midi_sync(
-        &mut self,
-        session: &Session,
-        options: &Options,
-    ) -> Result<Value, Box<dyn std::error::Error>> {
-        use firmware_api::l6::idle_loop;
-        use firmware_api::l6::midi_in;
-        use firmware_api::l6::midi_send;
-        const EVENT: u32 = 0x841ff000;
-        use firmware_api::l6::midi_cc_map;
-        use firmware_api::l6::midi_configured_channel;
-        if session.engine.model() != l6fw::Model::L6 {
-            return Err(std::io::Error::other("l6-midi-sync requires L6 firmware").into());
-        }
-        let socket = options
-            .gdb_socket
-            .as_ref()
-            .ok_or("l6-midi-sync requires a configured GDB socket")?;
-        if self.gdb.is_none() {
-            self.gdb = Some(l6max_diagnostics::gdb::Gdb::connect(socket)?);
-        }
-        let gdb = self.gdb.as_mut().unwrap();
-        let qmp = &session.engine.management[0];
-        let payload = if options.sd_image.is_some() {
-            let main = selected_main_image(options).map_err(std::io::Error::other)?;
-            let (edits, _, _, _, _, _, _) =
-                sd_fixture_edits(options, &main, session.engine.model())
-                    .map_err(std::io::Error::other)?;
-            let entry_offset = edits
-                .iter()
-                .find(|(address, _, _)| *address == midi_in)
-                .map(|(_, _, offset)| *offset)
-                .ok_or("dynamic SD bundle has no L6 midi-sync entry")?;
-            let registry = sd_registry(qmp, session.engine.model())?;
-            let loaded_base =
-                u32::from_le_bytes(qmp.read_memory(0, registry + 160, 4)?.try_into().unwrap());
-            let slot = sd_dynamic_handler_slot(options, session.engine.model(), registry, midi_in)
-                .map_err(std::io::Error::other)?;
-            let entry = u32::from_le_bytes(qmp.read_memory(0, slot, 4)?.try_into().unwrap());
-            if loaded_base == 0 || entry != (loaded_base + entry_offset | 1) {
-                return Err(
-                    "allocated L6 midi-sync handler does not match the bundle offset".into(),
-                );
-            }
-            entry & !1
-        } else {
-            let patch: Value =
-                serde_json::from_slice(&fs::read(options.firmware_dir.join("patch.json"))?)?;
-            patch["hooks"]
-                .as_array()
-                .ok_or("patch.json has no hooks")?
-                .iter()
-                .find(|hook| hook["symbol"] == "midi_in_hook")
-                .ok_or("patch.json has no L6 MIDI entry hook")?["target"]
-                .as_u64()
-                .ok_or("L6 MIDI entry hook target is not numeric")? as u32
-                & !1
-        };
-        gdb.breakpoint(idle_loop, true)?;
-        gdb.continue_until_stop(Duration::from_secs(60))?;
-        let pc = gdb.read_register(15)? & !1;
-        if pc != idle_loop {
-            return Err(std::io::Error::other(format!(
-                "expected L6 Idle task at {idle_loop:#x}, stopped at {pc:#x}"
-            ))
-            .into());
-        }
-        let channel = qmp.read_memory(0, midi_configured_channel, 1)?[0];
-        if channel > 15 {
-            return Err(std::io::Error::other(format!(
-                "invalid configured L6 MIDI channel {channel}"
-            ))
-            .into());
-        }
-        let cc_map = qmp.read_memory(0, midi_cc_map, 54)?;
-        let mut expected_ccs = Vec::new();
-        for channel_index in 0..6 {
-            for group in 0..9 {
-                let cc = cc_map[group * 6 + channel_index];
-                if cc != 0xff {
-                    expected_ccs.push(cc);
-                }
-            }
-        }
-        if expected_ccs.is_empty() {
-            return Err(std::io::Error::other("L6 MIDI CC map has no enabled entries").into());
-        }
-        let mut event = [0u8; 8];
-        event[4..7].copy_from_slice(&[0xb0 | channel, 127, 127]);
-        gdb.write(EVENT, &event)?;
-        gdb.breakpoint(payload, true)?;
-        gdb.breakpoint(midi_send, true)?;
-        gdb.register(0, EVENT)?;
-        gdb.register(14, idle_loop | 1)?;
-        gdb.register(15, midi_in)?;
-        gdb.continue_until_stop(Duration::from_secs(10))?;
-        let entry_pc = gdb.read_register(15)? & !1;
-        if entry_pc != payload {
-            return Err(std::io::Error::other(format!(
-                "L6 hook branched to {entry_pc:#x}, expected {payload:#x}"
-            ))
-            .into());
-        }
-        let entry_message = qmp.read_memory(0, EVENT, 7)?;
-        if entry_message != event[..7] {
-            return Err(std::io::Error::other(format!(
-                "L6 sync message changed before hook entry: {entry_message:02x?}"
-            ))
-            .into());
-        }
-        gdb.breakpoint(payload, false)?;
-        gdb.continue_until_stop(Duration::from_secs(10))?;
-
-        let mut replies = Vec::new();
-        let mut sender_entries = Vec::new();
-        let mut expected_index = 0usize;
-        let mut completed = false;
-        for _ in 0..expected_ccs.len() + 64 {
-            let pc = gdb.read_register(15)? & !1;
-            if pc == idle_loop {
-                return Err(std::io::Error::other(format!(
-                    "L6 midi-sync returned after {expected_index}/{} mapped CCs",
-                    expected_ccs.len()
-                ))
-                .into());
-            }
-            if pc != midi_send {
-                return Err(std::io::Error::other(format!(
-                    "L6 midi-sync stopped unexpectedly at {pc:#x}"
-                ))
-                .into());
-            }
-            let buffer = gdb.read_register(0)?;
-            let length = gdb.read_register(1)?;
-            let route = gdb.read_register(2)?;
-            let return_pc = gdb.read_register(14)? & !1;
-            if length != 3 || route != 1 {
-                return Err(std::io::Error::other(format!(
-                    "L6 queue sender got length {length}, route {route}"
-                ))
-                .into());
-            }
-            let bytes = qmp.read_memory(0, buffer, 3)?;
-            if bytes[0] != (0xb0 | channel) || bytes[1] == 0xff || bytes[2] > 127 {
-                return Err(std::io::Error::other(format!(
-                    "invalid mapped L6 Control Change: {bytes:02x?}"
-                ))
-                .into());
-            }
-            sender_entries.push(json!({"buffer":buffer,"return_pc":return_pc,"bytes":bytes}));
-            replies.push([bytes[0], bytes[1], bytes[2]]);
-            if bytes[1] == expected_ccs[expected_index] {
-                expected_index += 1;
-            }
-            if expected_index == expected_ccs.len() {
-                gdb.breakpoint(midi_send, false)?;
-                gdb.breakpoint(return_pc, true)?;
-                gdb.continue_until_stop(Duration::from_secs(10))?;
-                let stopped_pc = gdb.read_register(15)? & !1;
-                gdb.breakpoint(return_pc, false)?;
-                if stopped_pc != return_pc {
-                    return Err(std::io::Error::other(format!(
-                        "queue sender stopped at {stopped_pc:#x}, expected return {return_pc:#x}"
-                    ))
-                    .into());
-                }
-                completed = true;
-                break;
-            }
-            gdb.request("s")?;
-            gdb.continue_until_stop(Duration::from_secs(10))?;
-        }
-        if !completed {
-            return Err(std::io::Error::other(format!(
-                "L6 midi-sync queued {} replies but matched only {expected_index}/{} enabled CC-map entries",
-                replies.len(), expected_ccs.len()
-            ))
-            .into());
-        }
-        qmp.resume()?;
-        Ok(
-            json!({"channel":channel,"route":1,"expected_ccs":expected_ccs,"replies":replies,"sender_entries":sender_entries}),
-        )
-    }
-
     pub(super) fn run_l6_midi_ring_pin_sweep(
         &mut self,
         session: &Session,
@@ -2308,5 +2123,352 @@ mod declarative_midi_tests {
         assert!(!context.exceeded(start + Duration::from_secs(119), 14));
         assert!(context.exceeded(start + Duration::from_secs(121), 14));
         assert!(context.exceeded(start + Duration::from_secs(1), 15));
+    }
+}
+
+/// One disposable guest's injected L6 MIDI transaction. Each scenario action
+/// exposes a distinct observation while preserving one shared time budget.
+pub(super) struct L6MidiProbe {
+    debug: l6max_host::debug::Session,
+    target: u32,
+    binding: l6max_host::debug::L6MidiBinding,
+    wall_deadline: Instant,
+    guest_start: u32,
+    guest_timeout: u32,
+    event: Vec<u8>,
+    expected: Vec<u8>,
+    phase: u8,
+}
+fn l6_midi_expected_ccs(map: &[u8]) -> Result<Vec<u8>, String> {
+    if map.len() != 54 {
+        return Err("L6 MIDI CC map has the wrong size".into());
+    }
+    let result: Vec<u8> = (0..6)
+        .flat_map(|channel| (0..9).map(move |group| group * 6 + channel))
+        .map(|index| map[index])
+        .filter(|value| *value != 0xff)
+        .collect();
+    if result.is_empty() {
+        return Err("L6 MIDI CC map has no enabled entries".into());
+    }
+    Ok(result)
+}
+fn l6_accept_ordered_cc(expected: &[u8], index: &mut usize, cc: u8) -> bool {
+    if expected.get(*index) == Some(&cc) {
+        *index += 1;
+    }
+    *index == expected.len()
+}
+impl L6MidiProbe {
+    fn remaining_ms(&self, session: &Session, cap_ms: u64) -> Result<u64, String> {
+        if guest_now(session).wrapping_sub(self.guest_start) > self.guest_timeout {
+            return Err("L6 MIDI probe exceeded its guest deadline".into());
+        }
+        let left = self
+            .wall_deadline
+            .checked_duration_since(Instant::now())
+            .ok_or("L6 MIDI probe exceeded its wall deadline")?;
+        let ms = left.as_millis().min(u128::from(cap_ms)) as u64;
+        if ms == 0 {
+            return Err("L6 MIDI probe exceeded its wall deadline".into());
+        }
+        Ok(ms)
+    }
+    fn command(
+        &mut self,
+        session: &Session,
+        command: l6max_host::debug::Command,
+    ) -> Result<l6max_host::debug::Observation, String> {
+        self.remaining_ms(session, 60_000)?;
+        let deadline = self.wall_deadline;
+        let start = self.guest_start;
+        let timeout = self.guest_timeout;
+        let value = self.debug.execute_cancellable(command, || {
+            Instant::now() >= deadline || guest_now(session).wrapping_sub(start) > timeout
+        })?;
+        self.remaining_ms(session, 60_000)?;
+        Ok(value)
+    }
+    fn advance(&mut self, session: &Session, cap_ms: u64) -> Result<(), String> {
+        let timeout_ms = self.remaining_ms(session, cap_ms)?;
+        self.command(session, l6max_host::debug::Command::Continue { timeout_ms })?;
+        Ok(())
+    }
+}
+
+impl State {
+    pub(super) fn run_l6_midi_probe(
+        &mut self,
+        session: &Session,
+        options: &Options,
+        operation: Operation,
+        guest_timeout_ms: u32,
+        wall_timeout_s: u64,
+    ) -> Result<Value, String> {
+        use firmware_api::l6::{idle_loop, midi_in, midi_send};
+        use l6max_host::debug::{Command as C, L6MidiBinding as B, Observation as O};
+        if matches!(operation, Operation::L6MidiProbeBegin) {
+            if self.l6_midi_probe.is_some() || session.engine.model() != l6fw::Model::L6 {
+                return Err("L6 MIDI probe requires a fresh L6 guest".into());
+            }
+            let started = Instant::now();
+            let wall_deadline = started
+                .checked_add(Duration::from_secs(wall_timeout_s))
+                .ok_or("L6 MIDI probe deadline overflow")?;
+            let guest_start = guest_now(session);
+            let main = selected_main_image(options)?;
+            let (binding, direct_hook) = if options.sd_image.is_some() {
+                let root = sd_fixture_root(options)?;
+                // Preserve stock revision and staged module validation from the existing SD fixtures.
+                sd_fixture_edits(options, &main, l6fw::Model::L6)?;
+                let loader = fs::read(
+                    root.join(crate::fixture_layout::LOADER_BUILD)
+                        .join(crate::fixture_layout::PATCH_REPORT),
+                )
+                .map_err(|e| e.to_string())?;
+                let site = l6patch::hook_report::dispatch_site(&loader, &main, "L6", midi_in)?;
+                let output = root.join(crate::fixture_layout::SD_BUNDLE_BUILD);
+                let report: Value = serde_json::from_slice(
+                    &fs::read(output.join("patch.json")).map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
+                let mut matches = Vec::new();
+                for patch in report["patches"]
+                    .as_array()
+                    .ok_or("SD report has no modules")?
+                {
+                    let filename = patch["file"]
+                        .as_str()
+                        .and_then(|s| std::path::Path::new(s).file_name())
+                        .ok_or("SD report has no module file")?;
+                    let bytes = fs::read(output.join("PATCHES").join(filename))
+                        .map_err(|e| e.to_string())?;
+                    if let Ok(offset) = l6patch::hook_report::module_hook_offset(&bytes, midi_in) {
+                        matches.push(offset);
+                    }
+                }
+                if matches.len() != 1 {
+                    return Err("expected exactly one SD MIDI module hook".into());
+                }
+                (
+                    B::Sd {
+                        dispatcher: site.target,
+                        site_index: site.index,
+                        entry_offset: matches[0],
+                    },
+                    None,
+                )
+            } else {
+                let report =
+                    fs::read(options.firmware_dir.join("patch.json")).map_err(|e| e.to_string())?;
+                let hook = l6patch::hook_report::firmware_hook(
+                    &report,
+                    &main,
+                    "L6",
+                    "midi_in_hook",
+                    midi_in,
+                )?;
+                (B::Firmware, Some(hook.target))
+            };
+            let debug = l6ctl::OwnedControl::new(&session.engine)
+                .debug_session()
+                .map_err(|e| e.to_string())?;
+            let mut scope = L6MidiProbe {
+                debug,
+                target: 0,
+                binding,
+                wall_deadline,
+                guest_start,
+                guest_timeout: guest_timeout_ms,
+                event: vec![],
+                expected: vec![],
+                phase: 0,
+            };
+            scope.command(session, C::AddBreakpoint { address: idle_loop })?;
+            scope.advance(session, 60_000)?;
+            match scope.command(session, C::Register { index: 15 })? {
+                O::Register { value, .. } if value & !1 == idle_loop => (),
+                _ => return Err("L6 did not stop at idle".into()),
+            }
+            scope.target = if let Some(hook) = direct_hook {
+                hook
+            } else {
+                let B::Sd {
+                    dispatcher,
+                    site_index,
+                    entry_offset,
+                } = scope.binding
+                else {
+                    unreachable!()
+                };
+                let timeout_ms = scope.remaining_ms(session, 60_000)?;
+                match scope.command(
+                    session,
+                    C::L6MidiResolveSd {
+                        dispatcher,
+                        site_index,
+                        entry_offset,
+                        timeout_ms,
+                    },
+                )? {
+                    O::L6MidiResolved { hook } => hook,
+                    _ => return Err("unexpected SD hook observation".into()),
+                }
+            };
+            scope.command(session, C::AddBreakpoint { address: midi_send })?;
+            scope.command(
+                session,
+                C::AddBreakpoint {
+                    address: scope.target,
+                },
+            )?;
+            scope.phase = 1;
+            let target = scope.target;
+            self.l6_midi_probe = Some(scope);
+            return Ok(json!({"hook":target}));
+        }
+        let scope = self
+            .l6_midi_probe
+            .as_mut()
+            .ok_or("L6 MIDI probe has not begun")?;
+        match operation {
+            Operation::L6MidiProbeInject if scope.phase == 1 => {
+                let timeout_ms = scope.remaining_ms(session, 60_000)?;
+                let result = scope.command(
+                    session,
+                    C::L6MidiInject {
+                        expected_hook: scope.target,
+                        binding: scope.binding.clone(),
+                        timeout_ms,
+                        leave_stopped: true,
+                    },
+                )?;
+                let O::L6MidiInjected {
+                    event,
+                    config,
+                    requires_restart: true,
+                    ..
+                } = result
+                else {
+                    return Err("unexpected L6 injection observation".into());
+                };
+                scope.expected = l6_midi_expected_ccs(&config.cc_map)?;
+                scope.event = event;
+                scope.phase = 2;
+                Ok(json!({"channel":config.channel,"expected_ccs":scope.expected}))
+            }
+            Operation::L6MidiProbeExpectHook if scope.phase == 2 => {
+                scope.advance(session, 10_000)?;
+                let timeout_ms = scope.remaining_ms(session, 60_000)?;
+                let O::L6MidiHook { pc, event } =
+                    scope.command(session, C::L6MidiHook { timeout_ms })?
+                else {
+                    return Err("unexpected hook observation".into());
+                };
+                if pc != scope.target || event != scope.event[..7] {
+                    return Err("L6 MIDI event changed before hook entry".into());
+                }
+                let timeout_ms = scope.remaining_ms(session, 60_000)?;
+                scope.command(
+                    session,
+                    C::L6MidiBreakpoint {
+                        address: scope.target,
+                        enabled: false,
+                        timeout_ms,
+                    },
+                )?;
+                scope.phase = 3;
+                Ok(json!({"hook":pc,"event":event}))
+            }
+            Operation::L6MidiProbeExpectReplies if scope.phase == 3 => {
+                scope.advance(session, 10_000)?;
+                let mut index = 0;
+                let mut replies = Vec::new();
+                for _ in 0..scope.expected.len() + 64 {
+                    let timeout_ms = scope.remaining_ms(session, 60_000)?;
+                    let O::L6MidiSender {
+                        length,
+                        route,
+                        return_pc,
+                        bytes: Some(bytes),
+                        ..
+                    } = scope.command(session, C::L6MidiSender { timeout_ms })?
+                    else {
+                        return Err("expected a three-byte L6 sender observation".into());
+                    };
+                    if length != 3
+                        || route != 1
+                        || bytes.len() != 3
+                        || bytes[0] != scope.event[4]
+                        || bytes[1] == 0xff
+                        || bytes[2] > 127
+                    {
+                        return Err(format!("invalid L6 MIDI sender event: {bytes:?}"));
+                    }
+                    let complete = l6_accept_ordered_cc(&scope.expected, &mut index, bytes[1]);
+                    replies.push(bytes);
+                    if complete {
+                        let timeout_ms = scope.remaining_ms(session, 60_000)?;
+                        scope.command(
+                            session,
+                            C::L6MidiBreakpoint {
+                                address: midi_send,
+                                enabled: false,
+                                timeout_ms,
+                            },
+                        )?;
+                        let timeout_ms = scope.remaining_ms(session, 60_000)?;
+                        scope.command(
+                            session,
+                            C::L6MidiBreakpoint {
+                                address: return_pc,
+                                enabled: true,
+                                timeout_ms,
+                            },
+                        )?;
+                        scope.advance(session, 10_000)?;
+                        let timeout_ms = scope.remaining_ms(session, 60_000)?;
+                        let O::L6MidiFinished {
+                            requires_restart: true,
+                        } = scope.command(session, C::L6MidiFinish { timeout_ms })?
+                        else {
+                            return Err("L6 MIDI probe did not finish stopped".into());
+                        };
+                        self.l6_midi_probe.take();
+                        return Ok(json!({"replies":replies,"requires_restart":true}));
+                    }
+                    let timeout_ms = scope.remaining_ms(session, 60_000)?;
+                    scope.command(session, C::L6MidiStep { timeout_ms })?;
+                    scope.advance(session, 10_000)?;
+                }
+                Err(format!(
+                    "L6 MIDI sync matched {index}/{} expected CCs",
+                    scope.expected.len()
+                ))
+            }
+            _ => Err("L6 MIDI probe actions must execute in order".into()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod l6_hook_probe_tests {
+    use super::*;
+    #[test]
+    fn map_is_channel_major_and_replies_are_ordered_with_duplicates() {
+        let mut map = [0xff; 54];
+        map[0] = 7;
+        map[6] = 9;
+        map[12] = 7;
+        map[1] = 8;
+        let expected = l6_midi_expected_ccs(&map).unwrap();
+        assert_eq!(expected, [7, 9, 7, 8]);
+        let mut index = 0;
+        for cc in [9, 7, 8, 9, 7] {
+            assert!(!l6_accept_ordered_cc(&expected, &mut index, cc));
+        }
+        assert!(l6_accept_ordered_cc(&expected, &mut index, 8));
+        assert!(l6_midi_expected_ccs(&[0xff; 54]).is_err());
+        assert!(l6_midi_expected_ccs(&[0; 53]).is_err());
     }
 }

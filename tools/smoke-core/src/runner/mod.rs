@@ -644,8 +644,19 @@ impl Runner {
                 Action::HostMidiExpectSync => {
                     return Ok(Progress::Device(devices::Operation::HostMidiExpectSync));
                 }
-                Action::L6MidiSync => {
-                    return Ok(Progress::Device(devices::Operation::L6MidiSync));
+                Action::L6MidiProbeBegin => {
+                    return Ok(Progress::Device(devices::Operation::L6MidiProbeBegin));
+                }
+                Action::L6MidiProbeInject => {
+                    return Ok(Progress::Device(devices::Operation::L6MidiProbeInject));
+                }
+                Action::L6MidiProbeExpectHook => {
+                    return Ok(Progress::Device(devices::Operation::L6MidiProbeExpectHook));
+                }
+                Action::L6MidiProbeExpectReplies => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6MidiProbeExpectReplies,
+                    ));
                 }
                 Action::L6MidiRingPinSweep { cc } => {
                     return Ok(Progress::Device(devices::Operation::L6MidiRingPinSweep {

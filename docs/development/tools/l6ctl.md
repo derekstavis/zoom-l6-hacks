@@ -351,6 +351,12 @@ For a firmware patch the binding is `{"kind":"firmware"}`. For an SD patch
 it is `{"kind":"sd","dispatcher":ADDRESS,"site_index":INDEX,"entry_offset":OFFSET}`;
 derive those values from the matching loader report and module, and verify
 the staged fixture identities. All addresses and offsets are JSON numbers.
+`l6-midi-resolve-sd` takes those three fields and `timeout_ms`, and returns
+the current relocated `hook` after checking the installed branch and registry.
+Injection checks the binding again before writing guest state.
+`l6-midi-hook` observes the hook PC and seven event bytes. `l6-midi-step` and
+`l6-midi-breakpoint` (`address`, `enabled`, `timeout_ms`) provide bounded
+stepping and owned breakpoint changes during the injected transaction.
 
 Injection changes CPU execution state that this API cannot fully restore.
 Finish restores scratch and removes breakpoints but deliberately leaves MAIN

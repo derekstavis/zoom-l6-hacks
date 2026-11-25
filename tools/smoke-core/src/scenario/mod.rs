@@ -449,7 +449,10 @@ pub enum Action {
         expect_ring_change: bool,
     },
     L6DinUsbForwarding,
-    L6MidiSync,
+    L6MidiProbeBegin,
+    L6MidiProbeInject,
+    L6MidiProbeExpectHook,
+    L6MidiProbeExpectReplies,
     L6MidiRingPinSweep {
         cc: u8,
     },

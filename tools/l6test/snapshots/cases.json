@@ -561,7 +561,7 @@
     "suites": [
       "full"
     ],
-    "definition": "3a1ea4dd1180294a7e47bf75483b4d4235947602d3e47136ffbcebc66b78cbdf"
+    "definition": "d53191bc8f62ba95d227b7a059fcad27d0f4e48517ed3fdced2ab76aea8d1a9c"
   },
   {
     "case": "l6-panel-event-map",
@@ -3158,7 +3158,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "c3cd5d99e2f55d68f868c54eef5691a808f00116bf6335474985c45016e1380b"
+    "definition": "63e77c21ca5b59b173f49ccd51291cb3ccfb6ea79cb353395c21f2e5a08ef30e"
   },
   {
     "case": "sd-midi-sync",

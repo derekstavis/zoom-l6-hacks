@@ -428,6 +428,7 @@ pub enum Action {
     KnobDialogPreflightBackgroundLayer,
     KnobDialogCallbackRace,
     KnobDialogFirstActivation,
+    KnobDialogActiveOverlay,
     KnobDialog,
     /// Turn the channel 1 level knob once on the recorder screen and check
     /// that Knob Dialog shows the new value.

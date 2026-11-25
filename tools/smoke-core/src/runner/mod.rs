@@ -816,6 +816,11 @@ impl Runner {
                         devices::Operation::KnobDialogFirstActivation,
                     ));
                 }
+                Action::KnobDialogActiveOverlay => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogActiveOverlay,
+                    ));
+                }
                 Action::KnobDialog => {
                     return Ok(Progress::Device(devices::Operation::KnobDialog));
                 }

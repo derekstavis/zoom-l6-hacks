@@ -185,7 +185,8 @@ impl State {
             Operation::KnobDialogPreflightBackgroundLayer => Some(7),
             Operation::KnobDialogCallbackRace => Some(8),
             Operation::KnobDialogFirstActivation => Some(9),
-            Operation::KnobDialog => Some(10),
+            Operation::KnobDialogActiveOverlay => Some(10),
+            Operation::KnobDialog => Some(11),
             _ => None,
         };
         if expected.is_none() && self.has_knob_preflight() {
@@ -217,6 +218,21 @@ impl State {
         } else {
             None
         };
+        if let Some((start, begin_guest, guest_budget, wall_budget, _)) = shared {
+            if deadline_exceeded(
+                start.elapsed(),
+                begin_guest,
+                guest_start,
+                guest_budget,
+                wall_budget,
+            ) {
+                let error = "knob-dialog shared deadline exceeded before step";
+                return match self.abort_knob_preflight() {
+                    Ok(()) => Err(error.into()),
+                    Err(cleanup) => Err(format!("{error}; debugger cleanup failed: {cleanup}")),
+                };
+            }
+        }
         if is_ready {
             self.knob_dialog_deadline = None;
             self.knob_dialog_baseline = None;
@@ -275,7 +291,7 @@ impl State {
         if is_ready {
             self.knob_dialog_deadline =
                 Some((started, guest_start, guest_timeout_ms, wall_timeout_s, 0));
-        } else if expected.is_some() && !matches!(expected, Some(10)) {
+        } else if expected.is_some() && !matches!(expected, Some(11)) {
             let (start, guest_start, guest_budget, wall_budget, phase) = shared.unwrap();
             self.knob_dialog_deadline =
                 Some((start, guest_start, guest_budget, wall_budget, phase + 1));
@@ -2213,8 +2229,26 @@ impl State {
                     shared.ok_or("missing shared deadline")?,
                 )
             }
-            Operation::KnobDialog => {
+            Operation::KnobDialogActiveOverlay => {
                 let baseline = self
+                    .knob_dialog_baseline
+                    .as_ref()
+                    .ok_or("missing knob-dialog baseline")?;
+                let context = self
+                    .knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?;
+                run_active_overlay(
+                    session,
+                    options,
+                    context,
+                    baseline,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )
+            }
+            Operation::KnobDialog => {
+                let _baseline = self
                     .knob_dialog_baseline
                     .take()
                     .ok_or("knob-dialog requires baseline frame")?;
@@ -2222,7 +2256,6 @@ impl State {
                     session,
                     options,
                     &mut self.knob_dialog_preflight,
-                    baseline,
                     guest_timeout_ms,
                     wall_timeout_s,
                 )

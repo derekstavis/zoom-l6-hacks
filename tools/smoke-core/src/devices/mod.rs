@@ -217,6 +217,7 @@ pub enum Operation {
     KnobDialogPreflightBackgroundLayer,
     KnobDialogCallbackRace,
     KnobDialogFirstActivation,
+    KnobDialogActiveOverlay,
     KnobDialog,
     KnobPopupOpen {
         first_steps: i32,

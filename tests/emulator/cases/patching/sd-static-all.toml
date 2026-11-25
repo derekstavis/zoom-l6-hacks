@@ -151,6 +151,10 @@ action = "include"
 path = "patches/knob-dialog/tests/emulator/fragments/expiry.toml"
 
 [[step]]
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/restoration.toml"
+
+[[step]]
 action = "knob-dialog"
 guest_timeout_ms = 180000
 wall_timeout_s = 600

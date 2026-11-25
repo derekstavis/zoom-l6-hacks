@@ -39,6 +39,7 @@ use mode_primitives::{
     embedded_midi_sync_operations,
     embedded_mode_operations,
     embedded_notification_operations,
+    embedded_restoration_operations,
 };
 use panel::*;
 use sd::*;
@@ -375,6 +376,12 @@ pub enum Operation {
     KnobDialogExpectExpiryFrame {
         after: bool,
     },
+    KnobDialogSnapshotRestoration,
+    KnobDialogCheckRestoration {
+        field: crate::scenario::RestorationField,
+    },
+    KnobDialogFinishRestoration,
+    KnobDialogExpectRestoredHeap,
     KnobDialog,
     KnobPopupOpen {
         first_steps: i32,

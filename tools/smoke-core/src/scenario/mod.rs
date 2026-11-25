@@ -31,6 +31,27 @@ pub enum Backend {
     Gui,
 }
 
+/// Named fields in the ordered, non-atomic dialog restoration snapshot.
+#[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RestorationField {
+    Window,
+    Signature,
+    Bitmap,
+    BitmapDescriptor,
+    NotificationSemaphore,
+    TextResources,
+    SharedPointer,
+    SharedContents,
+    TextLengths,
+    Widget7,
+    Widget33,
+    Background10,
+    Background37,
+    Background48,
+    Callback,
+}
+
 /// A condition that ends a held chord.
 #[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -657,6 +678,12 @@ pub enum Action {
     KnobDialogExpectExpiryFrame {
         after: bool,
     },
+    KnobDialogSnapshotRestoration,
+    KnobDialogCheckRestoration {
+        field: crate::scenario::RestorationField,
+    },
+    KnobDialogFinishRestoration,
+    KnobDialogExpectRestoredHeap,
     KnobDialog,
     /// Turn the channel 1 level knob once on the recorder screen and check
     /// that Knob Dialog shows the new value.
@@ -1052,6 +1079,31 @@ pub(crate) fn valid_knob_expiry_steps(steps: &[&Step]) -> bool {
         && matches!(&capture.action, Action::CaptureDisplay { guest_ms, artifact } if *guest_ms > 0 && *guest_ms <= capture.guest_timeout_ms && !artifact.is_empty() && artifact.len() <= 64 && artifact.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
         && matches!(scene.action, Action::KnobDialogExpectExpiryFrame { after: true })
         && matches!(notification.action, Action::KnobDialogExpectExpiryFrame { after: false }))
+}
+
+pub(crate) fn valid_knob_restoration_steps(steps: &[&Step]) -> bool {
+    use RestorationField as F;
+    const FIELDS: [F; 15] = [
+        F::Window,
+        F::Signature,
+        F::Bitmap,
+        F::BitmapDescriptor,
+        F::NotificationSemaphore,
+        F::TextResources,
+        F::SharedPointer,
+        F::SharedContents,
+        F::TextLengths,
+        F::Widget7,
+        F::Widget33,
+        F::Background10,
+        F::Background37,
+        F::Background48,
+        F::Callback,
+    ];
+    steps.len() == 18 && matches!(steps[0].action, Action::KnobDialogSnapshotRestoration)
+        && steps[1..16].iter().zip(FIELDS).all(|(step, expected)| matches!(step.action, Action::KnobDialogCheckRestoration { field } if field == expected))
+        && matches!(steps[16].action, Action::KnobDialogFinishRestoration)
+        && matches!(steps[17].action, Action::KnobDialogExpectRestoredHeap)
 }
 
 /// Expand includes. A fragment is shared, so its steps scoped only to models

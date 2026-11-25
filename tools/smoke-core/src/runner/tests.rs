@@ -1312,8 +1312,10 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
         include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/notification.toml");
     let expiry =
         include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/expiry.toml");
+    let restoration =
+        include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/restoration.toml");
     let dialog = format!(
-        "{tags}{signature}{notification}{expiry}[[step]]\naction='knob-dialog'\nguest_timeout_ms=180000\nwall_timeout_s=600\n"
+        "{tags}{signature}{notification}{expiry}{restoration}[[step]]\naction='knob-dialog'\nguest_timeout_ms=180000\nwall_timeout_s=600\n"
     );
     let modes =
         include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/mode-walk.toml");
@@ -1339,6 +1341,14 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
         .is_err()
     );
     assert!(Scenario::parse(&complete.replace("mode = 8", "mode = 7")).is_err());
+    assert!(
+        Scenario::parse(&complete.replacen(
+            "field = \"bitmap-descriptor\"",
+            "field = \"bitmap\"",
+            1
+        ))
+        .is_err()
+    );
     assert!(
         Scenario::parse(&complete.replacen("interval_ms = 100", "interval_ms = 0", 1)).is_err()
     );

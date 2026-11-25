@@ -46,6 +46,10 @@ fn knob_dialog_phase(
         | Operation::KnobDialogExpectNotificationInvariants { .. }
         | Operation::KnobDialogWaitExpiry { .. }
         | Operation::KnobDialogExpectExpiryFrame { .. }
+        | Operation::KnobDialogSnapshotRestoration
+        | Operation::KnobDialogCheckRestoration { .. }
+        | Operation::KnobDialogFinishRestoration
+        | Operation::KnobDialogExpectRestoredHeap
         | Operation::KnobDialog => next_mode
             .and_then(|index| u16::try_from(17 + index * 10 + usize::from(final_phase?)).ok()),
         Operation::CaptureDisplay { .. } if scope.is_none() && final_phase == Some(22) => {
@@ -2726,6 +2730,29 @@ impl State {
                 }
                 Ok(json!({"after":after}))
             }
+            Operation::KnobDialogSnapshotRestoration => snapshot_restoration(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
+            Operation::KnobDialogCheckRestoration { field } => check_restoration_field(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                field,
+            ),
+            Operation::KnobDialogFinishRestoration => finish_restoration(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
+            Operation::KnobDialogExpectRestoredHeap => expect_restored_heap(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
             Operation::KnobDialog => {
                 self.knob_heap_reader = None;
                 let _baseline = self
@@ -2968,6 +2995,54 @@ mod knob_phase_tests {
             },
             Operation::KnobDialogExpectExpiryFrame { after: true },
             Operation::KnobDialogExpectExpiryFrame { after: false },
+            Operation::KnobDialogSnapshotRestoration,
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::Window,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::Signature,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::Bitmap,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::BitmapDescriptor,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::NotificationSemaphore,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::TextResources,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::SharedPointer,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::SharedContents,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::TextLengths,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::Widget7,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::Widget33,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::Background10,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::Background37,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::Background48,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::Callback,
+            },
+            Operation::KnobDialogFinishRestoration,
+            Operation::KnobDialogExpectRestoredHeap,
             Operation::KnobDialog,
         ]
         .into_iter()

@@ -7,6 +7,7 @@ fn knob_dialog_phase(
     pending: Option<&PendingInput>,
     next_mode: Option<usize>,
     final_phase: Option<u8>,
+    overlay_capture: bool,
 ) -> Option<u16> {
     let fixed = match operation {
         Operation::KnobDialogGuard => Some(0),
@@ -33,8 +34,12 @@ fn knob_dialog_phase(
         Operation::KnobOverlayCheckHeap => Some(26),
         Operation::KnobOverlayFinish => Some(27),
         Operation::KnobDialogBitmapZero => Some(28),
-        Operation::KnobDialogActiveOverlay => Some(29),
-        Operation::KnobDialogLockedUpdate => Some(30),
+        Operation::KnobOverlayRefreshBegin => Some(29),
+        Operation::KnobOverlayRefreshValue => Some(30),
+        Operation::CaptureDisplay { .. } if scope.is_none() && overlay_capture => Some(31),
+        Operation::KnobOverlayRefreshPixels => Some(32),
+        Operation::KnobOverlayRefreshFinish => Some(33),
+        Operation::KnobDialogLockedUpdate => Some(34),
         Operation::KnobOverlayCheckDescriptor { field } => Some(
             16 + match field {
                 crate::scenario::OverlayDescriptorField::Widget7 => 0,
@@ -45,7 +50,7 @@ fn knob_dialog_phase(
             },
         ),
         Operation::KnobDialogModeBegin { .. } => {
-            next_mode.and_then(|index| u16::try_from(31 + index * 10).ok())
+            next_mode.and_then(|index| u16::try_from(35 + index * 10).ok())
         }
         Operation::KnobDialogAdaptive { .. }
         | Operation::KnobDialogInjectInvalidTag { .. }
@@ -74,12 +79,12 @@ fn knob_dialog_phase(
         | Operation::KnobDialogSnapshotNavigation
         | Operation::KnobDialogCheckNavigation { .. }
         | Operation::KnobDialog => next_mode
-            .and_then(|index| u16::try_from(31 + index * 10 + usize::from(final_phase?)).ok()),
+            .and_then(|index| u16::try_from(35 + index * 10 + usize::from(final_phase?)).ok()),
         Operation::CaptureDisplay { .. }
             if scope.is_none() && matches!(final_phase, Some(22 | 44 | 47)) =>
         {
             next_mode
-                .and_then(|index| u16::try_from(31 + index * 10 + usize::from(final_phase?)).ok())
+                .and_then(|index| u16::try_from(35 + index * 10 + usize::from(final_phase?)).ok())
         }
         _ => None,
     };
@@ -104,7 +109,7 @@ fn knob_dialog_phase(
         Operation::KnobDialogModeEnd => 9,
         _ => return None,
     };
-    Some(31 + scope.index as u16 * 10 + offset)
+    Some(35 + scope.index as u16 * 10 + offset)
 }
 
 type KnobDeadline = (Instant, u32, u32, u64, u16);
@@ -397,6 +402,9 @@ impl State {
             self.pending_input.as_ref(),
             self.knob_dialog_preflight.as_ref().map(knob_mode_index),
             self.knob_dialog_preflight.as_ref().map(final_phase),
+            self.knob_dialog_preflight
+                .as_ref()
+                .is_some_and(expecting_overlay_refresh),
         );
         let deadline_operation = expected.map(|_| matches!(operation, Operation::KnobDialog));
         if expected.is_none() && self.has_knob_preflight() {
@@ -2664,21 +2672,55 @@ impl State {
                 self.overlay_reader = None;
                 Ok(value)
             }
-            operation @ (Operation::KnobDialogBitmapZero | Operation::KnobDialogActiveOverlay) => {
-                let phase = match operation {
-                    Operation::KnobDialogBitmapZero => OverlayPhase::BitmapZero,
-                    Operation::KnobDialogActiveOverlay => OverlayPhase::Refreshed,
-                    _ => unreachable!(),
-                };
-                run_active_overlay(
+            Operation::KnobDialogBitmapZero => run_bitmap_zero(
+                session,
+                options,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                guest_timeout_ms,
+                wall_timeout_s,
+            ),
+            Operation::KnobOverlayRefreshBegin => {
+                begin_refreshed_overlay(
                     session,
                     options,
                     self.knob_dialog_preflight
                         .as_mut()
                         .ok_or("missing knob-dialog preflight")?,
-                    phase,
-                    guest_timeout_ms,
-                    wall_timeout_s,
+                )?;
+                Ok(json!({"overlay": "opened"}))
+            }
+            Operation::KnobOverlayRefreshValue => check_refreshed_value(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobOverlayRefreshPixels => {
+                let frame = self
+                    .captured_display
+                    .as_ref()
+                    .ok_or("missing refreshed capture")?
+                    .frame;
+                check_refreshed_pixels(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    &frame,
+                )?;
+                Ok(json!({"pixels_match": true}))
+            }
+            Operation::KnobOverlayRefreshFinish => {
+                let capture = self
+                    .captured_display
+                    .take()
+                    .ok_or("missing refreshed capture")?;
+                finish_refreshed_overlay(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    capture.frame,
                 )
             }
             Operation::KnobDialogLockedUpdate => {
@@ -3038,7 +3080,14 @@ mod knob_phase_tests {
             Operation::KnobOverlayCheckHeap,
             Operation::KnobOverlayFinish,
             Operation::KnobDialogBitmapZero,
-            Operation::KnobDialogActiveOverlay,
+            Operation::KnobOverlayRefreshBegin,
+            Operation::KnobOverlayRefreshValue,
+            Operation::CaptureDisplay {
+                guest_ms: 500,
+                artifact: "window-scene-refreshed".into(),
+            },
+            Operation::KnobOverlayRefreshPixels,
+            Operation::KnobOverlayRefreshFinish,
             Operation::KnobDialogLockedUpdate,
         ];
         let start = Instant::now();
@@ -3050,7 +3099,14 @@ mod knob_phase_tests {
                      shared: &mut Option<KnobDeadline>| {
             let before = shared.expect("deadline lost before the final operation");
             assert_eq!(
-                knob_dialog_phase(operation, scope, pending, next_mode, Some(0)),
+                knob_dialog_phase(
+                    operation,
+                    scope,
+                    pending,
+                    next_mode,
+                    Some(0),
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 31
+                ),
                 Some(before.4)
             );
             *shared = advance_knob_deadline(matches!(operation, Operation::KnobDialog), before);
@@ -3286,7 +3342,7 @@ mod knob_phase_tests {
         {
             let before = shared.unwrap();
             assert_eq!(
-                knob_dialog_phase(&op, None, None, Some(3), Some(phase as u8)),
+                knob_dialog_phase(&op, None, None, Some(3), Some(phase as u8), false),
                 Some(before.4)
             );
             shared = advance_knob_deadline(matches!(op, Operation::KnobDialog), before);

@@ -137,6 +137,38 @@ pub(super) fn embedded_overlay_operations() -> Result<Vec<(String, Operation)>, 
         .collect()
 }
 
+pub(super) fn embedded_refreshed_overlay_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/refreshed-overlay.toml"
+    ))
+    .map_err(|error| format!("invalid embedded refreshed overlay fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_refreshed_overlay_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded refreshed overlay fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobOverlayRefreshBegin => Operation::KnobOverlayRefreshBegin,
+                crate::Action::KnobOverlayRefreshValue => Operation::KnobOverlayRefreshValue,
+                crate::Action::KnobOverlayRefreshPixels => Operation::KnobOverlayRefreshPixels,
+                crate::Action::KnobOverlayRefreshFinish => Operation::KnobOverlayRefreshFinish,
+                crate::Action::CaptureDisplay { guest_ms, artifact } => Operation::CaptureDisplay {
+                    guest_ms: *guest_ms,
+                    artifact: artifact.clone(),
+                },
+                _ => return Err("unsupported embedded refreshed overlay action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
 pub(super) fn embedded_mode_operations() -> Result<Vec<(String, Operation)>, String> {
     let fragment: crate::Fragment = toml::from_str(EMBEDDED_MODE_WALK)
         .map_err(|error| format!("invalid embedded knob mode fragment: {error}"))?;
@@ -707,6 +739,13 @@ impl State {
                     artifact: artifact.clone(),
                 };
                 if self.knob_mode.is_none()
+                    && self
+                        .knob_dialog_preflight
+                        .as_ref()
+                        .is_some_and(expecting_overlay_refresh)
+                {
+                    save_captured_display(&capture, &options.logs)?;
+                } else if self.knob_mode.is_none()
                     && self
                         .knob_dialog_preflight
                         .as_ref()

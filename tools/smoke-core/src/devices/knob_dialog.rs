@@ -677,6 +677,7 @@ pub(super) struct PreflightContext {
     last_mode: Option<u8>,
     final_phase: u8,
     overlay_check: Option<OverlayEvidence>,
+    overlay_refresh: bool,
     navigation: Option<l6ctl::NavigationSnapshot>,
     restoration: Option<RestorationEvidence>,
     pending_notification: Option<PendingNotification>,
@@ -822,6 +823,7 @@ pub(super) fn begin_preflight(
         last_mode: None,
         final_phase: 0,
         overlay_check: None,
+        overlay_refresh: false,
         navigation: None,
         restoration: None,
         pending_notification: None,
@@ -1902,26 +1904,15 @@ pub(super) fn finish_overlay_invariants(
     Ok(json!({"overlay_invariants":true}))
 }
 
-#[derive(Clone, Copy)]
-pub(super) enum OverlayPhase {
-    BitmapZero,
-    Refreshed,
-}
-
-pub(super) fn run_active_overlay(
+pub(super) fn run_bitmap_zero(
     session: &Session,
     options: &Options,
     context: &mut PreflightContext,
-    phase: OverlayPhase,
     guest_timeout_ms: u32,
     wall_timeout_s: u64,
 ) -> Result<Value, Box<dyn std::error::Error>> {
     use std::time::Instant;
-    let expected = match phase {
-        OverlayPhase::BitmapZero => 11,
-        OverlayPhase::Refreshed => 12,
-    };
-    if context.next != expected {
+    if context.next != 11 {
         return Err("knob-dialog active overlay step is out of order".into());
     }
     let main = selected_main_image(options).map_err(std::io::Error::other)?;
@@ -1969,49 +1960,6 @@ pub(super) fn run_active_overlay(
             .save(options.logs.join(format!("{name}.png")))?;
         Ok(raw)
     };
-    let expected_value = |mode: u32, raw: u8| -> String {
-        let table = |offset: usize| {
-            f32::from_le_bytes(
-                main[offset + raw as usize * 4..offset + raw as usize * 4 + 4]
-                    .try_into()
-                    .unwrap(),
-            )
-        };
-        match mode {
-            0 | 2 | 3 => {
-                let db = table(0xa5138);
-                if db > 0.0 {
-                    format!("+{db:.2} dB")
-                } else {
-                    format!("{db:.2} dB")
-                }
-            }
-            1 => {
-                let hz = table(0xa5738);
-                if hz < 1000.0 {
-                    format!("{hz:.0} Hz")
-                } else {
-                    format!("{:.2} kHz", hz / 1000.0)
-                }
-            }
-            8 => match raw {
-                63 | 64 => "CENTER".into(),
-                0..=62 => format!("L {}%", ((63 - raw as u32) * 100 + 31) / 63),
-                _ => format!("R {}%", ((raw as u32 - 64) * 100 + 31) / 63),
-            },
-            _ => format!("{}%", (raw as u32 * 100 + 63) / 127),
-        }
-    };
-    let decode_text = |address: u32| -> Result<String, Box<dyn std::error::Error>> {
-        let pointer = u32::from_le_bytes(qmp.read_memory(0, address, 4)?.try_into().unwrap());
-        let bytes = qmp.read_memory(0, pointer, 48)?;
-        let units = bytes
-            .chunks_exact(2)
-            .map(|b| u16::from_le_bytes([b[0], b[1]]))
-            .take_while(|c| *c != 0)
-            .collect::<Vec<_>>();
-        Ok(String::from_utf16(&units)?)
-    };
     let background_pointer = |index: u32| -> Result<u32, Box<dyn std::error::Error>> {
         Ok(u32::from_le_bytes(
             qmp.read_memory(0, l6max::gui_background_table + index * 4, 4)?
@@ -2020,7 +1968,6 @@ pub(super) fn run_active_overlay(
         ))
     };
     let original_bitmap = &context.original_bitmap;
-    let text_table = context.text_table;
     let debugger = context
         .debugger
         .as_mut()
@@ -2031,13 +1978,9 @@ pub(super) fn run_active_overlay(
         context.opened.as_ref().ok_or("missing active overlay")?,
     )?;
     let opened = context.opened.as_ref().unwrap();
-    let active = opened.frame;
     let active_slot5 = opened.callback;
-    let TaskContexts {
-        hook_task,
-        callback_task,
-    } = context.task_contexts.ok_or("missing task contexts")?;
-    if matches!(phase, OverlayPhase::BitmapZero) {
+    context.task_contexts.ok_or("missing task contexts")?;
+    {
         let state = l6max::gui_bitmap_table_entry_0;
         let null_bitmap_background = background_pointer(47)?;
         if u16::from_le_bytes(
@@ -2076,34 +2019,101 @@ pub(super) fn run_active_overlay(
             );
         }
         context.next = 12;
-        return Ok(json!({"bitmap_zero_guard_safe": true}));
+        Ok(json!({"bitmap_zero_guard_safe": true}))
     }
+}
+
+pub(super) fn expecting_overlay_refresh(context: &PreflightContext) -> bool {
+    context.overlay_refresh
+}
+
+pub(super) fn begin_refreshed_overlay(
+    session: &Session,
+    options: &Options,
+    context: &mut PreflightContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if context.next != 12 {
+        return Err("knob-dialog active overlay step is out of order".into());
+    }
+    let main = selected_main_image(options).map_err(std::io::Error::other)?;
+    if main.get(0x40c..0x410) != Some(&0x8007eea9u32.to_le_bytes()) {
+        return Err("patched startup hook does not reserve popup RAM".into());
+    }
+    let opened = context.opened.as_ref().ok_or("missing active overlay")?;
+    validate_opened_overlay(
+        session,
+        context
+            .debugger
+            .as_mut()
+            .ok_or("missing knob-dialog debugger")?,
+        opened,
+    )?;
+    context.task_contexts.ok_or("missing task contexts")?;
+    if context.overlay_heap.is_none() {
+        return Err("missing overlay invariants".into());
+    }
+    context.overlay_refresh = true;
+    Ok(())
+}
+
+pub(super) fn check_refreshed_value(
+    session: &Session,
+    context: &PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let reader = control.knob_popup_reader()?;
+    let text = reader.text_at_table(context.text_table)?;
+    let raw = reader.level()?;
+    if !knob_display_matches(9, &locked_level_expected(raw), &text) {
+        return Err(format!("custom window value mismatch: {text:?}").into());
+    }
+    Ok(json!({"value": text, "raw": raw}))
+}
+
+fn stable_refreshed_overlay(active: &[u8; 1024], refreshed: &[u8; 1024]) -> bool {
+    let pixel = |frame: &[u8; 1024], x: usize, y: usize| {
+        frame[((63 - y) / 8) * 128 + x] & (1 << ((63 - y) % 8)) != 0
+    };
+    (0..64).all(|y| {
+        (0..128).all(|x| {
+            (30..97).contains(&x) && (33..64).contains(&y)
+                || pixel(active, x, y) == pixel(refreshed, x, y)
+        })
+    })
+}
+
+pub(super) fn check_refreshed_pixels(
+    context: &PreflightContext,
+    refreshed: &[u8; 1024],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let active = &context
+        .opened
+        .as_ref()
+        .ok_or("missing active overlay")?
+        .frame;
+    if !stable_refreshed_overlay(active, refreshed) {
+        return Err("recorder redraw changed the custom overlay outside its value widget".into());
+    }
+    Ok(())
+}
+
+pub(super) fn finish_refreshed_overlay(
+    context: &mut PreflightContext,
+    refreshed: [u8; 1024],
+) -> Result<Value, Box<dyn std::error::Error>> {
     let (heap_live, state_heap_bytes) = context
         .overlay_heap
         .take()
         .ok_or("missing overlay invariants")?;
-    let value_text = decode_text(text_table + 179 * 4)?;
-    let raw = qmp.read_memory(0, l6max::mixer_channel_levels, 1)?[0];
-    if !knob_display_matches(9, &expected_value(9, raw), &value_text) {
-        return Err(format!("custom window value mismatch: {value_text:?}").into());
-    }
-    let refreshed = capture(500, "window-scene-refreshed")?;
-    let pixel = |frame: &[u8; 1024], x: usize, y: usize| {
-        frame[((63 - y) / 8) * 128 + x] & (1 << ((63 - y) % 8)) != 0
-    };
-    // The value has intentionally changed during the level demonstration.
-    // Compare the rest of the LCD, including the title and black backing,
-    // to make sure normal recorder redraws did not replace the overlay.
-    let stable_overlay = (0..64).all(|y| {
-        (0..128).all(|x| {
-            (30..97).contains(&x) && (33..64).contains(&y)
-                || pixel(&active, x, y) == pixel(&refreshed, x, y)
-        })
-    });
-    if !stable_overlay {
-        return Err("recorder redraw changed the custom overlay outside its value widget".into());
-    }
-
+    let active_slot5 = context
+        .opened
+        .as_ref()
+        .ok_or("missing active overlay")?
+        .callback;
+    let TaskContexts {
+        hook_task,
+        callback_task,
+    } = context.task_contexts.ok_or("missing task contexts")?;
     context.active = Some(ActiveSnapshot {
         active_slot5,
         heap_live,
@@ -2113,8 +2123,9 @@ pub(super) fn run_active_overlay(
         refreshed,
     });
     context.next = 13;
+    context.overlay_refresh = false;
     Ok(
-        json!({"active_overlay":true, "callback":active_slot5, "heap_bytes":state_heap_bytes, "mixer_task":hook_task, "display_task":callback_task}),
+        json!({"active_overlay":true,"callback":active_slot5,"heap_bytes":state_heap_bytes,"mixer_task":hook_task,"display_task":callback_task}),
     )
 }
 
@@ -4487,6 +4498,32 @@ mod overlay_invariant_tests {
             frame[index] = 1 << ((63 - y) % 8);
             assert!(!overlay_corners_black(&frame));
             frame[index] = 0;
+        }
+    }
+}
+
+#[cfg(test)]
+mod refreshed_overlay_tests {
+    use super::stable_refreshed_overlay;
+
+    #[test]
+    fn only_value_widget_pixels_may_change() {
+        let active = [0; 1024];
+        for (x, y, allowed) in [
+            (30, 33, true),
+            (96, 63, true),
+            (29, 33, false),
+            (97, 33, false),
+            (30, 32, false),
+            (127, 63, false),
+        ] {
+            let mut refreshed = active;
+            refreshed[((63 - y) / 8) * 128 + x] |= 1 << ((63 - y) % 8);
+            assert_eq!(
+                stable_refreshed_overlay(&active, &refreshed),
+                allowed,
+                "pixel ({x},{y})"
+            );
         }
     }
 }

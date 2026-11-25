@@ -117,7 +117,10 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobOverlayCheckHeap
         | Action::KnobOverlayFinish
         | Action::KnobDialogBitmapZero
-        | Action::KnobDialogActiveOverlay
+        | Action::KnobOverlayRefreshBegin
+        | Action::KnobOverlayRefreshValue
+        | Action::KnobOverlayRefreshPixels
+        | Action::KnobOverlayRefreshFinish
         | Action::KnobDialogLockedUpdate
         | Action::KnobDialogModeBegin { .. }
         | Action::WaitKnobParameterMode { .. }

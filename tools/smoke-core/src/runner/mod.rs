@@ -965,9 +965,24 @@ impl Runner {
                 Action::KnobDialogBitmapZero => {
                     return Ok(Progress::Device(devices::Operation::KnobDialogBitmapZero));
                 }
-                Action::KnobDialogActiveOverlay => {
+                Action::KnobOverlayRefreshBegin => {
                     return Ok(Progress::Device(
-                        devices::Operation::KnobDialogActiveOverlay,
+                        devices::Operation::KnobOverlayRefreshBegin,
+                    ));
+                }
+                Action::KnobOverlayRefreshValue => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobOverlayRefreshValue,
+                    ));
+                }
+                Action::KnobOverlayRefreshPixels => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobOverlayRefreshPixels,
+                    ));
+                }
+                Action::KnobOverlayRefreshFinish => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobOverlayRefreshFinish,
                     ));
                 }
                 Action::KnobDialogLockedUpdate => {

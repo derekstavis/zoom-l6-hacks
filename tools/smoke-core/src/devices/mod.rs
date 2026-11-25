@@ -40,6 +40,7 @@ use mode_primitives::{
     embedded_navigation_operations,
     embedded_notification_operations,
     embedded_overlay_operations,
+    embedded_refreshed_overlay_operations,
     embedded_restoration_operations,
     wait_parameter_mode_checked,
 };
@@ -331,7 +332,10 @@ pub enum Operation {
     KnobOverlayCheckHeap,
     KnobOverlayFinish,
     KnobDialogBitmapZero,
-    KnobDialogActiveOverlay,
+    KnobOverlayRefreshBegin,
+    KnobOverlayRefreshValue,
+    KnobOverlayRefreshPixels,
+    KnobOverlayRefreshFinish,
     KnobDialogLockedUpdate,
     KnobDialogModeBegin {
         scene: String,

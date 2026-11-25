@@ -8,6 +8,7 @@ pub use l6max_host::input::button_source;
 pub use l6max_host::input::{InputCounters, InputSource};
 pub use l6max_host::knob_popup::{ParameterState, RecorderState, Snapshot as KnobPopupSnapshot};
 pub use l6max_host::midi_config::Config as MidiConfig;
+pub use l6max_host::update_bootloader::Outcome as InstallerOutcome;
 pub use l6max_host::update_state::{UpdateGuiState, UpdateState};
 use l6max_host::{control, engine::Engine, freertos, qmp};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -41,6 +42,7 @@ pub enum Request {
     MidiConfig,
     UpdateState,
     UpdateGuiState,
+    InstallerOutcome,
     KnobPopup { with_text: bool },
     RecorderState,
     KnobParameterState,
@@ -189,6 +191,10 @@ impl ControlClient {
         self.request_as(&Request::MidiConfig)
     }
 
+    pub fn installer_outcome(&self) -> Result<InstallerOutcome, ControlError> {
+        self.request_as(&Request::InstallerOutcome)
+    }
+
     pub fn update_state(&self) -> Result<UpdateState, ControlError> {
         self.request_as(&Request::UpdateState)
     }
@@ -309,6 +315,15 @@ impl<'a> OwnedControl<'a> {
     pub fn update_gui_state(&self) -> Result<UpdateGuiState, ControlError> {
         l6max_host::update_state::update_gui_state(self.main_qmp()?, self.engine.model())
             .map_err(ControlError::Rejected)
+    }
+
+    pub fn installer_outcome(&self) -> Result<InstallerOutcome, ControlError> {
+        self.engine
+            .installer_outcome()
+            .cloned()
+            .ok_or(ControlError::Unavailable(
+                "replacement installer was not run for this engine start",
+            ))
     }
 
     /// Enqueue a one-based encoder input, without waiting for guest acknowledgment.

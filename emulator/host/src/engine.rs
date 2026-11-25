@@ -381,6 +381,7 @@ impl Options {
 
 pub struct Engine {
     model: l6fw::Model,
+    installer_outcome: Option<crate::update_bootloader::Outcome>,
     children: Vec<Child>,
     pub inputs: Option<Arc<InputHub>>,
     pub management: Vec<QmpClient>,
@@ -396,6 +397,11 @@ impl Engine {
         self.model
     }
 
+    /// Outcome of this engine start’s replacement installer, if enabled.
+    pub fn installer_outcome(&self) -> Option<&crate::update_bootloader::Outcome> {
+        self.installer_outcome.as_ref()
+    }
+
     pub fn start(options: &Options) -> Result<Self, String> {
         let mut prepared;
         let options = if options.auto_setup {
@@ -407,6 +413,7 @@ impl Engine {
         };
         let mut engine = Self {
             model: l6fw::Model::L6max,
+            installer_outcome: None,
             children: Vec::new(),
             inputs: None,
             management: Vec::new(),
@@ -478,6 +485,7 @@ impl Engine {
             if outcome == crate::update_bootloader::Outcome::Installed {
                 crate::firmware_patches::forget_installed(state)?;
             }
+            engine.installer_outcome = Some(outcome);
         }
         let firmware = crate::firmware_patches::prepare(options, &firmware, model, sd.as_deref())?
             .canonicalize()
@@ -750,6 +758,7 @@ impl Engine {
                 engine.inputs.as_ref().unwrap().clone(),
                 model,
                 engine.management[0].clone(),
+                engine.installer_outcome.clone(),
             )?);
         }
         // The DIN MIDI bridge is always running, draining the UART socket so

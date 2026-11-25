@@ -28,74 +28,81 @@ fn knob_dialog_phase(
         Operation::KnobProbeSample => probe_index.and_then(|i| u16::try_from(6 + i * 6).ok()),
         Operation::KnobProbeRestore => probe_index.and_then(|i| u16::try_from(7 + i * 6).ok()),
         Operation::KnobProbeAssert => probe_index.and_then(|i| u16::try_from(8 + i * 6).ok()),
-        Operation::KnobDialogCallbackRace => Some(33),
-        Operation::KnobDialogFirstActivation => Some(34),
-        Operation::KnobActiveBegin => Some(35),
-        Operation::EnqueueEncoderNoAck { .. } if active_display => Some(36),
-        Operation::CaptureDisplay { .. } if active_display => Some(37),
-        Operation::KnobActiveSampleCallbacks => Some(38),
-        Operation::KnobActiveCheckCallbacks => Some(39),
-        Operation::KnobActiveCheckFrame => Some(40),
-        Operation::KnobActiveFinish => Some(41),
-        Operation::KnobLevelBegin => Some(42),
-        Operation::KnobLevelStart { .. } => Some(43),
+        Operation::KnobRaceBegin => Some(33),
+        Operation::KnobRaceWaitRegistration => Some(34),
+        Operation::KnobRaceArmCallback => Some(35),
+        Operation::KnobRaceWaitCallback => Some(36),
+        Operation::KnobRaceCapture { .. } => Some(37),
+        Operation::KnobRaceSample => Some(38),
+        Operation::KnobRaceRestore => Some(39),
+        Operation::KnobRaceAssert => Some(40),
+        Operation::KnobDialogFirstActivation => Some(41),
+        Operation::KnobActiveBegin => Some(42),
+        Operation::EnqueueEncoderNoAck { .. } if active_display => Some(43),
+        Operation::CaptureDisplay { .. } if active_display => Some(44),
+        Operation::KnobActiveSampleCallbacks => Some(45),
+        Operation::KnobActiveCheckCallbacks => Some(46),
+        Operation::KnobActiveCheckFrame => Some(47),
+        Operation::KnobActiveFinish => Some(48),
+        Operation::KnobLevelBegin => Some(49),
+        Operation::KnobLevelStart { .. } => Some(50),
         Operation::KnobLevelSweep { sweep } => Some(match sweep.direction {
-            crate::scenario::adaptive::LevelDirection::Up => 44,
-            crate::scenario::adaptive::LevelDirection::Down => 46,
+            crate::scenario::adaptive::LevelDirection::Up => 51,
+            crate::scenario::adaptive::LevelDirection::Down => 53,
         }),
-        Operation::CaptureDisplay { .. } if scope.is_none() && level_phase == Some(2) => Some(45),
-        Operation::KnobLevelExpectZero => Some(47),
-        Operation::CaptureDisplay { .. } if scope.is_none() && level_phase == Some(5) => Some(48),
-        Operation::KnobLevelFinish => Some(49),
-        Operation::KnobTaskBegin => Some(50),
-        Operation::KnobTaskArmHook => Some(51),
-        Operation::EnqueueEncoderNoAck { .. } if task_probe => Some(52),
-        Operation::KnobTaskWaitHook => Some(53),
-        Operation::KnobTaskArmCallback => Some(54),
-        Operation::KnobTaskWaitCallback => Some(55),
-        Operation::KnobTaskAssertDistinct => Some(56),
-        Operation::KnobTaskRelease => Some(57),
-        Operation::CaptureDisplay { .. } if task_capture => Some(58),
-        Operation::KnobTaskFinish => Some(59),
-        Operation::KnobOverlayBegin => Some(60),
-        Operation::KnobOverlayCheckWindow => Some(61),
-        Operation::KnobOverlaySnapshotDescriptors => Some(62),
-        Operation::KnobOverlayFinishDescriptors => Some(68),
-        Operation::KnobOverlayCheckResource => Some(69),
-        Operation::KnobOverlayCheckCorners => Some(70),
-        Operation::KnobOverlayCheckSignature => Some(71),
-        Operation::KnobOverlayCheckBitmap => Some(72),
-        Operation::KnobOverlayCheckHeap => Some(73),
-        Operation::KnobOverlayFinish => Some(74),
-        Operation::KnobBitmapBegin => Some(75),
-        Operation::KnobBitmapCheckBackground { .. } => Some(76),
-        Operation::CaptureDisplay { .. } if bitmap_capture == Some(1) => Some(77),
-        Operation::KnobBitmapStoreBefore => Some(78),
-        Operation::KnobBitmapArm => Some(79),
-        Operation::KnobBitmapWait => Some(80),
-        Operation::KnobBitmapInvoke { .. } => Some(81),
-        Operation::CaptureDisplay { .. } if bitmap_capture == Some(6) => Some(82),
-        Operation::KnobBitmapCheckFrame => Some(83),
-        Operation::KnobBitmapCheckSignature => Some(84),
-        Operation::KnobBitmapCheckDescriptor => Some(85),
-        Operation::KnobBitmapFinish => Some(86),
-        Operation::KnobOverlayReactivate { .. } => Some(87),
-        Operation::KnobOverlayWaitActive => Some(88),
-        Operation::KnobOverlayRefreshBegin => Some(89),
-        Operation::KnobOverlayRefreshValue => Some(90),
-        Operation::CaptureDisplay { .. } if scope.is_none() && overlay_capture => Some(91),
-        Operation::KnobOverlayRefreshPixels => Some(92),
-        Operation::KnobOverlayRefreshFinish => Some(93),
-        Operation::KnobLockAcquire => Some(94),
-        Operation::KnobLockTrigger { .. } => Some(95),
-        Operation::KnobLockWait => Some(96),
-        Operation::KnobLockSample => Some(97),
-        Operation::KnobLockRestore => Some(98),
-        Operation::KnobLockAssert => Some(99),
-        Operation::CaptureDisplay { .. } if scope.is_none() && locked_capture => Some(100),
-        Operation::KnobLockFinish => Some(101),
+        Operation::CaptureDisplay { .. } if scope.is_none() && level_phase == Some(2) => Some(52),
+        Operation::KnobLevelExpectZero => Some(54),
+        Operation::CaptureDisplay { .. } if scope.is_none() && level_phase == Some(5) => Some(55),
+        Operation::KnobLevelFinish => Some(56),
+        Operation::KnobTaskBegin => Some(57),
+        Operation::KnobTaskArmHook => Some(58),
+        Operation::EnqueueEncoderNoAck { .. } if task_probe => Some(59),
+        Operation::KnobTaskWaitHook => Some(60),
+        Operation::KnobTaskArmCallback => Some(61),
+        Operation::KnobTaskWaitCallback => Some(62),
+        Operation::KnobTaskAssertDistinct => Some(63),
+        Operation::KnobTaskRelease => Some(64),
+        Operation::CaptureDisplay { .. } if task_capture => Some(65),
+        Operation::KnobTaskFinish => Some(66),
+        Operation::KnobOverlayBegin => Some(67),
+        Operation::KnobOverlayCheckWindow => Some(68),
+        Operation::KnobOverlaySnapshotDescriptors => Some(69),
+        Operation::KnobOverlayFinishDescriptors => Some(75),
+        Operation::KnobOverlayCheckResource => Some(76),
+        Operation::KnobOverlayCheckCorners => Some(77),
+        Operation::KnobOverlayCheckSignature => Some(78),
+        Operation::KnobOverlayCheckBitmap => Some(79),
+        Operation::KnobOverlayCheckHeap => Some(80),
+        Operation::KnobOverlayFinish => Some(81),
+        Operation::KnobBitmapBegin => Some(82),
+        Operation::KnobBitmapCheckBackground { .. } => Some(83),
+        Operation::CaptureDisplay { .. } if bitmap_capture == Some(1) => Some(84),
+        Operation::KnobBitmapStoreBefore => Some(85),
+        Operation::KnobBitmapArm => Some(86),
+        Operation::KnobBitmapWait => Some(87),
+        Operation::KnobBitmapInvoke { .. } => Some(88),
+        Operation::CaptureDisplay { .. } if bitmap_capture == Some(6) => Some(89),
+        Operation::KnobBitmapCheckFrame => Some(90),
+        Operation::KnobBitmapCheckSignature => Some(91),
+        Operation::KnobBitmapCheckDescriptor => Some(92),
+        Operation::KnobBitmapFinish => Some(93),
+        Operation::KnobOverlayReactivate { .. } => Some(94),
+        Operation::KnobOverlayWaitActive => Some(95),
+        Operation::KnobOverlayRefreshBegin => Some(96),
+        Operation::KnobOverlayRefreshValue => Some(97),
+        Operation::CaptureDisplay { .. } if scope.is_none() && overlay_capture => Some(98),
+        Operation::KnobOverlayRefreshPixels => Some(99),
+        Operation::KnobOverlayRefreshFinish => Some(100),
+        Operation::KnobLockAcquire => Some(101),
+        Operation::KnobLockTrigger { .. } => Some(102),
+        Operation::KnobLockWait => Some(103),
+        Operation::KnobLockSample => Some(104),
+        Operation::KnobLockRestore => Some(105),
+        Operation::KnobLockAssert => Some(106),
+        Operation::CaptureDisplay { .. } if scope.is_none() && locked_capture => Some(107),
+        Operation::KnobLockFinish => Some(108),
         Operation::KnobOverlayCheckDescriptor { field } => Some(
-            63 + match field {
+            70 + match field {
                 crate::scenario::OverlayDescriptorField::Widget7 => 0,
                 crate::scenario::OverlayDescriptorField::Widget33 => 1,
                 crate::scenario::OverlayDescriptorField::Background10 => 2,
@@ -104,7 +111,7 @@ fn knob_dialog_phase(
             },
         ),
         Operation::KnobDialogModeBegin { .. } => {
-            next_mode.and_then(|index| u16::try_from(102 + index * 10).ok())
+            next_mode.and_then(|index| u16::try_from(109 + index * 10).ok())
         }
         Operation::KnobDialogAdaptive { .. }
         | Operation::KnobDialogInjectInvalidTag { .. }
@@ -133,12 +140,12 @@ fn knob_dialog_phase(
         | Operation::KnobDialogSnapshotNavigation
         | Operation::KnobDialogCheckNavigation { .. }
         | Operation::KnobDialog => next_mode
-            .and_then(|index| u16::try_from(102 + index * 10 + usize::from(final_phase?)).ok()),
+            .and_then(|index| u16::try_from(109 + index * 10 + usize::from(final_phase?)).ok()),
         Operation::CaptureDisplay { .. }
             if scope.is_none() && matches!(final_phase, Some(22 | 44 | 47)) =>
         {
             next_mode
-                .and_then(|index| u16::try_from(102 + index * 10 + usize::from(final_phase?)).ok())
+                .and_then(|index| u16::try_from(109 + index * 10 + usize::from(final_phase?)).ok())
         }
         _ => None,
     };
@@ -163,7 +170,7 @@ fn knob_dialog_phase(
         Operation::KnobDialogModeEnd => 9,
         _ => return None,
     };
-    Some(102 + scope.index as u16 * 10 + offset)
+    Some(109 + scope.index as u16 * 10 + offset)
 }
 
 type KnobDeadline = (Instant, u32, u32, u64, u16);
@@ -2623,24 +2630,66 @@ impl State {
                 }
                 Ok(result)
             }
-            Operation::KnobDialogCallbackRace => {
-                let baseline = self
-                    .knob_dialog_baseline
-                    .as_ref()
-                    .ok_or("missing knob-dialog baseline")?;
-                let context = self
-                    .knob_dialog_preflight
+            Operation::KnobRaceBegin => begin_callback_race(
+                session,
+                self.knob_dialog_preflight
                     .as_mut()
-                    .ok_or("missing knob-dialog preflight")?;
-                run_callback_race(
-                    session,
-                    options,
-                    context,
-                    baseline,
-                    guest_timeout_ms,
-                    wall_timeout_s,
-                )
-            }
+                    .ok_or("missing knob-dialog preflight")?,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobRaceWaitRegistration => wait_race_registration(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobRaceArmCallback => arm_race_callback(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobRaceWaitCallback => wait_race_callback(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobRaceCapture { guest_ms, artifact } => capture_callback_race(
+                session,
+                options,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                guest_ms,
+                &artifact,
+                guest_timeout_ms,
+                wall_timeout_s,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobRaceSample => sample_callback_race(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                self.knob_dialog_baseline
+                    .as_ref()
+                    .ok_or("missing knob-dialog baseline")?,
+            ),
+            Operation::KnobRaceRestore => restore_callback_race(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobRaceAssert => assert_callback_race(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
             Operation::KnobDialogFirstActivation => {
                 let context = self
                     .knob_dialog_preflight
@@ -3508,7 +3557,17 @@ mod knob_phase_tests {
             Operation::KnobProbeSample,
             Operation::KnobProbeRestore,
             Operation::KnobProbeAssert,
-            Operation::KnobDialogCallbackRace,
+            Operation::KnobRaceBegin,
+            Operation::KnobRaceWaitRegistration,
+            Operation::KnobRaceArmCallback,
+            Operation::KnobRaceWaitCallback,
+            Operation::KnobRaceCapture {
+                guest_ms: 150,
+                artifact: "window-scene-callback-preflight-race".into(),
+            },
+            Operation::KnobRaceSample,
+            Operation::KnobRaceRestore,
+            Operation::KnobRaceAssert,
             Operation::KnobDialogFirstActivation,
             Operation::KnobActiveBegin,
             Operation::EnqueueEncoderNoAck {
@@ -3669,31 +3728,31 @@ mod knob_phase_tests {
                     pending,
                     next_mode,
                     Some(0),
-                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 91,
-                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 100,
-                    (matches!(operation, Operation::EnqueueEncoderNoAck { .. }) && before.4 == 36)
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 98,
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 107,
+                    (matches!(operation, Operation::EnqueueEncoderNoAck { .. }) && before.4 == 43)
                         || (matches!(operation, Operation::CaptureDisplay { .. })
-                            && before.4 == 37),
+                            && before.4 == 44),
                     if (3..33).contains(&before.4) {
                         Some(usize::from((before.4 - 3) / 6))
                     } else {
                         None
                     },
-                    matches!(operation, Operation::EnqueueEncoderNoAck { .. }) && before.4 == 52,
-                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 58,
-                    if matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 45 {
+                    matches!(operation, Operation::EnqueueEncoderNoAck { .. }) && before.4 == 59,
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 65,
+                    if matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 52 {
                         Some(2)
                     } else if matches!(operation, Operation::CaptureDisplay { .. })
-                        && before.4 == 48
+                        && before.4 == 55
                     {
                         Some(5)
                     } else {
                         None
                     },
-                    if matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 77 {
+                    if matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 84 {
                         Some(1)
                     } else if matches!(operation, Operation::CaptureDisplay { .. })
-                        && before.4 == 82
+                        && before.4 == 89
                     {
                         Some(6)
                     } else {

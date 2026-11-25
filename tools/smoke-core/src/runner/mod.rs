@@ -895,8 +895,34 @@ impl Runner {
                 Action::KnobProbeAssert => {
                     return Ok(Progress::Device(devices::Operation::KnobProbeAssert));
                 }
-                Action::KnobDialogCallbackRace => {
-                    return Ok(Progress::Device(devices::Operation::KnobDialogCallbackRace));
+                Action::KnobRaceBegin => {
+                    return Ok(Progress::Device(devices::Operation::KnobRaceBegin));
+                }
+                Action::KnobRaceWaitRegistration => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobRaceWaitRegistration,
+                    ));
+                }
+                Action::KnobRaceArmCallback => {
+                    return Ok(Progress::Device(devices::Operation::KnobRaceArmCallback));
+                }
+                Action::KnobRaceWaitCallback => {
+                    return Ok(Progress::Device(devices::Operation::KnobRaceWaitCallback));
+                }
+                Action::KnobRaceSample => {
+                    return Ok(Progress::Device(devices::Operation::KnobRaceSample));
+                }
+                Action::KnobRaceRestore => {
+                    return Ok(Progress::Device(devices::Operation::KnobRaceRestore));
+                }
+                Action::KnobRaceAssert => {
+                    return Ok(Progress::Device(devices::Operation::KnobRaceAssert));
+                }
+                Action::KnobRaceCapture { guest_ms, artifact } => {
+                    return Ok(Progress::Device(devices::Operation::KnobRaceCapture {
+                        guest_ms,
+                        artifact: artifact.clone(),
+                    }));
                 }
                 Action::KnobDialogFirstActivation => {
                     return Ok(Progress::Device(

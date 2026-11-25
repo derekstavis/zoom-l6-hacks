@@ -249,6 +249,43 @@ pub(super) fn embedded_active_display_operations() -> Result<Vec<(String, Operat
         .collect()
 }
 
+pub(super) fn embedded_callback_race_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/callback-race.toml"
+    ))
+    .map_err(|error| format!("invalid embedded callback race fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_callback_race_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded callback race fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobRaceBegin => Operation::KnobRaceBegin,
+                crate::Action::KnobRaceWaitRegistration => Operation::KnobRaceWaitRegistration,
+                crate::Action::KnobRaceArmCallback => Operation::KnobRaceArmCallback,
+                crate::Action::KnobRaceWaitCallback => Operation::KnobRaceWaitCallback,
+                crate::Action::KnobRaceSample => Operation::KnobRaceSample,
+                crate::Action::KnobRaceRestore => Operation::KnobRaceRestore,
+                crate::Action::KnobRaceAssert => Operation::KnobRaceAssert,
+                crate::Action::KnobRaceCapture { guest_ms, artifact } => {
+                    Operation::KnobRaceCapture {
+                        guest_ms: *guest_ms,
+                        artifact: artifact.clone(),
+                    }
+                }
+                _ => return Err("unsupported embedded callback race action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
 pub(super) fn embedded_preflight_probe_operations() -> Result<Vec<(String, Operation)>, String> {
     let fragment: crate::Fragment = toml::from_str(include_str!(
         "../../../../patches/knob-dialog/tests/emulator/fragments/preflight-probes.toml"

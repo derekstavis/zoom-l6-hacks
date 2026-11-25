@@ -717,6 +717,24 @@ pub(super) fn run_knob_dialog_baseline(
     capture(100, "window-scene-before")
 }
 
+/// State retained across the callback first-use race probe. Deadlines are
+/// anchored at the operation that resumes the guest, not at a later step.
+struct CallbackRace {
+    semaphore_count: Vec<u8>,
+    callback: Option<u32>,
+    registration_deadline: Instant,
+    callback_deadline: Option<Instant>,
+    frame: Option<[u8; 1024]>,
+    snapshot: Option<CallbackRaceSnapshot>,
+}
+
+struct CallbackRaceSnapshot {
+    state: Vec<u8>,
+    slot: Vec<u8>,
+    frame_unchanged: bool,
+    rejected: bool,
+}
+
 pub(super) struct PreflightContext {
     original_window: Vec<u8>,
     original_bitmap: Vec<u8>,
@@ -742,6 +760,7 @@ pub(super) struct PreflightContext {
     alias_widget: Option<u32>,
     alias_layer: Option<Vec<u8>>,
     next: usize,
+    callback_race: Option<CallbackRace>,
     activation_semaphore_count: Option<Vec<u8>>,
     activation_callback: Option<u32>,
     active: Option<ActiveSnapshot>,
@@ -896,6 +915,7 @@ pub(super) fn begin_preflight(
         alias_widget: None,
         alias_layer: None,
         next: 0,
+        callback_race: None,
         activation_semaphore_count: None,
         activation_callback: None,
         active: None,
@@ -1131,166 +1151,266 @@ fn callback_first_use_ready(state: &[u8], slot: u32, expected_callback: u32, run
         && running == 0
 }
 
-pub(super) fn run_callback_race(
+pub(super) fn begin_callback_race(
     session: &Session,
-    options: &Options,
     context: &mut PreflightContext,
-    baseline: &[u8; 1024],
-    guest_timeout_ms: u32,
-    wall_timeout_s: u64,
+    shared: (Instant, u32, u32, u64, u16),
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    use std::time::Instant;
-    if context.next != 5 {
+    if context.next != 5 || context.callback_race.is_some() {
         return Err("knob-dialog race step is out of order".into());
     }
     let qmp = &session.engine.management[0];
-    let inputs = session.engine.inputs.as_ref().unwrap();
-    let notification_semaphore = context.notification_semaphore;
-    let widget7 = context.widget7;
-    let background10 = context.background10;
-    let shared_resource_pointer = context.shared_resource_pointer;
-    let original_shared_resource = &context.original_shared_resource;
-    let alias_widget = context.alias_widget.ok_or("missing alias widget")?;
-    let original_alias_layer = context.alias_layer.as_ref().ok_or("missing alias layer")?;
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
     let debugger = context
         .debugger
         .as_mut()
         .ok_or("missing knob-dialog debugger")?;
-    let capture = |duration: u32, name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
-        let start = inputs.panel.snapshot().guest_ms;
-        let begin = Instant::now();
-        let raw = loop {
-            let data = session.poll()?;
-            let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(start);
-            if elapsed >= duration {
-                break data.display;
-            }
-            if elapsed > guest_timeout_ms || begin.elapsed() > Duration::from_secs(wall_timeout_s) {
-                return Err("knob-dialog display capture exceeded its deadline".into());
-            }
-            thread::sleep(Duration::from_millis(5));
-        };
-        let native = image::GrayImage::from_fn(128, 64, |x, y| {
-            let index = ((63 - y as usize) / 8) * 128 + x as usize;
-            image::Luma([if raw[index] & (1 << ((63 - y as usize) % 8)) != 0 {
-                255
-            } else {
-                0
-            }])
-        });
-        if let Some(scene) = name.strip_prefix("window-scene-")
-            && [
-                "high", "freq", "mid", "low", "aux1", "aux2", "efx", "sub-mix", "pan", "level",
-            ]
-            .contains(&scene)
-        {
-            let path = l6max_host::paths::repository_root()
-                .join(KNOB_DIALOG_REFERENCES)
-                .join(format!("{scene}.png"));
-            check_display_reference(&raw, &path, &options.logs, name)
-                .map_err(|error| format!("knob-dialog screen {scene}: {error}"))?;
-        }
-        image::DynamicImage::ImageLuma8(native)
-            .resize(768, 384, image::imageops::FilterType::Nearest)
-            .save(options.logs.join(format!("{name}.png")))?;
-        Ok(raw)
-    };
-    // Simulate the notification manager owning its semaphore during first
-    // use. The scene must not depend on that unrelated lock.
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
     qmp.stop()?;
-    let semaphore_count = qmp.read_memory(0, notification_semaphore + 56, 4)?;
+    let semaphore_count = qmp.read_memory(0, context.notification_semaphore + 56, 4)?;
     if semaphore_count != 1u32.to_le_bytes() {
         debugger.resume_guest()?;
         return Err("notification semaphore was not available before contention check".into());
     }
-    debugger.write(notification_semaphore + 56, &0u32.to_le_bytes())?;
-    // Stop at callback registration after the mixer-side scene preflight
-    // has passed. Change a borrowed descriptor before DisplayCycle2 can
-    // render so the callback-side preflight gets exercised deterministically.
-    use firmware_api::l6max::gui_display_callback_register;
-    debugger.breakpoint(gui_display_callback_register, true)?;
+    debugger.write(context.notification_semaphore + 56, &0u32.to_le_bytes())?;
+    debugger.breakpoint(firmware_api::l6max::gui_display_callback_register, true)?;
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
     debugger.resume_guest()?;
     inputs.knob(0, -1)?;
-    let registration_deadline = Instant::now() + Duration::from_secs(10);
+    context.callback_race = Some(CallbackRace {
+        semaphore_count,
+        callback: None,
+        registration_deadline: Instant::now() + Duration::from_secs(10),
+        callback_deadline: None,
+        frame: None,
+        snapshot: None,
+    });
+    Ok(json!({"semaphore_held": true, "delta": -1}))
+}
+
+fn race_deadline_expired(now: Instant, deadline: Instant) -> bool {
+    now >= deadline
+}
+
+pub(super) fn wait_race_registration(
+    session: &Session,
+    context: &mut PreflightContext,
+    shared: (Instant, u32, u32, u64, u16),
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let race = context
+        .callback_race
+        .as_mut()
+        .ok_or("missing callback race")?;
+    if race.callback.is_some() {
+        return Err("callback registration already observed".into());
+    }
+    let qmp = &session.engine.management[0];
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
     while qmp.query_status()?.running {
         session.poll()?;
-        if Instant::now() >= registration_deadline {
-            let _ = debugger.breakpoint(gui_display_callback_register, false);
-            let _ = debugger.resume_guest();
+        if race_deadline_expired(Instant::now(), race.registration_deadline) {
             return Err("first-use callback registration breakpoint timed out".into());
         }
+        remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
         thread::sleep(Duration::from_millis(5));
     }
-    let registration_pc = debugger.read_register(15)? & !1;
-    let callback_slot = debugger.read_register(0)?;
-    let callback_pointer = debugger.read_register(1)?;
-    if registration_pc != gui_display_callback_register
-        || callback_slot != 5
-        || callback_pointer & 1 == 0
-    {
-        let _ = debugger.breakpoint(gui_display_callback_register, false);
-        let _ = debugger.resume_guest();
-        return Err(format!(
-        "unexpected display callback registration: pc={registration_pc:#010x}, slot={callback_slot}, callback={callback_pointer:#010x}"
-    )
-    .into());
+    if race_deadline_expired(Instant::now(), race.registration_deadline) {
+        return Err("first-use callback registration breakpoint timed out".into());
     }
-    let callback_entry = callback_pointer & !1;
-    debugger.breakpoint(callback_entry, true)?;
-    debugger.breakpoint(gui_display_callback_register, false)?;
-    debugger.write(alias_widget, &4u16.to_le_bytes())?;
+    let debugger = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?;
+    let pc = debugger.read_register(15)? & !1;
+    let slot = debugger.read_register(0)?;
+    let callback = debugger.read_register(1)?;
+    if pc != firmware_api::l6max::gui_display_callback_register || slot != 5 || callback & 1 == 0 {
+        return Err(format!("unexpected display callback registration: pc={pc:#010x}, slot={slot}, callback={callback:#010x}").into());
+    }
+    race.callback = Some(callback);
+    Ok(json!({"pc": pc, "slot": slot, "callback": callback}))
+}
+
+pub(super) fn arm_race_callback(
+    session: &Session,
+    context: &mut PreflightContext,
+    shared: (Instant, u32, u32, u64, u16),
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let race = context
+        .callback_race
+        .as_mut()
+        .ok_or("missing callback race")?;
+    let callback = race.callback.ok_or("missing race callback")?;
+    if race.callback_deadline.is_some() {
+        return Err("callback already armed".into());
+    }
+    let debugger = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?;
+    debugger.breakpoint(callback & !1, true)?;
+    debugger.breakpoint(firmware_api::l6max::gui_display_callback_register, false)?;
+    debugger.write(
+        context.alias_widget.ok_or("missing alias widget")?,
+        &4u16.to_le_bytes(),
+    )?;
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
     debugger.resume_guest()?;
-    let callback_deadline = Instant::now() + Duration::from_secs(10);
+    race.callback_deadline = Some(Instant::now() + Duration::from_secs(10));
+    Ok(json!({"callback": callback, "alias_layer": 4}))
+}
+
+pub(super) fn wait_race_callback(
+    session: &Session,
+    context: &mut PreflightContext,
+    shared: (Instant, u32, u32, u64, u16),
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let race = context
+        .callback_race
+        .as_mut()
+        .ok_or("missing callback race")?;
+    let callback = race.callback.ok_or("missing race callback")?;
+    let deadline = race.callback_deadline.ok_or("callback not armed")?;
+    let qmp = &session.engine.management[0];
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
     while qmp.query_status()?.running {
         session.poll()?;
-        if Instant::now() >= callback_deadline {
-            let _ = debugger.breakpoint(callback_entry, false);
-            let _ = debugger.resume_guest();
+        if race_deadline_expired(Instant::now(), deadline) {
             return Err("first DisplayCycle2 callback breakpoint timed out".into());
         }
+        remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
         thread::sleep(Duration::from_millis(5));
     }
-    let callback_pc = debugger.read_register(15)? & !1;
-    if callback_pc != callback_entry {
-        let _ = debugger.breakpoint(callback_entry, false);
-        let _ = debugger.resume_guest();
-        return Err(format!(
-        "first-use race probe stopped at {callback_pc:#010x}, not callback {callback_entry:#010x}"
-    )
-    .into());
+    if race_deadline_expired(Instant::now(), deadline) {
+        return Err("first DisplayCycle2 callback breakpoint timed out".into());
     }
-    debugger.breakpoint(callback_entry, false)?;
-    debugger.resume_guest()?;
-    let race_frame = capture(150, "window-scene-callback-preflight-race")?;
-    qmp.stop()?;
-    let race_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
-    let race_slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
-    let callback_preflight_race_rejected = race_frame == *baseline
-        && u16::from_le_bytes(race_state[..2].try_into().unwrap()) == 0x4b4e
-        && u32::from_le_bytes(race_slot5.clone().try_into().unwrap()) == callback_pointer
-        && qmp.read_memory(0, alias_widget, 1)? == [4]
-        && qmp.read_memory(0, widget7, 1)? == [1]
-        && qmp.read_memory(0, background10, 1)? == [0]
-        && qmp.read_memory(0, shared_resource_pointer, 512)? == *original_shared_resource;
-    debugger.write(alias_widget, &original_alias_layer)?;
-    debugger.resume_guest()?;
-    if !callback_preflight_race_rejected {
+    let debugger = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?;
+    let pc = debugger.read_register(15)? & !1;
+    if pc != callback & !1 {
         return Err(format!(
-        "callback-side scene preflight failed to reject descriptor drift: state={race_state:02x?}, slot5={race_slot5:02x?}, frame_unchanged={} ",
-        race_frame == *baseline
-    )
-    .into());
+            "first-use race probe stopped at {pc:#010x}, not callback {:#010x}",
+            callback & !1
+        )
+        .into());
     }
+    debugger.breakpoint(callback & !1, false)?;
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    debugger.resume_guest()?;
+    Ok(json!({"callback_pc": pc}))
+}
 
-    // Only DisplayCycle2 sets ticks; require an empty mailbox and zero
-    // ticks so neither a previous scene nor an old event can satisfy the
-    // subsequent callback-return check.
-    if race_state[2] != 0 || race_state[3] != u8::MAX {
-        return Err(format!(
-        "knob-dialog retry requires zero ticks and empty mailbox, found ticks={} pending={:#04x}",
-        race_state[2], race_state[3]
-    ).into());
+pub(super) fn capture_callback_race(
+    session: &Session,
+    options: &Options,
+    context: &mut PreflightContext,
+    duration: u32,
+    artifact: &str,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+    shared: (Instant, u32, u32, u64, u16),
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    let race = context
+        .callback_race
+        .as_mut()
+        .ok_or("missing callback race")?;
+    if race.frame.is_some() {
+        return Err("callback race frame already captured".into());
     }
+    let frame = capture_knob_frame_checked(
+        session,
+        options,
+        duration,
+        artifact,
+        guest_timeout_ms,
+        wall_timeout_s,
+        || {
+            remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, wall_timeout_s)?;
+            Ok(())
+        },
+    )?;
+    race.frame = Some(frame);
+    Ok(json!({"guest_ms": duration, "artifact": artifact}))
+}
+
+pub(super) fn sample_callback_race(
+    session: &Session,
+    context: &mut PreflightContext,
+    baseline: &[u8; 1024],
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let race = context
+        .callback_race
+        .as_mut()
+        .ok_or("missing callback race")?;
+    if race.snapshot.is_some() {
+        return Err("callback race already sampled".into());
+    }
+    let callback = race.callback.ok_or("missing race callback")?;
+    let qmp = &session.engine.management[0];
+    qmp.stop()?;
+    let state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
+    let slot = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
+    let frame_unchanged = race.frame.as_ref().ok_or("callback race frame missing")? == baseline;
+    let rejected = frame_unchanged
+        && u16::from_le_bytes(state[..2].try_into().unwrap()) == 0x4b4e
+        && u32::from_le_bytes(slot.clone().try_into().unwrap()) == callback
+        && qmp.read_memory(0, context.alias_widget.ok_or("missing alias widget")?, 1)? == [4]
+        && qmp.read_memory(0, context.widget7, 1)? == [1]
+        && qmp.read_memory(0, context.background10, 1)? == [0]
+        && qmp.read_memory(0, context.shared_resource_pointer, 512)?
+            == context.original_shared_resource;
+    race.snapshot = Some(CallbackRaceSnapshot {
+        state,
+        slot,
+        frame_unchanged,
+        rejected,
+    });
+    Ok(json!({"sampled": true}))
+}
+
+pub(super) fn restore_callback_race(
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let race = context
+        .callback_race
+        .as_ref()
+        .ok_or("missing callback race")?;
+    if race.snapshot.is_none() {
+        return Err("callback race not sampled".into());
+    }
+    let debugger = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?;
+    debugger.write(
+        context.alias_widget.ok_or("missing alias widget")?,
+        context.alias_layer.as_ref().ok_or("missing alias layer")?,
+    )?;
+    debugger.resume_guest()?;
+    Ok(json!({"alias_restored": true}))
+}
+
+pub(super) fn assert_callback_race(
+    session: &Session,
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let race = context
+        .callback_race
+        .as_ref()
+        .ok_or("missing callback race")?;
+    let snapshot = race.snapshot.as_ref().ok_or("callback race not sampled")?;
+    let callback = race.callback.ok_or("missing race callback")?;
+    if !snapshot.rejected {
+        return Err(format!("callback-side scene preflight failed to reject descriptor drift: state={:02x?}, slot5={:02x?}, frame_unchanged={} ", snapshot.state, snapshot.slot, snapshot.frame_unchanged).into());
+    }
+    if snapshot.state[2] != 0 || snapshot.state[3] != u8::MAX {
+        return Err(format!("knob-dialog retry requires zero ticks and empty mailbox, found ticks={} pending={:#04x}", snapshot.state[2], snapshot.state[3]).into());
+    }
+    let qmp = &session.engine.management[0];
     if !supported_display_dispatcher(&qmp.read_memory(
         0,
         DISPLAY_CYCLE2_DISPATCH_GUARD,
@@ -1298,12 +1418,13 @@ pub(super) fn run_callback_race(
     )?) {
         return Err("unsupported L6max DisplayCycle2 dispatcher revision".into());
     }
-
-    context.activation_semaphore_count = Some(semaphore_count);
-    context.activation_callback = Some(callback_pointer);
+    let race_state = snapshot.state.clone();
+    context.activation_semaphore_count = Some(race.semaphore_count.clone());
+    context.activation_callback = Some(callback);
+    context.callback_race = None;
     context.next = 6;
     Ok(
-        json!({"callback_preflight_race_rejected": true, "callback":callback_pointer, "race_state":race_state, "frame_unchanged":true}),
+        json!({"callback_preflight_race_rejected": true, "callback": callback, "race_state": race_state, "frame_unchanged": true}),
     )
 }
 
@@ -2900,6 +3021,7 @@ fn capture_knob_frame_checked(
         }
         thread::sleep(Duration::from_millis(5));
     };
+    check()?;
     let native = image::GrayImage::from_fn(128, 64, |x, y| {
         let index = ((63 - y as usize) / 8) * 128 + x as usize;
         image::Luma([if raw[index] & (1 << ((63 - y as usize) % 8)) != 0 {
@@ -2920,9 +3042,11 @@ fn capture_knob_frame_checked(
         check_display_reference(&raw, &path, &options.logs, name)
             .map_err(|error| format!("knob-dialog screen {scene}: {error}"))?;
     }
+    check()?;
     image::DynamicImage::ImageLuma8(native)
         .resize(768, 384, image::imageops::FilterType::Nearest)
         .save(options.logs.join(format!("{name}.png")))?;
+    check()?;
     Ok(raw)
 }
 
@@ -5206,5 +5330,25 @@ mod overlay_reactivation_tests {
         assert!(!overlay_reactivation_ready(0, 20));
         assert!(!overlay_reactivation_ready(255, 0));
         assert!(overlay_reactivation_ready(255, 20));
+    }
+}
+
+#[cfg(test)]
+mod callback_race_deadline_tests {
+    use super::*;
+
+    #[test]
+    fn delayed_wait_and_already_stopped_observation_keep_original_anchor() {
+        let start = Instant::now();
+        let deadline = start + Duration::from_secs(10);
+        assert!(!race_deadline_expired(
+            deadline - Duration::from_nanos(1),
+            deadline
+        ));
+        assert!(race_deadline_expired(deadline, deadline));
+        assert!(race_deadline_expired(
+            deadline + Duration::from_secs(1),
+            deadline
+        ));
     }
 }

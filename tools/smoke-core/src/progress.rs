@@ -287,6 +287,14 @@ pub fn step_label(action: &crate::Action) -> String {
             format!("Observe invalid signature for {guest_ms} ms guest time")
         }
         Action::KnobDialogSampleInvalidSignature => "Sample invalid signature rejection".into(),
+        Action::KnobDialogWaitExpiry { .. } => "Wait for dialog inactivity expiry".into(),
+        Action::KnobDialogExpectExpiryFrame { after } => {
+            if *after {
+                "Check expired frame differs from dialog".into()
+            } else {
+                "Check expired frame differs from notification".into()
+            }
+        }
         Action::KnobDialogPrepareNotification => {
             "Check dialog text and save notification baseline".into()
         }

@@ -650,6 +650,13 @@ pub enum Action {
     KnobDialogExpectNotificationInvariants {
         clear: bool,
     },
+    KnobDialogWaitExpiry {
+        interval_ms: u32,
+        limit_ms: u32,
+    },
+    KnobDialogExpectExpiryFrame {
+        after: bool,
+    },
     KnobDialog,
     /// Turn the channel 1 level knob once on the recorder screen and check
     /// that Knob Dialog shows the new value.
@@ -1037,6 +1044,14 @@ pub(crate) fn valid_knob_notification_steps(steps: &[&Step]) -> bool {
         && matches!(check.action, Action::KnobDialogExpectNotificationInvariants { clear: false })
         && matches!(&clear.action, Action::KnobDialogWaitNotificationFrame { clear: true, artifact, guest_ms, limit_ms } if valid_artifact(artifact) && *guest_ms > 0 && *limit_ms >= *guest_ms && *limit_ms <= clear.guest_timeout_ms)
         && matches!(check_clear.action, Action::KnobDialogExpectNotificationInvariants { clear: true }))
+}
+
+pub(crate) fn valid_knob_expiry_steps(steps: &[&Step]) -> bool {
+    matches!(steps, [wait, capture, scene, notification]
+        if matches!(wait.action, Action::KnobDialogWaitExpiry { interval_ms, limit_ms } if interval_ms > 0 && limit_ms >= interval_ms && limit_ms <= wait.guest_timeout_ms)
+        && matches!(&capture.action, Action::CaptureDisplay { guest_ms, artifact } if *guest_ms > 0 && *guest_ms <= capture.guest_timeout_ms && !artifact.is_empty() && artifact.len() <= 64 && artifact.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+        && matches!(scene.action, Action::KnobDialogExpectExpiryFrame { after: true })
+        && matches!(notification.action, Action::KnobDialogExpectExpiryFrame { after: false }))
 }
 
 /// Expand includes. A fragment is shared, so its steps scoped only to models

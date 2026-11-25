@@ -242,6 +242,44 @@ pub(super) fn embedded_notification_operations() -> Result<Vec<(String, Operatio
         .collect()
 }
 
+pub(super) fn embedded_expiry_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/expiry.toml"
+    ))
+    .map_err(|error| format!("invalid embedded expiry fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_knob_expiry_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded expiry fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobDialogWaitExpiry {
+                    interval_ms,
+                    limit_ms,
+                } => Operation::KnobDialogWaitExpiry {
+                    interval_ms: *interval_ms,
+                    limit_ms: *limit_ms,
+                },
+                crate::Action::CaptureDisplay { guest_ms, artifact } => Operation::CaptureDisplay {
+                    guest_ms: *guest_ms,
+                    artifact: artifact.clone(),
+                },
+                crate::Action::KnobDialogExpectExpiryFrame { after } => {
+                    Operation::KnobDialogExpectExpiryFrame { after: *after }
+                }
+                _ => return Err("unsupported embedded expiry action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
 /// Convert a mode-fragment action for the post-update lifecycle. Scenario
 /// loading validates the complete sequence before this conversion.
 pub(super) fn mode_step_operation(action: &crate::Action) -> Option<Operation> {
@@ -320,6 +358,26 @@ fn mode_operation_matches(operation: &Operation) -> bool {
             | Operation::KnobDialogExpectHeap
             | Operation::KnobDialogModeEnd
     )
+}
+
+fn save_captured_display(
+    capture: &CapturedDisplay,
+    logs: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let native = image::GrayImage::from_fn(128, 64, |x, y| {
+        let index = ((63 - y as usize) / 8) * 128 + x as usize;
+        image::Luma([
+            if capture.frame[index] & (1 << ((63 - y as usize) % 8)) != 0 {
+                255
+            } else {
+                0
+            },
+        ])
+    });
+    image::DynamicImage::ImageLuma8(native)
+        .resize(768, 384, image::imageops::FilterType::Nearest)
+        .save(logs.join(format!("{}.png", capture.artifact)))?;
+    Ok(())
 }
 
 impl State {
@@ -473,10 +531,20 @@ impl State {
                     }
                     thread::sleep(Duration::from_millis(5));
                 };
-                self.captured_display = Some(CapturedDisplay {
+                let capture = CapturedDisplay {
                     frame,
                     artifact: artifact.clone(),
-                });
+                };
+                if self.knob_mode.is_none()
+                    && self
+                        .knob_dialog_preflight
+                        .as_ref()
+                        .is_some_and(|context| final_phase(context) == 22)
+                {
+                    save_captured_display(&capture, &options.logs)?;
+                    note_expiry_capture(self.knob_dialog_preflight.as_mut().unwrap())?;
+                }
+                self.captured_display = Some(capture);
                 Ok(json!({"guest_ms":guest_ms,"artifact":artifact}))
             }
             Operation::ExpectCapturedDisplayImage { image } => {
@@ -486,19 +554,7 @@ impl State {
                     .ok_or("no display capture to check")?;
                 let path = crate::scenario::spec_path(&image)?;
                 check_display_reference(&capture.frame, &path, &options.logs, &capture.artifact)?;
-                let native = image::GrayImage::from_fn(128, 64, |x, y| {
-                    let index = ((63 - y as usize) / 8) * 128 + x as usize;
-                    image::Luma([
-                        if capture.frame[index] & (1 << ((63 - y as usize) % 8)) != 0 {
-                            255
-                        } else {
-                            0
-                        },
-                    ])
-                });
-                image::DynamicImage::ImageLuma8(native)
-                    .resize(768, 384, image::imageops::FilterType::Nearest)
-                    .save(options.logs.join(format!("{}.png", capture.artifact)))?;
+                save_captured_display(capture, &options.logs)?;
                 let artifact = capture.artifact.clone();
                 self.captured_display = None;
                 Ok(json!({"image":image,"artifact":artifact}))

@@ -421,7 +421,7 @@
     "suites": [
       "full"
     ],
-    "definition": "ead3a6e8a95b390300c8505b87f26ceb81cec26c36f20fb0ac851ec4afb24cd8"
+    "definition": "83b5030d01134546ca8d91c885430159791c1fe7546f3a3f006a4821fc53b654"
   },
   {
     "case": "knob-dialog-menu",
@@ -3002,7 +3002,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "ee23fb715b1156ae8650875bb6a734614d99ce2cb4b3815c3ad65b66aaee9952"
+    "definition": "eb42dcfa21ab26006ae955411f23240cd800704b9bc9b6385fc0657ab66c8f63"
   },
   {
     "case": "sd-din-mixer-control",
@@ -3087,7 +3087,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "b27a01c955a07ef3b11e1f463e1a8ed7424036c8ea1e34000889eed3a1425c61"
+    "definition": "0fa3e5a316f8a941390baf76a2e5fa9d2e82b36546317e5335034df4e00768be"
   },
   {
     "case": "sd-knob-dialog-dynamic",
@@ -3096,7 +3096,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "f76bae6dba94f84b6aa666a26def0387f39be6cc4fc8c3dfe377430796ce9faf"
+    "definition": "1b150db3b813814dd019bb4094487b13201412c929690ddd0e1e8787870ea5e9"
   },
   {
     "case": "sd-knob-midi",
@@ -3105,7 +3105,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "223f3e117a3f2d7dbe61367d23ad5cccff5cedaa63c9ee0317a59e7c550ea153"
+    "definition": "1b5b424cfdb1899a471bc245d4f030a6984655a9f952f902a2c4f4f5e08ab6ed"
   },
   {
     "case": "sd-knob-midi-sync-dynamic",
@@ -3226,7 +3226,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "12b99fea785e5276d86a5389e6c90fb5fb402b26508210172820de2734c345e8"
+    "definition": "1c54ba25db20d3771aa301e4963273a21f3c334b37df6afaa19cef2948b6620c"
   },
   {
     "case": "sd-warm-reset",

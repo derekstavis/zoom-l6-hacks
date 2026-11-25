@@ -44,8 +44,13 @@ fn knob_dialog_phase(
         | Operation::KnobDialogInvokeNotification { .. }
         | Operation::KnobDialogWaitNotificationFrame { .. }
         | Operation::KnobDialogExpectNotificationInvariants { .. }
+        | Operation::KnobDialogWaitExpiry { .. }
+        | Operation::KnobDialogExpectExpiryFrame { .. }
         | Operation::KnobDialog => next_mode
             .and_then(|index| u16::try_from(17 + index * 10 + usize::from(final_phase?)).ok()),
+        Operation::CaptureDisplay { .. } if scope.is_none() && final_phase == Some(22) => {
+            next_mode.and_then(|index| u16::try_from(17 + index * 10 + 22).ok())
+        }
         _ => None,
     };
     if fixed.is_some() {
@@ -2693,6 +2698,34 @@ impl State {
                     clear,
                 )
             }
+            Operation::KnobDialogWaitExpiry {
+                interval_ms,
+                limit_ms,
+            } => wait_dialog_expiry(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                interval_ms,
+                limit_ms,
+                guest_timeout_ms,
+                wall_timeout_s,
+            ),
+            Operation::KnobDialogExpectExpiryFrame { after } => {
+                let capture = self
+                    .captured_display
+                    .as_ref()
+                    .ok_or("missing expiry capture")?;
+                let context = self
+                    .knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?;
+                expect_expiry_frame(context, &capture.frame, after)?;
+                if !after {
+                    self.captured_display = None;
+                }
+                Ok(json!({"after":after}))
+            }
             Operation::KnobDialog => {
                 self.knob_heap_reader = None;
                 let _baseline = self
@@ -2925,6 +2958,16 @@ mod knob_phase_tests {
                 limit_ms: 5000,
             },
             Operation::KnobDialogExpectNotificationInvariants { clear: true },
+            Operation::KnobDialogWaitExpiry {
+                interval_ms: 100,
+                limit_ms: 10_000,
+            },
+            Operation::CaptureDisplay {
+                guest_ms: 150,
+                artifact: "expired".into(),
+            },
+            Operation::KnobDialogExpectExpiryFrame { after: true },
+            Operation::KnobDialogExpectExpiryFrame { after: false },
             Operation::KnobDialog,
         ]
         .into_iter()

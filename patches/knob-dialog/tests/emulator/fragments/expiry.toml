@@ -1,0 +1,26 @@
+[[step]]
+action = "knob-dialog-wait-expiry"
+interval_ms = 100
+limit_ms = 10000
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "capture-display"
+guest_ms = 150
+artifact = "knob-dialog-timeout-cleared"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-expect-expiry-frame"
+after = true
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-expect-expiry-frame"
+after = false
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+

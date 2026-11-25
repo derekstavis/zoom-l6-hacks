@@ -2408,7 +2408,7 @@ pub(super) fn run_knob_dialog(
         return Err("knob-dialog preflight incomplete".into());
     }
     let context = context_slot.as_ref().unwrap();
-    if context.final_phase != if prefix { 0 } else { 21 } {
+    if context.final_phase != if prefix { 0 } else { 25 } {
         return Err("knob-dialog final phases out of order".into());
     }
     if context.alias_widget.is_none()
@@ -2586,39 +2586,6 @@ pub(super) fn run_knob_dialog(
         }
         let invalid_metadata_rejected = true;
         let invalid_tag_discarded = true;
-        let notification = context
-            .pending_notification
-            .as_ref()
-            .ok_or("missing notification context")?;
-        let notification_frame = notification.frame.ok_or("missing notification frame")?;
-        let after_notification = notification
-            .after
-            .ok_or("missing cleared notification frame")?;
-        let timeout_start = inputs.panel.snapshot().guest_ms;
-        loop {
-            let ticks = qmp.read_memory(0, state + 2, 1)?[0];
-            if ticks == 0 {
-                break;
-            }
-            let now = inputs.panel.snapshot().guest_ms;
-            // The guest countdown can land on its final tick while host-side
-            // QEMU work is contending with other parallel cases. Keep a full
-            // grace interval for that last tick before treating it as stuck.
-            if now.wrapping_sub(timeout_start) >= 10_000 {
-                return Err(format!(
-                    "custom scene timeout did not finish after notification expiry; {ticks} ticks remain"
-                )
-                .into());
-            }
-            wait_guest(session, now, 100, guest_timeout_ms, wall_timeout_s)?;
-        }
-        let timeout_cleared = capture(150, "knob-dialog-timeout-cleared")?;
-        if timeout_cleared == after_notification {
-            return Err("knob dialog timeout screenshot still shows the custom scene".into());
-        }
-        if timeout_cleared == notification_frame {
-            return Err("knob dialog timeout screenshot still shows the notification".into());
-        }
         let restore_checks = [
             (
                 "window",
@@ -2793,6 +2760,7 @@ struct PendingNotification {
     guest_start: Option<u32>,
     frame: Option<[u8; 1024]>,
     after: Option<[u8; 1024]>,
+    timeout_start: Option<u32>,
 }
 
 pub(super) fn prepare_notification(
@@ -2829,6 +2797,7 @@ pub(super) fn prepare_notification(
         guest_start: None,
         frame: None,
         after: None,
+        timeout_start: None,
     });
     context.final_phase += 1;
     Ok(json!({}))
@@ -3064,8 +3033,109 @@ pub(super) fn expect_notification_invariants(
             .guest_ms;
         return Err(format!("stock notification expiry damaged or prematurely removed the custom scene: callback {callback:02x?} vs {active_slot5:08x}, resource pointer {pointer:02x?} vs {:08x}, resource {:?} vs {:?}, ticks {}, window {:02x?}, notification active {} busy {}, guest ms since notification {}", context.shared_resource_pointer, utf16(&resource), utf16(&pending.text_before), qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 2, 1)?[0], qmp.read_memory(0, l6max::current_window, 4)?, qmp.read_memory(0, l6max::notification_active, 1)?[0], qmp.read_memory(0, l6max::notification_busy, 1)?[0], now.wrapping_sub(start)).into());
     }
+    if clear {
+        let now = session
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or("missing inputs")?
+            .panel
+            .snapshot()
+            .guest_ms;
+        context
+            .pending_notification
+            .as_mut()
+            .ok_or("missing notification context")?
+            .timeout_start = Some(now);
+    }
     context.final_phase += 1;
     Ok(json!({"clear":clear}))
+}
+
+fn expiry_timed_out(start: u32, now: u32, limit_ms: u32) -> bool {
+    now.wrapping_sub(start) >= limit_ms
+}
+
+pub(super) fn wait_dialog_expiry(
+    session: &Session,
+    context: &mut PreflightContext,
+    interval_ms: u32,
+    limit_ms: u32,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.final_phase != 21 {
+        return Err("dialog expiry wait out of order".into());
+    }
+    let start = context
+        .pending_notification
+        .as_ref()
+        .ok_or("missing notification context")?
+        .timeout_start
+        .ok_or("missing expiry start")?;
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let reader = control.knob_popup_reader()?;
+    loop {
+        let ticks = reader.countdown_ticks()?;
+        if ticks == 0 {
+            break;
+        }
+        let now = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
+        if expiry_timed_out(start, now, limit_ms) {
+            return Err(format!("custom scene timeout did not finish after notification expiry; {ticks} ticks remain").into());
+        }
+        wait_guest(session, now, interval_ms, guest_timeout_ms, wall_timeout_s)?;
+    }
+    context.final_phase += 1;
+    Ok(json!({}))
+}
+
+pub(super) fn note_expiry_capture(
+    context: &mut PreflightContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if context.final_phase != 22 {
+        return Err("dialog expiry capture out of order".into());
+    }
+    context.final_phase += 1;
+    Ok(())
+}
+
+fn validate_expiry_frame(
+    frame: &[u8; 1024],
+    expected: &[u8; 1024],
+    after: bool,
+) -> Result<(), &'static str> {
+    if frame == expected {
+        Err(if after {
+            "knob dialog timeout screenshot still shows the custom scene"
+        } else {
+            "knob dialog timeout screenshot still shows the notification"
+        })
+    } else {
+        Ok(())
+    }
+}
+
+pub(super) fn expect_expiry_frame(
+    context: &mut PreflightContext,
+    frame: &[u8; 1024],
+    after: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if context.final_phase != if after { 23 } else { 24 } {
+        return Err("dialog expiry frame assertion out of order".into());
+    }
+    let pending = context
+        .pending_notification
+        .as_ref()
+        .ok_or("missing notification context")?;
+    let expected = if after {
+        pending.after.ok_or("missing cleared notification frame")?
+    } else {
+        pending.frame.ok_or("missing notification frame")?
+    };
+    validate_expiry_frame(frame, &expected, after)?;
+    context.final_phase += 1;
+    Ok(())
 }
 
 struct PendingInvalidSignature {
@@ -4246,6 +4316,35 @@ mod notification_frame_wait_tests {
         assert_eq!(
             notification_frame_wait(true, start, 4500, 5000),
             NotificationFrameWait::Changed
+        );
+    }
+}
+
+#[cfg(test)]
+mod expiry_tests {
+    use super::*;
+    #[test]
+    fn expiry_grace_uses_original_start_across_guest_wrap() {
+        let start = u32::MAX - 499;
+        assert!(!expiry_timed_out(start, 9499, 10_000));
+        assert!(expiry_timed_out(start, 9500, 10_000));
+    }
+    #[test]
+    fn both_saved_frames_are_independently_rejected() {
+        let scene = [1; 1024];
+        let notification = [2; 1024];
+        let expired = [3; 1024];
+        assert!(validate_expiry_frame(&expired, &scene, true).is_ok());
+        assert!(validate_expiry_frame(&expired, &notification, false).is_ok());
+        assert!(
+            validate_expiry_frame(&scene, &scene, true)
+                .unwrap_err()
+                .contains("custom scene")
+        );
+        assert!(
+            validate_expiry_frame(&notification, &notification, false)
+                .unwrap_err()
+                .contains("notification")
         );
     }
 }

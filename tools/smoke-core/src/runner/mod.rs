@@ -1056,6 +1056,20 @@ impl Runner {
                         devices::Operation::KnobDialogExpectNotificationInvariants { clear },
                     ));
                 }
+                Action::KnobDialogWaitExpiry {
+                    interval_ms,
+                    limit_ms,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogWaitExpiry {
+                        interval_ms,
+                        limit_ms,
+                    }));
+                }
+                Action::KnobDialogExpectExpiryFrame { after } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogExpectExpiryFrame { after },
+                    ));
+                }
                 Action::KnobDialog => {
                     return Ok(Progress::Device(devices::Operation::KnobDialog));
                 }

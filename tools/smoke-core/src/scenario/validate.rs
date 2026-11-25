@@ -759,7 +759,7 @@ impl Scenario {
                 Action::KnobDialogActiveOverlay => "knob-dialog-bitmap-zero",
                 Action::KnobDialogLockedUpdate => "knob-dialog-active-overlay",
                 Action::KnobDialogFinalBegin => "knob-dialog-mode-end",
-                Action::KnobDialog => "knob-dialog-expect-notification-invariants",
+                Action::KnobDialog => "knob-dialog-expect-expiry-frame",
                 _ => continue,
             };
             for model in &value.models {
@@ -819,6 +819,10 @@ impl Scenario {
                         "knob-dialog-active-overlay" => {
                             matches!(previous.action, Action::KnobDialogActiveOverlay)
                         }
+                        "knob-dialog-expect-expiry-frame" => matches!(
+                            previous.action,
+                            Action::KnobDialogExpectExpiryFrame { after: false }
+                        ),
                         "knob-dialog-expect-notification-invariants" => matches!(
                             previous.action,
                             Action::KnobDialogExpectNotificationInvariants { clear: true }
@@ -864,7 +868,7 @@ impl Scenario {
                     return Err("knob-dialog preflight must end with the diagnostic".into());
                 };
                 let subsequent = &applicable[..=end];
-                if subsequent.len() < 46
+                if subsequent.len() < 50
                     || !matches!(subsequent[0].action, Action::KnobDialogPreflightDescriptor)
                     || !matches!(subsequent[1].action, Action::KnobDialogPreflightTextAlias)
                     || !matches!(
@@ -885,17 +889,21 @@ impl Scenario {
                     || !matches!(subsequent[11].action, Action::KnobDialogBitmapZero)
                     || !matches!(subsequent[12].action, Action::KnobDialogActiveOverlay)
                     || !matches!(subsequent[13].action, Action::KnobDialogLockedUpdate)
-                    || !valid_knob_mode_steps(&subsequent[14..subsequent.len().saturating_sub(22)])
+                    || !valid_knob_mode_steps(&subsequent[14..subsequent.len().saturating_sub(26)])
                     || !valid_invalid_tag_steps(
-                        &subsequent[subsequent.len().saturating_sub(22)
-                            ..subsequent.len().saturating_sub(15)],
+                        &subsequent[subsequent.len().saturating_sub(26)
+                            ..subsequent.len().saturating_sub(19)],
                     )
                     || !valid_invalid_signature_steps(
-                        &subsequent[subsequent.len().saturating_sub(15)
-                            ..subsequent.len().saturating_sub(9)],
+                        &subsequent[subsequent.len().saturating_sub(19)
+                            ..subsequent.len().saturating_sub(13)],
                     )
                     || !valid_knob_notification_steps(
-                        &subsequent[subsequent.len().saturating_sub(9)..subsequent.len() - 1],
+                        &subsequent[subsequent.len().saturating_sub(13)
+                            ..subsequent.len().saturating_sub(5)],
+                    )
+                    || !valid_knob_expiry_steps(
+                        &subsequent[subsequent.len().saturating_sub(5)..subsequent.len() - 1],
                     )
                     || subsequent.iter().any(|next| {
                         next.guest_timeout_ms != step.guest_timeout_ms

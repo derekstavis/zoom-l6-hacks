@@ -8151,6 +8151,7 @@
       "enum": [
         "bad-checksum",
         "l6-stock",
+        "l6-patched-midi",
         "synthetic-valid",
         "patched-midi"
       ],

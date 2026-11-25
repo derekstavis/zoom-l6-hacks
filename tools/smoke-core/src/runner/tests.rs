@@ -1523,6 +1523,31 @@ fn synthetic_valid_handoff_requires_all_semantic_checks() {
 }
 
 #[test]
+fn l6_patched_update_requires_full_terminal_verification() {
+    let source = include_str!("../../../../tests/emulator/cases/boot/l6-update-patched-midi.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    for changed in [
+        source.replace("profile = \"verify\"", "profile = \"restart\""),
+        source.replace("guest_ms = 5000", "guest_ms = 1"),
+        source.replace(
+            "patches/midi-sync/tests/emulator/fragments/l6-hook-probe.toml",
+            "tests/emulator/fragments/l6-update-install.toml",
+        ),
+        source.replace("models = [\"l6\"]", "models = [\"l6max\"]"),
+        source.replace(
+            "update_patches.l6 = [\"midi-sync\"]",
+            "update_patches.l6 = []",
+        ),
+        source.replace(
+            "action = \"lifecycle-stop\"",
+            "action = \"delay\"\nguest_ms = 1",
+        ),
+    ] {
+        assert!(Scenario::from_text(&changed).is_err());
+    }
+}
+
+#[test]
 fn synthetic_install_requires_all_boot_and_storage_checks() {
     let source =
         include_str!("../../../../tests/emulator/cases/boot/l6max-update-valid-install.toml");

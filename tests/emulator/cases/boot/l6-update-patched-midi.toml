@@ -1,0 +1,36 @@
+version = 1
+name = "l6-update-patched-midi"
+models = ["l6"]
+backends = ["headless"]
+state = "none"
+card = "none"
+update_fixture = "l6-patched-midi"
+update_patches.l6 = ["midi-sync"]
+update_goal = "install"
+
+[case]
+suites = ["full"]
+wall_timeout_s = 1200
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/l6-update-install.toml"
+
+[[step]]
+action = "lifecycle-start"
+profile = "verify"
+
+[[step]]
+action = "delay"
+guest_ms = 5000
+guest_timeout_ms = 120000
+wall_timeout_s = 180
+
+[[step]]
+action = "include"
+path = "patches/midi-sync/tests/emulator/fragments/l6-hook-probe.toml"
+include_guest_timeout_ms = 120000
+include_wall_timeout_s = 300
+
+[[step]]
+action = "lifecycle-stop"

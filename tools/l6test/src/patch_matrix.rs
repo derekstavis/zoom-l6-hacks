@@ -721,10 +721,28 @@ fn delivery_cases(model: Model, all: &Checks) -> Result<Vec<GeneratedCase>, Stri
                 "version = 1\nname = {id:?}\nmodels = [{name:?}]\nbackends = [\"headless\"]\nstate = \"none\"\ncard = \"none\"\nupdate_patches = {{ {name} = {} }}",
                 quoted_list(&closure)
             );
-            step(
-                &mut text,
-                "action = \"firmware-update\"\nguest_timeout_ms = 300000\nwall_timeout_s = 1200",
-            );
+            if model == Model::L6 && patch == "midi-sync" {
+                text.push_str("update_fixture = \"l6-patched-midi\"\nupdate_goal = \"install\"\n");
+                include(&mut text, "tests/emulator/fragments/l6-update-install.toml");
+                step(
+                    &mut text,
+                    "action = \"lifecycle-start\"\nprofile = \"verify\"",
+                );
+                step(
+                    &mut text,
+                    "action = \"delay\"\nguest_ms = 5000\nguest_timeout_ms = 120000\nwall_timeout_s = 180",
+                );
+                step(
+                    &mut text,
+                    "action = \"include\"\npath = \"patches/midi-sync/tests/emulator/fragments/l6-hook-probe.toml\"\ninclude_guest_timeout_ms = 120000\ninclude_wall_timeout_s = 300",
+                );
+                step(&mut text, "action = \"lifecycle-stop\"");
+            } else {
+                step(
+                    &mut text,
+                    "action = \"firmware-update\"\nguest_timeout_ms = 300000\nwall_timeout_s = 1200",
+                );
+            }
             cases.push(GeneratedCase {
                 id,
                 model: name,

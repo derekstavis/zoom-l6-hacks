@@ -10,7 +10,7 @@ impl Scenario {
         validate_models(&value.models)?;
         crate::requirements::check_scope(value)?;
         if let Some(fixture) = value.update_fixture {
-            let fixture_model = if fixture == UpdateFixture::L6Stock {
+            let fixture_model = if fixture.is_l6() {
                 Model::L6
             } else {
                 Model::L6max
@@ -19,10 +19,10 @@ impl Scenario {
                 || value.backends != [Backend::Headless]
                 || value.state.is_some()
                 || value.card.is_some()
-                || (fixture != UpdateFixture::PatchedMidi && !value.update_patches.is_empty())
-                || (fixture == UpdateFixture::PatchedMidi
+                || (!fixture.is_patched() && !value.update_patches.is_empty())
+                || (fixture.is_patched()
                     && (value.update_patches.len() != 1
-                        || value.update_patches.get(&Model::L6max).map(Vec::as_slice)
+                        || value.update_patches.get(&fixture_model).map(Vec::as_slice)
                             != Some(&["midi-sync".to_string()][..])))
                 || !value.patches.is_empty()
                 || value.sd_patches.is_some()
@@ -45,12 +45,17 @@ impl Scenario {
                 .map(|step| &step.action)
                 .collect::<Vec<_>>();
             match fixture {
-                UpdateFixture::L6Stock => {
+                UpdateFixture::L6Stock | UpdateFixture::L6PatchedMidi => {
                     if value.update_goal != Some(UpdateGoal::Install) {
                         return Err("L6 update requires the full install goal".into());
                     }
+                    let prefix = if fixture == UpdateFixture::L6PatchedMidi {
+                        &actions[..actions.len().saturating_sub(7)]
+                    } else {
+                        actions.as_slice()
+                    };
                     if !matches!(
-                        actions.as_slice(),
+                        prefix,
                         [
                             Action::LifecycleStart {
                                 profile: LifecycleBoot::Initial
@@ -96,6 +101,40 @@ impl Scenario {
                         ]
                     ) {
                         return Err("L6 stock update requires both complete boots, explicit marker, installed reset vector, every segment, resource and protected-region check".into());
+                    }
+                    if fixture == UpdateFixture::L6PatchedMidi
+                        && !matches!(
+                            actions.as_slice(),
+                            [
+                                ..,
+                                Action::LifecycleStart {
+                                    profile: LifecycleBoot::Verify
+                                },
+                                Action::Delay { guest_ms: 5000 },
+                                Action::L6MidiProbeBegin,
+                                Action::L6MidiProbeInject,
+                                Action::L6MidiProbeExpectHook,
+                                Action::L6MidiProbeExpectReplies,
+                                Action::LifecycleStop
+                            ]
+                        )
+                    {
+                        return Err(
+                            "patched L6 update requires complete terminal MIDI verification".into(),
+                        );
+                    }
+                    if fixture == UpdateFixture::L6PatchedMidi {
+                        let tail = &value.step[value.step.len() - 7..];
+                        if tail[1].wall_timeout_s != 180
+                            || tail[2..6].iter().any(|step| {
+                                step.guest_timeout_ms != 120_000 || step.wall_timeout_s != 300
+                            })
+                        {
+                            return Err(
+                                "patched L6 verify needs the original readiness and probe budgets"
+                                    .into(),
+                            );
+                        }
                     }
                 }
                 UpdateFixture::PatchedMidi => {
@@ -340,7 +379,12 @@ impl Scenario {
                                     last_profile == Some(LifecycleBoot::Installer)
                                 }
                                 LifecycleBoot::Verify => {
-                                    last_profile == Some(LifecycleBoot::Restart)
+                                    last_profile
+                                        == Some(if fixture == UpdateFixture::L6PatchedMidi {
+                                            LifecycleBoot::Installer
+                                        } else {
+                                            LifecycleBoot::Restart
+                                        })
                                 }
                             } =>
                     {
@@ -397,7 +441,7 @@ impl Scenario {
                 }
             }
             let expected_end = match fixture {
-                UpdateFixture::PatchedMidi => matches!(
+                UpdateFixture::PatchedMidi | UpdateFixture::L6PatchedMidi => matches!(
                     value.step.last().map(|s| &s.action),
                     Some(Action::LifecycleStop)
                 ),
@@ -524,7 +568,11 @@ impl Scenario {
                     (_, Some(_)) => return Err("SD inspection cannot be interrupted".into()),
                     _ => {},
                 }
-                if l6_probe_finished {
+                if l6_probe_finished
+                    && !(value.update_fixture == Some(UpdateFixture::L6PatchedMidi)
+                        && matches!(step.action, Action::LifecycleStop)
+                        && std::ptr::eq(step, value.step.last().unwrap()))
+                {
                     return Err(
                         "L6 MIDI probe must be the final action for L6: it leaves MAIN stopped"
                             .into(),

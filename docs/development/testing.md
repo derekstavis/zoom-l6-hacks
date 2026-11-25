@@ -613,3 +613,12 @@ Use the `lifecycle` or `devices` suite and the relevant individual cases.
 ## Editor
 
 Use the `editor-pad-assignments` case for the emulator's editor protocol path.
+
+The full knob-dialog diagnostic owns an intrusive GDB session. On an ordinary
+step error it stops the guest, restores outstanding debugger-written regions and
+registers, removes outstanding breakpoints, and resumes only if cleanup succeeds.
+A timed-out or failed GDB request can leave the protocol or an injected call's
+internal state uncertain; an unacknowledged mailbox handoff is also uncertain. In
+these cases the diagnostic leaves the guest stopped and reports the cleanup failure. A failed QMP stop leaves guest state unknown. This
+cleanup is best effort and does not run after process termination or panic; it
+does not roll back firmware activity that ran while the guest was resumed.

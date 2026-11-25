@@ -34,6 +34,7 @@ use midi::*;
 use midi_probe::*;
 use mode_primitives::{
     embedded_active_display_operations,
+    embedded_bitmap_probe_operations,
     embedded_expiry_operations,
     embedded_invalid_signature_operations,
     embedded_invalid_tag_operations,
@@ -362,7 +363,25 @@ pub enum Operation {
     KnobOverlayCheckBitmap,
     KnobOverlayCheckHeap,
     KnobOverlayFinish,
-    KnobDialogBitmapZero,
+    KnobBitmapBegin,
+    KnobBitmapCheckBackground {
+        background: u32,
+        expected: u16,
+    },
+    KnobBitmapStoreBefore,
+    KnobBitmapArm,
+    KnobBitmapWait,
+    KnobBitmapInvoke {
+        background: u32,
+    },
+    KnobBitmapCheckFrame,
+    KnobBitmapCheckSignature,
+    KnobBitmapCheckDescriptor,
+    KnobBitmapFinish,
+    KnobOverlayReactivate {
+        delta: i32,
+    },
+    KnobOverlayWaitActive,
     KnobOverlayRefreshBegin,
     KnobOverlayRefreshValue,
     KnobOverlayRefreshPixels,

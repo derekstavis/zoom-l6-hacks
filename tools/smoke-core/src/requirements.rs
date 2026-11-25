@@ -132,7 +132,18 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobOverlayCheckBitmap
         | Action::KnobOverlayCheckHeap
         | Action::KnobOverlayFinish
-        | Action::KnobDialogBitmapZero
+        | Action::KnobBitmapBegin
+        | Action::KnobBitmapCheckBackground { .. }
+        | Action::KnobBitmapStoreBefore
+        | Action::KnobBitmapArm
+        | Action::KnobBitmapWait
+        | Action::KnobBitmapInvoke { .. }
+        | Action::KnobBitmapCheckFrame
+        | Action::KnobBitmapCheckSignature
+        | Action::KnobBitmapCheckDescriptor
+        | Action::KnobBitmapFinish
+        | Action::KnobOverlayReactivate { .. }
+        | Action::KnobOverlayWaitActive
         | Action::KnobOverlayRefreshBegin
         | Action::KnobOverlayRefreshValue
         | Action::KnobOverlayRefreshPixels

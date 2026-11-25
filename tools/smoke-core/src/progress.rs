@@ -282,6 +282,10 @@ pub fn step_label(action: &crate::Action) -> String {
         } => format!("Hold chord for {ms} ms guest time"),
         Action::KnobLevelStart { .. } => "Capture initial level demo".into(),
         Action::KnobLevelSweep { sweep } => format!("Sweep level {:?}", sweep.direction),
+        Action::KnobOverlayReactivate { delta } => {
+            format!("Reactivate zero-level overlay (delta {delta})")
+        }
+        Action::KnobOverlayWaitActive => "Wait for zero-level overlay callback".into(),
         Action::KnobProbePrepare { probe } => format!("Prepare {probe:?} preflight probe"),
         Action::KnobOverlayCheckDescriptor { field } => {
             format!("Check overlay {field:?} descriptor")

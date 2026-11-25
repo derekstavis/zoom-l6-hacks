@@ -206,6 +206,36 @@ fn read_snapshot(
     })
 }
 
+fn read_background_bitmap_id(
+    index: u32,
+    read: &mut impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
+) -> Result<u16, String> {
+    if index != 47 {
+        return Err(format!(
+            "unsupported background index {index}; only 47 is validated"
+        ));
+    }
+    let address = l6max::gui_background_table
+        .checked_add(index.checked_mul(4).ok_or("background index overflow")?)
+        .ok_or("background table overflow")?;
+    let pointer = u32::from_le_bytes(
+        read(address, 4)?
+            .try_into()
+            .map_err(|_| "short background pointer")?,
+    );
+    let field = pointer
+        .checked_add(2)
+        .ok_or("background pointer overflow")?;
+    let end = field.checked_add(2).ok_or("background pointer overflow")?;
+    if pointer < SDRAM_START || end > SDRAM_END {
+        return Err(format!("background pointer {pointer:#010x} outside SDRAM"));
+    }
+    let raw = read(field, 2)?;
+    Ok(u16::from_le_bytes(
+        raw.try_into().map_err(|_| "short background bitmap id")?,
+    ))
+}
+
 fn read_preflight_state(
     read: &mut impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
@@ -366,6 +396,15 @@ impl Reader<'_> {
             .ok_or("short mixer level".into())
     }
 
+    /// Read the bitmap identifier from a background table entry.
+    pub fn background_bitmap_id(&self, index: u32) -> Result<u16, String> {
+        read_background_bitmap_id(index, &mut |address, len| {
+            self.qmp
+                .read_memory(0, address, len)
+                .map_err(|e| e.to_string())
+        })
+    }
+
     /// Read the in-place popup state then callback slot five, in that order.
     pub fn preflight_state(&self) -> Result<(Vec<u8>, Vec<u8>), String> {
         read_preflight_state(&mut |address, len| {
@@ -487,6 +526,9 @@ impl OverlayReader {
     fn borrowed(&self) -> Reader<'_> {
         Reader { qmp: &self.qmp }
     }
+    pub fn background_bitmap_id(&self, index: u32) -> Result<u16, String> {
+        self.borrowed().background_bitmap_id(index)
+    }
     pub fn preflight_state(&self) -> Result<(Vec<u8>, Vec<u8>), String> {
         self.borrowed().preflight_state()
     }
@@ -516,6 +558,9 @@ impl OverlayReader {
         self.qmp
             .read_memory(0, semaphore + 56, 4)
             .map_err(|e| e.to_string())
+    }
+    pub fn countdown_ticks(&self) -> Result<u8, String> {
+        self.borrowed().countdown_ticks()
     }
     pub fn level(&self) -> Result<u8, String> {
         self.borrowed().level()
@@ -830,5 +875,49 @@ mod preflight_order_tests {
             .is_err()
         );
         assert_eq!(calls, 1);
+    }
+}
+
+#[cfg(test)]
+mod background_bitmap_tests {
+    use super::*;
+    #[test]
+    fn reads_table_then_bitmap_id_and_rejects_short_pointer() {
+        let mut reads = Vec::new();
+        let id = read_background_bitmap_id(47, &mut |address, len| {
+            reads.push((address, len));
+            if len == 4 {
+                Ok(0x8020_0100u32.to_le_bytes().to_vec())
+            } else {
+                Ok(0u16.to_le_bytes().to_vec())
+            }
+        })
+        .unwrap();
+        assert_eq!(id, 0);
+        assert_eq!(
+            reads,
+            [(l6max::gui_background_table + 47 * 4, 4), (0x8020_0102, 2)]
+        );
+        let mut calls = 0;
+        assert!(
+            read_background_bitmap_id(47, &mut |_, _| {
+                calls += 1;
+                Ok(vec![0; 3])
+            })
+            .is_err()
+        );
+        assert_eq!(calls, 1);
+        assert!(read_background_bitmap_id(48, &mut |_, _| panic!("invalid index read")).is_err());
+        for pointer in [0u32, SDRAM_END - 3, u32::MAX] {
+            let mut calls = 0;
+            assert!(
+                read_background_bitmap_id(47, &mut |_, _| {
+                    calls += 1;
+                    Ok(pointer.to_le_bytes().to_vec())
+                })
+                .is_err()
+            );
+            assert_eq!(calls, 1);
+        }
     }
 }

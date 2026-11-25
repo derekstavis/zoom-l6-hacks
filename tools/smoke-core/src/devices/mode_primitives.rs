@@ -154,6 +154,10 @@ pub(super) fn embedded_refreshed_overlay_operations() -> Result<Vec<(String, Ope
         .into_iter()
         .map(|step| {
             let operation = match &step.action {
+                crate::Action::KnobOverlayReactivate { delta } => {
+                    Operation::KnobOverlayReactivate { delta: *delta }
+                }
+                crate::Action::KnobOverlayWaitActive => Operation::KnobOverlayWaitActive,
                 crate::Action::KnobOverlayRefreshBegin => Operation::KnobOverlayRefreshBegin,
                 crate::Action::KnobOverlayRefreshValue => Operation::KnobOverlayRefreshValue,
                 crate::Action::KnobOverlayRefreshPixels => Operation::KnobOverlayRefreshPixels,
@@ -353,6 +357,52 @@ pub(super) fn embedded_level_demo_operations() -> Result<Vec<(String, Operation)
                     artifact: artifact.clone(),
                 },
                 _ => return Err("unsupported embedded level demo action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
+pub(super) fn embedded_bitmap_probe_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/bitmap-zero.toml"
+    ))
+    .map_err(|error| format!("invalid embedded bitmap probe fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_bitmap_probe_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded bitmap probe fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobBitmapBegin => Operation::KnobBitmapBegin,
+                crate::Action::KnobBitmapCheckBackground {
+                    background,
+                    expected,
+                } => Operation::KnobBitmapCheckBackground {
+                    background: *background,
+                    expected: *expected,
+                },
+                crate::Action::KnobBitmapStoreBefore => Operation::KnobBitmapStoreBefore,
+                crate::Action::KnobBitmapArm => Operation::KnobBitmapArm,
+                crate::Action::KnobBitmapWait => Operation::KnobBitmapWait,
+                crate::Action::KnobBitmapInvoke { background } => Operation::KnobBitmapInvoke {
+                    background: *background,
+                },
+                crate::Action::KnobBitmapCheckFrame => Operation::KnobBitmapCheckFrame,
+                crate::Action::KnobBitmapCheckSignature => Operation::KnobBitmapCheckSignature,
+                crate::Action::KnobBitmapCheckDescriptor => Operation::KnobBitmapCheckDescriptor,
+                crate::Action::KnobBitmapFinish => Operation::KnobBitmapFinish,
+                crate::Action::CaptureDisplay { guest_ms, artifact } => Operation::CaptureDisplay {
+                    guest_ms: *guest_ms,
+                    artifact: artifact.clone(),
+                },
+                _ => return Err("unsupported embedded bitmap probe action".into()),
             };
             Ok((crate::progress::step_label(&step.action), operation))
         })
@@ -959,6 +1009,18 @@ impl State {
                     artifact: artifact.clone(),
                 };
                 if self.knob_mode.is_none()
+                    && self
+                        .knob_dialog_preflight
+                        .as_ref()
+                        .and_then(bitmap_capture_phase)
+                        .is_some_and(|p| matches!(p, 1 | 6))
+                {
+                    commit_level_capture(
+                        || check_shared(control.input_status(l6ctl::InputSource::Panel)?.guest_ms),
+                        || save_captured_display(&capture, &options.logs),
+                        || note_bitmap_capture(self.knob_dialog_preflight.as_mut().unwrap()),
+                    )?;
+                } else if self.knob_mode.is_none()
                     && self
                         .knob_dialog_preflight
                         .as_ref()

@@ -268,7 +268,8 @@ message delivered just after the interval.
 | `knob-level-*` | — | Capture the bounded level sweep to at least 69% and back to 0% |
 | `knob-task-*` | — | Verify the input hook and display callback run in different FreeRTOS tasks, retaining their task IDs as evidence |
 | `knob-overlay-*` | field for descriptor checks | Check the active window, saved descriptor snapshot, resource, background pixels, bitmap and heap against the baseline using the shared overlay fragment |
-| `knob-dialog-bitmap-zero` | — | Verify bitmap ID 0 safely short-circuits an injected display-task draw |
+| `knob-bitmap-*` | — | Verify bitmap ID 0 safely short-circuits an injected display-task draw |
+| `knob-overlay-reactivate`, `knob-overlay-wait-active` | delta for reactivation | Reopen the zero-level overlay without changing its value, then wait for its callback |
 | `knob-overlay-refresh-*` | — | Check the rendered value and stable overlay pixels after the bitmap probe |
 | `knob-lock-*` | — | Verify the dialog consumes and displays a level update while the notification semaphore is held, then restore the lock and check the mailbox |
 | `knob-dialog-mode-begin` / `knob-dialog-mode-end` | `scene` on begin | Scope each declared recorder scene inside the owned debugger transaction and its overall deadline. The subsequent Pan sweep requires the final declared parameter mode to be 8. |

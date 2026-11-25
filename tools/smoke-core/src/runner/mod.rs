@@ -827,6 +827,14 @@ impl Runner {
                 Action::KnobDialogTaskContexts => {
                     return Ok(Progress::Device(devices::Operation::KnobDialogTaskContexts));
                 }
+                Action::KnobDialogOverlayInvariants => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogOverlayInvariants,
+                    ));
+                }
+                Action::KnobDialogBitmapZero => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogBitmapZero));
+                }
                 Action::KnobDialogActiveOverlay => {
                     return Ok(Progress::Device(
                         devices::Operation::KnobDialogActiveOverlay,

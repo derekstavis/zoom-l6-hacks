@@ -1259,7 +1259,7 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
     let activation = "[[step]]\naction='knob-dialog-callback-race'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-first-activation'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let active_demo = "[[step]]\naction='knob-dialog-active-display'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-level-demo'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let tasks = "[[step]]\naction='knob-dialog-task-contexts'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
-    let overlay = "[[step]]\naction='knob-dialog-active-overlay'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
+    let overlay = "[[step]]\naction='knob-dialog-overlay-invariants'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-bitmap-zero'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-active-overlay'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let locked = "[[step]]\naction='knob-dialog-locked-update'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let dialog = "[[step]]\naction='knob-dialog'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     assert!(

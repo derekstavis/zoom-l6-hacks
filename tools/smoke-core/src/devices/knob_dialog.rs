@@ -670,6 +670,7 @@ pub(super) struct PreflightContext {
     active: Option<ActiveSnapshot>,
     opened: Option<OpenedOverlay>,
     task_contexts: Option<TaskContexts>,
+    overlay_heap: Option<(Vec<u32>, u32)>,
 }
 
 pub(super) fn begin_preflight(
@@ -805,6 +806,7 @@ pub(super) fn begin_preflight(
         active: None,
         opened: None,
         task_contexts: None,
+        overlay_heap: None,
     })
 }
 
@@ -1675,15 +1677,28 @@ pub(super) fn run_task_contexts(
     Ok(json!({"mixer_task":hook_task,"display_task":callback_task,"tasks_differ":true}))
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum OverlayPhase {
+    Invariants,
+    BitmapZero,
+    Refreshed,
+}
+
 pub(super) fn run_active_overlay(
     session: &Session,
     options: &Options,
     context: &mut PreflightContext,
+    phase: OverlayPhase,
     guest_timeout_ms: u32,
     wall_timeout_s: u64,
 ) -> Result<Value, Box<dyn std::error::Error>> {
     use std::time::Instant;
-    if context.next != 10 {
+    let expected = match phase {
+        OverlayPhase::Invariants => 10,
+        OverlayPhase::BitmapZero => 11,
+        OverlayPhase::Refreshed => 12,
+    };
+    if context.next != expected {
         return Err("knob-dialog active overlay step is out of order".into());
     }
     let main = selected_main_image(options).map_err(std::io::Error::other)?;
@@ -1817,113 +1832,128 @@ pub(super) fn run_active_overlay(
         hook_task,
         callback_task,
     } = context.task_contexts.ok_or("missing task contexts")?;
-    if u32::from_le_bytes(
-        qmp.read_memory(0, l6max::current_window, 4)?
-            .try_into()
-            .unwrap(),
-    ) != u32::from_le_bytes(original_window.clone().try_into().unwrap())
-    {
-        return Err("custom overlay replaced the active firmware window".into());
-    }
-    // The scene borrows the descriptors only while it draws, so a window that
-    // opens over it draws its own title on the stock layers.
-    let shown = (
-        qmp.read_memory(0, widget7, 16)?,
-        qmp.read_memory(0, widget33, 16)?,
-        [background10, background37, background48]
-            .into_iter()
-            .map(|background| qmp.read_memory(0, background, 1))
-            .collect::<Result<Vec<_>, _>>()?,
-    );
-    let stock = (
-        original_widget7.clone(),
-        original_widget33.clone(),
-        original_background_layers.to_vec(),
-    );
-    if shown != stock {
-        return Err(format!(
+    if matches!(phase, OverlayPhase::Invariants) {
+        if u32::from_le_bytes(
+            qmp.read_memory(0, l6max::current_window, 4)?
+                .try_into()
+                .unwrap(),
+        ) != u32::from_le_bytes(original_window.clone().try_into().unwrap())
+        {
+            return Err("custom overlay replaced the active firmware window".into());
+        }
+        // The scene borrows the descriptors only while it draws, so a window that
+        // opens over it draws its own title on the stock layers.
+        let shown = (
+            qmp.read_memory(0, widget7, 16)?,
+            qmp.read_memory(0, widget33, 16)?,
+            [background10, background37, background48]
+                .into_iter()
+                .map(|background| qmp.read_memory(0, background, 1))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+        let stock = (
+            original_widget7.clone(),
+            original_widget33.clone(),
+            original_background_layers.to_vec(),
+        );
+        if shown != stock {
+            return Err(format!(
     "custom overlay kept borrowed descriptors after drawing: widgets and background layers are {shown:02x?}, stock {stock:02x?}"
 )
 .into());
-    }
-    if u32::from_le_bytes(
-        qmp.read_memory(0, text_table + 179 * 4, 4)?
-            .try_into()
-            .unwrap(),
-    ) != shared_resource_pointer
-    {
-        return Err("dialog redirected the shared text-resource pointer".into());
-    }
-    let black_pixel = |x: usize, y: usize| {
-        let index = ((63 - y) / 8) * 128 + x;
-        active[index] & (1 << ((63 - y) % 8)) == 0
-    };
-    if ![(0, 0), (127, 0), (0, 63), (127, 63)]
-        .into_iter()
-        .all(|(x, y)| black_pixel(x, y))
-    {
-        return Err("stock bitmap 22 did not paint the overlay background black".into());
-    }
-    let state = l6max::gui_bitmap_table_entry_0;
-    if u16::from_le_bytes(qmp.read_memory(0, state, 2)?.try_into().unwrap()) != 0x4b4e
-        || qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)? != *original_bitmap
-    {
-        return Err("in-place state signature or stock bitmap-36 descriptor is invalid".into());
-    }
-    let heap_live = heap()?;
-    if heap_live[0] != heap_before[0]
-        || heap_live[2] != heap_before[2]
-        || heap_live[3] != heap_before[3]
-    {
-        return Err(format!(
-            "dialog state should not allocate heap: before={heap_before:?}, live={heap_live:?}"
-        )
-        .into());
-    }
-    let state_heap_bytes = heap_before[0]
-        .checked_sub(heap_live[0])
-        .ok_or("firmware heap free-byte count increased while allocating dialog state")?;
-    if state_heap_bytes != 0 {
-        return Err(
-            format!("dialog state should not consume heap bytes, got {state_heap_bytes}").into(),
-        );
-    }
-    let null_bitmap_background = background_pointer(47)?;
-    if u16::from_le_bytes(
-        qmp.read_memory(0, null_bitmap_background + 2, 2)?
-            .try_into()
-            .unwrap(),
-    ) != 0
-    {
-        return Err("background 47 no longer uses bitmap ID 0".into());
-    }
-    let before_null_bitmap_draw = capture(50, "window-scene-before-null-bitmap-probe")?;
-    // Call the draw routine from the display task, at the dialog's own
-    // callback entry. An arbitrary stop can land in the idle task or an
-    // exception handler, where the routine can block past the deadline.
-    qmp.stop()?;
-    debugger.breakpoint(active_slot5 & !1, true)?;
-    debugger.resume_guest()?;
-    let display_task_deadline = Instant::now() + Duration::from_secs(15);
-    while qmp.query_status()?.running {
-        session.poll()?;
-        if Instant::now() >= display_task_deadline {
-            return Err("dialog callback breakpoint was not reached".into());
         }
-        thread::sleep(Duration::from_millis(5));
+        if u32::from_le_bytes(
+            qmp.read_memory(0, text_table + 179 * 4, 4)?
+                .try_into()
+                .unwrap(),
+        ) != shared_resource_pointer
+        {
+            return Err("dialog redirected the shared text-resource pointer".into());
+        }
+        let black_pixel = |x: usize, y: usize| {
+            let index = ((63 - y) / 8) * 128 + x;
+            active[index] & (1 << ((63 - y) % 8)) == 0
+        };
+        if ![(0, 0), (127, 0), (0, 63), (127, 63)]
+            .into_iter()
+            .all(|(x, y)| black_pixel(x, y))
+        {
+            return Err("stock bitmap 22 did not paint the overlay background black".into());
+        }
+        let state = l6max::gui_bitmap_table_entry_0;
+        if u16::from_le_bytes(qmp.read_memory(0, state, 2)?.try_into().unwrap()) != 0x4b4e
+            || qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)? != *original_bitmap
+        {
+            return Err("in-place state signature or stock bitmap-36 descriptor is invalid".into());
+        }
+        let heap_live = heap()?;
+        if heap_live[0] != heap_before[0]
+            || heap_live[2] != heap_before[2]
+            || heap_live[3] != heap_before[3]
+        {
+            return Err(format!(
+                "dialog state should not allocate heap: before={heap_before:?}, live={heap_live:?}"
+            )
+            .into());
+        }
+        let state_heap_bytes = heap_before[0]
+            .checked_sub(heap_live[0])
+            .ok_or("firmware heap free-byte count increased while allocating dialog state")?;
+        if state_heap_bytes != 0 {
+            return Err(format!(
+                "dialog state should not consume heap bytes, got {state_heap_bytes}"
+            )
+            .into());
+        }
+        context.overlay_heap = Some((heap_live, state_heap_bytes));
+        context.next = 11;
+        return Ok(json!({"overlay_invariants": true}));
     }
-    debugger.breakpoint(active_slot5 & !1, false)?;
-    debugger.call_thumb(l6max::gui_draw_background, &[47], Duration::from_secs(5))?;
-    debugger.resume_guest()?;
-    let after_null_bitmap_draw = capture(100, "window-scene-after-null-bitmap-probe")?;
-    if before_null_bitmap_draw != after_null_bitmap_draw
-        || u16::from_le_bytes(qmp.read_memory(0, state, 2)?.try_into().unwrap()) != 0x4b4e
-        || qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)? != *original_bitmap
-    {
-        return Err(
-            "bitmap ID 0 did not safely short-circuit while holding the state handle".into(),
-        );
+    if matches!(phase, OverlayPhase::BitmapZero) {
+        let state = l6max::gui_bitmap_table_entry_0;
+        let null_bitmap_background = background_pointer(47)?;
+        if u16::from_le_bytes(
+            qmp.read_memory(0, null_bitmap_background + 2, 2)?
+                .try_into()
+                .unwrap(),
+        ) != 0
+        {
+            return Err("background 47 no longer uses bitmap ID 0".into());
+        }
+        let before_null_bitmap_draw = capture(50, "window-scene-before-null-bitmap-probe")?;
+        // Call the draw routine from the display task, at the dialog's own
+        // callback entry. An arbitrary stop can land in the idle task or an
+        // exception handler, where the routine can block past the deadline.
+        qmp.stop()?;
+        debugger.breakpoint(active_slot5 & !1, true)?;
+        debugger.resume_guest()?;
+        let display_task_deadline = Instant::now() + Duration::from_secs(15);
+        while qmp.query_status()?.running {
+            session.poll()?;
+            if Instant::now() >= display_task_deadline {
+                return Err("dialog callback breakpoint was not reached".into());
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        debugger.breakpoint(active_slot5 & !1, false)?;
+        debugger.call_thumb(l6max::gui_draw_background, &[47], Duration::from_secs(5))?;
+        debugger.resume_guest()?;
+        let after_null_bitmap_draw = capture(100, "window-scene-after-null-bitmap-probe")?;
+        if before_null_bitmap_draw != after_null_bitmap_draw
+            || u16::from_le_bytes(qmp.read_memory(0, state, 2)?.try_into().unwrap()) != 0x4b4e
+            || qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)? != *original_bitmap
+        {
+            return Err(
+                "bitmap ID 0 did not safely short-circuit while holding the state handle".into(),
+            );
+        }
+        context.next = 12;
+        return Ok(json!({"bitmap_zero_guard_safe": true}));
     }
+    let (heap_live, state_heap_bytes) = context
+        .overlay_heap
+        .take()
+        .ok_or("missing overlay invariants")?;
     let value_text = decode_text(text_table + 179 * 4)?;
     let raw = qmp.read_memory(0, l6max::mixer_channel_levels, 1)?[0];
     if !knob_display_matches(9, &expected_value(9, raw), &value_text) {
@@ -1954,7 +1984,7 @@ pub(super) fn run_active_overlay(
         callback_task,
         refreshed,
     });
-    context.next = 11;
+    context.next = 13;
     Ok(
         json!({"active_overlay":true, "callback":active_slot5, "heap_bytes":state_heap_bytes, "mixer_task":hook_task, "display_task":callback_task}),
     )
@@ -1977,7 +2007,7 @@ pub(super) fn run_locked_value_update(
     wall_timeout_s: u64,
 ) -> Result<Value, Box<dyn std::error::Error>> {
     use std::time::Instant;
-    if context.next != 11 {
+    if context.next != 13 {
         return Err("knob-dialog locked update step is out of order".into());
     }
     let qmp = &session.engine.management[0];
@@ -2111,7 +2141,7 @@ pub(super) fn run_locked_value_update(
     .into());
     }
 
-    context.next = 12;
+    context.next = 14;
     Ok(
         json!({"notification_semaphore_not_required_for_refresh": true,
         "pending_during": pending_during_contention, "pending_after":pending_after_contention,
@@ -2258,7 +2288,7 @@ pub(super) fn run_knob_dialog(
     };
     if context_slot
         .as_ref()
-        .is_none_or(|context| context.next != 12)
+        .is_none_or(|context| context.next != 14)
     {
         return Err("knob-dialog preflight incomplete".into());
     }

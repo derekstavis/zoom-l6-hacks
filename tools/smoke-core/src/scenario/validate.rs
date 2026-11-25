@@ -106,7 +106,9 @@ impl Scenario {
                 Action::KnobDialogActiveDisplay => "knob-dialog-first-activation",
                 Action::KnobDialogLevelDemo => "knob-dialog-active-display",
                 Action::KnobDialogTaskContexts => "knob-dialog-level-demo",
-                Action::KnobDialogActiveOverlay => "knob-dialog-task-contexts",
+                Action::KnobDialogOverlayInvariants => "knob-dialog-task-contexts",
+                Action::KnobDialogBitmapZero => "knob-dialog-overlay-invariants",
+                Action::KnobDialogActiveOverlay => "knob-dialog-bitmap-zero",
                 Action::KnobDialogLockedUpdate => "knob-dialog-active-overlay",
                 Action::KnobDialog => "knob-dialog-locked-update",
                 _ => continue,
@@ -159,6 +161,12 @@ impl Scenario {
                         "knob-dialog-task-contexts" => {
                             matches!(previous.action, Action::KnobDialogTaskContexts)
                         }
+                        "knob-dialog-overlay-invariants" => {
+                            matches!(previous.action, Action::KnobDialogOverlayInvariants)
+                        }
+                        "knob-dialog-bitmap-zero" => {
+                            matches!(previous.action, Action::KnobDialogBitmapZero)
+                        }
                         "knob-dialog-active-overlay" => {
                             matches!(previous.action, Action::KnobDialogActiveOverlay)
                         }
@@ -186,9 +194,9 @@ impl Scenario {
                 let subsequent = value.step[index + 1..]
                     .iter()
                     .filter(|next| next.applies_to(*model))
-                    .take(13)
+                    .take(15)
                     .collect::<Vec<_>>();
-                if subsequent.len() != 13
+                if subsequent.len() != 15
                     || !matches!(subsequent[0].action, Action::KnobDialogPreflightDescriptor)
                     || !matches!(subsequent[1].action, Action::KnobDialogPreflightTextAlias)
                     || !matches!(
@@ -205,9 +213,11 @@ impl Scenario {
                     || !matches!(subsequent[7].action, Action::KnobDialogActiveDisplay)
                     || !matches!(subsequent[8].action, Action::KnobDialogLevelDemo)
                     || !matches!(subsequent[9].action, Action::KnobDialogTaskContexts)
-                    || !matches!(subsequent[10].action, Action::KnobDialogActiveOverlay)
-                    || !matches!(subsequent[11].action, Action::KnobDialogLockedUpdate)
-                    || !matches!(subsequent[12].action, Action::KnobDialog)
+                    || !matches!(subsequent[10].action, Action::KnobDialogOverlayInvariants)
+                    || !matches!(subsequent[11].action, Action::KnobDialogBitmapZero)
+                    || !matches!(subsequent[12].action, Action::KnobDialogActiveOverlay)
+                    || !matches!(subsequent[13].action, Action::KnobDialogLockedUpdate)
+                    || !matches!(subsequent[14].action, Action::KnobDialog)
                     || subsequent.iter().any(|next| {
                         next.guest_timeout_ms != step.guest_timeout_ms
                             || next.wall_timeout_s != step.wall_timeout_s

@@ -220,6 +220,8 @@ pub enum Operation {
     KnobDialogActiveDisplay,
     KnobDialogLevelDemo,
     KnobDialogTaskContexts,
+    KnobDialogOverlayInvariants,
+    KnobDialogBitmapZero,
     KnobDialogActiveOverlay,
     KnobDialogLockedUpdate,
     KnobDialog,

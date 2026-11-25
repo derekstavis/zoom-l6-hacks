@@ -99,6 +99,8 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobDialogActiveDisplay
         | Action::KnobDialogLevelDemo
         | Action::KnobDialogTaskContexts
+        | Action::KnobDialogOverlayInvariants
+        | Action::KnobDialogBitmapZero
         | Action::KnobDialogActiveOverlay
         | Action::KnobDialogLockedUpdate
         | Action::KnobDialog

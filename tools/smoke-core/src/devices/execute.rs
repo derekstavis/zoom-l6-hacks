@@ -1,6 +1,41 @@
 //! Executing operations against a running session.
 use super::*;
 
+fn knob_dialog_phase(operation: &Operation) -> Option<u8> {
+    match operation {
+        Operation::KnobDialogGuard => Some(0),
+        Operation::KnobDialogBaseline => Some(1),
+        Operation::KnobDialogPreflightBegin => Some(2),
+        Operation::KnobDialogPreflightDescriptor => Some(3),
+        Operation::KnobDialogPreflightTextAlias => Some(4),
+        Operation::KnobDialogPreflightLayerCollision => Some(5),
+        Operation::KnobDialogPreflightWidgetLayer => Some(6),
+        Operation::KnobDialogPreflightBackgroundLayer => Some(7),
+        Operation::KnobDialogCallbackRace => Some(8),
+        Operation::KnobDialogFirstActivation => Some(9),
+        Operation::KnobDialogActiveDisplay => Some(10),
+        Operation::KnobDialogLevelDemo => Some(11),
+        Operation::KnobDialogTaskContexts => Some(12),
+        Operation::KnobDialogOverlayInvariants => Some(13),
+        Operation::KnobDialogBitmapZero => Some(14),
+        Operation::KnobDialogActiveOverlay => Some(15),
+        Operation::KnobDialogLockedUpdate => Some(16),
+        Operation::KnobDialog => Some(17),
+        _ => None,
+    }
+}
+
+type KnobDeadline = (Instant, u32, u32, u64, u8);
+
+fn advance_knob_deadline(is_terminal: bool, shared: KnobDeadline) -> Option<KnobDeadline> {
+    if is_terminal {
+        None
+    } else {
+        let (start, guest_start, guest_budget, wall_budget, phase) = shared;
+        Some((start, guest_start, guest_budget, wall_budget, phase + 1))
+    }
+}
+
 /// Only positive, single-reply checks can end early. An explicit reply window
 /// or a rejected prefix needs the whole observation interval.
 fn sysex_reply_complete(
@@ -174,25 +209,9 @@ impl State {
             .snapshot()
             .guest_ms;
         let is_ready = matches!(operation, Operation::KnobDialogReady);
-        let expected = match operation {
-            Operation::KnobDialogGuard => Some(0),
-            Operation::KnobDialogBaseline => Some(1),
-            Operation::KnobDialogPreflightBegin => Some(2),
-            Operation::KnobDialogPreflightDescriptor => Some(3),
-            Operation::KnobDialogPreflightTextAlias => Some(4),
-            Operation::KnobDialogPreflightLayerCollision => Some(5),
-            Operation::KnobDialogPreflightWidgetLayer => Some(6),
-            Operation::KnobDialogPreflightBackgroundLayer => Some(7),
-            Operation::KnobDialogCallbackRace => Some(8),
-            Operation::KnobDialogFirstActivation => Some(9),
-            Operation::KnobDialogActiveDisplay => Some(10),
-            Operation::KnobDialogLevelDemo => Some(11),
-            Operation::KnobDialogTaskContexts => Some(12),
-            Operation::KnobDialogActiveOverlay => Some(13),
-            Operation::KnobDialogLockedUpdate => Some(14),
-            Operation::KnobDialog => Some(15),
-            _ => None,
-        };
+        let deadline_operation =
+            knob_dialog_phase(&operation).map(|_| matches!(operation, Operation::KnobDialog));
+        let expected = knob_dialog_phase(&operation);
         if expected.is_none() && self.has_knob_preflight() {
             let error = "knob-dialog preflight interrupted by another operation";
             return match self.abort_knob_preflight() {
@@ -295,10 +314,8 @@ impl State {
         if is_ready {
             self.knob_dialog_deadline =
                 Some((started, guest_start, guest_timeout_ms, wall_timeout_s, 0));
-        } else if expected.is_some() && !matches!(expected, Some(15)) {
-            let (start, guest_start, guest_budget, wall_budget, phase) = shared.unwrap();
-            self.knob_dialog_deadline =
-                Some((start, guest_start, guest_budget, wall_budget, phase + 1));
+        } else if let Some(is_terminal) = deadline_operation {
+            self.knob_dialog_deadline = advance_knob_deadline(is_terminal, shared.unwrap());
         }
         Ok(result)
     }
@@ -2265,12 +2282,27 @@ impl State {
                     .ok_or("missing knob-dialog preflight")?;
                 run_task_contexts(session, options, context, guest_timeout_ms, wall_timeout_s)
             }
-            Operation::KnobDialogActiveOverlay => {
+            operation @ (Operation::KnobDialogOverlayInvariants
+            | Operation::KnobDialogBitmapZero
+            | Operation::KnobDialogActiveOverlay) => {
+                let phase = match operation {
+                    Operation::KnobDialogOverlayInvariants => OverlayPhase::Invariants,
+                    Operation::KnobDialogBitmapZero => OverlayPhase::BitmapZero,
+                    Operation::KnobDialogActiveOverlay => OverlayPhase::Refreshed,
+                    _ => unreachable!(),
+                };
                 let context = self
                     .knob_dialog_preflight
                     .as_mut()
                     .ok_or("missing knob-dialog preflight")?;
-                run_active_overlay(session, options, context, guest_timeout_ms, wall_timeout_s)
+                run_active_overlay(
+                    session,
+                    options,
+                    context,
+                    phase,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )
             }
             Operation::KnobDialogLockedUpdate => {
                 let context = self
@@ -2340,5 +2372,42 @@ mod sysex_completion_tests {
         request.reply_timeout_ms = None;
         request.expect_prefix = None;
         assert!(!sysex_reply_complete(&request, &[], &reply));
+    }
+}
+
+#[cfg(test)]
+mod knob_phase_tests {
+    use super::*;
+    #[test]
+    fn shared_budget_carries_through_every_intermediate_phase() {
+        let phases = [
+            Operation::KnobDialogGuard,
+            Operation::KnobDialogBaseline,
+            Operation::KnobDialogPreflightBegin,
+            Operation::KnobDialogPreflightDescriptor,
+            Operation::KnobDialogPreflightTextAlias,
+            Operation::KnobDialogPreflightLayerCollision,
+            Operation::KnobDialogPreflightWidgetLayer,
+            Operation::KnobDialogPreflightBackgroundLayer,
+            Operation::KnobDialogCallbackRace,
+            Operation::KnobDialogFirstActivation,
+            Operation::KnobDialogActiveDisplay,
+            Operation::KnobDialogLevelDemo,
+            Operation::KnobDialogTaskContexts,
+            Operation::KnobDialogOverlayInvariants,
+            Operation::KnobDialogBitmapZero,
+            Operation::KnobDialogActiveOverlay,
+            Operation::KnobDialogLockedUpdate,
+            Operation::KnobDialog,
+        ];
+        let start = Instant::now();
+        let mut shared = Some((start, 17, 180_000, 600, 0));
+        for (index, op) in phases.iter().enumerate() {
+            assert_eq!(knob_dialog_phase(op), Some(index as u8));
+            let before = shared.expect("deadline lost before the final operation");
+            assert_eq!(before.4, index as u8);
+            shared = advance_knob_deadline(matches!(op, Operation::KnobDialog), before);
+        }
+        assert!(shared.is_none());
     }
 }

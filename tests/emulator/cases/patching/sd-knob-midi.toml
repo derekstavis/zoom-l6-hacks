@@ -91,6 +91,16 @@ guest_timeout_ms = 180000
 wall_timeout_s = 600
 
 [[step]]
+action = "knob-dialog-overlay-invariants"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-bitmap-zero"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
 action = "knob-dialog-active-overlay"
 guest_timeout_ms = 180000
 wall_timeout_s = 600

@@ -21,6 +21,8 @@ in resource-nor.bin, so L6 settings commands need the state directory.
 FIRMWARE is an unpacked firmware directory or an update package.
 
   info PATH                         model, versions, update marker, active bank, catalog
+  update-compare BEFORE AFTER PANEL PACKAGE
+                                    compare stopped L6max state against a validated update
   dump PATH                         every catalog field of the active settings bank
   get PATH FIELD...                 print catalog fields of the active bank
   set PATH FIELD=VALUE... [--base defaults|installed]
@@ -259,6 +261,18 @@ fn run() -> Result<(), String> {
     }
     let command = args.remove(0);
     match (text(&command)?, args.as_slice()) {
+        ("update-compare", [before, after, panel, package]) => {
+            let before = l6nor::MainNor::read(Path::new(before))?;
+            let after = l6nor::MainNor::read(Path::new(after))?;
+            let panel = fs::read(panel).map_err(|e| e.to_string())?;
+            let package = fs::read(package).map_err(|e| e.to_string())?;
+            let result = l6nor::update::compare_l6max(&before, &after, &panel, &package)?;
+            println!(
+                "{}",
+                serde_json::to_string(&result).map_err(|e| e.to_string())?
+            );
+            Ok(())
+        }
         ("info", [path]) => info(Path::new(path)),
         ("dump", [path]) => {
             let (settings, matched) = settings_of(&open(Path::new(path))?)?;

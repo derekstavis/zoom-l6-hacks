@@ -19,6 +19,20 @@ pub fn recompute_checksum(package: &mut [u8]) -> io::Result<u32> {
     package[0x1fc..0x200].copy_from_slice(&sum.to_be_bytes());
     Ok(sum)
 }
+
+/// Validated L6max MAIN-only update bytes at the installer destinations.
+pub struct Images<'a> {
+    pub main_nor_payload: &'a [u8],
+    pub panel_flash: &'a [u8],
+}
+
+pub fn images(package: &[u8]) -> io::Result<Images<'_>> {
+    validate(package)?;
+    Ok(Images {
+        main_nor_payload: &package[0x200..],
+        panel_flash: &package[0x1a3200..0x1a7200],
+    })
+}
 /// Validate before changing any installed bytes. Extra restrictions describe
 /// this model's supported layout, not additional checks proved in ZOOM's code.
 pub fn validate(package: &[u8]) -> io::Result<&[u8]> {

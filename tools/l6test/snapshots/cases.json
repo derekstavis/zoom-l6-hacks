@@ -806,7 +806,7 @@
     "suites": [
       "full"
     ],
-    "definition": "2a29132d0906fd6744b244dd01a673d573c7b4f7c8658a582f4ed9daa741f263"
+    "definition": "a8386e89ed52bb0c567bff8df41bfcee3551cfb7cefd43323692a9dae97fab3c"
   },
   {
     "case": "l6max-update-valid-handoff",
@@ -815,7 +815,16 @@
     "suites": [
       "full"
     ],
-    "definition": "996099dfbc1e0fd4fcaddc64d66e48a93a6b3cba45e5740bc26ead7455090b47"
+    "definition": "616b95b9f1c44ad62c647bb0efc2650bee8902d9105b0bc5048b62f29198d102"
+  },
+  {
+    "case": "l6max-update-valid-install",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "d4a0bf1e113cb41cdf0f290da018382315622554f5d7053b69c936f3947e3fb5"
   },
   {
     "case": "l6max-volume-meter-sweep",

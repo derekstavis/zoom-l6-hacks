@@ -400,14 +400,21 @@ impl State {
         operation_start: (Instant, u32),
     ) -> Result<Value, Box<dyn std::error::Error>> {
         match operation {
-            Operation::LifecycleStart
+            Operation::LifecycleStart { .. }
             | Operation::LifecycleStop
             | Operation::WaitPanelUptime { .. }
             | Operation::ExpectUpdateState { .. }
             | Operation::ExpectUpdateMarkerAbsent
             | Operation::ExpectLiveUpdateMarkerAbsent
             | Operation::CaptureUpdateMarkerPending
-            | Operation::ExpectUpdateGui { .. } => {
+            | Operation::ExpectUpdateGui { .. }
+            | Operation::ExpectInstallerOutcome { .. }
+            | Operation::WaitUpdatePanelReady
+            | Operation::ExpectUpdateMode { .. }
+            | Operation::ExpectMainMemory { .. }
+            | Operation::ExpectUpdateComparison { .. }
+            | Operation::CaptureInstalledPanel
+            | Operation::ExpectPanelUnchanged => {
                 Err("managed lifecycle operation must run at the session boundary".into())
             }
             Operation::ExpectRecorder => {

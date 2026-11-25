@@ -12,6 +12,7 @@ wall_timeout_s = 1200
 
 [[step]]
 action = "lifecycle-start"
+profile = "initial"
 
 [[step]]
 action = "wait-panel-uptime"

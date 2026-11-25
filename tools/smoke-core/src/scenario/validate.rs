@@ -36,10 +36,15 @@ impl Scenario {
                 .collect::<Vec<_>>();
             match fixture {
                 UpdateFixture::BadChecksum => {
+                    if value.update_goal.is_some() {
+                        return Err("bad-checksum fixture has no install goal".into());
+                    }
                     if !matches!(
                         actions.as_slice(),
                         [
-                            Action::LifecycleStart,
+                            Action::LifecycleStart {
+                                profile: LifecycleBoot::Initial
+                            },
                             Action::WaitPanelUptime { guest_ms: 40000.. },
                             Action::ExpectUpdateState {
                                 mode: 1,
@@ -62,8 +67,26 @@ impl Scenario {
                             !matches!(action, Action::WaitInputApplied | Action::Delay { .. })
                         })
                         .collect::<Vec<_>>();
-                    if !matches!(semantic.as_slice(), [
-                        Action::LifecycleStart,
+                    if semantic.len() < 12 {
+                        return Err("valid handoff is incomplete".into());
+                    }
+                    let (handoff, tail) = semantic.split_at(12);
+                    match value.update_goal {
+                        Some(UpdateGoal::Handoff) if !tail.is_empty() => {
+                            return Err("handoff goal must end at pending marker".into());
+                        }
+                        Some(UpdateGoal::Install) if tail.is_empty() => {
+                            return Err("install goal requires installer and restart checks".into());
+                        }
+                        None => {
+                            return Err(
+                                "valid update needs an explicit handoff or install goal".into()
+                            );
+                        }
+                        _ => {}
+                    }
+                    if !matches!(handoff, [
+                        Action::LifecycleStart { profile: LifecycleBoot::Initial },
                         Action::ExpectDisplayImage { image, .. },
                         Action::ExpectUpdateState { mode: 6, flags_mask: 9, flags_value: 0 },
                         Action::ExpectUpdateGui { window: 0x802003b4, progress_mask: 0, progress_value: 0 },
@@ -82,25 +105,75 @@ impl Scenario {
                                 .into(),
                         );
                     }
+                    if !tail.is_empty()
+                        && !matches!(tail, [
+                        Action::LifecycleStart { profile: LifecycleBoot::Installer },
+                        Action::ExpectInstallerOutcome { expected: InstallerExpected::Installed },
+                        Action::WaitUpdatePanelReady,
+                        Action::ExpectTrace { contains: install_traces, absent: install_absent },
+                        Action::ExpectTraceCount { pattern, count: 64, at_least: false, checkpoint: None },
+                        Action::ExpectUpdateMode { mode: 4 },
+                        Action::ExpectMainMemory { address: 0x8000001c, bytes: install_word },
+                        Action::LifecycleStop,
+                        Action::ExpectUpdateComparison { field: UpdateComparisonField::MainPayload },
+                        Action::ExpectUpdateComparison { field: UpdateComparisonField::BootRegion },
+                        Action::ExpectUpdateComparison { field: UpdateComparisonField::ProtectedRegion },
+                        Action::ExpectUpdateComparison { field: UpdateComparisonField::PanelImage },
+                        Action::ExpectUpdateMarkerAbsent,
+                        Action::CaptureInstalledPanel,
+                        Action::LifecycleStart { profile: LifecycleBoot::Restart },
+                        Action::ExpectInstallerOutcome { expected: InstallerExpected::NoPending },
+                        Action::WaitPanelUptime { guest_ms: 40000.. },
+                        Action::ExpectMainMemory { address: 0x8000001c, bytes: restart_word },
+                        Action::ExpectTrace { contains: restart_contains, absent: restart_absent },
+                        Action::LifecycleStop,
+                        Action::ExpectPanelUnchanged
+                    ] if install_traces == &["l6 panel RTC response start", "l6 panel ROM 16 KiB image match: yes"]
+                        && install_absent.is_empty() && pattern == "l6 panel ROM write 080"
+                        && install_word == &[0xdf,0x9b,0x57,0x13] && restart_word == install_word
+                        && restart_contains.is_empty() && restart_absent == &["l6 panel ROM erase", "l6 panel ROM mass erase"])
+                    {
+                        return Err("installed update needs complete ordered installer, NOR, panel and restart checks".into());
+                    }
                 }
             }
             let mut active = false;
             let mut started = false;
+            let mut last_profile = None;
             for step in &value.step {
                 match &step.action {
-                    Action::LifecycleStart if !active && !started => {
+                    Action::LifecycleStart { profile }
+                        if !active
+                            && match profile {
+                                LifecycleBoot::Initial => last_profile.is_none(),
+                                LifecycleBoot::Installer => {
+                                    last_profile == Some(LifecycleBoot::Initial)
+                                }
+                                LifecycleBoot::Restart => {
+                                    last_profile == Some(LifecycleBoot::Installer)
+                                }
+                            } =>
+                    {
                         active = true;
                         started = true;
+                        last_profile = Some(*profile);
                     }
                     Action::LifecycleStop if active => {
                         active = false;
                     }
-                    Action::ExpectUpdateMarkerAbsent | Action::CaptureUpdateMarkerPending
+                    Action::ExpectUpdateMarkerAbsent
+                    | Action::CaptureUpdateMarkerPending
+                    | Action::ExpectUpdateComparison { .. }
+                    | Action::CaptureInstalledPanel
+                    | Action::ExpectPanelUnchanged
                         if !active && started => {}
-                    Action::LifecycleStart
+                    Action::LifecycleStart { .. }
                     | Action::LifecycleStop
                     | Action::ExpectUpdateMarkerAbsent
-                    | Action::CaptureUpdateMarkerPending => {
+                    | Action::CaptureUpdateMarkerPending
+                    | Action::ExpectUpdateComparison { .. }
+                    | Action::CaptureInstalledPanel
+                    | Action::ExpectPanelUnchanged => {
                         return Err("invalid lifecycle guest/state ordering".into());
                     }
                     _ if !active => return Err("lifecycle action requires an active guest".into()),
@@ -136,25 +209,34 @@ impl Scenario {
                 ),
                 UpdateFixture::SyntheticValid => matches!(
                     value.step.last().map(|s| &s.action),
-                    Some(Action::CaptureUpdateMarkerPending)
+                    Some(Action::CaptureUpdateMarkerPending | Action::ExpectPanelUnchanged)
                 ),
             };
             if active || !started || !expected_end {
                 return Err("lifecycle must end with stopped guest and expected marker".into());
             }
-        } else if value.step.iter().any(|step| {
-            matches!(
-                step.action,
-                Action::LifecycleStart
-                    | Action::LifecycleStop
-                    | Action::WaitPanelUptime { .. }
-                    | Action::ExpectUpdateState { .. }
-                    | Action::ExpectUpdateMarkerAbsent
-                    | Action::ExpectLiveUpdateMarkerAbsent
-                    | Action::CaptureUpdateMarkerPending
-                    | Action::ExpectUpdateGui { .. }
-            )
-        }) {
+        } else if value.update_goal.is_some()
+            || value.step.iter().any(|step| {
+                matches!(
+                    step.action,
+                    Action::LifecycleStart { .. }
+                        | Action::LifecycleStop
+                        | Action::WaitPanelUptime { .. }
+                        | Action::ExpectUpdateState { .. }
+                        | Action::ExpectUpdateMarkerAbsent
+                        | Action::ExpectLiveUpdateMarkerAbsent
+                        | Action::CaptureUpdateMarkerPending
+                        | Action::ExpectUpdateGui { .. }
+                        | Action::ExpectInstallerOutcome { .. }
+                        | Action::WaitUpdatePanelReady
+                        | Action::ExpectUpdateMode { .. }
+                        | Action::ExpectMainMemory { .. }
+                        | Action::ExpectUpdateComparison { .. }
+                        | Action::CaptureInstalledPanel
+                        | Action::ExpectPanelUnchanged
+                )
+            })
+        {
             return Err("managed update lifecycle needs a synthetic update fixture".into());
         }
         if let Some(mode) = &value.sd_bundle_mode {

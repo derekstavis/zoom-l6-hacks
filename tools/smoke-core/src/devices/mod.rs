@@ -76,7 +76,9 @@ fn midi_namespace() -> Option<String> {
 
 #[derive(Clone, Debug)]
 pub enum Operation {
-    LifecycleStart,
+    LifecycleStart {
+        profile: crate::scenario::LifecycleBoot,
+    },
     LifecycleStop,
     WaitPanelUptime {
         guest_ms: u32,
@@ -89,6 +91,22 @@ pub enum Operation {
     ExpectUpdateMarkerAbsent,
     ExpectLiveUpdateMarkerAbsent,
     CaptureUpdateMarkerPending,
+    ExpectInstallerOutcome {
+        expected: crate::scenario::InstallerExpected,
+    },
+    WaitUpdatePanelReady,
+    ExpectUpdateMode {
+        mode: u32,
+    },
+    ExpectMainMemory {
+        address: u32,
+        bytes: Vec<u8>,
+    },
+    ExpectUpdateComparison {
+        field: crate::scenario::UpdateComparisonField,
+    },
+    CaptureInstalledPanel,
+    ExpectPanelUnchanged,
     ExpectUpdateGui {
         window: u32,
         progress_mask: u32,

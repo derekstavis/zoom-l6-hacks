@@ -63,6 +63,38 @@ pub enum UpdateFixture {
     SyntheticValid,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, schemars::JsonSchema, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpdateGoal {
+    Handoff,
+    Install,
+}
+
+/// One boot generation of a managed update lifecycle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, schemars::JsonSchema, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LifecycleBoot {
+    Initial,
+    Installer,
+    Restart,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, schemars::JsonSchema, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InstallerExpected {
+    Installed,
+    NoPending,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, schemars::JsonSchema, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpdateComparisonField {
+    MainPayload,
+    BootRegion,
+    ProtectedRegion,
+    PanelImage,
+}
+
 impl Backend {
     pub fn name(self) -> &'static str {
         match self {
@@ -120,6 +152,8 @@ pub struct Scenario {
     /// Build a case-local synthetic L6max update card before execution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update_fixture: Option<UpdateFixture>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_goal: Option<UpdateGoal>,
     #[serde(default)]
     pub gdb: bool,
     pub audio_device: Option<String>,
@@ -232,7 +266,9 @@ pub struct UsbSysexRequest {
 #[derive(Clone, Debug, Deserialize, schemars::JsonSchema, Serialize)]
 #[serde(tag = "action", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Action {
-    LifecycleStart,
+    LifecycleStart {
+        profile: LifecycleBoot,
+    },
     LifecycleStop,
     WaitPanelUptime {
         guest_ms: u32,
@@ -245,6 +281,22 @@ pub enum Action {
     ExpectUpdateMarkerAbsent,
     ExpectLiveUpdateMarkerAbsent,
     CaptureUpdateMarkerPending,
+    ExpectInstallerOutcome {
+        expected: InstallerExpected,
+    },
+    WaitUpdatePanelReady,
+    ExpectUpdateMode {
+        mode: u32,
+    },
+    ExpectMainMemory {
+        address: u32,
+        bytes: Vec<u8>,
+    },
+    ExpectUpdateComparison {
+        field: UpdateComparisonField,
+    },
+    CaptureInstalledPanel,
+    ExpectPanelUnchanged,
     ExpectUpdateGui {
         window: u32,
         progress_mask: u32,

@@ -16,6 +16,7 @@ pub mod nor;
 pub mod rtc;
 pub mod settings;
 pub mod state;
+pub mod update;
 
 pub use catalog::Catalog;
 pub use device::Device;

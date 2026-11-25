@@ -7,6 +7,7 @@ pub use l6max_host::heap::Counters as HeapCounters;
 pub use l6max_host::input::button_source;
 pub use l6max_host::input::{InputCounters, InputSource};
 pub use l6max_host::knob_popup::{ParameterState, RecorderState, Snapshot as KnobPopupSnapshot};
+pub use l6max_host::memory::MemoryRead;
 pub use l6max_host::midi_config::Config as MidiConfig;
 pub use l6max_host::update_bootloader::Outcome as InstallerOutcome;
 pub use l6max_host::update_state::{UpdateGuiState, UpdateState};
@@ -39,6 +40,7 @@ pub enum Request {
     Info,
     InputStatus { source: InputSource },
     HeapCounters,
+    MemoryRead { address: u32, length: usize },
     MidiConfig,
     UpdateState,
     UpdateGuiState,
@@ -145,6 +147,7 @@ impl ControlClient {
             request,
             Request::Rtos { .. }
                 | Request::HeapCounters
+                | Request::MemoryRead { .. }
                 | Request::MidiConfig
                 | Request::UpdateState
                 | Request::UpdateGuiState
@@ -185,6 +188,14 @@ impl ControlClient {
     /// One guarded, non-atomic live counter read (no heap traversal).
     pub fn heap_counters(&self) -> Result<HeapCounters, ControlError> {
         self.request_as(&Request::HeapCounters)
+    }
+
+    pub fn read_main_memory(
+        &self,
+        address: u32,
+        length: usize,
+    ) -> Result<MemoryRead, ControlError> {
+        self.request_as(&Request::MemoryRead { address, length })
     }
 
     pub fn midi_config(&self) -> Result<MidiConfig, ControlError> {
@@ -299,6 +310,15 @@ impl<'a> OwnedControl<'a> {
     /// Recreate this reader after a guest restart or firmware change.
     pub fn heap_counter_reader(&self) -> Result<l6max_host::heap::CounterReader, ControlError> {
         l6max_host::heap::counter_reader(self.main_qmp()?, self.engine.model())
+            .map_err(ControlError::Rejected)
+    }
+
+    pub fn read_main_memory(
+        &self,
+        address: u32,
+        length: usize,
+    ) -> Result<MemoryRead, ControlError> {
+        l6max_host::memory::read_main(self.main_qmp()?, address, length)
             .map_err(ControlError::Rejected)
     }
 

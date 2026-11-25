@@ -966,8 +966,10 @@ impl Runner {
                         items,
                     }));
                 }
-                Action::LifecycleStart => {
-                    return Ok(Progress::Device(devices::Operation::LifecycleStart));
+                Action::LifecycleStart { profile } => {
+                    return Ok(Progress::Device(devices::Operation::LifecycleStart {
+                        profile,
+                    }));
                 }
                 Action::LifecycleStop => {
                     return Ok(Progress::Device(devices::Operation::LifecycleStop));
@@ -981,6 +983,36 @@ impl Runner {
                     return Ok(Progress::Device(
                         devices::Operation::CaptureUpdateMarkerPending,
                     ));
+                }
+                Action::ExpectInstallerOutcome { expected } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectInstallerOutcome { expected },
+                    ));
+                }
+                Action::WaitUpdatePanelReady => {
+                    return Ok(Progress::Device(devices::Operation::WaitUpdatePanelReady));
+                }
+                Action::ExpectUpdateMode { mode } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectUpdateMode {
+                        mode,
+                    }));
+                }
+                Action::ExpectMainMemory { address, bytes } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectMainMemory {
+                        address,
+                        bytes,
+                    }));
+                }
+                Action::ExpectUpdateComparison { field } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectUpdateComparison { field },
+                    ));
+                }
+                Action::CaptureInstalledPanel => {
+                    return Ok(Progress::Device(devices::Operation::CaptureInstalledPanel));
+                }
+                Action::ExpectPanelUnchanged => {
+                    return Ok(Progress::Device(devices::Operation::ExpectPanelUnchanged));
                 }
                 Action::ExpectUpdateGui {
                     window,
@@ -1628,6 +1660,7 @@ impl Runner {
         self.ring_quiet = None;
         self.last_report_guest = 0;
         self.last = None;
+        self.allowed_rejections = [0, 0];
     }
     pub fn current_step(&self) -> usize {
         self.step

@@ -6,7 +6,10 @@ use l6max_host::{
     panel::{PanelData, PanelFeed},
 };
 use serde_json::json;
-use std::{cell::Cell, time::Duration};
+use std::{
+    cell::Cell,
+    time::{Duration, Instant},
+};
 #[derive(Clone, Debug)]
 pub enum Command {
     Switch {
@@ -112,6 +115,59 @@ impl Session {
     }
 }
 
+/// Wait for an absolute panel-guest uptime while tolerating the panel being
+/// held in reset as long as MAIN advances, as the updater does.
+struct DualClockWatch {
+    last: (u32, u32),
+    deadline: Instant,
+}
+impl DualClockWatch {
+    fn new(now: Instant) -> Self {
+        Self {
+            last: (0, 0),
+            deadline: now + Duration::from_secs(60),
+        }
+    }
+    fn stalled(&mut self, panel: u32, main: u32, now: Instant) -> bool {
+        if (panel, main) != self.last {
+            self.last = (panel, main);
+            self.deadline = now + Duration::from_secs(60);
+        }
+        now >= self.deadline
+    }
+}
+
+fn wait_panel_uptime(session: &Session, target: u32, wall_timeout_s: u64) -> Result<u32, String> {
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
+    let mut watch = DualClockWatch::new(Instant::now());
+    loop {
+        if !session.poll()?.powered {
+            return Err("guest powered off before panel uptime".into());
+        }
+        let main = control
+            .input_status(l6ctl::InputSource::Main)
+            .map_err(|e| e.to_string())?;
+        let panel = control
+            .input_status(l6ctl::InputSource::Panel)
+            .map_err(|e| e.to_string())?;
+        if panel.guest_ms >= target {
+            return Ok(panel.guest_ms);
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return Err("panel uptime exceeded wall deadline".into());
+        }
+        if watch.stalled(panel.guest_ms, main.guest_ms, now) {
+            return Err(format!(
+                "guest clocks stalled at panel {} ms, MAIN {} ms",
+                panel.guest_ms, main.guest_ms
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 /// Execute a scenario without GPUI, with the production panel feed and shared assertions.
 pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
     if !scenario.backends.contains(&crate::Backend::Headless) {
@@ -204,14 +260,25 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
         phase: crate::progress::CasePhase::StartingEmulator,
         started_unix_ms: crate::progress::unix_ms(),
     });
-    let mut session = Some(Session::start(&options)?);
+    let managed = scenario.update_bad_checksum_card;
+    let mut session = if managed {
+        None
+    } else {
+        Some(Session::start(&options)?)
+    };
     progress.emit(crate::progress::CaseEvent::PhaseChanged {
         phase: crate::progress::CasePhase::PreparingScenario,
         started_unix_ms: crate::progress::unix_ms(),
     });
     let mut runner = Runner::with_progress(
         scenario,
-        session.as_ref().unwrap().engine.model(),
+        if let Some(session) = &session {
+            session.engine.model()
+        } else {
+            let main = std::fs::read(options.firmware_dir.join("main_firmware.bin"))
+                .map_err(|error| error.to_string())?;
+            l6fw::model_from_main(&main).map_err(|error| error.to_string())?
+        },
         options.logs.clone(),
         progress,
     )?;
@@ -230,13 +297,86 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                 return Err("knob-dialog preflight ended before diagnostic completion".into());
             }
             let progress = {
-                let current = session.as_ref().unwrap();
-                let data = current.poll()?;
-                runner.tick(data, current.engine.inputs.as_ref().unwrap())?
+                if let Some(current) = &session {
+                    let data = current.poll()?;
+                    runner.tick(data, current.engine.inputs.as_ref().unwrap())?
+                } else {
+                    runner.tick_without_input(PanelData {
+                        powered: true,
+                        ..Default::default()
+                    })?
+                }
             };
             match progress {
                 Progress::Complete => return Ok(()),
                 Progress::Dispatch(command) => session.as_ref().unwrap().dispatch(&command)?,
+                Progress::Device(devices::Operation::LifecycleStart) => {
+                    if session.is_some()
+                        || options.state_dir.is_none()
+                        || options.sd_image.is_none()
+                        || options.no_sd
+                    {
+                        return Err("lifecycle start requires an inactive guest, isolated state and update card".into());
+                    }
+                    session = Some(Session::start(&options)?);
+                    runner.device_finished(json!({"started":true}));
+                }
+                Progress::Device(devices::Operation::LifecycleStop) => {
+                    device_state.restarted()?;
+                    let mut current = session
+                        .take()
+                        .ok_or("lifecycle stop requires an active guest")?;
+                    current.engine.shutdown_checked()?;
+                    drop(current);
+                    runner.device_finished(json!({"stopped":true,"clean_shutdown":true}));
+                }
+                Progress::Device(devices::Operation::ExpectUpdateMarkerAbsent) => {
+                    if session.is_some() {
+                        return Err("update marker requires a stopped guest".into());
+                    }
+                    let state = options
+                        .state_dir
+                        .as_ref()
+                        .ok_or("update marker requires persistent state")?;
+                    let nor = l6nor::MainNor::read(&state.join("main-nor.bin"))?;
+                    let marker = nor.update_marker();
+                    if marker != l6nor::nor::UpdateMarker::None {
+                        return Err(format!(
+                            "corrupt package triggered update marker: {marker:?}"
+                        ));
+                    }
+                    use sha2::{Digest, Sha256};
+                    runner.device_finished(json!({"update_marker":"none", "main_nor_sha256":format!("{:x}", Sha256::digest(nor.bytes()))}));
+                }
+                Progress::Device(devices::Operation::WaitPanelUptime { guest_ms }) => {
+                    let current = session
+                        .as_ref()
+                        .ok_or("panel uptime requires an active guest")?;
+                    let step = &runner.scenario.step[runner.current_step()];
+                    let observed = wait_panel_uptime(current, guest_ms, step.wall_timeout_s)?;
+                    runner.device_finished(
+                        json!({"panel_uptime_ms":observed, "required_panel_uptime_ms":guest_ms}),
+                    );
+                }
+                Progress::Device(devices::Operation::ExpectUpdateState {
+                    mode,
+                    flags_mask,
+                    flags_value,
+                }) => {
+                    let current = session
+                        .as_ref()
+                        .ok_or("update state requires an active guest")?;
+                    let sample = l6ctl::OwnedControl::new(&current.engine)
+                        .update_state()
+                        .map_err(|e| e.to_string())?;
+                    if sample.mode != mode || sample.flags & flags_mask != flags_value {
+                        return Err(format!(
+                            "update state mismatch: mode={}, flags={:#x}; expected mode={mode}, flags & {flags_mask:#x}={flags_value:#x}",
+                            sample.mode, sample.flags
+                        ));
+                    }
+                    runner.device_finished(json!({"mode":sample.mode,"flags":sample.flags,"revision_guard":sample.revision_guard,"atomic":sample.atomic}));
+                }
                 Progress::Device(devices::Operation::Restart) => {
                     if options.state_dir.is_none() {
                         return Err("restart requires isolated persistent state".into());
@@ -319,4 +459,18 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
         runner.finish("PASS", None)?;
     }
     result
+}
+
+#[cfg(test)]
+mod lifecycle_clock_tests {
+    use super::*;
+    #[test]
+    fn main_progress_keeps_a_held_panel_alive_but_two_stopped_clocks_fail() {
+        let start = Instant::now();
+        let mut watch = DualClockWatch::new(start);
+        assert!(!watch.stalled(0, 100, start + Duration::from_secs(59)));
+        assert!(!watch.stalled(0, 200, start + Duration::from_secs(118)));
+        assert!(!watch.stalled(0, 200, start + Duration::from_secs(177)));
+        assert!(watch.stalled(0, 200, start + Duration::from_secs(178)));
+    }
 }

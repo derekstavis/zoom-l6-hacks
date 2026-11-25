@@ -1420,3 +1420,36 @@ fn midi_sync_requires_ordered_complete_scope_and_matching_deadlines() {
         .is_err()
     );
 }
+
+#[test]
+fn update_lifecycle_requires_isolated_fixture_and_ordered_steps() {
+    let prefix = "version=1\nname='bad-update'\nmodels=['l6max']\nbackends=['headless']\nstate='none'\ncard='none'\nupdate_bad_checksum_card=true\n";
+    let start = "[[step]]\naction='lifecycle-start'\n";
+    let wait = "[[step]]\naction='wait-panel-uptime'\nguest_ms=40000\nguest_timeout_ms=300000\n";
+    let state = "[[step]]\naction='expect-update-state'\nmode=1\nflags_mask=9\nflags_value=0\n";
+    let stop = "[[step]]\naction='lifecycle-stop'\n";
+    let marker = "[[step]]\naction='expect-update-marker-absent'\n";
+    assert!(Scenario::parse(&format!("{prefix}{start}{wait}{state}{stop}{marker}")).is_ok());
+    assert!(Scenario::parse(&format!("{prefix}{start}{wait}{state}{marker}")).is_err());
+    assert!(
+        Scenario::parse(
+            &format!("{prefix}{start}{wait}{state}{stop}{marker}")
+                .replace("models=['l6max']", "models=['l6']")
+        )
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(
+            &format!("{prefix}{start}{wait}{state}{stop}{marker}")
+                .replace("flags_value=0", "flags_value=2")
+        )
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(
+            &format!("{prefix}{start}{wait}{state}{stop}{marker}")
+                .replace("guest_ms=40000", "guest_ms=0")
+        )
+        .is_err()
+    );
+}

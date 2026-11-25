@@ -109,6 +109,9 @@ pub struct Scenario {
     /// Patches for the update package, per model, applied to the configured package.
     #[serde(default)]
     pub update_patches: std::collections::BTreeMap<Model, Vec<String>>,
+    /// Build a case-local card carrying a deliberately invalid L6max update.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub update_bad_checksum_card: bool,
     #[serde(default)]
     pub gdb: bool,
     pub audio_device: Option<String>,
@@ -160,6 +163,9 @@ impl Step {
 }
 fn default_backends() -> Vec<Backend> {
     vec![Backend::Headless, Backend::Gui]
+}
+fn is_false(value: &bool) -> bool {
+    !value
 }
 fn default_midi_cable() -> u8 {
     1
@@ -221,6 +227,17 @@ pub struct UsbSysexRequest {
 #[derive(Clone, Debug, Deserialize, schemars::JsonSchema, Serialize)]
 #[serde(tag = "action", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Action {
+    LifecycleStart,
+    LifecycleStop,
+    WaitPanelUptime {
+        guest_ms: u32,
+    },
+    ExpectUpdateState {
+        mode: u32,
+        flags_mask: u8,
+        flags_value: u8,
+    },
+    ExpectUpdateMarkerAbsent,
     Include {
         path: PathBuf,
     },

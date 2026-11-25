@@ -48,6 +48,7 @@ tables. Unknown header fields fail parsing.
 | `installed_patches` | no | Patches the engine installs on a device seeded with the model's stock package, as `--patch` does. |
 | `installed_sd_patches` | no | Patches the engine delivers on the case's card, as `--sd-patch` does: it installs the Patch loader and writes the hosted modules to `PATCHES/`. Requires `card`; cannot combine with `sd_patches`. |
 | `update_patches` | no | Patches per model for the case's update package, built from the model's package. |
+| `update_bad_checksum_card` | no | Build a case-local L6max 1.10 card containing the synthetic bad-checksum update before execution. Requires the dedicated headless, isolated lifecycle sequence. |
 | `gdb` | no | Enable the debugger socket. |
 | `audio_device` | no | QEMU audio-device syntax; `{logs}` expands to the case's log directory. |
 | `audio_input` | no | Array of tables assigning audio to input channels: `channel` plus one card-file source such as `loop-tone` or `copy`. Nothing plays until an `audio-input-transport` step. See [audio input](../emulator/audio.md#input). |
@@ -264,6 +265,11 @@ message delivered just after the interval.
 | `expect-menu` | `menu`, optional `path`, `items` | L6max; read a menu's children from guest memory and require exactly the titles in `items`. `menu` is `main`, `project`, `sound-pad`, `mixer` or `system`; `path` descends through child titles. Menu Loader adds its rows when the menu is first entered |
 | `effect-replacement-state` | optional `expected_effect_type`, `expected_processor_type`, `expected_effect`, `require_output`, `wait_for_slot` and other module fields | L6max effect replacement bundle; compare the selected stock slot and the loader's state with the expectations. `expected_effect` is the effect ID running in the selected slot; `require_output` requires that slot's replacement to have produced nonzero output; `wait_for_slot` waits for the selected slot and processor and, when output is required, a fresh nonzero output count |
 | `firmware-update` | — | L6 and L6max disposable-state update lifecycle, corrupt-checksum rejection, NOR segment install, L6max panel programming, protected-region preservation and clean restart; an `update_patches` package additionally checks model-specific post-install behavior |
+| `lifecycle-start` | — | Start the case's isolated update guest with its staged card and writable state. |
+| `wait-panel-uptime` | `guest_ms` | Wait for absolute panel guest uptime, with a wall deadline and a 60-second stall deadline reset by progress on either guest clock. |
+| `expect-update-state` | `mode`, `flags_mask`, `flags_value` | Require the guarded L6max update mode and masked package flags. |
+| `lifecycle-stop` | — | Request QMP shutdown and require successful child exits before reading persistent state. |
+| `expect-update-marker-absent` | — | With the guest stopped, use `l6nor` to assert that neither a pending nor failed update marker exists. |
 | `power-press` | `hold_ms`, `powered` | Check expected power result, model cutoff timing and stopped clock |
 | `restart` | — | Retire the session before reopening its isolated persistent state; reset readiness, trace counters and action baselines |
 | `expect-recorder` | — | L6max startup mode restored after restart |

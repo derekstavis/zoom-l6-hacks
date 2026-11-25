@@ -854,6 +854,42 @@ impl Engine {
     }
 }
 
+impl Engine {
+    /// Request QMP shutdown and wait for every child to exit successfully.
+    /// On error, Drop still terminates and reaps any remaining children.
+    pub fn shutdown_checked(&mut self) -> Result<(), String> {
+        drop(self.control_server.take());
+        drop(self.midi.take());
+        for management in &self.management {
+            management
+                .quit()
+                .map_err(|error| format!("QMP quit failed: {error}"))?;
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let mut pending = false;
+            for child in &mut self.children {
+                match child.try_wait().map_err(|error| error.to_string())? {
+                    Some(status) if !status.success() => {
+                        return Err(format!("QEMU exited unsuccessfully: {status}"));
+                    }
+                    Some(_) => {}
+                    None => pending = true,
+                }
+            }
+            if !pending {
+                self.children.clear();
+                self.management.clear();
+                return Ok(());
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err("QEMU did not exit after QMP quit".into());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
 impl Drop for Engine {
     fn drop(&mut self) {
         drop(self.control_server.take());

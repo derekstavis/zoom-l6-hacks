@@ -9,6 +9,71 @@ impl Scenario {
         }
         validate_models(&value.models)?;
         crate::requirements::check_scope(value)?;
+        if value.update_bad_checksum_card {
+            if value.models != [Model::L6max]
+                || value.backends != [Backend::Headless]
+                || value.state.is_some()
+                || value.card.is_some()
+                || !value.update_patches.is_empty()
+                || !value.patches.is_empty()
+                || value.sd_patches.is_some()
+                || !value.installed_patches.is_empty()
+                || !value.installed_sd_patches.is_empty()
+                || !value.effect_replacements.is_empty()
+                || value
+                    .step
+                    .iter()
+                    .any(|step| !step.models.is_empty() || step.setup_input)
+            {
+                return Err(
+                    "bad-checksum update needs a dedicated L6max headless stock fixture".into(),
+                );
+            }
+            let actions = value
+                .step
+                .iter()
+                .map(|step| &step.action)
+                .collect::<Vec<_>>();
+            if !matches!(
+                actions.as_slice(),
+                [
+                    Action::LifecycleStart,
+                    Action::WaitPanelUptime { .. },
+                    Action::ExpectUpdateState { .. },
+                    Action::LifecycleStop,
+                    Action::ExpectUpdateMarkerAbsent
+                ]
+            ) {
+                return Err(
+                    "bad-checksum update requires start, uptime, state, stop and marker steps"
+                        .into(),
+                );
+            }
+            if value.step.iter().any(|step| match step.action {
+                Action::WaitPanelUptime { guest_ms } => {
+                    guest_ms == 0 || guest_ms > step.guest_timeout_ms
+                }
+                Action::ExpectUpdateState {
+                    flags_mask,
+                    flags_value,
+                    ..
+                } => flags_mask == 0 || flags_value & !flags_mask != 0,
+                _ => false,
+            }) {
+                return Err("invalid lifecycle uptime or masked flags assertion".into());
+            }
+        } else if value.step.iter().any(|step| {
+            matches!(
+                step.action,
+                Action::LifecycleStart
+                    | Action::LifecycleStop
+                    | Action::WaitPanelUptime { .. }
+                    | Action::ExpectUpdateState { .. }
+                    | Action::ExpectUpdateMarkerAbsent
+            )
+        }) {
+            return Err("managed update lifecycle needs a bad-checksum fixture".into());
+        }
         if let Some(mode) = &value.sd_bundle_mode {
             if ![
                 "valid",

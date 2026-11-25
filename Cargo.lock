@@ -6539,6 +6539,7 @@ dependencies = [
  "l6fw",
  "l6max-diagnostics",
  "l6max-host",
+ "l6nor",
  "l6patch",
  "libc",
  "patch-abi",

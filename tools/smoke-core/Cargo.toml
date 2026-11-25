@@ -11,6 +11,7 @@ sd-image.workspace = true
 tracing.workspace = true
 l6max-host.workspace = true
 l6ctl = { path = "../l6ctl" }
+l6nor.workspace = true
 l6fw = { workspace = true, features = ["schemars"] }
 firmware-api.workspace = true
 l6patch = { path = "../l6patch" }

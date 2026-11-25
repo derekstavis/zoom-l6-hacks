@@ -31,6 +31,8 @@ pub(crate) struct Inputs {
     pub(crate) sd_bundle_mode: Option<String>,
     pub(crate) sd_patch_set_sha256: Option<String>,
     pub(crate) update_package_sha256: Option<String>,
+    /// Derived update bytes placed on the case-local card, when present.
+    pub(crate) update_card_package_sha256: Option<String>,
     /// The state spec's hash, resolved form and the report of applying it.
     pub(crate) state_spec: Option<Value>,
     /// The card the fixture built, before case options apply.
@@ -659,6 +661,7 @@ pub(crate) fn fixture_options(
             .map(hash_patch_directory)
             .transpose()?,
         update_package_sha256: fixture.update_package.as_deref().map(hash).transpose()?,
+        update_card_package_sha256: None,
         state_spec,
         sd_sha256: sd_hash,
         audio_device,

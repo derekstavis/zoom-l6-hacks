@@ -8,6 +8,7 @@ pub use l6max_host::input::button_source;
 pub use l6max_host::input::{InputCounters, InputSource};
 pub use l6max_host::knob_popup::{ParameterState, RecorderState, Snapshot as KnobPopupSnapshot};
 pub use l6max_host::midi_config::Config as MidiConfig;
+pub use l6max_host::update_state::UpdateState;
 use l6max_host::{control, engine::Engine, freertos, qmp};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -38,6 +39,7 @@ pub enum Request {
     InputStatus { source: InputSource },
     HeapCounters,
     MidiConfig,
+    UpdateState,
     KnobPopup { with_text: bool },
     RecorderState,
     KnobParameterState,
@@ -141,6 +143,7 @@ impl ControlClient {
             Request::Rtos { .. }
                 | Request::HeapCounters
                 | Request::MidiConfig
+                | Request::UpdateState
                 | Request::KnobPopup { .. }
                 | Request::RecorderState
                 | Request::KnobParameterState
@@ -182,6 +185,10 @@ impl ControlClient {
 
     pub fn midi_config(&self) -> Result<MidiConfig, ControlError> {
         self.request_as(&Request::MidiConfig)
+    }
+
+    pub fn update_state(&self) -> Result<UpdateState, ControlError> {
+        self.request_as(&Request::UpdateState)
     }
 
     /// Request the host's existing versioned RTOS JSON snapshot.
@@ -285,6 +292,11 @@ impl<'a> OwnedControl<'a> {
 
     pub fn midi_config(&self) -> Result<MidiConfig, ControlError> {
         l6max_host::midi_config::config(self.main_qmp()?, self.engine.model())
+            .map_err(ControlError::Rejected)
+    }
+
+    pub fn update_state(&self) -> Result<UpdateState, ControlError> {
+        l6max_host::update_state::update_state(self.main_qmp()?, self.engine.model())
             .map_err(ControlError::Rejected)
     }
 

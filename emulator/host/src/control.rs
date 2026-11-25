@@ -262,6 +262,14 @@ fn execute(
                 sample(kind)
             }
         }
+        "knob-popup" => {
+            let with_text = request
+                .get("with_text")
+                .and_then(Value::as_bool)
+                .ok_or("knob-popup requires with_text")?;
+            let snapshot = crate::knob_popup::snapshot(qmp, model, with_text)?;
+            serde_json::to_value(snapshot).map_err(|error| error.to_string())
+        }
         "info" => serde_json::to_value(info(inputs, model)).map_err(|error| error.to_string()),
         "tap" | "down" | "up" => {
             let target = number(request, "target")?;

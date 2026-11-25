@@ -567,6 +567,19 @@ impl Scenario {
                 Action::HostMidiExpectCount { count } if *count == 0 || *count > 16384 => {
                     return Err("MIDI message count must be 1..16384".into());
                 }
+                Action::KnobPopupOpen {
+                    first_steps,
+                    fallback_steps,
+                    attempt_guest_ms,
+                } if *first_steps == 0
+                    || *fallback_steps == 0
+                    || first_steps.unsigned_abs() > 120
+                    || fallback_steps.unsigned_abs() > 120
+                    || *attempt_guest_ms == 0
+                    || *attempt_guest_ms > step.guest_timeout_ms =>
+                {
+                    return Err("knob popup turns must be nonzero and at most 120, and its attempt duration must fit the guest timeout".into());
+                }
                 Action::HostMidiSettle { guest_ms }
                     if *guest_ms == 0 || *guest_ms > step.guest_timeout_ms =>
                 {

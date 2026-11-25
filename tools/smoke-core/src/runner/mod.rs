@@ -769,8 +769,22 @@ impl Runner {
                 Action::KnobDialog => {
                     return Ok(Progress::Device(devices::Operation::KnobDialog));
                 }
-                Action::KnobDialogPopup => {
-                    return Ok(Progress::Device(devices::Operation::KnobDialogPopup));
+                Action::KnobPopupOpen {
+                    first_steps,
+                    fallback_steps,
+                    attempt_guest_ms,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::KnobPopupOpen {
+                        first_steps,
+                        fallback_steps,
+                        attempt_guest_ms,
+                    }));
+                }
+                Action::KnobPopupExpectOpen => {
+                    return Ok(Progress::Device(devices::Operation::KnobPopupExpectOpen));
+                }
+                Action::KnobPopupExpectValue => {
+                    return Ok(Progress::Device(devices::Operation::KnobPopupExpectValue));
                 }
                 Action::ExpectMenu { menu, path, items } => {
                     return Ok(Progress::Device(devices::Operation::ExpectMenu {

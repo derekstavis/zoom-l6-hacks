@@ -207,7 +207,13 @@ pub enum Operation {
     },
     AudioCallbacks,
     KnobDialog,
-    KnobDialogPopup,
+    KnobPopupOpen {
+        first_steps: i32,
+        fallback_steps: i32,
+        attempt_guest_ms: u32,
+    },
+    KnobPopupExpectOpen,
+    KnobPopupExpectValue,
     ExpectMenu {
         menu: String,
         path: Vec<String>,
@@ -537,6 +543,7 @@ pub struct State {
     gdb: Option<l6max_diagnostics::gdb::Gdb>,
     host_midi: Option<Box<dyn crate::host_midi::Client>>,
     encoder_turned_up: bool,
+    knob_popup: Option<knob_dialog::PopupContext>,
     midi_round_trip: Option<MidiRoundTrip>,
     native_midi: Option<l6ctl::midi::MidiSession>,
 }

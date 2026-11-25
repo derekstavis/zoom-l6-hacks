@@ -3,6 +3,7 @@
 //! The socket interface is deliberately narrower than direct access. In
 //! particular its input replies confirm enqueueing, not guest acknowledgement.
 pub use l6max_host::control::Info;
+pub use l6max_host::knob_popup::Snapshot as KnobPopupSnapshot;
 use l6max_host::{control, engine::Engine, freertos, qmp};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -30,6 +31,7 @@ pub enum RtosKind {
 #[serde(tag = "command", rename_all = "kebab-case")]
 pub enum Request {
     Info,
+    KnobPopup { with_text: bool },
     Rtos { kind: RtosKind },
     Tap { target: u32, hold_ms: u32 },
     Down { target: u32, duration_ms: u32 },
@@ -120,7 +122,7 @@ impl ControlClient {
                 path: self.socket.clone(),
                 source,
             })?;
-        let timeout = if matches!(request, Request::Rtos { .. }) {
+        let timeout = if matches!(request, Request::Rtos { .. } | Request::KnobPopup { .. }) {
             30
         } else {
             3
@@ -154,6 +156,10 @@ impl ControlClient {
     /// Request the host's existing versioned RTOS JSON snapshot.
     pub fn rtos(&self, kind: RtosKind) -> Result<Value, ControlError> {
         self.request(&Request::Rtos { kind })
+    }
+
+    pub fn knob_popup(&self, with_text: bool) -> Result<KnobPopupSnapshot, ControlError> {
+        self.request_as(&Request::KnobPopup { with_text })
     }
 
     pub fn tap(&self, target: u32, hold_ms: u32) -> Result<ButtonReceipt, ControlError> {
@@ -231,6 +237,17 @@ impl<'a> OwnedControl<'a> {
         control::enqueue_encoder(inputs, self.engine.model(), channel, steps)
             .map_err(ControlError::Rejected)?;
         Ok(AxisReceipt { channel, steps })
+    }
+
+    /// Verify the GUI revision once for a bounded in-process observation step.
+    pub fn knob_popup_reader(&self) -> Result<l6max_host::knob_popup::Reader<'_>, ControlError> {
+        l6max_host::knob_popup::reader(self.main_qmp()?, self.engine.model())
+            .map_err(ControlError::Rejected)
+    }
+
+    pub fn knob_popup(&self, with_text: bool) -> Result<KnobPopupSnapshot, ControlError> {
+        l6max_host::knob_popup::snapshot(self.main_qmp()?, self.engine.model(), with_text)
+            .map_err(ControlError::Rejected)
     }
 
     pub fn rtos_heap(&self) -> Result<freertos::HeapSnapshot, ControlError> {

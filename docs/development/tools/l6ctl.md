@@ -184,3 +184,12 @@ On CoreMIDI the strict listener handles coalesced messages, running status,
 and messages fragmented across delivered byte chunks. CoreMIDI may itself
 omit bytes sent as incomplete independent packets; omitted bytes cannot be
 recovered by the decoder.
+
+## Knob Dialog observation
+
+`cargo l6ctl --socket /tmp/l6-control.sock knob-popup [--text]` reads the
+L6max 1.10 recorder window, four-byte dialog state, callback slot 5 and
+channel-1 level. `--text` also reads the bounded UTF-16 GUI resource 179.
+The response reports the GUI-routine fingerprint guard and `atomic: false`:
+the guest can change these values between QMP reads. Unsupported models,
+GUI revisions and out-of-range text pointers return an error.

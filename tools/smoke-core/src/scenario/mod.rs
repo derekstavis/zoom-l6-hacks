@@ -420,7 +420,13 @@ pub enum Action {
     KnobDialog,
     /// Turn the channel 1 level knob once on the recorder screen and check
     /// that Knob Dialog shows the new value.
-    KnobDialogPopup,
+    KnobPopupOpen {
+        first_steps: i32,
+        fallback_steps: i32,
+        attempt_guest_ms: u32,
+    },
+    KnobPopupExpectOpen,
+    KnobPopupExpectValue,
     /// Compare a menu's child titles with `items`. `menu` names a stock menu
     /// (`main`, `project`, `sound-pad`, `mixer` or `system`); `path` then
     /// descends through child titles.

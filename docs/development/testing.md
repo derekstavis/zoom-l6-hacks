@@ -522,7 +522,7 @@ shows every case.
   | Patch | Check |
   | --- | --- |
   | Any SD module | `expect-sd-patch` |
-  | knob-dialog | `knob-dialog-popup` |
+  | knob-dialog | `knob-popup-open`, `knob-popup-expect-open`, `knob-popup-expect-value` |
   | Effect replacements | `expect-heap`, then for each slot `effect-replacement-state` with the assigned effect ID and nonzero output, or no replacement |
   | midi-sync | `direct-usb-midi-round-trip`, then `host-midi-sync` |
   | din-mixer-control | `l6max-din-mixer-control` |

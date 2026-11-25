@@ -97,6 +97,7 @@ impl State {
             client.release();
         }
         self.midi_round_trip = None;
+        self.knob_popup = None;
         self.midi = None;
     }
     pub fn execute(
@@ -2006,8 +2007,10 @@ impl State {
             Operation::KnobDialog => {
                 run_knob_dialog(session, options, guest_timeout_ms, wall_timeout_s)
             }
-            Operation::KnobDialogPopup => {
-                run_knob_dialog_popup(session, guest_timeout_ms, wall_timeout_s)
+            operation @ (Operation::KnobPopupOpen { .. }
+            | Operation::KnobPopupExpectOpen
+            | Operation::KnobPopupExpectValue) => {
+                self.run_knob_popup(session, operation, guest_timeout_ms, wall_timeout_s)
             }
             Operation::ExpectMenu { menu, path, items } => {
                 Ok(expect_menu(session, &menu, &path, &items).map_err(std::io::Error::other)?)

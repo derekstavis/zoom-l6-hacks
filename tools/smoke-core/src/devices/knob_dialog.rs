@@ -1530,120 +1530,279 @@ pub(super) fn knob_display_matches(mode: u32, expected: &str, displayed: &str) -
     (expected - displayed).abs() <= tolerance
 }
 
-/// Turn the channel 1 level knob on the recorder screen and check that
-/// Knob Dialog opened its window with the knob's new value. This is the
-/// short check the patch matrix runs; `knob-dialog` covers the guards,
-/// contention and every screen.
-pub(super) fn run_knob_dialog_popup(
-    session: &Session,
+/// Evidence and original overall deadlines for the popup's declarative steps.
+pub(super) struct PopupContext {
+    before: [u8; 1024],
+    level_before: u8,
+    turns: Vec<i32>,
+    guest_start: u32,
+    wall_deadline: Instant,
     guest_timeout_ms: u32,
-    wall_timeout_s: u64,
-) -> Result<Value, Box<dyn std::error::Error>> {
-    use firmware_api::l6max::GUI_RECORDER_WINDOW;
-    use firmware_api::l6max::current_window;
-    const DIALOG_STATE: u32 = l6max::gui_bitmap_table_entry_0;
-    const DIALOG_STATE_MAGIC: u16 = 0x4b4e;
-    const DISPLAY_CALLBACK_SLOT5: u32 = l6max::gui_display_callback_table + 20;
-    use firmware_api::l6max::gui_text_pointers_by_language;
-    const DIALOG_TEXT_ID: u32 = 179;
-    use firmware_api::l6max::mixer_channel_levels;
+}
 
-    if session.engine.model() != l6fw::Model::L6max {
-        return Err("knob-dialog-popup requires L6max firmware".into());
+impl PopupContext {
+    fn expired(&self, now: Instant, guest: u32) -> bool {
+        now > self.wall_deadline || guest.wrapping_sub(self.guest_start) > self.guest_timeout_ms
     }
-    let inputs = session
-        .engine
-        .inputs
-        .as_ref()
-        .ok_or("knob-dialog-popup needs inputs")?;
-    let qmp = &session.engine.management[0];
-    let read_u32 = |address: u32| -> Result<u32, Box<dyn std::error::Error>> {
-        Ok(u32::from_le_bytes(
-            qmp.read_memory(0, address, 4)?.try_into().unwrap(),
-        ))
-    };
-    let window = read_u32(current_window)?;
-    if window != GUI_RECORDER_WINDOW {
-        return Err(format!(
-            "knob-dialog-popup needs the recorder screen, found window {window:#010x}"
-        )
-        .into());
-    }
-    let before = session.poll()?.display;
-    let level_before = qmp.read_memory(0, mixer_channel_levels, 1)?[0];
+}
+
+fn popup_active(snapshot: &l6ctl::KnobPopupSnapshot) -> bool {
+    u16::from_le_bytes([snapshot.state[0], snapshot.state[1]]) == 0x4b4e
+        && snapshot.callback & 1 == 1
+}
+
+fn popup_opened(
+    snapshot: &l6ctl::KnobPopupSnapshot,
+    before: &[u8; 1024],
+    after: &[u8; 1024],
+    level_before: u8,
+) -> bool {
+    popup_active(snapshot) && after != before && snapshot.level != level_before
+}
+
+fn popup_value_matches(snapshot: &l6ctl::KnobPopupSnapshot, level_before: u8) -> bool {
+    let expected = format!("{}%", (u32::from(snapshot.level) * 100 + 63) / 127);
+    snapshot.state[3] == u8::MAX
+        && snapshot.level != level_before
+        && snapshot.text.as_deref() == Some(expected.as_str())
+}
+
+fn attempt_popup_turns(
+    first_steps: i32,
+    fallback_steps: i32,
+    mut attempt: impl FnMut(i32) -> Result<bool, String>,
+) -> Result<Vec<i32>, String> {
     let mut turns = Vec::new();
-    // A knob already at an end of its range does not move, so turn back
-    // the other way when the first turn opens nothing.
-    for delta in [-2i32, 4] {
-        inputs.knob(0, delta)?;
+    for delta in [first_steps, fallback_steps] {
         turns.push(delta);
-        let start = inputs.panel.snapshot().guest_ms;
-        let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
-        let opened = loop {
-            let display = session.poll()?.display;
-            let state = qmp.read_memory(0, DIALOG_STATE, 2)?;
-            if u16::from_le_bytes([state[0], state[1]]) == DIALOG_STATE_MAGIC
-                && read_u32(DISPLAY_CALLBACK_SLOT5)? & 1 == 1
-                && display != before
-                && qmp.read_memory(0, mixer_channel_levels, 1)?[0] != level_before
-            {
-                break true;
-            }
-            if inputs.panel.snapshot().guest_ms.wrapping_sub(start) >= 500 {
-                break false;
-            }
-            if Instant::now() >= deadline
-                || inputs.panel.snapshot().guest_ms.wrapping_sub(start) >= guest_timeout_ms
-            {
-                return Err("knob-dialog popup observation exceeded its deadline".into());
-            }
-            thread::sleep(Duration::from_millis(5));
-        };
-        if opened {
+        if attempt(delta)? {
             break;
         }
     }
-    let state = qmp.read_memory(0, DIALOG_STATE, 2)?;
-    let slot5 = read_u32(DISPLAY_CALLBACK_SLOT5)?;
-    if u16::from_le_bytes([state[0], state[1]]) != DIALOG_STATE_MAGIC || slot5 & 1 == 0 {
-        return Err(format!(
-            "Knob Dialog did not open after turning channel 1 level {turns:?}: state={state:02x?}, slot5={slot5:#010x}"
-        )
-        .into());
-    }
-    let after = session.poll()?.display;
-    if after == before {
-        return Err("Knob Dialog opened but the display did not change".into());
-    }
-    let start = inputs.panel.snapshot().guest_ms;
-    let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(180));
-    let (raw, displayed) = loop {
-        session.poll()?;
-        let pointer = read_u32(read_u32(gui_text_pointers_by_language)? + DIALOG_TEXT_ID * 4)?;
-        let units = qmp
-            .read_memory(0, pointer, 48)?
-            .chunks_exact(2)
-            .map(|b| u16::from_le_bytes([b[0], b[1]]))
-            .take_while(|c| *c != 0)
-            .collect::<Vec<_>>();
-        let displayed = String::from_utf16(&units)?;
-        let raw = qmp.read_memory(0, mixer_channel_levels, 1)?[0];
-        let expected = format!("{}%", (u32::from(raw) * 100 + 63) / 127);
-        if qmp.read_memory(0, DIALOG_STATE + 3, 1)? == [u8::MAX]
-            && raw != level_before
-            && displayed == expected
+    Ok(turns)
+}
+
+impl State {
+    pub(super) fn run_knob_popup(
+        &mut self,
+        session: &Session,
+        operation: Operation,
+        guest_timeout_ms: u32,
+        wall_timeout_s: u64,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        let inputs = session
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or("knob popup needs inputs")?;
+        let step_started = Instant::now();
+        let step_guest = inputs.panel.snapshot().guest_ms;
+        let control = l6ctl::OwnedControl::new(&session.engine);
+        let reader = control.knob_popup_reader()?;
+        if let Operation::KnobPopupOpen {
+            first_steps,
+            fallback_steps,
+            attempt_guest_ms,
+        } = operation
         {
-            break (raw, displayed);
+            let guest_start = step_guest;
+            let wall_deadline = step_started + Duration::from_secs(wall_timeout_s);
+            let initial = reader.snapshot(false).map_err(std::io::Error::other)?;
+            if initial.window != l6max::GUI_RECORDER_WINDOW {
+                return Err(format!(
+                    "knob-dialog-popup needs the recorder screen, found window {:#010x}",
+                    initial.window
+                )
+                .into());
+            }
+            let before = session.poll()?.display;
+            let level_before = reader.snapshot(false).map_err(std::io::Error::other)?.level;
+            let mut context = PopupContext {
+                before,
+                level_before,
+                turns: Vec::new(),
+                guest_start,
+                wall_deadline,
+                guest_timeout_ms,
+            };
+            // InputHub::knob reverses panel encoder polarity; preserve that
+            // exact convention while using l6ctl's one-based encoder API.
+            context.turns = attempt_popup_turns(first_steps, fallback_steps, |delta| {
+                if context.expired(Instant::now(), inputs.panel.snapshot().guest_ms) {
+                    return Err(
+                        "knob-dialog popup exceeded its shared deadline before encoder input"
+                            .into(),
+                    );
+                }
+                control
+                    .encoder(1, -delta)
+                    .map_err(|error| error.to_string())?;
+                let attempt_start = inputs.panel.snapshot().guest_ms;
+                let attempt_deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
+                loop {
+                    let display = session.poll()?.display;
+                    let snapshot = reader.snapshot(false)?;
+                    if popup_opened(&snapshot, &context.before, &display, context.level_before) {
+                        return Ok(true);
+                    }
+                    let guest = inputs.panel.snapshot().guest_ms;
+                    if guest.wrapping_sub(attempt_start) >= attempt_guest_ms {
+                        return Ok(false);
+                    }
+                    if Instant::now() >= attempt_deadline
+                        || guest.wrapping_sub(attempt_start) >= guest_timeout_ms
+                        || context.expired(Instant::now(), guest)
+                    {
+                        return Err("knob-dialog popup observation exceeded its deadline".into());
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+            })?;
+            let turns = context.turns.clone();
+            self.knob_popup = Some(context);
+            return Ok(json!({"turns": turns, "level_before": level_before}));
         }
-        if inputs.panel.snapshot().guest_ms.wrapping_sub(start) >= guest_timeout_ms.min(10_000)
-            || Instant::now() >= deadline
-        {
-            return Err(format!(
-                "Knob Dialog shows {displayed:?} for channel 1 level {raw}, expected {expected:?}"
-            )
-            .into());
+        let context = self
+            .knob_popup
+            .as_ref()
+            .ok_or("knob popup open step has not run")?;
+        if context.expired(Instant::now(), inputs.panel.snapshot().guest_ms) {
+            return Err("knob-dialog popup exceeded its shared deadline".into());
         }
-        thread::sleep(Duration::from_millis(5));
-    };
-    Ok(json!({"turns":turns,"level_raw":raw,"displayed":displayed}))
+        match operation {
+            Operation::KnobPopupExpectOpen => {
+                let snapshot = reader.snapshot(false).map_err(std::io::Error::other)?;
+                if !popup_active(&snapshot) {
+                    return Err(format!("Knob Dialog did not open after turning channel 1 level {:?}: state={:02x?}, slot5={:#010x}", context.turns, &snapshot.state[..2], snapshot.callback).into());
+                }
+                if session.poll()?.display == context.before {
+                    return Err("Knob Dialog opened but the display did not change".into());
+                }
+                if context.expired(Instant::now(), inputs.panel.snapshot().guest_ms) {
+                    return Err("knob-dialog popup exceeded its shared deadline".into());
+                }
+                Ok(
+                    json!({"state":snapshot.state,"callback":snapshot.callback,"display_changed":true}),
+                )
+            }
+            Operation::KnobPopupExpectValue => {
+                let start = inputs.panel.snapshot().guest_ms;
+                let deadline = (Instant::now() + Duration::from_secs(wall_timeout_s.min(180)))
+                    .min(context.wall_deadline);
+                loop {
+                    session.poll()?;
+                    let snapshot = reader.snapshot(true).map_err(std::io::Error::other)?;
+                    let displayed = snapshot.text.as_deref().unwrap_or_default();
+                    let raw = snapshot.level;
+                    let expected = format!("{}%", (u32::from(raw) * 100 + 63) / 127);
+                    if popup_value_matches(&snapshot, context.level_before) {
+                        if context.expired(Instant::now(), inputs.panel.snapshot().guest_ms) {
+                            return Err("knob-dialog popup exceeded its shared deadline".into());
+                        }
+                        let result =
+                            json!({"turns":context.turns,"level_raw":raw,"displayed":displayed});
+                        self.knob_popup = None;
+                        return Ok(result);
+                    }
+                    let guest = inputs.panel.snapshot().guest_ms;
+                    if guest.wrapping_sub(start) >= guest_timeout_ms.min(10_000)
+                        || Instant::now() >= deadline
+                        || context.expired(Instant::now(), guest)
+                    {
+                        return Err(format!("Knob Dialog shows {displayed:?} for channel 1 level {raw}, expected {expected:?}").into());
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod popup_step_tests {
+    use super::*;
+    #[test]
+    fn tries_reverse_only_after_first_attempt_fails() {
+        let mut directions = Vec::new();
+        let turns = attempt_popup_turns(-2, 4, |delta| {
+            directions.push(delta);
+            Ok(true)
+        })
+        .unwrap();
+        assert_eq!(turns, [-2]);
+        assert_eq!(directions, [-2]);
+        let mut directions = Vec::new();
+        let turns = attempt_popup_turns(-2, 4, |delta| {
+            directions.push(delta);
+            Ok(delta == 4)
+        })
+        .unwrap();
+        assert_eq!(turns, [-2, 4]);
+        assert_eq!(directions, [-2, 4]);
+        assert!(
+            attempt_popup_turns(-2, 4, |_| Err("timeout".into()))
+                .unwrap_err()
+                .contains("timeout")
+        );
+    }
+
+    #[test]
+    fn open_requires_state_callback_display_and_level() {
+        let mut snapshot = l6ctl::KnobPopupSnapshot {
+            revision_guard: "test".into(),
+            atomic: false,
+            window: 0,
+            state: [0x4e, 0x4b, 1, 0xff],
+            callback: 1,
+            level: 33,
+            text: None,
+        };
+        let before = [0; 1024];
+        let mut after = before;
+        after[0] = 1;
+        assert!(popup_opened(&snapshot, &before, &after, 32));
+        assert!(!popup_opened(&snapshot, &before, &before, 32));
+        assert!(!popup_opened(&snapshot, &before, &after, 33));
+        snapshot.callback = 0;
+        assert!(!popup_opened(&snapshot, &before, &after, 32));
+        snapshot.callback = 1;
+        snapshot.state[0] = 0;
+        assert!(!popup_opened(&snapshot, &before, &after, 32));
+    }
+    #[test]
+    fn rendered_value_requires_ready_changed_level_and_exact_text() {
+        let mut snapshot = l6ctl::KnobPopupSnapshot {
+            revision_guard: "test".into(),
+            atomic: false,
+            window: 0,
+            state: [0x4e, 0x4b, 1, 0xff],
+            callback: 1,
+            level: 64,
+            text: Some("50%".into()),
+        };
+        assert!(popup_value_matches(&snapshot, 63));
+        assert!(!popup_value_matches(&snapshot, 64));
+        snapshot.text = Some("49%".into());
+        assert!(!popup_value_matches(&snapshot, 63));
+        snapshot.text = Some("50%".into());
+        snapshot.state[3] = 0;
+        assert!(!popup_value_matches(&snapshot, 63));
+    }
+
+    #[test]
+    fn popup_shared_deadline_is_bounded_by_wall_and_guest_time() {
+        let now = Instant::now();
+        let context = PopupContext {
+            before: [0; 1024],
+            level_before: 0,
+            turns: vec![],
+            guest_start: u32::MAX - 4,
+            wall_deadline: now + Duration::from_secs(2),
+            guest_timeout_ms: 10,
+        };
+        assert!(!context.expired(now + Duration::from_secs(1), 5));
+        assert!(context.expired(now + Duration::from_secs(3), 5));
+        assert!(context.expired(now + Duration::from_secs(1), 6));
+    }
 }

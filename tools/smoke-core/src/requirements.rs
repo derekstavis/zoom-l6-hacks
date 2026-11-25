@@ -86,7 +86,9 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6maxPanelKeyMap
         | Action::L6maxDinMixerControl { .. }
         | Action::KnobDialog
-        | Action::KnobDialogPopup
+        | Action::KnobPopupOpen { .. }
+        | Action::KnobPopupExpectOpen
+        | Action::KnobPopupExpectValue
         | Action::ExpectMenu { .. }
         | Action::WaitEffectMode { .. } => on(L6MAX),
         Action::ExpectDisplayAfterPress => Requirement {

@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     fs,
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, Write},
+    os::fd::AsRawFd,
     os::unix::{
         fs::PermissionsExt,
         net::{UnixListener, UnixStream},
@@ -111,6 +112,7 @@ impl ControlServer {
         qmp: QmpClient,
         installer_outcome: Option<crate::update_bootloader::Outcome>,
         usb_controller: Option<crate::usb::Controller>,
+        debugger: Option<crate::debug::Controller>,
     ) -> Result<Self, String> {
         if fs::symlink_metadata(&path).is_ok() {
             return Err(format!(
@@ -156,6 +158,8 @@ impl ControlServer {
                             let qmp = qmp.clone();
                             let installer_outcome = installer_outcome.clone();
                             let usb_controller = usb_controller.clone();
+                            let debugger = debugger.clone();
+                            let stopping = thread_stopping.clone();
                             workers.push(thread::spawn(move || {
                                 handle(
                                     stream,
@@ -164,6 +168,8 @@ impl ControlServer {
                                     &qmp,
                                     installer_outcome.as_ref(),
                                     usb_controller.as_ref(),
+                                    debugger.as_ref(),
+                                    &stopping,
                                 )
                             }));
                         }
@@ -429,52 +435,253 @@ fn handle(
     qmp: &QmpClient,
     installer_outcome: Option<&crate::update_bootloader::Outcome>,
     usb_controller: Option<&crate::usb::Controller>,
+    debugger: Option<&crate::debug::Controller>,
+    stopping: &AtomicBool,
 ) {
-    // Accepted sockets can inherit O_NONBLOCK from the listener (notably on
-    // macOS). Use bounded blocking I/O so large JSON replies are complete.
     if let Err(error) = configure_client(&stream) {
         tracing::warn!(%error, "cannot configure control client socket");
         return;
     }
-    let mut line = String::new();
-    let outcome = BufReader::new(&mut stream)
-        .take(4097)
-        .read_line(&mut line)
-        .map_err(|error| error.to_string())
-        .and_then(|_| {
-            if line.len() > 4096 {
-                return Err("request exceeds 4096 bytes".into());
+    let cloned = match stream.try_clone() {
+        Ok(cloned) => cloned,
+        Err(error) => {
+            tracing::warn!(%error, "cannot clone control socket");
+            return;
+        }
+    };
+    let mut reader = BufReader::new(cloned);
+    let request = read_control_request(&mut reader);
+    if request
+        .as_ref()
+        .ok()
+        .and_then(|r| r.get("command"))
+        .and_then(Value::as_str)
+        == Some("debug-begin")
+    {
+        match debugger
+            .ok_or_else(|| "debugger unavailable".to_owned())
+            .and_then(|controller| controller.begin())
+        {
+            Ok(session) => serve_debug(stream, reader, session, stopping),
+            Err(error) => {
+                let _ = send_response(&mut stream, &json!({"ok":false,"error":error}));
             }
-            let request: Value = serde_json::from_str(&line).map_err(|error| error.to_string())?;
-            if request.get("command").and_then(Value::as_str) == Some("usb-attach") {
-                usb_controller
-                    .ok_or("USB controller unavailable")?
-                    .attach()?;
-                return Ok(json!({"attached":true}));
-            }
-            if request.get("command").and_then(Value::as_str) == Some("usb-release") {
-                usb_controller
-                    .ok_or("USB controller unavailable")?
-                    .release()?;
-                return Ok(json!({"attached":false}));
-            }
-            if request.get("command").and_then(Value::as_str) == Some("usb-controller") {
-                let running = usb_controller
-                    .ok_or("USB controller unavailable")?
-                    .running()?;
-                return Ok(json!({"running":running}));
-            }
-            if request.get("command").and_then(Value::as_str) == Some("installer-outcome") {
-                return installer_observation(installer_outcome);
-            }
-            execute(&request, inputs, model, qmp)
-        });
+        }
+        return;
+    }
+    let outcome = request.and_then(|request| {
+        if request.get("command").and_then(Value::as_str) == Some("usb-attach") {
+            usb_controller
+                .ok_or("USB controller unavailable")?
+                .attach()?;
+            return Ok(json!({"attached":true}));
+        }
+        if request.get("command").and_then(Value::as_str) == Some("usb-release") {
+            usb_controller
+                .ok_or("USB controller unavailable")?
+                .release()?;
+            return Ok(json!({"attached":false}));
+        }
+        if request.get("command").and_then(Value::as_str) == Some("usb-controller") {
+            let running = usb_controller
+                .ok_or("USB controller unavailable")?
+                .running()?;
+            return Ok(json!({"running":running}));
+        }
+        if request.get("command").and_then(Value::as_str) == Some("installer-outcome") {
+            return installer_observation(installer_outcome);
+        }
+        execute(&request, inputs, model, qmp)
+    });
     let reply = match outcome {
         Ok(result) => json!({"ok":true,"result":result}),
         Err(error) => json!({"ok":false,"error":error}),
     };
     if let Err(error) = send_response(&mut stream, &reply) {
         tracing::warn!(%error, "cannot send control response");
+    }
+}
+
+enum ControlLine {
+    Idle,
+    Eof,
+    Value(String),
+}
+
+/// Keep the initial and session readers bounded even when a peer slowly drips
+/// a partial line; retain any pipelined bytes in the same `BufReader`.
+fn read_control_line(
+    reader: &mut BufReader<UnixStream>,
+    overall: std::time::Instant,
+    packet_timeout: Duration,
+) -> Result<ControlLine, String> {
+    let mut bytes = Vec::new();
+    let mut packet_deadline = None;
+    loop {
+        let now = std::time::Instant::now();
+        if now >= overall {
+            return Err("control session deadline exceeded".into());
+        }
+        if packet_deadline.is_some_and(|deadline| now >= deadline) {
+            return Err("control request deadline exceeded".into());
+        }
+        let end = packet_deadline.unwrap_or(overall).min(overall);
+        let wait = end
+            .saturating_duration_since(now)
+            .min(Duration::from_secs(1));
+        reader
+            .get_ref()
+            .set_read_timeout(Some(wait))
+            .map_err(|error| error.to_string())?;
+        let available = match reader.fill_buf() {
+            Ok(available) => available,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                ) =>
+            {
+                if bytes.is_empty() {
+                    return Ok(ControlLine::Idle);
+                }
+                continue;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error.to_string()),
+        };
+        if available.is_empty() {
+            return if bytes.is_empty() {
+                Ok(ControlLine::Eof)
+            } else {
+                Err("control request ended before newline".into())
+            };
+        }
+        if packet_deadline.is_none() {
+            packet_deadline = Some(std::time::Instant::now() + packet_timeout);
+        }
+        let count = available
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(available.len(), |index| index + 1);
+        if bytes.len() + count > 4096 {
+            return Err("control request exceeds 4096 bytes".into());
+        }
+        let finished = available[count - 1] == b'\n';
+        bytes.extend_from_slice(&available[..count]);
+        reader.consume(count);
+        if finished {
+            return String::from_utf8(bytes)
+                .map(ControlLine::Value)
+                .map_err(|error| error.to_string());
+        }
+    }
+}
+
+pub(crate) fn read_control_request(reader: &mut BufReader<UnixStream>) -> Result<Value, String> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        match read_control_line(reader, deadline, Duration::from_secs(2))? {
+            ControlLine::Idle => continue,
+            ControlLine::Eof => return Err("control request ended before newline".into()),
+            ControlLine::Value(line) => {
+                return serde_json::from_str(&line).map_err(|error| error.to_string());
+            }
+        }
+    }
+}
+
+/// One persistent connection owns one debugger session. EOF, malformed
+/// requests, idle timeout, or server shutdown all close the scoped session.
+pub(crate) fn serve_debug(
+    mut stream: UnixStream,
+    mut reader: BufReader<UnixStream>,
+    mut session: crate::debug::Session,
+    stopping: &AtomicBool,
+) {
+    if send_response(&mut stream, &json!({"ok":true,"result":{"started":true}})).is_err() {
+        return;
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(300);
+    loop {
+        if stopping.load(Ordering::Relaxed) || std::time::Instant::now() >= deadline {
+            break;
+        }
+        let line = match read_control_line(&mut reader, deadline, Duration::from_secs(2)) {
+            Ok(ControlLine::Idle) => continue,
+            Ok(ControlLine::Eof) => break,
+            Ok(ControlLine::Value(line)) => line,
+            Err(error) => {
+                let error = match session.close() {
+                    Ok(()) => error,
+                    Err(cleanup) => format!("{error}; debugger cleanup failed: {cleanup}"),
+                };
+                let _ = send_response(&mut stream, &json!({"ok":false,"error":error}));
+                break;
+            }
+        };
+        let command =
+            serde_json::from_str::<crate::debug::Command>(&line).map_err(|e| e.to_string());
+        let close = matches!(command, Ok(crate::debug::Command::Close));
+        let fd = stream.as_raw_fd();
+        let result = command.and_then(|command| {
+            session.execute_cancellable(command, || {
+                if stopping.load(Ordering::Relaxed) || std::time::Instant::now() >= deadline {
+                    return true;
+                }
+                // EOF can sit behind unread pipelined bytes, so peeking at
+                // data alone does not establish that the peer is still alive.
+                let mut descriptor = libc::pollfd {
+                    fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                let ready = unsafe { libc::poll(&mut descriptor, 1, 0) };
+                if ready < 0 {
+                    return std::io::Error::last_os_error().kind()
+                        != std::io::ErrorKind::Interrupted;
+                }
+                if descriptor.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+                    return true;
+                }
+                let mut byte = 0u8;
+                let received = unsafe {
+                    libc::recv(
+                        fd,
+                        (&mut byte as *mut u8).cast(),
+                        1,
+                        libc::MSG_PEEK | libc::MSG_DONTWAIT,
+                    )
+                };
+                if received == 0 {
+                    return true;
+                }
+                if received < 0 {
+                    let error = std::io::Error::last_os_error();
+                    return !matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                    );
+                }
+                false
+            })
+        });
+        let failed = result.is_err();
+        let reply = match result {
+            Ok(value) => json!({"ok":true,"result":value}),
+            Err(error) => {
+                let error = match session.close() {
+                    Ok(()) => error,
+                    Err(cleanup) => format!("{error}; debugger cleanup failed: {cleanup}"),
+                };
+                json!({"ok":false,"error":error})
+            }
+        };
+        if send_response(&mut stream, &reply).is_err() || close || failed {
+            break;
+        }
+    }
+    if let Err(error) = session.close() {
+        tracing::error!(%error, "debug session cleanup failed");
     }
 }
 
@@ -493,6 +700,30 @@ fn send_response(stream: &mut UnixStream, reply: &Value) -> std::io::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slow_partial_control_line_cannot_extend_its_deadline() {
+        let (server, mut client) = UnixStream::pair().unwrap();
+        let writer = thread::spawn(move || {
+            for _ in 0..20 {
+                if client.write_all(b"x").is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let mut reader = BufReader::new(server);
+        let started = std::time::Instant::now();
+        let result = read_control_line(
+            &mut reader,
+            started + Duration::from_secs(1),
+            Duration::from_millis(50),
+        );
+        assert!(matches!(result, Err(error) if error.contains("deadline")));
+        assert!(started.elapsed() < Duration::from_millis(300));
+        drop(reader);
+        writer.join().unwrap();
+    }
 
     #[test]
     fn installer_observation_reports_actual_result_or_unavailable() {

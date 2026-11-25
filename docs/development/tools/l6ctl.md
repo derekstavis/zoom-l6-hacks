@@ -312,3 +312,44 @@ probes whether an attached guest controller answers tokens and prints
 support the L6 and L6max emulator models. Their Rust equivalents are
 `ControlClient::usb_attach`, `ControlClient::usb_release`, `ControlClient::usb_controller`, and the same
 methods on `OwnedControl`.
+
+## Scoped MAIN debugger
+
+A local emulator can opt into the QEMU MAIN GDB stub as well as the control
+socket. `l6ctl debug-session` keeps one control connection open, pauses MAIN,
+and accepts one JSON command per line, returning one JSON response per line:
+
+```sh
+printf '%s\n' '{"command":"register","index":15}' '{"command":"close"}' |
+  cargo l6ctl --socket /tmp/l6-control.sock debug-session
+```
+
+Start the emulator with both `--control-socket /tmp/l6-control.sock` and
+`--gdb-socket /tmp/l6-main-gdb.sock`. MAIN stays paused between operations;
+the panel continues independently. Commands are `register` (indices 0–15),
+`read` (`address`, `length` up to 4096 bytes in bounded MAIN SDRAM),
+`add-breakpoint` and `remove-breakpoint` (aligned MAIN SDRAM `address`),
+`continue` (`timeout_ms` from 1 to 60000, with an owned breakpoint), `step`,
+`l6-scratch-read`, `l6-scratch-write` (exactly eight `bytes`), and `close`.
+The L6 scratch operations verify the supported L6 1.10 MIDI code before using
+the legacy emulator probe page at `0x841ff000`. This is a scoped diagnostic
+buffer, not evidence that physical firmware reserves that address.
+
+The session owns at most four breakpoints. Closing or disconnecting restores
+the scratch bytes, removes owned breakpoints, and restores MAIN's prior run
+state. A socket session expires after 300 seconds. A disconnect during
+`continue` interrupts the target before cleanup. If the debugger stream is
+desynchronized or cleanup cannot be verified, the host attempts to stop MAIN,
+marks its debugger unusable, and reports that the guest must be restarted.
+It does not terminate the emulator. If the stop itself fails, the error says
+so: MAIN's state is then unknown. The existing GDB transport uses an advisory
+cross-process lease shared by repository clients; third-party clients that
+connect directly to the QEMU stub do not honor that lease. The lease cannot
+prevent external QMP clients from changing run state, and cleanup cannot run
+if the host process itself is killed. In either situation, inspect or restart
+the disposable guest before relying on its state.
+
+Rust callers use `OwnedControl::debug_session()` for an owned engine or
+`ControlClient::debug_session()` for the persistent socket. Both accept
+`DebugCommand` and return `DebugObservation`. A caller should explicitly send
+`Close` and check its result; dropping a session also attempts cleanup.

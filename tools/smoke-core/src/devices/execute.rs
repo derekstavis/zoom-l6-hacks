@@ -2229,13 +2229,13 @@ impl State {
                 let points = callbacks(session.engine.model());
                 let model = session.engine.model();
                 let qmp = &session.engine.management[0];
-                qmp.stop()?;
                 let mut debugger = l6max_diagnostics::gdb::Gdb::connect(
                     options
                         .gdb_socket
                         .as_ref()
                         .ok_or("missing audio debugger socket")?,
                 )?;
+                qmp.stop()?;
                 for (address, _) in points {
                     debugger.breakpoint(*address, true)?;
                 }

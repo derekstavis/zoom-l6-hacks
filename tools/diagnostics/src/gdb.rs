@@ -1,71 +1,174 @@
 //! Minimal GDB remote client for all-stop QEMU firmware diagnostics.
 use std::{
+    fs::{File, OpenOptions},
     io::{self, Read, Write},
-    os::unix::net::UnixStream,
-    path::Path,
-    time::Duration,
+    net::Shutdown,
+    os::{
+        fd::AsRawFd,
+        unix::{fs::OpenOptionsExt, net::UnixStream},
+    },
+    path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
-pub struct Gdb(UnixStream);
+pub struct Gdb {
+    stream: UnixStream,
+    // Every in-repository GDB client shares this process-safe lease. The OS
+    // releases it on crash or disconnect; the sidecar itself stays in place.
+    _lease: Option<Lease>,
+}
 /// QEMU's GDB register number for xPSR on M-profile cores.
 const XPSR: u32 = 25;
 /// The active exception number in xPSR; zero in thread mode.
 const IPSR_MASK: u32 = 0x1ff;
+/// Cross-process advisory ownership of one canonical GDB socket.
+pub struct Lease {
+    path: PathBuf,
+    _file: File,
+}
+impl Lease {
+    pub fn try_clone(&self) -> io::Result<Self> {
+        Ok(Self {
+            path: self.path.clone(),
+            _file: self._file.try_clone()?,
+        })
+    }
+    pub fn acquire(path: &Path) -> io::Result<Self> {
+        let canonical = path.canonicalize()?;
+        let mut name = canonical.as_os_str().to_os_string();
+        name.push(".lease");
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(name)?;
+        if !file.metadata()?.file_type().is_file() {
+            return Err(io::Error::other("GDB lease path is not a regular file"));
+        }
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            let error = io::Error::last_os_error();
+            return Err(io::Error::new(
+                error.kind(),
+                format!("GDB socket already leased: {error}"),
+            ));
+        }
+        Ok(Self {
+            path: canonical,
+            _file: file,
+        })
+    }
+}
 impl Gdb {
     pub fn connect(path: &Path) -> io::Result<Self> {
-        let socket = UnixStream::connect(path)?;
+        Self::connect_leased(Lease::acquire(path)?)
+    }
+    /// Open the stub using ownership obtained before changing guest state.
+    pub fn connect_leased(lease: Lease) -> io::Result<Self> {
+        let socket = UnixStream::connect(&lease.path)?;
         socket.set_read_timeout(Some(Duration::from_secs(5)))?;
         socket.set_write_timeout(Some(Duration::from_secs(5)))?;
-        let mut client = Self(socket);
-        client.request("Hg1")?; // Main MCU, not panel CPU.
+        let mut client = Self {
+            stream: socket,
+            _lease: Some(lease),
+        };
+        let reply = client.request("Hg1")?;
+        if reply != "OK" {
+            return Err(io::Error::other(format!(
+                "unexpected GDB handshake reply: {reply}"
+            )));
+        }
         Ok(client)
     }
-    pub fn request(&mut self, command: &str) -> io::Result<String> {
-        let checksum = command.bytes().fold(0u8, u8::wrapping_add);
-        self.0
-            .write_all(format!("${command}#{checksum:02x}").as_bytes())?;
-        self.receive_packet()
+    /// Disconnect the stub while retaining its lease until this value drops.
+    pub fn disconnect(&mut self) -> io::Result<()> {
+        self.stream.shutdown(Shutdown::Both)
     }
-    fn receive_packet(&mut self) -> io::Result<String> {
+
+    pub fn request(&mut self, command: &str) -> io::Result<String> {
+        self.request_with_timeout(command, Duration::from_secs(5))
+    }
+
+    fn request_with_timeout(&mut self, command: &str, timeout: Duration) -> io::Result<String> {
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .ok_or_else(|| io::Error::other("GDB deadline overflow"))?;
+        let checksum = command.bytes().fold(0u8, u8::wrapping_add);
+        self.stream.set_write_timeout(Some(timeout))?;
+        self.stream
+            .write_all(format!("${command}#{checksum:02x}").as_bytes())?;
+        let first = self.read_byte(deadline)?;
+        self.receive_packet_from(first, deadline)
+    }
+
+    fn read_byte(&mut self, deadline: Instant) -> io::Result<u8> {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|duration| !duration.is_zero())
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::TimedOut, "GDB packet deadline exceeded")
+            })?;
+        self.stream.set_read_timeout(Some(remaining))?;
         let mut byte = [0];
-        self.0.read_exact(&mut byte)?;
-        self.receive_packet_from(byte[0])
+        self.stream.read_exact(&mut byte)?;
+        Ok(byte[0])
+    }
+
+    fn receive_packet(&mut self) -> io::Result<String> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let first = self.read_byte(deadline)?;
+        self.receive_packet_from(first, deadline)
     }
     /// Parse a packet whose first byte, `first`, was already read.
-    fn receive_packet_from(&mut self, first: u8) -> io::Result<String> {
-        let mut byte = [first];
-        while byte[0] != b'$' {
-            self.0.read_exact(&mut byte)?;
+    fn receive_packet_from(&mut self, mut first: u8, deadline: Instant) -> io::Result<String> {
+        while first != b'$' {
+            first = self.read_byte(deadline)?;
         }
         let mut encoded = Vec::new();
         loop {
-            self.0.read_exact(&mut byte)?;
-            if byte[0] == b'#' {
+            let byte = self.read_byte(deadline)?;
+            if byte == b'#' {
                 break;
             }
-            encoded.push(byte[0]);
+            if encoded.len() >= 65536 {
+                return Err(io::Error::other("GDB packet exceeds 65536 bytes"));
+            }
+            encoded.push(byte);
         }
-        let mut checksum_bytes = [0; 2];
-        self.0.read_exact(&mut checksum_bytes)?;
-        let expected = u8::from_str_radix(std::str::from_utf8(&checksum_bytes).unwrap(), 16)
-            .map_err(io::Error::other)?;
+        let checksum_bytes = [self.read_byte(deadline)?, self.read_byte(deadline)?];
+        let checksum_text = std::str::from_utf8(&checksum_bytes).map_err(io::Error::other)?;
+        let expected = u8::from_str_radix(checksum_text, 16).map_err(io::Error::other)?;
         if encoded.iter().copied().fold(0u8, u8::wrapping_add) != expected {
             return Err(io::Error::other("GDB checksum mismatch"));
         }
-        self.0.write_all(b"+")?;
+        self.stream.write_all(b"+")?;
         let mut data = Vec::new();
         let mut i = 0;
         while i < encoded.len() {
             match encoded[i] {
                 b'}' => {
                     i += 1;
-                    data.push(encoded[i] ^ 0x20);
+                    data.push(
+                        *encoded
+                            .get(i)
+                            .ok_or_else(|| io::Error::other("truncated GDB escape"))?
+                            ^ 0x20,
+                    );
                 }
                 b'*' => {
                     i += 1;
                     let previous = *data
                         .last()
                         .ok_or_else(|| io::Error::other("bad GDB repeat"))?;
-                    data.extend(std::iter::repeat_n(previous, (encoded[i] - 29) as usize));
+                    let repeat = encoded
+                        .get(i)
+                        .and_then(|count| count.checked_sub(29))
+                        .ok_or_else(|| io::Error::other("bad GDB repeat count"))?
+                        as usize;
+                    if data.len() + repeat > 65536 {
+                        return Err(io::Error::other("decoded GDB packet exceeds 65536 bytes"));
+                    }
+                    data.extend(std::iter::repeat_n(previous, repeat));
                 }
                 b => data.push(b),
             }
@@ -75,7 +178,7 @@ impl Gdb {
     }
     /// Interrupt a running target and return its GDB stop reply.
     pub fn interrupt(&mut self) -> io::Result<String> {
-        self.0.write_all(&[3])?;
+        self.stream.write_all(&[3])?;
         self.receive_packet()
     }
     /// Bring a stopped target to thread mode. A stop can land inside an
@@ -89,7 +192,8 @@ impl Gdb {
                 return Ok(());
             }
             let checksum = b'c';
-            self.0.write_all(format!("$c#{checksum:02x}").as_bytes())?;
+            self.stream
+                .write_all(format!("$c#{checksum:02x}").as_bytes())?;
             std::thread::sleep(Duration::from_millis(1));
             self.interrupt()?;
         }
@@ -100,44 +204,35 @@ impl Gdb {
     /// Let the target run without waiting for it to stop; collect the stop
     /// reply with [`Gdb::poll_stop`].
     pub fn resume(&mut self) -> io::Result<()> {
-        self.0.write_all(b"$c#63")
+        self.stream.write_all(b"$c#63")
     }
     /// The stop reply of a target [`Gdb::resume`] let run, or `None` when it
     /// is still running after `wait`. A timeout leaves the stream intact.
     pub fn poll_stop(&mut self, wait: Duration) -> io::Result<Option<String>> {
-        self.0.set_read_timeout(Some(wait))?;
-        let mut byte = [0];
-        // QEMU acknowledges the resume request with `+` before the target
-        // stops; only a `$` starts the stop reply. QEMU has no no-ack mode.
-        let read = loop {
-            match self.0.read(&mut byte) {
-                Ok(1) if byte[0] == b'+' => continue,
-                other => break other,
+        let deadline = Instant::now()
+            .checked_add(wait)
+            .ok_or_else(|| io::Error::other("GDB deadline overflow"))?;
+        loop {
+            match self.read_byte(deadline) {
+                Ok(b'+') => continue,
+                Ok(b'-') => return Err(io::Error::other("GDB rejected the resume request")),
+                Ok(first) => return self.receive_packet_from(first, deadline).map(Some),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
             }
-        };
-        self.0.set_read_timeout(Some(Duration::from_secs(5)))?;
-        match read {
-            Ok(0) => Err(io::ErrorKind::UnexpectedEof.into()),
-            Ok(_) if byte[0] == b'-' => Err(io::Error::other("GDB rejected the resume request")),
-            Ok(_) => self.receive_packet_from(byte[0]).map(Some),
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                ) =>
-            {
-                Ok(None)
-            }
-            Err(error) => Err(error),
         }
     }
     /// Resume the selected target until a breakpoint/exception, allowing a
     /// longer wait for firmware boot or a deliberately injected call.
     pub fn continue_until_stop(&mut self, timeout: Duration) -> io::Result<String> {
-        self.0.set_read_timeout(Some(timeout))?;
-        let result = self.request("c");
-        self.0.set_read_timeout(Some(Duration::from_secs(5)))?;
-        result
+        self.request_with_timeout("c", timeout)
     }
     fn ok(&mut self, command: &str) -> io::Result<()> {
         let response = self.request(command)?;
@@ -296,9 +391,170 @@ mod tests {
     use super::*;
 
     #[test]
+    fn gdb_connections_share_exclusive_process_safe_lease() {
+        use std::{os::unix::net::UnixListener, thread};
+        let dir = std::env::temp_dir().join(format!("l6-gdb-lease-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("gdb.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let server = thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut command = [0; 7];
+                stream.read_exact(&mut command).unwrap();
+                assert_eq!(&command, b"$Hg1#e0");
+                stream.write_all(b"+$OK#9a").unwrap();
+                let mut ack = [0];
+                stream.read_exact(&mut ack).unwrap();
+                assert_eq!(&ack, b"+");
+            }
+        });
+        let first = Gdb::connect(&path).unwrap();
+        assert!(
+            Gdb::connect(&path)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("already leased")
+        );
+        drop(first);
+        // A concurrently spawning process can briefly inherit the close-on-exec
+        // lease descriptor between fork and exec. Wait for that handoff.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match Gdb::connect(&path) {
+                Ok(second) => {
+                    drop(second);
+                    break;
+                }
+                Err(error)
+                    if error.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(5))
+                }
+                Err(error) => panic!("lease was not released: {error}"),
+            }
+        }
+        server.join().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn lease_rejects_fifo_without_blocking() {
+        use std::{
+            ffi::CString,
+            os::unix::{ffi::OsStrExt, net::UnixListener},
+        };
+        let dir = std::env::temp_dir().join(format!("l6-gdb-fifo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("gdb.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let fifo = dir.join("gdb.sock.lease");
+        let fifo_name = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
+        let start = Instant::now();
+        assert!(
+            Lease::acquire(&path)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("not a regular file")
+        );
+        assert!(start.elapsed() < Duration::from_secs(1));
+        drop(listener);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn lease_child_probe() {
+        let Some(path) = std::env::var_os("L6_TEST_GDB_LEASE_PATH") else {
+            return;
+        };
+        let error = Lease::acquire(Path::new(&path))
+            .err()
+            .expect("child acquired a held lease");
+        assert!(error.to_string().contains("already leased"));
+    }
+
+    #[test]
+    fn lease_excludes_a_separate_process() {
+        use std::{os::unix::net::UnixListener, process::Command};
+        let dir = std::env::temp_dir().join(format!("l6-gdb-process-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("gdb.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let lease = Lease::acquire(&path).unwrap();
+        let result = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "gdb::tests::lease_child_probe", "--nocapture"])
+            .env("L6_TEST_GDB_LEASE_PATH", &path)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(String::from_utf8_lossy(&result.stdout).contains("1 passed"));
+        drop(lease);
+        assert!(Lease::acquire(&path).is_ok());
+        drop(listener);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn packet_deadline_cannot_be_extended_by_slow_bytes() {
+        use std::thread;
+        let (client, mut stub) = UnixStream::pair().unwrap();
+        let mut gdb = Gdb {
+            stream: client,
+            _lease: None,
+        };
+        let server = thread::spawn(move || {
+            let mut request = [0; 5];
+            let _ = stub.read_exact(&mut request);
+            for byte in b"+$S05#b8" {
+                if stub.write_all(&[*byte]).is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(15));
+            }
+        });
+        let start = Instant::now();
+        assert!(
+            gdb.request_with_timeout("c", Duration::from_millis(40))
+                .is_err()
+        );
+        assert!(start.elapsed() < Duration::from_millis(300));
+        drop(gdb);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn malformed_escape_is_an_error_instead_of_a_panic() {
+        let (client, mut stub) = UnixStream::pair().unwrap();
+        let mut gdb = Gdb {
+            stream: client,
+            _lease: None,
+        };
+        stub.write_all(b"$}#7d").unwrap();
+        assert!(
+            gdb.receive_packet()
+                .unwrap_err()
+                .to_string()
+                .contains("truncated")
+        );
+    }
+
+    #[test]
     fn poll_stop_waits_past_the_resume_acknowledgement() {
         let (client, mut stub) = UnixStream::pair().unwrap();
-        let mut gdb = Gdb(client);
+        let mut gdb = Gdb {
+            stream: client,
+            _lease: None,
+        };
         gdb.resume().unwrap();
         let mut request = [0; 5];
         stub.read_exact(&mut request).unwrap();

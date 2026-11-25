@@ -477,6 +477,21 @@ impl OverlayReader {
     pub fn bitmap36(&self) -> Result<Vec<u8>, String> {
         self.borrowed().bitmap36()
     }
+    /// Samples the notification semaphore count at a previously verified address.
+    pub fn notification_count(&self, semaphore: u32) -> Result<Vec<u8>, String> {
+        self.qmp
+            .read_memory(0, semaphore + 56, 4)
+            .map_err(|e| e.to_string())
+    }
+    pub fn level(&self) -> Result<u8, String> {
+        self.borrowed().level()
+    }
+    pub fn mailbox(&self) -> Result<u8, String> {
+        self.borrowed().mailbox()
+    }
+    pub fn text_at_table(&self, table: u32) -> Result<String, String> {
+        self.borrowed().text_at_table(table)
+    }
 }
 
 pub fn overlay_reader(qmp: &QmpClient, model: Model) -> Result<OverlayReader, String> {

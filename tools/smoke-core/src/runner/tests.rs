@@ -1310,7 +1310,8 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
             "../../../../patches/knob-dialog/tests/emulator/fragments/refreshed-overlay.toml"
         )
     );
-    let locked = "[[step]]\naction='knob-dialog-locked-update'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
+    let locked =
+        include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/locked-update.toml");
     let tags =
         include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/invalid-tags.toml");
     let signature = include_str!(

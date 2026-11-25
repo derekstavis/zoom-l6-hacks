@@ -757,7 +757,7 @@ impl Scenario {
                 Action::KnobOverlayBegin => "knob-dialog-task-contexts",
                 Action::KnobDialogBitmapZero => "knob-overlay-finish",
                 Action::KnobOverlayRefreshBegin => "knob-dialog-bitmap-zero",
-                Action::KnobDialogLockedUpdate => "knob-overlay-refresh-finish",
+                Action::KnobLockAcquire => "knob-overlay-refresh-finish",
                 Action::KnobDialogAdaptive { .. } => "knob-dialog-mode-end",
                 Action::KnobDialog => "knob-dialog-check-navigation",
                 _ => continue,
@@ -845,7 +845,7 @@ impl Scenario {
                         "knob-dialog-mode-end" => {
                             matches!(previous.action, Action::KnobDialogModeEnd)
                         }
-                        _ => matches!(previous.action, Action::KnobDialogLockedUpdate),
+                        _ => matches!(previous.action, Action::KnobLockFinish),
                     };
                     correct
                         && previous.guest_timeout_ms == step.guest_timeout_ms
@@ -877,7 +877,7 @@ impl Scenario {
                     return Err("knob-dialog preflight must end with the diagnostic".into());
                 };
                 let subsequent = &applicable[..=end];
-                if subsequent.len() < 105
+                if subsequent.len() < 112
                     || !matches!(subsequent[0].action, Action::KnobDialogPreflightDescriptor)
                     || !matches!(subsequent[1].action, Action::KnobDialogPreflightTextAlias)
                     || !matches!(
@@ -897,8 +897,8 @@ impl Scenario {
                     || !super::valid_overlay_invariant_steps(&subsequent[10..25])
                     || !matches!(subsequent[25].action, Action::KnobDialogBitmapZero)
                     || !super::valid_refreshed_overlay_steps(&subsequent[26..31])
-                    || !matches!(subsequent[31].action, Action::KnobDialogLockedUpdate)
-                    || !valid_knob_mode_steps(&subsequent[32..subsequent.len().saturating_sub(63)])
+                    || !super::valid_locked_update_steps(&subsequent[31..39])
+                    || !valid_knob_mode_steps(&subsequent[39..subsequent.len().saturating_sub(63)])
                     || !valid_invalid_tag_steps(
                         &subsequent[subsequent.len().saturating_sub(63)
                             ..subsequent.len().saturating_sub(56)],

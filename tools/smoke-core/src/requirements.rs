@@ -121,7 +121,13 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobOverlayRefreshValue
         | Action::KnobOverlayRefreshPixels
         | Action::KnobOverlayRefreshFinish
-        | Action::KnobDialogLockedUpdate
+        | Action::KnobLockAcquire
+        | Action::KnobLockTrigger { .. }
+        | Action::KnobLockWait
+        | Action::KnobLockSample
+        | Action::KnobLockRestore
+        | Action::KnobLockAssert
+        | Action::KnobLockFinish
         | Action::KnobDialogModeBegin { .. }
         | Action::WaitKnobParameterMode { .. }
         | Action::KnobDialogExpectHeap

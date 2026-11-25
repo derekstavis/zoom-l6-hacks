@@ -916,7 +916,9 @@ pub(super) fn run_l6max_update(
                     for (label, operation) in embedded_refreshed_overlay_operations()? {
                         run(operation, &label)?;
                     }
-                    run(Operation::KnobDialogLockedUpdate, "knob-dialog")?;
+                    for (label, operation) in embedded_locked_update_operations()? {
+                        run(operation, &label)?;
+                    }
                     // The same fragment is embedded in the staged binary; no
                     // live checkout is consulted during the lifecycle run.
                     for (label, operation) in embedded_mode_operations()? {

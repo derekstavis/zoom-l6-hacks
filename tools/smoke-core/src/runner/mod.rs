@@ -985,8 +985,28 @@ impl Runner {
                         devices::Operation::KnobOverlayRefreshFinish,
                     ));
                 }
-                Action::KnobDialogLockedUpdate => {
-                    return Ok(Progress::Device(devices::Operation::KnobDialogLockedUpdate));
+                Action::KnobLockAcquire => {
+                    return Ok(Progress::Device(devices::Operation::KnobLockAcquire));
+                }
+                Action::KnobLockTrigger { delta } => {
+                    return Ok(Progress::Device(devices::Operation::KnobLockTrigger {
+                        delta,
+                    }));
+                }
+                Action::KnobLockWait => {
+                    return Ok(Progress::Device(devices::Operation::KnobLockWait));
+                }
+                Action::KnobLockSample => {
+                    return Ok(Progress::Device(devices::Operation::KnobLockSample));
+                }
+                Action::KnobLockRestore => {
+                    return Ok(Progress::Device(devices::Operation::KnobLockRestore));
+                }
+                Action::KnobLockAssert => {
+                    return Ok(Progress::Device(devices::Operation::KnobLockAssert));
+                }
+                Action::KnobLockFinish => {
+                    return Ok(Progress::Device(devices::Operation::KnobLockFinish));
                 }
                 Action::KnobDialogModeBegin { scene } => {
                     return Ok(Progress::Device(devices::Operation::KnobDialogModeBegin {

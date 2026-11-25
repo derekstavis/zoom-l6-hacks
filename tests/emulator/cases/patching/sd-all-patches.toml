@@ -152,9 +152,8 @@ action = "include"
 path = "patches/knob-dialog/tests/emulator/fragments/refreshed-overlay.toml"
 
 [[step]]
-action = "knob-dialog-locked-update"
-guest_timeout_ms = 180000
-wall_timeout_s = 600
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/locked-update.toml"
 
 [[step]]
 action = "include"

@@ -665,7 +665,15 @@ pub enum Action {
     KnobOverlayRefreshValue,
     KnobOverlayRefreshPixels,
     KnobOverlayRefreshFinish,
-    KnobDialogLockedUpdate,
+    KnobLockAcquire,
+    KnobLockTrigger {
+        delta: i32,
+    },
+    KnobLockWait,
+    KnobLockSample,
+    KnobLockRestore,
+    KnobLockAssert,
+    KnobLockFinish,
     KnobDialogModeBegin {
         scene: String,
     },
@@ -1425,6 +1433,46 @@ mod refreshed_overlay_fragment_tests {
         ));
         fragment.step.remove(3);
         assert!(!valid_refreshed_overlay_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+    }
+}
+
+pub(crate) fn valid_locked_update_steps(steps: &[&Step]) -> bool {
+    matches!(steps, [acquire, trigger, wait, sample, restore, check, capture, finish]
+        if matches!(acquire.action, Action::KnobLockAcquire)
+        && matches!(trigger.action, Action::KnobLockTrigger { delta: -1 })
+        && matches!(wait.action, Action::KnobLockWait)
+        && matches!(sample.action, Action::KnobLockSample)
+        && matches!(restore.action, Action::KnobLockRestore)
+        && matches!(check.action, Action::KnobLockAssert)
+        && matches!(&capture.action, Action::CaptureDisplay { guest_ms: 500, artifact } if artifact == "window-scene-after-callback-contention")
+        && matches!(finish.action, Action::KnobLockFinish))
+}
+
+#[cfg(test)]
+mod locked_update_fragment_tests {
+    use super::*;
+    #[test]
+    fn requires_restore_before_assert_and_original_capture() {
+        let mut fragment: crate::Fragment = toml::from_str(include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/locked-update.toml"
+        ))
+        .unwrap();
+        assert!(valid_locked_update_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(4, 5);
+        assert!(!valid_locked_update_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(4, 5);
+        if let Action::CaptureDisplay { guest_ms, .. } = &mut fragment.step[6].action {
+            *guest_ms = 1;
+        } else {
+            panic!("expected capture");
+        }
+        assert!(!valid_locked_update_steps(
             &fragment.step.iter().collect::<Vec<_>>()
         ));
     }

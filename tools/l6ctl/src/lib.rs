@@ -2,6 +2,9 @@
 //!
 //! The socket interface is deliberately narrower than direct access. In
 //! particular its input replies confirm enqueueing, not guest acknowledgement.
+pub use l6max_host::audio_trace::{
+    SAI1_TX_PREFIX, TxSample as Sai1TxSample, sai1_tx_nonzero, sai1_tx_samples,
+};
 pub use l6max_host::control::Info;
 pub use l6max_host::debug::{Command as DebugCommand, Observation as DebugObservation};
 pub use l6max_host::effect_editor::{
@@ -776,6 +779,39 @@ impl<'a> OwnedControl<'a> {
             target,
             command: "tap".into(),
         })
+    }
+
+    /// Enqueue a button down and return its input sequence for acknowledgement.
+    pub fn down_with_sequence(&self, target: u32, duration_ms: u32) -> Result<u32, ControlError> {
+        if l6max_host::input::button_source(target).is_none()
+            || duration_ms == 0
+            || duration_ms > 60_000
+        {
+            return Err(ControlError::Rejected(
+                "invalid button down target or duration".into(),
+            ));
+        }
+        self.engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .down(target, duration_ms)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+
+    /// Enqueue a button release and return its input sequence for acknowledgement.
+    pub fn up_with_sequence(&self, target: u32) -> Result<u32, ControlError> {
+        if l6max_host::input::button_source(target).is_none() {
+            return Err(ControlError::Rejected(
+                "invalid button release target".into(),
+            ));
+        }
+        self.engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .up(target)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
     }
 
     /// Verify the GUI and parameter getter revisions for one bounded observation.

@@ -602,14 +602,14 @@
     "model": "l6",
     "backend": "headless",
     "suites": [],
-    "definition": "49e18b116eff1bb665547e08ebed507b6e5b0140c8ea48cc25fa990c64c01c6c"
+    "definition": "90e95a2b93f59fbe232cc982dc132100d365427a789ed6f76423368c2996b454"
   },
   {
     "case": "l6-sound-pad-waveform",
     "model": "l6",
     "backend": "headless",
     "suites": [],
-    "definition": "a57dd505c8f76a618648a81e08b7a8ef1cdf604eaa75ffd7479d9f98056e528b"
+    "definition": "063a886047825e51dd807b748e0111e56f5aa2263a6ddb01d503423ac64f51bb"
   },
   {
     "case": "l6-update-patched-midi",
@@ -641,7 +641,7 @@
     "model": "l6",
     "backend": "headless",
     "suites": [],
-    "definition": "3f4b2a16307cf550b76ab44c48a33579936852da4bc003dfc23b373a0cc75a53"
+    "definition": "c854a94ad16ff5f49290e049fcd9f61b8993154286718c1768da2811a2e7d5bd"
   },
   {
     "case": "l6max-audio-input",
@@ -782,14 +782,14 @@
     "model": "l6max",
     "backend": "headless",
     "suites": [],
-    "definition": "9bfb4f2e095c8076aa6ecf6fd26f342386579e9aab37a348359c89bc29723162"
+    "definition": "4c919d8382d4edf141bb48335bfb23f7265c95e97b675954b0ce247327fcc9a2"
   },
   {
     "case": "l6max-sound-pad-waveform",
     "model": "l6max",
     "backend": "headless",
     "suites": [],
-    "definition": "06117d85aadb9be7682b4d268aa32f6f8f0ae66a225812e672d7e2ec59b1212f"
+    "definition": "d3ff087d13181e0189149b42c6bcdc8688403f3428461407ee20f76b03ad2dc8"
   },
   {
     "case": "l6max-switches-during-playback",
@@ -885,7 +885,7 @@
     "model": "l6max",
     "backend": "headless",
     "suites": [],
-    "definition": "d84494d886e16eee4595c16b040e2375405ab919c2acb9d52a1910f18aaea4cc"
+    "definition": "95ad4d64f70eb29d84fe730f5f55fc37a747a6b8a7ba506800823b9159a73336"
   },
   {
     "case": "mute",
@@ -3267,7 +3267,7 @@
     "suites": [
       "full"
     ],
-    "definition": "22c33c93c0d9982e8b1eebc6da85072e0c0a8d5da7d611dfd71d97a361647c77"
+    "definition": "25bd602771d74c0bdc01542c48d9a38f237b70f2e1c4e2c92cb1ecfcfc71bbbb"
   },
   {
     "case": "sound-pad-playback",
@@ -3276,7 +3276,7 @@
     "suites": [
       "full"
     ],
-    "definition": "d948809ed4e35db6716a7ca7834db3f093d1b203e2273e9a870be77032878b8a"
+    "definition": "9e0b9c48fe4e088f4b26f1dba46b405d17841610a15f3166d0eb4627909ddaf4"
   },
   {
     "case": "state-spec",

@@ -709,6 +709,7 @@ impl Scenario {
         }
         let mut checkpoints = std::collections::BTreeSet::new();
         for model in &value.models {
+            let mut sound_pad: Option<(u8, u32, u64)> = None;
             let mut sd_inspection: Option<(u32, u64)> = None;
 
             let panel_steps: Vec<_> = value
@@ -828,6 +829,41 @@ impl Scenario {
             let mut probe_ring = None;
             let mut probe_tap = None;
             for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                let sound_phase = match &step.action {
+                    Action::SoundPadPress => Some(0),
+                    Action::SoundPadHold => Some(1),
+                    Action::SoundPadRelease => Some(2),
+                    Action::SoundPadObserve => Some(3),
+                    Action::SoundPadSample => Some(4),
+                    Action::SoundPadAssertWaveform => Some(5),
+                    Action::SoundPadAssertAudio => Some(6),
+                    Action::SoundPadAssertLed => Some(7),
+                    Action::SoundPadAssertMeter => Some(8),
+                    Action::SoundPadFinish => Some(9),
+                    _ => None,
+                };
+                match (&step.action, sound_pad, sound_phase) {
+                    (Action::SoundPadBegin { .. }, None, None) => {
+                        sound_pad = Some((0, step.guest_timeout_ms, step.wall_timeout_s))
+                    }
+                    (_, Some((phase, guest, wall)), Some(actual))
+                        if phase == actual
+                            && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        sound_pad = if phase == 9 {
+                            None
+                        } else {
+                            Some((phase + 1, guest, wall))
+                        };
+                    }
+                    (_, Some(_), _) | (_, None, Some(_)) => {
+                        return Err(
+                            "sound-pad transaction requires ordered steps with matching budgets"
+                                .into(),
+                        );
+                    }
+                    _ => {}
+                }
                 match (&step.action, sd_inspection) {
                     (Action::ExpectSdLoader, None) => sd_inspection = Some((step.guest_timeout_ms, step.wall_timeout_s)),
                     (Action::ExpectSdModule { .. }, Some((guest, wall))) if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = None,
@@ -970,6 +1006,9 @@ impl Scenario {
                     }
                     _ => {}
                 }
+            }
+            if sound_pad.is_some() {
+                return Err("sound-pad transaction is incomplete".into());
             }
             if sd_inspection.is_some() {
                 return Err("SD inspection is incomplete".into());
@@ -1336,7 +1375,7 @@ impl Scenario {
                         return Err("editor-pad-playback scenarios must be scoped to L6".into());
                     }
                 }
-                Action::SoundPadPlayback {
+                Action::SoundPadBegin {
                     pad,
                     target,
                     assignment,

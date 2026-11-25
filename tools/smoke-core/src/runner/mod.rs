@@ -756,7 +756,7 @@ impl Runner {
                         pad,
                     }));
                 }
-                Action::SoundPadPlayback {
+                Action::SoundPadBegin {
                     pad,
                     target,
                     assignment,
@@ -766,7 +766,7 @@ impl Runner {
                     expect_source,
                     max_residual_db,
                 } => {
-                    return Ok(Progress::Device(devices::Operation::SoundPadPlayback {
+                    return Ok(Progress::Device(devices::Operation::SoundPadBegin {
                         pad,
                         target,
                         assignment,
@@ -781,6 +781,36 @@ impl Runner {
                     return Ok(Progress::Device(devices::Operation::WaitL6SoundPadFile {
                         path,
                     }));
+                }
+                Action::SoundPadPress => {
+                    return Ok(Progress::Device(devices::Operation::SoundPadPress));
+                }
+                Action::SoundPadHold => {
+                    return Ok(Progress::Device(devices::Operation::SoundPadHold));
+                }
+                Action::SoundPadRelease => {
+                    return Ok(Progress::Device(devices::Operation::SoundPadRelease));
+                }
+                Action::SoundPadObserve => {
+                    return Ok(Progress::Device(devices::Operation::SoundPadObserve));
+                }
+                Action::SoundPadSample => {
+                    return Ok(Progress::Device(devices::Operation::SoundPadSample));
+                }
+                Action::SoundPadAssertWaveform => {
+                    return Ok(Progress::Device(devices::Operation::SoundPadAssertWaveform));
+                }
+                Action::SoundPadAssertAudio => {
+                    return Ok(Progress::Device(devices::Operation::SoundPadAssertAudio));
+                }
+                Action::SoundPadAssertLed => {
+                    return Ok(Progress::Device(devices::Operation::SoundPadAssertLed));
+                }
+                Action::SoundPadAssertMeter => {
+                    return Ok(Progress::Device(devices::Operation::SoundPadAssertMeter));
+                }
+                Action::SoundPadFinish => {
+                    return Ok(Progress::Device(devices::Operation::SoundPadFinish));
                 }
                 Action::L6RecorderPlayback { target } => {
                     return Ok(Progress::Device(devices::Operation::L6RecorderPlayback {

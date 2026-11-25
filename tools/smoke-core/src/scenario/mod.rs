@@ -591,7 +591,7 @@ pub enum Action {
     L6maxUiPadVerify {
         pad: u8,
     },
-    SoundPadPlayback {
+    SoundPadBegin {
         pad: u8,
         target: u32,
         #[serde(default)]
@@ -611,6 +611,16 @@ pub enum Action {
     WaitL6SoundPadFile {
         path: String,
     },
+    SoundPadPress,
+    SoundPadHold,
+    SoundPadRelease,
+    SoundPadObserve,
+    SoundPadSample,
+    SoundPadAssertWaveform,
+    SoundPadAssertAudio,
+    SoundPadAssertLed,
+    SoundPadAssertMeter,
+    SoundPadFinish,
     L6RecorderPlayback {
         target: u32,
     },

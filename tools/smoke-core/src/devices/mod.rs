@@ -260,7 +260,7 @@ pub enum Operation {
     L6maxUiPadVerify {
         pad: u8,
     },
-    SoundPadPlayback {
+    SoundPadBegin {
         pad: u8,
         target: u32,
         assignment: PadAssignmentSource,
@@ -273,6 +273,16 @@ pub enum Operation {
     WaitL6SoundPadFile {
         path: String,
     },
+    SoundPadPress,
+    SoundPadHold,
+    SoundPadRelease,
+    SoundPadObserve,
+    SoundPadSample,
+    SoundPadAssertWaveform,
+    SoundPadAssertAudio,
+    SoundPadAssertLed,
+    SoundPadAssertMeter,
+    SoundPadFinish,
     L6RecorderPlayback {
         target: u32,
     },
@@ -914,6 +924,7 @@ pub struct State {
     midi_sync: Option<midi::MidiSync>,
     l6_midi_probe: Option<midi::L6MidiProbe>,
     sd_inspection: Option<sd::SdInspectionContext>,
+    sound_pad: Option<audio::sound_pad::SoundPadContext>,
     native_midi: Option<l6ctl::midi::MidiSession>,
     midi_probe: Option<MidiProbeContext>,
 }

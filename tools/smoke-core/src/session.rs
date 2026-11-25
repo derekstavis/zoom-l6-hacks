@@ -722,6 +722,9 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     runner.device_finished(json!({"started":true,"profile":label,"card": !boot.no_sd && boot.sd_image.is_some(),"replacement_installer":boot.update_bootloader}));
                 }
                 Progress::Device(devices::Operation::LifecycleStop) => {
+                    if device_state.has_sound_pad() {
+                        return Err("sound-pad transaction interrupted by guest shutdown".into());
+                    }
                     device_state.restarted()?;
                     let mut current = session
                         .take()
@@ -1156,6 +1159,9 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     if options.state_dir.is_none() {
                         return Err("restart requires isolated persistent state".into());
                     }
+                    if device_state.has_sound_pad() {
+                        return Err("sound-pad transaction interrupted by guest shutdown".into());
+                    }
                     device_state.restarted()?;
                     drop(session.take());
                     options.logs = options.logs.join("restart");
@@ -1210,6 +1216,21 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
     }
     if result.is_ok() && device_state.has_midi_sync() {
         result = Err("MIDI sync transaction ended before completion".into());
+    }
+    if result.is_ok() && device_state.has_sound_pad() {
+        result = Err("sound-pad transaction ended before completion".into());
+    }
+    if device_state.has_sound_pad() {
+        let cleanup = match session.as_ref() {
+            Some(current) => device_state.abort_sound_pad(current),
+            None => Err("no active guest to release sound pad".to_owned()),
+        };
+        if let Err(cleanup) = cleanup {
+            result = Err(match result {
+                Ok(()) => format!("sound-pad cleanup failed: {cleanup}"),
+                Err(error) => format!("{error}; sound-pad cleanup failed: {cleanup}"),
+            });
+        }
     }
     if let Err(cleanup) = device_state.abort_auxiliary_scopes() {
         result = Err(match result {

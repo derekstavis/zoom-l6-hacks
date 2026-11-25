@@ -369,6 +369,17 @@ impl State {
         self.l6_indicator = None;
         panel.map(|_| ())
     }
+    pub fn has_sound_pad(&self) -> bool {
+        self.sound_pad.is_some()
+    }
+    pub fn abort_sound_pad(&mut self, session: &Session) -> Result<(), String> {
+        match self.sound_pad.take() {
+            Some(mut context) => {
+                audio::sound_pad::abort(&mut context, session).map_err(|e| e.to_string())
+            }
+            None => Ok(()),
+        }
+    }
     pub fn has_knob_preflight(&self) -> bool {
         self.knob_dialog_preflight.is_some()
     }
@@ -431,6 +442,34 @@ impl State {
             ) {
                 self.l6_indicator = None;
                 return Err("L6 indicator campaign exceeded its shared deadline".into());
+            }
+        }
+        if self.sound_pad.is_some() {
+            let expected = match operation {
+                Operation::SoundPadPress => Some(0),
+                Operation::SoundPadHold => Some(1),
+                Operation::SoundPadRelease => Some(2),
+                Operation::SoundPadObserve => Some(3),
+                Operation::SoundPadSample => Some(4),
+                Operation::SoundPadAssertWaveform => Some(5),
+                Operation::SoundPadAssertAudio => Some(6),
+                Operation::SoundPadAssertLed => Some(7),
+                Operation::SoundPadAssertMeter => Some(8),
+                Operation::SoundPadFinish => Some(9),
+                _ => None,
+            };
+            let context = self.sound_pad.as_ref().unwrap();
+            if expected != Some(context.phase)
+                || (guest_timeout_ms, wall_timeout_s) != (context.guest_budget, context.wall_budget)
+            {
+                let mut context = self.sound_pad.take().unwrap();
+                let cleanup = audio::sound_pad::abort(&mut context, session);
+                return Err(match cleanup {
+                    Ok(()) => "sound-pad transaction interrupted or changed budget".into(),
+                    Err(error) => format!(
+                        "sound-pad transaction interrupted or changed budget; release failed: {error}"
+                    ),
+                });
             }
         }
         if self.sd_inspection.is_some() && !matches!(operation, Operation::ExpectSdModule { .. }) {
@@ -608,6 +647,15 @@ impl State {
             self.knob_dialog_deadline = None;
             self.knob_dialog_baseline = None;
         }
+        if let Some(context) = self.sound_pad.as_ref() {
+            if let Err(error) = audio::sound_pad::check(context, session) {
+                let mut context = self.sound_pad.take().unwrap();
+                return match audio::sound_pad::abort(&mut context, session) {
+                    Ok(()) => Err(error.to_string()),
+                    Err(cleanup) => Err(format!("{error}; sound-pad release failed: {cleanup}")),
+                };
+            }
+        }
         let result = self.execute_inner(
             session,
             options,
@@ -620,7 +668,12 @@ impl State {
         let result = match result {
             Ok(value) => value,
             Err(error) => {
-                let primary = error.to_string();
+                let mut primary = error.to_string();
+                if let Some(mut context) = self.sound_pad.take() {
+                    if let Err(cleanup) = audio::sound_pad::abort(&mut context, session) {
+                        primary = format!("{primary}; sound-pad release failed: {cleanup}");
+                    }
+                }
                 self.l6_indicator = None;
                 self.sysex_deadline = None;
                 self.abort_usb_midi();
@@ -630,6 +683,15 @@ impl State {
                 };
             }
         };
+        if let Some(context) = self.sound_pad.as_ref() {
+            if let Err(error) = audio::sound_pad::check(context, session) {
+                let mut context = self.sound_pad.take().unwrap();
+                return match audio::sound_pad::abort(&mut context, session) {
+                    Ok(()) => Err(error.to_string()),
+                    Err(cleanup) => Err(format!("{error}; sound-pad release failed: {cleanup}")),
+                };
+            }
+        }
         if let Some((wall_deadline, guest_start, guest_budget)) = sd_shared {
             if Instant::now() >= wall_deadline
                 || guest_now(session).wrapping_sub(guest_start) >= guest_budget
@@ -637,15 +699,29 @@ impl State {
                 return Err("SD inspection exceeded its shared deadline".into());
             }
         }
-        let elapsed = control
-            .input_status(l6ctl::InputSource::Panel)
-            .map_err(|e| e.to_string())?
-            .guest_ms
-            .wrapping_sub(guest_start);
+        let elapsed = match control.input_status(l6ctl::InputSource::Panel) {
+            Ok(status) => status.guest_ms.wrapping_sub(guest_start),
+            Err(error) => {
+                if let Some(mut context) = self.sound_pad.take() {
+                    return match audio::sound_pad::abort(&mut context, session) {
+                        Ok(()) => Err(error.to_string()),
+                        Err(cleanup) => {
+                            Err(format!("{error}; sound-pad release failed: {cleanup}"))
+                        }
+                    };
+                }
+                return Err(error.to_string());
+            }
+        };
         if started.elapsed() > Duration::from_secs(wall_timeout_s) || elapsed > guest_timeout_ms {
-            let error = "device operation exceeded its step deadline";
+            let mut error = "device operation exceeded its step deadline".to_owned();
+            if let Some(mut context) = self.sound_pad.take() {
+                if let Err(cleanup) = audio::sound_pad::abort(&mut context, session) {
+                    error = format!("{error}; sound-pad release failed: {cleanup}");
+                }
+            }
             return match self.abort_knob_preflight() {
-                Ok(()) => Err(error.into()),
+                Ok(()) => Err(error),
                 Err(cleanup) => Err(format!("{error}; debugger cleanup failed: {cleanup}")),
             };
         }
@@ -2534,7 +2610,7 @@ impl State {
             Operation::WaitL6SoundPadFile { path } => {
                 wait_l6_sound_pad_file(session, &path, guest_timeout_ms, wall_timeout_s)
             }
-            Operation::SoundPadPlayback {
+            Operation::SoundPadBegin {
                 pad,
                 target,
                 assignment,
@@ -2543,20 +2619,64 @@ impl State {
                 require_stereo_meter,
                 expect_source,
                 max_residual_db,
-            } => run_sound_pad_playback(
-                session,
-                options,
-                pad,
-                target,
-                assignment,
-                require_pad_led_change,
-                playback_window_ms,
-                require_stereo_meter,
-                expect_source.as_deref(),
-                max_residual_db,
-                guest_timeout_ms,
-                wall_timeout_s,
-            ),
+            } => {
+                if self.sound_pad.is_some() {
+                    return Err("sound-pad transaction already active".into());
+                }
+                self.sound_pad = Some(audio::sound_pad::begin(
+                    session,
+                    options,
+                    pad,
+                    target,
+                    assignment,
+                    require_pad_led_change,
+                    playback_window_ms,
+                    require_stereo_meter,
+                    expect_source,
+                    max_residual_db,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                    operation_start,
+                )?);
+                Ok(json!({"pad":pad,"target":target}))
+            }
+            operation @ (Operation::SoundPadPress
+            | Operation::SoundPadHold
+            | Operation::SoundPadRelease
+            | Operation::SoundPadObserve
+            | Operation::SoundPadSample
+            | Operation::SoundPadAssertWaveform
+            | Operation::SoundPadAssertAudio
+            | Operation::SoundPadAssertLed
+            | Operation::SoundPadAssertMeter
+            | Operation::SoundPadFinish) => {
+                let context = self
+                    .sound_pad
+                    .as_mut()
+                    .ok_or("missing sound-pad transaction")?;
+                let result = match operation {
+                    Operation::SoundPadPress => audio::sound_pad::press(context, session, options),
+                    Operation::SoundPadHold => audio::sound_pad::hold(context, session),
+                    Operation::SoundPadRelease => audio::sound_pad::release(context, session),
+                    Operation::SoundPadObserve => {
+                        audio::sound_pad::observe(context, session, options)
+                    }
+                    Operation::SoundPadSample => {
+                        audio::sound_pad::collect(context, session, options)
+                    }
+                    Operation::SoundPadAssertWaveform => audio::sound_pad::assert_waveform(context),
+                    Operation::SoundPadAssertAudio => audio::sound_pad::assert_audio(context),
+                    Operation::SoundPadAssertLed => audio::sound_pad::assert_led(context),
+                    Operation::SoundPadAssertMeter => audio::sound_pad::assert_meter(context),
+                    Operation::SoundPadFinish => Ok(json!({"finished":true})),
+                    _ => unreachable!(),
+                }?;
+                context.phase += 1;
+                if matches!(operation, Operation::SoundPadFinish) {
+                    self.sound_pad = None;
+                }
+                Ok(result)
+            }
             Operation::L6RecorderPlayback { target } => {
                 run_l6_recorder_playback(session, options, target, guest_timeout_ms, wall_timeout_s)
             }

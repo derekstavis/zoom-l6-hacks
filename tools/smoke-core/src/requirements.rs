@@ -274,7 +274,17 @@ pub fn of(action: &Action) -> Requirement {
         | Action::EditorPadAssignments
         | Action::EditorPadPlayback { .. }
         | Action::L6maxUiPadVerify { .. }
-        | Action::SoundPadPlayback { .. }
+        | Action::SoundPadBegin { .. }
+        | Action::SoundPadPress
+        | Action::SoundPadHold
+        | Action::SoundPadRelease
+        | Action::SoundPadObserve
+        | Action::SoundPadSample
+        | Action::SoundPadAssertWaveform
+        | Action::SoundPadAssertAudio
+        | Action::SoundPadAssertLed
+        | Action::SoundPadAssertMeter
+        | Action::SoundPadFinish
         | Action::ExpectMemory { .. }
         | Action::WaitMemory { .. }
         | Action::ExpectSdLoader

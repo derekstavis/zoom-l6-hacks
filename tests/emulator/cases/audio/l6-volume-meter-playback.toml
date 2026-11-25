@@ -83,12 +83,62 @@ value = 1023
 # Load Pad 1's saved assignment from the L6 SD card and verify actual playback
 # without using the USB editor or USB MIDI.
 [[step]]
-action = "sound-pad-playback"
+action = "sound-pad-begin"
 pad = 0
 target = 49
 assignment = "saved-state"
 require_pad_led_change = false
 require_stereo_meter = true
 playback_window_ms = 7000
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-press"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-hold"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-release"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-observe"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-sample"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-waveform"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-audio"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-led"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-meter"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-finish"
 guest_timeout_ms = 30000
 wall_timeout_s = 300

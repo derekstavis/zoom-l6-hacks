@@ -706,7 +706,25 @@ pub enum Action {
     KnobOverlayCheckBitmap,
     KnobOverlayCheckHeap,
     KnobOverlayFinish,
-    KnobDialogBitmapZero,
+    KnobBitmapBegin,
+    KnobBitmapCheckBackground {
+        background: u32,
+        expected: u16,
+    },
+    KnobBitmapStoreBefore,
+    KnobBitmapArm,
+    KnobBitmapWait,
+    KnobBitmapInvoke {
+        background: u32,
+    },
+    KnobBitmapCheckFrame,
+    KnobBitmapCheckSignature,
+    KnobBitmapCheckDescriptor,
+    KnobBitmapFinish,
+    KnobOverlayReactivate {
+        delta: i32,
+    },
+    KnobOverlayWaitActive,
     KnobOverlayRefreshBegin,
     KnobOverlayRefreshValue,
     KnobOverlayRefreshPixels,
@@ -1449,8 +1467,10 @@ mod overlay_fragment_tests {
 }
 
 pub(crate) fn valid_refreshed_overlay_steps(steps: &[&Step]) -> bool {
-    matches!(steps, [begin, value, capture, pixels, finish]
-        if matches!(begin.action, Action::KnobOverlayRefreshBegin)
+    matches!(steps, [reactivate, wait, begin, value, capture, pixels, finish]
+        if matches!(reactivate.action, Action::KnobOverlayReactivate { delta: -1 })
+        && matches!(wait.action, Action::KnobOverlayWaitActive)
+        && matches!(begin.action, Action::KnobOverlayRefreshBegin)
         && matches!(value.action, Action::KnobOverlayRefreshValue)
         && matches!(&capture.action, Action::CaptureDisplay { guest_ms: 500, artifact } if artifact == "window-scene-refreshed")
         && matches!(pixels.action, Action::KnobOverlayRefreshPixels)
@@ -1469,7 +1489,7 @@ mod refreshed_overlay_fragment_tests {
         assert!(valid_refreshed_overlay_steps(
             &fragment.step.iter().collect::<Vec<_>>()
         ));
-        if let Action::CaptureDisplay { guest_ms, .. } = &mut fragment.step[2].action {
+        if let Action::CaptureDisplay { guest_ms, .. } = &mut fragment.step[4].action {
             *guest_ms = 499;
         } else {
             panic!("expected capture");
@@ -1477,7 +1497,7 @@ mod refreshed_overlay_fragment_tests {
         assert!(!valid_refreshed_overlay_steps(
             &fragment.step.iter().collect::<Vec<_>>()
         ));
-        fragment.step.remove(3);
+        fragment.step.remove(5);
         assert!(!valid_refreshed_overlay_steps(
             &fragment.step.iter().collect::<Vec<_>>()
         ));
@@ -1689,6 +1709,50 @@ mod level_demo_fragment_tests {
         ));
         fragment.step.remove(5);
         assert!(!valid_level_demo_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+    }
+}
+
+pub(crate) fn valid_bitmap_probe_steps(steps: &[&Step]) -> bool {
+    matches!(steps, [begin, background, before, store, arm, wait, invoke, after, frame, sig, descriptor, finish]
+        if matches!(begin.action, Action::KnobBitmapBegin)
+        && matches!(background.action, Action::KnobBitmapCheckBackground { background: 47, expected: 0 })
+        && matches!(&before.action, Action::CaptureDisplay { guest_ms: 50, artifact } if artifact == "window-scene-before-null-bitmap-probe")
+        && matches!(store.action, Action::KnobBitmapStoreBefore)
+        && matches!(arm.action, Action::KnobBitmapArm)
+        && matches!(wait.action, Action::KnobBitmapWait)
+        && matches!(invoke.action, Action::KnobBitmapInvoke { background: 47 })
+        && matches!(&after.action, Action::CaptureDisplay { guest_ms: 100, artifact } if artifact == "window-scene-after-null-bitmap-probe")
+        && matches!(frame.action, Action::KnobBitmapCheckFrame)
+        && matches!(sig.action, Action::KnobBitmapCheckSignature)
+        && matches!(descriptor.action, Action::KnobBitmapCheckDescriptor)
+        && matches!(finish.action, Action::KnobBitmapFinish))
+}
+
+#[cfg(test)]
+mod bitmap_probe_fragment_tests {
+    use super::*;
+    #[test]
+    fn requires_capture_order_and_short_circuit_assertions() {
+        let mut fragment: crate::Fragment = toml::from_str(include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/bitmap-zero.toml"
+        ))
+        .unwrap();
+        assert!(valid_bitmap_probe_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(8, 9);
+        assert!(!valid_bitmap_probe_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(8, 9);
+        if let Action::KnobBitmapInvoke { background } = &mut fragment.step[6].action {
+            *background = 48;
+        } else {
+            panic!("expected bitmap invocation");
+        }
+        assert!(!valid_bitmap_probe_steps(
             &fragment.step.iter().collect::<Vec<_>>()
         ));
     }

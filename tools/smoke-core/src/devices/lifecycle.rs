@@ -916,7 +916,9 @@ pub(super) fn run_l6max_update(
                     for (label, operation) in embedded_overlay_operations()? {
                         run(operation, &label)?;
                     }
-                    run(Operation::KnobDialogBitmapZero, "knob-dialog")?;
+                    for (label, operation) in embedded_bitmap_probe_operations()? {
+                        run(operation, &label)?;
+                    }
                     for (label, operation) in embedded_refreshed_overlay_operations()? {
                         run(operation, &label)?;
                     }

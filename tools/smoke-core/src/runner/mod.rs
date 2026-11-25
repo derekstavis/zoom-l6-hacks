@@ -1011,8 +1011,57 @@ impl Runner {
                 Action::KnobOverlayFinish => {
                     return Ok(Progress::Device(devices::Operation::KnobOverlayFinish));
                 }
-                Action::KnobDialogBitmapZero => {
-                    return Ok(Progress::Device(devices::Operation::KnobDialogBitmapZero));
+                Action::KnobBitmapBegin => {
+                    return Ok(Progress::Device(devices::Operation::KnobBitmapBegin));
+                }
+                Action::KnobBitmapCheckBackground {
+                    background,
+                    expected,
+                } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobBitmapCheckBackground {
+                            background,
+                            expected,
+                        },
+                    ));
+                }
+                Action::KnobBitmapStoreBefore => {
+                    return Ok(Progress::Device(devices::Operation::KnobBitmapStoreBefore));
+                }
+                Action::KnobBitmapArm => {
+                    return Ok(Progress::Device(devices::Operation::KnobBitmapArm));
+                }
+                Action::KnobBitmapWait => {
+                    return Ok(Progress::Device(devices::Operation::KnobBitmapWait));
+                }
+                Action::KnobBitmapInvoke { background } => {
+                    return Ok(Progress::Device(devices::Operation::KnobBitmapInvoke {
+                        background,
+                    }));
+                }
+                Action::KnobBitmapCheckFrame => {
+                    return Ok(Progress::Device(devices::Operation::KnobBitmapCheckFrame));
+                }
+                Action::KnobBitmapCheckSignature => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobBitmapCheckSignature,
+                    ));
+                }
+                Action::KnobBitmapCheckDescriptor => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobBitmapCheckDescriptor,
+                    ));
+                }
+                Action::KnobBitmapFinish => {
+                    return Ok(Progress::Device(devices::Operation::KnobBitmapFinish));
+                }
+                Action::KnobOverlayReactivate { delta } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobOverlayReactivate { delta },
+                    ));
+                }
+                Action::KnobOverlayWaitActive => {
+                    return Ok(Progress::Device(devices::Operation::KnobOverlayWaitActive));
                 }
                 Action::KnobOverlayRefreshBegin => {
                     return Ok(Progress::Device(

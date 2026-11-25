@@ -286,7 +286,7 @@ impl DebugCleanup for KnobDebugSession {
 /// Wait until the MAIN 1.10 mixer call and the knob-dialog post-hook return.
 /// At this point a first-use guard has either rejected the turn or published
 /// the pending callback, even when the mixer value was already at its limit.
-fn preflight_remaining_wait(
+fn remaining_debug_wait(
     shared: (Instant, u32, u32, u64, u16),
     guest_now: u32,
     wall_timeout_s: u64,
@@ -299,12 +299,12 @@ fn preflight_remaining_wait(
         guest_budget,
         wall_budget,
     ) {
-        return Err("knob-dialog shared deadline exceeded during preflight trigger".into());
+        return Err("knob-dialog shared deadline exceeded during debugger operation".into());
     }
     let remaining = Duration::from_secs(wall_budget)
         .checked_sub(start.elapsed())
         .filter(|d| !d.is_zero())
-        .ok_or("knob-dialog shared deadline exceeded during preflight trigger")?;
+        .ok_or("knob-dialog shared deadline exceeded during debugger operation")?;
     Ok(remaining.min(Duration::from_secs(wall_timeout_s.min(30))))
 }
 
@@ -314,7 +314,7 @@ fn turn_and_wait_hook(
     delta: i32,
     wall_timeout_s: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    turn_and_wait_hook_bounded(session, debugger, delta, wall_timeout_s, None)
+    turn_and_wait_hook_bounded(session, debugger, delta, wall_timeout_s, None, None)
 }
 
 fn turn_and_wait_hook_bounded(
@@ -323,23 +323,32 @@ fn turn_and_wait_hook_bounded(
     delta: i32,
     wall_timeout_s: u64,
     shared: Option<(Instant, u32, u32, u64, u16)>,
+    expected_mailbox: Option<(&l6max_host::knob_popup::OverlayReader, u8)>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     const MIXER_HOOK_RETURN: u32 = 0x8003_6c78;
     let qmp = &session.engine.management[0];
     let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
     if let Some(shared) = shared {
-        preflight_remaining_wait(shared, inputs.panel.snapshot().guest_ms, wall_timeout_s)?;
+        remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, wall_timeout_s)?;
     }
     qmp.stop()?;
+    if let Some((reader, _)) = expected_mailbox {
+        let pending = reader.mailbox()?;
+        if pending != u8::MAX {
+            return Err(
+                format!("knob hook mailbox was not empty before input: {pending:#04x}").into(),
+            );
+        }
+    }
     debugger.breakpoint(MIXER_HOOK_RETURN, true)?;
     // Recheck before enqueuing guest input if stopping or arming consumed the budget.
     if let Some(shared) = shared {
-        preflight_remaining_wait(shared, inputs.panel.snapshot().guest_ms, wall_timeout_s)?;
+        remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, wall_timeout_s)?;
     }
     inputs.knob(0, delta)?;
     let timeout = match shared {
         Some(shared) => {
-            preflight_remaining_wait(shared, inputs.panel.snapshot().guest_ms, wall_timeout_s)?
+            remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, wall_timeout_s)?
         }
         None => Duration::from_secs(wall_timeout_s.min(30)),
     };
@@ -348,12 +357,24 @@ fn turn_and_wait_hook_bounded(
     // afterward and fail closed if the shared guest budget was exceeded.
     debugger.continue_until_stop(timeout)?;
     if let Some(shared) = shared {
-        preflight_remaining_wait(shared, inputs.panel.snapshot().guest_ms, wall_timeout_s)?;
+        remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, wall_timeout_s)?;
     }
     let pc = debugger.read_register(15)? & !1;
     debugger.breakpoint(MIXER_HOOK_RETURN, false)?;
     if pc != MIXER_HOOK_RETURN {
         return Err(format!("knob turn stopped at {pc:#x}, not the mixer hook return").into());
+    }
+    if let Some((reader, expected)) = expected_mailbox {
+        let actual = reader.mailbox()?;
+        if actual != expected {
+            return Err(format!(
+                "knob hook published mailbox {actual:#04x}, expected {expected:#04x}"
+            )
+            .into());
+        }
+    }
+    if let Some(shared) = shared {
+        remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, wall_timeout_s)?;
     }
     debugger.resume_guest()?;
     Ok(())
@@ -733,6 +754,8 @@ pub(super) struct PreflightContext {
     final_phase: u8,
     overlay_check: Option<OverlayEvidence>,
     overlay_refresh: bool,
+    overlay_reactivation: Option<(u32, Instant)>,
+    bitmap_probe: Option<BitmapProbe>,
     active_display: Option<ActiveDisplayEvidence>,
     level_phase: Option<u8>,
     level_peak: Option<u8>,
@@ -885,6 +908,8 @@ pub(super) fn begin_preflight(
         final_phase: 0,
         overlay_check: None,
         overlay_refresh: false,
+        overlay_reactivation: None,
+        bitmap_probe: None,
         active_display: None,
         level_phase: None,
         level_peak: None,
@@ -1019,7 +1044,7 @@ pub(super) fn trigger_preflight_probe(
         .debugger
         .as_mut()
         .ok_or("missing knob-dialog debugger")?;
-    turn_and_wait_hook_bounded(session, debugger, delta, wall_timeout_s, Some(shared))?;
+    turn_and_wait_hook_bounded(session, debugger, delta, wall_timeout_s, Some(shared), None)?;
     Ok(json!({"delta":delta}))
 }
 
@@ -2102,122 +2127,321 @@ pub(super) fn finish_overlay_invariants(
     Ok(json!({"overlay_invariants":true}))
 }
 
-pub(super) fn run_bitmap_zero(
+struct BitmapProbe {
+    before: Option<[u8; 1024]>,
+    deadline: Option<Instant>,
+    capture_phase: u8,
+}
+
+pub(super) fn bitmap_capture_phase(context: &PreflightContext) -> Option<u8> {
+    context.bitmap_probe.as_ref().map(|p| p.capture_phase)
+}
+
+pub(super) fn begin_bitmap_probe(
     session: &Session,
     options: &Options,
     context: &mut PreflightContext,
-    guest_timeout_ms: u32,
-    wall_timeout_s: u64,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    use std::time::Instant;
-    if context.next != 11 {
+    if context.next != 11 || context.bitmap_probe.is_some() {
         return Err("knob-dialog active overlay step is out of order".into());
     }
     let main = selected_main_image(options).map_err(std::io::Error::other)?;
     if main.get(0x40c..0x410) != Some(&0x8007eea9u32.to_le_bytes()) {
         return Err("patched startup hook does not reserve popup RAM".into());
     }
-    let inputs = session.engine.inputs.as_ref().unwrap();
-    let qmp = &session.engine.management[0];
-    let capture = |duration: u32, name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
-        let start = inputs.panel.snapshot().guest_ms;
-        let begin = Instant::now();
-        let raw = loop {
-            let data = session.poll()?;
-            let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(start);
-            if elapsed >= duration {
-                break data.display;
-            }
-            if elapsed > guest_timeout_ms || begin.elapsed() > Duration::from_secs(wall_timeout_s) {
-                return Err("knob-dialog display capture exceeded its deadline".into());
-            }
-            thread::sleep(Duration::from_millis(5));
-        };
-        let native = image::GrayImage::from_fn(128, 64, |x, y| {
-            let index = ((63 - y as usize) / 8) * 128 + x as usize;
-            image::Luma([if raw[index] & (1 << ((63 - y as usize) % 8)) != 0 {
-                255
-            } else {
-                0
-            }])
-        });
-        if let Some(scene) = name.strip_prefix("window-scene-")
-            && [
-                "high", "freq", "mid", "low", "aux1", "aux2", "efx", "sub-mix", "pan", "level",
-            ]
-            .contains(&scene)
-        {
-            let path = l6max_host::paths::repository_root()
-                .join(KNOB_DIALOG_REFERENCES)
-                .join(format!("{scene}.png"));
-            check_display_reference(&raw, &path, &options.logs, name)
-                .map_err(|error| format!("knob-dialog screen {scene}: {error}"))?;
-        }
-        image::DynamicImage::ImageLuma8(native)
-            .resize(768, 384, image::imageops::FilterType::Nearest)
-            .save(options.logs.join(format!("{name}.png")))?;
-        Ok(raw)
+    let opened = context.opened.as_ref().ok_or("missing active overlay")?;
+    validate_opened_overlay(
+        session,
+        context
+            .debugger
+            .as_mut()
+            .ok_or("missing knob-dialog debugger")?,
+        opened,
+    )?;
+    context.task_contexts.ok_or("missing task contexts")?;
+    context.bitmap_probe = Some(BitmapProbe {
+        before: None,
+        deadline: None,
+        capture_phase: 0,
+    });
+    Ok(json!({"validated":true}))
+}
+
+pub(super) fn check_bitmap_background(
+    context: &mut PreflightContext,
+    reader: &l6max_host::knob_popup::OverlayReader,
+    background: u32,
+    expected: u16,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if reader.background_bitmap_id(background)? != expected {
+        return Err(format!("background {background} no longer uses bitmap ID {expected}").into());
+    }
+    context
+        .bitmap_probe
+        .as_mut()
+        .ok_or("missing bitmap probe")?
+        .capture_phase = 1;
+    Ok(json!({"background":background,"bitmap_id":expected}))
+}
+
+pub(super) fn note_bitmap_capture(
+    context: &mut PreflightContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let probe = context
+        .bitmap_probe
+        .as_mut()
+        .ok_or("missing bitmap probe")?;
+    probe.capture_phase = match probe.capture_phase {
+        1 => 2,
+        6 => 7,
+        _ => return Err("bitmap capture out of order".into()),
     };
-    let background_pointer = |index: u32| -> Result<u32, Box<dyn std::error::Error>> {
-        Ok(u32::from_le_bytes(
-            qmp.read_memory(0, l6max::gui_background_table + index * 4, 4)?
-                .try_into()
-                .unwrap(),
-        ))
-    };
-    let original_bitmap = &context.original_bitmap;
+    Ok(())
+}
+
+pub(super) fn store_bitmap_before(
+    context: &mut PreflightContext,
+    frame: [u8; 1024],
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let probe = context
+        .bitmap_probe
+        .as_mut()
+        .ok_or("missing bitmap probe")?;
+    if probe.capture_phase != 2 {
+        return Err("bitmap before frame out of order".into());
+    }
+    probe.before = Some(frame);
+    probe.capture_phase = 3;
+    Ok(json!({"before_captured":true}))
+}
+
+pub(super) fn arm_bitmap_callback(
+    session: &Session,
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let entry = context
+        .opened
+        .as_ref()
+        .ok_or("missing active overlay")?
+        .callback
+        & !1;
     let debugger = context
         .debugger
         .as_mut()
         .ok_or("missing knob-dialog debugger")?;
-    validate_opened_overlay(
+    session.engine.management[0].stop()?;
+    debugger.breakpoint(entry, true)?;
+    debugger.resume_guest()?;
+    let probe = context
+        .bitmap_probe
+        .as_mut()
+        .ok_or("missing bitmap probe")?;
+    probe.deadline = Some(Instant::now() + Duration::from_secs(15));
+    probe.capture_phase = 4;
+    Ok(json!({"callback_entry":entry}))
+}
+
+pub(super) fn wait_bitmap_callback(
+    session: &Session,
+    context: &mut PreflightContext,
+    shared: (Instant, u32, u32, u64, u16),
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let probe = context
+        .bitmap_probe
+        .as_mut()
+        .ok_or("missing bitmap probe")?;
+    wait_task_stop(
+        session,
+        probe.deadline.ok_or("missing bitmap deadline")?,
+        shared,
+        "dialog callback breakpoint was not reached",
+    )?;
+    probe.capture_phase = 5;
+    Ok(json!({"callback_stopped":true}))
+}
+
+pub(super) fn invoke_bitmap_probe(
+    session: &Session,
+    context: &mut PreflightContext,
+    background: u32,
+    shared: (Instant, u32, u32, u64, u16),
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let entry = context
+        .opened
+        .as_ref()
+        .ok_or("missing active overlay")?
+        .callback
+        & !1;
+    let debugger = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?;
+    debugger.breakpoint(entry, false)?;
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    let timeout = remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, 5)?;
+    debugger.call_thumb(l6max::gui_draw_background, &[background], timeout)?;
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, 5)?;
+    debugger.resume_guest()?;
+    context
+        .bitmap_probe
+        .as_mut()
+        .ok_or("missing bitmap probe")?
+        .capture_phase = 6;
+    Ok(json!({"background":background}))
+}
+
+pub(super) fn check_bitmap_frame(
+    context: &PreflightContext,
+    after: &[u8; 1024],
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context
+        .bitmap_probe
+        .as_ref()
+        .ok_or("missing bitmap probe")?
+        .before
+        .as_ref()
+        .ok_or("missing bitmap before frame")?
+        != after
+    {
+        return Err(
+            "bitmap ID 0 did not safely short-circuit while holding the state handle".into(),
+        );
+    }
+    Ok(json!({"frame_unchanged":true}))
+}
+
+pub(super) fn check_bitmap_signature(
+    reader: &l6max_host::knob_popup::OverlayReader,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if reader.state_signature()? != 0x4b4eu16.to_le_bytes() {
+        return Err(
+            "bitmap ID 0 did not safely short-circuit while holding the state handle".into(),
+        );
+    }
+    Ok(json!({"signature_valid":true}))
+}
+
+pub(super) fn check_bitmap_descriptor(
+    context: &PreflightContext,
+    reader: &l6max_host::knob_popup::OverlayReader,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if reader.bitmap36()? != context.original_bitmap {
+        return Err(
+            "bitmap ID 0 did not safely short-circuit while holding the state handle".into(),
+        );
+    }
+    Ok(json!({"descriptor_unchanged":true}))
+}
+
+pub(super) fn finish_bitmap_probe(
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    context.bitmap_probe.take().ok_or("missing bitmap probe")?;
+    context.next = 12;
+    Ok(json!({"bitmap_zero_guard_safe":true}))
+}
+
+// The decomposed probes can span the two-second popup lifetime. Re-trigger
+// the already-zero endpoint explicitly, then wait for the callback before
+// testing the refreshed image. An endpoint guard prevents mixer-value changes.
+fn validate_zero_reactivation(before: u8, delta: i32) -> Result<(), String> {
+    if delta != -1 {
+        return Err("unsupported overlay reactivation direction".into());
+    }
+    if before != 0 {
+        return Err(format!(
+            "overlay reactivation requires the zero level endpoint, found {before}"
+        ));
+    }
+    Ok(())
+}
+
+fn overlay_reactivation_expired(
+    start: u32,
+    now: u32,
+    elapsed: Duration,
+    shared: (Instant, u32, u32, u64, u16),
+) -> bool {
+    now.wrapping_sub(start) >= 10_000
+        || elapsed >= Duration::from_secs(180)
+        || super::execute::deadline_exceeded(shared.0.elapsed(), shared.1, now, shared.2, shared.3)
+}
+
+pub(super) fn reactivate_zero_overlay(
+    session: &Session,
+    context: &mut PreflightContext,
+    reader: &l6max_host::knob_popup::OverlayReader,
+    delta: i32,
+    shared: (Instant, u32, u32, u64, u16),
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.next != 12 || context.overlay_reactivation.is_some() {
+        return Err("overlay reactivation out of order".into());
+    }
+    let before = reader.level()?;
+    validate_zero_reactivation(before, delta)?;
+    let debugger = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?;
+    turn_and_wait_hook_bounded(
         session,
         debugger,
-        context.opened.as_ref().ok_or("missing active overlay")?,
+        delta,
+        shared.3,
+        Some(shared),
+        Some((reader, 0x09)),
     )?;
-    let opened = context.opened.as_ref().unwrap();
-    let active_slot5 = opened.callback;
-    context.task_contexts.ok_or("missing task contexts")?;
-    {
-        let state = l6max::gui_bitmap_table_entry_0;
-        let null_bitmap_background = background_pointer(47)?;
-        if u16::from_le_bytes(
-            qmp.read_memory(0, null_bitmap_background + 2, 2)?
-                .try_into()
-                .unwrap(),
-        ) != 0
-        {
-            return Err("background 47 no longer uses bitmap ID 0".into());
+    let start = session
+        .engine
+        .inputs
+        .as_ref()
+        .ok_or("missing inputs")?
+        .panel
+        .snapshot()
+        .guest_ms;
+    context.overlay_reactivation = Some((start, Instant::now()));
+    Ok(json!({"channel":1,"delta":delta,"raw_before":before}))
+}
+
+fn overlay_reactivation_ready(pending: u8, ticks: u8) -> bool {
+    pending == u8::MAX && ticks > 0
+}
+
+pub(super) fn wait_zero_overlay_active(
+    session: &Session,
+    context: &mut PreflightContext,
+    reader: &l6max_host::knob_popup::OverlayReader,
+    shared: (Instant, u32, u32, u64, u16),
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let (start, wall) = context
+        .overlay_reactivation
+        .ok_or("missing overlay reactivation")?;
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    loop {
+        let now = inputs.panel.snapshot().guest_ms;
+        if overlay_reactivation_expired(start, now, wall.elapsed(), shared) {
+            return Err("zero-level overlay did not reactivate before its deadline".into());
         }
-        let before_null_bitmap_draw = capture(50, "window-scene-before-null-bitmap-probe")?;
-        // Call the draw routine from the display task, at the dialog's own
-        // callback entry. An arbitrary stop can land in the idle task or an
-        // exception handler, where the routine can block past the deadline.
-        qmp.stop()?;
-        debugger.breakpoint(active_slot5 & !1, true)?;
-        debugger.resume_guest()?;
-        let display_task_deadline = Instant::now() + Duration::from_secs(15);
-        while qmp.query_status()?.running {
-            session.poll()?;
-            if Instant::now() >= display_task_deadline {
-                return Err("dialog callback breakpoint was not reached".into());
+        session.poll()?;
+        let pending = reader.mailbox()?;
+        let ticks = if pending == u8::MAX {
+            reader.countdown_ticks()?
+        } else {
+            0
+        };
+        if overlay_reactivation_ready(pending, ticks) {
+            let now = inputs.panel.snapshot().guest_ms;
+            if overlay_reactivation_expired(start, now, wall.elapsed(), shared) {
+                return Err("zero-level overlay did not reactivate before its deadline".into());
             }
-            thread::sleep(Duration::from_millis(5));
+            let after = reader.level()?;
+            if after != 0 {
+                return Err(format!("overlay reactivation changed zero level to {after}").into());
+            }
+            context.overlay_reactivation = None;
+            return Ok(json!({"level":after,"ticks":ticks,"mailbox":pending}));
         }
-        debugger.breakpoint(active_slot5 & !1, false)?;
-        debugger.call_thumb(l6max::gui_draw_background, &[47], Duration::from_secs(5))?;
-        debugger.resume_guest()?;
-        let after_null_bitmap_draw = capture(100, "window-scene-after-null-bitmap-probe")?;
-        if before_null_bitmap_draw != after_null_bitmap_draw
-            || u16::from_le_bytes(qmp.read_memory(0, state, 2)?.try_into().unwrap()) != 0x4b4e
-            || qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)? != *original_bitmap
-        {
-            return Err(
-                "bitmap ID 0 did not safely short-circuit while holding the state handle".into(),
-            );
-        }
-        context.next = 12;
-        Ok(json!({"bitmap_zero_guard_safe": true}))
+        thread::sleep(Duration::from_millis(5));
     }
 }
 
@@ -4906,11 +5130,11 @@ mod preflight_budget_tests {
     fn caps_blocking_wait_to_remaining_wall_and_checks_guest_wrap() {
         let start = Instant::now() - Duration::from_millis(9500);
         let shared = (start, u32::MAX - 499, 10_000, 10, 0);
-        let remaining = preflight_remaining_wait(shared, 1000, 600).unwrap();
+        let remaining = remaining_debug_wait(shared, 1000, 600).unwrap();
         assert!(remaining <= Duration::from_millis(500));
-        assert!(preflight_remaining_wait(shared, 9501, 600).is_err());
+        assert!(remaining_debug_wait(shared, 9501, 600).is_err());
         let expired = (Instant::now() - Duration::from_secs(11), 0, 10_000, 10, 0);
-        assert!(preflight_remaining_wait(expired, 0, 600).is_err());
+        assert!(remaining_debug_wait(expired, 0, 600).is_err());
     }
 }
 
@@ -4940,5 +5164,47 @@ mod task_probe_deadline_tests {
             9501,
             shared
         ));
+    }
+}
+
+#[cfg(test)]
+mod overlay_reactivation_tests {
+    use super::{
+        overlay_reactivation_expired, overlay_reactivation_ready, validate_zero_reactivation,
+    };
+    use std::time::{Duration, Instant};
+    #[test]
+    fn requires_zero_endpoint_and_decreasing_input() {
+        assert!(validate_zero_reactivation(0, -1).is_ok());
+        assert!(validate_zero_reactivation(1, -1).is_err());
+        assert!(validate_zero_reactivation(0, 1).is_err());
+    }
+    #[test]
+    fn readiness_timeout_handles_guest_wrap_and_wall_limit() {
+        let shared = (Instant::now(), u32::MAX - 499, 50_000, 600, 0);
+        assert!(!overlay_reactivation_expired(
+            u32::MAX - 499,
+            9499,
+            Duration::from_secs(1),
+            shared
+        ));
+        assert!(overlay_reactivation_expired(
+            u32::MAX - 499,
+            9500,
+            Duration::from_secs(1),
+            shared
+        ));
+        assert!(overlay_reactivation_expired(
+            0,
+            0,
+            Duration::from_secs(180),
+            shared
+        ));
+    }
+    #[test]
+    fn requires_consumed_mailbox_and_active_countdown() {
+        assert!(!overlay_reactivation_ready(0, 20));
+        assert!(!overlay_reactivation_ready(255, 0));
+        assert!(overlay_reactivation_ready(255, 20));
     }
 }

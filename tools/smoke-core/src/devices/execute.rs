@@ -14,6 +14,7 @@ fn knob_dialog_phase(
     task_probe: bool,
     task_capture: bool,
     level_phase: Option<u8>,
+    bitmap_capture: Option<u8>,
 ) -> Option<u16> {
     let fixed = match operation {
         Operation::KnobDialogGuard => Some(0),
@@ -66,20 +67,33 @@ fn knob_dialog_phase(
         Operation::KnobOverlayCheckBitmap => Some(72),
         Operation::KnobOverlayCheckHeap => Some(73),
         Operation::KnobOverlayFinish => Some(74),
-        Operation::KnobDialogBitmapZero => Some(75),
-        Operation::KnobOverlayRefreshBegin => Some(76),
-        Operation::KnobOverlayRefreshValue => Some(77),
-        Operation::CaptureDisplay { .. } if scope.is_none() && overlay_capture => Some(78),
-        Operation::KnobOverlayRefreshPixels => Some(79),
-        Operation::KnobOverlayRefreshFinish => Some(80),
-        Operation::KnobLockAcquire => Some(81),
-        Operation::KnobLockTrigger { .. } => Some(82),
-        Operation::KnobLockWait => Some(83),
-        Operation::KnobLockSample => Some(84),
-        Operation::KnobLockRestore => Some(85),
-        Operation::KnobLockAssert => Some(86),
-        Operation::CaptureDisplay { .. } if scope.is_none() && locked_capture => Some(87),
-        Operation::KnobLockFinish => Some(88),
+        Operation::KnobBitmapBegin => Some(75),
+        Operation::KnobBitmapCheckBackground { .. } => Some(76),
+        Operation::CaptureDisplay { .. } if bitmap_capture == Some(1) => Some(77),
+        Operation::KnobBitmapStoreBefore => Some(78),
+        Operation::KnobBitmapArm => Some(79),
+        Operation::KnobBitmapWait => Some(80),
+        Operation::KnobBitmapInvoke { .. } => Some(81),
+        Operation::CaptureDisplay { .. } if bitmap_capture == Some(6) => Some(82),
+        Operation::KnobBitmapCheckFrame => Some(83),
+        Operation::KnobBitmapCheckSignature => Some(84),
+        Operation::KnobBitmapCheckDescriptor => Some(85),
+        Operation::KnobBitmapFinish => Some(86),
+        Operation::KnobOverlayReactivate { .. } => Some(87),
+        Operation::KnobOverlayWaitActive => Some(88),
+        Operation::KnobOverlayRefreshBegin => Some(89),
+        Operation::KnobOverlayRefreshValue => Some(90),
+        Operation::CaptureDisplay { .. } if scope.is_none() && overlay_capture => Some(91),
+        Operation::KnobOverlayRefreshPixels => Some(92),
+        Operation::KnobOverlayRefreshFinish => Some(93),
+        Operation::KnobLockAcquire => Some(94),
+        Operation::KnobLockTrigger { .. } => Some(95),
+        Operation::KnobLockWait => Some(96),
+        Operation::KnobLockSample => Some(97),
+        Operation::KnobLockRestore => Some(98),
+        Operation::KnobLockAssert => Some(99),
+        Operation::CaptureDisplay { .. } if scope.is_none() && locked_capture => Some(100),
+        Operation::KnobLockFinish => Some(101),
         Operation::KnobOverlayCheckDescriptor { field } => Some(
             63 + match field {
                 crate::scenario::OverlayDescriptorField::Widget7 => 0,
@@ -90,7 +104,7 @@ fn knob_dialog_phase(
             },
         ),
         Operation::KnobDialogModeBegin { .. } => {
-            next_mode.and_then(|index| u16::try_from(89 + index * 10).ok())
+            next_mode.and_then(|index| u16::try_from(102 + index * 10).ok())
         }
         Operation::KnobDialogAdaptive { .. }
         | Operation::KnobDialogInjectInvalidTag { .. }
@@ -119,12 +133,12 @@ fn knob_dialog_phase(
         | Operation::KnobDialogSnapshotNavigation
         | Operation::KnobDialogCheckNavigation { .. }
         | Operation::KnobDialog => next_mode
-            .and_then(|index| u16::try_from(89 + index * 10 + usize::from(final_phase?)).ok()),
+            .and_then(|index| u16::try_from(102 + index * 10 + usize::from(final_phase?)).ok()),
         Operation::CaptureDisplay { .. }
             if scope.is_none() && matches!(final_phase, Some(22 | 44 | 47)) =>
         {
             next_mode
-                .and_then(|index| u16::try_from(89 + index * 10 + usize::from(final_phase?)).ok())
+                .and_then(|index| u16::try_from(102 + index * 10 + usize::from(final_phase?)).ok())
         }
         _ => None,
     };
@@ -149,7 +163,7 @@ fn knob_dialog_phase(
         Operation::KnobDialogModeEnd => 9,
         _ => return None,
     };
-    Some(89 + scope.index as u16 * 10 + offset)
+    Some(102 + scope.index as u16 * 10 + offset)
 }
 
 type KnobDeadline = (Instant, u32, u32, u64, u16);
@@ -462,6 +476,9 @@ impl State {
                 .as_ref()
                 .is_some_and(expecting_task_capture),
             self.knob_dialog_preflight.as_ref().and_then(level_phase),
+            self.knob_dialog_preflight
+                .as_ref()
+                .and_then(bitmap_capture_phase),
         );
         let deadline_operation = expected.map(|_| matches!(operation, Operation::KnobDialog));
         if expected.is_none() && self.has_knob_preflight() {
@@ -2898,15 +2915,130 @@ impl State {
                 self.overlay_reader = None;
                 Ok(value)
             }
-            Operation::KnobDialogBitmapZero => run_bitmap_zero(
-                session,
-                options,
+            Operation::KnobBitmapBegin => {
+                let value = begin_bitmap_probe(
+                    session,
+                    options,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                )?;
+                self.overlay_reader =
+                    Some(l6ctl::OwnedControl::new(&session.engine).knob_overlay_reader()?);
+                Ok(value)
+            }
+            Operation::KnobBitmapCheckBackground {
+                background,
+                expected,
+            } => check_bitmap_background(
                 self.knob_dialog_preflight
                     .as_mut()
                     .ok_or("missing knob-dialog preflight")?,
-                guest_timeout_ms,
-                wall_timeout_s,
+                self.overlay_reader
+                    .as_ref()
+                    .ok_or("missing bitmap reader")?,
+                background,
+                expected,
             ),
+            Operation::KnobBitmapStoreBefore => {
+                let frame = self
+                    .captured_display
+                    .take()
+                    .ok_or("missing bitmap before capture")?
+                    .frame;
+                store_bitmap_before(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    frame,
+                )
+            }
+            Operation::KnobBitmapArm => arm_bitmap_callback(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobBitmapWait => wait_bitmap_callback(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobBitmapInvoke { background } => invoke_bitmap_probe(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                background,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobBitmapCheckFrame => {
+                let frame = &self
+                    .captured_display
+                    .as_ref()
+                    .ok_or("missing bitmap after capture")?
+                    .frame;
+                check_bitmap_frame(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    frame,
+                )
+            }
+            Operation::KnobBitmapCheckSignature => check_bitmap_signature(
+                self.overlay_reader
+                    .as_ref()
+                    .ok_or("missing bitmap reader")?,
+            ),
+            Operation::KnobBitmapCheckDescriptor => check_bitmap_descriptor(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                self.overlay_reader
+                    .as_ref()
+                    .ok_or("missing bitmap reader")?,
+            ),
+            Operation::KnobBitmapFinish => {
+                self.captured_display = None;
+                let value = finish_bitmap_probe(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                )?;
+                self.overlay_reader = None;
+                Ok(value)
+            }
+            Operation::KnobOverlayReactivate { delta } => {
+                self.overlay_reader =
+                    Some(l6ctl::OwnedControl::new(&session.engine).knob_overlay_reader()?);
+                reactivate_zero_overlay(
+                    session,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing overlay reactivation reader")?,
+                    delta,
+                    shared.ok_or("missing shared deadline")?,
+                )
+            }
+            Operation::KnobOverlayWaitActive => {
+                let value = wait_zero_overlay_active(
+                    session,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing overlay reactivation reader")?,
+                    shared.ok_or("missing shared deadline")?,
+                )?;
+                self.overlay_reader = None;
+                Ok(value)
+            }
             Operation::KnobOverlayRefreshBegin => {
                 begin_refreshed_overlay(
                     session,
@@ -3479,7 +3611,29 @@ mod knob_phase_tests {
             Operation::KnobOverlayCheckBitmap,
             Operation::KnobOverlayCheckHeap,
             Operation::KnobOverlayFinish,
-            Operation::KnobDialogBitmapZero,
+            Operation::KnobBitmapBegin,
+            Operation::KnobBitmapCheckBackground {
+                background: 47,
+                expected: 0,
+            },
+            Operation::CaptureDisplay {
+                guest_ms: 50,
+                artifact: "window-scene-before-null-bitmap-probe".into(),
+            },
+            Operation::KnobBitmapStoreBefore,
+            Operation::KnobBitmapArm,
+            Operation::KnobBitmapWait,
+            Operation::KnobBitmapInvoke { background: 47 },
+            Operation::CaptureDisplay {
+                guest_ms: 100,
+                artifact: "window-scene-after-null-bitmap-probe".into(),
+            },
+            Operation::KnobBitmapCheckFrame,
+            Operation::KnobBitmapCheckSignature,
+            Operation::KnobBitmapCheckDescriptor,
+            Operation::KnobBitmapFinish,
+            Operation::KnobOverlayReactivate { delta: -1 },
+            Operation::KnobOverlayWaitActive,
             Operation::KnobOverlayRefreshBegin,
             Operation::KnobOverlayRefreshValue,
             Operation::CaptureDisplay {
@@ -3515,8 +3669,8 @@ mod knob_phase_tests {
                     pending,
                     next_mode,
                     Some(0),
-                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 78,
-                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 87,
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 91,
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 100,
                     (matches!(operation, Operation::EnqueueEncoderNoAck { .. }) && before.4 == 36)
                         || (matches!(operation, Operation::CaptureDisplay { .. })
                             && before.4 == 37),
@@ -3533,6 +3687,15 @@ mod knob_phase_tests {
                         && before.4 == 48
                     {
                         Some(5)
+                    } else {
+                        None
+                    },
+                    if matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 77 {
+                        Some(1)
+                    } else if matches!(operation, Operation::CaptureDisplay { .. })
+                        && before.4 == 82
+                    {
+                        Some(6)
                     } else {
                         None
                     }
@@ -3784,6 +3947,7 @@ mod knob_phase_tests {
                     None,
                     false,
                     false,
+                    None,
                     None
                 ),
                 Some(before.4)

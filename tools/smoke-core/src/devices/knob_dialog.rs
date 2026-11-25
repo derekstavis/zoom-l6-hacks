@@ -668,6 +668,7 @@ pub(super) struct PreflightContext {
     activation_semaphore_count: Option<Vec<u8>>,
     activation_callback: Option<u32>,
     active: Option<ActiveSnapshot>,
+    opened: Option<OpenedOverlay>,
 }
 
 pub(super) fn begin_preflight(
@@ -801,6 +802,7 @@ pub(super) fn begin_preflight(
         activation_semaphore_count: None,
         activation_callback: None,
         active: None,
+        opened: None,
     })
 }
 
@@ -1280,7 +1282,46 @@ struct ActiveSnapshot {
     refreshed: [u8; 1024],
 }
 
-pub(super) fn run_active_overlay(
+#[derive(Clone)]
+struct OpenedOverlay {
+    frame: [u8; 1024],
+    callback: u32,
+}
+
+fn opened_overlay_matches(state: &[u8], slot: &[u8], expected_callback: u32) -> bool {
+    state.len() == 4
+        && u16::from_le_bytes([state[0], state[1]]) == 0x4b4e
+        && slot == expected_callback.to_le_bytes()
+}
+
+fn validate_opened_overlay(
+    session: &Session,
+    debugger: &mut KnobDebugSession,
+    opened: &OpenedOverlay,
+) -> Result<(), String> {
+    let qmp = &session.engine.management[0];
+    paused_observation(
+        || qmp.stop().map_err(|error| error.to_string()),
+        || {
+            let state = qmp
+                .read_memory(0, l6max::gui_bitmap_table_entry_0, 4)
+                .map_err(|error| error.to_string())?;
+            let slot = qmp
+                .read_memory(0, l6max::gui_display_callback_table + 20, 4)
+                .map_err(|error| error.to_string())?;
+            if !opened_overlay_matches(&state, &slot, opened.callback) {
+                return Err(format!(
+                    "knob-dialog state or callback changed between steps: state={state:02x?}, slot={slot:02x?}, expected={:#010x}",
+                    opened.callback
+                ));
+            }
+            Ok(())
+        },
+        || debugger.resume_guest().map_err(|error| error.to_string()),
+    )
+}
+
+pub(super) fn run_active_display(
     session: &Session,
     options: &Options,
     context: &mut PreflightContext,
@@ -1290,6 +1331,211 @@ pub(super) fn run_active_overlay(
 ) -> Result<Value, Box<dyn std::error::Error>> {
     use std::time::Instant;
     if context.next != 7 {
+        return Err("knob-dialog active display step is out of order".into());
+    }
+    let main = selected_main_image(options).map_err(std::io::Error::other)?;
+    if main.get(0x40c..0x410) != Some(&0x8007eea9u32.to_le_bytes()) {
+        return Err("patched startup hook does not reserve popup RAM".into());
+    }
+    let inputs = session.engine.inputs.as_ref().unwrap();
+    let qmp = &session.engine.management[0];
+    let capture = |duration: u32, name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
+        let start = inputs.panel.snapshot().guest_ms;
+        let begin = Instant::now();
+        let raw = loop {
+            let data = session.poll()?;
+            let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(start);
+            if elapsed >= duration {
+                break data.display;
+            }
+            if elapsed > guest_timeout_ms || begin.elapsed() > Duration::from_secs(wall_timeout_s) {
+                return Err("knob-dialog display capture exceeded its deadline".into());
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+        let native = image::GrayImage::from_fn(128, 64, |x, y| {
+            let index = ((63 - y as usize) / 8) * 128 + x as usize;
+            image::Luma([if raw[index] & (1 << ((63 - y as usize) % 8)) != 0 {
+                255
+            } else {
+                0
+            }])
+        });
+        if let Some(scene) = name.strip_prefix("window-scene-")
+            && [
+                "high", "freq", "mid", "low", "aux1", "aux2", "efx", "sub-mix", "pan", "level",
+            ]
+            .contains(&scene)
+        {
+            let path = l6max_host::paths::repository_root()
+                .join(KNOB_DIALOG_REFERENCES)
+                .join(format!("{scene}.png"));
+            check_display_reference(&raw, &path, &options.logs, name)
+                .map_err(|error| format!("knob-dialog screen {scene}: {error}"))?;
+        }
+        image::DynamicImage::ImageLuma8(native)
+            .resize(768, 384, image::imageops::FilterType::Nearest)
+            .save(options.logs.join(format!("{name}.png")))?;
+        Ok(raw)
+    };
+    inputs.knob(0, -3)?;
+    let active = capture(500, "knob-dialog-active")?;
+    let active_callbacks = qmp.read_memory(0, l6max::gui_display_callback_table, 24)?;
+    let active_slot5 = u32::from_le_bytes(active_callbacks[20..24].try_into().unwrap());
+    if active_slot5 & 1 == 0
+        || u32::from_le_bytes(active_callbacks[0..4].try_into().unwrap()) != 0
+        || u32::from_le_bytes(active_callbacks[8..12].try_into().unwrap()) != 0
+    {
+        return Err(format!(
+        "first knob event did not claim only free callback slot 5; slots0/2/5={:#010x}/{:#010x}/{active_slot5:#010x}",
+        u32::from_le_bytes(active_callbacks[0..4].try_into().unwrap()),
+        u32::from_le_bytes(active_callbacks[8..12].try_into().unwrap()),
+    )
+    .into());
+    }
+    if active == *baseline {
+        return Err("custom overlay did not change the LCD".into());
+    }
+
+    context.opened = Some(OpenedOverlay {
+        frame: active,
+        callback: active_slot5,
+    });
+    context.next = 8;
+    Ok(json!({"display_changed":true, "callback":active_slot5}))
+}
+
+pub(super) fn run_level_demo(
+    session: &Session,
+    options: &Options,
+    context: &mut PreflightContext,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    use std::time::Instant;
+    if context.next != 8 {
+        return Err("knob-dialog level demo step is out of order".into());
+    }
+    validate_opened_overlay(
+        session,
+        context
+            .debugger
+            .as_mut()
+            .ok_or("missing knob-dialog debugger")?,
+        context.opened.as_ref().ok_or("missing active overlay")?,
+    )?;
+    let inputs = session.engine.inputs.as_ref().unwrap();
+    let qmp = &session.engine.management[0];
+    let text_table = context.text_table;
+    let capture = |duration: u32, name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
+        let start = inputs.panel.snapshot().guest_ms;
+        let begin = Instant::now();
+        let raw = loop {
+            let data = session.poll()?;
+            let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(start);
+            if elapsed >= duration {
+                break data.display;
+            }
+            if elapsed > guest_timeout_ms || begin.elapsed() > Duration::from_secs(wall_timeout_s) {
+                return Err("knob-dialog display capture exceeded its deadline".into());
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+        let native = image::GrayImage::from_fn(128, 64, |x, y| {
+            let index = ((63 - y as usize) / 8) * 128 + x as usize;
+            image::Luma([if raw[index] & (1 << ((63 - y as usize) % 8)) != 0 {
+                255
+            } else {
+                0
+            }])
+        });
+        if let Some(scene) = name.strip_prefix("window-scene-")
+            && [
+                "high", "freq", "mid", "low", "aux1", "aux2", "efx", "sub-mix", "pan", "level",
+            ]
+            .contains(&scene)
+        {
+            let path = l6max_host::paths::repository_root()
+                .join(KNOB_DIALOG_REFERENCES)
+                .join(format!("{scene}.png"));
+            check_display_reference(&raw, &path, &options.logs, name)
+                .map_err(|error| format!("knob-dialog screen {scene}: {error}"))?;
+        }
+        image::DynamicImage::ImageLuma8(native)
+            .resize(768, 384, image::imageops::FilterType::Nearest)
+            .save(options.logs.join(format!("{name}.png")))?;
+        Ok(raw)
+    };
+    let decode_text = |address: u32| -> Result<String, Box<dyn std::error::Error>> {
+        let pointer = u32::from_le_bytes(qmp.read_memory(0, address, 4)?.try_into().unwrap());
+        let bytes = qmp.read_memory(0, pointer, 48)?;
+        let units = bytes
+            .chunks_exact(2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+            .take_while(|c| *c != 0)
+            .collect::<Vec<_>>();
+        Ok(String::from_utf16(&units)?)
+    };
+    let capture_demo = |name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
+        let mut frame = capture(100, name)?;
+        for _ in 0..6 {
+            if frame.iter().map(|byte| byte.count_ones()).sum::<u32>() >= 100 {
+                return Ok(frame);
+            }
+            frame = capture(100, name)?;
+        }
+        Err(format!("demo frame {name} stayed blank").into())
+    };
+    // Capture emulator frames while the web demo values move in both
+    // directions. The web animation plays these captures at 20 fps.
+    capture_demo("knob-dialog-demo-level-start")?;
+    let mut level_peak_reached = false;
+    // Encoder samples can coalesce while the guest is busy. Keep the target
+    // value assertion, but allow enough bounded attempts to reach it.
+    for index in 0..128 {
+        let displayed = decode_text(text_table + 179 * 4)?;
+        let value = displayed
+            .strip_suffix('%')
+            .and_then(|value| value.parse::<u8>().ok())
+            .unwrap_or(0);
+        if value >= 69 {
+            level_peak_reached = true;
+            break;
+        }
+        inputs.knob(0, 1)?;
+        capture_demo(&format!("knob-dialog-demo-level-up-{index:02}"))?;
+    }
+    if !level_peak_reached {
+        return Err("demo level sweep did not reach 69%".into());
+    }
+    capture(500, "knob-dialog-demo-level-peak")?;
+    // The displayed percentage is rounded from a 0..127 firmware value,
+    // so 60 encoder steps are not always enough to return to zero.
+    for index in 0..128 {
+        if decode_text(text_table + 179 * 4)? == "0%" {
+            break;
+        }
+        inputs.knob(0, -1)?;
+        capture_demo(&format!("knob-dialog-demo-level-down-{index:02}"))?;
+    }
+    if decode_text(text_table + 179 * 4)? != "0%" {
+        return Err("demo level sweep did not return to zero".into());
+    }
+    capture(500, "knob-dialog-demo-level-zero")?;
+
+    context.next = 9;
+    Ok(json!({"level_demo_peak_at_least_percent":69, "level_demo_final_percent":0}))
+}
+
+pub(super) fn run_active_overlay(
+    session: &Session,
+    options: &Options,
+    context: &mut PreflightContext,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    use std::time::Instant;
+    if context.next != 9 {
         return Err("knob-dialog active overlay step is out of order".into());
     }
     let main = selected_main_image(options).map_err(std::io::Error::other)?;
@@ -1387,16 +1633,6 @@ pub(super) fn run_active_overlay(
             .collect::<Vec<_>>();
         Ok(String::from_utf16(&units)?)
     };
-    let capture_demo = |name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
-        let mut frame = capture(100, name)?;
-        for _ in 0..6 {
-            if frame.iter().map(|byte| byte.count_ones()).sum::<u32>() >= 100 {
-                return Ok(frame);
-            }
-            frame = capture(100, name)?;
-        }
-        Err(format!("demo frame {name} stayed blank").into())
-    };
     let background_pointer = |index: u32| -> Result<u32, Box<dyn std::error::Error>> {
         Ok(u32::from_le_bytes(
             qmp.read_memory(0, l6max::gui_background_table + index * 4, 4)?
@@ -1421,62 +1657,14 @@ pub(super) fn run_active_overlay(
         .debugger
         .as_mut()
         .ok_or("missing knob-dialog debugger")?;
-    inputs.knob(0, -3)?;
-    let active = capture(500, "knob-dialog-active")?;
-    let active_callbacks = qmp.read_memory(0, l6max::gui_display_callback_table, 24)?;
-    let active_slot5 = u32::from_le_bytes(active_callbacks[20..24].try_into().unwrap());
-    if active_slot5 & 1 == 0
-        || u32::from_le_bytes(active_callbacks[0..4].try_into().unwrap()) != 0
-        || u32::from_le_bytes(active_callbacks[8..12].try_into().unwrap()) != 0
-    {
-        return Err(format!(
-        "first knob event did not claim only free callback slot 5; slots0/2/5={:#010x}/{:#010x}/{active_slot5:#010x}",
-        u32::from_le_bytes(active_callbacks[0..4].try_into().unwrap()),
-        u32::from_le_bytes(active_callbacks[8..12].try_into().unwrap()),
-    )
-    .into());
-    }
-    if active == *baseline {
-        return Err("custom overlay did not change the LCD".into());
-    }
-
-    // Capture emulator frames while the web demo values move in both
-    // directions. The web animation plays these captures at 20 fps.
-    capture_demo("knob-dialog-demo-level-start")?;
-    let mut level_peak_reached = false;
-    // Encoder samples can coalesce while the guest is busy. Keep the target
-    // value assertion, but allow enough bounded attempts to reach it.
-    for index in 0..128 {
-        let displayed = decode_text(text_table + 179 * 4)?;
-        let value = displayed
-            .strip_suffix('%')
-            .and_then(|value| value.parse::<u8>().ok())
-            .unwrap_or(0);
-        if value >= 69 {
-            level_peak_reached = true;
-            break;
-        }
-        inputs.knob(0, 1)?;
-        capture_demo(&format!("knob-dialog-demo-level-up-{index:02}"))?;
-    }
-    if !level_peak_reached {
-        return Err("demo level sweep did not reach 69%".into());
-    }
-    capture(500, "knob-dialog-demo-level-peak")?;
-    // The displayed percentage is rounded from a 0..127 firmware value,
-    // so 60 encoder steps are not always enough to return to zero.
-    for index in 0..128 {
-        if decode_text(text_table + 179 * 4)? == "0%" {
-            break;
-        }
-        inputs.knob(0, -1)?;
-        capture_demo(&format!("knob-dialog-demo-level-down-{index:02}"))?;
-    }
-    if decode_text(text_table + 179 * 4)? != "0%" {
-        return Err("demo level sweep did not return to zero".into());
-    }
-    capture(500, "knob-dialog-demo-level-zero")?;
-
+    validate_opened_overlay(
+        session,
+        debugger,
+        context.opened.as_ref().ok_or("missing active overlay")?,
+    )?;
+    let opened = context.opened.as_ref().unwrap();
+    let active = opened.frame;
+    let active_slot5 = opened.callback;
     // Observe the producer and consumer task contexts directly. The knob
     // hook runs from the mixer update path; slot 5 runs from DisplayCycle2.
     // This determines whether the atomic mailbox can be replaced safely.
@@ -1682,7 +1870,7 @@ pub(super) fn run_active_overlay(
         callback_task,
         refreshed,
     });
-    context.next = 8;
+    context.next = 10;
     Ok(
         json!({"active_overlay":true, "callback":active_slot5, "heap_bytes":state_heap_bytes, "mixer_task":hook_task, "display_task":callback_task}),
     )
@@ -1705,7 +1893,7 @@ pub(super) fn run_locked_value_update(
     wall_timeout_s: u64,
 ) -> Result<Value, Box<dyn std::error::Error>> {
     use std::time::Instant;
-    if context.next != 8 {
+    if context.next != 10 {
         return Err("knob-dialog locked update step is out of order".into());
     }
     let qmp = &session.engine.management[0];
@@ -1839,7 +2027,7 @@ pub(super) fn run_locked_value_update(
     .into());
     }
 
-    context.next = 9;
+    context.next = 11;
     Ok(
         json!({"notification_semaphore_not_required_for_refresh": true,
         "pending_during": pending_during_contention, "pending_after":pending_after_contention,
@@ -1986,7 +2174,7 @@ pub(super) fn run_knob_dialog(
     };
     if context_slot
         .as_ref()
-        .is_none_or(|context| context.next != 9)
+        .is_none_or(|context| context.next != 11)
     {
         return Err("knob-dialog preflight incomplete".into());
     }
@@ -3141,5 +3329,29 @@ mod locked_update_tests {
         assert!(!locked_update_ready(&[9], Some("50%"), 64));
         assert!(!locked_update_ready(&[0xff], None, 64));
         assert!(!locked_update_ready(&[0xff], Some("49%"), 64));
+    }
+}
+
+#[cfg(test)]
+mod opened_overlay_tests {
+    use super::opened_overlay_matches;
+    #[test]
+    fn boundary_requires_signature_and_same_callback_but_allows_expiry() {
+        assert!(opened_overlay_matches(
+            &[0x4e, 0x4b, 1, 0xff],
+            &3u32.to_le_bytes(),
+            3
+        ));
+        assert!(opened_overlay_matches(
+            &[0x4e, 0x4b, 0, 0xff],
+            &3u32.to_le_bytes(),
+            3
+        ));
+        assert!(!opened_overlay_matches(&[0; 4], &3u32.to_le_bytes(), 3));
+        assert!(!opened_overlay_matches(
+            &[0x4e, 0x4b, 1, 0xff],
+            &5u32.to_le_bytes(),
+            3
+        ));
     }
 }

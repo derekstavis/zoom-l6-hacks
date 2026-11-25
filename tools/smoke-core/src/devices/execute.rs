@@ -185,9 +185,11 @@ impl State {
             Operation::KnobDialogPreflightBackgroundLayer => Some(7),
             Operation::KnobDialogCallbackRace => Some(8),
             Operation::KnobDialogFirstActivation => Some(9),
-            Operation::KnobDialogActiveOverlay => Some(10),
-            Operation::KnobDialogLockedUpdate => Some(11),
-            Operation::KnobDialog => Some(12),
+            Operation::KnobDialogActiveDisplay => Some(10),
+            Operation::KnobDialogLevelDemo => Some(11),
+            Operation::KnobDialogActiveOverlay => Some(12),
+            Operation::KnobDialogLockedUpdate => Some(13),
+            Operation::KnobDialog => Some(14),
             _ => None,
         };
         if expected.is_none() && self.has_knob_preflight() {
@@ -292,7 +294,7 @@ impl State {
         if is_ready {
             self.knob_dialog_deadline =
                 Some((started, guest_start, guest_timeout_ms, wall_timeout_s, 0));
-        } else if expected.is_some() && !matches!(expected, Some(12)) {
+        } else if expected.is_some() && !matches!(expected, Some(14)) {
             let (start, guest_start, guest_budget, wall_budget, phase) = shared.unwrap();
             self.knob_dialog_deadline =
                 Some((start, guest_start, guest_budget, wall_budget, phase + 1));
@@ -2230,7 +2232,7 @@ impl State {
                     shared.ok_or("missing shared deadline")?,
                 )
             }
-            Operation::KnobDialogActiveOverlay => {
+            Operation::KnobDialogActiveDisplay => {
                 let baseline = self
                     .knob_dialog_baseline
                     .as_ref()
@@ -2239,7 +2241,7 @@ impl State {
                     .knob_dialog_preflight
                     .as_mut()
                     .ok_or("missing knob-dialog preflight")?;
-                run_active_overlay(
+                run_active_display(
                     session,
                     options,
                     context,
@@ -2247,6 +2249,20 @@ impl State {
                     guest_timeout_ms,
                     wall_timeout_s,
                 )
+            }
+            Operation::KnobDialogLevelDemo => {
+                let context = self
+                    .knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?;
+                run_level_demo(session, options, context, guest_timeout_ms, wall_timeout_s)
+            }
+            Operation::KnobDialogActiveOverlay => {
+                let context = self
+                    .knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?;
+                run_active_overlay(session, options, context, guest_timeout_ms, wall_timeout_s)
             }
             Operation::KnobDialogLockedUpdate => {
                 let context = self

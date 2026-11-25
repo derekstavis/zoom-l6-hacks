@@ -428,6 +428,8 @@ pub enum Action {
     KnobDialogPreflightBackgroundLayer,
     KnobDialogCallbackRace,
     KnobDialogFirstActivation,
+    KnobDialogActiveDisplay,
+    KnobDialogLevelDemo,
     KnobDialogActiveOverlay,
     KnobDialogLockedUpdate,
     KnobDialog,

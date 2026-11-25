@@ -216,6 +216,8 @@ fail even if the ring changed by that observation.
 | `knob-dialog-preflight-background-layer` | — | Verify first use rejects a changed background layer |
 | `knob-dialog-callback-race` | — | Verify callback-side preflight rejects descriptor drift while retaining the notification semaphore in the owned debugger context |
 | `knob-dialog-first-activation` | — | Wait for the display callback to return, then verify first activation and restore the notification semaphore |
+| `knob-dialog-active-display` | — | Turn the knob, capture the active display and preserve its frame and callback pointer |
+| `knob-dialog-level-demo` | — | Capture the bounded level sweep to at least 69% and back to 0% |
 | `knob-dialog-active-overlay` | — | Intermediate grouped step: check active overlay rendering, level demo captures, task contexts, descriptor/heap invariants and bitmap-zero drawing; its individual probes still need decomposition |
 | `knob-dialog-locked-update` | — | Verify the dialog consumes and displays a level update while the notification semaphore is held, then restore the lock and check the mailbox |
 | `knob-dialog` | — | Patched L6max only; compare all ten parameter scenes with reviewed display images, then verify heap lifetime, busy-aware expiry, display cleanup, widget restoration and exact encoder reports |

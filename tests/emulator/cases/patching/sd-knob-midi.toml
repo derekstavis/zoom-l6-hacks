@@ -76,6 +76,16 @@ guest_timeout_ms = 180000
 wall_timeout_s = 600
 
 [[step]]
+action = "knob-dialog-active-display"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-level-demo"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
 action = "knob-dialog-active-overlay"
 guest_timeout_ms = 180000
 wall_timeout_s = 600

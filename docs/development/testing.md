@@ -506,6 +506,8 @@ Generated scenarios include the `patch-matrix-*` fragments in
 `tests/emulator/fragments/` for their shared mixer and model-specific startup
 checks. L6 SD combinations use the loader's completion check instead of the
 L6 startup delay. The timeouts belong to the fragment steps themselves.
+The generator derives typed effect-slot and menu-action plans before emitting
+the dynamic checks; placement selection and case composition stay unchanged.
 
 - **Combinations:** each patch is absent, installed in firmware, or loaded
   from the SD card, wherever its package declares that model. Each stock

@@ -368,6 +368,7 @@ fn output_alone_cannot_pass_before_the_command_acknowledgement() {
         runner.advance(feedback, now).unwrap(),
         Progress::Complete
     ));
+    runner.finish("PASS", None).unwrap();
     assert!(runner.logs.join("scenario.json").is_file());
     fs::remove_dir_all(&runner.logs).unwrap();
 }
@@ -1103,7 +1104,7 @@ fn setup_input_propagates_through_includes_and_is_dropped_for_spec_state() {
             .collect::<Vec<_>>(),
         [true, true, false]
     );
-    let kept = loaded.without_setup_input();
+    let kept = loaded.without_setup_input().unwrap();
     assert_eq!(kept.step.len(), 1);
     assert!(matches!(kept.step[0].action, Action::Delay { guest_ms: 4 }));
     fs::remove_dir_all(&dir).unwrap();
@@ -1254,8 +1255,25 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
         "[[step]]\naction='knob-dialog-guard'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let baseline =
         "[[step]]\naction='knob-dialog-baseline'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
+    let preflight = ["begin", "descriptor", "text-alias", "layer-collision", "widget-layer", "background-layer"].iter().map(|name| format!("[[step]]\naction='knob-dialog-preflight-{name}'\nguest_timeout_ms=180000\nwall_timeout_s=600\n")).collect::<String>();
     let dialog = "[[step]]\naction='knob-dialog'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
-    assert!(Scenario::parse(&format!("{prefix}{ready}{guard}{baseline}{dialog}")).is_ok());
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}{ready}{guard}{baseline}{preflight}{dialog}"
+        ))
+        .is_ok()
+    );
+    assert!(Scenario::parse(&format!("{prefix}{ready}{guard}{baseline}{preflight}")).is_err());
+    let setup_pruned = format!("{prefix}{ready}{guard}{baseline}{preflight}{dialog}").replace(
+        "action='knob-dialog-preflight-widget-layer'",
+        "setup_input=true\naction='knob-dialog-preflight-widget-layer'",
+    );
+    assert!(
+        Scenario::parse(&setup_pruned)
+            .unwrap()
+            .without_setup_input()
+            .is_err()
+    );
     assert!(Scenario::parse(&format!("{prefix}{ready}{dialog}")).is_err());
     assert!(Scenario::parse(&format!("{prefix}{dialog}")).is_err());
     assert!(
@@ -1266,9 +1284,32 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
     );
     assert!(
         Scenario::parse(&format!(
-            "{prefix}{ready}{guard}{baseline}{}",
+            "{prefix}{ready}{guard}{baseline}{preflight}{}",
             dialog.replace("wall_timeout_s=600", "wall_timeout_s=599")
         ))
         .is_err()
     );
+}
+
+#[test]
+fn completion_does_not_publish_pass_before_adapter_cleanup() {
+    let mut runner = test_runner("[[step]]\naction='delay'\nguest_ms=1\n");
+    let mut skipped = runner.scenario.step[0].clone();
+    skipped.models = vec![Model::L6max];
+    runner.scenario.step.push(skipped);
+    let now = Instant::now();
+    assert!(matches!(
+        runner.advance(sample(0), now).unwrap(),
+        Progress::Waiting
+    ));
+    assert!(matches!(
+        runner.advance(sample(1), now).unwrap(),
+        Progress::Complete
+    ));
+    assert!(!runner.logs.join("scenario.json").exists());
+    runner.finish("FAIL", Some("cleanup failed")).unwrap();
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(runner.logs.join("scenario.json")).unwrap()).unwrap();
+    assert_eq!(report["outcome"], "FAIL");
+    fs::remove_dir_all(&runner.logs).unwrap();
 }

@@ -184,9 +184,12 @@ impl Runner {
             progress,
         })
     }
+    /// Advance the scenario. After `Complete`, the adapter must call `finish`
+    /// only after its own cleanup and result checks succeed.
     pub fn tick(&mut self, data: PanelData, inputs: &InputHub) -> Result<Progress, String> {
         self.tick_observation(data, inputs.main.snapshot(), inputs.panel.snapshot())
     }
+    /// Advance without input; completion has the same explicit `finish` contract as `tick`.
     pub fn tick_without_input(&mut self, data: PanelData) -> Result<Progress, String> {
         let guest_ms = self.last.as_ref().map_or(0, |last| last.panel.guest_ms);
         let status = l6max_host::input::InputStatus {
@@ -774,6 +777,36 @@ impl Runner {
                 }
                 Action::KnobDialogBaseline => {
                     return Ok(Progress::Device(devices::Operation::KnobDialogBaseline));
+                }
+                Action::KnobDialogPreflightBegin => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogPreflightBegin,
+                    ));
+                }
+                Action::KnobDialogPreflightDescriptor => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogPreflightDescriptor,
+                    ));
+                }
+                Action::KnobDialogPreflightTextAlias => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogPreflightTextAlias,
+                    ));
+                }
+                Action::KnobDialogPreflightLayerCollision => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogPreflightLayerCollision,
+                    ));
+                }
+                Action::KnobDialogPreflightWidgetLayer => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogPreflightWidgetLayer,
+                    ));
+                }
+                Action::KnobDialogPreflightBackgroundLayer => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogPreflightBackgroundLayer,
+                    ));
                 }
                 Action::KnobDialog => {
                     return Ok(Progress::Device(devices::Operation::KnobDialog));
@@ -1381,7 +1414,6 @@ impl Runner {
             self.dispatched = false;
             self.scene_save = None;
         }
-        self.finish("PASS", None)?;
         Ok(Progress::Complete)
     }
     fn encoder_reports_ready(&self, obs: &Observation) -> Result<bool, String> {

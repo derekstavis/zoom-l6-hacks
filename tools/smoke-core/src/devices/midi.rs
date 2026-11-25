@@ -2041,7 +2041,7 @@ mod declarative_midi_tests {
             guest_timeout_ms: 1,
             midi_sent_at: None,
         });
-        state.restarted();
+        state.restarted().unwrap();
         assert!(released.load(Ordering::SeqCst));
         assert!(state.native_midi.is_none());
         assert!(state.midi_round_trip.is_none());

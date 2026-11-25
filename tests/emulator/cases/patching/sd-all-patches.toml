@@ -77,6 +77,36 @@ guest_timeout_ms = 180000
 wall_timeout_s = 600
 
 [[step]]
+action = "knob-dialog-preflight-begin"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-preflight-descriptor"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-preflight-text-alias"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-preflight-layer-collision"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-preflight-widget-layer"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-preflight-background-layer"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
 action = "knob-dialog"
 guest_timeout_ms = 180000
 wall_timeout_s = 600

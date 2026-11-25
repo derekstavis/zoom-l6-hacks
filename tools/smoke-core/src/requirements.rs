@@ -88,6 +88,12 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobDialogReady
         | Action::KnobDialogGuard
         | Action::KnobDialogBaseline
+        | Action::KnobDialogPreflightBegin
+        | Action::KnobDialogPreflightDescriptor
+        | Action::KnobDialogPreflightTextAlias
+        | Action::KnobDialogPreflightLayerCollision
+        | Action::KnobDialogPreflightWidgetLayer
+        | Action::KnobDialogPreflightBackgroundLayer
         | Action::KnobDialog
         | Action::KnobPopupOpen { .. }
         | Action::KnobPopupExpectOpen

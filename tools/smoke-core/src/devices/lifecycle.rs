@@ -314,7 +314,10 @@ fn wait_l6max_update_dialog(guest: &Headless, logs: &Path) -> Result<(), String>
             ..Default::default()
         };
         match runner.tick(data, inputs)? {
-            crate::Progress::Complete => return Ok(()),
+            crate::Progress::Complete => {
+                runner.finish("PASS", None)?;
+                return Ok(());
+            }
             crate::Progress::Waiting => {}
             _ => return Err("update dialog image check requested an unexpected action".into()),
         }
@@ -352,7 +355,10 @@ fn complete_l6max_post_update_setup(session: &Session, logs: &Path) -> Result<()
     let deadline = Instant::now() + Duration::from_secs(WALL_TIMEOUT_S);
     loop {
         match runner.tick(session.poll()?, inputs)? {
-            crate::Progress::Complete => return Ok(()),
+            crate::Progress::Complete => {
+                runner.finish("PASS", None)?;
+                return Ok(());
+            }
             crate::Progress::Waiting => {}
             crate::Progress::Dispatch(command) => session.dispatch(&command)?,
             crate::Progress::Device(_) => {
@@ -881,6 +887,12 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
                     run(Operation::KnobDialogReady, "knob-dialog")?;
                     run(Operation::KnobDialogGuard, "knob-dialog")?;
                     run(Operation::KnobDialogBaseline, "knob-dialog")?;
+                    run(Operation::KnobDialogPreflightBegin, "knob-dialog")?;
+                    run(Operation::KnobDialogPreflightDescriptor, "knob-dialog")?;
+                    run(Operation::KnobDialogPreflightTextAlias, "knob-dialog")?;
+                    run(Operation::KnobDialogPreflightLayerCollision, "knob-dialog")?;
+                    run(Operation::KnobDialogPreflightWidgetLayer, "knob-dialog")?;
+                    run(Operation::KnobDialogPreflightBackgroundLayer, "knob-dialog")?;
                     run(Operation::KnobDialog, "knob-dialog")?;
                 }
                 if let Some(patch) = patches.iter().find(|patch| **patch == "midi-sync") {

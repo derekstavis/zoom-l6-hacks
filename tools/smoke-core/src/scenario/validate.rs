@@ -95,7 +95,13 @@ impl Scenario {
             let expected = match step.action {
                 Action::KnobDialogGuard => "knob-dialog-ready",
                 Action::KnobDialogBaseline => "knob-dialog-guard",
-                Action::KnobDialog => "knob-dialog-baseline",
+                Action::KnobDialogPreflightBegin => "knob-dialog-baseline",
+                Action::KnobDialogPreflightDescriptor => "knob-dialog-preflight-begin",
+                Action::KnobDialogPreflightTextAlias => "knob-dialog-preflight-descriptor",
+                Action::KnobDialogPreflightLayerCollision => "knob-dialog-preflight-text-alias",
+                Action::KnobDialogPreflightWidgetLayer => "knob-dialog-preflight-layer-collision",
+                Action::KnobDialogPreflightBackgroundLayer => "knob-dialog-preflight-widget-layer",
+                Action::KnobDialog => "knob-dialog-preflight-background-layer",
                 _ => continue,
             };
             for model in &value.models {
@@ -110,7 +116,25 @@ impl Scenario {
                     let correct = match expected {
                         "knob-dialog-ready" => matches!(previous.action, Action::KnobDialogReady),
                         "knob-dialog-guard" => matches!(previous.action, Action::KnobDialogGuard),
-                        _ => matches!(previous.action, Action::KnobDialogBaseline),
+                        "knob-dialog-baseline" => {
+                            matches!(previous.action, Action::KnobDialogBaseline)
+                        }
+                        "knob-dialog-preflight-begin" => {
+                            matches!(previous.action, Action::KnobDialogPreflightBegin)
+                        }
+                        "knob-dialog-preflight-descriptor" => {
+                            matches!(previous.action, Action::KnobDialogPreflightDescriptor)
+                        }
+                        "knob-dialog-preflight-text-alias" => {
+                            matches!(previous.action, Action::KnobDialogPreflightTextAlias)
+                        }
+                        "knob-dialog-preflight-layer-collision" => {
+                            matches!(previous.action, Action::KnobDialogPreflightLayerCollision)
+                        }
+                        "knob-dialog-preflight-widget-layer" => {
+                            matches!(previous.action, Action::KnobDialogPreflightWidgetLayer)
+                        }
+                        _ => matches!(previous.action, Action::KnobDialogPreflightBackgroundLayer),
                     };
                     correct
                         && previous.guest_timeout_ms == step.guest_timeout_ms
@@ -119,6 +143,42 @@ impl Scenario {
                     return Err(format!(
                         "knob-dialog step requires immediately preceding {expected} with matching deadlines"
                     ));
+                }
+            }
+        }
+        // An intrusive debugger session must not outlive a truncated scenario.
+        for (index, step) in value.step.iter().enumerate() {
+            if !matches!(step.action, Action::KnobDialogPreflightBegin) {
+                continue;
+            }
+            for model in &value.models {
+                if !step.applies_to(*model) {
+                    continue;
+                }
+                let subsequent = value.step[index + 1..]
+                    .iter()
+                    .filter(|next| next.applies_to(*model))
+                    .take(6)
+                    .collect::<Vec<_>>();
+                if subsequent.len() != 6
+                    || !matches!(subsequent[0].action, Action::KnobDialogPreflightDescriptor)
+                    || !matches!(subsequent[1].action, Action::KnobDialogPreflightTextAlias)
+                    || !matches!(
+                        subsequent[2].action,
+                        Action::KnobDialogPreflightLayerCollision
+                    )
+                    || !matches!(subsequent[3].action, Action::KnobDialogPreflightWidgetLayer)
+                    || !matches!(
+                        subsequent[4].action,
+                        Action::KnobDialogPreflightBackgroundLayer
+                    )
+                    || !matches!(subsequent[5].action, Action::KnobDialog)
+                    || subsequent.iter().any(|next| {
+                        next.guest_timeout_ms != step.guest_timeout_ms
+                            || next.wall_timeout_s != step.wall_timeout_s
+                    })
+                {
+                    return Err("knob-dialog preflight must be followed immediately by every probe and the diagnostic with matching deadlines".into());
                 }
             }
         }

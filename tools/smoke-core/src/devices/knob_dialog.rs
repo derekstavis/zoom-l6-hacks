@@ -15,6 +15,7 @@ struct KnobDebugSession {
     registers: Vec<(u32, u32)>,
     synchronized: bool,
     mailbox_pending: bool,
+    finalized: bool,
 }
 
 fn begin_temporary_write(
@@ -58,6 +59,7 @@ impl KnobDebugSession {
             registers: Vec::new(),
             synchronized: true,
             mailbox_pending: false,
+            finalized: false,
         })
     }
     fn write(&mut self, address: u32, data: &[u8]) -> std::io::Result<()> {
@@ -156,9 +158,11 @@ impl KnobDebugSession {
                     && self.synchronized
                     && !self.mailbox_pending =>
             {
+                self.finalized = true;
                 Ok(value)
             }
             Ok(_) => {
+                self.finalized = true;
                 let failures = cleanup_debugger(&mut self);
                 Err(format!(
                     "debugger session ended with active mutations or breakpoints; cleanup: {}",
@@ -171,12 +175,27 @@ impl KnobDebugSession {
                 .into())
             }
             Err(error) => {
+                self.finalized = true;
                 let failures = cleanup_debugger(&mut self);
                 if failures.is_empty() {
                     Err(error)
                 } else {
                     Err(format!("{error}; debugger cleanup failed: {}", failures.join("; ")).into())
                 }
+            }
+        }
+    }
+}
+
+impl Drop for KnobDebugSession {
+    fn drop(&mut self) {
+        if !self.finalized {
+            let errors = cleanup_debugger(self);
+            if !errors.is_empty() {
+                tracing::error!(
+                    "abandoned knob-dialog debugger cleanup failed: {}",
+                    errors.join("; ")
+                );
             }
         }
     }
@@ -621,9 +640,266 @@ pub(super) fn run_knob_dialog_baseline(
     capture(100, "window-scene-before")
 }
 
+pub(super) struct PreflightContext {
+    original_window: Vec<u8>,
+    original_bitmap: Vec<u8>,
+    original_bitmap_descriptor: Vec<u8>,
+    original_notification_semaphore: Vec<u8>,
+    notification_semaphore: u32,
+    text_table: u32,
+    original_resources: Vec<u8>,
+    shared_resource_pointer: u32,
+    original_shared_resource: Vec<u8>,
+    original_lengths_table: u32,
+    original_lengths: Vec<u8>,
+    widget7: u32,
+    widget33: u32,
+    original_widget7: Vec<u8>,
+    original_widget33: Vec<u8>,
+    background10: u32,
+    background37: u32,
+    background48: u32,
+    original_background_layers: [Vec<u8>; 3],
+    heap_before: Vec<u32>,
+    debugger: Option<KnobDebugSession>,
+    alias_widget: Option<u32>,
+    alias_layer: Option<Vec<u8>>,
+    next: usize,
+}
+
+pub(super) fn begin_preflight(
+    session: &Session,
+    options: &Options,
+) -> Result<PreflightContext, Box<dyn std::error::Error>> {
+    let qmp = &session.engine.management[0];
+    let heap = || -> Result<Vec<u32>, Box<dyn std::error::Error>> {
+        Ok(qmp
+            .read_memory(0, l6max::xFreeBytesRemaining, 16)?
+            .chunks_exact(4)
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+            .collect())
+    };
+    let original_window = qmp.read_memory(0, l6max::current_window, 4)?;
+    let original_bitmap = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)?;
+    let original_bitmap_descriptor = qmp.read_memory(0, l6max::GUI_BITMAP_36_DESCRIPTOR, 8)?;
+    let original_state_handle = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
+    if u32::from_le_bytes(original_bitmap.clone().try_into().unwrap())
+        != l6max::GUI_BITMAP_36_DESCRIPTOR
+    {
+        return Err(
+            "stock bitmap-table entry 36 did not point at its guarded ROM descriptor".into(),
+        );
+    }
+    if original_state_handle != 0u32.to_le_bytes() {
+        return Err(format!(
+            "bitmap-table slot 0 is not the expected null sentinel: {original_state_handle:02x?}"
+        )
+        .into());
+    }
+    let original_notification_semaphore = qmp.read_memory(0, l6max::notification_slot, 4)?;
+    let notification_semaphore =
+        u32::from_le_bytes(original_notification_semaphore.clone().try_into().unwrap());
+    if notification_semaphore == 0 || notification_semaphore & 1 != 0 {
+        return Err(format!(
+            "expected the stock untagged notification semaphore, got {notification_semaphore:#010x}"
+        )
+        .into());
+    }
+    let text_table = u32::from_le_bytes(
+        qmp.read_memory(0, l6max::gui_text_pointers_by_language, 4)?
+            .try_into()
+            .unwrap(),
+    );
+    let original_resources = qmp.read_memory(0, text_table + 229 * 4, 8)?;
+    let shared_resource_pointer = u32::from_le_bytes(
+        qmp.read_memory(0, text_table + 179 * 4, 4)?
+            .try_into()
+            .unwrap(),
+    );
+    let original_shared_resource = qmp.read_memory(0, shared_resource_pointer, 512)?;
+    let original_lengths_table = u32::from_le_bytes(
+        qmp.read_memory(0, l6max::gui_text_lengths_by_language, 4)?
+            .try_into()
+            .unwrap(),
+    );
+    let original_lengths = qmp.read_memory(0, original_lengths_table + 229 * 2, 4)?;
+    let widget_pointer = |index: u32| -> Result<u32, Box<dyn std::error::Error>> {
+        Ok(u32::from_le_bytes(
+            qmp.read_memory(0, l6max::gui_widget_table + index * 4, 4)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let widget7 = widget_pointer(7)?;
+    let widget33 = widget_pointer(33)?;
+    let original_widget7 = qmp.read_memory(0, widget7, 16)?;
+    let original_widget33 = qmp.read_memory(0, widget33, 16)?;
+    if original_widget7.as_slice() != [1, 0, 0, 0, 10, 0, 1, 0, 1, 0, 126, 0, 1, 0, 1, 2]
+        || original_widget33.as_slice() != [1, 0, 1, 0, 40, 0, 30, 0, 33, 0, 67, 0, 1, 0, 1, 0]
+    {
+        return Err("recorder widgets do not match the guarded firmware defaults".into());
+    }
+    let original_shared_capacity = qmp.read_memory(0, original_lengths_table + 179 * 2, 2)?;
+    if u16::from_le_bytes(original_shared_capacity.try_into().unwrap()) != 255
+        || original_shared_resource
+            .chunks_exact(2)
+            .take(255)
+            .any(|unit| unit != b"*\0")
+        || original_shared_resource[510..512] != [0, 0]
+    {
+        return Err("shared GUI resource 179 is not the expected free 255-character buffer".into());
+    }
+    let background_pointer = |index: u32| -> Result<u32, Box<dyn std::error::Error>> {
+        Ok(u32::from_le_bytes(
+            qmp.read_memory(0, l6max::gui_background_table + index * 4, 4)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let background10 = background_pointer(10)?;
+    let background37 = background_pointer(37)?;
+    let background48 = background_pointer(48)?;
+    let original_background_layers = [
+        qmp.read_memory(0, background10, 1)?,
+        qmp.read_memory(0, background37, 1)?,
+        qmp.read_memory(0, background48, 1)?,
+    ];
+    let heap_before = heap()?;
+    let socket = options
+        .gdb_socket
+        .as_ref()
+        .ok_or("knob-dialog lock-contention check needs GDB")?;
+    let debugger = KnobDebugSession::connect(qmp, socket)?;
+    Ok(PreflightContext {
+        original_window,
+        original_bitmap,
+        original_bitmap_descriptor,
+        original_notification_semaphore,
+        notification_semaphore,
+        text_table,
+        original_resources,
+        shared_resource_pointer,
+        original_shared_resource,
+        original_lengths_table,
+        original_lengths,
+        widget7,
+        widget33,
+        original_widget7,
+        original_widget33,
+        background10,
+        background37,
+        background48,
+        original_background_layers,
+        heap_before,
+        debugger: Some(debugger),
+        alias_widget: None,
+        alias_layer: None,
+        next: 0,
+    })
+}
+
+pub(super) fn abort_preflight(mut context: PreflightContext) -> Result<(), String> {
+    if let Some(mut debugger) = context.debugger.take() {
+        debugger.finalized = true;
+        let failures = cleanup_debugger(&mut debugger);
+        if !failures.is_empty() {
+            return Err(failures.join("; "));
+        }
+    }
+    Ok(())
+}
+
+fn preflight_rejected(state: &[u8], callback: &[u8], heap: &[u32], baseline_heap: &[u32]) -> bool {
+    state == 0u32.to_le_bytes() && callback == 0u32.to_le_bytes() && heap == baseline_heap
+}
+
+pub(super) fn run_preflight_probe(
+    session: &Session,
+    context: &mut PreflightContext,
+    probe: usize,
+    wall_timeout_s: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.next != probe {
+        return Err("knob-dialog preflight probes are out of order".into());
+    }
+    let qmp = &session.engine.management[0];
+    let (address, original, replacement, description) = match probe {
+        0 => (
+            context.widget7 + 6,
+            vec![1, 0],
+            vec![2, 0],
+            "descriptor drift",
+        ),
+        1 => {
+            let alias = u32::from_le_bytes(
+                qmp.read_memory(0, l6max::gui_widget_table + 60 * 4, 4)?
+                    .try_into()
+                    .unwrap(),
+            );
+            context.alias_widget = Some(alias);
+            (
+                alias + 4,
+                qmp.read_memory(0, alias + 4, 2)?,
+                179u16.to_le_bytes().to_vec(),
+                "shared text resource alias",
+            )
+        }
+        2 => {
+            let alias = context.alias_widget.ok_or("missing alias widget")?;
+            let original = qmp.read_memory(0, alias, 2)?;
+            context.alias_layer = Some(original.clone());
+            (
+                alias,
+                original,
+                4u16.to_le_bytes().to_vec(),
+                "scene layer collision",
+            )
+        }
+        3 => (
+            context.widget7,
+            qmp.read_memory(0, context.widget7, 1)?,
+            vec![0],
+            "changed widget layer",
+        ),
+        4 => (
+            context.background10,
+            context.original_background_layers[0].clone(),
+            vec![1],
+            "changed background layer",
+        ),
+        _ => return Err("invalid knob-dialog preflight probe".into()),
+    };
+    let debugger = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?;
+    qmp.stop()?;
+    debugger.write(address, &replacement)?;
+    debugger.resume_guest()?;
+    turn_and_wait_hook(session, debugger, -1, wall_timeout_s)?;
+    qmp.stop()?;
+    let state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
+    let slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
+    let heap = qmp
+        .read_memory(0, l6max::xFreeBytesRemaining, 16)?
+        .chunks_exact(4)
+        .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    debugger.write(address, &original)?;
+    debugger.resume_guest()?;
+    if !preflight_rejected(&state, &slot5, &heap, &context.heap_before) {
+        return Err(format!("{description} was not rejected cleanly: state={state:02x?}, slot5={slot5:02x?}, heap={heap:?}").into());
+    }
+    context.next += 1;
+    Ok(
+        json!({"preflight": description, "rejected": true, "state":state, "callback":slot5, "heap":heap, "baseline_heap":context.heap_before}),
+    )
+}
+
 pub(super) fn run_knob_dialog(
     session: &Session,
     options: &Options,
+    context_slot: &mut Option<PreflightContext>,
     baseline: [u8; 1024],
     guest_timeout_ms: u32,
     wall_timeout_s: u64,
@@ -743,37 +1019,6 @@ pub(super) fn run_knob_dialog(
         }
     };
     let non_recorder_guard_passed = true;
-    let original_window = qmp.read_memory(0, l6max::current_window, 4)?;
-    let original_bitmap = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)?;
-    let original_bitmap_descriptor = qmp.read_memory(0, l6max::GUI_BITMAP_36_DESCRIPTOR, 8)?;
-    let original_state_handle = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
-    if u32::from_le_bytes(original_bitmap.clone().try_into().unwrap())
-        != l6max::GUI_BITMAP_36_DESCRIPTOR
-    {
-        return Err(
-            "stock bitmap-table entry 36 did not point at its guarded ROM descriptor".into(),
-        );
-    }
-    if original_state_handle != 0u32.to_le_bytes() {
-        return Err(format!(
-            "bitmap-table slot 0 is not the expected null sentinel: {original_state_handle:02x?}"
-        )
-        .into());
-    }
-    let original_notification_semaphore = qmp.read_memory(0, l6max::notification_slot, 4)?;
-    let notification_semaphore =
-        u32::from_le_bytes(original_notification_semaphore.clone().try_into().unwrap());
-    if notification_semaphore == 0 || notification_semaphore & 1 != 0 {
-        return Err(format!(
-            "expected the stock untagged notification semaphore, got {notification_semaphore:#010x}"
-        )
-        .into());
-    }
-    let text_table = u32::from_le_bytes(
-        qmp.read_memory(0, l6max::gui_text_pointers_by_language, 4)?
-            .try_into()
-            .unwrap(),
-    );
     let decode_text = |address: u32| -> Result<String, Box<dyn std::error::Error>> {
         let pointer = u32::from_le_bytes(qmp.read_memory(0, address, 4)?.try_into().unwrap());
         let bytes = qmp.read_memory(0, pointer, 48)?;
@@ -794,45 +1039,6 @@ pub(super) fn run_knob_dialog(
         }
         Err(format!("demo frame {name} stayed blank").into())
     };
-    let original_resources = qmp.read_memory(0, text_table + 229 * 4, 8)?;
-    let shared_resource_pointer = u32::from_le_bytes(
-        qmp.read_memory(0, text_table + 179 * 4, 4)?
-            .try_into()
-            .unwrap(),
-    );
-    let original_shared_resource = qmp.read_memory(0, shared_resource_pointer, 512)?;
-    let original_lengths_table = u32::from_le_bytes(
-        qmp.read_memory(0, l6max::gui_text_lengths_by_language, 4)?
-            .try_into()
-            .unwrap(),
-    );
-    let original_lengths = qmp.read_memory(0, original_lengths_table + 229 * 2, 4)?;
-    let widget_pointer = |index: u32| -> Result<u32, Box<dyn std::error::Error>> {
-        Ok(u32::from_le_bytes(
-            qmp.read_memory(0, l6max::gui_widget_table + index * 4, 4)?
-                .try_into()
-                .unwrap(),
-        ))
-    };
-    let widget7 = widget_pointer(7)?;
-    let widget33 = widget_pointer(33)?;
-    let original_widget7 = qmp.read_memory(0, widget7, 16)?;
-    let original_widget33 = qmp.read_memory(0, widget33, 16)?;
-    if original_widget7.as_slice() != [1, 0, 0, 0, 10, 0, 1, 0, 1, 0, 126, 0, 1, 0, 1, 2]
-        || original_widget33.as_slice() != [1, 0, 1, 0, 40, 0, 30, 0, 33, 0, 67, 0, 1, 0, 1, 0]
-    {
-        return Err("recorder widgets do not match the guarded firmware defaults".into());
-    }
-    let original_shared_capacity = qmp.read_memory(0, original_lengths_table + 179 * 2, 2)?;
-    if u16::from_le_bytes(original_shared_capacity.try_into().unwrap()) != 255
-        || original_shared_resource
-            .chunks_exact(2)
-            .take(255)
-            .any(|unit| unit != b"*\0")
-        || original_shared_resource[510..512] != [0, 0]
-    {
-        return Err("shared GUI resource 179 is not the expected free 255-character buffer".into());
-    }
     let background_pointer = |index: u32| -> Result<u32, Box<dyn std::error::Error>> {
         Ok(u32::from_le_bytes(
             qmp.read_memory(0, l6max::gui_background_table + index * 4, 4)?
@@ -840,136 +1046,44 @@ pub(super) fn run_knob_dialog(
                 .unwrap(),
         ))
     };
-    let background10 = background_pointer(10)?;
-    let background37 = background_pointer(37)?;
-    let background48 = background_pointer(48)?;
-    let original_background_layers = [
-        qmp.read_memory(0, background10, 1)?,
-        qmp.read_memory(0, background37, 1)?,
-        qmp.read_memory(0, background48, 1)?,
-    ];
-    let heap_before = heap()?;
-    let socket = options
-        .gdb_socket
+    if context_slot
         .as_ref()
-        .ok_or("knob-dialog lock-contention check needs GDB")?;
-    let mut debugger = KnobDebugSession::connect(qmp, socket)?;
+        .is_none_or(|context| context.next != 5)
+    {
+        return Err("knob-dialog preflight incomplete".into());
+    }
+    let context = context_slot.as_ref().unwrap();
+    if context.alias_widget.is_none() || context.alias_layer.is_none() || context.debugger.is_none()
+    {
+        return Err("incomplete knob-dialog preflight context".into());
+    }
+    let mut context = context_slot.take().unwrap();
+    let alias_widget = context.alias_widget.unwrap();
+    let original_alias_layer = context.alias_layer.take().unwrap();
+    let mut debugger = context.debugger.take().unwrap();
+    let original_window = context.original_window;
+    let original_bitmap = context.original_bitmap;
+    let original_bitmap_descriptor = context.original_bitmap_descriptor;
+    let original_notification_semaphore = context.original_notification_semaphore;
+    let notification_semaphore = context.notification_semaphore;
+    let text_table = context.text_table;
+    let original_resources = context.original_resources;
+    let shared_resource_pointer = context.shared_resource_pointer;
+    let original_shared_resource = context.original_shared_resource;
+    let original_lengths_table = context.original_lengths_table;
+    let original_lengths = context.original_lengths;
+    let widget7 = context.widget7;
+    let widget33 = context.widget33;
+    let original_widget7 = context.original_widget7;
+    let original_widget33 = context.original_widget33;
+    let background10 = context.background10;
+    let background37 = context.background37;
+    let background48 = context.background48;
+    let original_background_layers = context.original_background_layers;
+    let heap_before = context.heap_before;
+    let widget_layer_guard_rejected = true;
+    let background_layer_guard_rejected = true;
     let result = (|| -> Result<Value, Box<dyn std::error::Error>> {
-        // A descriptor drift must make the patch decline first use without
-        // allocating state or claiming its callback slot.
-        qmp.stop()?;
-        debugger.write(widget7 + 6, &2u16.to_le_bytes())?;
-        debugger.resume_guest()?;
-        turn_and_wait_hook(session, &mut debugger, -1, wall_timeout_s)?;
-        qmp.stop()?;
-        let mismatch_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
-        let mismatch_slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
-        let mismatch_heap = heap()?;
-        debugger.write(widget7 + 6, &1u16.to_le_bytes())?;
-        debugger.resume_guest()?;
-        if mismatch_state != 0u32.to_le_bytes()
-            || mismatch_slot5 != 0u32.to_le_bytes()
-            || mismatch_heap != heap_before
-        {
-            return Err(format!(
-                "descriptor drift was not rejected cleanly: state={mismatch_state:02x?}, slot5={mismatch_slot5:02x?}, heap={mismatch_heap:?}"
-            )
-            .into());
-        }
-
-        // Resource 179 is borrowed by the dialog only if no other initialized
-        // widget points at it. Simulate another patch claiming that resource.
-        let alias_widget = widget_pointer(60)?;
-        let original_alias_resource = qmp.read_memory(0, alias_widget + 4, 2)?;
-        qmp.stop()?;
-        debugger.write(alias_widget + 4, &179u16.to_le_bytes())?;
-        debugger.resume_guest()?;
-        turn_and_wait_hook(session, &mut debugger, -1, wall_timeout_s)?;
-        qmp.stop()?;
-        let alias_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
-        let alias_slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
-        let alias_heap = heap()?;
-        debugger.write(alias_widget + 4, &original_alias_resource)?;
-        debugger.resume_guest()?;
-        if alias_state != 0u32.to_le_bytes()
-            || alias_slot5 != 0u32.to_le_bytes()
-            || alias_heap != heap_before
-        {
-            return Err(format!(
-                "shared text resource alias was not rejected cleanly: state={alias_state:02x?}, slot5={alias_slot5:02x?}, heap={alias_heap:?}"
-            )
-            .into());
-        }
-
-        // Layer 4 is reserved for this scene. An existing descriptor on that
-        // layer must also prevent first use from claiming it.
-        let original_alias_layer = qmp.read_memory(0, alias_widget, 2)?;
-        qmp.stop()?;
-        debugger.write(alias_widget, &4u16.to_le_bytes())?;
-        debugger.resume_guest()?;
-        turn_and_wait_hook(session, &mut debugger, -1, wall_timeout_s)?;
-        qmp.stop()?;
-        let layer_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
-        let layer_slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
-        let layer_heap = heap()?;
-        debugger.write(alias_widget, &original_alias_layer)?;
-        debugger.resume_guest()?;
-        if layer_state != 0u32.to_le_bytes()
-            || layer_slot5 != 0u32.to_le_bytes()
-            || layer_heap != heap_before
-        {
-            return Err(format!(
-                "scene layer collision was not rejected cleanly: state={layer_state:02x?}, slot5={layer_slot5:02x?}, heap={layer_heap:?}"
-            )
-            .into());
-        }
-
-        // The compact state record restores fixed stock layers, so reject a
-        // changed borrowed widget layer instead of trying to save metadata.
-        let original_widget_layer = qmp.read_memory(0, widget7, 1)?;
-        qmp.stop()?;
-        debugger.write(widget7, &[0])?;
-        debugger.resume_guest()?;
-        turn_and_wait_hook(session, &mut debugger, -1, wall_timeout_s)?;
-        qmp.stop()?;
-        let widget_layer_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
-        let widget_layer_slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
-        let widget_layer_heap = heap()?;
-        debugger.write(widget7, &original_widget_layer)?;
-        debugger.resume_guest()?;
-        let widget_layer_guard_rejected = widget_layer_state == 0u32.to_le_bytes()
-            && widget_layer_slot5 == 0u32.to_le_bytes()
-            && widget_layer_heap == heap_before;
-        if !widget_layer_guard_rejected {
-            return Err(format!(
-                "changed widget layer was not rejected cleanly: state={widget_layer_state:02x?}, slot5={widget_layer_slot5:02x?}, heap={widget_layer_heap:?}"
-            )
-            .into());
-        }
-
-        // Background descriptors have the same fixed-layer restoration
-        // contract and must pass the same first-use preflight.
-        qmp.stop()?;
-        debugger.write(background10, &[1])?;
-        debugger.resume_guest()?;
-        turn_and_wait_hook(session, &mut debugger, -1, wall_timeout_s)?;
-        qmp.stop()?;
-        let background_layer_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
-        let background_layer_slot5 =
-            qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
-        let background_layer_heap = heap()?;
-        debugger.write(background10, &original_background_layers[0])?;
-        debugger.resume_guest()?;
-        let background_layer_guard_rejected = background_layer_state == 0u32.to_le_bytes()
-            && background_layer_slot5 == 0u32.to_le_bytes()
-            && background_layer_heap == heap_before;
-        if !background_layer_guard_rejected {
-            return Err(format!(
-                "changed background layer was not rejected cleanly: state={background_layer_state:02x?}, slot5={background_layer_slot5:02x?}, heap={background_layer_heap:?}"
-            )
-            .into());
-        }
-
         // Simulate the notification manager owning its semaphore during first
         // use. The scene must not depend on that unrelated lock.
         qmp.stop()?;
@@ -1108,18 +1222,37 @@ pub(super) fn run_knob_dialog(
         && qmp.read_memory(0, widget7, 16)? == original_widget7
         && qmp.read_memory(0, background10, 1)? == original_background_layers[0]
         && notification_lock_still_held;
+        let first_use_failed = !dialog_without_notification_lock
+            || heap_while_locked[2] != heap_before[2]
+            || heap_while_locked[3] != heap_before[3];
+        // Preserve the stopped snapshot before releasing the lock: ticks and
+        // mailbox acknowledgement can become visible before rendering returns.
+        let diagnostic = if first_use_failed {
+            let widget7_read = qmp
+                .read_memory(0, widget7, 16)
+                .map_err(|error| error.to_string());
+            let widget33_read = qmp
+                .read_memory(0, widget33, 16)
+                .map_err(|error| error.to_string());
+            let background10_read = qmp
+                .read_memory(0, background10, 1)
+                .map_err(|error| error.to_string());
+            let pc = match debugger.read_register(15) {
+                Ok(pc) => pc,
+                Err(error) => return Err(format!(
+                    "dialog first use failed: state={first_state:02x?}, slot5={first_slot5:#010x}, heap={heap_while_locked:?}, notification_lock_still_held={notification_lock_still_held}, actual_widget7={widget7_read:02x?}, actual_widget33={widget33_read:02x?}, actual_background10={background10_read:02x?}, stopped_pc_error={error}"
+                ).into()),
+            };
+            Some((widget7_read, widget33_read, background10_read, pc))
+        } else {
+            None
+        };
         debugger.write(notification_semaphore + 56, &semaphore_count)?;
         debugger.resume_guest()?;
-        if !dialog_without_notification_lock
-            || heap_while_locked[2] != heap_before[2]
-            || heap_while_locked[3] != heap_before[3]
-        {
+        if first_use_failed {
             return Err(format!(
-                "dialog first use failed: state={first_state:02x?}, slot5={first_slot5:#010x}, heap={heap_while_locked:?}, notification_lock_still_held={notification_lock_still_held}, widget_x=({}, {})",
-                u16::from_le_bytes([original_widget7[6], original_widget7[7]]),
-                u16::from_le_bytes([original_widget33[6], original_widget33[7]])
-            )
-            .into());
+                "dialog first use failed: state={first_state:02x?}, slot5={first_slot5:#010x}, heap={heap_while_locked:?}, notification_lock_still_held={notification_lock_still_held}, actual_widget7_widget33_background10_pc={diagnostic:02x?}"
+            ).into());
         }
 
         inputs.knob(0, -3)?;
@@ -2473,5 +2606,23 @@ mod debug_cleanup_tests {
         assert_eq!(fake.calls, ["stop"]);
         assert_eq!(errors.len(), 1);
         assert!(errors[0].contains("stop failure"));
+    }
+}
+
+#[cfg(test)]
+mod preflight_tests {
+    use super::preflight_rejected;
+    #[test]
+    fn rejection_requires_empty_state_and_callback_and_unchanged_heap() {
+        let heap = [100, 90, 5, 2];
+        assert!(preflight_rejected(&[0; 4], &[0; 4], &heap, &heap));
+        assert!(!preflight_rejected(&[1, 0, 0, 0], &[0; 4], &heap, &heap));
+        assert!(!preflight_rejected(&[0; 4], &[1, 0, 0, 0], &heap, &heap));
+        assert!(!preflight_rejected(
+            &[0; 4],
+            &[0; 4],
+            &[100, 90, 6, 2],
+            &heap
+        ));
     }
 }

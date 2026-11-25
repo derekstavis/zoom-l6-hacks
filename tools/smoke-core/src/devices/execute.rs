@@ -132,7 +132,7 @@ mod carried_deadline_tests {
 }
 
 impl State {
-    pub fn restarted(&mut self) {
+    pub fn restarted(&mut self) -> Result<(), String> {
         if let Some(mut client) = self.native_midi.take() {
             client.release();
         }
@@ -143,7 +143,18 @@ impl State {
         self.knob_popup = None;
         self.knob_dialog_deadline = None;
         self.knob_dialog_baseline = None;
+        self.abort_knob_preflight()?;
         self.midi = None;
+        Ok(())
+    }
+    pub fn has_knob_preflight(&self) -> bool {
+        self.knob_dialog_preflight.is_some()
+    }
+    pub fn abort_knob_preflight(&mut self) -> Result<(), String> {
+        match self.knob_dialog_preflight.take() {
+            Some(context) => super::knob_dialog::abort_preflight(context),
+            None => Ok(()),
+        }
     }
     pub fn execute(
         &mut self,
@@ -163,30 +174,47 @@ impl State {
             .snapshot()
             .guest_ms;
         let is_ready = matches!(operation, Operation::KnobDialogReady);
-        let is_guard = matches!(operation, Operation::KnobDialogGuard);
-        let is_baseline = matches!(operation, Operation::KnobDialogBaseline);
-        let is_dialog = matches!(operation, Operation::KnobDialog);
-        let shared = if is_guard || is_baseline || is_dialog {
-            Some(
-                self.knob_dialog_deadline
-                    .take()
-                    .ok_or("knob-dialog requires preceding readiness step")?,
-            )
+        let expected = match operation {
+            Operation::KnobDialogGuard => Some(0),
+            Operation::KnobDialogBaseline => Some(1),
+            Operation::KnobDialogPreflightBegin => Some(2),
+            Operation::KnobDialogPreflightDescriptor => Some(3),
+            Operation::KnobDialogPreflightTextAlias => Some(4),
+            Operation::KnobDialogPreflightLayerCollision => Some(5),
+            Operation::KnobDialogPreflightWidgetLayer => Some(6),
+            Operation::KnobDialogPreflightBackgroundLayer => Some(7),
+            Operation::KnobDialog => Some(8),
+            _ => None,
+        };
+        if expected.is_none() && self.has_knob_preflight() {
+            let error = "knob-dialog preflight interrupted by another operation";
+            return match self.abort_knob_preflight() {
+                Ok(()) => Err(error.into()),
+                Err(cleanup) => Err(format!("{error}; debugger cleanup failed: {cleanup}")),
+            };
+        }
+        let shared = if let Some(expected) = expected {
+            let context = match self.knob_dialog_deadline.take() {
+                Some(context) => context,
+                None => {
+                    let error = "knob-dialog requires preceding readiness step";
+                    return match self.abort_knob_preflight() {
+                        Ok(()) => Err(error.into()),
+                        Err(cleanup) => Err(format!("{error}; debugger cleanup failed: {cleanup}")),
+                    };
+                }
+            };
+            if context.4 != expected {
+                let error = "knob-dialog steps are out of order";
+                return match self.abort_knob_preflight() {
+                    Ok(()) => Err(error.into()),
+                    Err(cleanup) => Err(format!("{error}; debugger cleanup failed: {cleanup}")),
+                };
+            }
+            Some(context)
         } else {
             None
         };
-        if let Some((_, _, _, _, phase)) = shared {
-            let expected = if is_guard {
-                0
-            } else if is_baseline {
-                1
-            } else {
-                2
-            };
-            if phase != expected {
-                return Err("knob-dialog steps are out of order".into());
-            }
-        }
         if is_ready {
             self.knob_dialog_deadline = None;
             self.knob_dialog_baseline = None;
@@ -198,7 +226,16 @@ impl State {
             guest_timeout_ms,
             wall_timeout_s,
         );
-        let result = result.map_err(|e| e.to_string())?;
+        let result = match result {
+            Ok(value) => value,
+            Err(error) => {
+                let primary = error.to_string();
+                return match self.abort_knob_preflight() {
+                    Ok(()) => Err(primary),
+                    Err(cleanup) => Err(format!("{primary}; debugger cleanup failed: {cleanup}")),
+                };
+            }
+        };
         let elapsed = session
             .engine
             .inputs
@@ -209,7 +246,11 @@ impl State {
             .guest_ms
             .wrapping_sub(guest_start);
         if started.elapsed() > Duration::from_secs(wall_timeout_s) || elapsed > guest_timeout_ms {
-            return Err("device operation exceeded its step deadline".into());
+            let error = "device operation exceeded its step deadline";
+            return match self.abort_knob_preflight() {
+                Ok(()) => Err(error.into()),
+                Err(cleanup) => Err(format!("{error}; debugger cleanup failed: {cleanup}")),
+            };
         }
         if let Some((start, guest_start, guest_budget, wall_budget, _)) = shared {
             let now = session
@@ -221,13 +262,17 @@ impl State {
                 .snapshot()
                 .guest_ms;
             if deadline_exceeded(start.elapsed(), guest_start, now, guest_budget, wall_budget) {
-                return Err("device operation exceeded its step deadline".into());
+                let error = "device operation exceeded its step deadline";
+                return match self.abort_knob_preflight() {
+                    Ok(()) => Err(error.into()),
+                    Err(cleanup) => Err(format!("{error}; debugger cleanup failed: {cleanup}")),
+                };
             }
         }
         if is_ready {
             self.knob_dialog_deadline =
                 Some((started, guest_start, guest_timeout_ms, wall_timeout_s, 0));
-        } else if is_guard || is_baseline {
+        } else if expected.is_some() && !matches!(expected, Some(8)) {
             let (start, guest_start, guest_budget, wall_budget, phase) = shared.unwrap();
             self.knob_dialog_deadline =
                 Some((start, guest_start, guest_budget, wall_budget, phase + 1));
@@ -2111,12 +2156,41 @@ impl State {
                 self.knob_dialog_baseline = Some(frame);
                 Ok(json!({"baseline_captured": true}))
             }
+            Operation::KnobDialogPreflightBegin => {
+                self.knob_dialog_preflight = Some(begin_preflight(session, options)?);
+                Ok(json!({"preflight": "begin"}))
+            }
+            operation @ (Operation::KnobDialogPreflightDescriptor
+            | Operation::KnobDialogPreflightTextAlias
+            | Operation::KnobDialogPreflightLayerCollision
+            | Operation::KnobDialogPreflightWidgetLayer
+            | Operation::KnobDialogPreflightBackgroundLayer) => {
+                let index = match operation {
+                    Operation::KnobDialogPreflightDescriptor => 0,
+                    Operation::KnobDialogPreflightTextAlias => 1,
+                    Operation::KnobDialogPreflightLayerCollision => 2,
+                    Operation::KnobDialogPreflightWidgetLayer => 3,
+                    _ => 4,
+                };
+                let context = self
+                    .knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?;
+                run_preflight_probe(session, context, index, wall_timeout_s)
+            }
             Operation::KnobDialog => {
                 let baseline = self
                     .knob_dialog_baseline
                     .take()
                     .ok_or("knob-dialog requires baseline frame")?;
-                run_knob_dialog(session, options, baseline, guest_timeout_ms, wall_timeout_s)
+                run_knob_dialog(
+                    session,
+                    options,
+                    &mut self.knob_dialog_preflight,
+                    baseline,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )
             }
             operation @ (Operation::KnobPopupOpen { .. }
             | Operation::KnobPopupExpectOpen

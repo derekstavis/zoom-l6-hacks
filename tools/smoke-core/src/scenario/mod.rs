@@ -420,6 +420,12 @@ pub enum Action {
     KnobDialogReady,
     KnobDialogGuard,
     KnobDialogBaseline,
+    KnobDialogPreflightBegin,
+    KnobDialogPreflightDescriptor,
+    KnobDialogPreflightTextAlias,
+    KnobDialogPreflightLayerCollision,
+    KnobDialogPreflightWidgetLayer,
+    KnobDialogPreflightBackgroundLayer,
     KnobDialog,
     /// Turn the channel 1 level knob once on the recorder screen and check
     /// that Knob Dialog shows the new value.
@@ -680,16 +686,17 @@ impl Scenario {
     /// steps are dropped because the state already holds their result.
     pub fn load_for_case(path: &Path) -> Result<Self, String> {
         let scenario = Self::load(path)?;
-        Ok(if std::env::var(STATE_SPEC_ENV).as_deref() == Ok("1") {
+        if std::env::var(STATE_SPEC_ENV).as_deref() == Ok("1") {
             scenario.without_setup_input()
         } else {
-            scenario
-        })
+            Ok(scenario)
+        }
     }
-    pub fn without_setup_input(mut self) -> Self {
+    pub fn without_setup_input(mut self) -> Result<Self, String> {
         self.step.retain(|step| !step.setup_input);
         self.spec_state = true;
-        self
+        self.validate()?;
+        Ok(self)
     }
     /// Whether this scenario needs the native patch builder for its setup or
     /// for a native-versus-WASM patch comparison.

@@ -332,6 +332,7 @@ impl State {
     }
 
     pub fn restarted(&mut self) -> Result<(), String> {
+        let auxiliary_cleanup = self.abort_auxiliary_scopes();
         self.abort_midi_probe();
         if let Some(mut client) = self.native_midi.take() {
             client.release();
@@ -342,12 +343,31 @@ impl State {
         self.knob_popup = None;
         self.knob_dialog_deadline = None;
         self.knob_dialog_baseline = None;
-        self.abort_knob_preflight()?;
+        let debugger_cleanup = self.abort_knob_preflight();
         self.midi = None;
         self.l6_indicator = None;
         self.sysex_deadline = None;
         self.usb_midi = None;
-        Ok(())
+        match (auxiliary_cleanup, debugger_cleanup) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+            (Err(error), Err(debugger)) => {
+                Err(format!("{error}; debugger cleanup failed: {debugger}"))
+            }
+        }
+    }
+    /// Release held inputs and owned transport scopes before the guest exits.
+    pub fn abort_auxiliary_scopes(&mut self) -> Result<(), String> {
+        let panel = self
+            .panel_keys
+            .take()
+            .map(|mut scope| scope.release())
+            .transpose();
+        self.din_usb = None;
+        self.sd_inspection = None;
+        self.usb_midi = None;
+        self.l6_indicator = None;
+        panel.map(|_| ())
     }
     pub fn has_knob_preflight(&self) -> bool {
         self.knob_dialog_preflight.is_some()
@@ -360,9 +380,6 @@ impl State {
     }
     pub fn abort_usb_midi(&mut self) {
         self.usb_midi = None;
-    }
-    pub fn abort_l6_indicator(&mut self) {
-        self.l6_indicator = None;
     }
     pub fn abort_midi_sync(&mut self) {
         self.midi_sync = None;

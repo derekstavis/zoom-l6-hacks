@@ -196,14 +196,18 @@ mod carried_deadline_tests {
 }
 
 impl State {
+    pub(super) fn release_retained_host_midi(&mut self) {
+        if let Some(mut client) = self.host_midi.take() {
+            client.release();
+        }
+    }
+
     pub fn restarted(&mut self) -> Result<(), String> {
         self.abort_midi_probe();
         if let Some(mut client) = self.native_midi.take() {
             client.release();
         }
-        if let Some(mut client) = self.host_midi.take() {
-            client.release();
-        }
+        self.release_retained_host_midi();
         self.midi_round_trip = None;
         self.midi_sync = None;
         self.knob_popup = None;

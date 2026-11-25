@@ -554,6 +554,11 @@ impl State {
             )[1],
         );
         let mut client: Box<dyn crate::host_midi::Client> = if let Some(cable) = direct_cable {
+            // A previous round trip deliberately retained its session for any
+            // following sync. Replace it before acquiring the exclusive USB
+            // lease for a new round trip; its queued events belong to that
+            // earlier session and must not leak into the new one.
+            self.release_retained_host_midi();
             Box::new(l6ctl::midi::MidiSession::connect_direct(
                 session.engine.usb.clone().ok_or("USB host unavailable")?,
                 cable,
@@ -2057,6 +2062,28 @@ mod declarative_midi_tests {
         .unwrap_err();
         assert!(error.contains("shared deadline"));
         assert_eq!(n.get(), 3);
+    }
+
+    #[test]
+    fn consecutive_direct_round_trips_release_the_previous_session_before_reopening() {
+        let first_released = Arc::new(AtomicBool::new(false));
+        let mut state = State::default();
+        state.host_midi = Some(Box::new(FakeClient {
+            queue: VecDeque::from([[0xb0, 83, 1]]),
+            released: first_released.clone(),
+        }));
+        state.release_retained_host_midi();
+        assert!(first_released.load(Ordering::SeqCst));
+        assert!(state.host_midi.is_none());
+        state.host_midi = Some(Box::new(FakeClient {
+            queue: VecDeque::from([[0xb0, 81, 2]]),
+            released: Arc::new(AtomicBool::new(false)),
+        }));
+        assert_eq!(
+            state.host_midi.as_mut().unwrap().poll().unwrap(),
+            Some([0xb0, 81, 2])
+        );
+        assert_eq!(state.host_midi.as_mut().unwrap().poll().unwrap(), None);
     }
 
     #[test]

@@ -8322,6 +8322,7 @@
       "description": "Case-local synthetic L6max update card variant.",
       "enum": [
         "bad-checksum",
+        "bad-checksum-stock",
         "l6-stock",
         "l6-patched-midi",
         "synthetic-valid",

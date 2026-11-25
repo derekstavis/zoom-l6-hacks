@@ -35,7 +35,7 @@ Each scenario declares what it runs from, so the local file only supplies firmwa
 | `installed_patches` | Have the engine install named patches on a device seeded with the stock firmware, as `--patch` does. |
 | `installed_sd_patches` | Have the engine install the Patch loader and write the named patches' hosted modules to the case's card, as `--sd-patch` does. |
 | `update_patches` | Build the case's update package from the model's package, per model, for example `{ l6 = ["midi-sync"] }`. |
-| `update_fixture` | Stage an isolated stock L6, synthetic L6max valid or bad-checksum, or browser-built L6 or L6max patched MIDI update card. The update and actual card are hashed before execution; patched updates additionally pin the patch report and unpacked verification firmware. |
+| `update_fixture` | Stage an isolated stock L6, synthetic L6max valid or bad-checksum, one-byte checksum-corrupted stock L6max, or browser-built L6 or L6max patched MIDI update card. The update and actual card are hashed before execution; patched updates additionally pin the patch report and unpacked verification firmware. |
 | `gdb` | Enable the case's debugger socket. |
 | `audio_device` | QEMU audio-device syntax, with `{logs}` as the case's log directory. |
 | `audio_input` | Audio assigned to input channels; see [audio input](../emulator/audio.md#input). |

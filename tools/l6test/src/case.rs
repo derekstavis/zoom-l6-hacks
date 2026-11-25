@@ -56,6 +56,7 @@ fn synthetic_update(
             }
         }
         smoke_core::UpdateFixture::PatchedMidi
+        | smoke_core::UpdateFixture::BadChecksumStock
         | smoke_core::UpdateFixture::L6Stock
         | smoke_core::UpdateFixture::L6PatchedMidi => {
             return Err("update is not synthetic".into());
@@ -79,7 +80,19 @@ fn checked_update(
     {
         return Err("bad-checksum update needs the hash-pinned L6max 1.10 package matching its staged identity".into());
     }
-    synthetic_update(source_bytes, fixture)
+    if fixture == smoke_core::UpdateFixture::BadChecksumStock {
+        l6fw::update::validate(&source_bytes).map_err(|error| error.to_string())?;
+        let mut corrupt = source_bytes;
+        corrupt[0x1fc] ^= 1;
+        if !l6fw::update::validate(&corrupt)
+            .is_err_and(|error| error.to_string().contains("checksum"))
+        {
+            return Err("stock update did not have the intended checksum failure".into());
+        }
+        Ok(corrupt)
+    } else {
+        synthetic_update(source_bytes, fixture)
+    }
 }
 
 /// What every case of a run shares.
@@ -818,6 +831,28 @@ mod tests {
                 smoke_core::UpdateFixture::BadChecksum
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    #[ignore = "requires L6MAX_UPDATE_TEST_PACKAGE pointing at stock 1.10"]
+    fn stock_bad_checksum_fixture_flips_only_checksum_byte() {
+        let original = fs::read(std::env::var_os("L6MAX_UPDATE_TEST_PACKAGE").unwrap()).unwrap();
+        let fixture = smoke_core::UpdateFixture::BadChecksumStock;
+        let hash = smoke_core::firmware::STOCK_L6MAX_PACKAGE_SHA256;
+        assert!(checked_update(original.clone(), Some("incorrect"), fixture).is_err());
+        let mut altered = original.clone();
+        altered[0x300] ^= 1;
+        assert!(checked_update(altered, Some(hash), fixture).is_err());
+        let corrupt = checked_update(original.clone(), Some(hash), fixture).unwrap();
+        let mut expected = original;
+        expected[0x1fc] ^= 1;
+        assert_eq!(corrupt, expected);
+        assert!(
+            l6fw::update::validate(&corrupt)
+                .unwrap_err()
+                .to_string()
+                .contains("checksum")
         );
     }
 

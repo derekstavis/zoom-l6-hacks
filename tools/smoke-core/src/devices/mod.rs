@@ -923,11 +923,19 @@ struct PanelKeyScope {
     held: Option<u32>,
     inputs: std::sync::Arc<l6max_host::input::InputHub>,
 }
+impl PanelKeyScope {
+    fn release(&mut self) -> Result<(), String> {
+        if let Some(target) = self.held.take() {
+            self.inputs
+                .up(target)
+                .map_err(|error| format!("release panel key {target}: {error}"))?;
+        }
+        Ok(())
+    }
+}
 impl Drop for PanelKeyScope {
     fn drop(&mut self) {
-        if let Some(target) = self.held.take() {
-            let _ = self.inputs.up(target);
-        }
+        let _ = self.release();
     }
 }
 
@@ -1108,6 +1116,65 @@ fn wait_guest(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn restarted_releases_held_panel_key_before_input_shutdown() {
+        use super::*;
+        use std::{os::unix::net::UnixStream, sync::Arc};
+        let (main_host, _main_peer) = UnixStream::pair().unwrap();
+        let (panel_host, mut panel_peer) = UnixStream::pair().unwrap();
+        let inputs = Arc::new(l6max_host::input::InputHub::new(
+            l6max_host::input::EngineInput::new(main_host).unwrap(),
+            l6max_host::input::EngineInput::new(panel_host).unwrap(),
+            l6fw::Model::L6max,
+        ));
+        let mut state = State::default();
+        state.panel_keys = Some(PanelKeyScope {
+            deadline: Instant::now(),
+            held: Some(1),
+            inputs,
+        });
+        state.restarted().unwrap();
+        let message = l6max_host::protocol::Message::read(&mut panel_peer).unwrap();
+        assert_eq!(
+            (message.kind, message.target),
+            (l6max_host::protocol::UP, 1)
+        );
+        assert!(state.panel_keys.is_none());
+    }
+    #[test]
+    fn scope_cleanup_reports_failed_release_and_clears_scope() {
+        use super::*;
+        use std::{net::Shutdown, os::unix::net::UnixStream, sync::Arc};
+        let (main_host, _main_peer) = UnixStream::pair().unwrap();
+        let (panel_host, panel_peer) = UnixStream::pair().unwrap();
+        let inputs = Arc::new(l6max_host::input::InputHub::new(
+            l6max_host::input::EngineInput::new(main_host).unwrap(),
+            l6max_host::input::EngineInput::new(panel_host).unwrap(),
+            l6fw::Model::L6max,
+        ));
+        panel_peer.shutdown(Shutdown::Both).unwrap();
+        let until = Instant::now() + std::time::Duration::from_secs(2);
+        while inputs.panel.snapshot().connected && Instant::now() < until {
+            std::thread::yield_now();
+        }
+        assert!(
+            !inputs.panel.snapshot().connected,
+            "input reader did not observe disconnect"
+        );
+        let mut state = State::default();
+        state.panel_keys = Some(PanelKeyScope {
+            deadline: Instant::now(),
+            held: Some(1),
+            inputs,
+        });
+        assert!(
+            state
+                .abort_auxiliary_scopes()
+                .unwrap_err()
+                .contains("release panel key 1")
+        );
+        assert!(state.panel_keys.is_none());
+    }
     #[test]
     fn preparation_can_use_a_separately_staged_firmware_report() {
         use super::{Options, Scenario, prepare, prepare_with_report};

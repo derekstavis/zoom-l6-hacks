@@ -674,6 +674,7 @@ pub(super) struct PreflightContext {
     mode_index: usize,
     last_mode: Option<u8>,
     final_phase: u8,
+    restoration: Option<RestorationEvidence>,
     pending_notification: Option<PendingNotification>,
     pending_invalid_signature: Option<PendingInvalidSignature>,
     pending_invalid_tag: Option<PendingInvalidTag>,
@@ -816,6 +817,7 @@ pub(super) fn begin_preflight(
         mode_index: 0,
         last_mode: None,
         final_phase: 0,
+        restoration: None,
         pending_notification: None,
         pending_invalid_signature: None,
         pending_invalid_tag: None,
@@ -2331,13 +2333,6 @@ pub(super) fn run_knob_dialog(
             thread::sleep(Duration::from_millis(5));
         }
     };
-    let heap = || -> Result<Vec<u32>, Box<dyn std::error::Error>> {
-        Ok(qmp
-            .read_memory(0, l6max::xFreeBytesRemaining, 16)?
-            .chunks_exact(4)
-            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
-            .collect())
-    };
     let capture = |duration: u32, name: &str| {
         capture_knob_frame(
             session,
@@ -2408,7 +2403,7 @@ pub(super) fn run_knob_dialog(
         return Err("knob-dialog preflight incomplete".into());
     }
     let context = context_slot.as_ref().unwrap();
-    if context.final_phase != if prefix { 0 } else { 25 } {
+    if context.final_phase != if prefix { 0 } else { 43 } {
         return Err("knob-dialog final phases out of order".into());
     }
     if context.alias_widget.is_none()
@@ -2427,11 +2422,8 @@ pub(super) fn run_knob_dialog(
     let original_bitmap_descriptor = context.original_bitmap_descriptor.clone();
     let original_notification_semaphore = context.original_notification_semaphore.clone();
     let text_table = context.text_table;
-    let original_resources = context.original_resources.clone();
     let shared_resource_pointer = context.shared_resource_pointer;
     let original_shared_resource = context.original_shared_resource.clone();
-    let original_lengths_table = context.original_lengths_table;
-    let original_lengths = context.original_lengths.clone();
     let widget7 = context.widget7;
     let widget33 = context.widget33;
     let original_widget7 = context.original_widget7.clone();
@@ -2446,7 +2438,7 @@ pub(super) fn run_knob_dialog(
     let result = (|| -> Result<Value, Box<dyn std::error::Error>> {
         let ActiveSnapshot {
             active_slot5,
-            heap_live,
+            heap_live: _,
             state_heap_bytes,
             hook_task,
             callback_task,
@@ -2586,97 +2578,6 @@ pub(super) fn run_knob_dialog(
         }
         let invalid_metadata_rejected = true;
         let invalid_tag_discarded = true;
-        let restore_checks = [
-            (
-                "window",
-                qmp.read_memory(0, l6max::current_window, 4)? == original_window,
-            ),
-            (
-                "state signature",
-                u16::from_le_bytes(qmp.read_memory(0, state, 2)?.try_into().unwrap()) == 0x4b4e,
-            ),
-            (
-                "bitmap table",
-                qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)? == original_bitmap,
-            ),
-            (
-                "bitmap descriptor",
-                qmp.read_memory(
-                    0,
-                    u32::from_le_bytes(original_bitmap.clone().try_into().unwrap()),
-                    8,
-                )? == original_bitmap_descriptor,
-            ),
-            (
-                "notification semaphore",
-                qmp.read_memory(0, l6max::notification_slot, 4)? == original_notification_semaphore,
-            ),
-            (
-                "text resource table",
-                qmp.read_memory(0, text_table + 229 * 4, 8)? == original_resources,
-            ),
-            (
-                "shared resource pointer",
-                qmp.read_memory(0, text_table + 179 * 4, 4)?
-                    == shared_resource_pointer.to_le_bytes(),
-            ),
-            (
-                "shared resource contents",
-                qmp.read_memory(0, shared_resource_pointer, 512)? == original_shared_resource,
-            ),
-            (
-                "text lengths",
-                qmp.read_memory(0, original_lengths_table + 229 * 2, 4)? == original_lengths,
-            ),
-            (
-                "widget 7",
-                qmp.read_memory(0, widget7, 16)? == original_widget7,
-            ),
-            (
-                "widget 33",
-                qmp.read_memory(0, widget33, 16)? == original_widget33,
-            ),
-            (
-                "background layer 10",
-                qmp.read_memory(0, background10, 1)? == original_background_layers[0],
-            ),
-            (
-                "background layer 37",
-                qmp.read_memory(0, background37, 1)? == original_background_layers[1],
-            ),
-            (
-                "background layer 48",
-                qmp.read_memory(0, background48, 1)? == original_background_layers[2],
-            ),
-            (
-                "display callback slot 5",
-                u32::from_le_bytes(
-                    qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?
-                        .try_into()
-                        .unwrap(),
-                ) == active_slot5,
-            ),
-        ];
-        let mismatches = restore_checks
-            .iter()
-            .filter_map(|(name, matches)| (!matches).then_some(*name))
-            .collect::<Vec<_>>();
-        if !mismatches.is_empty() {
-            return Err(format!(
-                "custom overlay did not restore borrowed resources or preserve stock bitmap 36: {mismatches:?}"
-            )
-            .into());
-        }
-        let heap_after = heap()?;
-        if heap_after[0] != heap_live[0]
-            || heap_after[2] != heap_live[2]
-            || heap_after[3] != heap_live[3]
-        {
-            return Err(format!(
-                "in-place scene state caused heap changes: live={heap_live:?}, after={heap_after:?}"
-            )
-            .into());
-        }
         // Prove that the DisplayCycle2 callback restores borrowed global
         // descriptors on navigation, rather than relying on expiry cleanup.
         inputs.knob(0, -3)?;
@@ -2752,6 +2653,194 @@ pub(super) fn run_knob_dialog(
     } else {
         debugger.finish(result)
     }
+}
+
+struct RestorationEvidence {
+    snapshot: l6ctl::RestorationSnapshot,
+    mismatches: Vec<&'static str>,
+}
+
+pub(super) fn snapshot_restoration(
+    session: &Session,
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.final_phase != 25 {
+        return Err("restoration snapshot out of order".into());
+    }
+    let pointers = l6ctl::RestorationPointers {
+        bitmap_descriptor: u32::from_le_bytes(
+            context
+                .original_bitmap
+                .clone()
+                .try_into()
+                .map_err(|_| "short bitmap pointer")?,
+        ),
+        text_table: context.text_table,
+        shared_resource: context.shared_resource_pointer,
+        lengths_table: context.original_lengths_table,
+        widget7: context.widget7,
+        widget33: context.widget33,
+        backgrounds: [
+            context.background10,
+            context.background37,
+            context.background48,
+        ],
+    };
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let snapshot = control.knob_popup_reader()?.restoration(&pointers)?;
+    context.restoration = Some(RestorationEvidence {
+        snapshot,
+        mismatches: Vec::new(),
+    });
+    context.final_phase += 1;
+    Ok(json!({"atomic":false}))
+}
+
+fn collect_restoration_mismatch(
+    mismatches: &mut Vec<&'static str>,
+    name: &'static str,
+    actual: &[u8],
+    expected: &[u8],
+) -> bool {
+    let matches = actual == expected;
+    if !matches {
+        mismatches.push(name);
+    }
+    matches
+}
+
+pub(super) fn check_restoration_field(
+    context: &mut PreflightContext,
+    field: crate::scenario::RestorationField,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    use crate::scenario::RestorationField as F;
+    if usize::from(context.final_phase) != 26 + field as usize {
+        return Err("restoration field out of order".into());
+    }
+    let evidence = context
+        .restoration
+        .as_ref()
+        .ok_or("missing restoration snapshot")?;
+    let s = &evidence.snapshot;
+    let active = context.active.as_ref().ok_or("missing active snapshot")?;
+    let (name, actual, expected): (&'static str, &[u8], Vec<u8>) = match field {
+        F::Window => ("window", &s.window, context.original_window.clone()),
+        F::Signature => (
+            "state signature",
+            &s.signature,
+            0x4b4eu16.to_le_bytes().to_vec(),
+        ),
+        F::Bitmap => ("bitmap table", &s.bitmap, context.original_bitmap.clone()),
+        F::BitmapDescriptor => (
+            "bitmap descriptor",
+            &s.bitmap_descriptor,
+            context.original_bitmap_descriptor.clone(),
+        ),
+        F::NotificationSemaphore => (
+            "notification semaphore",
+            &s.notification_semaphore,
+            context.original_notification_semaphore.clone(),
+        ),
+        F::TextResources => (
+            "text resource table",
+            &s.text_resources,
+            context.original_resources.clone(),
+        ),
+        F::SharedPointer => (
+            "shared resource pointer",
+            &s.shared_pointer,
+            context.shared_resource_pointer.to_le_bytes().to_vec(),
+        ),
+        F::SharedContents => (
+            "shared resource contents",
+            &s.shared_contents,
+            context.original_shared_resource.clone(),
+        ),
+        F::TextLengths => (
+            "text lengths",
+            &s.text_lengths,
+            context.original_lengths.clone(),
+        ),
+        F::Widget7 => ("widget 7", &s.widget7, context.original_widget7.clone()),
+        F::Widget33 => ("widget 33", &s.widget33, context.original_widget33.clone()),
+        F::Background10 => (
+            "background layer 10",
+            &s.background10,
+            context.original_background_layers[0].clone(),
+        ),
+        F::Background37 => (
+            "background layer 37",
+            &s.background37,
+            context.original_background_layers[1].clone(),
+        ),
+        F::Background48 => (
+            "background layer 48",
+            &s.background48,
+            context.original_background_layers[2].clone(),
+        ),
+        F::Callback => (
+            "display callback slot 5",
+            &s.callback,
+            active.active_slot5.to_le_bytes().to_vec(),
+        ),
+    };
+    let actual = actual.to_vec();
+    let matches = collect_restoration_mismatch(
+        &mut context.restoration.as_mut().unwrap().mismatches,
+        name,
+        &actual,
+        &expected,
+    );
+    context.final_phase += 1;
+    Ok(json!({"field":name,"matches":matches}))
+}
+
+pub(super) fn finish_restoration(
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.final_phase != 41 {
+        return Err("restoration completion out of order".into());
+    }
+    let evidence = context
+        .restoration
+        .take()
+        .ok_or("missing restoration snapshot")?;
+    if !evidence.mismatches.is_empty() {
+        return Err(format!(
+            "custom overlay did not restore borrowed resources or preserve stock bitmap 36: {:?}",
+            evidence.mismatches
+        )
+        .into());
+    }
+    context.final_phase += 1;
+    Ok(json!({}))
+}
+
+pub(super) fn expect_restored_heap(
+    session: &Session,
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.final_phase != 42 {
+        return Err("restoration heap check out of order".into());
+    }
+    let baseline = &context
+        .active
+        .as_ref()
+        .ok_or("missing active snapshot")?
+        .heap_live;
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let current = control.heap_counter_reader()?.read()?;
+    if current.free != baseline[0]
+        || current.allocations != baseline[2]
+        || current.frees != baseline[3]
+    {
+        return Err(format!(
+            "in-place scene state caused heap changes: live={baseline:?}, after={current:?}"
+        )
+        .into());
+    }
+    context.final_phase += 1;
+    Ok(json!({"free":current.free,"allocations":current.allocations,"frees":current.frees}))
 }
 
 struct PendingNotification {
@@ -4346,5 +4435,33 @@ mod expiry_tests {
                 .unwrap_err()
                 .contains("notification")
         );
+    }
+}
+
+#[cfg(test)]
+mod restoration_mismatch_tests {
+    use super::collect_restoration_mismatch;
+    #[test]
+    fn aggregates_all_mismatches_in_comparison_order() {
+        let mut names = Vec::new();
+        assert!(!collect_restoration_mismatch(
+            &mut names,
+            "window",
+            &[0],
+            &[1]
+        ));
+        assert!(collect_restoration_mismatch(
+            &mut names,
+            "bitmap",
+            &[2],
+            &[2]
+        ));
+        assert!(!collect_restoration_mismatch(
+            &mut names,
+            "widget",
+            &[3],
+            &[4]
+        ));
+        assert_eq!(names, ["window", "widget"]);
     }
 }

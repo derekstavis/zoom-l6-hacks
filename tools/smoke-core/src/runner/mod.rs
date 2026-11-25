@@ -1070,6 +1070,26 @@ impl Runner {
                         devices::Operation::KnobDialogExpectExpiryFrame { after },
                     ));
                 }
+                Action::KnobDialogSnapshotRestoration => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogSnapshotRestoration,
+                    ));
+                }
+                Action::KnobDialogCheckRestoration { field } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogCheckRestoration { field },
+                    ));
+                }
+                Action::KnobDialogFinishRestoration => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogFinishRestoration,
+                    ));
+                }
+                Action::KnobDialogExpectRestoredHeap => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogExpectRestoredHeap,
+                    ));
+                }
                 Action::KnobDialog => {
                     return Ok(Progress::Device(devices::Operation::KnobDialog));
                 }

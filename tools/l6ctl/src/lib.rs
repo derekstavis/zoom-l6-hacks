@@ -10,7 +10,7 @@ pub use l6max_host::effect_editor::{
 pub use l6max_host::heap::Counters as HeapCounters;
 pub use l6max_host::input::button_source;
 pub use l6max_host::input::{InputAck, InputAckState, InputCounters, InputSource};
-pub use l6max_host::knob_popup::{ParameterState, RecorderState, Snapshot as KnobPopupSnapshot};
+pub use l6max_host::knob_popup::{ParameterState, RecorderState, RestorationPointers, RestorationSnapshot, Snapshot as KnobPopupSnapshot};
 pub use l6max_host::memory::MemoryRead;
 pub use l6max_host::midi_config::Config as MidiConfig;
 pub use l6max_host::sd_loader::{Site as SdLoaderSite, Snapshot as SdLoaderSnapshot};

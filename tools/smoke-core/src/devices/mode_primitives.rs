@@ -280,6 +280,42 @@ pub(super) fn embedded_expiry_operations() -> Result<Vec<(String, Operation)>, S
         .collect()
 }
 
+pub(super) fn embedded_restoration_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/restoration.toml"
+    ))
+    .map_err(|error| format!("invalid embedded restoration fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_knob_restoration_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded restoration fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match step.action {
+                crate::Action::KnobDialogSnapshotRestoration => {
+                    Operation::KnobDialogSnapshotRestoration
+                }
+                crate::Action::KnobDialogCheckRestoration { field } => {
+                    Operation::KnobDialogCheckRestoration { field }
+                }
+                crate::Action::KnobDialogFinishRestoration => {
+                    Operation::KnobDialogFinishRestoration
+                }
+                crate::Action::KnobDialogExpectRestoredHeap => {
+                    Operation::KnobDialogExpectRestoredHeap
+                }
+                _ => return Err("unsupported embedded restoration action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
 /// Convert a mode-fragment action for the post-update lifecycle. Scenario
 /// loading validates the complete sequence before this conversion.
 pub(super) fn mode_step_operation(action: &crate::Action) -> Option<Operation> {

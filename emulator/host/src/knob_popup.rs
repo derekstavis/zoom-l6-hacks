@@ -31,6 +31,38 @@ pub struct Snapshot {
     pub text: Option<String>,
 }
 
+/// Addresses captured during the same L6max 1.10 GUI transaction.
+#[derive(Clone, Debug)]
+pub struct RestorationPointers {
+    pub bitmap_descriptor: u32,
+    pub text_table: u32,
+    pub shared_resource: u32,
+    pub lengths_table: u32,
+    pub widget7: u32,
+    pub widget33: u32,
+    pub backgrounds: [u32; 3],
+}
+
+/// Ordered QMP reads while the guest runs; values are not atomic.
+#[derive(Clone, Debug)]
+pub struct RestorationSnapshot {
+    pub window: Vec<u8>,
+    pub signature: Vec<u8>,
+    pub bitmap: Vec<u8>,
+    pub bitmap_descriptor: Vec<u8>,
+    pub notification_semaphore: Vec<u8>,
+    pub text_resources: Vec<u8>,
+    pub shared_pointer: Vec<u8>,
+    pub shared_contents: Vec<u8>,
+    pub text_lengths: Vec<u8>,
+    pub widget7: Vec<u8>,
+    pub widget33: Vec<u8>,
+    pub background10: Vec<u8>,
+    pub background37: Vec<u8>,
+    pub background48: Vec<u8>,
+    pub callback: Vec<u8>,
+}
+
 /// Non-atomic GUI state; display pixels are sampled separately by PanelFeed.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct RecorderState {
@@ -149,6 +181,29 @@ fn read_snapshot(
     })
 }
 
+fn read_restoration(
+    pointers: &RestorationPointers,
+    read: &mut impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
+) -> Result<RestorationSnapshot, String> {
+    Ok(RestorationSnapshot {
+        window: read(l6max::current_window, 4)?,
+        signature: read(l6max::gui_bitmap_table_entry_0, 2)?,
+        bitmap: read(l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)?,
+        bitmap_descriptor: read(pointers.bitmap_descriptor, 8)?,
+        notification_semaphore: read(l6max::notification_slot, 4)?,
+        text_resources: read(pointers.text_table + 229 * 4, 8)?,
+        shared_pointer: read(pointers.text_table + 179 * 4, 4)?,
+        shared_contents: read(pointers.shared_resource, 512)?,
+        text_lengths: read(pointers.lengths_table + 229 * 2, 4)?,
+        widget7: read(pointers.widget7, 16)?,
+        widget33: read(pointers.widget33, 16)?,
+        background10: read(pointers.backgrounds[0], 1)?,
+        background37: read(pointers.backgrounds[1], 1)?,
+        background48: read(pointers.backgrounds[2], 1)?,
+        callback: read(l6max::gui_display_callback_table + 20, 4)?,
+    })
+}
+
 /// A revision-checked reader for one uninterrupted observation step.
 pub struct Reader<'a> {
     qmp: &'a QmpClient,
@@ -196,6 +251,18 @@ impl Reader<'_> {
             .first()
             .copied()
             .ok_or("short mixer level".into())
+    }
+
+    /// Capture restoration fields in firmware check order; the guest is not paused.
+    pub fn restoration(
+        &self,
+        pointers: &RestorationPointers,
+    ) -> Result<RestorationSnapshot, String> {
+        read_restoration(pointers, &mut |address, len| {
+            self.qmp
+                .read_memory(0, address, len)
+                .map_err(|error| error.to_string())
+        })
     }
 
     /// Dialog inactivity countdown byte, sampled independently.
@@ -383,5 +450,51 @@ mod tests {
                 .contains("outside SDRAM")
         );
         assert_eq!(read_snapshot(false, &mut read(true)).unwrap().text, None);
+    }
+}
+
+#[cfg(test)]
+mod restoration_tests {
+    use super::*;
+    #[test]
+    fn reads_all_baselines_in_original_order() {
+        let p = RestorationPointers {
+            bitmap_descriptor: 0x100,
+            text_table: 0x200,
+            shared_resource: 0x300,
+            lengths_table: 0x400,
+            widget7: 0x500,
+            widget33: 0x600,
+            backgrounds: [0x700, 0x800, 0x900],
+        };
+        let mut calls = Vec::new();
+        let snapshot = read_restoration(&p, &mut |address, len| {
+            calls.push((address, len));
+            Ok(vec![calls.len() as u8; len])
+        })
+        .unwrap();
+        assert_eq!(
+            calls,
+            vec![
+                (l6max::current_window, 4),
+                (l6max::gui_bitmap_table_entry_0, 2),
+                (l6max::gui_bitmap_table_entry_0 + 36 * 4, 4),
+                (0x100, 8),
+                (l6max::notification_slot, 4),
+                (0x200 + 229 * 4, 8),
+                (0x200 + 179 * 4, 4),
+                (0x300, 512),
+                (0x400 + 229 * 2, 4),
+                (0x500, 16),
+                (0x600, 16),
+                (0x700, 1),
+                (0x800, 1),
+                (0x900, 1),
+                (l6max::gui_display_callback_table + 20, 4)
+            ]
+        );
+        assert_eq!(snapshot.window, vec![1; 4]);
+        assert_eq!(snapshot.shared_contents, vec![8; 512]);
+        assert_eq!(snapshot.callback, vec![15; 4]);
     }
 }

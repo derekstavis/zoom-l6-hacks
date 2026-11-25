@@ -287,6 +287,10 @@ pub fn step_label(action: &crate::Action) -> String {
             format!("Observe invalid signature for {guest_ms} ms guest time")
         }
         Action::KnobDialogSampleInvalidSignature => "Sample invalid signature rejection".into(),
+        Action::KnobDialogSnapshotRestoration => "Capture restored dialog resources".into(),
+        Action::KnobDialogCheckRestoration { field } => format!("Check restored {field:?}"),
+        Action::KnobDialogFinishRestoration => "Assert dialog resources restored".into(),
+        Action::KnobDialogExpectRestoredHeap => "Check restored dialog heap".into(),
         Action::KnobDialogWaitExpiry { .. } => "Wait for dialog inactivity expiry".into(),
         Action::KnobDialogExpectExpiryFrame { after } => {
             if *after {

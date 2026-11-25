@@ -130,6 +130,10 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobDialogExpectNotificationInvariants { .. }
         | Action::KnobDialogWaitExpiry { .. }
         | Action::KnobDialogExpectExpiryFrame { .. }
+        | Action::KnobDialogSnapshotRestoration
+        | Action::KnobDialogCheckRestoration { .. }
+        | Action::KnobDialogFinishRestoration
+        | Action::KnobDialogExpectRestoredHeap
         | Action::CaptureDisplay { .. }
         | Action::ExpectCapturedDisplayImage { .. }
         | Action::KnobDialog

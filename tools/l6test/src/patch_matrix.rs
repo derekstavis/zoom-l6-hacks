@@ -341,17 +341,12 @@ fn delay(text: &mut String, guest_ms: u32) {
 /// L6max must finish rendering the recorder before patch inputs can work.
 /// L6 has no display, so its other delivery paths retain their startup wait.
 fn startup_readiness(text: &mut String, model: Model) {
-    if model == Model::L6max {
-        step(
-            text,
-            "action = \"expect-display-image\"\nimage = \"tests/emulator/references/l6max-recorder-home.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
-        );
+    let path = if model == Model::L6max {
+        "tests/emulator/fragments/patch-matrix-l6max-home.toml"
     } else {
-        step(
-            text,
-            "action = \"delay\"\nguest_ms = 8000\nguest_timeout_ms = 20000\nwall_timeout_s = 300",
-        );
-    }
+        "tests/emulator/fragments/patch-matrix-l6-startup.toml"
+    };
+    include(text, path);
 }
 
 /// Patches rows and System items menu-loader shows for a combination.
@@ -649,9 +644,9 @@ fn combination_case(
             "action = \"audio-input-transport\"\ncommand = \"play\"",
         );
     }
-    step(
+    include(
         &mut text,
-        "action = \"wait\"\nuntil = \"mixer-ready\"\nguest_timeout_ms = 60000\nwall_timeout_s = 300",
+        "tests/emulator/fragments/patch-matrix-mixer-ready.toml",
     );
     // The L6 SD loader has its own completion signal in `checks`. L6max
     // also needs its rendered recorder screen before patch input checks.
@@ -699,9 +694,9 @@ fn delivery_cases(model: Model, all: &Checks) -> Result<Vec<GeneratedCase>, Stri
                 true,
             );
             let _ = writeln!(text, "installed_patches = {}", quoted_list(&closure));
-            step(
+            include(
                 &mut text,
-                "action = \"wait\"\nuntil = \"mixer-ready\"\nguest_timeout_ms = 60000\nwall_timeout_s = 300",
+                "tests/emulator/fragments/patch-matrix-mixer-ready.toml",
             );
             startup_readiness(&mut text, model);
             checks(&mut text, &combination, all)?;
@@ -747,9 +742,9 @@ fn delivery_cases(model: Model, all: &Checks) -> Result<Vec<GeneratedCase>, Stri
                 true,
             );
             let _ = writeln!(text, "installed_sd_patches = [{patch:?}]");
-            step(
+            include(
                 &mut text,
-                "action = \"wait\"\nuntil = \"mixer-ready\"\nguest_timeout_ms = 60000\nwall_timeout_s = 300",
+                "tests/emulator/fragments/patch-matrix-mixer-ready.toml",
             );
             startup_readiness(&mut text, model);
             let hosted = Combination {
@@ -980,6 +975,70 @@ mod tests {
         for case in generate().unwrap() {
             smoke_core::Scenario::from_text(&case.scenario)
                 .unwrap_or_else(|error| panic!("{}: {error}\n{}", case.id, case.scenario));
+        }
+    }
+
+    #[test]
+    fn expanded_matrix_preserves_model_specific_startup() {
+        use smoke_core::Action;
+        for case in generate().unwrap() {
+            let scenario = smoke_core::Scenario::from_text(&case.scenario).unwrap();
+            if matches!(
+                scenario.step.first().map(|step| &step.action),
+                Some(Action::FirmwareUpdate)
+            ) {
+                continue;
+            }
+            let mixer = scenario
+                .step
+                .iter()
+                .position(
+                    |step| matches!(&step.action, Action::Wait { until } if until == "mixer-ready"),
+                )
+                .unwrap_or_else(|| panic!("{}: no mixer wait", case.id));
+            let step = &scenario.step[mixer];
+            assert_eq!(
+                (step.guest_timeout_ms, step.wall_timeout_s),
+                (60_000, 300),
+                "{}",
+                case.id
+            );
+            let next = &scenario.step[mixer + 1];
+            if case.model == "l6max" {
+                assert!(
+                    matches!(&next.action, Action::ExpectDisplayImage { image, settle_ms: 0 } if image == std::path::Path::new("tests/emulator/references/l6max-recorder-home.png")),
+                    "{}",
+                    case.id
+                );
+                assert_eq!(
+                    (next.guest_timeout_ms, next.wall_timeout_s),
+                    (30_000, 300),
+                    "{}",
+                    case.id
+                );
+            } else if scenario
+                .sd_patches
+                .as_ref()
+                .is_some_and(|patches| !patches.is_empty())
+            {
+                assert!(
+                    matches!(next.action, Action::ExpectSdPatch { loaded: true, .. }),
+                    "{}",
+                    case.id
+                );
+            } else {
+                assert!(
+                    matches!(next.action, Action::Delay { guest_ms: 8_000 }),
+                    "{}",
+                    case.id
+                );
+                assert_eq!(
+                    (next.guest_timeout_ms, next.wall_timeout_s),
+                    (20_000, 300),
+                    "{}",
+                    case.id
+                );
+            }
         }
     }
 }

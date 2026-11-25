@@ -817,6 +817,29 @@ mod l6_indicator_tests {
             5,
             2
         ));
+        // The campaign may spend time between its 6,000 ms of observations,
+        // but neither the guest nor wall ceiling may be exceeded.
+        assert!(!indicator_deadline_expired(
+            Duration::from_secs(89),
+            0,
+            9_999,
+            10_000,
+            90
+        ));
+        assert!(indicator_deadline_expired(
+            Duration::from_secs(1),
+            0,
+            10_001,
+            10_000,
+            90
+        ));
+        assert!(indicator_deadline_expired(
+            Duration::from_millis(90_001),
+            0,
+            1,
+            10_000,
+            90
+        ));
     }
     #[test]
     fn ring_sample_rejects_other_ring_changes_and_invalid_ring() {

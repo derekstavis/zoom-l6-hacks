@@ -484,14 +484,14 @@
     "suites": [
       "full"
     ],
-    "definition": "4a1d7eed5f47fda582defcb978987ec5d9eedde418b549324155b8e498785227"
+    "definition": "1e4629cd9b8fcf66fd8eb4e892871e93adfd2361b73028fb940871d1519e1a6c"
   },
   {
     "case": "l6-direct-midi-sync-fresh",
     "model": "l6",
     "backend": "headless",
     "suites": [],
-    "definition": "7afe864e3f3cd58d9c921e1cb21fca4b1834ed49b78b68e4eafde0b4497ff3fd"
+    "definition": "14acf84363a2d1f1bf78ed7a63fb5c45f67d262e4753a4269c1e94117e227784"
   },
   {
     "case": "l6-editor-pad-playback",
@@ -538,7 +538,7 @@
     "suites": [
       "full"
     ],
-    "definition": "58e3d19f526adab157ba9d29e63d377b21f0c217295f3c17d2749cd5aaf45dde"
+    "definition": "9bb7f64e0224ec2fd231f1841a8b236be0d30434f23235adaf63f06251e2cf21"
   },
   {
     "case": "l6-level-meter-pwm",

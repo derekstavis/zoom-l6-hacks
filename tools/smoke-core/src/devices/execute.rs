@@ -2468,6 +2468,8 @@ impl State {
                     &mut self.knob_dialog_preflight,
                     guest_timeout_ms,
                     wall_timeout_s,
+                    shared,
+                    operation_start,
                 )
             }
             operation @ (Operation::KnobPopupOpen { .. }

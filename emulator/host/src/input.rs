@@ -39,6 +39,43 @@ pub struct InputStatus {
     pub error: Option<String>,
 }
 
+/// Receipt tracking is bounded. Unknown means the sequence was never tracked
+/// or has been evicted; it must not be interpreted as an acknowledgement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputAckState {
+    Pending,
+    Applied,
+    Rejected,
+    Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct InputAck {
+    pub source: InputSource,
+    pub sequence: u32,
+    pub state: InputAckState,
+}
+
+const RECEIPT_LIMIT: usize = 256;
+
+fn retire_input(
+    status: &Mutex<InputStatus>,
+    receipts: &Mutex<VecDeque<(u32, InputAckState)>>,
+    error: String,
+) {
+    // The same status -> receipts order is used while registering a command.
+    let mut state = status.lock().unwrap_or_else(|e| e.into_inner());
+    state.connected = false;
+    state.error = Some(error);
+    let mut receipts = receipts.lock().unwrap_or_else(|e| e.into_inner());
+    for (_, receipt) in receipts.iter_mut() {
+        if *receipt == InputAckState::Pending {
+            *receipt = InputAckState::Unknown;
+        }
+    }
+}
+
 /// The engine input channel being observed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -80,6 +117,7 @@ struct Inner {
     sequence: AtomicU32,
     status: Arc<Mutex<InputStatus>>,
     frames: Arc<Mutex<FrameQueue>>,
+    receipts: Arc<Mutex<VecDeque<(u32, InputAckState)>>>,
 }
 #[derive(Default)]
 struct FrameQueue {
@@ -113,6 +151,8 @@ impl EngineInput {
         let reader_status = status.clone();
         let frames = Arc::new(Mutex::new(FrameQueue::default()));
         let reader_frames = frames.clone();
+        let receipts = Arc::new(Mutex::new(VecDeque::<(u32, InputAckState)>::new()));
+        let reader_receipts = receipts.clone();
         thread::Builder::new()
             .name("qemu-input-replies".into())
             .spawn(move || {
@@ -194,11 +234,11 @@ impl EngineInput {
                             let slot = message.target as usize;
                             if queue.ready.len() == 2 || queue.owned[slot].is_some() {
                                 drop(queue);
-                                let mut state = reader_status
-                                    .lock()
-                                    .unwrap_or_else(|error| error.into_inner());
-                                state.connected = false;
-                                state.error = Some("engine reused an owned display slot".into());
+                                retire_input(
+                                    &reader_status,
+                                    &reader_receipts,
+                                    "engine reused an owned display slot".into(),
+                                );
                                 let _ = reader.shutdown(Shutdown::Both);
                                 break;
                             }
@@ -225,19 +265,31 @@ impl EngineInput {
                                 protocol::RELEASED => state.released += 1,
                                 _ => state.rejected += 1,
                             }
+                            if message.kind != protocol::RELEASED {
+                                let mut receipts = reader_receipts
+                                    .lock()
+                                    .unwrap_or_else(|error| error.into_inner());
+                                if let Some((_, receipt)) = receipts
+                                    .iter_mut()
+                                    .find(|(sequence, _)| *sequence == message.sequence)
+                                {
+                                    *receipt = if message.kind == protocol::APPLIED {
+                                        InputAckState::Applied
+                                    } else {
+                                        InputAckState::Rejected
+                                    };
+                                }
+                            }
                             state.last_ack = Some(message);
                         }
                         result => {
-                            let mut state = reader_status
-                                .lock()
-                                .unwrap_or_else(|error| error.into_inner());
-                            state.connected = false;
-                            state.error = Some(match result {
+                            let error = match result {
                                 Err(error) => error.to_string(),
                                 Ok(_) => {
                                     "engine sent a command instead of an acknowledgement".into()
                                 }
-                            });
+                            };
+                            retire_input(&reader_status, &reader_receipts, error);
                             let _ = reader.shutdown(Shutdown::Both);
                             break;
                         }
@@ -249,6 +301,7 @@ impl EngineInput {
             sequence: AtomicU32::new(0),
             status,
             frames,
+            receipts,
         })))
     }
     pub fn snapshot(&self) -> InputStatus {
@@ -307,13 +360,7 @@ impl EngineInput {
         };
         if let Err(error) = acknowledgement.write(&mut *writer) {
             let _ = writer.shutdown(Shutdown::Both);
-            let mut status = self
-                .0
-                .status
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            status.connected = false;
-            status.error = Some(error.to_string());
+            retire_input(&self.0.status, &self.0.receipts, error.to_string());
             return Err(error);
         }
         frames.owned[slot] = None;
@@ -345,21 +392,33 @@ impl EngineInput {
             duration_ms,
         };
         message.validate()?;
-        if !self.snapshot().connected {
-            return Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "engine input disconnected",
-            ));
-        }
-        if let Err(error) = message.write(&mut *writer) {
-            let _ = writer.shutdown(Shutdown::Both);
-            let mut state = self
+        {
+            let state = self
                 .0
                 .status
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
-            state.connected = false;
-            state.error = Some(error.to_string());
+            if !state.connected {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "engine input disconnected",
+                ));
+            }
+            let mut receipts = self
+                .0
+                .receipts
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if receipts.len() == RECEIPT_LIMIT {
+                receipts.pop_front();
+            }
+            receipts.push_back((sequence, InputAckState::Pending));
+            drop(receipts);
+            drop(state);
+        }
+        if let Err(error) = message.write(&mut *writer) {
+            let _ = writer.shutdown(Shutdown::Both);
+            retire_input(&self.0.status, &self.0.receipts, error.to_string());
             return Err(error);
         }
         self.0
@@ -400,6 +459,26 @@ pub struct InputHub {
     analog_channels: [u32; 5],
 }
 impl InputHub {
+    pub fn acknowledgement(&self, source: InputSource, sequence: u32) -> InputAck {
+        let input = match source {
+            InputSource::Main => &self.main,
+            InputSource::Panel => &self.panel,
+        };
+        let receipts = input
+            .0
+            .receipts
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let receipt = receipts
+            .iter()
+            .find(|(s, _)| *s == sequence)
+            .map_or(InputAckState::Unknown, |(_, status)| *status);
+        InputAck {
+            source,
+            sequence,
+            state: receipt,
+        }
+    }
     /// Observe one channel without consuming its acknowledgements.
     pub fn counters(&self, source: InputSource) -> InputCounters {
         let status = match source {
@@ -493,6 +572,104 @@ impl InputHub {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn receipts_match_the_exact_sequence_and_eviction_is_unknown() {
+        let (main, _main_wire) = EngineInput::pair().unwrap();
+        let (panel, mut wire) = EngineInput::pair().unwrap();
+        let hub = InputHub::new(main, panel, l6fw::Model::L6max);
+        let first = hub.encoder(0, 1).unwrap();
+        let second = hub.encoder(1, 1).unwrap();
+        let one = Message::read(&mut wire).unwrap();
+        let two = Message::read(&mut wire).unwrap();
+        assert_eq!((one.sequence, two.sequence), (first, second));
+        assert_eq!(
+            hub.acknowledgement(InputSource::Panel, first).state,
+            InputAckState::Pending
+        );
+        Message {
+            kind: protocol::APPLIED,
+            ..two
+        }
+        .write(&mut wire)
+        .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while hub.acknowledgement(InputSource::Panel, second).state != InputAckState::Applied {
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            hub.acknowledgement(InputSource::Panel, first).state,
+            InputAckState::Pending
+        );
+        Message {
+            kind: protocol::ERROR,
+            value: -1,
+            ..one
+        }
+        .write(&mut wire)
+        .unwrap();
+        while hub.acknowledgement(InputSource::Panel, first).state != InputAckState::Rejected {
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(1));
+        }
+        for _ in 0..RECEIPT_LIMIT {
+            hub.encoder(0, 1).unwrap();
+            Message::read(&mut wire).unwrap();
+        }
+        assert_eq!(
+            hub.acknowledgement(InputSource::Panel, first).state,
+            InputAckState::Unknown
+        );
+        assert_eq!(
+            hub.acknowledgement(InputSource::Main, second).state,
+            InputAckState::Unknown
+        );
+    }
+    #[test]
+    fn half_closed_input_retires_pending_receipts_and_rejects_new_commands() {
+        let (main, _main_wire) = EngineInput::pair().unwrap();
+        let (panel, mut wire) = EngineInput::pair().unwrap();
+        let hub = InputHub::new(main, panel, l6fw::Model::L6max);
+        let sequence = hub.encoder(0, 1).unwrap();
+        Message::read(&mut wire).unwrap();
+        wire.shutdown(Shutdown::Write).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while hub.panel.snapshot().connected {
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            hub.acknowledgement(InputSource::Panel, sequence).state,
+            InputAckState::Unknown
+        );
+        assert!(hub.encoder(0, 1).is_err());
+    }
+    #[test]
+    fn reused_display_slot_retires_pending_receipts() {
+        let (main, mut wire) = EngineInput::pair().unwrap();
+        let (panel, _panel_wire) = EngineInput::pair().unwrap();
+        let hub = InputHub::new(main, panel, l6fw::Model::L6max);
+        let sequence = hub.main.adc(3, 100).unwrap();
+        Message::read(&mut wire).unwrap();
+        let frame = Message {
+            kind: protocol::FRAME_READY,
+            sequence: 77,
+            target: 0,
+            value: 0,
+            duration_ms: 0,
+        };
+        frame.write(&mut wire).unwrap();
+        frame.write(&mut wire).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while hub.main.snapshot().connected {
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            hub.acknowledgement(InputSource::Main, sequence).state,
+            InputAckState::Unknown
+        );
+    }
     #[test]
     fn analog_gestures_route_to_main_and_stop_at_physical_endpoints() {
         let (main, mut wire) = EngineInput::pair().unwrap();

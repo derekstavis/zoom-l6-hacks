@@ -91,6 +91,38 @@ fn input_status_client_and_cli_use_the_same_typed_wire_contract() {
 }
 
 #[test]
+fn input_ack_client_and_cli_preserve_sequence_and_state() {
+    let path = socket_path();
+    let response = json!({"source":"panel", "sequence":17, "state":"applied"});
+    let exchange = (
+        json!({"command":"input-ack", "source":"panel", "sequence":17}),
+        json!({"ok":true,"result":response}),
+    );
+    let server = server(&path, vec![exchange.clone(), exchange]);
+    let ack = ControlClient::new(&path)
+        .input_ack(InputSource::Panel, 17)
+        .unwrap();
+    assert_eq!(ack.state, l6ctl::InputAckState::Applied);
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["input", "ack", "panel", "17"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        response
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn input_status_cli_rejects_unknown_channel_before_connecting() {
     let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
         .arg("--socket")
@@ -114,7 +146,7 @@ fn typed_client_uses_existing_wire_format_and_surfaces_server_errors() {
             ),
             (
                 json!({"command":"encoder","channel":1,"steps":-4}),
-                json!({"ok":true,"result":{"channel":1,"steps":-4}}),
+                json!({"ok":true,"result":{"channel":1,"steps":-4,"sequence":17}}),
             ),
             (
                 json!({"command":"rtos","kind":"tasks"}),
@@ -510,7 +542,7 @@ fn cli_keeps_existing_one_based_encoder_and_output_contract() {
             ),
             (
                 json!({"command":"encoder","channel":1,"steps":-4}),
-                json!({"ok":true,"result":{"channel":1,"steps":-4}}),
+                json!({"ok":true,"result":{"channel":1,"steps":-4,"sequence":17}}),
             ),
         ],
     );
@@ -527,7 +559,7 @@ fn cli_keeps_existing_one_based_encoder_and_output_contract() {
     );
     assert_eq!(
         serde_json::from_slice::<Value>(&output.stdout).unwrap(),
-        json!({"channel":1,"steps":-4})
+        json!({"channel":1,"steps":-4,"sequence":17})
     );
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();

@@ -53,11 +53,10 @@ pub fn enqueue_encoder(
     model: Model,
     channel: u32,
     steps: i32,
-) -> Result<(), String> {
+) -> Result<u32, String> {
     enqueue_encoder_with(model, channel, steps, |index, steps| {
         inputs
             .encoder(index, steps)
-            .map(|_| ())
             .map_err(|error| error.to_string())
     })
 }
@@ -79,12 +78,12 @@ pub fn enqueue_tap(inputs: &InputHub, target: u32, hold_ms: u32) -> Result<(), S
         .map_err(|error| error.to_string())
 }
 
-fn enqueue_encoder_with(
+fn enqueue_encoder_with<T>(
     model: Model,
     channel: u32,
     steps: i32,
-    enqueue: impl FnOnce(u32, i32) -> Result<(), String>,
-) -> Result<(), String> {
+    enqueue: impl FnOnce(u32, i32) -> Result<T, String>,
+) -> Result<T, String> {
     let count = model.channels() as u32;
     if channel == 0 || channel > count {
         return Err(format!(
@@ -294,6 +293,17 @@ fn execute(
             };
             serde_json::to_value(inputs.counters(source)).map_err(|error| error.to_string())
         }
+        "input-ack" => {
+            let source = match request.get("source").and_then(Value::as_str) {
+                Some("main") => InputSource::Main,
+                Some("panel") => InputSource::Panel,
+                _ => return Err("input-ack source must be main or panel".into()),
+            };
+            let sequence = u32::try_from(number(request, "sequence")?)
+                .map_err(|_| "invalid input sequence")?;
+            serde_json::to_value(inputs.acknowledgement(source, sequence))
+                .map_err(|error| error.to_string())
+        }
         "heap-counters" => {
             let counters = crate::heap::counters(qmp, model)?;
             serde_json::to_value(counters).map_err(|error| error.to_string())
@@ -388,8 +398,8 @@ fn execute(
             let channel = number(request, "channel")?;
             let steps = signed(request, "steps")?;
             let channel = u32::try_from(channel).map_err(|_| "encoder channel is too large")?;
-            enqueue_encoder(inputs, model, channel, steps)?;
-            Ok(json!({"channel":channel,"steps":steps}))
+            let sequence = enqueue_encoder(inputs, model, channel, steps)?;
+            Ok(json!({"channel":channel,"steps":steps,"sequence":sequence}))
         }
         "analog" => {
             let channel = number(request, "channel")?;
@@ -401,10 +411,10 @@ fn execute(
                 return Err("steps must be between -1000 and 1000, excluding zero".into());
             }
             let index = 8 + channel as usize - 1;
-            inputs
+            let sequence = inputs
                 .knob(index, steps)
                 .map_err(|error| error.to_string())?;
-            Ok(json!({"channel":channel,"steps":steps}))
+            Ok(json!({"channel":channel,"steps":steps,"sequence":sequence}))
         }
         "set-analog" => {
             let channel = number(request, "channel")?;
@@ -895,14 +905,15 @@ mod encoder_enqueue_tests {
             (Model::L6, 1, 1001),
         ] {
             assert!(
-                enqueue_encoder_with(model, channel, steps, |_, _| panic!(
+                enqueue_encoder_with::<()>(model, channel, steps, |_, _| panic!(
                     "invalid input was enqueued"
                 ))
                 .is_err()
             );
         }
         assert_eq!(
-            enqueue_encoder_with(Model::L6, 1, 1, |_, _| Err("enqueue failed".into())).unwrap_err(),
+            enqueue_encoder_with::<()>(Model::L6, 1, 1, |_, _| Err("enqueue failed".into()))
+                .unwrap_err(),
             "enqueue failed"
         );
     }

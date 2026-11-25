@@ -46,6 +46,14 @@ not sampled atomically with the running firmware or the other channel. The
 reply reader can observe an applied event before the sender increments `sent`,
 so `applied` can transiently exceed `sent`.
 
+Encoder and analog responses include the enqueued input `sequence`. Use
+`input ack panel SEQUENCE` for an encoder, or `input ack main SEQUENCE` for
+an analog input, to query its individual `pending`, `applied`, or `rejected`
+state. The host tracks the most recent 256 inputs per channel; `unknown` means
+the sequence was never tracked or has been evicted, and does not imply that it
+was applied. Acknowledgement confirms guest input handling, not that a later
+firmware action or display update has completed.
+
 `button` (alias `tap`) presses and releases after 50 ms by default; use
 `--hold-ms MS` to change it. `down NAME|TARGET DURATION_MS` presses for a
 bounded duration, while `up NAME|TARGET` releases it. Names are semantic names
@@ -63,7 +71,7 @@ socket.
 
 The `l6ctl` crate also exposes typed control requests for Rust callers.
 `ControlClient::new(path)` attaches to the existing optional socket;
-`info`, `input_status`, `tap`, `down`, `up`, `encoder`, `analog`, and `set_analog` return
+`info`, `input_status`, `input_ack`, `tap`, `down`, `up`, `encoder`, `analog`, and `set_analog` return
 typed responses. Encoder and analog channels use the same one-based numbering
 as the CLI. Socket input receipts indicate that the request was enqueued,
 not that the guest applied it. `request` and `RtosKind` expose the existing

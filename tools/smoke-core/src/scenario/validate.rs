@@ -10,7 +10,12 @@ impl Scenario {
         validate_models(&value.models)?;
         crate::requirements::check_scope(value)?;
         if let Some(fixture) = value.update_fixture {
-            if value.models != [Model::L6max]
+            let fixture_model = if fixture == UpdateFixture::L6Stock {
+                Model::L6
+            } else {
+                Model::L6max
+            };
+            if value.models != [fixture_model]
                 || value.backends != [Backend::Headless]
                 || value.state.is_some()
                 || value.card.is_some()
@@ -31,7 +36,7 @@ impl Scenario {
                         .any(|step| !step.models.is_empty() || step.setup_input))
             {
                 return Err(
-                    "synthetic update needs a dedicated L6max headless stock fixture".into(),
+                    "managed update needs a dedicated model-scoped headless stock fixture".into(),
                 );
             }
             let actions = value
@@ -40,6 +45,59 @@ impl Scenario {
                 .map(|step| &step.action)
                 .collect::<Vec<_>>();
             match fixture {
+                UpdateFixture::L6Stock => {
+                    if value.update_goal != Some(UpdateGoal::Install) {
+                        return Err("L6 update requires the full install goal".into());
+                    }
+                    if !matches!(
+                        actions.as_slice(),
+                        [
+                            Action::LifecycleStart {
+                                profile: LifecycleBoot::Initial
+                            },
+                            Action::WaitPanelUptime { guest_ms: 40000.. },
+                            Action::LifecycleStop,
+                            Action::MarkL6UpdatePending,
+                            Action::CaptureUpdateMarkerPending,
+                            Action::LifecycleStart {
+                                profile: LifecycleBoot::Installer
+                            },
+                            Action::ExpectInstallerOutcome {
+                                expected: InstallerExpected::Installed
+                            },
+                            Action::ExpectL6UpdateResetVector,
+                            Action::WaitPanelUptime { guest_ms: 40000.. },
+                            Action::LifecycleStop,
+                            Action::ExpectL6UpdateComparison {
+                                field: L6UpdateField::MainFirmware
+                            },
+                            Action::ExpectL6UpdateComparison {
+                                field: L6UpdateField::MainTrailer
+                            },
+                            Action::ExpectL6UpdateComparison {
+                                field: L6UpdateField::SecondaryFirmware
+                            },
+                            Action::ExpectL6UpdateComparison {
+                                field: L6UpdateField::SecondaryTrailer
+                            },
+                            Action::ExpectL6UpdateComparison {
+                                field: L6UpdateField::PackageFooter
+                            },
+                            Action::ExpectL6UpdateComparison {
+                                field: L6UpdateField::BootRegion
+                            },
+                            Action::ExpectL6UpdateComparison {
+                                field: L6UpdateField::ProtectedRegion
+                            },
+                            Action::ExpectL6UpdateComparison {
+                                field: L6UpdateField::ResourceNor
+                            },
+                            Action::ExpectUpdateMarkerAbsent,
+                        ]
+                    ) {
+                        return Err("L6 stock update requires both complete boots, explicit marker, installed reset vector, every segment, resource and protected-region check".into());
+                    }
+                }
                 UpdateFixture::PatchedMidi => {
                     if value.update_goal != Some(UpdateGoal::Install) {
                         return Err("patched update requires the full install goal".into());
@@ -294,6 +352,8 @@ impl Scenario {
                         active = false;
                     }
                     Action::ExpectUpdateMarkerAbsent
+                    | Action::MarkL6UpdatePending
+                    | Action::ExpectL6UpdateComparison { .. }
                     | Action::CaptureUpdateMarkerPending
                     | Action::ExpectUpdateComparison { .. }
                     | Action::CaptureInstalledPanel
@@ -302,6 +362,8 @@ impl Scenario {
                     Action::LifecycleStart { .. }
                     | Action::LifecycleStop
                     | Action::ExpectUpdateMarkerAbsent
+                    | Action::MarkL6UpdatePending
+                    | Action::ExpectL6UpdateComparison { .. }
                     | Action::CaptureUpdateMarkerPending
                     | Action::ExpectUpdateComparison { .. }
                     | Action::CaptureInstalledPanel
@@ -339,6 +401,10 @@ impl Scenario {
                     value.step.last().map(|s| &s.action),
                     Some(Action::LifecycleStop)
                 ),
+                UpdateFixture::L6Stock => matches!(
+                    value.step.last().map(|s| &s.action),
+                    Some(Action::ExpectUpdateMarkerAbsent)
+                ),
                 UpdateFixture::BadChecksum => matches!(
                     value.step.last().map(|s| &s.action),
                     Some(Action::ExpectUpdateMarkerAbsent)
@@ -362,6 +428,9 @@ impl Scenario {
                         | Action::ExpectUpdateMarkerAbsent
                         | Action::ExpectLiveUpdateMarkerAbsent
                         | Action::CaptureUpdateMarkerPending
+                        | Action::MarkL6UpdatePending
+                        | Action::ExpectL6UpdateResetVector
+                        | Action::ExpectL6UpdateComparison { .. }
                         | Action::ExpectUpdateGui { .. }
                         | Action::ExpectInstallerOutcome { .. }
                         | Action::WaitUpdatePanelReady { .. }
@@ -376,7 +445,7 @@ impl Scenario {
                 )
             })
         {
-            return Err("managed update lifecycle needs a synthetic update fixture".into());
+            return Err("managed update lifecycle needs an update fixture".into());
         }
         if let Some(mode) = &value.sd_bundle_mode {
             if ![

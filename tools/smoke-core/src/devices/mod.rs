@@ -91,6 +91,11 @@ pub enum Operation {
     ExpectUpdateMarkerAbsent,
     ExpectLiveUpdateMarkerAbsent,
     CaptureUpdateMarkerPending,
+    MarkL6UpdatePending,
+    ExpectL6UpdateResetVector,
+    ExpectL6UpdateComparison {
+        field: crate::scenario::L6UpdateField,
+    },
     ExpectInstallerOutcome {
         expected: crate::scenario::InstallerExpected,
     },

@@ -1590,3 +1590,54 @@ fn patched_update_requires_complete_four_boot_verification() {
         .is_err()
     );
 }
+
+#[test]
+fn l6_stock_update_requires_both_boots_and_all_comparisons() {
+    let source = include_str!("../../../../tests/emulator/cases/boot/l6-update-stock-install.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    for action in [
+        "mark-l6-update-pending",
+        "capture-update-marker-pending",
+        "expect-installer-outcome",
+        "expect-l6-update-reset-vector",
+        "expect-update-marker-absent",
+    ] {
+        let needle = format!("action = \"{action}\"");
+        assert!(
+            Scenario::from_text(
+                &source.replace(&needle, "action = \"checkpoint\"\nname = \"removed\"")
+            )
+            .is_err(),
+            "{action}"
+        );
+    }
+    for field in [
+        "main-firmware",
+        "main-trailer",
+        "secondary-firmware",
+        "secondary-trailer",
+        "package-footer",
+        "boot-region",
+        "protected-region",
+        "resource-nor",
+    ] {
+        let needle = format!("field = \"{field}\"");
+        let replacement = if field == "resource-nor" {
+            "field = \"boot-region\""
+        } else {
+            "field = \"resource-nor\""
+        };
+        assert!(
+            Scenario::from_text(&source.replace(&needle, replacement)).is_err(),
+            "{field}"
+        );
+    }
+    assert!(Scenario::from_text(&source.replacen("guest_ms = 40000", "guest_ms = 1", 1)).is_err());
+    assert!(
+        Scenario::from_text(&source.replace("models = [\"l6\"]", "models = [\"l6max\"]")).is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replace("profile = \"installer\"", "profile = \"restart\""))
+            .is_err()
+    );
+}

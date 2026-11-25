@@ -125,15 +125,9 @@ pub fn of(action: &Action) -> Requirement {
             models: L6MAX,
             ..ANY
         },
-        Action::LifecycleStart { .. }
-        | Action::LifecycleStop
-        | Action::WaitPanelUptime { .. }
-        | Action::ExpectUpdateState { .. }
-        | Action::ExpectUpdateMarkerAbsent
+        Action::ExpectUpdateState { .. }
         | Action::ExpectLiveUpdateMarkerAbsent
-        | Action::CaptureUpdateMarkerPending
         | Action::ExpectUpdateGui { .. }
-        | Action::ExpectInstallerOutcome { .. }
         | Action::WaitUpdatePanelReady { .. }
         | Action::WaitUsbController
         | Action::BeginWallDeadline { .. }
@@ -143,6 +137,15 @@ pub fn of(action: &Action) -> Requirement {
         | Action::ExpectUpdateComparison { .. }
         | Action::CaptureInstalledPanel
         | Action::ExpectPanelUnchanged => on(L6MAX),
+        Action::WaitPanelUptime { .. }
+        | Action::LifecycleStart { .. }
+        | Action::LifecycleStop
+        | Action::CaptureUpdateMarkerPending
+        | Action::ExpectInstallerOutcome { .. }
+        | Action::ExpectUpdateMarkerAbsent => ANY,
+        Action::MarkL6UpdatePending
+        | Action::ExpectL6UpdateResetVector
+        | Action::ExpectL6UpdateComparison { .. } => on(L6),
         Action::SdCard { .. }
         | Action::UsbDescriptors
         | Action::UsbStorage

@@ -48,8 +48,8 @@ fn synthetic_update(
                 return Err("synthetic update did not have the intended checksum failure".into());
             }
         }
-        smoke_core::UpdateFixture::PatchedMidi => {
-            return Err("patched update is not synthetic".into());
+        smoke_core::UpdateFixture::PatchedMidi | smoke_core::UpdateFixture::L6Stock => {
+            return Err("update is not synthetic".into());
         }
         smoke_core::UpdateFixture::SyntheticValid => {
             l6fw::update::recompute_checksum(&mut package).map_err(|error| error.to_string())?;
@@ -313,14 +313,19 @@ fn build_fixture(
             || selected.card_spec.is_some()
         {
             return Err(failed(
-                "bad-checksum update needs an isolated persistent state and its own card".into(),
+                "managed update needs an isolated persistent state and its own card".into(),
             ));
         }
+        let expected_model = if fixture == smoke_core::UpdateFixture::L6Stock {
+            Model::L6
+        } else {
+            Model::L6max
+        };
         if inputs.firmware.get("main_firmware.bin").map(String::as_str)
-            != Some(Model::L6max.stock_main_sha256())
+            != Some(expected_model.stock_main_sha256())
         {
             return Err(failed(
-                "bad-checksum update needs hash-pinned stock L6max MAIN".into(),
+                "managed update needs the model’s hash-pinned stock MAIN".into(),
             ));
         }
         let source = selected
@@ -328,7 +333,20 @@ fn build_fixture(
             .as_ref()
             .ok_or_else(|| failed("update card needs a firmware package".into()))?;
         let source_bytes = fs::read(source).failed_in(Phase::Fixture)?;
-        let package = if fixture == smoke_core::UpdateFixture::PatchedMidi {
+        let package = if fixture == smoke_core::UpdateFixture::L6Stock {
+            let hash = format!("{:x}", Sha256::digest(&source_bytes));
+            if hash != smoke_core::firmware::STOCK_L6_PACKAGE_SHA256
+                || inputs.package_sha256.as_deref() != Some(hash.as_str())
+            {
+                return Err(failed("L6 update requires the pinned stock package".into()));
+            }
+            if l6fw::model_from_package(&source_bytes).map_err(|e| failed(e.to_string()))?
+                != Model::L6
+            {
+                return Err(failed("L6 update package model mismatch".into()));
+            }
+            source_bytes
+        } else if fixture == smoke_core::UpdateFixture::PatchedMidi {
             let stock_hash = format!("{:x}", Sha256::digest(&source_bytes));
             if stock_hash != smoke_core::firmware::STOCK_L6MAX_PACKAGE_SHA256
                 || inputs.package_sha256.as_deref() != Some(stock_hash.as_str())
@@ -413,14 +431,23 @@ fn build_fixture(
             inputs.verify_firmware = Some(files(&verify).map_err(failed)?);
         }
         let card = dir.join("staged-update-card.img");
-        let mut volume =
-            sd_image::create_empty(&card, "L6MAX").map_err(|e| failed(e.to_string()))?;
-        volume
-            .write("L6max.BIN", &package)
-            .and_then(|()| volume.flush())
-            .map_err(|e| failed(e.to_string()))?;
-        drop(volume);
-        if sd_image::read_file(&card, "L6max.BIN", package.len() as u64 + 1)
+        let filename = if fixture == smoke_core::UpdateFixture::L6Stock {
+            "L6.BIN"
+        } else {
+            "L6max.BIN"
+        };
+        if fixture == smoke_core::UpdateFixture::L6Stock {
+            sd_image::create(&card, &update).map_err(|e| failed(e.to_string()))?;
+        } else {
+            let mut volume =
+                sd_image::create_empty(&card, "L6MAX").map_err(|e| failed(e.to_string()))?;
+            volume
+                .write(filename, &package)
+                .and_then(|()| volume.flush())
+                .map_err(|e| failed(e.to_string()))?;
+            drop(volume);
+        }
+        if sd_image::read_file(&card, filename, package.len() as u64 + 1)
             .map_err(|error| failed(error.to_string()))?
             != package
         {

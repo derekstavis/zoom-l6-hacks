@@ -19,8 +19,11 @@ pub enum FirmwareIdentity {
     Unknown { sha256: String },
 }
 
-/// SHA-256 of the supported stock L6max 1.10 update package, which the
-/// firmware-update lifecycle reinstalls byte for byte.
+/// SHA-256 of the supported stock L6 1.10 update package.
+pub const STOCK_L6_PACKAGE_SHA256: &str =
+    "64f1f36b8383176b5d841911fbf3c16205139a313ee88be906f313b1a98a33fb";
+
+/// SHA-256 of the supported stock L6max 1.10 update package.
 pub const STOCK_L6MAX_PACKAGE_SHA256: &str =
     "4e20f92c9c5131ed082c0feec2b2d7d0445fb576296f11f6dace56a4fc0c9b47";
 

@@ -612,6 +612,15 @@
     "definition": "a57dd505c8f76a618648a81e08b7a8ef1cdf604eaa75ffd7479d9f98056e528b"
   },
   {
+    "case": "l6-update-stock-install",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "1a248f32ea9458fbc0d25c202a006a6786404aa1c20df136ec761ae666e02771"
+  },
+  {
     "case": "l6-usb-startup",
     "model": "l6",
     "backend": "headless",

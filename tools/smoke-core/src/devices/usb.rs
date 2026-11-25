@@ -55,13 +55,19 @@ pub(super) fn run_l6_usb_startup(
             .breakpoint(address, true)
             .map_err(|error| error.to_string())?;
     }
-    qmp.resume().map_err(|error| error.to_string())?;
+    // Both guests start paused; the panel supplies guest time and must run
+    // while MAIN is observed at its USB breakpoints.
+    for management in &session.engine.management {
+        management.resume().map_err(|error| error.to_string())?;
+    }
 
     let mut hits = Vec::new();
     let mut targeted_inputs = 0usize;
     let mut panel_sweep = 0usize;
     let mut panel_ids = vec![1, 2, 3, 6];
-    panel_ids.extend(7..=47);
+    // L6 exposes 7..=30 and 47; 31..=46 are unsupported targets.
+    panel_ids.extend(7..=30);
+    panel_ids.push(47);
     let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
     while inputs.panel.snapshot().guest_ms < 60_000 {
         session.poll()?;

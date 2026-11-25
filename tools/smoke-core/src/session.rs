@@ -1211,6 +1211,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
     if result.is_ok() && device_state.has_midi_sync() {
         result = Err("MIDI sync transaction ended before completion".into());
     }
+    device_state.abort_usb_midi();
     device_state.abort_midi_sync();
     device_state.abort_midi_probe();
     if let Err(cleanup) = device_state.abort_knob_preflight() {

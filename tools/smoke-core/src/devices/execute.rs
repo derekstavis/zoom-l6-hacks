@@ -345,6 +345,7 @@ impl State {
         self.abort_knob_preflight()?;
         self.midi = None;
         self.sysex_deadline = None;
+        self.usb_midi = None;
         Ok(())
     }
     pub fn has_knob_preflight(&self) -> bool {
@@ -355,6 +356,9 @@ impl State {
     }
     pub fn has_midi_sync(&self) -> bool {
         self.midi_sync.is_some()
+    }
+    pub fn abort_usb_midi(&mut self) {
+        self.usb_midi = None;
     }
     pub fn abort_midi_sync(&mut self) {
         self.midi_sync = None;
@@ -573,6 +577,7 @@ impl State {
             Err(error) => {
                 let primary = error.to_string();
                 self.sysex_deadline = None;
+                self.abort_usb_midi();
                 return match self.abort_knob_preflight() {
                     Ok(()) => Err(primary),
                     Err(cleanup) => Err(format!("{primary}; debugger cleanup failed: {cleanup}")),
@@ -2132,102 +2137,22 @@ impl State {
                     json!({"vid":u16::from_le_bytes([descriptor[8],descriptor[9]]),"pid":u16::from_le_bytes([descriptor[10],descriptor[11]]),"configuration_bytes":config.len(),"interfaces":config[4]}),
                 )
             }
-            Operation::UsbMidi { value } => {
-                let usb = session
-                    .engine
-                    .usb
-                    .as_ref()
-                    .ok_or("USB backend unavailable")?;
-                let endpoints = self
-                    .midi
-                    .ok_or("usb-midi needs a preceding USB MIDI enumeration")?;
-                let cc = if session.engine.model() == l6fw::Model::L6 {
-                    0x53
-                } else {
-                    0x51
-                };
-                let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
-                let start = session
-                    .engine
-                    .inputs
-                    .as_ref()
-                    .unwrap()
-                    .panel
-                    .snapshot()
-                    .guest_ms;
-                let mut midi = Vec::new();
-                loop {
-                    session.poll()?;
-                    match usb.try_receive(endpoints.input, 16384) {
-                        Ok(bytes) => {
-                            // The preceding encoder step's channel-1 CC.
-                            let matching = l6max_host::usb_midi::decode(&bytes)?
-                                .iter()
-                                .any(|(_, msg)| msg.starts_with(&[0xb0, cc]));
-                            midi.extend_from_slice(&bytes);
-                            fs::write(options.logs.join("usb-midi.bin"), &midi)?;
-                            if matching {
-                                break;
-                            }
-                        }
-                        Err(e) if e.raw_os_error() == Some(libc::EAGAIN) => {}
-                        Err(e) => return Err(e.into()),
-                    }
-                    if Instant::now() > deadline
-                        || session
-                            .engine
-                            .inputs
-                            .as_ref()
-                            .unwrap()
-                            .panel
-                            .snapshot()
-                            .guest_ms
-                            .wrapping_sub(start)
-                            > guest_timeout_ms
-                    {
-                        return Err("USB MIDI receive deadline exceeded".into());
-                    }
-                    thread::sleep(Duration::from_millis(5));
-                }
-                fs::write(options.logs.join("usb-midi.bin"), &midi)?;
-                // Confirm that MAIN consumed the incoming CC. If the mixer is
-                // already at the requested value, first send a different one
-                // so the final check cannot succeed on stale state.
-                let level_address = match session.engine.model() {
-                    l6fw::Model::L6 => l6::mixer_state_tail,
-                    l6fw::Model::L6max => l6max::mixer_channel_levels,
-                };
-                let qmp = &session.engine.management[0];
-                let send_and_wait = |level: u8| -> Result<(), Box<dyn std::error::Error>> {
-                    const GUEST_TIMEOUT_MS: u32 = 10_000;
-                    const WALL_TIMEOUT_S: u64 = 180;
-                    const POLL_INTERVAL_MS: u64 = 10;
-                    let start = guest_now(session);
-                    let deadline =
-                        Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
-                    usb.send(endpoints.output, &[0x1b, 0xb0, cc, level])?;
-                    loop {
-                        session.poll()?;
-                        if qmp.read_memory(0, level_address, 1)? == [level] {
-                            return Ok(());
-                        }
-                        if guest_now(session).wrapping_sub(start)
-                            >= guest_timeout_ms.min(GUEST_TIMEOUT_MS)
-                            || Instant::now() >= deadline
-                        {
-                            return Err(
-                                format!("USB MIDI channel level did not become {level}").into()
-                            );
-                        }
-                        thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
-                    }
-                };
-                if qmp.read_memory(0, level_address, 1)? == [value] {
-                    send_and_wait(if value == 0 { 127 } else { 0 })?;
-                }
-                send_and_wait(value)?;
-                Ok(json!({"received":midi,"sent":[0x1b,0xb0,cc,value]}))
-            }
+            operation @ (Operation::UsbMidiOpen
+            | Operation::UsbMidiBegin
+            | Operation::UsbMidiExpectEncoder
+            | Operation::UsbMidiPrepareLevel { .. }
+            | Operation::UsbMidiSetAlternate
+            | Operation::UsbMidiSetTarget
+            | Operation::UsbMidiEnd) => self
+                .run_usb_midi_steps(
+                    session,
+                    options,
+                    operation,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                    operation_start,
+                )
+                .map_err(Into::into),
             Operation::HostMidiConnect => self.run_declarative_midi(
                 session,
                 Operation::HostMidiConnect,

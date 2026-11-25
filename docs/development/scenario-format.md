@@ -218,7 +218,7 @@ message delivered just after the interval.
 | --- | --- | --- |
 | `sd-card` | `inserted` | QMP removal or insertion of the case's copied card |
 | `usb-descriptors` | — | Validate device/configuration descriptors and SET_CONFIGURATION |
-| `usb-midi` | `value` | Require the preceding encoder input's model-mapped channel-1 CC on USB MIDI IN, then send that CC with `value` |
+| `usb-midi-open`, `usb-midi-begin`, `usb-midi-expect-encoder`, `usb-midi-prepare-level`, `usb-midi-set-alternate`, `usb-midi-set-target`, `usb-midi-end` | `value` on prepare | Retain the previously enumerated endpoints before the encoder; observe its model-mapped CC on any USB cable, then set and verify channel 1 on cable 1. The transaction keeps a single guest/wall budget; an alternate value is sent first when the target is already present. |
 | `host-midi-round-trip` | — | Verify host MIDI input/output delivery through the configured host MIDI backend |
 | `host-midi-connect` | — | Connect the model's native mixer endpoint and start the first MIDI transaction |
 | `host-midi-drain` | `quiet_wall_ms` | Drain the retained native session until no legacy control observation arrives for the declared wall interval, within the transaction budget |

@@ -16,6 +16,7 @@ cargo l6ctl --socket /tmp/l6-control.sock info
 cargo l6ctl --socket /tmp/l6-control.sock input status panel
 cargo l6ctl --socket /tmp/l6-control.sock heap-counters
 cargo l6ctl --socket /tmp/l6-control.sock midi-config
+cargo l6ctl --socket /tmp/l6-control.sock mixer-level
 cargo l6ctl --socket /tmp/l6-control.sock usb attach
 cargo l6ctl --socket /tmp/l6-control.sock usb release
 cargo l6ctl --socket /tmp/l6-control.sock usb controller
@@ -265,6 +266,7 @@ paused guest. The CLI does not offer an atomic version: `knob-popup` and
 `l6ctl --socket PATH midi-config` reads the L6 1.10 MIDI channel and its 54
 raw CC mappings. Entries retain their order and duplicates; `255` means
 unmapped. The channel and map are separate live reads and are not atomic.
+
 The host checks the stock MIDI channel and mapped-CC sender routines before
 reading; other models and revisions are rejected, as are patches that alter
 either guard routine. The command requires a running guest with its MAIN
@@ -280,6 +282,12 @@ CC replies. The first static check used the wrong image base and was corrected
 after a live L6 observation exposed the error. To repeat the static check with an unpacked
 MAIN, set `L6_MIDI_TEST_MAIN` to its path and run
 `cargo test --offline --locked -p l6max-host compatible_firmware_passes_production_guards -- --ignored`.
+
+`l6ctl --socket PATH mixer-level` samples channel 1 on L6 or L6max. It checks
+the complete model-specific 1.10 mixer getter before reading its level byte.
+The getter match is not a whole-image identity, and the live snapshot is not
+atomic with its guard read.
+
 
 `l6ctl --socket PATH knob-parameter-state` reads the L6max 1.10 parameter
 selector and callback slots 0, 2 and 5. The sample is non-atomic.

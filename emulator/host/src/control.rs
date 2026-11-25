@@ -359,6 +359,8 @@ fn execute(
         }
         "midi-config" => serde_json::to_value(crate::midi_config::config(qmp, model)?)
             .map_err(|error| error.to_string()),
+        "mixer-level" => serde_json::to_value(crate::mixer_level::first_channel(qmp, model)?)
+            .map_err(|error| error.to_string()),
         "rtos" => {
             let kind = request
                 .get("kind")

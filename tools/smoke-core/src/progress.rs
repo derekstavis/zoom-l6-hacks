@@ -404,6 +404,13 @@ pub fn step_label(action: &crate::Action) -> String {
             if *playing { "playing" } else { "paused" }
         ),
         Action::WaitMemory { symbol, .. } => format!("Wait for {symbol}"),
+        Action::UsbMidiOpen => "Retain enumerated USB MIDI".into(),
+        Action::UsbMidiBegin => "Start USB MIDI transaction".into(),
+        Action::UsbMidiExpectEncoder => "Wait for encoder USB MIDI".into(),
+        Action::UsbMidiPrepareLevel { value } => format!("Read mixer level before setting {value}"),
+        Action::UsbMidiSetAlternate => "Set alternate mixer level if needed".into(),
+        Action::UsbMidiSetTarget => "Set target mixer level".into(),
+        Action::UsbMidiEnd => "Release USB MIDI session".into(),
         Action::WaitL6SoundPadFile { path } => format!("Wait for sound-pad file {path}"),
         Action::ExpectDisplayImage { image, .. } => format!(
             "Wait for {} screen",

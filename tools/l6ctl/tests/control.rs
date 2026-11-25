@@ -370,6 +370,51 @@ fn midi_config_cli_and_client_use_typed_snapshot() {
 }
 
 #[test]
+fn mixer_level_client_and_cli_preserve_guard_and_value() {
+    let path = socket_path();
+    let sample = json!({"model":"l6","channel":1,"value":32,"getter_guard":"l6_1_10_mixer_getter","atomic":false});
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"mixer-level"}),
+                json!({"ok":true,"result":sample}),
+            ),
+            (
+                json!({"command":"mixer-level"}),
+                json!({"ok":true,"result":sample}),
+            ),
+            (
+                json!({"command":"mixer-level"}),
+                json!({"ok":false,"error":"unsupported getter"}),
+            ),
+        ],
+    );
+    let client = ControlClient::new(&path);
+    assert_eq!(client.mixer_level().unwrap().value, 32);
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .arg("mixer-level")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        sample
+    );
+    assert!(
+        matches!(client.mixer_level(), Err(ControlError::Rejected(message)) if message == "unsupported getter")
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn update_state_cli_and_client_preserve_raw_snapshot() {
     let path = socket_path();
     let sample =

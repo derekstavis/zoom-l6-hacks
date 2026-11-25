@@ -18,6 +18,7 @@ pub use l6max_host::memory::MemoryRead;
 pub use l6max_host::midi_config::Config as MidiConfig;
 pub use l6max_host::sd_loader::{Site as SdLoaderSite, Snapshot as SdLoaderSnapshot};
 
+pub use l6max_host::mixer_level::MixerLevel;
 pub use l6max_host::panel_keys::Snapshot as PanelKeySnapshot;
 pub use l6max_host::update_bootloader::Outcome as InstallerOutcome;
 pub use l6max_host::update_state::{UpdateGuiState, UpdateState};
@@ -58,6 +59,7 @@ pub enum Request {
     MidiConfig,
     EffectEditor { binding: EffectEditorBinding },
 
+    MixerLevel,
     PanelKey { code: u32 },
     UpdateState,
     UpdateGuiState,
@@ -282,6 +284,7 @@ impl ControlClient {
                 | Request::MemoryRead { .. }
                 | Request::MidiConfig
                 | Request::EffectEditor { .. }
+                | Request::MixerLevel
                 | Request::PanelKey { .. }
                 | Request::UpdateState
                 | Request::UpdateGuiState
@@ -345,6 +348,10 @@ impl ControlClient {
 
     pub fn midi_config(&self) -> Result<MidiConfig, ControlError> {
         self.request_as(&Request::MidiConfig)
+    }
+
+    pub fn mixer_level(&self) -> Result<MixerLevel, ControlError> {
+        self.request_as(&Request::MixerLevel)
     }
 
     pub fn installer_outcome(&self) -> Result<InstallerOutcome, ControlError> {
@@ -452,6 +459,21 @@ impl<'a> OwnedControl<'a> {
             .ok_or(ControlError::Unavailable("USB host unavailable"))?
             .clone();
         l6max_host::usb_midi::RawReceiver::attach(usb).map_err(ControlError::Rejected)
+    }
+
+    /// Claim endpoints from an existing enumeration without losing queued packets.
+    pub fn raw_usb_midi_enumerated(
+        &self,
+        endpoints: l6max_host::usb::Endpoints,
+    ) -> Result<l6max_host::usb_midi::RawReceiver, ControlError> {
+        let usb = self
+            .engine
+            .usb
+            .as_ref()
+            .ok_or(ControlError::Unavailable("USB host unavailable"))?
+            .clone();
+        l6max_host::usb_midi::RawReceiver::claim_enumerated(usb, endpoints)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
     }
 
     pub fn debug_session(&self) -> Result<l6max_host::debug::Session, ControlError> {
@@ -647,6 +669,37 @@ impl<'a> OwnedControl<'a> {
     pub fn midi_config(&self) -> Result<MidiConfig, ControlError> {
         l6max_host::midi_config::config(self.main_qmp()?, self.engine.model())
             .map_err(ControlError::Rejected)
+    }
+
+    pub fn mixer_level(&self) -> Result<MixerLevel, ControlError> {
+        l6max_host::mixer_level::first_channel(self.main_qmp()?, self.engine.model())
+            .map_err(ControlError::Rejected)
+    }
+
+    pub fn mixer_level_before(
+        &self,
+        deadline: std::time::Instant,
+    ) -> Result<MixerLevel, ControlError> {
+        l6max_host::mixer_level::first_channel_before(
+            self.main_qmp()?,
+            self.engine.model(),
+            deadline,
+        )
+        .map_err(ControlError::Rejected)
+    }
+
+    pub fn mixer_level_cancellable(
+        &self,
+        deadline: std::time::Instant,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<MixerLevel, ControlError> {
+        l6max_host::mixer_level::first_channel_before_cancellable(
+            self.main_qmp()?,
+            self.engine.model(),
+            deadline,
+            cancelled,
+        )
+        .map_err(ControlError::Rejected)
     }
 
     pub fn update_state(&self) -> Result<UpdateState, ControlError> {

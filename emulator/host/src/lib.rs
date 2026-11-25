@@ -14,6 +14,7 @@ pub mod input;
 pub mod knob_popup;
 pub mod memory;
 pub mod midi_config;
+pub mod mixer_level;
 pub mod panel_keys;
 pub mod protocol;
 pub mod qmp;

@@ -705,6 +705,51 @@ mod tests {
     }
 
     #[test]
+    fn claiming_enumerated_midi_preserves_queued_transfer_and_sends_on_cable_one() {
+        let (socket, mut peer) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || {
+            for (kind, endpoint) in [(3u32, 0x81u32), (4, 2)] {
+                let mut header = [0u8; 20];
+                peer.read_exact(&mut header).unwrap();
+                let word =
+                    |i: usize| u32::from_le_bytes(header[i * 4..i * 4 + 4].try_into().unwrap());
+                assert_eq!((word(1), word(3)), (kind, endpoint));
+                if kind == 4 {
+                    let mut payload = [0; 4];
+                    peer.read_exact(&mut payload).unwrap();
+                    assert_eq!(payload, [0x1b, 0xb0, 0x53, 32]);
+                }
+                let payload: &[u8] = if kind == 3 {
+                    &[0x2b, 0xb0, 0x53, 42]
+                } else {
+                    &[]
+                };
+                for value in [MAGIC, 0x8000_0000, word(2), 0, payload.len() as u32] {
+                    peer.write_all(&value.to_le_bytes()).unwrap();
+                }
+                peer.write_all(payload).unwrap();
+            }
+        });
+        let host = Arc::new(UsbHost::new(socket).unwrap());
+        let endpoints = Endpoints {
+            interface: 1,
+            input: 1,
+            output: 2,
+        };
+        let mut receiver =
+            crate::usb_midi::RawReceiver::claim_enumerated(host.clone(), endpoints).unwrap();
+        assert!(host.acquire_direct().is_err());
+        let (raw, messages) = receiver.poll_transfer().unwrap().unwrap();
+        assert_eq!(raw, [0x2b, 0xb0, 0x53, 42]);
+        assert_eq!(messages, vec![(2, vec![0xb0, 0x53, 42])]);
+        receiver.send_control_change(1, 0, 0x53, 32).unwrap();
+        assert!(receiver.send_control_change(16, 0, 0x53, 32).is_err());
+        drop(receiver);
+        assert!(host.acquire_direct().is_ok());
+        server.join().unwrap();
+    }
+
+    #[test]
     fn failed_raw_midi_receiver_attach_rolls_back_and_releases_lease() {
         let (socket, mut peer) = UnixStream::pair().unwrap();
         let server = thread::spawn(move || {

@@ -654,6 +654,59 @@ impl Scenario {
         if value.backends.is_empty() {
             return Err("backends must contain headless and/or gui".into());
         }
+        for model in &value.models {
+            let steps: Vec<_> = value
+                .step
+                .iter()
+                .filter(|step| step.applies_to(*model))
+                .collect();
+            let mut index = 0;
+            while index < steps.len() {
+                if matches!(steps[index].action, Action::UsbMidiOpen) {
+                    if index == 0
+                        || !matches!(steps[index - 1].action, Action::UsbDescriptors)
+                        || index + 8 >= steps.len()
+                    {
+                        return Err(
+                            "USB MIDI needs descriptor enumeration and a complete transaction"
+                                .into(),
+                        );
+                    }
+                    let group = &steps[index..index + 9];
+                    if !matches!(group[1].action, Action::Encoder { channel: 1, .. })
+                        || !matches!(group[2].action, Action::ExpectEncoderReports)
+                        || !matches!(group[3].action, Action::UsbMidiBegin)
+                        || !matches!(group[4].action, Action::UsbMidiExpectEncoder)
+                        || !matches!(
+                            group[5].action,
+                            Action::UsbMidiPrepareLevel { value: 0..=127 }
+                        )
+                        || !matches!(group[6].action, Action::UsbMidiSetAlternate)
+                        || !matches!(group[7].action, Action::UsbMidiSetTarget)
+                        || !matches!(group[8].action, Action::UsbMidiEnd)
+                        || group[4..].iter().any(|step| {
+                            step.guest_timeout_ms != group[3].guest_timeout_ms
+                                || step.wall_timeout_s != group[3].wall_timeout_s
+                        })
+                    {
+                        return Err("USB MIDI transaction requires ordered encoder, receive and level checks with shared deadlines".into());
+                    }
+                    index += 9;
+                } else if matches!(
+                    steps[index].action,
+                    Action::UsbMidiBegin
+                        | Action::UsbMidiExpectEncoder
+                        | Action::UsbMidiPrepareLevel { .. }
+                        | Action::UsbMidiSetAlternate
+                        | Action::UsbMidiSetTarget
+                        | Action::UsbMidiEnd
+                ) {
+                    return Err("USB MIDI action outside transaction".into());
+                } else {
+                    index += 1;
+                }
+            }
+        }
         let mut checkpoints = std::collections::BTreeSet::new();
         for model in &value.models {
             let mut sd_inspection: Option<(u32, u64)> = None;

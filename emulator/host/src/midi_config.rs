@@ -8,11 +8,11 @@ use sha2::{Digest, Sha256};
 const GUARDS: [(u32, &str); 2] = [
     (
         l6::midi_channel,
-        "8cc22093555293a7bdb89ca756a95df2d5b7cfb5b88f9114ba2a2b2feeba715e",
+        "6f9448a58dc770e74e085a0972a4a7252cd9b0d6c2360ba868b2e6364a1678b5",
     ),
     (
         l6::midi_send_mapped_cc,
-        "8ca6beb7dfc918dcccfc8807ecc2e5aedbae95d4c5acd53e17402b5d8bcacfdf",
+        "90da986822a1402afa10333215ce410fdb0fa1ad8d27fb698e3338ac3e791b18",
     ),
 ];
 
@@ -123,7 +123,7 @@ mod tests {
             if address == l6::midi_cc_map {
                 return Ok(vec![0xff; 54]);
             }
-            let offset = (address - 0x8000_0000) as usize;
+            let offset = (address - Model::L6.main_base()) as usize;
             Ok(image[offset..offset + len].to_vec())
         })
         .unwrap();

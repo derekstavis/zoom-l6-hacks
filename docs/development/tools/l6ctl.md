@@ -252,8 +252,10 @@ The production guards have been checked against the unpacked L6 1.10 MAIN
 SHA-256 `827c7c5cb2a43cc3a011d4556462b8cb9539242f817ebeed7727d66a36c03799`
 and a midi-sync-patched MAIN SHA-256
 `57b716759a62be814cc0df4c8b38df1a08985545584f4bfad2420d34895addee`.
-Those checks used real firmware bytes with simulated configuration reads;
-they do not establish live-guest behavior. To repeat them with an unpacked
+The stock image was also verified against a live headless guest through the
+control socket; the patched image check used simulated configuration reads.
+The first static check used the wrong image base and was corrected after a
+live L6 observation exposed the error. To repeat the static check with an unpacked
 MAIN, set `L6_MIDI_TEST_MAIN` to its path and run
 `cargo test --offline --locked -p l6max-host compatible_firmware_passes_production_guards -- --ignored`.
 

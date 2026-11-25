@@ -31,6 +31,16 @@ pub struct Snapshot {
     pub text: Option<String>,
 }
 
+/// Non-atomic GUI state; display pixels are sampled separately by PanelFeed.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct RecorderState {
+    pub revision_guard: String,
+    pub atomic: bool,
+    pub window: u32,
+    pub notification_busy: u8,
+    pub notification_active: u8,
+}
+
 fn checked_sdram(address: u32, size: usize) -> Result<u32, String> {
     let end = address
         .checked_add(u32::try_from(size).map_err(|_| "invalid size")?)
@@ -115,6 +125,25 @@ pub struct Reader<'a> {
 }
 
 impl Reader<'_> {
+    pub fn recorder_state(&self) -> Result<RecorderState, String> {
+        let mut read = |address, size| {
+            self.qmp
+                .read_memory(0, address, size)
+                .map_err(|error| error.to_string())
+        };
+        Ok(RecorderState {
+            revision_guard: "l6max_1_10_gui_routines".into(),
+            atomic: false,
+            window: read_word(&mut read, l6max::current_window)?,
+            notification_busy: *read(l6max::notification_busy, 1)?
+                .first()
+                .ok_or("short notification state")?,
+            notification_active: *read(l6max::notification_active, 1)?
+                .first()
+                .ok_or("short notification state")?,
+        })
+    }
+
     /// Values can change between QMP reads; this is not an atomic snapshot.
     pub fn snapshot(&self, with_text: bool) -> Result<Snapshot, String> {
         read_snapshot(with_text, &mut |address, size| {

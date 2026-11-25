@@ -88,6 +88,49 @@ mod recorded_wav_tests {
     }
 }
 
+fn deadline_exceeded(
+    wall_elapsed: Duration,
+    guest_start: u32,
+    guest_now: u32,
+    guest_budget: u32,
+    wall_budget: u64,
+) -> bool {
+    wall_elapsed > Duration::from_secs(wall_budget)
+        || guest_now.wrapping_sub(guest_start) > guest_budget
+}
+
+#[cfg(test)]
+mod carried_deadline_tests {
+    use super::deadline_exceeded;
+    use std::time::Duration;
+
+    #[test]
+    fn total_elapsed_is_checked_across_both_steps_and_guest_wrap() {
+        let start = u32::MAX - 100;
+        assert!(!deadline_exceeded(
+            Duration::from_secs(120),
+            start,
+            49,
+            150,
+            120
+        ));
+        assert!(deadline_exceeded(
+            Duration::from_secs(121),
+            start,
+            49,
+            150,
+            120
+        ));
+        assert!(deadline_exceeded(
+            Duration::from_secs(1),
+            start,
+            50,
+            150,
+            120
+        ));
+    }
+}
+
 impl State {
     pub fn restarted(&mut self) {
         if let Some(mut client) = self.native_midi.take() {
@@ -98,6 +141,7 @@ impl State {
         }
         self.midi_round_trip = None;
         self.knob_popup = None;
+        self.knob_dialog_deadline = None;
         self.midi = None;
     }
     pub fn execute(
@@ -117,6 +161,20 @@ impl State {
             .panel
             .snapshot()
             .guest_ms;
+        let is_ready = matches!(operation, Operation::KnobDialogReady);
+        let is_dialog = matches!(operation, Operation::KnobDialog);
+        let shared = if is_dialog {
+            Some(
+                self.knob_dialog_deadline
+                    .take()
+                    .ok_or("knob-dialog requires preceding readiness step")?,
+            )
+        } else {
+            None
+        };
+        if is_ready {
+            self.knob_dialog_deadline = None;
+        }
         let result = self.execute_inner(
             session,
             options,
@@ -136,6 +194,23 @@ impl State {
             .wrapping_sub(guest_start);
         if started.elapsed() > Duration::from_secs(wall_timeout_s) || elapsed > guest_timeout_ms {
             return Err("device operation exceeded its step deadline".into());
+        }
+        if let Some((start, guest_start, guest_budget, wall_budget)) = shared {
+            let now = session
+                .engine
+                .inputs
+                .as_ref()
+                .unwrap()
+                .panel
+                .snapshot()
+                .guest_ms;
+            if deadline_exceeded(start.elapsed(), guest_start, now, guest_budget, wall_budget) {
+                return Err("device operation exceeded its step deadline".into());
+            }
+        }
+        if is_ready {
+            self.knob_dialog_deadline =
+                Some((started, guest_start, guest_timeout_ms, wall_timeout_s));
         }
         Ok(result)
     }
@@ -2003,6 +2078,9 @@ impl State {
                     serde_json::to_vec_pretty(&evidence)?,
                 )?;
                 Ok(evidence)
+            }
+            Operation::KnobDialogReady => {
+                run_knob_dialog_ready(session, options, guest_timeout_ms, wall_timeout_s)
             }
             Operation::KnobDialog => {
                 run_knob_dialog(session, options, guest_timeout_ms, wall_timeout_s)

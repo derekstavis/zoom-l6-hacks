@@ -189,3 +189,32 @@ fn help_lists_knob_popup() {
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("knob-popup [--text]"));
 }
+
+#[test]
+fn recorder_state_cli_reports_window_and_notification_flags() {
+    let path = socket_path();
+    let sample = json!({"revision_guard":"l6max_1_10_gui_routines","atomic":false,"window":2149581832u32,"notification_busy":0,"notification_active":1});
+    let server = server(
+        &path,
+        vec![(
+            json!({"command":"recorder-state"}),
+            json!({"ok":true,"result":sample}),
+        )],
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .arg("recorder-state")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["notification_active"], 1);
+    assert_eq!(result["atomic"], false);
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}

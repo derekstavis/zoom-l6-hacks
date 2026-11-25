@@ -193,3 +193,7 @@ channel-1 level. `--text` also reads the bounded UTF-16 GUI resource 179.
 The response reports the GUI-routine fingerprint guard and `atomic: false`:
 the guest can change these values between QMP reads. Unsupported models,
 GUI revisions and out-of-range text pointers return an error.
+
+`l6ctl --socket PATH recorder-state` reads the revision-guarded L6max 1.10
+recorder window and notification flags. This non-atomic observation does not
+include display pixels and does not by itself prove that the screen rendered.

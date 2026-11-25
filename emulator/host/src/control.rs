@@ -262,6 +262,10 @@ fn execute(
                 sample(kind)
             }
         }
+        "recorder-state" => {
+            let state = crate::knob_popup::reader(qmp, model)?.recorder_state()?;
+            serde_json::to_value(state).map_err(|error| error.to_string())
+        }
         "knob-popup" => {
             let with_text = request
                 .get("with_text")

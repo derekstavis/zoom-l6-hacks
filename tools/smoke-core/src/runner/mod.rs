@@ -766,6 +766,9 @@ impl Runner {
                 Action::AudioCallbacks => {
                     return Ok(Progress::Device(devices::Operation::AudioCallbacks));
                 }
+                Action::KnobDialogReady => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogReady));
+                }
                 Action::KnobDialog => {
                     return Ok(Progress::Device(devices::Operation::KnobDialog));
                 }

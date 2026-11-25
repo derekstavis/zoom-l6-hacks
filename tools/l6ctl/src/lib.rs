@@ -3,7 +3,7 @@
 //! The socket interface is deliberately narrower than direct access. In
 //! particular its input replies confirm enqueueing, not guest acknowledgement.
 pub use l6max_host::control::Info;
-pub use l6max_host::knob_popup::Snapshot as KnobPopupSnapshot;
+pub use l6max_host::knob_popup::{RecorderState, Snapshot as KnobPopupSnapshot};
 use l6max_host::{control, engine::Engine, freertos, qmp};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -32,6 +32,7 @@ pub enum RtosKind {
 pub enum Request {
     Info,
     KnobPopup { with_text: bool },
+    RecorderState,
     Rtos { kind: RtosKind },
     Tap { target: u32, hold_ms: u32 },
     Down { target: u32, duration_ms: u32 },
@@ -122,7 +123,10 @@ impl ControlClient {
                 path: self.socket.clone(),
                 source,
             })?;
-        let timeout = if matches!(request, Request::Rtos { .. } | Request::KnobPopup { .. }) {
+        let timeout = if matches!(
+            request,
+            Request::Rtos { .. } | Request::KnobPopup { .. } | Request::RecorderState
+        ) {
             30
         } else {
             3
@@ -156,6 +160,10 @@ impl ControlClient {
     /// Request the host's existing versioned RTOS JSON snapshot.
     pub fn rtos(&self, kind: RtosKind) -> Result<Value, ControlError> {
         self.request(&Request::Rtos { kind })
+    }
+
+    pub fn recorder_state(&self) -> Result<RecorderState, ControlError> {
+        self.request_as(&Request::RecorderState)
     }
 
     pub fn knob_popup(&self, with_text: bool) -> Result<KnobPopupSnapshot, ControlError> {

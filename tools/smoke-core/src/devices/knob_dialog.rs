@@ -29,6 +29,68 @@ fn turn_and_wait_hook(
     Ok(())
 }
 
+fn recorder_controls_visible(display: &[u8; 1024], reference: &image::GrayImage) -> bool {
+    (16..40).all(|y| {
+        (0..128).all(|x| {
+            let index = ((63 - y) / 8) * 128 + x;
+            (display[index] & (1 << ((63 - y) % 8)) != 0)
+                == (reference.get_pixel(x as u32, y as u32).0[0] >= 128)
+        })
+    })
+}
+
+pub(super) fn run_knob_dialog_ready(
+    session: &Session,
+    options: &Options,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    use std::time::Instant;
+    let main = selected_main_image(options).map_err(std::io::Error::other)?;
+    if main.get(0x40c..0x410) != Some(&0x8007eea9u32.to_le_bytes()) {
+        return Err("patched startup hook does not reserve popup RAM".into());
+    }
+    let inputs = session.engine.inputs.as_ref().unwrap();
+    const READY_GUEST_TIMEOUT_MS: u32 = 30_000;
+    const READY_WALL_TIMEOUT_S: u64 = 180;
+    const READY_POLL_MS: u64 = 5;
+    let recorder_reference = image::open(
+        l6max_host::paths::repository_root()
+            .join("tests/emulator/references/l6max-recorder-home.png"),
+    )?
+    .to_luma8();
+    if recorder_reference.dimensions() != (128, 64) {
+        return Err("recorder reference must be 128×64".into());
+    }
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let reader = control.knob_popup_reader()?;
+    let start = inputs.panel.snapshot().guest_ms;
+    let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(READY_WALL_TIMEOUT_S));
+    loop {
+        let display = session.poll()?.display;
+        let now = inputs.panel.snapshot().guest_ms;
+        let observed = reader.recorder_state()?;
+        let window = observed.window;
+        let busy = observed.notification_busy;
+        let active = observed.notification_active;
+        if window == l6max::GUI_RECORDER_WINDOW
+            && busy == 0
+            && active == 0
+            && recorder_controls_visible(&display, &recorder_reference)
+        {
+            break;
+        }
+        if now.wrapping_sub(start) >= guest_timeout_ms.min(READY_GUEST_TIMEOUT_MS)
+            || Instant::now() >= deadline
+        {
+            return Err("recorder did not settle before knob-dialog checks".into());
+        }
+        thread::sleep(Duration::from_millis(READY_POLL_MS));
+    }
+
+    Ok(serde_json::json!({"recorder_ready": true}))
+}
+
 pub(super) fn run_knob_dialog(
     session: &Session,
     options: &Options,
@@ -56,22 +118,13 @@ pub(super) fn run_knob_dialog(
     if recorder_reference.dimensions() != (128, 64) {
         return Err("recorder reference must be 128×64".into());
     }
-    let recorder_controls_visible = |display: &[u8; 1024]| {
-        (16..40).all(|y| {
-            (0..128).all(|x| {
-                let index = ((63 - y) / 8) * 128 + x;
-                let actual = display[index] & (1 << ((63 - y) % 8)) != 0;
-                actual == (recorder_reference.get_pixel(x as u32, y as u32).0[0] >= 128)
-            })
-        })
-    };
     let wait_recorder_controls = || -> Result<(), Box<dyn std::error::Error>> {
         let start = inputs.panel.snapshot().guest_ms;
         let deadline =
             Instant::now() + Duration::from_secs(wall_timeout_s.min(READY_WALL_TIMEOUT_S));
         loop {
             let display = session.poll()?.display;
-            if recorder_controls_visible(&display) {
+            if recorder_controls_visible(&display, &recorder_reference) {
                 return Ok(());
             }
             if inputs.panel.snapshot().guest_ms.wrapping_sub(start)
@@ -83,33 +136,6 @@ pub(super) fn run_knob_dialog(
             thread::sleep(Duration::from_millis(READY_POLL_MS));
         }
     };
-    let start = inputs.panel.snapshot().guest_ms;
-    let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(READY_WALL_TIMEOUT_S));
-    loop {
-        let display = session.poll()?.display;
-        let now = inputs.panel.snapshot().guest_ms;
-        let window = u32::from_le_bytes(
-            qmp.read_memory(0, l6max::current_window, 4)?
-                .try_into()
-                .unwrap(),
-        );
-        let busy = qmp.read_memory(0, l6max::notification_busy, 1)?[0];
-        let active = qmp.read_memory(0, l6max::notification_active, 1)?[0];
-        if window == l6max::GUI_RECORDER_WINDOW
-            && busy == 0
-            && active == 0
-            && recorder_controls_visible(&display)
-        {
-            break;
-        }
-        if now.wrapping_sub(start) >= guest_timeout_ms.min(READY_GUEST_TIMEOUT_MS)
-            || Instant::now() >= deadline
-        {
-            return Err("recorder did not settle before knob-dialog checks".into());
-        }
-        thread::sleep(Duration::from_millis(READY_POLL_MS));
-    }
-
     let word = |address: u32| -> Result<u32, Box<dyn std::error::Error>> {
         Ok(u32::from_le_bytes(
             qmp.read_memory(0, address, 4)?.try_into().unwrap(),
@@ -1804,5 +1830,20 @@ mod popup_step_tests {
         assert!(!context.expired(now + Duration::from_secs(1), 5));
         assert!(context.expired(now + Duration::from_secs(3), 5));
         assert!(context.expired(now + Duration::from_secs(1), 6));
+    }
+}
+
+#[cfg(test)]
+mod recorder_ready_tests {
+    use super::recorder_controls_visible;
+    #[test]
+    fn compares_only_the_reviewed_transport_crop() {
+        let reference = image::GrayImage::from_pixel(128, 64, image::Luma([0]));
+        let mut display = [0; 1024];
+        assert!(recorder_controls_visible(&display, &reference));
+        display[((63 - 4) / 8) * 128] ^= 1 << ((63 - 4) % 8);
+        assert!(recorder_controls_visible(&display, &reference));
+        display[((63 - 20) / 8) * 128] ^= 1 << ((63 - 20) % 8);
+        assert!(!recorder_controls_visible(&display, &reference));
     }
 }

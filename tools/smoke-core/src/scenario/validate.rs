@@ -91,6 +91,27 @@ impl Scenario {
                 }
             }
         }
+        for (index, step) in value.step.iter().enumerate() {
+            if !matches!(step.action, Action::KnobDialog) {
+                continue;
+            }
+            for model in &value.models {
+                if !step.applies_to(*model) {
+                    continue;
+                }
+                let previous = value.step[..index]
+                    .iter()
+                    .rev()
+                    .find(|previous| previous.applies_to(*model));
+                if !previous.is_some_and(|previous| {
+                    matches!(previous.action, Action::KnobDialogReady)
+                        && previous.guest_timeout_ms == step.guest_timeout_ms
+                        && previous.wall_timeout_s == step.wall_timeout_s
+                }) {
+                    return Err("knob-dialog requires an immediately preceding knob-dialog-ready with matching deadlines".into());
+                }
+            }
+        }
         for step in &value.step {
             if matches!(step.action, Action::EditorPadAssignments) && !usb_descriptors_seen {
                 return Err(

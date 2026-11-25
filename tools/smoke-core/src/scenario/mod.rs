@@ -8,6 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub mod adaptive;
 mod validate;
 /// How a case drives the emulator.
 #[derive(
@@ -659,7 +660,9 @@ pub enum Action {
     },
     KnobDialogExpectHeap,
     KnobDialogModeEnd,
-    KnobDialogFinalBegin,
+    KnobDialogAdaptive {
+        plan: adaptive::Plan,
+    },
     KnobDialogInjectInvalidTag {
         tag: u8,
     },
@@ -1059,7 +1062,7 @@ pub(crate) fn valid_knob_mode_steps(steps: &[&Step]) -> bool {
 
 pub(crate) fn valid_invalid_tag_steps(steps: &[&Step]) -> bool {
     matches!(steps, [begin, inject1, wait1, confirm1, inject2, wait2, confirm2]
-        if matches!(begin.action, Action::KnobDialogFinalBegin)
+        if matches!(&begin.action, Action::KnobDialogAdaptive { plan } if plan.validate().is_ok())
         && matches!(inject1.action, Action::KnobDialogInjectInvalidTag { tag } if tag & 0x0f >= 10 && tag >> 4 < 8)
         && matches!(wait1.action, Action::KnobDialogWaitInvalidTag)
         && matches!(confirm1.action, Action::KnobDialogConfirmInvalidTag)

@@ -971,8 +971,10 @@ impl Runner {
                 Action::KnobDialogModeEnd => {
                     return Ok(Progress::Device(devices::Operation::KnobDialogModeEnd));
                 }
-                Action::KnobDialogFinalBegin => {
-                    return Ok(Progress::Device(devices::Operation::KnobDialogFinalBegin));
+                Action::KnobDialogAdaptive { ref plan } => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogAdaptive {
+                        plan: plan.clone(),
+                    }));
                 }
                 Action::KnobDialogInjectInvalidTag { tag } => {
                     return Ok(Progress::Device(
@@ -1867,6 +1869,12 @@ impl Runner {
         self.allowed_rejections = [0, 0];
     }
     pub fn current_display_index(&self) -> usize {
+        self.scenario.step[..=self.step]
+            .iter()
+            .filter(|step| step.applies_to(self.model))
+            .count()
+    }
+    pub fn current_progress_index(&self) -> usize {
         self.scenario.step[..=self.step]
             .iter()
             .filter(|step| step.applies_to(self.model))

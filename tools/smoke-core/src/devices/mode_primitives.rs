@@ -134,7 +134,9 @@ pub(super) fn embedded_invalid_tag_operations() -> Result<Vec<(String, Operation
         .into_iter()
         .map(|step| {
             let operation = match step.action {
-                crate::Action::KnobDialogFinalBegin => Operation::KnobDialogFinalBegin,
+                crate::Action::KnobDialogAdaptive { ref plan } => {
+                    Operation::KnobDialogAdaptive { plan: plan.clone() }
+                }
                 crate::Action::KnobDialogInjectInvalidTag { tag } => {
                     Operation::KnobDialogInjectInvalidTag { tag }
                 }
@@ -441,6 +443,50 @@ fn mode_operation_matches(operation: &Operation) -> bool {
     )
 }
 
+pub(super) fn wait_parameter_mode(
+    session: &Session,
+    control: &l6ctl::OwnedControl<'_>,
+    mode: u8,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    wait_parameter_mode_checked(
+        session,
+        control,
+        mode,
+        guest_timeout_ms,
+        wall_timeout_s,
+        || Ok(()),
+    )
+}
+
+pub(super) fn wait_parameter_mode_checked(
+    session: &Session,
+    control: &l6ctl::OwnedControl<'_>,
+    mode: u8,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+    mut check: impl FnMut() -> Result<(), Box<dyn std::error::Error>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    check()?;
+    let reader = control.knob_parameter_reader()?;
+    let start = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
+    let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(180));
+    loop {
+        check()?;
+        session.poll()?;
+        let actual = reader.parameter_mode()?;
+        if actual == mode {
+            return Ok(());
+        }
+        let now = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
+        if now.wrapping_sub(start) >= guest_timeout_ms.min(10_000) || Instant::now() >= deadline {
+            return Err(format!("parameter mode did not become {mode}; found {actual}").into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
 fn save_captured_display(
     capture: &CapturedDisplay,
     logs: &Path,
@@ -584,29 +630,11 @@ impl State {
                 }
             }
             Operation::WaitKnobParameterMode { mode } => {
-                let reader = control.knob_parameter_reader()?;
-                let start = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
-                let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(180));
-                loop {
-                    session.poll()?;
-                    let actual = reader.parameter_mode()?;
-                    if actual == mode {
-                        if let Some(scope) = self.knob_mode.as_mut() {
-                            scope.selected_mode = Some(mode);
-                        }
-                        return Ok(json!({"mode":mode}));
-                    }
-                    let now = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
-                    if now.wrapping_sub(start) >= guest_timeout_ms.min(10_000)
-                        || Instant::now() >= deadline
-                    {
-                        return Err(format!(
-                            "parameter mode did not become {mode}; found {actual}"
-                        )
-                        .into());
-                    }
-                    thread::sleep(Duration::from_millis(5));
+                wait_parameter_mode(session, &control, mode, guest_timeout_ms, wall_timeout_s)?;
+                if let Some(scope) = self.knob_mode.as_mut() {
+                    scope.selected_mode = Some(mode);
                 }
+                Ok(json!({"mode":mode}))
             }
             Operation::CaptureDisplay { guest_ms, artifact } => {
                 if guest_ms == 0 || !valid_artifact(&artifact) {

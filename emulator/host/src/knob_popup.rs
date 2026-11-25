@@ -327,6 +327,29 @@ impl Reader<'_> {
         })
     }
 
+    /// Channel-one pan byte for the guarded L6max mixer layout.
+    pub fn pan(&self) -> Result<u8, String> {
+        self.qmp
+            .read_memory(0, l6max::mixer_first_channel_pan, 1)
+            .map_err(|error| error.to_string())?
+            .first()
+            .copied()
+            .ok_or("short pan value".into())
+    }
+
+    /// Mixer level for a one-based L6max channel.
+    pub fn channel_level(&self, channel: u32) -> Result<u8, String> {
+        if !(1..=8).contains(&channel) {
+            return Err("channel must be 1..8".into());
+        }
+        self.qmp
+            .read_memory(0, l6max::mixer_channel_levels + channel - 1, 1)
+            .map_err(|error| error.to_string())?
+            .first()
+            .copied()
+            .ok_or("short mixer level".into())
+    }
+
     /// Dialog inactivity countdown byte, sampled independently.
     pub fn countdown_ticks(&self) -> Result<u8, String> {
         self.qmp

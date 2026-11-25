@@ -410,6 +410,136 @@ fn step_timings(path: &Path) -> Vec<(usize, String, u64)> {
     timings
 }
 
+/// Recover completed adaptive children; incomplete events do not produce durations.
+fn adaptive_child_timings(
+    path: &Path,
+) -> Vec<(
+    usize,
+    String,
+    u32,
+    String,
+    smoke_core::progress::Outcome,
+    u64,
+)> {
+    use smoke_core::progress::{CaseEvent, VERSION};
+    let Ok(stream) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut lines = stream.lines();
+    if !matches!(
+        lines
+            .next()
+            .and_then(|line| serde_json::from_str::<CaseEvent>(line).ok()),
+        Some(CaseEvent::Header {
+            version: VERSION,
+            ..
+        })
+    ) {
+        return Vec::new();
+    }
+    let mut current = None;
+    let mut result = Vec::new();
+    for line in lines {
+        let Ok(event) = serde_json::from_str::<CaseEvent>(line) else {
+            break;
+        };
+        match event {
+            CaseEvent::AdaptiveChildStarted {
+                index,
+                block,
+                attempt,
+                child,
+                started_unix_ms,
+                ..
+            } => current = Some((index, block, attempt, child, started_unix_ms)),
+            CaseEvent::AdaptiveChildFinished {
+                index,
+                block,
+                attempt,
+                child,
+                outcome,
+                finished_unix_ms,
+            } => {
+                if let Some((i, b, a, c, start)) = current.take()
+                    && i == index
+                    && b == block
+                    && a == attempt
+                    && c == child
+                    && let Some(duration) = finished_unix_ms.checked_sub(start)
+                {
+                    result.push((i, b, a, c, outcome, duration));
+                }
+            }
+            CaseEvent::StepStarted { .. } | CaseEvent::ScenarioFinished { .. } => current = None,
+            _ => {}
+        }
+    }
+    result
+}
+
+fn adaptive_scope_timings(
+    path: &Path,
+) -> Vec<(
+    usize,
+    String,
+    Option<u32>,
+    smoke_core::progress::Outcome,
+    Option<bool>,
+    u64,
+)> {
+    use smoke_core::progress::{CaseEvent, VERSION};
+    let Ok(stream) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut lines = stream.lines();
+    if !matches!(
+        lines
+            .next()
+            .and_then(|line| serde_json::from_str::<CaseEvent>(line).ok()),
+        Some(CaseEvent::Header {
+            version: VERSION,
+            ..
+        })
+    ) {
+        return Vec::new();
+    }
+    let mut starts = std::collections::BTreeMap::new();
+    let mut result = Vec::new();
+    for line in lines {
+        let Ok(event) = serde_json::from_str::<CaseEvent>(line) else {
+            break;
+        };
+        match event {
+            CaseEvent::AdaptiveScopeStarted {
+                index,
+                block,
+                attempt,
+                started_unix_ms,
+                ..
+            } => {
+                starts.insert((index, block, attempt), started_unix_ms);
+            }
+            CaseEvent::AdaptiveScopeFinished {
+                index,
+                block,
+                attempt,
+                outcome,
+                matched,
+                finished_unix_ms,
+            } => {
+                if let Some(start) = starts.remove(&(index, block.clone(), attempt))
+                    && let Some(duration) = finished_unix_ms.checked_sub(start)
+                {
+                    result.push((index, block, attempt, outcome, matched, duration));
+                }
+            }
+            CaseEvent::StepStarted { .. } | CaseEvent::ScenarioFinished { .. } => starts.clear(),
+            _ => {}
+        }
+    }
+    result
+}
+
 /// Recover completed runner startup intervals; interrupted phases have no end.
 fn case_phase_timings(path: &Path) -> Vec<(smoke_core::progress::CasePhase, u64)> {
     use smoke_core::progress::{CaseEvent, VERSION};
@@ -550,13 +680,20 @@ pub fn write_summary(
         };
         for (attempt, dir) in artifacts.iter().enumerate() {
             let timings = step_timings(&dir.join("progress.jsonl"));
+            let children = adaptive_child_timings(&dir.join("progress.jsonl"));
+            let scopes = adaptive_scope_timings(&dir.join("progress.jsonl"));
             let phases = case_phase_timings(&dir.join("progress.jsonl"));
             let stages = if result.attempts.is_empty() {
                 &result.timings.stages
             } else {
                 &result.attempts[attempt].timings.stages
             };
-            if timings.is_empty() && stages.is_empty() && phases.is_empty() {
+            if timings.is_empty()
+                && stages.is_empty()
+                && phases.is_empty()
+                && children.is_empty()
+                && scopes.is_empty()
+            {
                 continue;
             }
             text.push_str(&format!(
@@ -598,6 +735,34 @@ pub fn write_summary(
                     label.replace('|', "\\|"),
                     milliseconds as f64 / 1000.0
                 ));
+            }
+            if !scopes.is_empty() {
+                text.push_str("\n| Step | Block | Attempt | Outcome | Matched | Wall seconds |\n| --- | --- | ---: | --- | --- | ---: |\n");
+                for (index, block, attempt, outcome, matched, milliseconds) in scopes {
+                    text.push_str(&format!(
+                        "| {} | {} | {} | {:?} | {} | {:.3} |\n",
+                        index,
+                        block.replace('|', "\\|"),
+                        attempt.map_or("all".into(), |n| n.to_string()),
+                        outcome,
+                        matched.map_or("—".into(), |value| value.to_string()),
+                        milliseconds as f64 / 1000.0
+                    ));
+                }
+            }
+            if !children.is_empty() {
+                text.push_str("\n| Step | Block | Attempt | Child | Outcome | Wall seconds |\n| --- | --- | ---: | --- | --- | ---: |\n");
+                for (index, block, attempt, child, outcome, milliseconds) in children {
+                    text.push_str(&format!(
+                        "| {} | {} | {} | {} | {:?} | {:.3} |\n",
+                        index,
+                        block.replace('|', "\\|"),
+                        attempt,
+                        child.replace('|', "\\|"),
+                        outcome,
+                        milliseconds as f64 / 1000.0
+                    ));
+                }
             }
         }
     }
@@ -680,6 +845,115 @@ mod tests {
         assert!(results[0].seconds >= 0.0);
     }
 
+    #[test]
+    fn adaptive_events_preserve_parent_timing_and_record_child_outcome() {
+        use smoke_core::progress::{AttemptId, CaseEvent, CaseId, Outcome, VERSION, Writer};
+        let path = std::env::temp_dir().join(format!("l6-adaptive-timing-{}", std::process::id()));
+        let mut writer = Writer::create(&path).unwrap();
+        let id = AttemptId {
+            case: CaseId {
+                case: "case".into(),
+                model: l6fw::Model::L6max,
+                backend: smoke_core::Backend::Headless,
+            },
+            attempt: 1,
+        };
+        writer
+            .emit(&CaseEvent::Header {
+                version: VERSION,
+                run_id: "run".into(),
+                id,
+            })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::StepStarted {
+                index: 2,
+                label: "parent".into(),
+                started_unix_ms: 100,
+            })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::AdaptiveScopeStarted {
+                index: 2,
+                block: "pan".into(),
+                attempt: Some(1),
+                max_attempts: 100,
+                started_unix_ms: 110,
+            })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::AdaptiveChildStarted {
+                index: 2,
+                block: "pan".into(),
+                attempt: 1,
+                max_attempts: 100,
+                child: "capture".into(),
+                started_unix_ms: 120,
+            })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::AdaptiveChildFinished {
+                index: 2,
+                block: "pan".into(),
+                attempt: 1,
+                child: "capture".into(),
+                outcome: Outcome::Fail,
+                finished_unix_ms: 150,
+            })
+            .unwrap();
+        writer
+            .emit(&CaseEvent::AdaptiveScopeFinished {
+                index: 2,
+                block: "pan".into(),
+                attempt: Some(1),
+                outcome: Outcome::Fail,
+                matched: None,
+                finished_unix_ms: 160,
+            })
+            .unwrap();
+        for (attempt, matched, started, finished) in [(2, false, 165, 170), (3, true, 175, 180)] {
+            writer
+                .emit(&CaseEvent::AdaptiveScopeStarted {
+                    index: 2,
+                    block: "pan".into(),
+                    attempt: Some(attempt),
+                    max_attempts: 100,
+                    started_unix_ms: started,
+                })
+                .unwrap();
+            writer
+                .emit(&CaseEvent::AdaptiveScopeFinished {
+                    index: 2,
+                    block: "pan".into(),
+                    attempt: Some(attempt),
+                    outcome: Outcome::Pass,
+                    matched: Some(matched),
+                    finished_unix_ms: finished,
+                })
+                .unwrap();
+        }
+        writer
+            .emit(&CaseEvent::ScenarioFinished {
+                outcome: Outcome::Fail,
+                finished_unix_ms: 200,
+            })
+            .unwrap();
+        assert_eq!(super::step_timings(&path), vec![(2, "parent".into(), 100)]);
+        assert_eq!(
+            super::adaptive_child_timings(&path),
+            vec![(2, "pan".into(), 1, "capture".into(), Outcome::Fail, 30)]
+        );
+        assert_eq!(
+            super::adaptive_scope_timings(&path),
+            vec![
+                (2, "pan".into(), Some(1), Outcome::Fail, None, 50),
+                (2, "pan".into(), Some(2), Outcome::Pass, Some(false), 5),
+                (2, "pan".into(), Some(3), Outcome::Pass, Some(true), 5),
+            ]
+        );
+        drop(writer);
+        std::fs::remove_file(path).unwrap();
+    }
     #[test]
     fn timing_report_orders_steps_and_omits_interrupted_final_step() {
         use smoke_core::progress::{AttemptId, CaseEvent, CaseId, VERSION, Writer};

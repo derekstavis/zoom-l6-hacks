@@ -30,14 +30,17 @@ pub(super) fn prepare_factory_fixture(options: &mut Options) -> Result<(), Strin
 
 /// Run the firmware updater's full disposable-state lifecycle. This action owns
 /// its guest restarts because each boot changes the NOR and SD fixture.
-pub fn run_firmware_update(options: &Options) -> Result<(), String> {
+pub fn run_firmware_update(
+    options: &Options,
+    progress: crate::progress::CaseProgress,
+) -> Result<(), String> {
     let main =
         fs::read(options.firmware_dir.join("main_firmware.bin")).map_err(|e| e.to_string())?;
     let model = l6fw::model_from_main(&main).map_err(|e| e.to_string())?;
     if model == l6fw::Model::L6 {
         run_l6_update(options, &main)
     } else {
-        run_l6max_update(options, &main)
+        run_l6max_update(options, &main, progress)
     }
 }
 
@@ -645,7 +648,11 @@ pub(super) fn update_checksum(package: &[u8]) -> u32 {
         .fold(0u32, |sum, &byte| sum.wrapping_add(u32::from(byte)))
 }
 
-pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), String> {
+pub(super) fn run_l6max_update(
+    options: &Options,
+    main: &[u8],
+    progress: crate::progress::CaseProgress,
+) -> Result<(), String> {
     use sha2::{Digest, Sha256};
     let source = options
         .firmware_package
@@ -878,6 +885,7 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
                 // in full; din-mixer-control needs a DIN port and Mixer
                 // Control via MIDI, which this boot does not set up.
                 let mut state = State::default();
+                state.set_adaptive_progress(progress.clone(), 1);
                 let mut run = |operation: Operation, patch: &str| {
                     state
                         .execute(&session, &verify, operation, 180_000, 300)

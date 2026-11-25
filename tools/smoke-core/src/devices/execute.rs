@@ -29,7 +29,7 @@ fn knob_dialog_phase(
         Operation::KnobDialogModeBegin { .. } => {
             next_mode.and_then(|index| u16::try_from(17 + index * 10).ok())
         }
-        Operation::KnobDialogFinalBegin
+        Operation::KnobDialogAdaptive { .. }
         | Operation::KnobDialogInjectInvalidTag { .. }
         | Operation::KnobDialogWaitInvalidTag
         | Operation::KnobDialogConfirmInvalidTag
@@ -2587,17 +2587,20 @@ impl State {
                 guest_timeout_ms,
                 wall_timeout_s,
             ),
-            Operation::KnobDialogFinalBegin => {
+            Operation::KnobDialogAdaptive { plan } => {
                 self.knob_heap_reader = None;
-                run_knob_dialog(
-                    true,
+                run_adaptive_demo(
+                    &plan,
                     session,
                     options,
-                    &mut self.knob_dialog_preflight,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob preflight")?,
+                    self.adaptive_progress.clone(),
+                    self.adaptive_index,
                     guest_timeout_ms,
                     wall_timeout_s,
-                    shared,
-                    operation_start,
+                    shared.ok_or("missing shared deadline")?,
                 )
             }
             Operation::KnobDialogInjectInvalidTag { tag } => inject_invalid_tag(
@@ -2796,16 +2799,7 @@ impl State {
                     .knob_dialog_baseline
                     .take()
                     .ok_or("knob-dialog requires baseline frame")?;
-                run_knob_dialog(
-                    false,
-                    session,
-                    options,
-                    &mut self.knob_dialog_preflight,
-                    guest_timeout_ms,
-                    wall_timeout_s,
-                    shared,
-                    operation_start,
-                )
+                finish_knob_dialog(options, &mut self.knob_dialog_preflight)
             }
             operation @ (Operation::KnobPopupOpen { .. }
             | Operation::KnobPopupExpectOpen
@@ -2987,7 +2981,18 @@ mod knob_phase_tests {
             }
         }
         for (phase, op) in [
-            Operation::KnobDialogFinalBegin,
+            Operation::KnobDialogAdaptive {
+                plan: {
+                    let fragment: crate::Fragment = toml::from_str(include_str!(
+                        "../../../../patches/knob-dialog/tests/emulator/fragments/invalid-tags.toml"
+                    ))
+                    .unwrap();
+                    match &fragment.step[0].action {
+                        crate::Action::KnobDialogAdaptive { plan } => plan.clone(),
+                        _ => panic!("missing adaptive plan"),
+                    }
+                },
+            },
             Operation::KnobDialogInjectInvalidTag { tag: 15 },
             Operation::KnobDialogWaitInvalidTag,
             Operation::KnobDialogConfirmInvalidTag,

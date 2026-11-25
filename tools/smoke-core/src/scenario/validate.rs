@@ -758,7 +758,7 @@ impl Scenario {
                 Action::KnobDialogBitmapZero => "knob-dialog-overlay-invariants",
                 Action::KnobDialogActiveOverlay => "knob-dialog-bitmap-zero",
                 Action::KnobDialogLockedUpdate => "knob-dialog-active-overlay",
-                Action::KnobDialogFinalBegin => "knob-dialog-mode-end",
+                Action::KnobDialogAdaptive { .. } => "knob-dialog-mode-end",
                 Action::KnobDialog => "knob-dialog-check-navigation",
                 _ => continue,
             };
@@ -968,6 +968,9 @@ impl Scenario {
             }
         }
         for step in &value.step {
+            if let Action::KnobDialogAdaptive { plan } = &step.action {
+                plan.validate()?;
+            }
             if matches!(step.action, Action::EditorPadAssignments) && !usb_descriptors_seen {
                 return Err(
                     "editor-pad-assignments requires a preceding usb-descriptors step".into(),

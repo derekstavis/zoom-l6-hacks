@@ -3,6 +3,7 @@
 //! The socket interface is deliberately narrower than direct access. In
 //! particular its input replies confirm enqueueing, not guest acknowledgement.
 pub use l6max_host::control::Info;
+pub use l6max_host::input::{InputCounters, InputSource};
 pub use l6max_host::knob_popup::{ParameterState, RecorderState, Snapshot as KnobPopupSnapshot};
 use l6max_host::{control, engine::Engine, freertos, qmp};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -31,6 +32,7 @@ pub enum RtosKind {
 #[serde(tag = "command", rename_all = "kebab-case")]
 pub enum Request {
     Info,
+    InputStatus { source: InputSource },
     KnobPopup { with_text: bool },
     RecorderState,
     KnobParameterState,
@@ -113,6 +115,11 @@ impl ControlClient {
 
     pub fn socket(&self) -> &Path {
         &self.socket
+    }
+
+    /// Sample aggregate counters for one running emulator input channel.
+    pub fn input_status(&self, source: InputSource) -> Result<InputCounters, ControlError> {
+        self.request_as(&Request::InputStatus { source })
     }
 
     /// Send one typed request. RTOS response bodies are currently the host's
@@ -234,6 +241,16 @@ impl<'a> OwnedControl<'a> {
             .as_ref()
             .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
         Ok(control::info(inputs, self.engine.model()))
+    }
+
+    /// Sample the host's channel counters without opening a control socket.
+    pub fn input_status(&self, source: InputSource) -> Result<InputCounters, ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
+        Ok(inputs.counters(source))
     }
 
     fn main_qmp(&self) -> Result<&qmp::QmpClient, ControlError> {

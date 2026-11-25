@@ -17,6 +17,8 @@ guarded FreeRTOS snapshots; see `docs/development/tools/l6ctl.md` for the JSON
 schema, supported revisions and live-sampling limits. Rust callers can use the
 `l6ctl` crate for typed socket requests or borrow an existing host engine;
 socket input receipts mean enqueue, not guest acknowledgement.
+`cargo l6ctl input status main|panel` exposes aggregate per-channel counters;
+they cannot attribute an acknowledgement to a particular caller.
 Local firmware package and audio paths belong in ignored `config.toml`; never commit
 firmware, SD cards, saved flash, generated analysis artifacts or runtime logs.
 Persistent fixture caching is experimental and must not be used for qualification;

@@ -13,6 +13,7 @@ Then run commands in another terminal:
 
 ```sh
 cargo l6ctl --socket /tmp/l6-control.sock info
+cargo l6ctl --socket /tmp/l6-control.sock input status panel
 cargo l6ctl --socket /tmp/l6-control.sock button channel.1.mute
 cargo l6ctl --socket /tmp/l6-control.sock down play 500
 cargo l6ctl --socket /tmp/l6-control.sock up play
@@ -25,6 +26,17 @@ cargo l6ctl --socket /tmp/l6-control.sock rtos tasks --pretty
 `--socket PATH` can be omitted when `L6_CONTROL_SOCKET` is set. The socket is
 created with current-user-only permissions and is removed when the emulator
 exits. `info` reports model, guest time, power state, and indicator snapshots.
+
+`input status main|panel` returns a compact JSON observation of one input
+channel: its `source`, `connected` state, `guest_ms`, `sent`, `applied`,
+`released`, `rejected`, and optional `error`. The counters aggregate all
+clients on that channel and live for that host connection. They are not a
+per-command acknowledgement: another input can advance them, and a socket
+command's receipt still means enqueueing only. The 32-bit guest clock wraps;
+values can lag guest execution. Status fields are copied under one host lock,
+not sampled atomically with the running firmware or the other channel. The
+reply reader can observe an applied event before the sender increments `sent`,
+so `applied` can transiently exceed `sent`.
 
 `button` (alias `tap`) presses and releases after 50 ms by default; use
 `--hold-ms MS` to change it. `down NAME|TARGET DURATION_MS` presses for a
@@ -43,14 +55,14 @@ socket.
 
 The `l6ctl` crate also exposes typed control requests for Rust callers.
 `ControlClient::new(path)` attaches to the existing optional socket;
-`info`, `tap`, `down`, `up`, `encoder`, `analog`, and `set_analog` return
+`info`, `input_status`, `tap`, `down`, `up`, `encoder`, `analog`, and `set_analog` return
 typed responses. Encoder and analog channels use the same one-based numbering
 as the CLI. Socket input receipts indicate that the request was enqueued,
 not that the guest applied it. `request` and `RtosKind` expose the existing
 versioned RTOS JSON until its socket responses have shared typed schemas.
 
 Code that already owns an `l6max_host::engine::Engine` can borrow it with
-`OwnedControl::new(&engine)`. Its `info` and `rtos_*` methods use the host's
+`OwnedControl::new(&engine)`. Its `info`, `input_status` and `rtos_*` methods use the host's
 existing snapshots directly; it does not create a second guest or open a
 control socket. RTOS decoding and model/revision guards remain in
 `l6max-host`, and the two transports do not yet expose identical capabilities.

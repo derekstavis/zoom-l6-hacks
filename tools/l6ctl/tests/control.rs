@@ -1,4 +1,4 @@
-use l6ctl::{ControlClient, ControlError, Request, RtosKind};
+use l6ctl::{ControlClient, ControlError, InputSource, Request, RtosKind};
 use l6fw::Model;
 use serde_json::{Value, json};
 use std::{
@@ -36,6 +36,70 @@ fn server(path: &PathBuf, exchanges: Vec<(Value, Value)>) -> thread::JoinHandle<
 fn info() -> Value {
     json!({"model":"l6max","guest_ms":42,"powered_off":false,
         "main_indicators":vec![0;8],"panel_indicators":vec![0;8]})
+}
+
+#[test]
+fn input_status_client_and_cli_use_the_same_typed_wire_contract() {
+    let path = socket_path();
+    let panel = json!({"source":"panel", "connected":true, "guest_ms":42,
+        "sent":7, "applied":6, "released":3, "rejected":1, "error":null});
+    let main = json!({"source":"main", "connected":false, "guest_ms":0,
+        "sent":2, "applied":1, "released":0, "rejected":0, "error":"disconnected"});
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"input-status", "source":"panel"}),
+                json!({"ok":true,"result":panel}),
+            ),
+            (
+                json!({"command":"input-status", "source":"main"}),
+                json!({"ok":true,"result":main}),
+            ),
+        ],
+    );
+    let status = ControlClient::new(&path)
+        .input_status(InputSource::Panel)
+        .unwrap();
+    assert_eq!(
+        (
+            status.guest_ms,
+            status.sent,
+            status.applied,
+            status.released,
+            status.rejected
+        ),
+        (42, 7, 6, 3, 1)
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["input", "status", "main"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        main
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn input_status_cli_rejects_unknown_channel_before_connecting() {
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(socket_path())
+        .args(["input", "status", "bad"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("input status main|panel"));
 }
 
 #[test]

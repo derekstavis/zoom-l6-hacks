@@ -1,5 +1,9 @@
 //! Optional local Unix-socket control endpoint for a running emulator.
-use crate::{freertos, input::InputHub, qmp::QmpClient};
+use crate::{
+    freertos,
+    input::{InputHub, InputSource},
+    qmp::QmpClient,
+};
 use l6fw::Model;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -264,6 +268,14 @@ fn execute(
         .and_then(Value::as_str)
         .ok_or("request needs a command")?;
     match command {
+        "input-status" => {
+            let source = match request.get("source").and_then(Value::as_str) {
+                Some("main") => InputSource::Main,
+                Some("panel") => InputSource::Panel,
+                _ => return Err("input-status source must be main or panel".into()),
+            };
+            serde_json::to_value(inputs.counters(source)).map_err(|error| error.to_string())
+        }
         "rtos" => {
             let kind = request
                 .get("kind")
@@ -408,6 +420,108 @@ fn send_response(stream: &mut UnixStream, reply: &Value) -> std::io::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn input_status_request_dispatches_and_rejects_invalid_sources() {
+        use crate::input::EngineInput;
+        let (main, _main_peer) = EngineInput::pair().unwrap();
+        let (panel, _panel_peer) = EngineInput::pair().unwrap();
+        let inputs = InputHub::new(main, panel, Model::L6max);
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || {
+            peer.write_all(b"{\"QMP\":{\"version\":{\"qemu\":{\"major\":10,\"minor\":0,\"micro\":0},\"package\":\"\"},\"capabilities\":[]}}\r\n").unwrap();
+            let mut line = String::new();
+            BufReader::new(&mut peer).read_line(&mut line).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&line).unwrap()["execute"],
+                "qmp_capabilities"
+            );
+            peer.write_all(b"{\"return\":{}}\r\n").unwrap();
+        });
+        let qmp = QmpClient::connect(stream).unwrap();
+        server.join().unwrap();
+        for (source, expected) in [("main", InputSource::Main), ("panel", InputSource::Panel)] {
+            let result = execute(
+                &json!({"command":"input-status", "source":source}),
+                &inputs,
+                Model::L6max,
+                &qmp,
+            )
+            .unwrap();
+            assert_eq!(
+                result,
+                serde_json::to_value(inputs.counters(expected)).unwrap()
+            );
+        }
+        assert!(
+            execute(
+                &json!({"command":"input-status", "source":"other"}),
+                &inputs,
+                Model::L6max,
+                &qmp
+            )
+            .is_err()
+        );
+        assert!(
+            execute(
+                &json!({"command":"input-status"}),
+                &inputs,
+                Model::L6max,
+                &qmp
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn input_status_samples_channel_counters_without_consuming_acknowledgements() {
+        use crate::{
+            input::EngineInput,
+            protocol::{self, Message},
+        };
+        let (main, _main_peer) = EngineInput::pair().unwrap();
+        let (panel, mut panel_peer) = EngineInput::pair().unwrap();
+        let inputs = InputHub::new(main, panel, Model::L6max);
+        let sent = inputs.tap(35, 50).unwrap();
+        let command = Message::read(&mut panel_peer).unwrap();
+        assert_eq!(command.sequence, sent);
+        Message {
+            kind: protocol::APPLIED,
+            sequence: sent,
+            target: 35,
+            value: 0,
+            duration_ms: 0,
+        }
+        .write(&mut panel_peer)
+        .unwrap();
+        Message {
+            kind: protocol::CLOCK,
+            sequence: 1,
+            target: 0,
+            value: 0,
+            duration_ms: 4321,
+        }
+        .write(&mut panel_peer)
+        .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let panel = inputs.counters(InputSource::Panel);
+            if panel.applied == 1 && panel.guest_ms == 4321 {
+                assert_eq!((panel.sent, panel.released, panel.rejected), (1, 0, 0));
+                assert!(panel.connected);
+                assert_eq!(panel.error, None);
+                assert_eq!(inputs.counters(InputSource::Panel), panel);
+                let main = inputs.counters(InputSource::Main);
+                assert_eq!((main.sent, main.applied, main.guest_ms), (0, 0, 0));
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "input status did not observe messages: {panel:?}"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
 
     #[test]
     fn large_unicode_response_is_complete_json() {

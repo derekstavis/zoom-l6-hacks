@@ -128,6 +128,8 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobDialogInvokeNotification { .. }
         | Action::KnobDialogWaitNotificationFrame { .. }
         | Action::KnobDialogExpectNotificationInvariants { .. }
+        | Action::KnobDialogWaitExpiry { .. }
+        | Action::KnobDialogExpectExpiryFrame { .. }
         | Action::CaptureDisplay { .. }
         | Action::ExpectCapturedDisplayImage { .. }
         | Action::KnobDialog

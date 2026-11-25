@@ -198,6 +198,16 @@ impl Reader<'_> {
             .ok_or("short mixer level".into())
     }
 
+    /// Dialog inactivity countdown byte, sampled independently.
+    pub fn countdown_ticks(&self) -> Result<u8, String> {
+        self.qmp
+            .read_memory(0, l6max::gui_bitmap_table_entry_0 + 2, 1)
+            .map_err(|error| error.to_string())?
+            .first()
+            .copied()
+            .ok_or("short dialog state".into())
+    }
+
     /// Dialog callback mailbox byte, sampled independently.
     pub fn mailbox(&self) -> Result<u8, String> {
         self.qmp

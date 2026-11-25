@@ -1016,6 +1016,46 @@ impl Runner {
                         devices::Operation::KnobDialogRestoreInvalidSignature,
                     ));
                 }
+                Action::KnobDialogPrepareNotification => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogPrepareNotification,
+                    ));
+                }
+                Action::KnobDialogArmNotificationCallback => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogArmNotificationCallback,
+                    ));
+                }
+                Action::KnobDialogWaitNotificationCallback => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogWaitNotificationCallback,
+                    ));
+                }
+                Action::KnobDialogInvokeNotification { message } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogInvokeNotification { message },
+                    ));
+                }
+                Action::KnobDialogWaitNotificationFrame {
+                    clear,
+                    artifact,
+                    guest_ms,
+                    limit_ms,
+                } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogWaitNotificationFrame {
+                            clear,
+                            artifact: artifact.clone(),
+                            guest_ms,
+                            limit_ms,
+                        },
+                    ));
+                }
+                Action::KnobDialogExpectNotificationInvariants { clear } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogExpectNotificationInvariants { clear },
+                    ));
+                }
                 Action::KnobDialog => {
                     return Ok(Progress::Device(devices::Operation::KnobDialog));
                 }

@@ -635,6 +635,21 @@ pub enum Action {
     },
     KnobDialogSampleInvalidSignature,
     KnobDialogRestoreInvalidSignature,
+    KnobDialogPrepareNotification,
+    KnobDialogArmNotificationCallback,
+    KnobDialogWaitNotificationCallback,
+    KnobDialogInvokeNotification {
+        message: u32,
+    },
+    KnobDialogWaitNotificationFrame {
+        clear: bool,
+        artifact: String,
+        guest_ms: u32,
+        limit_ms: u32,
+    },
+    KnobDialogExpectNotificationInvariants {
+        clear: bool,
+    },
     KnobDialog,
     /// Turn the channel 1 level knob once on the recorder screen and check
     /// that Knob Dialog shows the new value.
@@ -1003,6 +1018,25 @@ pub(crate) fn valid_invalid_signature_steps(steps: &[&Step]) -> bool {
         && matches!(sample.action, Action::KnobDialogSampleInvalidSignature)
         && matches!(restore.action, Action::KnobDialogRestoreInvalidSignature)
         && matches!(&after.action, Action::KnobDialogSettleLevel { artifact } if valid_artifact(artifact)))
+}
+
+pub(crate) fn valid_knob_notification_steps(steps: &[&Step]) -> bool {
+    let valid_artifact = |name: &str| {
+        !name.is_empty()
+            && name.len() <= 64
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    };
+    matches!(steps, [prepare, arm, wait, invoke, frame, check, clear, check_clear]
+        if matches!(prepare.action, Action::KnobDialogPrepareNotification)
+        && matches!(arm.action, Action::KnobDialogArmNotificationCallback)
+        && matches!(wait.action, Action::KnobDialogWaitNotificationCallback)
+        && matches!(invoke.action, Action::KnobDialogInvokeNotification { message: 4 })
+        && matches!(&frame.action, Action::KnobDialogWaitNotificationFrame { clear: false, artifact, guest_ms, limit_ms } if valid_artifact(artifact) && *guest_ms > 0 && *limit_ms >= *guest_ms && *limit_ms <= frame.guest_timeout_ms)
+        && matches!(check.action, Action::KnobDialogExpectNotificationInvariants { clear: false })
+        && matches!(&clear.action, Action::KnobDialogWaitNotificationFrame { clear: true, artifact, guest_ms, limit_ms } if valid_artifact(artifact) && *guest_ms > 0 && *limit_ms >= *guest_ms && *limit_ms <= clear.guest_timeout_ms)
+        && matches!(check_clear.action, Action::KnobDialogExpectNotificationInvariants { clear: true }))
 }
 
 /// Expand includes. A fragment is shared, so its steps scoped only to models

@@ -122,6 +122,12 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobDialogObserveInvalidSignature { .. }
         | Action::KnobDialogSampleInvalidSignature
         | Action::KnobDialogRestoreInvalidSignature
+        | Action::KnobDialogPrepareNotification
+        | Action::KnobDialogArmNotificationCallback
+        | Action::KnobDialogWaitNotificationCallback
+        | Action::KnobDialogInvokeNotification { .. }
+        | Action::KnobDialogWaitNotificationFrame { .. }
+        | Action::KnobDialogExpectNotificationInvariants { .. }
         | Action::CaptureDisplay { .. }
         | Action::ExpectCapturedDisplayImage { .. }
         | Action::KnobDialog

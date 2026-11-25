@@ -287,6 +287,28 @@ pub fn step_label(action: &crate::Action) -> String {
             format!("Observe invalid signature for {guest_ms} ms guest time")
         }
         Action::KnobDialogSampleInvalidSignature => "Sample invalid signature rejection".into(),
+        Action::KnobDialogPrepareNotification => {
+            "Check dialog text and save notification baseline".into()
+        }
+        Action::KnobDialogArmNotificationCallback => "Arm notification callback breakpoint".into(),
+        Action::KnobDialogWaitNotificationCallback => "Wait for notification callback".into(),
+        Action::KnobDialogInvokeNotification { message } => {
+            format!("Invoke stock notification {message}")
+        }
+        Action::KnobDialogWaitNotificationFrame { clear, .. } => {
+            if *clear {
+                "Wait for notification to clear".into()
+            } else {
+                "Wait for notification frame".into()
+            }
+        }
+        Action::KnobDialogExpectNotificationInvariants { clear } => {
+            if *clear {
+                "Check scene after notification expiry".into()
+            } else {
+                "Check scene during notification".into()
+            }
+        }
         Action::KnobDialogRestoreInvalidSignature => {
             "Restore state and check signature rejection".into()
         }

@@ -131,3 +131,13 @@ it may have observed the previous boot's state. The dialog failure combines
 several checks and did not identify the failing subcondition. Both need
 investigation before claiming their causes are fixed. The QEMU executable was
 externally supplied and its source was not attested.
+
+Three later focused four-worker runs repeated the original cases with expanded
+dialog diagnostics. Firmware, card, state, audio and QEMU identities matched
+the full run; the instrumented runner differed. The dialog cases passed in all
+three runs. L6 warm reset
+failed once while the registry magic was zero and passed twice; its mixer-ready
+step took 0, 0 and 1 ms respectively. The immediate check can observe stale
+panel state and does not establish that the new boot reached the mixer, even
+when the following assertion passes. The reset readiness logic and combined
+dialog assertion are also present on `main` at `d6fc1fec`.

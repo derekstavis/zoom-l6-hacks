@@ -979,6 +979,19 @@ impl Runner {
                         devices::Operation::ExpectLiveUpdateMarkerAbsent,
                     ));
                 }
+                Action::MarkL6UpdatePending => {
+                    return Ok(Progress::Device(devices::Operation::MarkL6UpdatePending));
+                }
+                Action::ExpectL6UpdateResetVector => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectL6UpdateResetVector,
+                    ));
+                }
+                Action::ExpectL6UpdateComparison { field } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectL6UpdateComparison { field },
+                    ));
+                }
                 Action::CaptureUpdateMarkerPending => {
                     return Ok(Progress::Device(
                         devices::Operation::CaptureUpdateMarkerPending,

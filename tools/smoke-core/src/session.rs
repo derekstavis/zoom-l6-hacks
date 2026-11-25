@@ -532,6 +532,13 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     }
                     let mut boot = options.clone();
                     match profile {
+                        LifecycleBoot::Initial
+                            if runner.scenario.update_fixture
+                                == Some(crate::scenario::UpdateFixture::L6Stock) =>
+                        {
+                            boot.sd_image = None;
+                            boot.no_sd = true;
+                        }
                         LifecycleBoot::Initial | LifecycleBoot::Installer => {
                             if boot.sd_image.is_none() || boot.no_sd {
                                 return Err("update boot needs its staged card".into());
@@ -541,7 +548,13 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                                 .ok_or("missing frozen update package")?;
                             let card_package = sd_image::read_file(
                                 boot.sd_image.as_ref().unwrap(),
-                                "L6max.BIN",
+                                if runner.scenario.update_fixture
+                                    == Some(crate::scenario::UpdateFixture::L6Stock)
+                                {
+                                    "L6.BIN"
+                                } else {
+                                    "L6max.BIN"
+                                },
                                 package.len() as u64 + 1,
                             )
                             .map_err(|e| e.to_string())?;
@@ -553,6 +566,23 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                             boot.sd_image = None;
                             boot.no_sd = true;
                         }
+                    }
+                    if profile == LifecycleBoot::Installer
+                        && runner.scenario.update_fixture
+                            == Some(crate::scenario::UpdateFixture::L6Stock)
+                    {
+                        let frozen = pending_snapshot
+                            .as_deref()
+                            .ok_or("missing pending L6 snapshot")?;
+                        verify_frozen_snapshot(&options.logs.join("pending-main-nor.bin"), frozen)?;
+                        verify_frozen_snapshot(
+                            &boot
+                                .state_dir
+                                .as_ref()
+                                .ok_or("missing L6 state")?
+                                .join("main-nor.bin"),
+                            frozen,
+                        )?;
                     }
                     boot.update_bootloader =
                         matches!(profile, LifecycleBoot::Installer | LifecycleBoot::Restart);
@@ -617,7 +647,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     };
                     lifecycle_last_boot = Some(profile);
                     runner.restarted(&boot.logs);
-                    runner.device_finished(json!({"started":true,"profile":label,"card":matches!(profile, LifecycleBoot::Initial | LifecycleBoot::Installer),"replacement_installer":boot.update_bootloader}));
+                    runner.device_finished(json!({"started":true,"profile":label,"card": !boot.no_sd && boot.sd_image.is_some(),"replacement_installer":boot.update_bootloader}));
                 }
                 Progress::Device(devices::Operation::LifecycleStop) => {
                     device_state.restarted()?;
@@ -660,6 +690,106 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     }
                     runner.device_finished(json!({"update_marker":"none", "atomic":false}));
                 }
+                Progress::Device(devices::Operation::MarkL6UpdatePending) => {
+                    if session.is_some()
+                        || runner.scenario.update_fixture
+                            != Some(crate::scenario::UpdateFixture::L6Stock)
+                    {
+                        return Err(
+                            "L6 marker mutation requires the stopped L6 stock lifecycle".into()
+                        );
+                    }
+                    let path = options
+                        .state_dir
+                        .as_ref()
+                        .ok_or("marker requires persistent state")?
+                        .join("main-nor.bin");
+                    let mut nor = l6nor::MainNor::read(&path)?;
+                    l6nor::update::mark_l6_pending(&mut nor)?;
+                    l6nor::state::write_device_file(&path, nor.bytes())?;
+                    if l6nor::MainNor::read(&path)?.update_marker()
+                        != l6nor::nor::UpdateMarker::Pending
+                    {
+                        return Err("pending marker was not persisted".into());
+                    }
+                    runner.device_finished(
+                        json!({"update_marker":"pending","source":"explicit-offline-mutation"}),
+                    );
+                }
+                Progress::Device(devices::Operation::ExpectL6UpdateResetVector) => {
+                    let current = session
+                        .as_ref()
+                        .ok_or("reset vector check needs active guest")?;
+                    if current.engine.model() != l6fw::Model::L6 {
+                        return Err("reset vector check requires L6".into());
+                    }
+                    let package = managed_package
+                        .as_deref()
+                        .ok_or("missing frozen update package")?;
+                    let (_, segments) = l6fw::unpack_bytes(package).map_err(|e| e.to_string())?;
+                    let main = segments
+                        .get("main_firmware.bin")
+                        .ok_or("package lacks MAIN")?;
+                    let expected = main.get(4..8).ok_or("package MAIN lacks reset vector")?;
+                    let address = l6fw::Model::L6.main_base() + 4;
+                    let sample = l6ctl::OwnedControl::new(&current.engine)
+                        .read_main_memory(address, 4)
+                        .map_err(|e| e.to_string())?;
+                    if sample.bytes != expected {
+                        return Err(format!(
+                            "installed reset vector differs from package: {:02x?} != {expected:02x?}",
+                            sample.bytes
+                        ));
+                    }
+                    runner.device_finished(
+                        json!({"address":address,"bytes":sample.bytes,"atomic":sample.atomic}),
+                    );
+                }
+                Progress::Device(devices::Operation::ExpectL6UpdateComparison { field }) => {
+                    if session.is_some()
+                        || runner.scenario.update_fixture
+                            != Some(crate::scenario::UpdateFixture::L6Stock)
+                    {
+                        return Err("L6 comparison requires a stopped L6 stock lifecycle".into());
+                    }
+                    let state = options
+                        .state_dir
+                        .as_ref()
+                        .ok_or("L6 comparison needs persistent state")?;
+                    let frozen = pending_snapshot
+                        .as_deref()
+                        .ok_or("missing frozen pending NOR snapshot")?;
+                    verify_frozen_snapshot(&options.logs.join("pending-main-nor.bin"), frozen)?;
+                    let pending = l6nor::MainNor::from_bytes(frozen.to_vec())?;
+                    let installed = l6nor::MainNor::read(&state.join("main-nor.bin"))?;
+                    let resource =
+                        std::fs::read(state.join("resource-nor.bin")).map_err(|e| e.to_string())?;
+                    let comparison = l6nor::update::compare_l6(
+                        &pending,
+                        &installed,
+                        &resource,
+                        managed_package
+                            .as_deref()
+                            .ok_or("missing frozen update package")?,
+                    )?;
+                    use crate::scenario::L6UpdateField::*;
+                    let matched = match field {
+                        MainFirmware => comparison.segment_matches["main_firmware.bin"],
+                        MainTrailer => comparison.segment_matches["main_trailer.bin"],
+                        SecondaryFirmware => comparison.segment_matches["secondary_firmware.bin"],
+                        SecondaryTrailer => comparison.segment_matches["secondary_trailer.bin"],
+                        PackageFooter => comparison.segment_matches["package_footer.bin"],
+                        BootRegion => comparison.boot_region_preserved,
+                        ProtectedRegion => comparison.protected_region_preserved,
+                        ResourceNor => comparison.resource_nor_matches,
+                    };
+                    if !matched {
+                        return Err(format!(
+                            "L6 installed update comparison failed for {field:?}"
+                        ));
+                    }
+                    runner.device_finished(json!({"field":format!("{field:?}"),"matches":true}));
+                }
                 Progress::Device(devices::Operation::CaptureUpdateMarkerPending) => {
                     if session.is_some() {
                         return Err("pending marker requires a stopped guest".into());
@@ -670,8 +800,12 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         .ok_or("update marker requires persistent state")?;
                     let nor = l6nor::MainNor::read(&state.join("main-nor.bin"))?;
                     let marker = nor.update_marker();
-                    if marker == l6nor::nor::UpdateMarker::None {
-                        return Err("power handoff did not save update marker".into());
+                    if marker == l6nor::nor::UpdateMarker::None
+                        || (runner.scenario.update_fixture
+                            == Some(crate::scenario::UpdateFixture::L6Stock)
+                            && marker != l6nor::nor::UpdateMarker::Pending)
+                    {
+                        return Err("power handoff did not save a valid update marker".into());
                     }
                     let path = options.logs.join("pending-main-nor.bin");
                     use std::io::Write;

@@ -21,6 +21,9 @@ in resource-nor.bin, so L6 settings commands need the state directory.
 FIRMWARE is an unpacked firmware directory or an update package.
 
   info PATH                         model, versions, update marker, active bank, catalog
+  update-mark-l6-pending PATH       set the replacement installer marker on stopped L6 NOR
+  update-compare-l6 BEFORE AFTER RESOURCE PACKAGE
+                                    compare stopped L6 installation against a package
   update-compare BEFORE AFTER PANEL PACKAGE
                                     compare stopped L6max state against a validated update
   dump PATH                         every catalog field of the active settings bank
@@ -261,6 +264,26 @@ fn run() -> Result<(), String> {
     }
     let command = args.remove(0);
     match (text(&command)?, args.as_slice()) {
+        ("update-mark-l6-pending", [path]) => {
+            let path = Path::new(path);
+            let mut device = open(path)?;
+            l6nor::update::mark_l6_pending(&mut device.main)?;
+            persist(&device, path)?;
+            print_json(&json!({"model":"l6","update_marker":"pending"}));
+            Ok(())
+        }
+        ("update-compare-l6", [before, after, resource, package]) => {
+            let before = l6nor::MainNor::read(Path::new(before))?;
+            let after = l6nor::MainNor::read(Path::new(after))?;
+            let resource = fs::read(resource).map_err(|e| e.to_string())?;
+            let package = fs::read(package).map_err(|e| e.to_string())?;
+            let result = l6nor::update::compare_l6(&before, &after, &resource, &package)?;
+            println!(
+                "{}",
+                serde_json::to_string(&result).map_err(|e| e.to_string())?
+            );
+            Ok(())
+        }
         ("update-compare", [before, after, panel, package]) => {
             let before = l6nor::MainNor::read(Path::new(before))?;
             let after = l6nor::MainNor::read(Path::new(after))?;

@@ -48,7 +48,7 @@ tables. Unknown header fields fail parsing.
 | `installed_patches` | no | Patches the engine installs on a device seeded with the model's stock package, as `--patch` does. |
 | `installed_sd_patches` | no | Patches the engine delivers on the case's card, as `--sd-patch` does: it installs the Patch loader and writes the hosted modules to `PATCHES/`. Requires `card`; cannot combine with `sd_patches`. |
 | `update_patches` | no | Patches per model for the case's update package, built from the model's package. |
-| `update_fixture` | no | Build a case-local L6max 1.10 update card: synthetic `bad-checksum`, synthetic `synthetic-valid`, or browser-built `patched-midi`. Managed update scenarios require an isolated headless lifecycle. |
+| `update_fixture` | no | Build a case-local update card: stock L6 `l6-stock`, synthetic L6max `bad-checksum` or `synthetic-valid`, or browser-built L6max `patched-midi`. Managed update scenarios require an isolated headless lifecycle. |
 | `update_goal` | no | Select the complete valid-update `handoff` or `install` lifecycle. |
 | `gdb` | no | Enable the debugger socket. |
 | `audio_device` | no | QEMU audio-device syntax; `{logs}` expands to the case's log directory. |
@@ -281,6 +281,9 @@ message delivered just after the interval.
 | `expect-live-update-marker-absent` | — | Assert the marker is absent from the live state file before power handoff; this sample is non-atomic. |
 | `expect-update-gui` | `window`, `progress_mask`, `progress_value` | Assert the guarded current update window and masked progress flags. |
 | `capture-update-marker-pending` | — | Require the stopped guest's pending marker and save/hash its case-local MAIN NOR snapshot. |
+| `mark-l6-update-pending` | — | Explicitly set and flush the replacement-installer marker in a stopped L6 fixture; this does not emulate a firmware handoff. |
+| `expect-l6-update-reset-vector` | — | Compare the live L6 MAIN reset vector against the frozen package. |
+| `expect-l6-update-comparison` | `field` | Compare one of the five installed L6 package segments, boot/protected NOR, or entire resource NOR against frozen package and pending-state data. |
 | `expect-installer-outcome` | `expected` | Assert the typed emulator replacement-installer result for this boot. |
 | `wait-update-panel-ready` | `require_programming` | Under one guest/wall deadline, wait until the expected panel image, mode and RTC response agree simultaneously. When `require_programming` is true, require 64 writes and the image-verification trace too. |
 | `wait-usb-controller` | — | Attach raw USB and wait for controller readiness within the step’s guest and wall deadlines. |

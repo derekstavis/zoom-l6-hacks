@@ -60,6 +60,7 @@ pub enum MidiProbePort {
 #[serde(rename_all = "kebab-case")]
 pub enum UpdateFixture {
     BadChecksum,
+    L6Stock,
     SyntheticValid,
     PatchedMidi,
 }
@@ -95,6 +96,19 @@ pub enum UpdateComparisonField {
     BootRegion,
     ProtectedRegion,
     PanelImage,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, schemars::JsonSchema, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum L6UpdateField {
+    MainFirmware,
+    MainTrailer,
+    SecondaryFirmware,
+    SecondaryTrailer,
+    PackageFooter,
+    BootRegion,
+    ProtectedRegion,
+    ResourceNor,
 }
 
 impl Backend {
@@ -283,6 +297,11 @@ pub enum Action {
     ExpectUpdateMarkerAbsent,
     ExpectLiveUpdateMarkerAbsent,
     CaptureUpdateMarkerPending,
+    MarkL6UpdatePending,
+    ExpectL6UpdateResetVector,
+    ExpectL6UpdateComparison {
+        field: L6UpdateField,
+    },
     ExpectInstallerOutcome {
         expected: InstallerExpected,
     },

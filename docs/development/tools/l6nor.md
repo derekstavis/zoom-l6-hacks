@@ -134,3 +134,15 @@ reproduces the first-boot setup flow without input. The `state-spec` case checks
 result.
 
 `cargo l6nor update-compare BEFORE AFTER PANEL PACKAGE` compares stopped L6max NOR snapshots and panel flash against a validated update package. It prints separate payload, protected-region, marker and panel results; the caller decides which results to assert.
+
+
+`cargo l6nor update-mark-l6-pending PATH` explicitly sets and flushes the
+replacement-installer marker in a **stopped** L6 state or MAIN NOR file. It
+rejects an existing or stale failure marker. This creates a simulator fixture;
+it does not emulate an L6 firmware handoff.
+
+`cargo l6nor update-compare-l6 BEFORE AFTER RESOURCE PACKAGE` compares stopped
+L6 MAIN NOR snapshots and the full resource NOR against an L6 update package.
+It returns individual results for all five installed segments, both preserved
+regions, the pending marker and the complete resource image. The caller decides
+which observations to assert.

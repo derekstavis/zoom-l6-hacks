@@ -411,6 +411,9 @@ impl State {
             | Operation::ExpectUpdateMarkerAbsent
             | Operation::ExpectLiveUpdateMarkerAbsent
             | Operation::CaptureUpdateMarkerPending
+            | Operation::MarkL6UpdatePending
+            | Operation::ExpectL6UpdateResetVector
+            | Operation::ExpectL6UpdateComparison { .. }
             | Operation::ExpectUpdateGui { .. }
             | Operation::ExpectInstallerOutcome { .. }
             | Operation::WaitUpdatePanelReady { .. }

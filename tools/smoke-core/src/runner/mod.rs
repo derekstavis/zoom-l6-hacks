@@ -754,15 +754,6 @@ impl Runner {
                         chain_count,
                     }));
                 }
-                Action::ExpectSdPatch {
-                    loaded,
-                    chain_count,
-                } => {
-                    return Ok(Progress::Device(devices::Operation::ExpectSdPatch {
-                        loaded,
-                        chain_count,
-                    }));
-                }
                 Action::EffectParameterEdit { encoder, steps } => {
                     return Ok(Progress::Device(devices::Operation::EffectParameterEdit {
                         encoder,

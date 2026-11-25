@@ -40,7 +40,10 @@ action = "expect-card-entry"
 path = "RECORDER"
 
 [[step]]
-action = "expect-sd-patch"
+action = "expect-sd-loader"
+
+[[step]]
+action = "expect-sd-module"
 loaded = false
 
 [[step]]

@@ -1121,11 +1121,7 @@ impl Scenario {
                     }
                 }
             }
-            if let Action::ExpectSdPatch {
-                loaded,
-                chain_count,
-            }
-            | Action::ExpectSdModule {
+            if let Action::ExpectSdModule {
                 loaded,
                 chain_count,
             } = &step.action

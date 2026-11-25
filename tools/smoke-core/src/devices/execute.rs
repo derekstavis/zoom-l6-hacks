@@ -610,7 +610,6 @@ impl State {
                 )
                 .map_err(std::io::Error::other)?;
                 self.sd_inspection = Some(sd::SdInspectionContext {
-                    main,
                     fixture,
                     wall_deadline,
                     guest_start: operation_start.1,
@@ -619,48 +618,18 @@ impl State {
                 });
                 Ok(json!({"guarded_hooks":guarded}))
             }
-            operation @ (Operation::ExpectSdPatch { .. } | Operation::ExpectSdModule { .. }) => {
-                let (loaded, chain_count, split) = match operation {
-                    Operation::ExpectSdPatch {
-                        loaded,
-                        chain_count,
-                    } => (loaded, chain_count, false),
-                    Operation::ExpectSdModule {
-                        loaded,
-                        chain_count,
-                    } => (loaded, chain_count, true),
-                    _ => unreachable!(),
-                };
-                let (
-                    main,
-                    fixture,
-                    inspection_deadline,
-                    inspection_guest_start,
-                    inspection_guest_budget,
-                ) = if split {
-                    let context = self
-                        .sd_inspection
-                        .take()
-                        .ok_or("SD module assertion needs preceding loader assertion")?;
-                    (
-                        context.main,
-                        context.fixture,
-                        context.wall_deadline,
-                        context.guest_start,
-                        context.guest_timeout_ms,
-                    )
-                } else {
-                    let main = selected_main_image(options).map_err(std::io::Error::other)?;
-                    let fixture = freeze_sd_fixture(options, &main, session.engine.model())
-                        .map_err(std::io::Error::other)?;
-                    (
-                        main,
-                        fixture,
-                        operation_start.0 + Duration::from_secs(wall_timeout_s),
-                        operation_start.1,
-                        guest_timeout_ms,
-                    )
-                };
+            Operation::ExpectSdModule {
+                loaded,
+                chain_count,
+            } => {
+                let context = self
+                    .sd_inspection
+                    .take()
+                    .ok_or("SD module assertion needs preceding loader assertion")?;
+                let fixture = context.fixture;
+                let inspection_deadline = context.wall_deadline;
+                let inspection_guest_start = context.guest_start;
+                let inspection_guest_budget = context.guest_timeout_ms;
                 let sd::FrozenSdFixture {
                     edits: fixture,
                     loader_report: frozen_loader,
@@ -669,43 +638,6 @@ impl State {
                 } = fixture;
                 let (edits, link_base, payload, _, _relocations, module_hooks, module_images) =
                     fixture;
-                let qmp = &session.engine.management[0];
-                let image_base = session.engine.model().main_base();
-                // The patch loader's own hook sites (patches/patch-loader),
-                // which its build report does not list.
-                let loader_calls: &[u32] = match session.engine.model() {
-                    l6fw::Model::L6 => &[0x8000_9a60, 0x8000_9aa0],
-                    l6fw::Model::L6max => &[
-                        l6max::sys_main_startup_initialize,
-                        0x8000_e9fa,
-                        0x8000_ea24,
-                        0x8001_0118,
-                        0x8002_bc7e,
-                        0x8000_ebac,
-                    ],
-                };
-                for &address in if split { &[] } else { loader_calls } {
-                    let offset = (address - image_base) as usize;
-                    let expected = main
-                        .get(offset..offset + 4)
-                        .ok_or("Patch loader image too short")?;
-                    if qmp.read_memory(0, address, 4)? != expected {
-                        return Err(
-                            format!("persistent loader hook missing at {address:#010x}").into()
-                        );
-                    }
-                }
-                for (address, original, _entry_offset) in if split { &[][..] } else { &edits[..] } {
-                    let offset = (*address - image_base) as usize;
-                    let expected = &main[offset..offset + original.len()];
-                    let actual = qmp.read_memory(0, *address, expected.len())?;
-                    if actual != expected {
-                        return Err(format!(
-                            "persistent SD dispatch stub missing at {address:#010x}"
-                        )
-                        .into());
-                    }
-                }
                 // Without a card mount since the last reset the loader has no
                 // registry, so every dispatch stub takes the stock path.
                 // A successful loader claim is published only after the SD
@@ -713,61 +645,36 @@ impl State {
                 // signal when a module is expected; absence checks remain
                 // immediate and require their own observation window.
                 let control = l6ctl::OwnedControl::new(&session.engine);
-                let reader = if split {
-                    Some(
-                        control
-                            .sd_loader_reader(inspection_deadline)
-                            .map_err(std::io::Error::other)?,
-                    )
-                } else {
-                    None
-                };
-                let read_live = |address: u32,
-                                 length: usize|
-                 -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-                    if let Some(reader) = &reader {
+                let reader = control
+                    .sd_loader_reader(inspection_deadline)
+                    .map_err(std::io::Error::other)?;
+                let read_live =
+                    |address: u32, length: usize| -> Result<Vec<u8>, Box<dyn std::error::Error>> {
                         reader
                             .read_chunk_cancellable(address, length, inspection_deadline, || {
                                 guest_now(session).wrapping_sub(inspection_guest_start)
                                     >= inspection_guest_budget
                             })
                             .map_err(|e| std::io::Error::other(e).into())
-                    } else {
-                        Ok(qmp.read_memory(0, address, length)?)
-                    }
-                };
-                let typed_snapshot = if let Some(reader) = &reader {
-                    Some(if loaded {
-                        wait_sd_loader_snapshot(
-                            session,
-                            reader,
-                            inspection_deadline,
-                            inspection_guest_start,
-                            inspection_guest_budget,
-                        )
-                        .map_err(std::io::Error::other)?
-                    } else {
-                        reader
-                            .snapshot_cancellable(inspection_deadline, || {
-                                guest_now(session).wrapping_sub(inspection_guest_start)
-                                    >= inspection_guest_budget
-                            })
-                            .map_err(std::io::Error::other)?
-                    })
-                } else {
-                    None
-                };
-                let registry = if let Some(state) = &typed_snapshot {
-                    state.registry
-                } else if loaded {
-                    Some(wait_sd_patch_loaded(
+                    };
+                let typed_snapshot = if loaded {
+                    wait_sd_loader_snapshot(
                         session,
-                        guest_timeout_ms,
-                        wall_timeout_s,
-                    )?)
+                        &reader,
+                        inspection_deadline,
+                        inspection_guest_start,
+                        inspection_guest_budget,
+                    )
+                    .map_err(std::io::Error::other)?
                 } else {
-                    sd_registry_if_allocated(qmp, session.engine.model())?
+                    reader
+                        .snapshot_cancellable(inspection_deadline, || {
+                            guest_now(session).wrapping_sub(inspection_guest_start)
+                                >= inspection_guest_budget
+                        })
+                        .map_err(std::io::Error::other)?
                 };
+                let registry = typed_snapshot.registry;
                 let Some(registry) = registry else {
                     if loaded {
                         return Err("the Patch loader has not allocated its registry".into());
@@ -775,60 +682,35 @@ impl State {
                     return Ok(json!({"loaded":false,"registry":null,"guarded_hooks":edits.len()}));
                 };
                 let inspect_chain = |record| -> Result<_, Box<dyn std::error::Error>> {
-                    if let Some(reader) = &reader {
-                        sd_typed_site_chain(
-                            reader,
-                            session,
-                            registry,
-                            record,
-                            inspection_deadline,
-                            inspection_guest_start,
-                            inspection_guest_budget,
-                        )
-                        .map_err(|e| std::io::Error::other(e).into())
-                    } else {
-                        sd_site_chain(qmp, record)
-                    }
+                    sd_typed_site_chain(
+                        &reader,
+                        session,
+                        registry,
+                        record,
+                        inspection_deadline,
+                        inspection_guest_start,
+                        inspection_guest_budget,
+                    )
+                    .map_err(|e| std::io::Error::other(e).into())
                 };
                 let slot_for = |address| {
                     sd_frozen_handler_slot(&frozen_loader, registry, address)
                         .map_err(std::io::Error::other)
                 };
-                let loaded_base = if let Some(state) = &typed_snapshot {
-                    state.module_base.ok_or("SD module base missing")?
-                } else {
-                    u32::from_le_bytes(read_live(registry + 160, 4)?.try_into().unwrap())
-                };
-                let loaded_len = if let Some(state) = &typed_snapshot {
-                    state.module_len.ok_or("SD module length missing")?
-                } else {
-                    u32::from_le_bytes(read_live(registry + 164, 4)?.try_into().unwrap())
-                };
+                let loaded_base = typed_snapshot.module_base.ok_or("SD module base missing")?;
+                let loaded_len = typed_snapshot
+                    .module_len
+                    .ok_or("SD module length missing")?;
                 let known_module_size = module_images
                     .iter()
                     .any(|(module_payload, _, _)| module_payload.len() == loaded_len as usize);
                 if loaded != (loaded_base != 0) || (loaded && !known_module_size) {
-                    let stage = if let Some(state) = &typed_snapshot {
-                        state.stage.unwrap_or_default()
-                    } else {
-                        u32::from_le_bytes(read_live(registry + 4, 4)?.try_into().unwrap())
-                    };
-                    return Err(format!(
-                        "SD allocation state loaded={loaded}, base={loaded_base:#010x}, len={loaded_len}, loader stage={stage:#x}"
-                    )
-                    .into());
+                    let stage = typed_snapshot.stage.unwrap_or_default();
+                    return Err(format!("SD allocation state loaded={loaded}, base={loaded_base:#010x}, len={loaded_len}, loader stage={stage:#x}").into());
                 }
-                let claim = if let Some(state) = &typed_snapshot {
-                    state.claim.ok_or("SD claim missing")?
-                } else {
-                    u32::from_le_bytes(read_live(registry + 8, 4)?.try_into().unwrap())
-                };
+                let claim = typed_snapshot.claim.ok_or("SD claim missing")?;
                 if (claim == 1) != loaded {
-                    let stage = if let Some(state) = &typed_snapshot {
-                        state.stage.unwrap_or_default()
-                    } else {
-                        u32::from_le_bytes(read_live(registry + 4, 4)?.try_into().unwrap())
-                    };
+                    let stage = typed_snapshot.stage.unwrap_or_default();
                     return Err(format!(
                         "SD module loaded={loaded}, claim={claim:#x}, loader stage={stage:#x}"
                     )

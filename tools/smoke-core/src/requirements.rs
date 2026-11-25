@@ -181,7 +181,6 @@ pub fn of(action: &Action) -> Requirement {
         | Action::WaitMemory { .. }
         | Action::ExpectSdLoader
         | Action::ExpectSdModule { .. }
-        | Action::ExpectSdPatch { .. }
         | Action::EffectParameterEdit { .. }
         | Action::EffectReplacementState { .. }
         | Action::ExpectHeap { .. }

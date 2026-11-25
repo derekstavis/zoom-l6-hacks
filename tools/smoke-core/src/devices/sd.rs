@@ -17,7 +17,6 @@ pub(super) type SdEdits = (
 );
 
 pub(super) struct SdInspectionContext {
-    pub main: Vec<u8>,
     pub fixture: FrozenSdFixture,
     pub wall_deadline: Instant,
     pub guest_start: u32,
@@ -1072,64 +1071,6 @@ pub(super) fn sd_frozen_handler_slot(
 
 /// A dispatch site's registry record, at the record's address, and the links
 /// it chains, read from guest memory.
-pub(super) fn sd_site_chain(
-    qmp: &l6max_host::qmp::QmpClient,
-    record: u32,
-) -> Result<
-    (
-        patch_abi::dynamic::SiteChain,
-        Vec<patch_abi::dynamic::HookLink>,
-    ),
-    Box<dyn std::error::Error>,
-> {
-    let words = |address: u32, count: usize| -> Result<Vec<u32>, Box<dyn std::error::Error>> {
-        Ok(qmp
-            .read_memory(0, address, count * 4)?
-            .chunks_exact(4)
-            .map(|word| u32::from_le_bytes(word.try_into().unwrap()))
-            .collect())
-    };
-    let value = words(record, 4)?;
-    let chain = patch_abi::dynamic::SiteChain {
-        handler: value[0],
-        first: value[1],
-        last: value[2],
-        count: value[3],
-    };
-    let mut links = Vec::new();
-    let mut next = chain.first;
-    while next != 0 {
-        if links.len() >= chain.count as usize {
-            return Err(format!(
-                "site record {record:#010x} chains more than {} links",
-                chain.count
-            )
-            .into());
-        }
-        let value = words(next, 6)?;
-        links.push(patch_abi::dynamic::HookLink {
-            entry: value[0],
-            next_slot: value[1],
-            order: value[2],
-            module_base: value[3],
-            next: value[4],
-            site: value[5],
-        });
-        next = value[4];
-    }
-    if links.len() != chain.count as usize
-        || links.last().is_some_and(|_| chain.last == 0)
-        || (chain.count != 0 && chain.handler != links[0].entry)
-    {
-        return Err(format!(
-            "site record {record:#010x} is inconsistent: {chain:?}, {} links",
-            links.len()
-        )
-        .into());
-    }
-    Ok((chain, links))
-}
-
 /// Use the guarded host interpretation while retaining the existing assertion types.
 pub(super) fn sd_typed_site_chain(
     reader: &l6max_host::sd_loader::Reader<'_>,

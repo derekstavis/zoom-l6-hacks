@@ -514,11 +514,6 @@ pub enum Action {
         #[serde(default)]
         chain_count: Option<u8>,
     },
-    ExpectSdPatch {
-        loaded: bool,
-        #[serde(default)]
-        chain_count: Option<u8>,
-    },
     EffectParameterEdit {
         encoder: usize,
         steps: i32,

@@ -23,7 +23,10 @@ guest_timeout_ms = 30000
 wall_timeout_s = 300
 
 [[step]]
-action = "expect-sd-patch"
+action = "expect-sd-loader"
+
+[[step]]
+action = "expect-sd-module"
 loaded = true
 
 [[step]]
@@ -35,7 +38,10 @@ action = "expect-card-entry"
 path = "RECORDER"
 
 [[step]]
-action = "expect-sd-patch"
+action = "expect-sd-loader"
+
+[[step]]
+action = "expect-sd-module"
 loaded = true
 
 [[step]]
@@ -56,7 +62,10 @@ guest_timeout_ms = 60000
 wall_timeout_s = 300
 
 [[step]]
-action = "expect-sd-patch"
+action = "expect-sd-loader"
+
+[[step]]
+action = "expect-sd-module"
 loaded = true
 
 [[step]]
@@ -159,7 +168,10 @@ guest_timeout_ms = 180000
 wall_timeout_s = 600
 
 [[step]]
-action = "expect-sd-patch"
+action = "expect-sd-loader"
+
+[[step]]
+action = "expect-sd-module"
 loaded = true
 
 [[step]]

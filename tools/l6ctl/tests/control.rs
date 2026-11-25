@@ -846,3 +846,49 @@ fn effect_editor_client_uses_bounded_typed_wire_contract() {
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn panel_key_client_and_cli_use_typed_wire_contract() {
+    let path = socket_path();
+    let result = json!({"revision_guard":"l6max_1_10_panel_handler_and_gui","atomic":false,"key_code":25,"bit":1,"word_index":4,"words":[0,0,0,0,2,0]});
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"panel-key","code":25}),
+                json!({"ok":true,"result":result}),
+            ),
+            (
+                json!({"command":"panel-key","code":25}),
+                json!({"ok":true,"result":result}),
+            ),
+        ],
+    );
+    let sample = ControlClient::new(&path).panel_key(25).unwrap();
+    assert_eq!(
+        (
+            sample.key_code,
+            sample.bit,
+            sample.word_index,
+            sample.words[4]
+        ),
+        (25, 1, 4, 2)
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["panel-key", "25"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        result
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}

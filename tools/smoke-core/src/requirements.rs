@@ -83,7 +83,10 @@ pub fn of(action: &Action) -> Requirement {
         Action::L6DinUsbForwarding | Action::L6InputSweep => on(L6),
         Action::L6maxRecorderPlayback { .. }
         | Action::L6maxInputTiming
-        | Action::L6maxPanelKeyMap
+        | Action::L6maxPanelKeyBegin
+        | Action::L6maxPanelKeyCheck { .. }
+        | Action::L6maxPanelKeyInput { .. }
+        | Action::L6maxPanelKeyEnd
         | Action::MidiProbeBegin
         | Action::MidiProbeSendCc { .. }
         | Action::MidiProbeExpectRing { .. }

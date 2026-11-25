@@ -348,6 +348,15 @@ fn execute(
             serde_json::to_value(crate::effect_editor::Reader::new(qmp, model, binding)?.read()?)
                 .map_err(|e| e.to_string())
         }
+        "panel-key" => {
+            let code = request
+                .get("code")
+                .and_then(Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok())
+                .ok_or("panel-key needs a code")?;
+            serde_json::to_value(crate::panel_keys::snapshot(qmp, model, code)?)
+                .map_err(|e| e.to_string())
+        }
         "midi-config" => serde_json::to_value(crate::midi_config::config(qmp, model)?)
             .map_err(|error| error.to_string()),
         "rtos" => {

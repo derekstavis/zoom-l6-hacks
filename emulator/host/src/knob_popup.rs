@@ -80,6 +80,14 @@ pub struct NavigationSnapshot {
     pub callback: Vec<u8>,
 }
 
+/// Ordered widget and layer reads; the guest remains running.
+#[derive(Clone, Debug)]
+pub struct OverlayDescriptors {
+    pub widget7: Vec<u8>,
+    pub widget33: Vec<u8>,
+    pub backgrounds: [Vec<u8>; 3],
+}
+
 /// Non-atomic GUI state; display pixels are sampled separately by PanelFeed.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct RecorderState {
@@ -350,6 +358,53 @@ impl Reader<'_> {
             .ok_or("short mixer level".into())
     }
 
+    /// Current recorder window as its raw word.
+    pub fn window(&self) -> Result<Vec<u8>, String> {
+        self.qmp
+            .read_memory(0, l6max::current_window, 4)
+            .map_err(|e| e.to_string())
+    }
+    /// Widget and background descriptors in original firmware-check order.
+    pub fn overlay_descriptors(
+        &self,
+        widget7: u32,
+        widget33: u32,
+        backgrounds: [u32; 3],
+    ) -> Result<OverlayDescriptors, String> {
+        let read = |address, len| {
+            self.qmp
+                .read_memory(0, address, len)
+                .map_err(|e| e.to_string())
+        };
+        Ok(OverlayDescriptors {
+            widget7: read(widget7, 16)?,
+            widget33: read(widget33, 16)?,
+            backgrounds: [
+                read(backgrounds[0], 1)?,
+                read(backgrounds[1], 1)?,
+                read(backgrounds[2], 1)?,
+            ],
+        })
+    }
+    /// Resource 179 pointer from a previously captured text table.
+    pub fn shared_resource_pointer(&self, table: u32) -> Result<Vec<u8>, String> {
+        self.qmp
+            .read_memory(0, table + 179 * 4, 4)
+            .map_err(|e| e.to_string())
+    }
+    /// Current dialog signature bytes.
+    pub fn state_signature(&self) -> Result<Vec<u8>, String> {
+        self.qmp
+            .read_memory(0, l6max::gui_bitmap_table_entry_0, 2)
+            .map_err(|e| e.to_string())
+    }
+    /// Current pointer for bitmap 36.
+    pub fn bitmap36(&self) -> Result<Vec<u8>, String> {
+        self.qmp
+            .read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)
+            .map_err(|e| e.to_string())
+    }
+
     /// Dialog inactivity countdown byte, sampled independently.
     pub fn countdown_ticks(&self) -> Result<u8, String> {
         self.qmp
@@ -390,6 +445,45 @@ impl Reader<'_> {
                 .map_err(|error| error.to_string())
         })
     }
+}
+
+/// Revision-checked reader for one bounded overlay transaction.
+/// Recreate after guest restart or firmware changes.
+pub struct OverlayReader {
+    qmp: QmpClient,
+}
+impl OverlayReader {
+    fn borrowed(&self) -> Reader<'_> {
+        Reader { qmp: &self.qmp }
+    }
+    pub fn window(&self) -> Result<Vec<u8>, String> {
+        self.borrowed().window()
+    }
+    pub fn overlay_descriptors(
+        &self,
+        widget7: u32,
+        widget33: u32,
+        backgrounds: [u32; 3],
+    ) -> Result<OverlayDescriptors, String> {
+        self.borrowed()
+            .overlay_descriptors(widget7, widget33, backgrounds)
+    }
+    pub fn shared_resource_pointer(&self, table: u32) -> Result<Vec<u8>, String> {
+        self.borrowed().shared_resource_pointer(table)
+    }
+    pub fn state_signature(&self) -> Result<Vec<u8>, String> {
+        self.borrowed().state_signature()
+    }
+    pub fn bitmap36(&self) -> Result<Vec<u8>, String> {
+        self.borrowed().bitmap36()
+    }
+}
+
+pub fn overlay_reader(qmp: &QmpClient, model: Model) -> Result<OverlayReader, String> {
+    verify(model, &mut |address, size| {
+        qmp.read_memory(0, address, size).map_err(|e| e.to_string())
+    })?;
+    Ok(OverlayReader { qmp: qmp.clone() })
 }
 
 /// GUI reader additionally guarded by the parameter-mode getter code.

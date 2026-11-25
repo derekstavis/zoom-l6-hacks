@@ -22,12 +22,30 @@ fn knob_dialog_phase(
         Operation::KnobDialogActiveDisplay => Some(10),
         Operation::KnobDialogLevelDemo => Some(11),
         Operation::KnobDialogTaskContexts => Some(12),
-        Operation::KnobDialogOverlayInvariants => Some(13),
-        Operation::KnobDialogBitmapZero => Some(14),
-        Operation::KnobDialogActiveOverlay => Some(15),
-        Operation::KnobDialogLockedUpdate => Some(16),
+        Operation::KnobOverlayBegin => Some(13),
+        Operation::KnobOverlayCheckWindow => Some(14),
+        Operation::KnobOverlaySnapshotDescriptors => Some(15),
+        Operation::KnobOverlayFinishDescriptors => Some(21),
+        Operation::KnobOverlayCheckResource => Some(22),
+        Operation::KnobOverlayCheckCorners => Some(23),
+        Operation::KnobOverlayCheckSignature => Some(24),
+        Operation::KnobOverlayCheckBitmap => Some(25),
+        Operation::KnobOverlayCheckHeap => Some(26),
+        Operation::KnobOverlayFinish => Some(27),
+        Operation::KnobDialogBitmapZero => Some(28),
+        Operation::KnobDialogActiveOverlay => Some(29),
+        Operation::KnobDialogLockedUpdate => Some(30),
+        Operation::KnobOverlayCheckDescriptor { field } => Some(
+            16 + match field {
+                crate::scenario::OverlayDescriptorField::Widget7 => 0,
+                crate::scenario::OverlayDescriptorField::Widget33 => 1,
+                crate::scenario::OverlayDescriptorField::Background10 => 2,
+                crate::scenario::OverlayDescriptorField::Background37 => 3,
+                crate::scenario::OverlayDescriptorField::Background48 => 4,
+            },
+        ),
         Operation::KnobDialogModeBegin { .. } => {
-            next_mode.and_then(|index| u16::try_from(17 + index * 10).ok())
+            next_mode.and_then(|index| u16::try_from(31 + index * 10).ok())
         }
         Operation::KnobDialogAdaptive { .. }
         | Operation::KnobDialogInjectInvalidTag { .. }
@@ -56,12 +74,12 @@ fn knob_dialog_phase(
         | Operation::KnobDialogSnapshotNavigation
         | Operation::KnobDialogCheckNavigation { .. }
         | Operation::KnobDialog => next_mode
-            .and_then(|index| u16::try_from(17 + index * 10 + usize::from(final_phase?)).ok()),
+            .and_then(|index| u16::try_from(31 + index * 10 + usize::from(final_phase?)).ok()),
         Operation::CaptureDisplay { .. }
             if scope.is_none() && matches!(final_phase, Some(22 | 44 | 47)) =>
         {
             next_mode
-                .and_then(|index| u16::try_from(17 + index * 10 + usize::from(final_phase?)).ok())
+                .and_then(|index| u16::try_from(31 + index * 10 + usize::from(final_phase?)).ok())
         }
         _ => None,
     };
@@ -86,7 +104,7 @@ fn knob_dialog_phase(
         Operation::KnobDialogModeEnd => 9,
         _ => return None,
     };
-    Some(17 + scope.index as u16 * 10 + offset)
+    Some(31 + scope.index as u16 * 10 + offset)
 }
 
 type KnobDeadline = (Instant, u32, u32, u64, u16);
@@ -282,6 +300,7 @@ impl State {
     }
     pub fn abort_knob_preflight(&mut self) -> Result<(), String> {
         self.knob_mode = None;
+        self.overlay_reader = None;
         self.knob_heap_reader = None;
         self.pending_input = None;
         self.captured_display = None;
@@ -2544,23 +2563,119 @@ impl State {
                     .ok_or("missing knob-dialog preflight")?;
                 run_task_contexts(session, options, context, guest_timeout_ms, wall_timeout_s)
             }
-            operation @ (Operation::KnobDialogOverlayInvariants
-            | Operation::KnobDialogBitmapZero
-            | Operation::KnobDialogActiveOverlay) => {
+            Operation::KnobOverlayBegin => {
+                begin_overlay_invariants(
+                    session,
+                    options,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                )?;
+                self.overlay_reader =
+                    Some(l6ctl::OwnedControl::new(&session.engine).knob_overlay_reader()?);
+                Ok(json!({"overlay": "opened"}))
+            }
+            Operation::KnobOverlayCheckWindow => {
+                check_overlay_window(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing overlay reader")?,
+                )?;
+                Ok(json!({"checked": true}))
+            }
+            Operation::KnobOverlaySnapshotDescriptors => {
+                snapshot_overlay_descriptors(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing overlay reader")?,
+                )?;
+                Ok(json!({"checked": true}))
+            }
+            Operation::KnobOverlayFinishDescriptors => {
+                finish_overlay_descriptors(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                )?;
+                Ok(json!({"checked": true}))
+            }
+            Operation::KnobOverlayCheckResource => {
+                check_overlay_resource(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing overlay reader")?,
+                )?;
+                Ok(json!({"checked": true}))
+            }
+            Operation::KnobOverlayCheckCorners => {
+                check_overlay_corners(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                )?;
+                Ok(json!({"checked": true}))
+            }
+            Operation::KnobOverlayCheckSignature => {
+                check_overlay_signature(
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing overlay reader")?,
+                )?;
+                Ok(json!({"checked": true}))
+            }
+            Operation::KnobOverlayCheckBitmap => {
+                check_overlay_bitmap(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing overlay reader")?,
+                )?;
+                Ok(json!({"checked": true}))
+            }
+            Operation::KnobOverlayCheckDescriptor { field } => check_overlay_descriptor(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                field,
+            ),
+            Operation::KnobOverlayCheckHeap => check_overlay_heap(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobOverlayFinish => {
+                let value = finish_overlay_invariants(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                )?;
+                self.overlay_reader = None;
+                Ok(value)
+            }
+            operation @ (Operation::KnobDialogBitmapZero | Operation::KnobDialogActiveOverlay) => {
                 let phase = match operation {
-                    Operation::KnobDialogOverlayInvariants => OverlayPhase::Invariants,
                     Operation::KnobDialogBitmapZero => OverlayPhase::BitmapZero,
                     Operation::KnobDialogActiveOverlay => OverlayPhase::Refreshed,
                     _ => unreachable!(),
                 };
-                let context = self
-                    .knob_dialog_preflight
-                    .as_mut()
-                    .ok_or("missing knob-dialog preflight")?;
                 run_active_overlay(
                     session,
                     options,
-                    context,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
                     phase,
                     guest_timeout_ms,
                     wall_timeout_s,
@@ -2897,7 +3012,31 @@ mod knob_phase_tests {
             Operation::KnobDialogActiveDisplay,
             Operation::KnobDialogLevelDemo,
             Operation::KnobDialogTaskContexts,
-            Operation::KnobDialogOverlayInvariants,
+            Operation::KnobOverlayBegin,
+            Operation::KnobOverlayCheckWindow,
+            Operation::KnobOverlaySnapshotDescriptors,
+            Operation::KnobOverlayCheckDescriptor {
+                field: crate::scenario::OverlayDescriptorField::Widget7,
+            },
+            Operation::KnobOverlayCheckDescriptor {
+                field: crate::scenario::OverlayDescriptorField::Widget33,
+            },
+            Operation::KnobOverlayCheckDescriptor {
+                field: crate::scenario::OverlayDescriptorField::Background10,
+            },
+            Operation::KnobOverlayCheckDescriptor {
+                field: crate::scenario::OverlayDescriptorField::Background37,
+            },
+            Operation::KnobOverlayCheckDescriptor {
+                field: crate::scenario::OverlayDescriptorField::Background48,
+            },
+            Operation::KnobOverlayFinishDescriptors,
+            Operation::KnobOverlayCheckResource,
+            Operation::KnobOverlayCheckCorners,
+            Operation::KnobOverlayCheckSignature,
+            Operation::KnobOverlayCheckBitmap,
+            Operation::KnobOverlayCheckHeap,
+            Operation::KnobOverlayFinish,
             Operation::KnobDialogBitmapZero,
             Operation::KnobDialogActiveOverlay,
             Operation::KnobDialogLockedUpdate,

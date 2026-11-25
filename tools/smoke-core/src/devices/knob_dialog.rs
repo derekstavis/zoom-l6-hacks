@@ -676,6 +676,7 @@ pub(super) struct PreflightContext {
     mode_index: usize,
     last_mode: Option<u8>,
     final_phase: u8,
+    overlay_check: Option<OverlayEvidence>,
     navigation: Option<l6ctl::NavigationSnapshot>,
     restoration: Option<RestorationEvidence>,
     pending_notification: Option<PendingNotification>,
@@ -820,6 +821,7 @@ pub(super) fn begin_preflight(
         mode_index: 0,
         last_mode: None,
         final_phase: 0,
+        overlay_check: None,
         navigation: None,
         restoration: None,
         pending_notification: None,
@@ -1695,9 +1697,213 @@ pub(super) fn run_task_contexts(
     Ok(json!({"mixer_task":hook_task,"display_task":callback_task,"tasks_differ":true}))
 }
 
+struct OverlayEvidence {
+    descriptors: Option<l6ctl::OverlayDescriptors>,
+    descriptor_mismatch: bool,
+}
+
+pub(super) fn begin_overlay_invariants(
+    session: &Session,
+    options: &Options,
+    context: &mut PreflightContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if context.next != 10 {
+        return Err("knob-dialog active overlay step is out of order".into());
+    }
+    let main = selected_main_image(options).map_err(std::io::Error::other)?;
+    if main.get(0x40c..0x410) != Some(&0x8007eea9u32.to_le_bytes()) {
+        return Err("patched startup hook does not reserve popup RAM".into());
+    }
+    let opened = context.opened.as_ref().ok_or("missing active overlay")?;
+    validate_opened_overlay(
+        session,
+        context
+            .debugger
+            .as_mut()
+            .ok_or("missing knob-dialog debugger")?,
+        opened,
+    )?;
+    context.task_contexts.ok_or("missing task contexts")?;
+    context.overlay_check = Some(OverlayEvidence {
+        descriptors: None,
+        descriptor_mismatch: false,
+    });
+    Ok(())
+}
+
+pub(super) fn check_overlay_window(
+    context: &PreflightContext,
+    reader: &l6max_host::knob_popup::OverlayReader,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if reader.window()? != context.original_window {
+        return Err("custom overlay replaced the active firmware window".into());
+    }
+    Ok(())
+}
+
+pub(super) fn snapshot_overlay_descriptors(
+    context: &mut PreflightContext,
+    reader: &l6max_host::knob_popup::OverlayReader,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let snapshot = reader.overlay_descriptors(
+        context.widget7,
+        context.widget33,
+        [
+            context.background10,
+            context.background37,
+            context.background48,
+        ],
+    )?;
+    context
+        .overlay_check
+        .as_mut()
+        .ok_or("missing overlay evidence")?
+        .descriptors = Some(snapshot);
+    Ok(())
+}
+
+pub(super) fn check_overlay_descriptor(
+    context: &mut PreflightContext,
+    field: crate::scenario::OverlayDescriptorField,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    use crate::scenario::OverlayDescriptorField as F;
+    let evidence = context
+        .overlay_check
+        .as_ref()
+        .ok_or("missing overlay evidence")?;
+    let shown = evidence
+        .descriptors
+        .as_ref()
+        .ok_or("missing overlay descriptors")?;
+    let matches = match field {
+        F::Widget7 => shown.widget7 == context.original_widget7,
+        F::Widget33 => shown.widget33 == context.original_widget33,
+        F::Background10 => shown.backgrounds[0] == context.original_background_layers[0],
+        F::Background37 => shown.backgrounds[1] == context.original_background_layers[1],
+        F::Background48 => shown.backgrounds[2] == context.original_background_layers[2],
+    };
+    context.overlay_check.as_mut().unwrap().descriptor_mismatch |= !matches;
+    Ok(json!({"field":format!("{field:?}"),"matches":matches}))
+}
+
+pub(super) fn finish_overlay_descriptors(
+    context: &PreflightContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let evidence = context
+        .overlay_check
+        .as_ref()
+        .ok_or("missing overlay evidence")?;
+    let shown = evidence
+        .descriptors
+        .as_ref()
+        .ok_or("missing overlay descriptors")?;
+    if evidence.descriptor_mismatch {
+        let shown = (&shown.widget7, &shown.widget33, shown.backgrounds.to_vec());
+        let stock = (
+            &context.original_widget7,
+            &context.original_widget33,
+            context.original_background_layers.to_vec(),
+        );
+        return Err(format!("custom overlay kept borrowed descriptors after drawing: widgets and background layers are {shown:02x?}, stock {stock:02x?}").into());
+    }
+    Ok(())
+}
+
+pub(super) fn check_overlay_resource(
+    context: &PreflightContext,
+    reader: &l6max_host::knob_popup::OverlayReader,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if reader.shared_resource_pointer(context.text_table)?
+        != context.shared_resource_pointer.to_le_bytes()
+    {
+        return Err("dialog redirected the shared text-resource pointer".into());
+    }
+    Ok(())
+}
+
+fn overlay_corners_black(frame: &[u8; 1024]) -> bool {
+    [(0usize, 0usize), (127, 0), (0, 63), (127, 63)]
+        .into_iter()
+        .all(|(x, y)| {
+            let index = ((63 - y) / 8) * 128 + x;
+            frame[index] & (1 << ((63 - y) % 8)) == 0
+        })
+}
+pub(super) fn check_overlay_corners(
+    context: &PreflightContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !overlay_corners_black(
+        &context
+            .opened
+            .as_ref()
+            .ok_or("missing active overlay")?
+            .frame,
+    ) {
+        return Err("stock bitmap 22 did not paint the overlay background black".into());
+    }
+    Ok(())
+}
+
+pub(super) fn check_overlay_signature(
+    reader: &l6max_host::knob_popup::OverlayReader,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if reader.state_signature()? != 0x4b4eu16.to_le_bytes() {
+        return Err("in-place state signature or stock bitmap-36 descriptor is invalid".into());
+    }
+    Ok(())
+}
+pub(super) fn check_overlay_bitmap(
+    context: &PreflightContext,
+    reader: &l6max_host::knob_popup::OverlayReader,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if reader.bitmap36()? != context.original_bitmap {
+        return Err("in-place state signature or stock bitmap-36 descriptor is invalid".into());
+    }
+    Ok(())
+}
+
+pub(super) fn check_overlay_heap(
+    session: &Session,
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let counters = control.heap_counter_reader()?.read()?;
+    let heap_live = vec![
+        counters.free,
+        counters.minimum_ever_free,
+        counters.allocations,
+        counters.frees,
+    ];
+    let before = &context.heap_before;
+    if heap_live[0] != before[0] || heap_live[2] != before[2] || heap_live[3] != before[3] {
+        return Err(format!(
+            "dialog state should not allocate heap: before={before:?}, live={heap_live:?}"
+        )
+        .into());
+    }
+    let consumed = before[0]
+        .checked_sub(heap_live[0])
+        .ok_or("firmware heap free-byte count increased while allocating dialog state")?;
+    if consumed != 0 {
+        return Err(format!("dialog state should not consume heap bytes, got {consumed}").into());
+    }
+    context.overlay_heap = Some((heap_live, consumed));
+    Ok(json!({"heap_bytes":consumed}))
+}
+
+pub(super) fn finish_overlay_invariants(
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.overlay_heap.is_none() {
+        return Err("missing overlay heap evidence".into());
+    }
+    context.overlay_check = None;
+    context.next = 11;
+    Ok(json!({"overlay_invariants":true}))
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum OverlayPhase {
-    Invariants,
     BitmapZero,
     Refreshed,
 }
@@ -1712,7 +1918,6 @@ pub(super) fn run_active_overlay(
 ) -> Result<Value, Box<dyn std::error::Error>> {
     use std::time::Instant;
     let expected = match phase {
-        OverlayPhase::Invariants => 10,
         OverlayPhase::BitmapZero => 11,
         OverlayPhase::Refreshed => 12,
     };
@@ -1725,13 +1930,6 @@ pub(super) fn run_active_overlay(
     }
     let inputs = session.engine.inputs.as_ref().unwrap();
     let qmp = &session.engine.management[0];
-    let heap = || -> Result<Vec<u32>, Box<dyn std::error::Error>> {
-        Ok(qmp
-            .read_memory(0, l6max::xFreeBytesRemaining, 16)?
-            .chunks_exact(4)
-            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
-            .collect())
-    };
     let capture = |duration: u32, name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
         let start = inputs.panel.snapshot().guest_ms;
         let begin = Instant::now();
@@ -1821,19 +2019,8 @@ pub(super) fn run_active_overlay(
                 .unwrap(),
         ))
     };
-    let original_window = &context.original_window;
     let original_bitmap = &context.original_bitmap;
     let text_table = context.text_table;
-    let shared_resource_pointer = context.shared_resource_pointer;
-    let widget7 = context.widget7;
-    let widget33 = context.widget33;
-    let original_widget7 = &context.original_widget7;
-    let original_widget33 = &context.original_widget33;
-    let background10 = context.background10;
-    let background37 = context.background37;
-    let background48 = context.background48;
-    let original_background_layers = &context.original_background_layers;
-    let heap_before = &context.heap_before;
     let debugger = context
         .debugger
         .as_mut()
@@ -1850,83 +2037,6 @@ pub(super) fn run_active_overlay(
         hook_task,
         callback_task,
     } = context.task_contexts.ok_or("missing task contexts")?;
-    if matches!(phase, OverlayPhase::Invariants) {
-        if u32::from_le_bytes(
-            qmp.read_memory(0, l6max::current_window, 4)?
-                .try_into()
-                .unwrap(),
-        ) != u32::from_le_bytes(original_window.clone().try_into().unwrap())
-        {
-            return Err("custom overlay replaced the active firmware window".into());
-        }
-        // The scene borrows the descriptors only while it draws, so a window that
-        // opens over it draws its own title on the stock layers.
-        let shown = (
-            qmp.read_memory(0, widget7, 16)?,
-            qmp.read_memory(0, widget33, 16)?,
-            [background10, background37, background48]
-                .into_iter()
-                .map(|background| qmp.read_memory(0, background, 1))
-                .collect::<Result<Vec<_>, _>>()?,
-        );
-        let stock = (
-            original_widget7.clone(),
-            original_widget33.clone(),
-            original_background_layers.to_vec(),
-        );
-        if shown != stock {
-            return Err(format!(
-    "custom overlay kept borrowed descriptors after drawing: widgets and background layers are {shown:02x?}, stock {stock:02x?}"
-)
-.into());
-        }
-        if u32::from_le_bytes(
-            qmp.read_memory(0, text_table + 179 * 4, 4)?
-                .try_into()
-                .unwrap(),
-        ) != shared_resource_pointer
-        {
-            return Err("dialog redirected the shared text-resource pointer".into());
-        }
-        let black_pixel = |x: usize, y: usize| {
-            let index = ((63 - y) / 8) * 128 + x;
-            active[index] & (1 << ((63 - y) % 8)) == 0
-        };
-        if ![(0, 0), (127, 0), (0, 63), (127, 63)]
-            .into_iter()
-            .all(|(x, y)| black_pixel(x, y))
-        {
-            return Err("stock bitmap 22 did not paint the overlay background black".into());
-        }
-        let state = l6max::gui_bitmap_table_entry_0;
-        if u16::from_le_bytes(qmp.read_memory(0, state, 2)?.try_into().unwrap()) != 0x4b4e
-            || qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)? != *original_bitmap
-        {
-            return Err("in-place state signature or stock bitmap-36 descriptor is invalid".into());
-        }
-        let heap_live = heap()?;
-        if heap_live[0] != heap_before[0]
-            || heap_live[2] != heap_before[2]
-            || heap_live[3] != heap_before[3]
-        {
-            return Err(format!(
-                "dialog state should not allocate heap: before={heap_before:?}, live={heap_live:?}"
-            )
-            .into());
-        }
-        let state_heap_bytes = heap_before[0]
-            .checked_sub(heap_live[0])
-            .ok_or("firmware heap free-byte count increased while allocating dialog state")?;
-        if state_heap_bytes != 0 {
-            return Err(format!(
-                "dialog state should not consume heap bytes, got {state_heap_bytes}"
-            )
-            .into());
-        }
-        context.overlay_heap = Some((heap_live, state_heap_bytes));
-        context.next = 11;
-        return Ok(json!({"overlay_invariants": true}));
-    }
     if matches!(phase, OverlayPhase::BitmapZero) {
         let state = l6max::gui_bitmap_table_entry_0;
         let null_bitmap_background = background_pointer(47)?;
@@ -4362,5 +4472,21 @@ mod restoration_mismatch_tests {
             &[4]
         ));
         assert_eq!(names, ["window", "widget"]);
+    }
+}
+
+#[cfg(test)]
+mod overlay_invariant_tests {
+    use super::overlay_corners_black;
+    #[test]
+    fn detects_each_lit_corner_of_saved_frame() {
+        let mut frame = [0; 1024];
+        assert!(overlay_corners_black(&frame));
+        for (x, y) in [(0usize, 0usize), (127, 0), (0, 63), (127, 63)] {
+            let index = ((63 - y) / 8) * 128 + x;
+            frame[index] = 1 << ((63 - y) % 8);
+            assert!(!overlay_corners_black(&frame));
+            frame[index] = 0;
+        }
     }
 }

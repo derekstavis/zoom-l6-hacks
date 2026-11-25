@@ -96,9 +96,8 @@ action = "knob-dialog-task-contexts"
 guest_timeout_ms = 180000
 wall_timeout_s = 600
 [[step]]
-action = "knob-dialog-overlay-invariants"
-guest_timeout_ms = 180000
-wall_timeout_s = 600
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/overlay-invariants.toml"
 
 [[step]]
 action = "knob-dialog-bitmap-zero"

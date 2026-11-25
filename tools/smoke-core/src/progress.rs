@@ -280,6 +280,9 @@ pub fn step_label(action: &crate::Action) -> String {
             duration_ms: Some(ms),
             ..
         } => format!("Hold chord for {ms} ms guest time"),
+        Action::KnobOverlayCheckDescriptor { field } => {
+            format!("Check overlay {field:?} descriptor")
+        }
         Action::KnobDialogModeBegin { scene } => {
             format!("Check knob dialog {} scene", scene.replace('-', " "))
         }

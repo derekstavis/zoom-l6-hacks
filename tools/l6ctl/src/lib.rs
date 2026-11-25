@@ -11,8 +11,8 @@ pub use l6max_host::heap::Counters as HeapCounters;
 pub use l6max_host::input::button_source;
 pub use l6max_host::input::{InputAck, InputAckState, InputCounters, InputSource};
 pub use l6max_host::knob_popup::{
-    NavigationSnapshot, ParameterState, RecorderState, RestorationPointers, RestorationSnapshot,
-    Snapshot as KnobPopupSnapshot,
+    NavigationSnapshot, OverlayDescriptors, ParameterState, RecorderState, RestorationPointers,
+    RestorationSnapshot, Snapshot as KnobPopupSnapshot,
 };
 pub use l6max_host::memory::MemoryRead;
 pub use l6max_host::midi_config::Config as MidiConfig;
@@ -664,6 +664,15 @@ impl<'a> OwnedControl<'a> {
         &self,
     ) -> Result<l6max_host::knob_popup::ParameterReader<'_>, ControlError> {
         l6max_host::knob_popup::parameter_reader(self.main_qmp()?, self.engine.model())
+            .map_err(ControlError::Rejected)
+    }
+
+    /// Verify the GUI revision once for a bounded overlay transaction.
+    /// Recreate this reader after a guest restart or firmware change.
+    pub fn knob_overlay_reader(
+        &self,
+    ) -> Result<l6max_host::knob_popup::OverlayReader, ControlError> {
+        l6max_host::knob_popup::overlay_reader(self.main_qmp()?, self.engine.model())
             .map_err(ControlError::Rejected)
     }
 

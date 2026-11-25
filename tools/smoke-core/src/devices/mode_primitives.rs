@@ -96,6 +96,47 @@ fn midi_sync_operations(fragment: &str) -> Result<Vec<(String, Operation)>, Stri
     Ok(operations)
 }
 
+pub(super) fn embedded_overlay_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/overlay-invariants.toml"
+    ))
+    .map_err(|error| format!("invalid embedded overlay fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_overlay_invariant_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded overlay fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match step.action {
+                crate::Action::KnobOverlayBegin => Operation::KnobOverlayBegin,
+                crate::Action::KnobOverlayCheckWindow => Operation::KnobOverlayCheckWindow,
+                crate::Action::KnobOverlaySnapshotDescriptors => {
+                    Operation::KnobOverlaySnapshotDescriptors
+                }
+                crate::Action::KnobOverlayCheckDescriptor { field } => {
+                    Operation::KnobOverlayCheckDescriptor { field }
+                }
+                crate::Action::KnobOverlayFinishDescriptors => {
+                    Operation::KnobOverlayFinishDescriptors
+                }
+                crate::Action::KnobOverlayCheckResource => Operation::KnobOverlayCheckResource,
+                crate::Action::KnobOverlayCheckCorners => Operation::KnobOverlayCheckCorners,
+                crate::Action::KnobOverlayCheckSignature => Operation::KnobOverlayCheckSignature,
+                crate::Action::KnobOverlayCheckBitmap => Operation::KnobOverlayCheckBitmap,
+                crate::Action::KnobOverlayCheckHeap => Operation::KnobOverlayCheckHeap,
+                crate::Action::KnobOverlayFinish => Operation::KnobOverlayFinish,
+                _ => return Err("unsupported embedded overlay action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
 pub(super) fn embedded_mode_operations() -> Result<Vec<(String, Operation)>, String> {
     let fragment: crate::Fragment = toml::from_str(EMBEDDED_MODE_WALK)
         .map_err(|error| format!("invalid embedded knob mode fragment: {error}"))?;

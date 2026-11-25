@@ -105,7 +105,17 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobDialogActiveDisplay
         | Action::KnobDialogLevelDemo
         | Action::KnobDialogTaskContexts
-        | Action::KnobDialogOverlayInvariants
+        | Action::KnobOverlayBegin
+        | Action::KnobOverlayCheckWindow
+        | Action::KnobOverlaySnapshotDescriptors
+        | Action::KnobOverlayCheckDescriptor { .. }
+        | Action::KnobOverlayFinishDescriptors
+        | Action::KnobOverlayCheckResource
+        | Action::KnobOverlayCheckCorners
+        | Action::KnobOverlayCheckSignature
+        | Action::KnobOverlayCheckBitmap
+        | Action::KnobOverlayCheckHeap
+        | Action::KnobOverlayFinish
         | Action::KnobDialogBitmapZero
         | Action::KnobDialogActiveOverlay
         | Action::KnobDialogLockedUpdate

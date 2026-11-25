@@ -206,6 +206,14 @@ fn read_snapshot(
     })
 }
 
+fn read_preflight_state(
+    read: &mut impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
+) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let state = read(l6max::gui_bitmap_table_entry_0, 4)?;
+    let callback = read(l6max::gui_display_callback_table + 20, 4)?;
+    Ok((state, callback))
+}
+
 fn read_restoration(
     pointers: &RestorationPointers,
     read: &mut impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
@@ -358,6 +366,15 @@ impl Reader<'_> {
             .ok_or("short mixer level".into())
     }
 
+    /// Read the in-place popup state then callback slot five, in that order.
+    pub fn preflight_state(&self) -> Result<(Vec<u8>, Vec<u8>), String> {
+        read_preflight_state(&mut |address, len| {
+            self.qmp
+                .read_memory(0, address, len)
+                .map_err(|e| e.to_string())
+        })
+    }
+
     /// Sample the six callback slots in one non-atomic guest read.
     pub fn callback_slots(&self) -> Result<[u32; 6], String> {
         let bytes = self
@@ -469,6 +486,9 @@ pub struct OverlayReader {
 impl OverlayReader {
     fn borrowed(&self) -> Reader<'_> {
         Reader { qmp: &self.qmp }
+    }
+    pub fn preflight_state(&self) -> Result<(Vec<u8>, Vec<u8>), String> {
+        self.borrowed().preflight_state()
     }
     pub fn window(&self) -> Result<Vec<u8>, String> {
         self.borrowed().window()
@@ -779,5 +799,36 @@ mod restoration_tests {
         assert_eq!(snapshot.window, vec![1; 4]);
         assert_eq!(snapshot.shared_contents, vec![8; 512]);
         assert_eq!(snapshot.callback, vec![15; 4]);
+    }
+}
+
+#[cfg(test)]
+mod preflight_order_tests {
+    use super::*;
+    #[test]
+    fn reads_state_before_callback_and_stops_on_error() {
+        let mut reads = Vec::new();
+        let result = read_preflight_state(&mut |address, len| {
+            reads.push((address, len));
+            Ok(vec![0; len])
+        })
+        .unwrap();
+        assert_eq!(
+            reads,
+            [
+                (l6max::gui_bitmap_table_entry_0, 4),
+                (l6max::gui_display_callback_table + 20, 4)
+            ]
+        );
+        assert_eq!(result, (vec![0; 4], vec![0; 4]));
+        let mut calls = 0;
+        assert!(
+            read_preflight_state(&mut |_, _| {
+                calls += 1;
+                Err("unavailable".into())
+            })
+            .is_err()
+        );
+        assert_eq!(calls, 1);
     }
 }

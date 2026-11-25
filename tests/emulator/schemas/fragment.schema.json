@@ -386,7 +386,6 @@
       "type": "string"
     },
     "OverlayDescriptorField": {
-      "description": "Ordered fields in the retained overlay descriptor snapshot.",
       "enum": [
         "widget7",
         "widget33",
@@ -417,6 +416,17 @@
         "blocks"
       ],
       "type": "object"
+    },
+    "PreflightProbe": {
+      "description": "Ordered fields in the retained overlay descriptor snapshot.",
+      "enum": [
+        "descriptor",
+        "text-alias",
+        "layer-collision",
+        "widget-layer",
+        "background-layer"
+      ],
+      "type": "string"
     },
     "RestorationField": {
       "description": "Named fields in the ordered, non-atomic dialog restoration snapshot.",
@@ -4903,7 +4913,48 @@
           "additionalProperties": false,
           "properties": {
             "action": {
-              "const": "knob-dialog-preflight-descriptor",
+              "const": "knob-probe-prepare",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "probe": {
+              "$ref": "#/definitions/PreflightProbe"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "probe"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "knob-probe-inject",
               "type": "string"
             },
             "guest_timeout_ms": {
@@ -4940,7 +4991,49 @@
           "additionalProperties": false,
           "properties": {
             "action": {
-              "const": "knob-dialog-preflight-text-alias",
+              "const": "knob-probe-trigger",
+              "type": "string"
+            },
+            "delta": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "delta"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "knob-probe-sample",
               "type": "string"
             },
             "guest_timeout_ms": {
@@ -4977,7 +5070,7 @@
           "additionalProperties": false,
           "properties": {
             "action": {
-              "const": "knob-dialog-preflight-layer-collision",
+              "const": "knob-probe-restore",
               "type": "string"
             },
             "guest_timeout_ms": {
@@ -5014,44 +5107,7 @@
           "additionalProperties": false,
           "properties": {
             "action": {
-              "const": "knob-dialog-preflight-widget-layer",
-              "type": "string"
-            },
-            "guest_timeout_ms": {
-              "default": 10000,
-              "format": "uint32",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "models": {
-              "default": [],
-              "items": {
-                "$ref": "#/definitions/Model"
-              },
-              "type": "array"
-            },
-            "setup_input": {
-              "default": false,
-              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
-              "type": "boolean"
-            },
-            "wall_timeout_s": {
-              "default": 180,
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "action"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "action": {
-              "const": "knob-dialog-preflight-background-layer",
+              "const": "knob-probe-assert",
               "type": "string"
             },
             "guest_timeout_ms": {
@@ -10171,11 +10227,12 @@
             "knob-dialog-guard",
             "knob-dialog-baseline",
             "knob-dialog-preflight-begin",
-            "knob-dialog-preflight-descriptor",
-            "knob-dialog-preflight-text-alias",
-            "knob-dialog-preflight-layer-collision",
-            "knob-dialog-preflight-widget-layer",
-            "knob-dialog-preflight-background-layer",
+            "knob-probe-prepare",
+            "knob-probe-inject",
+            "knob-probe-trigger",
+            "knob-probe-sample",
+            "knob-probe-restore",
+            "knob-probe-assert",
             "knob-dialog-callback-race",
             "knob-dialog-first-activation",
             "knob-active-begin",

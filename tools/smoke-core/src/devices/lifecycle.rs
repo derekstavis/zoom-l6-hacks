@@ -899,11 +899,9 @@ pub(super) fn run_l6max_update(
                     run(Operation::KnobDialogGuard, "knob-dialog")?;
                     run(Operation::KnobDialogBaseline, "knob-dialog")?;
                     run(Operation::KnobDialogPreflightBegin, "knob-dialog")?;
-                    run(Operation::KnobDialogPreflightDescriptor, "knob-dialog")?;
-                    run(Operation::KnobDialogPreflightTextAlias, "knob-dialog")?;
-                    run(Operation::KnobDialogPreflightLayerCollision, "knob-dialog")?;
-                    run(Operation::KnobDialogPreflightWidgetLayer, "knob-dialog")?;
-                    run(Operation::KnobDialogPreflightBackgroundLayer, "knob-dialog")?;
+                    for (label, operation) in embedded_preflight_probe_operations()? {
+                        run(operation, &label)?;
+                    }
                     run(Operation::KnobDialogCallbackRace, "knob-dialog")?;
                     run(Operation::KnobDialogFirstActivation, "knob-dialog")?;
                     for (label, operation) in embedded_active_display_operations()? {

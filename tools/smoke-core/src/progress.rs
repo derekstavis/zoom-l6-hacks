@@ -280,6 +280,7 @@ pub fn step_label(action: &crate::Action) -> String {
             duration_ms: Some(ms),
             ..
         } => format!("Hold chord for {ms} ms guest time"),
+        Action::KnobProbePrepare { probe } => format!("Prepare {probe:?} preflight probe"),
         Action::KnobOverlayCheckDescriptor { field } => {
             format!("Check overlay {field:?} descriptor")
         }

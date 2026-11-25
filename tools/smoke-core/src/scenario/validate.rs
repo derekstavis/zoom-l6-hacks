@@ -744,12 +744,7 @@ impl Scenario {
                 Action::KnobDialogGuard => "knob-dialog-ready",
                 Action::KnobDialogBaseline => "knob-dialog-guard",
                 Action::KnobDialogPreflightBegin => "knob-dialog-baseline",
-                Action::KnobDialogPreflightDescriptor => "knob-dialog-preflight-begin",
-                Action::KnobDialogPreflightTextAlias => "knob-dialog-preflight-descriptor",
-                Action::KnobDialogPreflightLayerCollision => "knob-dialog-preflight-text-alias",
-                Action::KnobDialogPreflightWidgetLayer => "knob-dialog-preflight-layer-collision",
-                Action::KnobDialogPreflightBackgroundLayer => "knob-dialog-preflight-widget-layer",
-                Action::KnobDialogCallbackRace => "knob-dialog-preflight-background-layer",
+                Action::KnobDialogCallbackRace => "knob-probe-assert",
                 Action::KnobDialogFirstActivation => "knob-dialog-callback-race",
                 Action::KnobActiveBegin => "knob-dialog-first-activation",
                 Action::KnobDialogLevelDemo => "knob-active-finish",
@@ -780,21 +775,7 @@ impl Scenario {
                         "knob-dialog-preflight-begin" => {
                             matches!(previous.action, Action::KnobDialogPreflightBegin)
                         }
-                        "knob-dialog-preflight-descriptor" => {
-                            matches!(previous.action, Action::KnobDialogPreflightDescriptor)
-                        }
-                        "knob-dialog-preflight-text-alias" => {
-                            matches!(previous.action, Action::KnobDialogPreflightTextAlias)
-                        }
-                        "knob-dialog-preflight-layer-collision" => {
-                            matches!(previous.action, Action::KnobDialogPreflightLayerCollision)
-                        }
-                        "knob-dialog-preflight-widget-layer" => {
-                            matches!(previous.action, Action::KnobDialogPreflightWidgetLayer)
-                        }
-                        "knob-dialog-preflight-background-layer" => {
-                            matches!(previous.action, Action::KnobDialogPreflightBackgroundLayer)
-                        }
+                        "knob-probe-assert" => matches!(previous.action, Action::KnobProbeAssert),
                         "knob-dialog-callback-race" => {
                             matches!(previous.action, Action::KnobDialogCallbackRace)
                         }
@@ -877,28 +858,18 @@ impl Scenario {
                     return Err("knob-dialog preflight must end with the diagnostic".into());
                 };
                 let subsequent = &applicable[..=end];
-                if subsequent.len() < 118
-                    || !matches!(subsequent[0].action, Action::KnobDialogPreflightDescriptor)
-                    || !matches!(subsequent[1].action, Action::KnobDialogPreflightTextAlias)
-                    || !matches!(
-                        subsequent[2].action,
-                        Action::KnobDialogPreflightLayerCollision
-                    )
-                    || !matches!(subsequent[3].action, Action::KnobDialogPreflightWidgetLayer)
-                    || !matches!(
-                        subsequent[4].action,
-                        Action::KnobDialogPreflightBackgroundLayer
-                    )
-                    || !matches!(subsequent[5].action, Action::KnobDialogCallbackRace)
-                    || !matches!(subsequent[6].action, Action::KnobDialogFirstActivation)
-                    || !super::valid_active_display_steps(&subsequent[7..14])
-                    || !matches!(subsequent[14].action, Action::KnobDialogLevelDemo)
-                    || !matches!(subsequent[15].action, Action::KnobDialogTaskContexts)
-                    || !super::valid_overlay_invariant_steps(&subsequent[16..31])
-                    || !matches!(subsequent[31].action, Action::KnobDialogBitmapZero)
-                    || !super::valid_refreshed_overlay_steps(&subsequent[32..37])
-                    || !super::valid_locked_update_steps(&subsequent[37..45])
-                    || !valid_knob_mode_steps(&subsequent[45..subsequent.len().saturating_sub(63)])
+                if subsequent.len() < 143
+                    || !super::valid_preflight_probe_steps(&subsequent[0..30])
+                    || !matches!(subsequent[30].action, Action::KnobDialogCallbackRace)
+                    || !matches!(subsequent[31].action, Action::KnobDialogFirstActivation)
+                    || !super::valid_active_display_steps(&subsequent[32..39])
+                    || !matches!(subsequent[39].action, Action::KnobDialogLevelDemo)
+                    || !matches!(subsequent[40].action, Action::KnobDialogTaskContexts)
+                    || !super::valid_overlay_invariant_steps(&subsequent[41..56])
+                    || !matches!(subsequent[56].action, Action::KnobDialogBitmapZero)
+                    || !super::valid_refreshed_overlay_steps(&subsequent[57..62])
+                    || !super::valid_locked_update_steps(&subsequent[62..70])
+                    || !valid_knob_mode_steps(&subsequent[70..subsequent.len().saturating_sub(63)])
                     || !valid_invalid_tag_steps(
                         &subsequent[subsequent.len().saturating_sub(63)
                             ..subsequent.len().saturating_sub(56)],

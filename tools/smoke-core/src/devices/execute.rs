@@ -10,53 +10,57 @@ fn knob_dialog_phase(
     overlay_capture: bool,
     locked_capture: bool,
     active_display: bool,
+    probe_index: Option<usize>,
 ) -> Option<u16> {
     let fixed = match operation {
         Operation::KnobDialogGuard => Some(0),
         Operation::KnobDialogBaseline => Some(1),
         Operation::KnobDialogPreflightBegin => Some(2),
-        Operation::KnobDialogPreflightDescriptor => Some(3),
-        Operation::KnobDialogPreflightTextAlias => Some(4),
-        Operation::KnobDialogPreflightLayerCollision => Some(5),
-        Operation::KnobDialogPreflightWidgetLayer => Some(6),
-        Operation::KnobDialogPreflightBackgroundLayer => Some(7),
-        Operation::KnobDialogCallbackRace => Some(8),
-        Operation::KnobDialogFirstActivation => Some(9),
-        Operation::KnobActiveBegin => Some(10),
-        Operation::EnqueueEncoderNoAck { .. } if active_display => Some(11),
-        Operation::CaptureDisplay { .. } if active_display => Some(12),
-        Operation::KnobActiveSampleCallbacks => Some(13),
-        Operation::KnobActiveCheckCallbacks => Some(14),
-        Operation::KnobActiveCheckFrame => Some(15),
-        Operation::KnobActiveFinish => Some(16),
-        Operation::KnobDialogLevelDemo => Some(17),
-        Operation::KnobDialogTaskContexts => Some(18),
-        Operation::KnobOverlayBegin => Some(19),
-        Operation::KnobOverlayCheckWindow => Some(20),
-        Operation::KnobOverlaySnapshotDescriptors => Some(21),
-        Operation::KnobOverlayFinishDescriptors => Some(27),
-        Operation::KnobOverlayCheckResource => Some(28),
-        Operation::KnobOverlayCheckCorners => Some(29),
-        Operation::KnobOverlayCheckSignature => Some(30),
-        Operation::KnobOverlayCheckBitmap => Some(31),
-        Operation::KnobOverlayCheckHeap => Some(32),
-        Operation::KnobOverlayFinish => Some(33),
-        Operation::KnobDialogBitmapZero => Some(34),
-        Operation::KnobOverlayRefreshBegin => Some(35),
-        Operation::KnobOverlayRefreshValue => Some(36),
-        Operation::CaptureDisplay { .. } if scope.is_none() && overlay_capture => Some(37),
-        Operation::KnobOverlayRefreshPixels => Some(38),
-        Operation::KnobOverlayRefreshFinish => Some(39),
-        Operation::KnobLockAcquire => Some(40),
-        Operation::KnobLockTrigger { .. } => Some(41),
-        Operation::KnobLockWait => Some(42),
-        Operation::KnobLockSample => Some(43),
-        Operation::KnobLockRestore => Some(44),
-        Operation::KnobLockAssert => Some(45),
-        Operation::CaptureDisplay { .. } if scope.is_none() && locked_capture => Some(46),
-        Operation::KnobLockFinish => Some(47),
+        Operation::KnobProbePrepare { probe } => u16::try_from(3 + probe.index() * 6).ok(),
+        Operation::KnobProbeInject => probe_index.and_then(|i| u16::try_from(4 + i * 6).ok()),
+        Operation::KnobProbeTrigger { .. } => {
+            probe_index.and_then(|i| u16::try_from(5 + i * 6).ok())
+        }
+        Operation::KnobProbeSample => probe_index.and_then(|i| u16::try_from(6 + i * 6).ok()),
+        Operation::KnobProbeRestore => probe_index.and_then(|i| u16::try_from(7 + i * 6).ok()),
+        Operation::KnobProbeAssert => probe_index.and_then(|i| u16::try_from(8 + i * 6).ok()),
+        Operation::KnobDialogCallbackRace => Some(33),
+        Operation::KnobDialogFirstActivation => Some(34),
+        Operation::KnobActiveBegin => Some(35),
+        Operation::EnqueueEncoderNoAck { .. } if active_display => Some(36),
+        Operation::CaptureDisplay { .. } if active_display => Some(37),
+        Operation::KnobActiveSampleCallbacks => Some(38),
+        Operation::KnobActiveCheckCallbacks => Some(39),
+        Operation::KnobActiveCheckFrame => Some(40),
+        Operation::KnobActiveFinish => Some(41),
+        Operation::KnobDialogLevelDemo => Some(42),
+        Operation::KnobDialogTaskContexts => Some(43),
+        Operation::KnobOverlayBegin => Some(44),
+        Operation::KnobOverlayCheckWindow => Some(45),
+        Operation::KnobOverlaySnapshotDescriptors => Some(46),
+        Operation::KnobOverlayFinishDescriptors => Some(52),
+        Operation::KnobOverlayCheckResource => Some(53),
+        Operation::KnobOverlayCheckCorners => Some(54),
+        Operation::KnobOverlayCheckSignature => Some(55),
+        Operation::KnobOverlayCheckBitmap => Some(56),
+        Operation::KnobOverlayCheckHeap => Some(57),
+        Operation::KnobOverlayFinish => Some(58),
+        Operation::KnobDialogBitmapZero => Some(59),
+        Operation::KnobOverlayRefreshBegin => Some(60),
+        Operation::KnobOverlayRefreshValue => Some(61),
+        Operation::CaptureDisplay { .. } if scope.is_none() && overlay_capture => Some(62),
+        Operation::KnobOverlayRefreshPixels => Some(63),
+        Operation::KnobOverlayRefreshFinish => Some(64),
+        Operation::KnobLockAcquire => Some(65),
+        Operation::KnobLockTrigger { .. } => Some(66),
+        Operation::KnobLockWait => Some(67),
+        Operation::KnobLockSample => Some(68),
+        Operation::KnobLockRestore => Some(69),
+        Operation::KnobLockAssert => Some(70),
+        Operation::CaptureDisplay { .. } if scope.is_none() && locked_capture => Some(71),
+        Operation::KnobLockFinish => Some(72),
         Operation::KnobOverlayCheckDescriptor { field } => Some(
-            22 + match field {
+            47 + match field {
                 crate::scenario::OverlayDescriptorField::Widget7 => 0,
                 crate::scenario::OverlayDescriptorField::Widget33 => 1,
                 crate::scenario::OverlayDescriptorField::Background10 => 2,
@@ -65,7 +69,7 @@ fn knob_dialog_phase(
             },
         ),
         Operation::KnobDialogModeBegin { .. } => {
-            next_mode.and_then(|index| u16::try_from(48 + index * 10).ok())
+            next_mode.and_then(|index| u16::try_from(73 + index * 10).ok())
         }
         Operation::KnobDialogAdaptive { .. }
         | Operation::KnobDialogInjectInvalidTag { .. }
@@ -94,12 +98,12 @@ fn knob_dialog_phase(
         | Operation::KnobDialogSnapshotNavigation
         | Operation::KnobDialogCheckNavigation { .. }
         | Operation::KnobDialog => next_mode
-            .and_then(|index| u16::try_from(48 + index * 10 + usize::from(final_phase?)).ok()),
+            .and_then(|index| u16::try_from(73 + index * 10 + usize::from(final_phase?)).ok()),
         Operation::CaptureDisplay { .. }
             if scope.is_none() && matches!(final_phase, Some(22 | 44 | 47)) =>
         {
             next_mode
-                .and_then(|index| u16::try_from(48 + index * 10 + usize::from(final_phase?)).ok())
+                .and_then(|index| u16::try_from(73 + index * 10 + usize::from(final_phase?)).ok())
         }
         _ => None,
     };
@@ -124,7 +128,7 @@ fn knob_dialog_phase(
         Operation::KnobDialogModeEnd => 9,
         _ => return None,
     };
-    Some(48 + scope.index as u16 * 10 + offset)
+    Some(73 + scope.index as u16 * 10 + offset)
 }
 
 type KnobDeadline = (Instant, u32, u32, u64, u16);
@@ -426,6 +430,9 @@ impl State {
             self.knob_dialog_preflight
                 .as_ref()
                 .is_some_and(expecting_active_display),
+            self.knob_dialog_preflight
+                .as_ref()
+                .map(preflight_probe_index),
         );
         let deadline_operation = expected.map(|_| matches!(operation, Operation::KnobDialog));
         if expected.is_none() && self.has_knob_preflight() {
@@ -2509,25 +2516,65 @@ impl State {
             }
             Operation::KnobDialogPreflightBegin => {
                 self.knob_dialog_preflight = Some(begin_preflight(session, options)?);
+                let control = l6ctl::OwnedControl::new(&session.engine);
+                self.overlay_reader = Some(control.knob_overlay_reader()?);
+                self.knob_heap_reader = Some(control.heap_counter_reader()?);
                 Ok(json!({"preflight": "begin"}))
             }
-            operation @ (Operation::KnobDialogPreflightDescriptor
-            | Operation::KnobDialogPreflightTextAlias
-            | Operation::KnobDialogPreflightLayerCollision
-            | Operation::KnobDialogPreflightWidgetLayer
-            | Operation::KnobDialogPreflightBackgroundLayer) => {
-                let index = match operation {
-                    Operation::KnobDialogPreflightDescriptor => 0,
-                    Operation::KnobDialogPreflightTextAlias => 1,
-                    Operation::KnobDialogPreflightLayerCollision => 2,
-                    Operation::KnobDialogPreflightWidgetLayer => 3,
-                    _ => 4,
-                };
-                let context = self
-                    .knob_dialog_preflight
+            Operation::KnobProbePrepare { probe } => prepare_preflight_probe(
+                session,
+                self.knob_dialog_preflight
                     .as_mut()
-                    .ok_or("missing knob-dialog preflight")?;
-                run_preflight_probe(session, context, index, wall_timeout_s)
+                    .ok_or("missing knob-dialog preflight")?,
+                probe,
+            ),
+            Operation::KnobProbeInject => inject_preflight_probe(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobProbeTrigger { delta } => trigger_preflight_probe(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                delta,
+                wall_timeout_s,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobProbeSample => sample_preflight_probe(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                self.overlay_reader
+                    .as_ref()
+                    .ok_or("missing preflight reader")?,
+                self.knob_heap_reader
+                    .as_ref()
+                    .ok_or("missing preflight heap reader")?,
+            ),
+            Operation::KnobProbeRestore => restore_preflight_probe(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobProbeAssert => {
+                let result = assert_preflight_probe(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                )?;
+                if self
+                    .knob_dialog_preflight
+                    .as_ref()
+                    .is_some_and(|c| preflight_probe_index(c) == 5)
+                {
+                    self.overlay_reader = None;
+                    self.knob_heap_reader = None;
+                }
+                Ok(result)
             }
             Operation::KnobDialogCallbackRace => {
                 let baseline = self
@@ -3150,11 +3197,46 @@ mod knob_phase_tests {
             Operation::KnobDialogGuard,
             Operation::KnobDialogBaseline,
             Operation::KnobDialogPreflightBegin,
-            Operation::KnobDialogPreflightDescriptor,
-            Operation::KnobDialogPreflightTextAlias,
-            Operation::KnobDialogPreflightLayerCollision,
-            Operation::KnobDialogPreflightWidgetLayer,
-            Operation::KnobDialogPreflightBackgroundLayer,
+            Operation::KnobProbePrepare {
+                probe: crate::scenario::PreflightProbe::Descriptor,
+            },
+            Operation::KnobProbeInject,
+            Operation::KnobProbeTrigger { delta: -1 },
+            Operation::KnobProbeSample,
+            Operation::KnobProbeRestore,
+            Operation::KnobProbeAssert,
+            Operation::KnobProbePrepare {
+                probe: crate::scenario::PreflightProbe::TextAlias,
+            },
+            Operation::KnobProbeInject,
+            Operation::KnobProbeTrigger { delta: -1 },
+            Operation::KnobProbeSample,
+            Operation::KnobProbeRestore,
+            Operation::KnobProbeAssert,
+            Operation::KnobProbePrepare {
+                probe: crate::scenario::PreflightProbe::LayerCollision,
+            },
+            Operation::KnobProbeInject,
+            Operation::KnobProbeTrigger { delta: -1 },
+            Operation::KnobProbeSample,
+            Operation::KnobProbeRestore,
+            Operation::KnobProbeAssert,
+            Operation::KnobProbePrepare {
+                probe: crate::scenario::PreflightProbe::WidgetLayer,
+            },
+            Operation::KnobProbeInject,
+            Operation::KnobProbeTrigger { delta: -1 },
+            Operation::KnobProbeSample,
+            Operation::KnobProbeRestore,
+            Operation::KnobProbeAssert,
+            Operation::KnobProbePrepare {
+                probe: crate::scenario::PreflightProbe::BackgroundLayer,
+            },
+            Operation::KnobProbeInject,
+            Operation::KnobProbeTrigger { delta: -1 },
+            Operation::KnobProbeSample,
+            Operation::KnobProbeRestore,
+            Operation::KnobProbeAssert,
             Operation::KnobDialogCallbackRace,
             Operation::KnobDialogFirstActivation,
             Operation::KnobActiveBegin,
@@ -3233,11 +3315,16 @@ mod knob_phase_tests {
                     pending,
                     next_mode,
                     Some(0),
-                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 37,
-                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 46,
-                    (matches!(operation, Operation::EnqueueEncoderNoAck { .. }) && before.4 == 11)
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 62,
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 71,
+                    (matches!(operation, Operation::EnqueueEncoderNoAck { .. }) && before.4 == 36)
                         || (matches!(operation, Operation::CaptureDisplay { .. })
-                            && before.4 == 12)
+                            && before.4 == 37),
+                    if (3..33).contains(&before.4) {
+                        Some(usize::from((before.4 - 3) / 6))
+                    } else {
+                        None
+                    }
                 ),
                 Some(before.4)
             );
@@ -3482,7 +3569,8 @@ mod knob_phase_tests {
                     Some(phase as u8),
                     false,
                     false,
-                    false
+                    false,
+                    None
                 ),
                 Some(before.4)
             );

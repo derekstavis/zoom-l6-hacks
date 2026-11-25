@@ -873,30 +873,27 @@ impl Runner {
                         devices::Operation::KnobDialogPreflightBegin,
                     ));
                 }
-                Action::KnobDialogPreflightDescriptor => {
-                    return Ok(Progress::Device(
-                        devices::Operation::KnobDialogPreflightDescriptor,
-                    ));
+                Action::KnobProbePrepare { probe } => {
+                    return Ok(Progress::Device(devices::Operation::KnobProbePrepare {
+                        probe,
+                    }));
                 }
-                Action::KnobDialogPreflightTextAlias => {
-                    return Ok(Progress::Device(
-                        devices::Operation::KnobDialogPreflightTextAlias,
-                    ));
+                Action::KnobProbeInject => {
+                    return Ok(Progress::Device(devices::Operation::KnobProbeInject));
                 }
-                Action::KnobDialogPreflightLayerCollision => {
-                    return Ok(Progress::Device(
-                        devices::Operation::KnobDialogPreflightLayerCollision,
-                    ));
+                Action::KnobProbeTrigger { delta } => {
+                    return Ok(Progress::Device(devices::Operation::KnobProbeTrigger {
+                        delta,
+                    }));
                 }
-                Action::KnobDialogPreflightWidgetLayer => {
-                    return Ok(Progress::Device(
-                        devices::Operation::KnobDialogPreflightWidgetLayer,
-                    ));
+                Action::KnobProbeSample => {
+                    return Ok(Progress::Device(devices::Operation::KnobProbeSample));
                 }
-                Action::KnobDialogPreflightBackgroundLayer => {
-                    return Ok(Progress::Device(
-                        devices::Operation::KnobDialogPreflightBackgroundLayer,
-                    ));
+                Action::KnobProbeRestore => {
+                    return Ok(Progress::Device(devices::Operation::KnobProbeRestore));
+                }
+                Action::KnobProbeAssert => {
+                    return Ok(Progress::Device(devices::Operation::KnobProbeAssert));
                 }
                 Action::KnobDialogCallbackRace => {
                     return Ok(Progress::Device(devices::Operation::KnobDialogCallbackRace));

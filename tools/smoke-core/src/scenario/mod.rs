@@ -74,6 +74,27 @@ pub enum NavigationField {
 /// Ordered fields in the retained overlay descriptor snapshot.
 #[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
+pub enum PreflightProbe {
+    Descriptor,
+    TextAlias,
+    LayerCollision,
+    WidgetLayer,
+    BackgroundLayer,
+}
+impl PreflightProbe {
+    pub(crate) fn index(self) -> usize {
+        match self {
+            Self::Descriptor => 0,
+            Self::TextAlias => 1,
+            Self::LayerCollision => 2,
+            Self::WidgetLayer => 3,
+            Self::BackgroundLayer => 4,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
 pub enum OverlayDescriptorField {
     Widget7,
     Widget33,
@@ -637,11 +658,16 @@ pub enum Action {
     KnobDialogGuard,
     KnobDialogBaseline,
     KnobDialogPreflightBegin,
-    KnobDialogPreflightDescriptor,
-    KnobDialogPreflightTextAlias,
-    KnobDialogPreflightLayerCollision,
-    KnobDialogPreflightWidgetLayer,
-    KnobDialogPreflightBackgroundLayer,
+    KnobProbePrepare {
+        probe: PreflightProbe,
+    },
+    KnobProbeInject,
+    KnobProbeTrigger {
+        delta: i32,
+    },
+    KnobProbeSample,
+    KnobProbeRestore,
+    KnobProbeAssert,
     KnobDialogCallbackRace,
     KnobDialogFirstActivation,
     KnobActiveBegin,
@@ -1515,6 +1541,50 @@ mod active_display_fragment_tests {
         ));
         fragment.step.swap(3, 4);
         assert!(!valid_active_display_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+    }
+}
+
+pub(crate) fn valid_preflight_probe_steps(steps: &[&Step]) -> bool {
+    use PreflightProbe as P;
+    const PROBES: [P; 5] = [
+        P::Descriptor,
+        P::TextAlias,
+        P::LayerCollision,
+        P::WidgetLayer,
+        P::BackgroundLayer,
+    ];
+    steps.len() == 30
+        && steps.chunks_exact(6).zip(PROBES).all(|(chunk, expected)| {
+            matches!(chunk[0].action, Action::KnobProbePrepare { probe } if probe == expected)
+                && matches!(chunk[1].action, Action::KnobProbeInject)
+                && matches!(chunk[2].action, Action::KnobProbeTrigger { delta: -1 })
+                && matches!(chunk[3].action, Action::KnobProbeSample)
+                && matches!(chunk[4].action, Action::KnobProbeRestore)
+                && matches!(chunk[5].action, Action::KnobProbeAssert)
+        })
+}
+
+#[cfg(test)]
+mod preflight_fragment_tests {
+    use super::*;
+    #[test]
+    fn preserves_probe_order_alias_dependency_and_restoration() {
+        let mut fragment: crate::Fragment = toml::from_str(include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/preflight-probes.toml"
+        ))
+        .unwrap();
+        assert!(valid_preflight_probe_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(6, 12);
+        assert!(!valid_preflight_probe_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(6, 12);
+        fragment.step.swap(4, 5);
+        assert!(!valid_preflight_probe_steps(
             &fragment.step.iter().collect::<Vec<_>>()
         ));
     }

@@ -1297,7 +1297,12 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
         "[[step]]\naction='knob-dialog-guard'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let baseline =
         "[[step]]\naction='knob-dialog-baseline'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
-    let preflight = ["begin", "descriptor", "text-alias", "layer-collision", "widget-layer", "background-layer"].iter().map(|name| format!("[[step]]\naction='knob-dialog-preflight-{name}'\nguest_timeout_ms=180000\nwall_timeout_s=600\n")).collect::<String>();
+    let preflight = concat!(
+        "[[step]]\naction='knob-dialog-preflight-begin'\nguest_timeout_ms=180000\nwall_timeout_s=600\n",
+        include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/preflight-probes.toml"
+        )
+    );
     let activation = "[[step]]\naction='knob-dialog-callback-race'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-first-activation'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let active_demo = concat!(
         include_str!(
@@ -1404,8 +1409,8 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
     let setup_pruned =
         format!("{prefix}{ready}{guard}{baseline}{preflight}{activation}{active_demo}{tasks}{overlay}{locked}{modes}{dialog}")
             .replace(
-                "action='knob-dialog-preflight-widget-layer'",
-                "setup_input=true\naction='knob-dialog-preflight-widget-layer'",
+                "action = \"knob-probe-prepare\"\nprobe = \"widget-layer\"",
+                "setup_input=true\naction = \"knob-probe-prepare\"\nprobe = \"widget-layer\"",
             );
     assert!(
         Scenario::parse(&setup_pruned)

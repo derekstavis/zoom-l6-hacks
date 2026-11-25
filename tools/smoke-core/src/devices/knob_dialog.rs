@@ -284,18 +284,70 @@ impl DebugCleanup for KnobDebugSession {
 /// Wait until the MAIN 1.10 mixer call and the knob-dialog post-hook return.
 /// At this point a first-use guard has either rejected the turn or published
 /// the pending callback, even when the mixer value was already at its limit.
+fn preflight_remaining_wait(
+    shared: (Instant, u32, u32, u64, u16),
+    guest_now: u32,
+    wall_timeout_s: u64,
+) -> Result<Duration, Box<dyn std::error::Error>> {
+    let (start, guest_start, guest_budget, wall_budget, _) = shared;
+    if super::execute::deadline_exceeded(
+        start.elapsed(),
+        guest_start,
+        guest_now,
+        guest_budget,
+        wall_budget,
+    ) {
+        return Err("knob-dialog shared deadline exceeded during preflight trigger".into());
+    }
+    let remaining = Duration::from_secs(wall_budget)
+        .checked_sub(start.elapsed())
+        .filter(|d| !d.is_zero())
+        .ok_or("knob-dialog shared deadline exceeded during preflight trigger")?;
+    Ok(remaining.min(Duration::from_secs(wall_timeout_s.min(30))))
+}
+
 fn turn_and_wait_hook(
     session: &Session,
     debugger: &mut KnobDebugSession,
     delta: i32,
     wall_timeout_s: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    turn_and_wait_hook_bounded(session, debugger, delta, wall_timeout_s, None)
+}
+
+fn turn_and_wait_hook_bounded(
+    session: &Session,
+    debugger: &mut KnobDebugSession,
+    delta: i32,
+    wall_timeout_s: u64,
+    shared: Option<(Instant, u32, u32, u64, u16)>,
+) -> Result<(), Box<dyn std::error::Error>> {
     const MIXER_HOOK_RETURN: u32 = 0x8003_6c78;
     let qmp = &session.engine.management[0];
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    if let Some(shared) = shared {
+        preflight_remaining_wait(shared, inputs.panel.snapshot().guest_ms, wall_timeout_s)?;
+    }
     qmp.stop()?;
     debugger.breakpoint(MIXER_HOOK_RETURN, true)?;
-    session.engine.inputs.as_ref().unwrap().knob(0, delta)?;
-    debugger.continue_until_stop(Duration::from_secs(wall_timeout_s.min(30)))?;
+    // Recheck before enqueuing guest input if stopping or arming consumed the budget.
+    if let Some(shared) = shared {
+        preflight_remaining_wait(shared, inputs.panel.snapshot().guest_ms, wall_timeout_s)?;
+    }
+    inputs.knob(0, delta)?;
+    let timeout = match shared {
+        Some(shared) => {
+            preflight_remaining_wait(shared, inputs.panel.snapshot().guest_ms, wall_timeout_s)?
+        }
+        None => Duration::from_secs(wall_timeout_s.min(30)),
+    };
+    // GDB continuation is synchronous. Its wall timeout is capped above;
+    // guest time cannot be sampled until it returns, so check it immediately
+    // afterward and fail closed if the shared guest budget was exceeded.
+    debugger.continue_until_stop(timeout)?;
+    if let Some(shared) = shared {
+        preflight_remaining_wait(shared, inputs.panel.snapshot().guest_ms, wall_timeout_s)?;
+    }
     let pc = debugger.read_register(15)? & !1;
     debugger.breakpoint(MIXER_HOOK_RETURN, false)?;
     if pc != MIXER_HOOK_RETURN {
@@ -679,6 +731,7 @@ pub(super) struct PreflightContext {
     overlay_check: Option<OverlayEvidence>,
     overlay_refresh: bool,
     active_display: Option<ActiveDisplayEvidence>,
+    pending_preflight_probe: Option<PendingPreflightProbe>,
     locked_update: Option<LockedUpdate>,
     navigation: Option<l6ctl::NavigationSnapshot>,
     restoration: Option<RestorationEvidence>,
@@ -827,6 +880,7 @@ pub(super) fn begin_preflight(
         overlay_check: None,
         overlay_refresh: false,
         active_display: None,
+        pending_preflight_probe: None,
         locked_update: None,
         navigation: None,
         restoration: None,
@@ -851,24 +905,36 @@ fn preflight_rejected(state: &[u8], callback: &[u8], heap: &[u32], baseline_heap
     state == 0u32.to_le_bytes() && callback == 0u32.to_le_bytes() && heap == baseline_heap
 }
 
-pub(super) fn run_preflight_probe(
+struct PendingPreflightProbe {
+    address: u32,
+    original: Vec<u8>,
+    replacement: Vec<u8>,
+    description: &'static str,
+    sample: Option<(Vec<u8>, Vec<u8>, Vec<u32>)>,
+}
+
+pub(super) fn preflight_probe_index(context: &PreflightContext) -> usize {
+    context.next
+}
+
+pub(super) fn prepare_preflight_probe(
     session: &Session,
     context: &mut PreflightContext,
-    probe: usize,
-    wall_timeout_s: u64,
+    probe: crate::scenario::PreflightProbe,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    if context.next != probe {
+    use crate::scenario::PreflightProbe as P;
+    if context.next != probe.index() || context.pending_preflight_probe.is_some() {
         return Err("knob-dialog preflight probes are out of order".into());
     }
     let qmp = &session.engine.management[0];
     let (address, original, replacement, description) = match probe {
-        0 => (
+        P::Descriptor => (
             context.widget7 + 6,
             vec![1, 0],
             vec![2, 0],
             "descriptor drift",
         ),
-        1 => {
+        P::TextAlias => {
             let alias = u32::from_le_bytes(
                 qmp.read_memory(0, l6max::gui_widget_table + 60 * 4, 4)?
                     .try_into()
@@ -882,7 +948,7 @@ pub(super) fn run_preflight_probe(
                 "shared text resource alias",
             )
         }
-        2 => {
+        P::LayerCollision => {
             let alias = context.alias_widget.ok_or("missing alias widget")?;
             let original = qmp.read_memory(0, alias, 2)?;
             context.alias_layer = Some(original.clone());
@@ -893,44 +959,119 @@ pub(super) fn run_preflight_probe(
                 "scene layer collision",
             )
         }
-        3 => (
+        P::WidgetLayer => (
             context.widget7,
             qmp.read_memory(0, context.widget7, 1)?,
             vec![0],
             "changed widget layer",
         ),
-        4 => (
+        P::BackgroundLayer => (
             context.background10,
             context.original_background_layers[0].clone(),
             vec![1],
             "changed background layer",
         ),
-        _ => return Err("invalid knob-dialog preflight probe".into()),
     };
+    context.pending_preflight_probe = Some(PendingPreflightProbe {
+        address,
+        original,
+        replacement,
+        description,
+        sample: None,
+    });
+    Ok(json!({"probe":description}))
+}
+
+pub(super) fn inject_preflight_probe(
+    session: &Session,
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let probe = context
+        .pending_preflight_probe
+        .as_ref()
+        .ok_or("missing preflight probe")?;
     let debugger = context
         .debugger
         .as_mut()
         .ok_or("missing knob-dialog debugger")?;
-    qmp.stop()?;
-    debugger.write(address, &replacement)?;
+    session.engine.management[0].stop()?;
+    debugger.write(probe.address, &probe.replacement)?;
     debugger.resume_guest()?;
-    turn_and_wait_hook(session, debugger, -1, wall_timeout_s)?;
-    qmp.stop()?;
-    let state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
-    let slot5 = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
-    let heap = qmp
-        .read_memory(0, l6max::xFreeBytesRemaining, 16)?
-        .chunks_exact(4)
-        .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
-        .collect::<Vec<_>>();
-    debugger.write(address, &original)?;
+    Ok(json!({"injected":probe.description}))
+}
+
+pub(super) fn trigger_preflight_probe(
+    session: &Session,
+    context: &mut PreflightContext,
+    delta: i32,
+    wall_timeout_s: u64,
+    shared: (Instant, u32, u32, u64, u16),
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let debugger = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?;
+    turn_and_wait_hook_bounded(session, debugger, delta, wall_timeout_s, Some(shared))?;
+    Ok(json!({"delta":delta}))
+}
+
+pub(super) fn sample_preflight_probe(
+    session: &Session,
+    context: &mut PreflightContext,
+    reader: &l6max_host::knob_popup::OverlayReader,
+    heap_reader: &l6max_host::heap::CounterReader,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    session.engine.management[0].stop()?;
+    let (state, callback) = reader.preflight_state()?;
+    let heap = heap_reader.read()?;
+    let heap = vec![
+        heap.free,
+        heap.minimum_ever_free,
+        heap.allocations,
+        heap.frees,
+    ];
+    context
+        .pending_preflight_probe
+        .as_mut()
+        .ok_or("missing preflight probe")?
+        .sample = Some((state, callback, heap));
+    Ok(json!({"sampled":true}))
+}
+
+pub(super) fn restore_preflight_probe(
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let probe = context
+        .pending_preflight_probe
+        .as_ref()
+        .ok_or("missing preflight probe")?;
+    let debugger = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?;
+    debugger.write(probe.address, &probe.original)?;
     debugger.resume_guest()?;
+    Ok(json!({"restored":probe.description}))
+}
+
+pub(super) fn assert_preflight_probe(
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let probe = context
+        .pending_preflight_probe
+        .take()
+        .ok_or("missing preflight probe")?;
+    let (state, slot5, heap) = probe.sample.ok_or("missing preflight sample")?;
     if !preflight_rejected(&state, &slot5, &heap, &context.heap_before) {
-        return Err(format!("{description} was not rejected cleanly: state={state:02x?}, slot5={slot5:02x?}, heap={heap:?}").into());
+        return Err(format!(
+            "{} was not rejected cleanly: state={state:02x?}, slot5={slot5:02x?}, heap={heap:?}",
+            probe.description
+        )
+        .into());
     }
     context.next += 1;
     Ok(
-        json!({"preflight": description, "rejected": true, "state":state, "callback":slot5, "heap":heap, "baseline_heap":context.heap_before}),
+        json!({"preflight":probe.description,"rejected":true,"state":state,"callback":slot5,"heap":heap,"baseline_heap":context.heap_before}),
     )
 }
 
@@ -4670,5 +4811,48 @@ mod locked_update_decomposition_tests {
             180_000,
             600
         ));
+    }
+}
+
+#[cfg(test)]
+mod preflight_assertion_tests {
+    use super::preflight_rejected;
+    #[test]
+    fn rejects_nonzero_state_callback_and_every_heap_counter_change() {
+        let zero = [0; 4];
+        let baseline = [100, 90, 7, 6];
+        assert!(preflight_rejected(&zero, &zero, &baseline, &baseline));
+        assert!(!preflight_rejected(
+            &[1, 0, 0, 0],
+            &zero,
+            &baseline,
+            &baseline
+        ));
+        assert!(!preflight_rejected(
+            &zero,
+            &[1, 0, 0, 0],
+            &baseline,
+            &baseline
+        ));
+        for i in 0..4 {
+            let mut changed = baseline;
+            changed[i] += 1;
+            assert!(!preflight_rejected(&zero, &zero, &changed, &baseline));
+        }
+    }
+}
+
+#[cfg(test)]
+mod preflight_budget_tests {
+    use super::*;
+    #[test]
+    fn caps_blocking_wait_to_remaining_wall_and_checks_guest_wrap() {
+        let start = Instant::now() - Duration::from_millis(9500);
+        let shared = (start, u32::MAX - 499, 10_000, 10, 0);
+        let remaining = preflight_remaining_wait(shared, 1000, 600).unwrap();
+        assert!(remaining <= Duration::from_millis(500));
+        assert!(preflight_remaining_wait(shared, 9501, 600).is_err());
+        let expired = (Instant::now() - Duration::from_secs(11), 0, 10_000, 10, 0);
+        assert!(preflight_remaining_wait(expired, 0, 600).is_err());
     }
 }

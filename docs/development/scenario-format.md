@@ -260,12 +260,8 @@ message delivered just after the interval.
 | `knob-dialog-ready` | — | Wait for the L6max recorder window, idle notification state and reviewed transport-control pixels before `knob-dialog-guard`; all steps use matching deadlines shared across the sequence |
 | `knob-dialog-guard` | — | Verify first-use rejection outside the recorder screen and return to the recorder; retain a screenshot and read state while QEMU is stopped |
 | `knob-dialog-baseline` | — | Select level mode and capture the baseline frame for the later race check |
+| `knob-probe-*` | probe for prepare, delta for trigger | Inject a guarded descriptor conflict, sample rejection, restore it and assert the saved state and heap |
 | `knob-dialog-preflight-begin` | — | Capture the original descriptors, resources and heap, and open the debugger for the following five probes |
-| `knob-dialog-preflight-descriptor` | — | Verify first use rejects a changed widget descriptor |
-| `knob-dialog-preflight-text-alias` | — | Verify first use rejects a conflicting text resource |
-| `knob-dialog-preflight-layer-collision` | — | Verify first use rejects a conflicting scene layer |
-| `knob-dialog-preflight-widget-layer` | — | Verify first use rejects a changed widget layer |
-| `knob-dialog-preflight-background-layer` | — | Verify first use rejects a changed background layer |
 | `knob-dialog-callback-race` | — | Verify callback-side preflight rejects descriptor drift while retaining the notification semaphore in the owned debugger context |
 | `knob-dialog-first-activation` | — | Wait for the display callback to return, then verify first activation and restore the notification semaphore |
 | `knob-active-*` | — | Turn the knob, capture the active display and preserve its frame and callback pointer |

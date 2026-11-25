@@ -95,11 +95,12 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobDialogGuard
         | Action::KnobDialogBaseline
         | Action::KnobDialogPreflightBegin
-        | Action::KnobDialogPreflightDescriptor
-        | Action::KnobDialogPreflightTextAlias
-        | Action::KnobDialogPreflightLayerCollision
-        | Action::KnobDialogPreflightWidgetLayer
-        | Action::KnobDialogPreflightBackgroundLayer
+        | Action::KnobProbePrepare { .. }
+        | Action::KnobProbeInject
+        | Action::KnobProbeTrigger { .. }
+        | Action::KnobProbeSample
+        | Action::KnobProbeRestore
+        | Action::KnobProbeAssert
         | Action::KnobDialogCallbackRace
         | Action::KnobDialogFirstActivation
         | Action::KnobActiveBegin

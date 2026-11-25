@@ -245,6 +245,40 @@ pub(super) fn embedded_active_display_operations() -> Result<Vec<(String, Operat
         .collect()
 }
 
+pub(super) fn embedded_preflight_probe_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/preflight-probes.toml"
+    ))
+    .map_err(|error| format!("invalid embedded preflight fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_preflight_probe_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded preflight fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobProbePrepare { probe } => {
+                    Operation::KnobProbePrepare { probe: *probe }
+                }
+                crate::Action::KnobProbeInject => Operation::KnobProbeInject,
+                crate::Action::KnobProbeTrigger { delta } => {
+                    Operation::KnobProbeTrigger { delta: *delta }
+                }
+                crate::Action::KnobProbeSample => Operation::KnobProbeSample,
+                crate::Action::KnobProbeRestore => Operation::KnobProbeRestore,
+                crate::Action::KnobProbeAssert => Operation::KnobProbeAssert,
+                _ => return Err("unsupported embedded preflight action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
 pub(super) fn embedded_mode_operations() -> Result<Vec<(String, Operation)>, String> {
     let fragment: crate::Fragment = toml::from_str(EMBEDDED_MODE_WALK)
         .map_err(|error| format!("invalid embedded knob mode fragment: {error}"))?;

@@ -522,7 +522,7 @@ shows every case.
 
   | Patch | Check |
   | --- | --- |
-  | Any SD module | `expect-sd-patch` |
+  | Any SD module | `expect-sd-loader`, then `expect-sd-module` |
   | knob-dialog | `knob-popup-open`, `knob-popup-expect-open`, `knob-popup-expect-value` |
   | Effect replacements | `expect-heap`, then for each slot `effect-replacement-state` with the assigned effect ID and nonzero output, or no replacement |
   | midi-sync | `direct-usb-midi-round-trip`, then the declarative MIDI state request fragment |

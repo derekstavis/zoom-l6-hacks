@@ -256,10 +256,6 @@ pub enum Operation {
         loaded: bool,
         chain_count: Option<u8>,
     },
-    ExpectSdPatch {
-        loaded: bool,
-        chain_count: Option<u8>,
-    },
     EffectParameterEdit {
         encoder: usize,
         steps: i32,

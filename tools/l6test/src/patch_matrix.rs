@@ -415,7 +415,8 @@ fn include(text: &mut String, path: &str) {
 /// The steps that check every patch a combination installs, in check order.
 fn checks(text: &mut String, combination: &Combination, all: &Checks) -> Result<(), String> {
     if !combination.sd.is_empty() {
-        step(text, "action = \"expect-sd-patch\"\nloaded = true");
+        step(text, "action = \"expect-sd-loader\"");
+        step(text, "action = \"expect-sd-module\"\nloaded = true");
     }
     for (name, patch) in &all.order {
         let active = if patch.checks_effect_slots {
@@ -981,5 +982,43 @@ mod tests {
             smoke_core::Scenario::from_text(&case.scenario)
                 .unwrap_or_else(|error| panic!("{}: {error}\n{}", case.id, case.scenario));
         }
+    }
+
+    #[test]
+    fn generated_sd_combinations_check_loader_before_module() {
+        let mut checked = 0;
+        for case in generate().unwrap() {
+            let doc: toml::Value = toml::from_str(&case.scenario).unwrap();
+            let has_sd = doc
+                .get("sd_patches")
+                .and_then(toml::Value::as_array)
+                .is_some_and(|patches| !patches.is_empty());
+            let steps = doc.get("step").and_then(toml::Value::as_array).unwrap();
+            let loaders: Vec<_> = steps
+                .iter()
+                .enumerate()
+                .filter(|(_, step)| {
+                    step.get("action").and_then(toml::Value::as_str) == Some("expect-sd-loader")
+                })
+                .collect();
+            assert_eq!(loaders.len(), usize::from(has_sd), "{}", case.id);
+            if let Some((index, _)) = loaders.first() {
+                let module = &steps[index + 1];
+                assert_eq!(
+                    module.get("action").and_then(toml::Value::as_str),
+                    Some("expect-sd-module"),
+                    "{}",
+                    case.id
+                );
+                assert_eq!(
+                    module.get("loaded").and_then(toml::Value::as_bool),
+                    Some(true),
+                    "{}",
+                    case.id
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 0);
     }
 }

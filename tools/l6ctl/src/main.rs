@@ -276,6 +276,7 @@ fn run() -> Result<(), String> {
         | Request::InputStatus { .. }
         | Request::HeapCounters
         | Request::MidiConfig
+        | Request::UpdateState
         | Request::RecorderState
         | Request::KnobParameterState
         | Request::KnobPopup { .. }

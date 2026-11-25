@@ -134,6 +134,11 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobDialogCheckRestoration { .. }
         | Action::KnobDialogFinishRestoration
         | Action::KnobDialogExpectRestoredHeap
+        | Action::EnqueueEncoderNoAck { .. }
+        | Action::EnqueueTapNoAck { .. }
+        | Action::ReleaseCapturedDisplay
+        | Action::KnobDialogSnapshotNavigation
+        | Action::KnobDialogCheckNavigation { .. }
         | Action::CaptureDisplay { .. }
         | Action::ExpectCapturedDisplayImage { .. }
         | Action::KnobDialog

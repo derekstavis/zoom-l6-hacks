@@ -1090,6 +1090,31 @@ impl Runner {
                         devices::Operation::KnobDialogExpectRestoredHeap,
                     ));
                 }
+                Action::EnqueueEncoderNoAck { channel, steps } => {
+                    return Ok(Progress::Device(devices::Operation::EnqueueEncoderNoAck {
+                        channel,
+                        steps,
+                    }));
+                }
+                Action::EnqueueTapNoAck { target, hold_ms } => {
+                    return Ok(Progress::Device(devices::Operation::EnqueueTapNoAck {
+                        target,
+                        hold_ms,
+                    }));
+                }
+                Action::ReleaseCapturedDisplay => {
+                    return Ok(Progress::Device(devices::Operation::ReleaseCapturedDisplay));
+                }
+                Action::KnobDialogSnapshotNavigation => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogSnapshotNavigation,
+                    ));
+                }
+                Action::KnobDialogCheckNavigation { field } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogCheckNavigation { field },
+                    ));
+                }
                 Action::KnobDialog => {
                     return Ok(Progress::Device(devices::Operation::KnobDialog));
                 }

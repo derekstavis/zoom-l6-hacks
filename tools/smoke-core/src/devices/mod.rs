@@ -38,6 +38,7 @@ use mode_primitives::{
     embedded_invalid_tag_operations,
     embedded_midi_sync_operations,
     embedded_mode_operations,
+    embedded_navigation_operations,
     embedded_notification_operations,
     embedded_restoration_operations,
 };
@@ -382,6 +383,19 @@ pub enum Operation {
     },
     KnobDialogFinishRestoration,
     KnobDialogExpectRestoredHeap,
+    EnqueueEncoderNoAck {
+        channel: u32,
+        steps: i32,
+    },
+    EnqueueTapNoAck {
+        target: u32,
+        hold_ms: u32,
+    },
+    ReleaseCapturedDisplay,
+    KnobDialogSnapshotNavigation,
+    KnobDialogCheckNavigation {
+        field: crate::scenario::NavigationField,
+    },
     KnobDialog,
     KnobPopupOpen {
         first_steps: i32,

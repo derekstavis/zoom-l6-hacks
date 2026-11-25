@@ -759,7 +759,7 @@ impl Scenario {
                 Action::KnobDialogActiveOverlay => "knob-dialog-bitmap-zero",
                 Action::KnobDialogLockedUpdate => "knob-dialog-active-overlay",
                 Action::KnobDialogFinalBegin => "knob-dialog-mode-end",
-                Action::KnobDialog => "knob-dialog-expect-restored-heap",
+                Action::KnobDialog => "knob-dialog-check-navigation",
                 _ => continue,
             };
             for model in &value.models {
@@ -819,6 +819,12 @@ impl Scenario {
                         "knob-dialog-active-overlay" => {
                             matches!(previous.action, Action::KnobDialogActiveOverlay)
                         }
+                        "knob-dialog-check-navigation" => matches!(
+                            previous.action,
+                            Action::KnobDialogCheckNavigation {
+                                field: super::NavigationField::Callback
+                            }
+                        ),
                         "knob-dialog-expect-restored-heap" => {
                             matches!(previous.action, Action::KnobDialogExpectRestoredHeap)
                         }
@@ -871,7 +877,7 @@ impl Scenario {
                     return Err("knob-dialog preflight must end with the diagnostic".into());
                 };
                 let subsequent = &applicable[..=end];
-                if subsequent.len() < 68
+                if subsequent.len() < 87
                     || !matches!(subsequent[0].action, Action::KnobDialogPreflightDescriptor)
                     || !matches!(subsequent[1].action, Action::KnobDialogPreflightTextAlias)
                     || !matches!(
@@ -892,25 +898,29 @@ impl Scenario {
                     || !matches!(subsequent[11].action, Action::KnobDialogBitmapZero)
                     || !matches!(subsequent[12].action, Action::KnobDialogActiveOverlay)
                     || !matches!(subsequent[13].action, Action::KnobDialogLockedUpdate)
-                    || !valid_knob_mode_steps(&subsequent[14..subsequent.len().saturating_sub(44)])
+                    || !valid_knob_mode_steps(&subsequent[14..subsequent.len().saturating_sub(63)])
                     || !valid_invalid_tag_steps(
-                        &subsequent[subsequent.len().saturating_sub(44)
-                            ..subsequent.len().saturating_sub(37)],
+                        &subsequent[subsequent.len().saturating_sub(63)
+                            ..subsequent.len().saturating_sub(56)],
                     )
                     || !valid_invalid_signature_steps(
-                        &subsequent[subsequent.len().saturating_sub(37)
-                            ..subsequent.len().saturating_sub(31)],
+                        &subsequent[subsequent.len().saturating_sub(56)
+                            ..subsequent.len().saturating_sub(50)],
                     )
                     || !valid_knob_notification_steps(
-                        &subsequent[subsequent.len().saturating_sub(31)
-                            ..subsequent.len().saturating_sub(23)],
+                        &subsequent[subsequent.len().saturating_sub(50)
+                            ..subsequent.len().saturating_sub(42)],
                     )
                     || !valid_knob_expiry_steps(
-                        &subsequent[subsequent.len().saturating_sub(23)
-                            ..subsequent.len().saturating_sub(19)],
+                        &subsequent[subsequent.len().saturating_sub(42)
+                            ..subsequent.len().saturating_sub(38)],
                     )
                     || !valid_knob_restoration_steps(
-                        &subsequent[subsequent.len().saturating_sub(19)..subsequent.len() - 1],
+                        &subsequent[subsequent.len().saturating_sub(38)
+                            ..subsequent.len().saturating_sub(20)],
+                    )
+                    || !valid_knob_navigation_steps(
+                        &subsequent[subsequent.len().saturating_sub(20)..subsequent.len() - 1],
                     )
                     || subsequent.iter().any(|next| {
                         next.guest_timeout_ms != step.guest_timeout_ms

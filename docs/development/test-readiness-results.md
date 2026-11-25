@@ -648,3 +648,12 @@ full SD matrix passed all 23 cases with four workers
 patch parity passed for both models
 (`/private/tmp/l6-readiness-wasm-parity-correct/report.json`). These later
 passes do not erase the earlier failures.
+
+The knob-dialog first-use contention check waits for DisplayCycle2 slot 5 to
+return before asserting that borrowed descriptors have been restored. On the
+supported L6max 1.10 dispatcher, slot 5's running word at `0x8020a598` is set
+before the callback and cleared after it returns. The check guards the
+dispatcher's instructions, requires the prior failed first-use attempt to have
+zero scene ticks and an empty mailbox, and reads the running word and existing assertions while the
+guest is stopped. The mailbox can be cleared and ticks set while rendering is
+still in progress, so those fields alone do not establish callback completion.

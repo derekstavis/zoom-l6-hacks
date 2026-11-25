@@ -896,6 +896,29 @@ pub(super) fn run_preflight_probe(
     )
 }
 
+const DISPLAY_CYCLE2_RETURN_GUARD: [u8; 60] = [
+    0x4a, 0xf2, 0x68, 0x55, 0x4f, 0xf0, 0x00, 0x08, 0xc8, 0xf2, 0x20, 0x05, 0x01, 0x26, 0x00, 0x27,
+    0x05, 0xe0, 0x00, 0xbf, 0x78, 0x1c, 0xc1, 0xb2, 0x8f, 0x1f, 0x18, 0xbf, 0x07, 0x46, 0x28, 0x69,
+    0x4f, 0xf0, 0xff, 0x31, 0x0c, 0xf0, 0x18, 0xf8, 0xf8, 0xb2, 0x05, 0xeb, 0x80, 0x04, 0x60, 0x6b,
+    0x00, 0x28, 0xef, 0xd0, 0xe6, 0x61, 0x80, 0x47, 0xc4, 0xf8, 0x1c, 0x80,
+];
+const DISPLAY_CYCLE2_DISPATCH_GUARD: u32 = 0x8008_4ff0;
+const DISPLAY_CYCLE2_SLOT5_RUNNING: u32 = 0x8020_a598;
+
+fn supported_display_dispatcher(bytes: &[u8]) -> bool {
+    bytes == DISPLAY_CYCLE2_RETURN_GUARD
+}
+
+fn callback_first_use_ready(state: &[u8], slot: u32, expected_callback: u32, running: u32) -> bool {
+    state.len() == 4
+        && u16::from_le_bytes([state[0], state[1]]) == 0x4b4e
+        && state[2] != 0
+        && state[3] == u8::MAX
+        && expected_callback & 1 == 1
+        && slot == expected_callback
+        && running == 0
+}
+
 pub(super) fn run_knob_dialog(
     session: &Session,
     options: &Options,
@@ -1171,6 +1194,22 @@ pub(super) fn run_knob_dialog(
             .into());
         }
 
+        // Only DisplayCycle2 sets ticks; require an empty mailbox and zero
+        // ticks so neither a previous scene nor an old event can satisfy the
+        // subsequent callback-return check.
+        if race_state[2] != 0 || race_state[3] != u8::MAX {
+            return Err(format!(
+                "knob-dialog retry requires zero ticks and empty mailbox, found ticks={} pending={:#04x}",
+                race_state[2], race_state[3]
+            ).into());
+        }
+        if !supported_display_dispatcher(&qmp.read_memory(
+            0,
+            DISPLAY_CYCLE2_DISPATCH_GUARD,
+            DISPLAY_CYCLE2_RETURN_GUARD.len(),
+        )?) {
+            return Err("unsupported L6max DisplayCycle2 dispatcher revision".into());
+        }
         // Retry while the notification semaphore is still held. The scene
         // should now pass its callback-side preflight and render without using
         // the notification manager's lock.
@@ -1181,12 +1220,23 @@ pub(super) fn run_knob_dialog(
             session.poll()?;
             let state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
             let slot = word(l6max::gui_display_callback_table + 20)?;
-            if u16::from_le_bytes(state[..2].try_into().unwrap()) == 0x4b4e
+            if state.len() == 4
+                && u16::from_le_bytes([state[0], state[1]]) == 0x4b4e
                 && state[2] != 0
                 && state[3] == u8::MAX
                 && slot & 1 == 1
             {
-                break;
+                // Coherently sample the running word after stopping QEMU. A
+                // zero here proves the callback that set ticks returned.
+                qmp.stop()?;
+                let stopped_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
+                let stopped_slot = word(l6max::gui_display_callback_table + 20)?;
+                let running = word(DISPLAY_CYCLE2_SLOT5_RUNNING)?;
+                if callback_first_use_ready(&stopped_state, stopped_slot, callback_pointer, running)
+                {
+                    break;
+                }
+                debugger.resume_guest()?;
             }
             if inputs
                 .panel
@@ -1202,7 +1252,6 @@ pub(super) fn run_knob_dialog(
             }
             thread::sleep(Duration::from_millis(5));
         }
-        qmp.stop()?;
         let first_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
         let first_slot5 = u32::from_le_bytes(
             qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?
@@ -2624,5 +2673,35 @@ mod preflight_tests {
             &[100, 90, 6, 2],
             &heap
         ));
+    }
+}
+
+#[cfg(test)]
+mod first_use_callback_tests {
+    use super::{
+        DISPLAY_CYCLE2_RETURN_GUARD, callback_first_use_ready, supported_display_dispatcher,
+    };
+    #[test]
+    fn dispatcher_guard_rejects_any_changed_or_truncated_instruction() {
+        assert!(supported_display_dispatcher(&DISPLAY_CYCLE2_RETURN_GUARD));
+        assert!(!supported_display_dispatcher(
+            &DISPLAY_CYCLE2_RETURN_GUARD[..59]
+        ));
+        for index in 0..DISPLAY_CYCLE2_RETURN_GUARD.len() {
+            let mut changed = DISPLAY_CYCLE2_RETURN_GUARD;
+            changed[index] ^= 1;
+            assert!(!supported_display_dispatcher(&changed));
+        }
+    }
+    #[test]
+    fn cleared_mailbox_and_ticks_are_not_enough_until_callback_returns() {
+        let ready = [0x4e, 0x4b, 20, 0xff];
+        assert!(!callback_first_use_ready(&ready, 1, 1, 1));
+        assert!(callback_first_use_ready(&ready, 1, 1, 0));
+        assert!(!callback_first_use_ready(&[0x4e, 0x4b, 0, 0xff], 1, 1, 0));
+        assert!(!callback_first_use_ready(&[0x4e, 0x4b, 20, 9], 1, 1, 0));
+        assert!(!callback_first_use_ready(&ready, 0, 1, 0));
+        assert!(!callback_first_use_ready(&ready, 3, 1, 0));
+        assert!(!callback_first_use_ready(&[0; 3], 1, 1, 0));
     }
 }

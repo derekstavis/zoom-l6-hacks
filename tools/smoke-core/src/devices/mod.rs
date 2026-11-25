@@ -218,6 +218,7 @@ pub enum Operation {
     KnobDialogCallbackRace,
     KnobDialogFirstActivation,
     KnobDialogActiveOverlay,
+    KnobDialogLockedUpdate,
     KnobDialog,
     KnobPopupOpen {
         first_steps: i32,

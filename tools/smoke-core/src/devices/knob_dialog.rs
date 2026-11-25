@@ -1688,6 +1688,165 @@ pub(super) fn run_active_overlay(
     )
 }
 
+fn locked_level_expected(raw: u8) -> String {
+    format!("{}%", (raw as u32 * 100 + 63) / 127)
+}
+fn locked_update_ready(pending: &[u8], displayed: Option<&str>, raw: u8) -> bool {
+    pending == u8::MAX.to_le_bytes()
+        && displayed
+            .is_some_and(|value| knob_display_matches(9, &locked_level_expected(raw), value))
+}
+
+pub(super) fn run_locked_value_update(
+    session: &Session,
+    options: &Options,
+    context: &mut PreflightContext,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    use std::time::Instant;
+    if context.next != 8 {
+        return Err("knob-dialog locked update step is out of order".into());
+    }
+    let qmp = &session.engine.management[0];
+    let inputs = session.engine.inputs.as_ref().unwrap();
+    let notification_semaphore = context.notification_semaphore;
+    let text_table = context.text_table;
+    let state = l6max::gui_bitmap_table_entry_0;
+    let debugger = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?;
+    let capture = |duration: u32, name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
+        let start = inputs.panel.snapshot().guest_ms;
+        let begin = Instant::now();
+        let raw = loop {
+            let data = session.poll()?;
+            let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(start);
+            if elapsed >= duration {
+                break data.display;
+            }
+            if elapsed > guest_timeout_ms || begin.elapsed() > Duration::from_secs(wall_timeout_s) {
+                return Err("knob-dialog display capture exceeded its deadline".into());
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+        let native = image::GrayImage::from_fn(128, 64, |x, y| {
+            let index = ((63 - y as usize) / 8) * 128 + x as usize;
+            image::Luma([if raw[index] & (1 << ((63 - y as usize) % 8)) != 0 {
+                255
+            } else {
+                0
+            }])
+        });
+        if let Some(scene) = name.strip_prefix("window-scene-")
+            && [
+                "high", "freq", "mid", "low", "aux1", "aux2", "efx", "sub-mix", "pan", "level",
+            ]
+            .contains(&scene)
+        {
+            let path = l6max_host::paths::repository_root()
+                .join(KNOB_DIALOG_REFERENCES)
+                .join(format!("{scene}.png"));
+            check_display_reference(&raw, &path, &options.logs, name)
+                .map_err(|error| format!("knob-dialog screen {scene}: {error}"))?;
+        }
+        image::DynamicImage::ImageLuma8(native)
+            .resize(768, 384, image::imageops::FilterType::Nearest)
+            .save(options.logs.join(format!("{name}.png")))?;
+        Ok(raw)
+    };
+    let decode_text = |address: u32| -> Result<String, Box<dyn std::error::Error>> {
+        let pointer = u32::from_le_bytes(qmp.read_memory(0, address, 4)?.try_into().unwrap());
+        let bytes = qmp.read_memory(0, pointer, 48)?;
+        let units = bytes
+            .chunks_exact(2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+            .take_while(|c| *c != 0)
+            .collect::<Vec<_>>();
+        Ok(String::from_utf16(&units)?)
+    };
+    // Hold the notification semaphore while a second value is rendered.
+    // The patch's dedicated layer/widget resources and persistent bitmap
+    // descriptor must remain usable without taking this unrelated lock.
+    qmp.stop()?;
+    let semaphore_count = qmp.read_memory(0, notification_semaphore + 56, 4)?;
+    if semaphore_count != 1u32.to_le_bytes() {
+        debugger.resume_guest()?;
+        return Err(
+            "notification semaphore was not available before callback contention check".into(),
+        );
+    }
+    debugger.write(notification_semaphore + 56, &0u32.to_le_bytes())?;
+    debugger.resume_guest()?;
+    turn_and_wait_hook(session, debugger, -1, wall_timeout_s)?;
+    let callback_busy_start = inputs.panel.snapshot().guest_ms;
+    let callback_deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(180));
+    loop {
+        session.poll()?;
+        let raw = qmp.read_memory(0, l6max::mixer_channel_levels, 1)?[0];
+        let pending = qmp.read_memory(0, state + 3, 1)?;
+        let displayed = if pending == u8::MAX.to_le_bytes() {
+            Some(decode_text(text_table + 179 * 4)?)
+        } else {
+            None
+        };
+        let expected = locked_level_expected(raw);
+        if locked_update_ready(&pending, displayed.as_deref(), raw) {
+            break;
+        }
+        if inputs
+            .panel
+            .snapshot()
+            .guest_ms
+            .wrapping_sub(callback_busy_start)
+            >= guest_timeout_ms.min(10_000)
+            || Instant::now() >= callback_deadline
+        {
+            return Err(
+            format!("knob dialog did not update while the notification lock was held: pending={pending:02x?}, raw={raw}, displayed={displayed:?}, expected={expected:?}").into(),
+        );
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    qmp.stop()?;
+    let pending_during_contention = qmp.read_memory(0, state + 3, 1)?;
+    let lock_held_during_render =
+        qmp.read_memory(0, notification_semaphore + 56, 4)? == 0u32.to_le_bytes();
+    let dialog_value_during_lock = decode_text(text_table + 179 * 4)?;
+    let raw_during_lock = qmp.read_memory(0, l6max::mixer_channel_levels, 1)?[0];
+    debugger.write(notification_semaphore + 56, &semaphore_count)?;
+    debugger.resume_guest()?;
+    if pending_during_contention != u8::MAX.to_le_bytes()
+        || !lock_held_during_render
+        || !knob_display_matches(
+            9,
+            &locked_level_expected(raw_during_lock),
+            &dialog_value_during_lock,
+        )
+    {
+        return Err(format!(
+        "dialog did not process the latest update while the notification semaphore was unavailable: pending={pending_during_contention:02x?}, value={dialog_value_during_lock:?}"
+    )
+    .into());
+    }
+    capture(500, "window-scene-after-callback-contention")?;
+    let pending_after_contention = qmp.read_memory(0, state + 3, 1)?;
+    if pending_after_contention != u8::MAX.to_le_bytes() {
+        return Err(format!(
+        "display callback did not consume the pending update while the lock was held: pending={pending_after_contention:02x?}"
+    )
+    .into());
+    }
+
+    context.next = 9;
+    Ok(
+        json!({"notification_semaphore_not_required_for_refresh": true,
+        "pending_during": pending_during_contention, "pending_after":pending_after_contention,
+        "lock_held":lock_held_during_render, "raw":raw_during_lock, "displayed":dialog_value_during_lock}),
+    )
+}
+
 pub(super) fn run_knob_dialog(
     session: &Session,
     options: &Options,
@@ -1827,7 +1986,7 @@ pub(super) fn run_knob_dialog(
     };
     if context_slot
         .as_ref()
-        .is_none_or(|context| context.next != 8)
+        .is_none_or(|context| context.next != 9)
     {
         return Err("knob-dialog preflight incomplete".into());
     }
@@ -1847,7 +2006,6 @@ pub(super) fn run_knob_dialog(
     let original_bitmap = context.original_bitmap;
     let original_bitmap_descriptor = context.original_bitmap_descriptor;
     let original_notification_semaphore = context.original_notification_semaphore;
-    let notification_semaphore = context.notification_semaphore;
     let text_table = context.text_table;
     let original_resources = context.original_resources;
     let shared_resource_pointer = context.shared_resource_pointer;
@@ -1875,77 +2033,6 @@ pub(super) fn run_knob_dialog(
             refreshed,
         } = active_snapshot;
         let state = l6max::gui_bitmap_table_entry_0;
-        // Hold the notification semaphore while a second value is rendered.
-        // The patch's dedicated layer/widget resources and persistent bitmap
-        // descriptor must remain usable without taking this unrelated lock.
-        qmp.stop()?;
-        let semaphore_count = qmp.read_memory(0, notification_semaphore + 56, 4)?;
-        if semaphore_count != 1u32.to_le_bytes() {
-            debugger.resume_guest()?;
-            return Err(
-                "notification semaphore was not available before callback contention check".into(),
-            );
-        }
-        debugger.write(notification_semaphore + 56, &0u32.to_le_bytes())?;
-        debugger.resume_guest()?;
-        turn_and_wait_hook(session, &mut debugger, -1, wall_timeout_s)?;
-        let callback_busy_start = inputs.panel.snapshot().guest_ms;
-        let callback_deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(180));
-        loop {
-            session.poll()?;
-            let raw = qmp.read_memory(0, l6max::mixer_channel_levels, 1)?[0];
-            if qmp.read_memory(0, state + 3, 1)? == u8::MAX.to_le_bytes()
-                && knob_display_matches(
-                    9,
-                    &expected_value(9, raw),
-                    &decode_text(text_table + 179 * 4)?,
-                )
-            {
-                break;
-            }
-            if inputs
-                .panel
-                .snapshot()
-                .guest_ms
-                .wrapping_sub(callback_busy_start)
-                >= guest_timeout_ms.min(10_000)
-                || Instant::now() >= callback_deadline
-            {
-                return Err(
-                    "knob dialog did not update while the notification lock was held".into(),
-                );
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-        qmp.stop()?;
-        let pending_during_contention = qmp.read_memory(0, state + 3, 1)?;
-        let lock_held_during_render =
-            qmp.read_memory(0, notification_semaphore + 56, 4)? == 0u32.to_le_bytes();
-        let dialog_value_during_lock = decode_text(text_table + 179 * 4)?;
-        let raw_during_lock = qmp.read_memory(0, l6max::mixer_channel_levels, 1)?[0];
-        debugger.write(notification_semaphore + 56, &semaphore_count)?;
-        debugger.resume_guest()?;
-        if pending_during_contention != u8::MAX.to_le_bytes()
-            || !lock_held_during_render
-            || !knob_display_matches(
-                9,
-                &expected_value(9, raw_during_lock),
-                &dialog_value_during_lock,
-            )
-        {
-            return Err(format!(
-                "dialog did not process the latest update while the notification semaphore was unavailable: pending={pending_during_contention:02x?}, value={dialog_value_during_lock:?}"
-            )
-            .into());
-        }
-        capture(500, "window-scene-after-callback-contention")?;
-        let pending_after_contention = qmp.read_memory(0, state + 3, 1)?;
-        if pending_after_contention != u8::MAX.to_le_bytes() {
-            return Err(format!(
-                "display callback did not consume the pending update while the lock was held: pending={pending_after_contention:02x?}"
-            )
-            .into());
-        }
         for (button, name, mode) in [
             (35, "level", 9),
             (28, "high", 0),
@@ -3041,5 +3128,18 @@ mod activation_baseline_tests {
         ));
         assert!(!activation_baseline_ready(&state, 5, 3, &[0; 4]));
         assert!(!activation_baseline_ready(&state, 3, 3, &[1, 0, 0, 0]));
+    }
+}
+
+#[cfg(test)]
+mod locked_update_tests {
+    use super::{locked_level_expected, locked_update_ready};
+    #[test]
+    fn mailbox_and_current_rounded_value_must_both_match() {
+        assert_eq!(locked_level_expected(64), "50%");
+        assert!(locked_update_ready(&[0xff], Some("50%"), 64));
+        assert!(!locked_update_ready(&[9], Some("50%"), 64));
+        assert!(!locked_update_ready(&[0xff], None, 64));
+        assert!(!locked_update_ready(&[0xff], Some("49%"), 64));
     }
 }

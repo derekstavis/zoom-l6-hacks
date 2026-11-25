@@ -186,7 +186,8 @@ impl State {
             Operation::KnobDialogCallbackRace => Some(8),
             Operation::KnobDialogFirstActivation => Some(9),
             Operation::KnobDialogActiveOverlay => Some(10),
-            Operation::KnobDialog => Some(11),
+            Operation::KnobDialogLockedUpdate => Some(11),
+            Operation::KnobDialog => Some(12),
             _ => None,
         };
         if expected.is_none() && self.has_knob_preflight() {
@@ -291,7 +292,7 @@ impl State {
         if is_ready {
             self.knob_dialog_deadline =
                 Some((started, guest_start, guest_timeout_ms, wall_timeout_s, 0));
-        } else if expected.is_some() && !matches!(expected, Some(11)) {
+        } else if expected.is_some() && !matches!(expected, Some(12)) {
             let (start, guest_start, guest_budget, wall_budget, phase) = shared.unwrap();
             self.knob_dialog_deadline =
                 Some((start, guest_start, guest_budget, wall_budget, phase + 1));
@@ -2246,6 +2247,13 @@ impl State {
                     guest_timeout_ms,
                     wall_timeout_s,
                 )
+            }
+            Operation::KnobDialogLockedUpdate => {
+                let context = self
+                    .knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?;
+                run_locked_value_update(session, options, context, guest_timeout_ms, wall_timeout_s)
             }
             Operation::KnobDialog => {
                 let _baseline = self

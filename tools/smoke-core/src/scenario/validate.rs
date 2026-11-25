@@ -104,7 +104,8 @@ impl Scenario {
                 Action::KnobDialogCallbackRace => "knob-dialog-preflight-background-layer",
                 Action::KnobDialogFirstActivation => "knob-dialog-callback-race",
                 Action::KnobDialogActiveOverlay => "knob-dialog-first-activation",
-                Action::KnobDialog => "knob-dialog-active-overlay",
+                Action::KnobDialogLockedUpdate => "knob-dialog-active-overlay",
+                Action::KnobDialog => "knob-dialog-locked-update",
                 _ => continue,
             };
             for model in &value.models {
@@ -146,7 +147,10 @@ impl Scenario {
                         "knob-dialog-first-activation" => {
                             matches!(previous.action, Action::KnobDialogFirstActivation)
                         }
-                        _ => matches!(previous.action, Action::KnobDialogActiveOverlay),
+                        "knob-dialog-active-overlay" => {
+                            matches!(previous.action, Action::KnobDialogActiveOverlay)
+                        }
+                        _ => matches!(previous.action, Action::KnobDialogLockedUpdate),
                     };
                     correct
                         && previous.guest_timeout_ms == step.guest_timeout_ms
@@ -170,9 +174,9 @@ impl Scenario {
                 let subsequent = value.step[index + 1..]
                     .iter()
                     .filter(|next| next.applies_to(*model))
-                    .take(9)
+                    .take(10)
                     .collect::<Vec<_>>();
-                if subsequent.len() != 9
+                if subsequent.len() != 10
                     || !matches!(subsequent[0].action, Action::KnobDialogPreflightDescriptor)
                     || !matches!(subsequent[1].action, Action::KnobDialogPreflightTextAlias)
                     || !matches!(
@@ -187,7 +191,8 @@ impl Scenario {
                     || !matches!(subsequent[5].action, Action::KnobDialogCallbackRace)
                     || !matches!(subsequent[6].action, Action::KnobDialogFirstActivation)
                     || !matches!(subsequent[7].action, Action::KnobDialogActiveOverlay)
-                    || !matches!(subsequent[8].action, Action::KnobDialog)
+                    || !matches!(subsequent[8].action, Action::KnobDialogLockedUpdate)
+                    || !matches!(subsequent[9].action, Action::KnobDialog)
                     || subsequent.iter().any(|next| {
                         next.guest_timeout_ms != step.guest_timeout_ms
                             || next.wall_timeout_s != step.wall_timeout_s

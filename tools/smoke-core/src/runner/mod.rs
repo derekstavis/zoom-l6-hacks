@@ -821,6 +821,9 @@ impl Runner {
                         devices::Operation::KnobDialogActiveOverlay,
                     ));
                 }
+                Action::KnobDialogLockedUpdate => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogLockedUpdate));
+                }
                 Action::KnobDialog => {
                     return Ok(Progress::Device(devices::Operation::KnobDialog));
                 }

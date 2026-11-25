@@ -896,6 +896,7 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
                     run(Operation::KnobDialogCallbackRace, "knob-dialog")?;
                     run(Operation::KnobDialogFirstActivation, "knob-dialog")?;
                     run(Operation::KnobDialogActiveOverlay, "knob-dialog")?;
+                    run(Operation::KnobDialogLockedUpdate, "knob-dialog")?;
                     run(Operation::KnobDialog, "knob-dialog")?;
                 }
                 if let Some(patch) = patches.iter().find(|patch| **patch == "midi-sync") {

@@ -122,6 +122,11 @@ guest_timeout_ms = 180000
 wall_timeout_s = 600
 
 [[step]]
+action = "knob-dialog-locked-update"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
 action = "knob-dialog"
 guest_timeout_ms = 180000
 wall_timeout_s = 600

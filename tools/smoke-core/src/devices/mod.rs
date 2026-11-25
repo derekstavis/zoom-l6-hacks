@@ -32,7 +32,10 @@ pub use knob_dialog::*;
 pub use lifecycle::*;
 use midi::*;
 use midi_probe::*;
-use mode_primitives::{embedded_invalid_tag_operations, embedded_midi_sync_operations, embedded_mode_operations};
+use mode_primitives::{
+    embedded_invalid_signature_operations, embedded_invalid_tag_operations,
+    embedded_midi_sync_operations, embedded_mode_operations,
+};
 use panel::*;
 use sd::*;
 use usb::*;
@@ -337,6 +340,15 @@ pub enum Operation {
     },
     KnobDialogWaitInvalidTag,
     KnobDialogConfirmInvalidTag,
+    KnobDialogSettleLevel {
+        artifact: String,
+    },
+    KnobDialogInjectInvalidSignature,
+    KnobDialogObserveInvalidSignature {
+        guest_ms: u32,
+    },
+    KnobDialogSampleInvalidSignature,
+    KnobDialogRestoreInvalidSignature,
     KnobDialog,
     KnobPopupOpen {
         first_steps: i32,

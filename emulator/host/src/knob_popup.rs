@@ -94,6 +94,33 @@ fn verify(
     Ok(())
 }
 
+fn read_text(
+    read: &mut impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
+) -> Result<String, String> {
+    let table = read_word(read, l6max::gui_text_pointers_by_language)?;
+    read_text_at_table(read, table)
+}
+
+fn read_text_at_table(
+    read: &mut impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
+    table: u32,
+) -> Result<String, String> {
+    let entry = table
+        .checked_add(TEXT_ID * 4)
+        .ok_or("GUI text table overflow")?;
+    let pointer = read_word(read, checked_sdram(entry, 4)?)?;
+    let bytes = read(checked_sdram(pointer, 48)?, 48)?;
+    if bytes.len() != 48 {
+        return Err("short GUI text".into());
+    }
+    let units = bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .take_while(|unit| *unit != 0)
+        .collect::<Vec<_>>();
+    String::from_utf16(&units).map_err(|error| error.to_string())
+}
+
 fn read_snapshot(
     with_text: bool,
     read: &mut impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
@@ -107,21 +134,7 @@ fn read_snapshot(
         .first()
         .ok_or("short mixer level")?;
     let text = if with_text {
-        let table = read_word(read, l6max::gui_text_pointers_by_language)?;
-        let entry = table
-            .checked_add(TEXT_ID * 4)
-            .ok_or("GUI text table overflow")?;
-        let pointer = read_word(read, checked_sdram(entry, 4)?)?;
-        let bytes = read(checked_sdram(pointer, 48)?, 48)?;
-        if bytes.len() != 48 {
-            return Err("short GUI text".into());
-        }
-        let units = bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .take_while(|unit| *unit != 0)
-            .collect::<Vec<_>>();
-        Some(String::from_utf16(&units).map_err(|error| error.to_string())?)
+        Some(read_text(read)?)
     } else {
         None
     };
@@ -173,6 +186,38 @@ impl Reader<'_> {
                 .first()
                 .ok_or("short notification state")?,
         })
+    }
+
+    /// Channel-one raw level, sampled independently.
+    pub fn level(&self) -> Result<u8, String> {
+        self.qmp
+            .read_memory(0, l6max::mixer_channel_levels, 1)
+            .map_err(|error| error.to_string())?
+            .first()
+            .copied()
+            .ok_or("short mixer level".into())
+    }
+
+    /// Dialog callback mailbox byte, sampled independently.
+    pub fn mailbox(&self) -> Result<u8, String> {
+        self.qmp
+            .read_memory(0, l6max::gui_bitmap_table_entry_0 + 3, 1)
+            .map_err(|error| error.to_string())?
+            .first()
+            .copied()
+            .ok_or("short dialog state".into())
+    }
+
+    /// Decode current dialog text using a previously captured table pointer.
+    pub fn text_at_table(&self, table: u32) -> Result<String, String> {
+        read_text_at_table(
+            &mut |address, size| {
+                self.qmp
+                    .read_memory(0, address, size)
+                    .map_err(|error| error.to_string())
+            },
+            table,
+        )
     }
 
     /// Values can change between QMP reads; this is not an atomic snapshot.

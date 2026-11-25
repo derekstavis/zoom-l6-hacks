@@ -167,6 +167,10 @@ action = "include"
 path = "patches/knob-dialog/tests/emulator/fragments/invalid-tags.toml"
 
 [[step]]
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/invalid-signature.toml"
+
+[[step]]
 action = "knob-dialog"
 guest_timeout_ms = 180000
 wall_timeout_s = 600

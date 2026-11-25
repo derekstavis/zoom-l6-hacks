@@ -674,6 +674,7 @@ pub(super) struct PreflightContext {
     mode_index: usize,
     last_mode: Option<u8>,
     final_phase: u8,
+    pending_invalid_signature: Option<PendingInvalidSignature>,
     pending_invalid_tag: Option<PendingInvalidTag>,
 }
 
@@ -814,6 +815,7 @@ pub(super) fn begin_preflight(
         mode_index: 0,
         last_mode: None,
         final_phase: 0,
+        pending_invalid_signature: None,
         pending_invalid_tag: None,
     })
 }
@@ -2225,6 +2227,54 @@ fn channel_level_turn_clamped(raw: u8, delta: i32) -> bool {
     (delta < 0 && raw == 0) || (delta > 0 && raw == 127)
 }
 
+fn capture_knob_frame(
+    session: &Session,
+    options: &Options,
+    duration: u32,
+    name: &str,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<[u8; 1024], Box<dyn std::error::Error>> {
+    let inputs = session.engine.inputs.as_ref().unwrap();
+    let start = inputs.panel.snapshot().guest_ms;
+    let begin = Instant::now();
+    let raw = loop {
+        let data = session.poll()?;
+        let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(start);
+        if elapsed >= duration {
+            break data.display;
+        }
+        if elapsed > guest_timeout_ms || begin.elapsed() > Duration::from_secs(wall_timeout_s) {
+            return Err("knob-dialog display capture exceeded its deadline".into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    };
+    let native = image::GrayImage::from_fn(128, 64, |x, y| {
+        let index = ((63 - y as usize) / 8) * 128 + x as usize;
+        image::Luma([if raw[index] & (1 << ((63 - y as usize) % 8)) != 0 {
+            255
+        } else {
+            0
+        }])
+    });
+    if let Some(scene) = name.strip_prefix("window-scene-")
+        && [
+            "high", "freq", "mid", "low", "aux1", "aux2", "efx", "sub-mix", "pan", "level",
+        ]
+        .contains(&scene)
+    {
+        let path = l6max_host::paths::repository_root()
+            .join(KNOB_DIALOG_REFERENCES)
+            .join(format!("{scene}.png"));
+        check_display_reference(&raw, &path, &options.logs, name)
+            .map_err(|error| format!("knob-dialog screen {scene}: {error}"))?;
+    }
+    image::DynamicImage::ImageLuma8(native)
+        .resize(768, 384, image::imageops::FilterType::Nearest)
+        .save(options.logs.join(format!("{name}.png")))?;
+    Ok(raw)
+}
+
 pub(super) fn run_knob_dialog(
     prefix: bool,
     session: &Session,
@@ -2286,44 +2336,15 @@ pub(super) fn run_knob_dialog(
             .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
             .collect())
     };
-    let capture = |duration: u32, name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
-        let start = inputs.panel.snapshot().guest_ms;
-        let begin = Instant::now();
-        let raw = loop {
-            let data = session.poll()?;
-            let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(start);
-            if elapsed >= duration {
-                break data.display;
-            }
-            if elapsed > guest_timeout_ms || begin.elapsed() > Duration::from_secs(wall_timeout_s) {
-                return Err("knob-dialog display capture exceeded its deadline".into());
-            }
-            thread::sleep(Duration::from_millis(5));
-        };
-        let native = image::GrayImage::from_fn(128, 64, |x, y| {
-            let index = ((63 - y as usize) / 8) * 128 + x as usize;
-            image::Luma([if raw[index] & (1 << ((63 - y as usize) % 8)) != 0 {
-                255
-            } else {
-                0
-            }])
-        });
-        if let Some(scene) = name.strip_prefix("window-scene-")
-            && [
-                "high", "freq", "mid", "low", "aux1", "aux2", "efx", "sub-mix", "pan", "level",
-            ]
-            .contains(&scene)
-        {
-            let path = l6max_host::paths::repository_root()
-                .join(KNOB_DIALOG_REFERENCES)
-                .join(format!("{scene}.png"));
-            check_display_reference(&raw, &path, &options.logs, name)
-                .map_err(|error| format!("knob-dialog screen {scene}: {error}"))?;
-        }
-        image::DynamicImage::ImageLuma8(native)
-            .resize(768, 384, image::imageops::FilterType::Nearest)
-            .save(options.logs.join(format!("{name}.png")))?;
-        Ok(raw)
+    let capture = |duration: u32, name: &str| {
+        capture_knob_frame(
+            session,
+            options,
+            duration,
+            name,
+            guest_timeout_ms,
+            wall_timeout_s,
+        )
     };
     let expected_value = |mode: u32, raw: u8| -> String {
         let table = |offset: usize| {
@@ -2385,7 +2406,7 @@ pub(super) fn run_knob_dialog(
         return Err("knob-dialog preflight incomplete".into());
     }
     let context = context_slot.as_ref().unwrap();
-    if context.final_phase != if prefix { 0 } else { 7 } {
+    if context.final_phase != if prefix { 0 } else { 13 } {
         return Err("knob-dialog final phases out of order".into());
     }
     if context.alias_widget.is_none()
@@ -2561,65 +2582,7 @@ pub(super) fn run_knob_dialog(
             }
             return Ok(json!({"pan_and_level_checked": true}));
         }
-        // An encoder turn reaches the mailbox through the panel MCU, its UART
-        // and the mixer, so a fixed delay can end before the dialog shows it.
-        // A late event is held while a stock notification is active and then
-        // changes the scene after expiry. Wait until the dialog has consumed
-        // the event and shows the new mixer value.
-        let channel0_level = l6max::mixer_channel_levels;
-        let settled_turn = |name: &str| -> Result<(), Box<dyn std::error::Error>> {
-            let before = qmp.read_memory(0, channel0_level, 1)?[0];
-            inputs.knob(0, if before == 0 { 1 } else { -1 })?;
-            let start = inputs.panel.snapshot().guest_ms;
-            loop {
-                capture(50, name)?;
-                let raw = qmp.read_memory(0, channel0_level, 1)?[0];
-                if raw != before
-                    && qmp.read_memory(0, state + 3, 1)?[0] == u8::MAX
-                    && knob_display_matches(
-                        9,
-                        &expected_value(9, raw),
-                        &decode_text(text_table + 179 * 4)?,
-                    )
-                {
-                    return Ok(());
-                }
-                if inputs.panel.snapshot().guest_ms.wrapping_sub(start) >= 2_000 {
-                    return Err(format!(
-                        "channel-1 LEVEL turn was not displayed: before={before}, now={raw}"
-                    )
-                    .into());
-                }
-            }
-        };
-        settled_turn("window-scene-before-invalid-state-metadata")?;
-        qmp.stop()?;
-        let metadata = qmp.read_memory(0, state, 4)?;
-        let metadata_word = u32::from_le_bytes(metadata.clone().try_into().unwrap());
-        let invalid_metadata = metadata_word ^ 1;
-        debugger.write(state, &invalid_metadata.to_le_bytes())?;
-        debugger.resume_guest()?;
-        let invalid_metadata_start = inputs.panel.snapshot().guest_ms;
-        wait_guest(
-            session,
-            invalid_metadata_start,
-            150,
-            guest_timeout_ms,
-            wall_timeout_s,
-        )?;
-        qmp.stop()?;
-        // The payload returns borrowed descriptors after every draw, so they
-        // cannot show a rejection; an accepted state rewrites its word and the
-        // dialog's bitmap entry.
-        let invalid_metadata_rejected = qmp.read_memory(0, state, 4)?
-            == invalid_metadata.to_le_bytes()
-            && qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)? == original_bitmap;
-        debugger.write(state, &metadata)?;
-        debugger.resume_guest()?;
-        if !invalid_metadata_rejected {
-            return Err("the payload accepted an invalid state signature".into());
-        }
-        settled_turn("window-scene-after-invalid-state-metadata")?;
+        let invalid_metadata_rejected = true;
         let invalid_tag_discarded = true;
         let lit_pixels = |y0: usize, y1: usize| {
             (y0..y1)
@@ -2919,6 +2882,234 @@ pub(super) fn run_knob_dialog(
     } else {
         debugger.finish(result)
     }
+}
+
+struct PendingInvalidSignature {
+    original: Vec<u8>,
+    invalid: u32,
+    guest_start: u32,
+    wall_start: Instant,
+    rejected: Option<bool>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SignatureObservation {
+    Complete,
+    Waiting,
+    Expired,
+}
+
+impl PendingInvalidSignature {
+    fn observation(
+        &self,
+        guest_now: u32,
+        now: Instant,
+        guest_ms: u32,
+        guest_timeout_ms: u32,
+        wall_timeout_s: u64,
+    ) -> SignatureObservation {
+        let elapsed = guest_now.wrapping_sub(self.guest_start);
+        if elapsed >= guest_ms {
+            SignatureObservation::Complete
+        } else if elapsed > guest_timeout_ms
+            || now.duration_since(self.wall_start) > Duration::from_secs(wall_timeout_s)
+        {
+            SignatureObservation::Expired
+        } else {
+            SignatureObservation::Waiting
+        }
+    }
+}
+
+fn settle_level_encoder_steps(before: u8) -> i32 {
+    if before == 0 { -1 } else { 1 }
+}
+
+fn settled_level_matches(
+    before: u8,
+    level: u8,
+    mut mailbox: impl FnMut() -> Result<u8, String>,
+    mut text: impl FnMut() -> Result<String, String>,
+) -> Result<bool, String> {
+    let expected = format!("{}%", (u32::from(level) * 100 + 63) / 127);
+    Ok(level != before && mailbox()? == u8::MAX && knob_display_matches(9, &expected, &text()?))
+}
+
+pub(super) fn settle_level(
+    session: &Session,
+    options: &Options,
+    context: &mut PreflightContext,
+    artifact: &str,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if !matches!(context.final_phase, 7 | 12) {
+        return Err("level settle out of order".into());
+    }
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let reader = control.knob_popup_reader()?;
+    let before = reader.level()?;
+    control.encoder(1, settle_level_encoder_steps(before))?;
+    let start = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
+    loop {
+        capture_knob_frame(
+            session,
+            options,
+            50,
+            artifact,
+            guest_timeout_ms,
+            wall_timeout_s,
+        )?;
+        let level = reader.level()?;
+        if settled_level_matches(
+            before,
+            level,
+            || reader.mailbox(),
+            || reader.text_at_table(context.text_table),
+        )? {
+            break;
+        }
+        if control
+            .input_status(l6ctl::InputSource::Panel)?
+            .guest_ms
+            .wrapping_sub(start)
+            >= 2_000
+        {
+            return Err(format!(
+                "channel-1 LEVEL turn was not displayed: before={before}, now={}",
+                level
+            )
+            .into());
+        }
+    }
+    context.final_phase += 1;
+    Ok(json!({"artifact":artifact}))
+}
+
+pub(super) fn inject_invalid_signature(
+    session: &Session,
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.final_phase != 8 {
+        return Err("signature injection out of order".into());
+    }
+    let qmp = &session.engine.management[0];
+    let debugger = context.debugger.as_mut().ok_or("missing knob debugger")?;
+    qmp.stop()?;
+    let address = l6max::gui_bitmap_table_entry_0;
+    let original = qmp.read_memory(0, address, 4)?;
+    let invalid = u32::from_le_bytes(
+        original
+            .clone()
+            .try_into()
+            .map_err(|_| "short signature read")?,
+    ) ^ 1;
+    debugger.write(address, &invalid.to_le_bytes())?;
+    debugger.resume_guest()?;
+    let guest_start = session
+        .engine
+        .inputs
+        .as_ref()
+        .ok_or("missing inputs")?
+        .panel
+        .snapshot()
+        .guest_ms;
+    context.pending_invalid_signature = Some(PendingInvalidSignature {
+        original,
+        invalid,
+        guest_start,
+        wall_start: Instant::now(),
+        rejected: None,
+    });
+    context.final_phase += 1;
+    Ok(json!({}))
+}
+
+pub(super) fn observe_invalid_signature(
+    session: &Session,
+    context: &mut PreflightContext,
+    guest_ms: u32,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.final_phase != 9 {
+        return Err("signature observation out of order".into());
+    }
+    let pending = context
+        .pending_invalid_signature
+        .as_ref()
+        .ok_or("missing signature probe")?;
+    loop {
+        session.poll()?;
+        let guest_now = session
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or("missing inputs")?
+            .panel
+            .snapshot()
+            .guest_ms;
+        match pending.observation(
+            guest_now,
+            Instant::now(),
+            guest_ms,
+            guest_timeout_ms,
+            wall_timeout_s,
+        ) {
+            SignatureObservation::Complete => break,
+            SignatureObservation::Expired => {
+                return Err("knob-dialog setup exceeded its deadline".into());
+            }
+            SignatureObservation::Waiting => {}
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    context.final_phase += 1;
+    Ok(json!({"guest_ms":guest_ms}))
+}
+
+pub(super) fn sample_invalid_signature(
+    session: &Session,
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.final_phase != 10 {
+        return Err("signature sample out of order".into());
+    }
+    let pending = context
+        .pending_invalid_signature
+        .as_mut()
+        .ok_or("missing signature probe")?;
+    let qmp = &session.engine.management[0];
+    qmp.stop()?;
+    let state = l6max::gui_bitmap_table_entry_0;
+    pending.rejected = Some(
+        qmp.read_memory(0, state, 4)? == pending.invalid.to_le_bytes()
+            && qmp.read_memory(0, state + 36 * 4, 4)? == context.original_bitmap,
+    );
+    context.final_phase += 1;
+    Ok(json!({}))
+}
+
+pub(super) fn restore_invalid_signature(
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.final_phase != 11 {
+        return Err("signature restoration out of order".into());
+    }
+    let pending = context
+        .pending_invalid_signature
+        .as_ref()
+        .ok_or("missing signature probe")?;
+    let rejected = pending.rejected.ok_or("missing signature sample")?;
+    let debugger = context.debugger.as_mut().ok_or("missing knob debugger")?;
+    debugger.write(l6max::gui_bitmap_table_entry_0, &pending.original)?;
+    debugger.resume_guest()?;
+    if !rejected {
+        return Err("the payload accepted an invalid state signature".into());
+    }
+    context.pending_invalid_signature = None;
+    context.final_phase += 1;
+    Ok(json!({"rejected":true}))
 }
 
 struct PendingInvalidTag {
@@ -3764,5 +3955,64 @@ mod invalid_tag_deadline_tests {
             PendingInvalidTag { tag: 240, ..tag }.description(),
             "invalid channel 15"
         );
+    }
+}
+
+#[cfg(test)]
+mod invalid_signature_observation_tests {
+    use super::*;
+    #[test]
+    fn anchors_guest_time_at_resume_and_handles_wrap_and_deadline() {
+        let start = Instant::now();
+        let pending = PendingInvalidSignature {
+            original: vec![0; 4],
+            invalid: 1,
+            guest_start: u32::MAX - 49,
+            wall_start: start,
+            rejected: None,
+        };
+        assert_eq!(
+            pending.observation(49, start + Duration::from_secs(1), 150, 180_000, 600),
+            SignatureObservation::Waiting
+        );
+        assert_eq!(
+            pending.observation(100, start + Duration::from_secs(1), 150, 180_000, 600),
+            SignatureObservation::Complete
+        );
+        assert_eq!(
+            pending.observation(49, start + Duration::from_secs(601), 150, 180_000, 600),
+            SignatureObservation::Expired
+        );
+        assert_eq!(
+            pending.observation(100, start + Duration::from_secs(601), 150, 180_000, 600),
+            SignatureObservation::Complete
+        );
+    }
+}
+
+#[cfg(test)]
+mod settle_level_polarity_tests {
+    use super::settle_level_encoder_steps;
+    #[test]
+    fn uses_input_hub_equivalent_polarity_at_both_endpoints() {
+        assert_eq!(settle_level_encoder_steps(0), -1);
+        assert_eq!(settle_level_encoder_steps(127), 1);
+    }
+}
+
+#[cfg(test)]
+mod settle_level_observation_tests {
+    use super::settled_level_matches;
+    #[test]
+    fn does_not_read_mailbox_or_text_before_level_changes() {
+        assert!(
+            !settled_level_matches(4, 4, || panic!("mailbox read"), || panic!("text read"))
+                .unwrap()
+        );
+    }
+    #[test]
+    fn does_not_read_text_before_mailbox_clears() {
+        assert!(!settled_level_matches(4, 5, || Ok(0), || panic!("text read")).unwrap());
+        assert!(settled_level_matches(4, 5, || Ok(255), || Ok("4%".into())).unwrap());
     }
 }

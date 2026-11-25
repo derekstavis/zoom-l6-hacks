@@ -149,6 +149,49 @@ pub(super) fn embedded_invalid_tag_operations() -> Result<Vec<(String, Operation
         .collect()
 }
 
+pub(super) fn embedded_invalid_signature_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/invalid-signature.toml"
+    ))
+    .map_err(|error| format!("invalid embedded signature fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_invalid_signature_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded signature fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobDialogSettleLevel { artifact } => {
+                    Operation::KnobDialogSettleLevel {
+                        artifact: artifact.clone(),
+                    }
+                }
+                crate::Action::KnobDialogInjectInvalidSignature => {
+                    Operation::KnobDialogInjectInvalidSignature
+                }
+                crate::Action::KnobDialogObserveInvalidSignature { guest_ms } => {
+                    Operation::KnobDialogObserveInvalidSignature {
+                        guest_ms: *guest_ms,
+                    }
+                }
+                crate::Action::KnobDialogSampleInvalidSignature => {
+                    Operation::KnobDialogSampleInvalidSignature
+                }
+                crate::Action::KnobDialogRestoreInvalidSignature => {
+                    Operation::KnobDialogRestoreInvalidSignature
+                }
+                _ => return Err("unsupported embedded signature action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
 /// Convert a mode-fragment action for the post-update lifecycle. Scenario
 /// loading validates the complete sequence before this conversion.
 pub(super) fn mode_step_operation(action: &crate::Action) -> Option<Operation> {

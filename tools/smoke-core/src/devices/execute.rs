@@ -33,6 +33,11 @@ fn knob_dialog_phase(
         | Operation::KnobDialogInjectInvalidTag { .. }
         | Operation::KnobDialogWaitInvalidTag
         | Operation::KnobDialogConfirmInvalidTag
+        | Operation::KnobDialogSettleLevel { .. }
+        | Operation::KnobDialogInjectInvalidSignature
+        | Operation::KnobDialogObserveInvalidSignature { .. }
+        | Operation::KnobDialogSampleInvalidSignature
+        | Operation::KnobDialogRestoreInvalidSignature
         | Operation::KnobDialog => next_mode
             .and_then(|index| u16::try_from(17 + index * 10 + usize::from(final_phase?)).ok()),
         _ => None,
@@ -2594,6 +2599,42 @@ impl State {
                     .as_mut()
                     .ok_or("missing knob preflight")?,
             ),
+            Operation::KnobDialogSettleLevel { artifact } => settle_level(
+                session,
+                options,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                &artifact,
+                guest_timeout_ms,
+                wall_timeout_s,
+            ),
+            Operation::KnobDialogInjectInvalidSignature => inject_invalid_signature(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
+            Operation::KnobDialogObserveInvalidSignature { guest_ms } => observe_invalid_signature(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                guest_ms,
+                guest_timeout_ms,
+                wall_timeout_s,
+            ),
+            Operation::KnobDialogSampleInvalidSignature => sample_invalid_signature(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
+            Operation::KnobDialogRestoreInvalidSignature => restore_invalid_signature(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
             Operation::KnobDialog => {
                 self.knob_heap_reader = None;
                 let _baseline = self
@@ -2798,6 +2839,16 @@ mod knob_phase_tests {
             Operation::KnobDialogInjectInvalidTag { tag: 240 },
             Operation::KnobDialogWaitInvalidTag,
             Operation::KnobDialogConfirmInvalidTag,
+            Operation::KnobDialogSettleLevel {
+                artifact: "before".into(),
+            },
+            Operation::KnobDialogInjectInvalidSignature,
+            Operation::KnobDialogObserveInvalidSignature { guest_ms: 150 },
+            Operation::KnobDialogSampleInvalidSignature,
+            Operation::KnobDialogRestoreInvalidSignature,
+            Operation::KnobDialogSettleLevel {
+                artifact: "after".into(),
+            },
             Operation::KnobDialog,
         ]
         .into_iter()

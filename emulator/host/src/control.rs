@@ -110,6 +110,7 @@ impl ControlServer {
         model: Model,
         qmp: QmpClient,
         installer_outcome: Option<crate::update_bootloader::Outcome>,
+        usb_controller: Option<crate::usb::Controller>,
     ) -> Result<Self, String> {
         if fs::symlink_metadata(&path).is_ok() {
             return Err(format!(
@@ -154,8 +155,16 @@ impl ControlServer {
                             let inputs = inputs.clone();
                             let qmp = qmp.clone();
                             let installer_outcome = installer_outcome.clone();
+                            let usb_controller = usb_controller.clone();
                             workers.push(thread::spawn(move || {
-                                handle(stream, &inputs, model, &qmp, installer_outcome.as_ref())
+                                handle(
+                                    stream,
+                                    &inputs,
+                                    model,
+                                    &qmp,
+                                    installer_outcome.as_ref(),
+                                    usb_controller.as_ref(),
+                                )
                             }));
                         }
                         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -419,6 +428,7 @@ fn handle(
     model: Model,
     qmp: &QmpClient,
     installer_outcome: Option<&crate::update_bootloader::Outcome>,
+    usb_controller: Option<&crate::usb::Controller>,
 ) {
     // Accepted sockets can inherit O_NONBLOCK from the listener (notably on
     // macOS). Use bounded blocking I/O so large JSON replies are complete.
@@ -436,6 +446,24 @@ fn handle(
                 return Err("request exceeds 4096 bytes".into());
             }
             let request: Value = serde_json::from_str(&line).map_err(|error| error.to_string())?;
+            if request.get("command").and_then(Value::as_str) == Some("usb-attach") {
+                usb_controller
+                    .ok_or("USB controller unavailable")?
+                    .attach()?;
+                return Ok(json!({"attached":true}));
+            }
+            if request.get("command").and_then(Value::as_str) == Some("usb-release") {
+                usb_controller
+                    .ok_or("USB controller unavailable")?
+                    .release()?;
+                return Ok(json!({"attached":false}));
+            }
+            if request.get("command").and_then(Value::as_str) == Some("usb-controller") {
+                let running = usb_controller
+                    .ok_or("USB controller unavailable")?
+                    .running()?;
+                return Ok(json!({"running":running}));
+            }
             if request.get("command").and_then(Value::as_str) == Some("installer-outcome") {
                 return installer_observation(installer_outcome);
             }

@@ -450,6 +450,55 @@ fn installer_outcome_cli_and_client_preserve_result_and_unavailable() {
 }
 
 #[test]
+fn usb_controller_cli_and_client_distinguish_attach_and_running() {
+    let path = socket_path();
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"usb-attach"}),
+                json!({"ok":true,"result":{"attached":true}}),
+            ),
+            (
+                json!({"command":"usb-controller"}),
+                json!({"ok":true,"result":{"running":false}}),
+            ),
+            (
+                json!({"command":"usb-controller"}),
+                json!({"ok":true,"result":{"running":true}}),
+            ),
+            (
+                json!({"command":"usb-attach"}),
+                json!({"ok":false,"error":"USB is owned by the native MIDI bridge"}),
+            ),
+        ],
+    );
+    let client = ControlClient::new(&path);
+    assert!(client.usb_attach().unwrap().attached);
+    assert!(!client.usb_controller().unwrap().running);
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["usb", "controller"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        json!({"running":true})
+    );
+    assert!(
+        matches!(client.usb_attach(), Err(ControlError::Rejected(message)) if message.contains("bridge"))
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn cli_keeps_existing_one_based_encoder_and_output_contract() {
     let path = socket_path();
     let server = server(

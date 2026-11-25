@@ -434,6 +434,7 @@ pub fn connect(name: &str) -> Result<Box<dyn Client>, String> {
 }
 
 pub struct DirectUsbClient {
+    _lease: crate::usb::DirectLease,
     usb: std::sync::Arc<crate::usb::UsbHost>,
     endpoints: crate::usb::Endpoints,
     encoder: crate::usb_midi::Encoder,
@@ -446,13 +447,25 @@ impl DirectUsbClient {
         if cable > 15 {
             return Err("USB MIDI cable must be in 0..=15".into());
         }
-        usb.connect(true).map_err(|error| error.to_string())?;
-        let endpoints = usb
-            .enumerate()
-            .map_err(|error| error.to_string())?
-            .midi
-            .ok_or("USB device has no MIDI interface")?;
+        let lease = usb.acquire_direct()?;
+        let endpoints = (|| -> Result<_, String> {
+            usb.connect(true).map_err(|error| error.to_string())?;
+            usb.enumerate()
+                .map_err(|error| error.to_string())?
+                .midi
+                .ok_or("USB device has no MIDI interface".into())
+        })();
+        let endpoints = match endpoints {
+            Ok(value) => value,
+            Err(error) => {
+                return Err(match lease.rollback(&usb) {
+                    Ok(()) => error,
+                    Err(cleanup) => format!("{error}; USB detach after failed setup: {cleanup}"),
+                });
+            }
+        };
         Ok(Self {
+            _lease: lease,
             usb,
             endpoints,
             encoder: crate::usb_midi::Encoder::default(),

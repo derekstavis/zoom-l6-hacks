@@ -16,6 +16,9 @@ cargo l6ctl --socket /tmp/l6-control.sock info
 cargo l6ctl --socket /tmp/l6-control.sock input status panel
 cargo l6ctl --socket /tmp/l6-control.sock heap-counters
 cargo l6ctl --socket /tmp/l6-control.sock midi-config
+cargo l6ctl --socket /tmp/l6-control.sock usb attach
+cargo l6ctl --socket /tmp/l6-control.sock usb release
+cargo l6ctl --socket /tmp/l6-control.sock usb controller
 cargo l6ctl --socket /tmp/l6-control.sock installer-outcome
 cargo l6ctl --socket /tmp/l6-control.sock update-state
 cargo l6ctl --socket /tmp/l6-control.sock update-gui-state
@@ -295,3 +298,17 @@ Rust methods are `ControlClient::installer_outcome` and
 `OwnedControl::installer_outcome`; a new engine start has its own result.
 
 `cargo l6ctl --socket PATH memory-read ADDRESS LENGTH` reads 1–4096 bytes of MAIN SDRAM (0x80000000–0x83ffffff) as non-atomic raw data. It does not select a firmware revision or interpret the bytes.
+
+### USB controller
+
+`l6ctl --socket PATH usb attach` attaches the emulated raw USB cable; it
+does not start the native MIDI bridge or wait for the guest. It reserves the USB host until `usb release` or engine shutdown, and fails while
+the native MIDI bridge or a direct MIDI session owns the USB host. A raw
+reservation prevents the bridge from starting; release detaches the cable.
+The guard coordinates these APIs and direct MIDI sessions; legacy in-process
+callers using `UsbHost` directly bypass it and must coordinate separately. `l6ctl --socket PATH usb controller`
+probes whether an attached guest controller answers tokens and prints
+`running`; this is not USB enumeration or MIDI readiness. Both operations
+support the L6 and L6max emulator models. Their Rust equivalents are
+`ControlClient::usb_attach`, `ControlClient::usb_release`, `ControlClient::usb_controller`, and the same
+methods on `OwnedControl`.

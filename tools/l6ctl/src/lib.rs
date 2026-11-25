@@ -45,6 +45,9 @@ pub enum Request {
     UpdateState,
     UpdateGuiState,
     InstallerOutcome,
+    UsbAttach,
+    UsbRelease,
+    UsbController,
     KnobPopup { with_text: bool },
     RecorderState,
     KnobParameterState,
@@ -55,6 +58,17 @@ pub enum Request {
     Encoder { channel: u32, steps: i32 },
     Analog { channel: u32, steps: i32 },
     SetAnalog { channel: u32, value: u16 },
+}
+
+/// The attach request only signals cable attachment, not enumeration.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct UsbAttachReceipt {
+    pub attached: bool,
+}
+/// `running` means the attached guest controller answers tokens; it does not prove enumeration.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct UsbControllerStatus {
+    pub running: bool,
 }
 
 /// The socket reports the accepted command, not a guest acknowledgement.
@@ -206,6 +220,16 @@ impl ControlClient {
         self.request_as(&Request::InstallerOutcome)
     }
 
+    pub fn usb_attach(&self) -> Result<UsbAttachReceipt, ControlError> {
+        self.request_as(&Request::UsbAttach)
+    }
+    pub fn usb_release(&self) -> Result<UsbAttachReceipt, ControlError> {
+        self.request_as(&Request::UsbRelease)
+    }
+    pub fn usb_controller(&self) -> Result<UsbControllerStatus, ControlError> {
+        self.request_as(&Request::UsbController)
+    }
+
     pub fn update_state(&self) -> Result<UpdateState, ControlError> {
         self.request_as(&Request::UpdateState)
     }
@@ -344,6 +368,32 @@ impl<'a> OwnedControl<'a> {
             .ok_or(ControlError::Unavailable(
                 "replacement installer was not run for this engine start",
             ))
+    }
+
+    pub fn usb_attach(&self) -> Result<UsbAttachReceipt, ControlError> {
+        self.engine
+            .usb_controller()
+            .ok_or(ControlError::Unavailable("USB controller unavailable"))?
+            .attach()
+            .map_err(ControlError::Rejected)?;
+        Ok(UsbAttachReceipt { attached: true })
+    }
+    pub fn usb_release(&self) -> Result<UsbAttachReceipt, ControlError> {
+        self.engine
+            .usb_controller()
+            .ok_or(ControlError::Unavailable("USB controller unavailable"))?
+            .release()
+            .map_err(ControlError::Rejected)?;
+        Ok(UsbAttachReceipt { attached: false })
+    }
+    pub fn usb_controller(&self) -> Result<UsbControllerStatus, ControlError> {
+        let running = self
+            .engine
+            .usb_controller()
+            .ok_or(ControlError::Unavailable("USB controller unavailable"))?
+            .running()
+            .map_err(ControlError::Rejected)?;
+        Ok(UsbControllerStatus { running })
     }
 
     /// Enqueue a one-based encoder input, without waiting for guest acknowledgment.

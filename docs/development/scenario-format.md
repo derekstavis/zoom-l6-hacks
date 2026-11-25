@@ -340,6 +340,11 @@ message delivered just after the interval.
 | `l6-din-sweep` | — | Sweep supported L6 DIN values and record dispatch behavior |
 | `l6max-input-timing` | — | Measure L6max input timing and applied acknowledgements |
 
+The shared indicator fragment budgets 10,000 guest ms and 90 wall seconds per
+campaign. Its fixed 6,000 guest ms of observations remain unchanged; the
+remaining budget covers runner work between samples and slower guests under
+parallel load. Both ceilings remain hard failures.
+
 Peripheral calls have bounded I/O and the step's guest/wall deadline. Callback,
 startup and settings operations require the known MAIN revision; existing
 installed MAIN bytes must match the selected image. Firmware addresses stay in

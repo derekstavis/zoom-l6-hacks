@@ -6,7 +6,7 @@ pub use l6max_host::control::Info;
 pub use l6max_host::debug::{Command as DebugCommand, Observation as DebugObservation};
 pub use l6max_host::heap::Counters as HeapCounters;
 pub use l6max_host::input::button_source;
-pub use l6max_host::input::{InputCounters, InputSource};
+pub use l6max_host::input::{InputAck, InputAckState, InputCounters, InputSource};
 pub use l6max_host::knob_popup::{ParameterState, RecorderState, Snapshot as KnobPopupSnapshot};
 pub use l6max_host::memory::MemoryRead;
 pub use l6max_host::midi_config::Config as MidiConfig;
@@ -40,6 +40,7 @@ pub enum RtosKind {
 pub enum Request {
     Info,
     InputStatus { source: InputSource },
+    InputAck { source: InputSource, sequence: u32 },
     HeapCounters,
     MemoryRead { address: u32, length: usize },
     MidiConfig,
@@ -83,6 +84,7 @@ pub struct ButtonReceipt {
 pub struct AxisReceipt {
     pub channel: u32,
     pub steps: i32,
+    pub sequence: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -231,6 +233,9 @@ impl ControlClient {
     /// Sample aggregate counters for one running emulator input channel.
     pub fn input_status(&self, source: InputSource) -> Result<InputCounters, ControlError> {
         self.request_as(&Request::InputStatus { source })
+    }
+    pub fn input_ack(&self, source: InputSource, sequence: u32) -> Result<InputAck, ControlError> {
+        self.request_as(&Request::InputAck { source, sequence })
     }
 
     /// Send one typed request. RTOS response bodies are currently the host's
@@ -417,6 +422,14 @@ impl<'a> OwnedControl<'a> {
             .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
         Ok(inputs.counters(source))
     }
+    pub fn input_ack(&self, source: InputSource, sequence: u32) -> Result<InputAck, ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
+        Ok(inputs.acknowledgement(source, sequence))
+    }
 
     fn main_qmp(&self) -> Result<&qmp::QmpClient, ControlError> {
         self.engine
@@ -498,9 +511,13 @@ impl<'a> OwnedControl<'a> {
             .inputs
             .as_ref()
             .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
-        control::enqueue_encoder(inputs, self.engine.model(), channel, steps)
+        let sequence = control::enqueue_encoder(inputs, self.engine.model(), channel, steps)
             .map_err(ControlError::Rejected)?;
-        Ok(AxisReceipt { channel, steps })
+        Ok(AxisReceipt {
+            channel,
+            steps,
+            sequence,
+        })
     }
 
     /// Enqueue a tap without waiting for the guest to apply it.

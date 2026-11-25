@@ -41,7 +41,7 @@ fn run() -> Result<(), String> {
     let command = args.first().map(String::as_str).unwrap_or("help");
     if matches!(command, "help" | "--help" | "-h") {
         println!(
-            "Usage: l6ctl [--socket PATH] info\n       l6ctl [--socket PATH] debug-session\n       l6ctl [--socket PATH] input status main|panel\n       l6ctl [--socket PATH] heap-counters\n       l6ctl [--socket PATH] memory-read ADDRESS LENGTH\n       l6ctl [--socket PATH] midi-config\n       l6ctl [--socket PATH] update-state\n       l6ctl [--socket PATH] installer-outcome\n       l6ctl [--socket PATH] usb attach|release|controller\n       l6ctl [--socket PATH] update-gui-state\n       l6ctl [--socket PATH] knob-popup [--text]\n       l6ctl [--socket PATH] recorder-state\n       l6ctl [--socket PATH] knob-parameter-state\n       l6ctl [--socket PATH] rtos heap|tasks|scheduler|objects|all [--pretty]\n       l6ctl [--socket PATH] button NAME|TARGET [--hold-ms MS]\n       l6ctl [--socket PATH] down NAME|TARGET DURATION_MS\n       l6ctl [--socket PATH] up NAME|TARGET\n       l6ctl [--socket PATH] encoder CHANNEL STEPS\n       l6ctl [--socket PATH] analog CHANNEL STEPS\n       l6ctl [--socket PATH] set-analog CHANNEL VALUE\n       l6ctl midi listen ENDPOINT [--timeout-ms MS]\n       l6ctl midi observe ENDPOINT --wall-ms MS\n       l6ctl midi send ENDPOINT CHANNEL CONTROLLER VALUE\n       l6ctl midi sync ENDPOINT --count N [--quiet-ms MS] [--timeout-ms MS]\n\nConnects to a running emulator started with --control-socket PATH. Button names use the semantic names documented by l6test; numeric targets 0..53 are also accepted. Encoder channels are one-based. Analog channels are 1..5."
+            "Usage: l6ctl [--socket PATH] info\n       l6ctl [--socket PATH] debug-session\n       l6ctl [--socket PATH] input status main|panel\n       l6ctl [--socket PATH] input ack main|panel SEQUENCE\n       l6ctl [--socket PATH] heap-counters\n       l6ctl [--socket PATH] memory-read ADDRESS LENGTH\n       l6ctl [--socket PATH] midi-config\n       l6ctl [--socket PATH] update-state\n       l6ctl [--socket PATH] installer-outcome\n       l6ctl [--socket PATH] usb attach|release|controller\n       l6ctl [--socket PATH] update-gui-state\n       l6ctl [--socket PATH] knob-popup [--text]\n       l6ctl [--socket PATH] recorder-state\n       l6ctl [--socket PATH] knob-parameter-state\n       l6ctl [--socket PATH] rtos heap|tasks|scheduler|objects|all [--pretty]\n       l6ctl [--socket PATH] button NAME|TARGET [--hold-ms MS]\n       l6ctl [--socket PATH] down NAME|TARGET DURATION_MS\n       l6ctl [--socket PATH] up NAME|TARGET\n       l6ctl [--socket PATH] encoder CHANNEL STEPS\n       l6ctl [--socket PATH] analog CHANNEL STEPS\n       l6ctl [--socket PATH] set-analog CHANNEL VALUE\n       l6ctl midi listen ENDPOINT [--timeout-ms MS]\n       l6ctl midi observe ENDPOINT --wall-ms MS\n       l6ctl midi send ENDPOINT CHANNEL CONTROLLER VALUE\n       l6ctl midi sync ENDPOINT --count N [--quiet-ms MS] [--timeout-ms MS]\n\nConnects to a running emulator started with --control-socket PATH. Button names use the semantic names documented by l6test; numeric targets 0..53 are also accepted. Encoder channels are one-based. Analog channels are 1..5."
         );
         return Ok(());
     }
@@ -57,6 +57,26 @@ fn run() -> Result<(), String> {
         return debug_cli::run(&client);
     }
     if command == "input" {
+        if let [_, subcommand, source, sequence] = args.as_slice() {
+            if subcommand == "ack" {
+                let source = match source.as_str() {
+                    "main" => InputSource::Main,
+                    "panel" => InputSource::Panel,
+                    _ => return Err("input source must be main or panel".into()),
+                };
+                let sequence = sequence
+                    .parse::<u32>()
+                    .map_err(|_| "invalid input sequence")?;
+                let ack = client
+                    .input_ack(source, sequence)
+                    .map_err(|error| error.to_string())?;
+                println!(
+                    "{}",
+                    serde_json::to_string(&ack).map_err(|error| error.to_string())?
+                );
+                return Ok(());
+            }
+        }
         let source = match args.as_slice() {
             [_, subcommand, source] if subcommand == "status" && source == "main" => {
                 InputSource::Main
@@ -347,6 +367,7 @@ fn run() -> Result<(), String> {
         ),
         Request::Info
         | Request::InputStatus { .. }
+        | Request::InputAck { .. }
         | Request::HeapCounters
         | Request::MemoryRead { .. }
         | Request::MidiConfig

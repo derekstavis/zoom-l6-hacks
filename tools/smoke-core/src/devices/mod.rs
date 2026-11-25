@@ -34,9 +34,14 @@ use midi::*;
 use midi_probe::*;
 use mode_primitives::{
     embedded_expiry_operations, embedded_invalid_signature_operations,
-    embedded_invalid_tag_operations, embedded_midi_sync_operations, embedded_mode_operations,
-    embedded_navigation_operations, embedded_notification_operations,
-    embedded_restoration_operations, wait_parameter_mode_checked,
+    embedded_invalid_tag_operations,
+    embedded_midi_sync_operations,
+    embedded_mode_operations,
+    embedded_navigation_operations,
+    embedded_notification_operations,
+    embedded_overlay_operations,
+    embedded_restoration_operations,
+    wait_parameter_mode_checked,
 };
 use panel::*;
 use sd::*;
@@ -312,7 +317,19 @@ pub enum Operation {
     KnobDialogActiveDisplay,
     KnobDialogLevelDemo,
     KnobDialogTaskContexts,
-    KnobDialogOverlayInvariants,
+    KnobOverlayBegin,
+    KnobOverlayCheckWindow,
+    KnobOverlaySnapshotDescriptors,
+    KnobOverlayCheckDescriptor {
+        field: crate::scenario::OverlayDescriptorField,
+    },
+    KnobOverlayFinishDescriptors,
+    KnobOverlayCheckResource,
+    KnobOverlayCheckCorners,
+    KnobOverlayCheckSignature,
+    KnobOverlayCheckBitmap,
+    KnobOverlayCheckHeap,
+    KnobOverlayFinish,
     KnobDialogBitmapZero,
     KnobDialogActiveOverlay,
     KnobDialogLockedUpdate,
@@ -776,6 +793,7 @@ pub struct State {
     knob_popup: Option<knob_dialog::PopupContext>,
     knob_dialog_baseline: Option<[u8; 1024]>,
     knob_dialog_preflight: Option<knob_dialog::PreflightContext>,
+    overlay_reader: Option<l6max_host::knob_popup::OverlayReader>,
     knob_dialog_deadline: Option<(std::time::Instant, u32, u32, u64, u16)>,
     knob_mode: Option<KnobModeScope>,
     knob_heap_reader: Option<l6max_host::heap::CounterReader>,

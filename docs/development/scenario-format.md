@@ -271,7 +271,7 @@ message delivered just after the interval.
 | `knob-dialog-active-display` | — | Turn the knob, capture the active display and preserve its frame and callback pointer |
 | `knob-dialog-level-demo` | — | Capture the bounded level sweep to at least 69% and back to 0% |
 | `knob-dialog-task-contexts` | — | Verify the input hook and display callback run in different FreeRTOS tasks, retaining their task IDs as evidence |
-| `knob-dialog-overlay-invariants` | — | Check the active window, borrowed descriptors, background pixels and heap against the saved baseline |
+| `knob-overlay-*` | field for descriptor checks | Check the active window, saved descriptor snapshot, resource, background pixels, bitmap and heap against the baseline using the shared overlay fragment |
 | `knob-dialog-bitmap-zero` | — | Verify bitmap ID 0 safely short-circuits an injected display-task draw |
 | `knob-dialog-active-overlay` | — | Check the rendered value and stable overlay pixels after the bitmap probe |
 | `knob-dialog-locked-update` | — | Verify the dialog consumes and displays a level update while the notification semaphore is held, then restore the lock and check the mailbox |

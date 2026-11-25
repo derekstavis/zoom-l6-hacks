@@ -754,8 +754,8 @@ impl Scenario {
                 Action::KnobDialogActiveDisplay => "knob-dialog-first-activation",
                 Action::KnobDialogLevelDemo => "knob-dialog-active-display",
                 Action::KnobDialogTaskContexts => "knob-dialog-level-demo",
-                Action::KnobDialogOverlayInvariants => "knob-dialog-task-contexts",
-                Action::KnobDialogBitmapZero => "knob-dialog-overlay-invariants",
+                Action::KnobOverlayBegin => "knob-dialog-task-contexts",
+                Action::KnobDialogBitmapZero => "knob-overlay-finish",
                 Action::KnobDialogActiveOverlay => "knob-dialog-bitmap-zero",
                 Action::KnobDialogLockedUpdate => "knob-dialog-active-overlay",
                 Action::KnobDialogAdaptive { .. } => "knob-dialog-mode-end",
@@ -810,8 +810,8 @@ impl Scenario {
                         "knob-dialog-task-contexts" => {
                             matches!(previous.action, Action::KnobDialogTaskContexts)
                         }
-                        "knob-dialog-overlay-invariants" => {
-                            matches!(previous.action, Action::KnobDialogOverlayInvariants)
+                        "knob-overlay-finish" => {
+                            matches!(previous.action, Action::KnobOverlayFinish)
                         }
                         "knob-dialog-bitmap-zero" => {
                             matches!(previous.action, Action::KnobDialogBitmapZero)
@@ -877,7 +877,7 @@ impl Scenario {
                     return Err("knob-dialog preflight must end with the diagnostic".into());
                 };
                 let subsequent = &applicable[..=end];
-                if subsequent.len() < 87
+                if subsequent.len() < 101
                     || !matches!(subsequent[0].action, Action::KnobDialogPreflightDescriptor)
                     || !matches!(subsequent[1].action, Action::KnobDialogPreflightTextAlias)
                     || !matches!(
@@ -894,11 +894,11 @@ impl Scenario {
                     || !matches!(subsequent[7].action, Action::KnobDialogActiveDisplay)
                     || !matches!(subsequent[8].action, Action::KnobDialogLevelDemo)
                     || !matches!(subsequent[9].action, Action::KnobDialogTaskContexts)
-                    || !matches!(subsequent[10].action, Action::KnobDialogOverlayInvariants)
-                    || !matches!(subsequent[11].action, Action::KnobDialogBitmapZero)
-                    || !matches!(subsequent[12].action, Action::KnobDialogActiveOverlay)
-                    || !matches!(subsequent[13].action, Action::KnobDialogLockedUpdate)
-                    || !valid_knob_mode_steps(&subsequent[14..subsequent.len().saturating_sub(63)])
+                    || !super::valid_overlay_invariant_steps(&subsequent[10..25])
+                    || !matches!(subsequent[25].action, Action::KnobDialogBitmapZero)
+                    || !matches!(subsequent[26].action, Action::KnobDialogActiveOverlay)
+                    || !matches!(subsequent[27].action, Action::KnobDialogLockedUpdate)
+                    || !valid_knob_mode_steps(&subsequent[28..subsequent.len().saturating_sub(63)])
                     || !valid_invalid_tag_steps(
                         &subsequent[subsequent.len().saturating_sub(63)
                             ..subsequent.len().saturating_sub(56)],

@@ -71,6 +71,17 @@ pub enum NavigationField {
     Callback,
 }
 
+/// Ordered fields in the retained overlay descriptor snapshot.
+#[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum OverlayDescriptorField {
+    Widget7,
+    Widget33,
+    Background10,
+    Background37,
+    Background48,
+}
+
 /// A condition that ends a held chord.
 #[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -636,7 +647,19 @@ pub enum Action {
     KnobDialogActiveDisplay,
     KnobDialogLevelDemo,
     KnobDialogTaskContexts,
-    KnobDialogOverlayInvariants,
+    KnobOverlayBegin,
+    KnobOverlayCheckWindow,
+    KnobOverlaySnapshotDescriptors,
+    KnobOverlayCheckDescriptor {
+        field: OverlayDescriptorField,
+    },
+    KnobOverlayFinishDescriptors,
+    KnobOverlayCheckResource,
+    KnobOverlayCheckCorners,
+    KnobOverlayCheckSignature,
+    KnobOverlayCheckBitmap,
+    KnobOverlayCheckHeap,
+    KnobOverlayFinish,
     KnobDialogBitmapZero,
     KnobDialogActiveOverlay,
     KnobDialogLockedUpdate,
@@ -1297,5 +1320,73 @@ pub fn l6_button_led_index(model: Model, control: &str) -> Result<usize, String>
         12 => Ok(10),
         7 => Ok(11),
         _ => Err(format!("{control} has no L6 button LED")),
+    }
+}
+
+pub(crate) fn valid_overlay_invariant_steps(steps: &[&Step]) -> bool {
+    steps.len() == 15
+        && matches!(steps[0].action, Action::KnobOverlayBegin)
+        && matches!(steps[1].action, Action::KnobOverlayCheckWindow)
+        && matches!(steps[2].action, Action::KnobOverlaySnapshotDescriptors)
+        && matches!(
+            steps[3].action,
+            Action::KnobOverlayCheckDescriptor {
+                field: OverlayDescriptorField::Widget7
+            }
+        )
+        && matches!(
+            steps[4].action,
+            Action::KnobOverlayCheckDescriptor {
+                field: OverlayDescriptorField::Widget33
+            }
+        )
+        && matches!(
+            steps[5].action,
+            Action::KnobOverlayCheckDescriptor {
+                field: OverlayDescriptorField::Background10
+            }
+        )
+        && matches!(
+            steps[6].action,
+            Action::KnobOverlayCheckDescriptor {
+                field: OverlayDescriptorField::Background37
+            }
+        )
+        && matches!(
+            steps[7].action,
+            Action::KnobOverlayCheckDescriptor {
+                field: OverlayDescriptorField::Background48
+            }
+        )
+        && matches!(steps[8].action, Action::KnobOverlayFinishDescriptors)
+        && matches!(steps[9].action, Action::KnobOverlayCheckResource)
+        && matches!(steps[10].action, Action::KnobOverlayCheckCorners)
+        && matches!(steps[11].action, Action::KnobOverlayCheckSignature)
+        && matches!(steps[12].action, Action::KnobOverlayCheckBitmap)
+        && matches!(steps[13].action, Action::KnobOverlayCheckHeap)
+        && matches!(steps[14].action, Action::KnobOverlayFinish)
+}
+
+#[cfg(test)]
+mod overlay_fragment_tests {
+    use super::*;
+    #[test]
+    fn descriptor_order_and_completeness_are_enforced() {
+        let mut fragment: crate::Fragment = toml::from_str(include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/overlay-invariants.toml"
+        ))
+        .unwrap();
+        assert!(valid_overlay_invariant_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(3, 4);
+        assert!(!valid_overlay_invariant_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(3, 4);
+        fragment.step.pop();
+        assert!(!valid_overlay_invariant_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
     }
 }

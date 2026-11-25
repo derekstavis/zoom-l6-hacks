@@ -1,0 +1,79 @@
+[[step]]
+action = "knob-overlay-begin"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-overlay-check-window"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-overlay-snapshot-descriptors"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-overlay-check-descriptor"
+field = "widget7"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-overlay-check-descriptor"
+field = "widget33"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-overlay-check-descriptor"
+field = "background10"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-overlay-check-descriptor"
+field = "background37"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-overlay-check-descriptor"
+field = "background48"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-overlay-finish-descriptors"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-overlay-check-resource"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-overlay-check-corners"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-overlay-check-signature"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-overlay-check-bitmap"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-overlay-check-heap"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-overlay-finish"
+guest_timeout_ms = 180000
+wall_timeout_s = 600

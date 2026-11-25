@@ -917,10 +917,50 @@ impl Runner {
                 Action::KnobDialogTaskContexts => {
                     return Ok(Progress::Device(devices::Operation::KnobDialogTaskContexts));
                 }
-                Action::KnobDialogOverlayInvariants => {
+                Action::KnobOverlayBegin => {
+                    return Ok(Progress::Device(devices::Operation::KnobOverlayBegin));
+                }
+                Action::KnobOverlayCheckWindow => {
+                    return Ok(Progress::Device(devices::Operation::KnobOverlayCheckWindow));
+                }
+                Action::KnobOverlaySnapshotDescriptors => {
                     return Ok(Progress::Device(
-                        devices::Operation::KnobDialogOverlayInvariants,
+                        devices::Operation::KnobOverlaySnapshotDescriptors,
                     ));
+                }
+                Action::KnobOverlayCheckDescriptor { field } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobOverlayCheckDescriptor { field },
+                    ));
+                }
+                Action::KnobOverlayFinishDescriptors => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobOverlayFinishDescriptors,
+                    ));
+                }
+                Action::KnobOverlayCheckResource => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobOverlayCheckResource,
+                    ));
+                }
+                Action::KnobOverlayCheckCorners => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobOverlayCheckCorners,
+                    ));
+                }
+                Action::KnobOverlayCheckSignature => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobOverlayCheckSignature,
+                    ));
+                }
+                Action::KnobOverlayCheckBitmap => {
+                    return Ok(Progress::Device(devices::Operation::KnobOverlayCheckBitmap));
+                }
+                Action::KnobOverlayCheckHeap => {
+                    return Ok(Progress::Device(devices::Operation::KnobOverlayCheckHeap));
+                }
+                Action::KnobOverlayFinish => {
+                    return Ok(Progress::Device(devices::Operation::KnobOverlayFinish));
                 }
                 Action::KnobDialogBitmapZero => {
                     return Ok(Progress::Device(devices::Operation::KnobDialogBitmapZero));

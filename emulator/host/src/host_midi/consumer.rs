@@ -443,6 +443,50 @@ pub struct DirectUsbClient {
 }
 
 impl DirectUsbClient {
+    pub fn connect_before(
+        usb: std::sync::Arc<crate::usb::UsbHost>,
+        cable: u8,
+        budget: &crate::usb::Budget,
+    ) -> Result<Self, String> {
+        if cable > 15 {
+            return Err("USB MIDI cable must be in 0..=15".into());
+        }
+        budget.check().map_err(|e| e.to_string())?;
+        let lease = usb.acquire_direct()?;
+        let endpoints = (|| -> Result<_, String> {
+            usb.attach_before(budget).map_err(|e| e.to_string())?;
+            usb.enumerate_before(budget)
+                .map_err(|e| e.to_string())?
+                .midi
+                .ok_or("USB device has no MIDI interface".into())
+        })();
+        let endpoints = match endpoints {
+            Ok(value) => value,
+            Err(error) => {
+                let cleanup = crate::usb::Budget::new(
+                    std::time::Instant::now() + std::time::Duration::from_secs(1),
+                    || false,
+                );
+                return Err(match lease.rollback_before(&usb, &cleanup) {
+                    Ok(()) => error,
+                    Err(e) => {
+                        usb.shutdown();
+                        format!(
+                            "{error}; USB setup rollback failed: {e}; transport closed, restart required"
+                        )
+                    }
+                });
+            }
+        };
+        Ok(Self {
+            _lease: lease,
+            usb,
+            endpoints,
+            encoder: crate::usb_midi::Encoder::default(),
+            pending: std::collections::VecDeque::new(),
+            cable,
+        })
+    }
     pub fn connect(usb: std::sync::Arc<crate::usb::UsbHost>, cable: u8) -> Result<Self, String> {
         if cable > 15 {
             return Err("USB MIDI cable must be in 0..=15".into());

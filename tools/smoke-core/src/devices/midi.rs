@@ -539,139 +539,6 @@ pub(super) fn run_l6_din_event_dispatch(
 }
 
 impl State {
-    pub(super) fn run_host_midi_round_trip(
-        &mut self,
-        session: &Session,
-        guest_timeout_ms: u32,
-        wall_timeout_s: u64,
-        direct_cable: Option<u8>,
-        expect_ring_change: bool,
-    ) -> Result<Value, Box<dyn std::error::Error>> {
-        let model = session.engine.model();
-        let endpoint = l6max_host::host_midi::endpoint_name(
-            &l6max_host::host_midi::port_names_for_model_with_namespace(
-                model,
-                midi_namespace().as_deref(),
-            )[1],
-        );
-        let mut client: Box<dyn crate::host_midi::Client> = if let Some(cable) = direct_cable {
-            // A previous round trip deliberately retained its session for any
-            // following sync. Replace it before acquiring the exclusive USB
-            // lease for a new round trip; its queued events belong to that
-            // earlier session and must not leak into the new one.
-            self.release_retained_host_midi();
-            Box::new(l6ctl::midi::MidiSession::connect_direct(
-                session.engine.usb.clone().ok_or("USB host unavailable")?,
-                cable,
-            )?)
-        } else {
-            let endpoint_deadline = Instant::now() + Duration::from_secs(10);
-            loop {
-                match crate::host_midi::connect(&endpoint) {
-                    Ok(client) => break client,
-                    Err(error)
-                        if error.contains("missing native MIDI")
-                            && Instant::now() < endpoint_deadline =>
-                    {
-                        session.poll()?;
-                        thread::sleep(Duration::from_millis(25));
-                    }
-                    Err(error) => {
-                        let bridge = session
-                            .engine
-                            .midi
-                            .as_ref()
-                            .map(|midi| midi.status.lock().unwrap().clone())
-                            .unwrap_or_else(|| "USB MIDI bridge unavailable".into());
-                        return Err(std::io::Error::other(format!(
-                            "{error}; bridge status: {bridge}"
-                        ))
-                        .into());
-                    }
-                }
-            }
-        };
-        let inputs = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("MIDI test needs inputs")?;
-        let expected_cc = if model == l6fw::Model::L6 {
-            [0xb0, 0x53]
-        } else {
-            [0xb0, 0x51]
-        };
-        let start_guest = inputs.panel.snapshot().guest_ms;
-        let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(30));
-        // Alternate direction: repeated turns one way saturate and send no CC.
-        self.encoder_turned_up = !self.encoder_turned_up;
-        inputs.encoder(0, if self.encoder_turned_up { -4 } else { 4 })?;
-        let mut knob_message = None;
-        while Instant::now() < deadline {
-            session.poll()?;
-            if let Some(message) = client.poll().map_err(std::io::Error::other)? {
-                if message[..2] == expected_cc {
-                    knob_message = Some(message);
-                    break;
-                }
-            }
-            let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(start_guest);
-            if elapsed > guest_timeout_ms {
-                break;
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-        let knob_message = knob_message.ok_or_else(|| {
-            std::io::Error::other(format!(
-                "model-specific encoder CC {expected_cc:02x?} did not reach the host MIDI endpoint"
-            ))
-        })?;
-        // Let the encoder's remaining reports land before taking the baseline.
-        wait_guest_duration(session, 1000, deadline)?;
-        let before = inputs.panel.snapshot().indicators;
-        let mixer_cc = if model == l6fw::Model::L6 { 0x53 } else { 0x51 };
-        client
-            .send(&[0xb0, mixer_cc, 100])
-            .map_err(std::io::Error::other)?;
-        let indicator_deadline =
-            Instant::now() + Duration::from_secs(3).min(Duration::from_secs(wall_timeout_s));
-        let after = loop {
-            session.poll()?;
-            let after = inputs.panel.snapshot().indicators;
-            let changed =
-                l6ctl::decode_indicator_rings(after)[0] != l6ctl::decode_indicator_rings(before)[0];
-            if changed {
-                if expect_ring_change {
-                    break after;
-                }
-                return Err(std::io::Error::other(format!(
-                    "direct USB MIDI cable {} unexpectedly changed the channel-1 ring",
-                    direct_cable.unwrap_or(1)
-                ))
-                .into());
-            }
-            if Instant::now() >= indicator_deadline {
-                if !expect_ring_change {
-                    break before;
-                }
-                return Err(std::io::Error::other(format!(
-                    "host MIDI CC {mixer_cc:#04x}=100 did not change the model's firmware indicator"
-                ))
-                .into());
-            }
-            thread::sleep(Duration::from_millis(5));
-        };
-        self.host_midi = Some(client);
-        let endpoint_description = if let Some(cable) = direct_cable {
-            format!("direct-usb-cable-{cable}")
-        } else {
-            endpoint
-        };
-        Ok(
-            json!({"endpoint":endpoint_description,"encoder_cc":knob_message,"mixer_cc":[0xb0,mixer_cc,100],"expect_ring_change":expect_ring_change,"indicator_before":before,"indicator_after":after}),
-        )
-    }
-
     pub(super) fn run_l6_indicator_sample(
         &mut self,
         session: &Session,
@@ -1110,6 +977,39 @@ fn ring_observation(
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum NegativeRingObservation {
+    Changed,
+    Waiting,
+    Complete,
+    BudgetExpired,
+}
+
+fn negative_ring_observation(
+    before: [u32; 8],
+    after: [u32; 8],
+    index: usize,
+    now: Instant,
+    observation_end: Instant,
+    overall_end: Instant,
+    guest_expired: bool,
+) -> NegativeRingObservation {
+    if l6ctl::decode_indicator_rings(after)[index] != l6ctl::decode_indicator_rings(before)[index] {
+        NegativeRingObservation::Changed
+    } else if guest_expired || (now >= overall_end && overall_end < observation_end) {
+        NegativeRingObservation::BudgetExpired
+    } else if now >= observation_end {
+        NegativeRingObservation::Complete
+    } else {
+        NegativeRingObservation::Waiting
+    }
+}
+
+fn next_midi_encoder_steps(turned_up: &mut bool) -> i32 {
+    *turned_up = !*turned_up;
+    if *turned_up { -4 } else { 4 }
+}
+
 fn uses_midi_budget(operation: &Operation) -> bool {
     !matches!(
         operation,
@@ -1189,6 +1089,49 @@ impl State {
             });
             return Ok(json!({"endpoint": endpoint}));
         }
+        if let Operation::DirectMidiConnect { cable } = operation {
+            if cable > 15 {
+                return Err("direct MIDI cable must be 0..15".into());
+            }
+            if self.midi_round_trip.is_some() || self.midi_sync.is_some() {
+                return Err("cannot replace a MIDI session during a transaction".into());
+            }
+            if self.native_midi.is_some() && !self.direct_midi {
+                return Err("cannot replace a retained native MIDI session with direct USB".into());
+            }
+            if self.direct_midi {
+                if let Some(mut previous) = self.native_midi.take() {
+                    previous.release();
+                }
+                self.direct_midi = false;
+            }
+            self.release_retained_host_midi();
+            let started = Instant::now();
+            let guest_start = inputs.panel.snapshot().guest_ms;
+            let panel = inputs.panel.clone();
+            let budget = l6max_host::usb::Budget::new(
+                started + Duration::from_secs(wall_timeout_s),
+                move || panel.snapshot().guest_ms.wrapping_sub(guest_start) > guest_timeout_ms,
+            );
+            let client = MidiSession::connect_direct_before(
+                session.engine.usb.clone().ok_or("USB host unavailable")?,
+                cable,
+                &budget,
+            )?;
+            budget.check()?;
+            let now = Instant::now();
+            self.native_midi = Some(client);
+            self.direct_midi = true;
+            self.midi_round_trip = Some(MidiRoundTrip {
+                guest_start,
+                receive_start: inputs.panel.snapshot().guest_ms,
+                deadline: now + Duration::from_secs(wall_timeout_s.min(30)),
+                overall_deadline: started + Duration::from_secs(wall_timeout_s),
+                guest_timeout_ms,
+                midi_sent_at: None,
+            });
+            return Ok(json!({"endpoint":format!("direct-usb-cable-{cable}")}));
+        }
         if matches!(operation, Operation::HostMidiSyncBegin) {
             let overall_deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
             if self.midi_sync.is_some() || self.midi_round_trip.is_some() {
@@ -1217,7 +1160,7 @@ impl State {
             } else {
                 (94, None)
             };
-            let transport = if self.native_midi.is_some() {
+            let transport = if self.native_midi.is_some() && !self.direct_midi {
                 "retained-native"
             } else {
                 "retained-legacy"
@@ -1399,6 +1342,50 @@ impl State {
                 return Err("device operation exceeded its shared deadline".into());
             }
         }
+        if matches!(operation, Operation::MidiEncoderAlternate) {
+            let context = self
+                .midi_round_trip
+                .as_ref()
+                .ok_or("encoder input requires an active MIDI transaction")?;
+            if context.receive_expired(Instant::now(), inputs.panel.snapshot().guest_ms) {
+                return Err("host MIDI receive deadline elapsed before encoder input".into());
+            }
+            let steps = next_midi_encoder_steps(&mut self.encoder_turned_up);
+            let receipt = l6ctl::OwnedControl::new(&session.engine).encoder(1, steps)?;
+            return Ok(json!({"channel":receipt.channel,"steps":receipt.steps}));
+        }
+        if let Operation::HostMidiSendAndExpectRingUnchanged {
+            channel,
+            controller,
+            value,
+            ring,
+            before,
+            observe_wall_ms,
+        } = operation
+        {
+            self.run_declarative_midi(
+                session,
+                Operation::HostMidiSendCc {
+                    channel,
+                    controller,
+                    value,
+                },
+                guest_timeout_ms,
+                wall_timeout_s,
+            )?;
+            return self.run_declarative_midi(
+                session,
+                Operation::ExpectRingChanged {
+                    channel: ring,
+                    before,
+                    expected_change: false,
+                    observe_wall_ms: Some(observe_wall_ms),
+                    midi_transaction: true,
+                },
+                guest_timeout_ms,
+                wall_timeout_s,
+            );
+        }
         let result = match operation {
             Operation::EnqueueEncoder {
                 channel,
@@ -1549,8 +1536,13 @@ impl State {
             Operation::ExpectRingChanged {
                 channel,
                 before,
+                expected_change,
+                observe_wall_ms,
                 midi_transaction,
             } => {
+                let duration = observe_wall_ms
+                    .map(|ms| Duration::from_millis(u64::from(ms)))
+                    .unwrap_or_else(|| Duration::from_secs(wall_timeout_s));
                 let deadline = if midi_transaction {
                     let context = self
                         .midi_round_trip
@@ -1559,24 +1551,52 @@ impl State {
                     let sent = context
                         .midi_sent_at
                         .ok_or("ring assertion requires a host MIDI CC sent in this transaction")?;
-                    (sent + Duration::from_secs(wall_timeout_s)).min(context.overall_deadline)
+                    (sent + duration).min(context.overall_deadline)
                 } else {
-                    Instant::now() + Duration::from_secs(wall_timeout_s)
+                    Instant::now() + duration
                 };
                 let index = channel
                     .checked_sub(1)
                     .ok_or("ring channel must be positive")?;
+                let mut negative_start = None;
                 let after = loop {
                     session.poll()?;
                     let after = inputs.panel.snapshot().indicators;
                     let observation =
                         ring_observation(before, after, index, Instant::now(), deadline);
-                    if observation == RingObservation::Expired
-                        || midi_transaction
-                            && self.midi_round_trip.as_ref().is_some_and(|context| {
-                                context.exceeded(Instant::now(), inputs.panel.snapshot().guest_ms)
-                            })
+                    if !expected_change {
+                        let context = self
+                            .midi_round_trip
+                            .as_ref()
+                            .ok_or("negative ring observation requires a MIDI transaction")?;
+                        context
+                            .midi_sent_at
+                            .ok_or("negative ring observation requires a sent CC")?;
+                        let sampled_at = Instant::now();
+                        let started = match negative_start {
+                            Some(started) => started,
+                            None => {
+                                negative_start = Some(sampled_at);
+                                sampled_at
+                            }
+                        };
+                        match negative_ring_observation(before, after, index, sampled_at, started + duration,
+                            context.overall_deadline,
+                            inputs.panel.snapshot().guest_ms.wrapping_sub(context.guest_start) > context.guest_timeout_ms) {
+                            NegativeRingObservation::Changed => return Err(format!("channel {channel} ring unexpectedly changed during negative observation").into()),
+                            NegativeRingObservation::BudgetExpired => return Err("shared MIDI deadline ended before negative observation completed".into()),
+                            NegativeRingObservation::Complete => break after,
+                            NegativeRingObservation::Waiting => { thread::sleep(Duration::from_millis(5)); continue; }
+                        }
+                    }
+                    if midi_transaction
+                        && self.midi_round_trip.as_ref().is_some_and(|context| {
+                            context.exceeded(Instant::now(), inputs.panel.snapshot().guest_ms)
+                        })
                     {
+                        return Err("device operation exceeded its shared deadline".into());
+                    }
+                    if observation == RingObservation::Expired {
                         return Err(std::io::Error::other(format!("channel {channel} ring did not change; expected different ring from baseline; before={before:08x?}, last_after={after:08x?}")).into());
                     }
                     if observation == RingObservation::Changed {
@@ -1784,6 +1804,56 @@ mod declarative_midi_tests {
     }
 
     #[test]
+    fn repeated_round_trips_alternate_encoder_direction() {
+        let mut turned_up = false;
+        assert_eq!(
+            [
+                next_midi_encoder_steps(&mut turned_up),
+                next_midi_encoder_steps(&mut turned_up),
+                next_midi_encoder_steps(&mut turned_up)
+            ],
+            [-4, 4, -4]
+        );
+    }
+
+    #[test]
+    fn negative_ring_requires_full_window_and_rejects_changes_or_budget_expiry() {
+        let start = Instant::now();
+        let end = start + Duration::from_secs(3);
+        let budget = start + Duration::from_secs(10);
+        let before = [0; 8];
+        let changed = [u32::MAX; 8];
+        assert_eq!(
+            negative_ring_observation(before, before, 0, start, end, budget, false),
+            NegativeRingObservation::Waiting
+        );
+        assert_eq!(
+            negative_ring_observation(before, before, 0, end, end, budget, false),
+            NegativeRingObservation::Complete
+        );
+        assert_eq!(
+            negative_ring_observation(before, changed, 0, end, end, budget, false),
+            NegativeRingObservation::Changed
+        );
+        assert_eq!(
+            negative_ring_observation(
+                before,
+                before,
+                0,
+                start + Duration::from_secs(1),
+                end,
+                start + Duration::from_secs(1),
+                false
+            ),
+            NegativeRingObservation::BudgetExpired
+        );
+        assert_eq!(
+            negative_ring_observation(before, before, 0, start, end, budget, true),
+            NegativeRingObservation::BudgetExpired
+        );
+    }
+
+    #[test]
     fn consecutive_direct_round_trips_release_the_previous_session_before_reopening() {
         let first_released = Arc::new(AtomicBool::new(false));
         let mut state = State::default();
@@ -1914,11 +1984,15 @@ mod declarative_midi_tests {
         assert!(!uses_midi_budget(&Operation::ExpectRingChanged {
             channel: 1,
             before: [0; 8],
+            expected_change: true,
+            observe_wall_ms: None,
             midi_transaction: false
         }));
         assert!(uses_midi_budget(&Operation::ExpectRingChanged {
             channel: 1,
             before: [0; 8],
+            expected_change: true,
+            observe_wall_ms: None,
             midi_transaction: true
         }));
     }

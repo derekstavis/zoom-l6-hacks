@@ -48,9 +48,8 @@ path = "RECORDER"
 wall_timeout_s = 60
 
 [[step]]
-action = "direct-usb-midi-round-trip"
-guest_timeout_ms = 15000
-wall_timeout_s = 120
+action = "include"
+path = "tests/emulator/fragments/host-midi-direct-cable-1.toml"
 
 [[step]]
 action = "include"

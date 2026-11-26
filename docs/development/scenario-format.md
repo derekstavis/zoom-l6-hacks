@@ -165,8 +165,10 @@ devices require `backends = ["headless"]`; a scenario that names another backend
 is rejected when it loads.
 `trace_sd = true` enables SD trace instrumentation (also enabled by `sd-card`).
 
-Native MIDI steps retain one session and its receive queue across steps. `host-midi-connect`
-starts the first bounded transaction. A ring assertion with `midi_transaction = true`
+MIDI steps retain one native or direct USB session and its receive queue across steps.
+`host-midi-connect` and `direct-midi-connect` start the first bounded transaction.
+Starting another direct transaction releases the previous direct session before reacquiring
+USB, while sync between transactions consumes the retained queue. A ring assertion with `midi_transaction = true`
 uses the last CC send as its deadline anchor; a plain ring assertion is
 independent. `host-midi-end` completes the transaction without closing the
 session, and `host-midi-begin` starts another transaction on that session.
@@ -176,9 +178,12 @@ the normal encoder acknowledgment, and `expect-ring-changed` compares a named
 checkpoint without requiring encoder reports. A native MIDI session cannot share
 USB endpoints with direct USB operations in the same scenario. The existing
 L6max DIN mixer setup uses direct USB descriptors and SysEx, so it cannot be
-combined with the native bridge in one scenario under this policy. The migrated
-`host-midi` case enqueues one explicit -4 turn; repeated legacy round trips still
-alternate direction. Typed MIDI receive filters non-CC ALSA events. Connection
+combined with the native bridge in one scenario under this policy.
+`midi-encoder-alternate` alternates -4 and +4 turns so repeated checks avoid saturation.
+The negative cable check sends its CC and observes the ring in one operation; it
+samples immediately after sending and requires the entire declared wall window
+from that sample. Like the original polling check, it observes sampled states;
+a transient between samples is not guaranteed to be detected. Typed MIDI receive filters non-CC ALSA events. Connection
 retries honor the shared guest and wall limits while retaining the independent
 10-second discovery cap. Ring observations at or after the declared wall deadline
 fail even if the ring changed by that observation.
@@ -220,18 +225,19 @@ message delivered just after the interval.
 | `sd-card` | `inserted` | QMP removal or insertion of the case's copied card |
 | `usb-descriptors` | — | Validate device/configuration descriptors and SET_CONFIGURATION |
 | `usb-midi-open`, `usb-midi-begin`, `usb-midi-expect-encoder`, `usb-midi-prepare-level`, `usb-midi-set-alternate`, `usb-midi-set-target`, `usb-midi-end` | `value` on prepare | Retain the previously enumerated endpoints before the encoder; observe its model-mapped CC on any USB cable, then set and verify channel 1 on cable 1. The transaction keeps a single guest/wall budget; an alternate value is sent first when the target is already present. |
-| `host-midi-round-trip` | — | Verify host MIDI input/output delivery through the configured host MIDI backend |
 | `host-midi-connect` | — | Connect the model's native mixer endpoint and start the first MIDI transaction |
+| `direct-midi-connect` | `cable` | Start a bounded direct USB MIDI transaction on cable 0–15 |
+| `midi-encoder-alternate` | — | Enqueue the next alternating channel-1 encoder turn |
+| `host-midi-send-and-expect-ring-unchanged` | `channel`, `controller`, `value`, `ring`, `checkpoint`, `observe_wall_ms` | Send a CC and observe the specified ring for the full bounded wall interval in one operation |
 | `host-midi-drain` | `quiet_wall_ms` | Drain the retained native session until no legacy control observation arrives for the declared wall interval, within the transaction budget |
 | `host-midi-expect-count` | `count` | Collect that many legacy control observations on the retained native session; preserve their order and remaining queue |
 | `host-midi-begin` | — | Start a new bounded transaction on the retained session |
 | `host-midi-end` | — | End the active transaction while retaining the session and its queue |
 | `enqueue-encoder` | `channel`, `steps`, optional `midi_transaction` | Enqueue an encoder input without waiting for guest acknowledgment; optionally enforce the active MIDI budget |
-| `host-midi-expect-cc` | `channel`, `controller` | Wait for a matching CC on the retained native session |
+| `host-midi-expect-cc` | `channel`, `controller` | Wait for a matching CC on the retained session |
 | `host-midi-settle` | `guest_ms` | Allow guest time to pass within the shared MIDI deadline |
-| `host-midi-send-cc` | `channel`, `controller`, `value` | Send a CC through the retained native session |
+| `host-midi-send-cc` | `channel`, `controller`, `value` | Send a CC through the retained session |
 | `expect-ring-changed` | `channel`, `checkpoint`, optional `midi_transaction` | Wait for a ring to differ from a named checkpoint; when `midi_transaction` is true, anchor its deadline at the MIDI send |
-| `direct-usb-midi-round-trip` | optional `cable` (0–15), `expect_ring_change` (defaults to true) | Check the encoder report and channel-1 mixer CC on a selected USB MIDI cable; set `expect_ring_change = false` to verify other cables are ignored |
 | `l6-din-usb-forwarding` | — | Verify L6 DIN-to-USB forwarding behavior |
 | `host-midi-sync-begin` | — | Capture the L6 MIDI map and configured channel, or the L6max reply count, using a retained MIDI session. Begin the shared guest deadline. |
 | `host-midi-expect-sync` | — | Assert the captured L6 channel and CC multiset, including duplicate mappings, or 94 L6max Control Change replies. Follow with `host-midi-end`. |

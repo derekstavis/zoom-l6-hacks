@@ -99,34 +99,13 @@ fn display_reference_settling_requires_a_continuous_matching_guest_interval() {
 }
 
 #[test]
-fn direct_usb_midi_cable_is_configurable_and_range_checked() {
-    let default = Scenario::parse(
-        "version=1\nname='midi'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='direct-usb-midi-round-trip'\n",
-    )
-    .unwrap();
+fn direct_midi_cable_is_range_checked() {
+    let source = "version=1\nname='midi'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='direct-midi-connect'\ncable=5\n";
     assert!(matches!(
-        default.step[0].action,
-        Action::DirectUsbMidiRoundTrip {
-            cable: 1,
-            expect_ring_change: true
-        }
+        Scenario::parse(source).unwrap().step[0].action,
+        Action::DirectMidiConnect { cable: 5 }
     ));
-
-    let ignored_cable = Scenario::parse(
-        "version=1\nname='midi'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='direct-usb-midi-round-trip'\ncable=5\nexpect_ring_change=false\n",
-    )
-    .unwrap();
-    assert!(matches!(
-        ignored_cable.step[0].action,
-        Action::DirectUsbMidiRoundTrip {
-            cable: 5,
-            expect_ring_change: false
-        }
-    ));
-    assert!(Scenario::parse(
-        "version=1\nname='midi'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='direct-usb-midi-round-trip'\ncable=16\n",
-    )
-    .is_err());
+    assert!(Scenario::parse(&source.replace("cable=5", "cable=16")).is_err());
 }
 #[test]
 fn display_after_press_requires_ack_and_new_display() {
@@ -1886,7 +1865,7 @@ fn patched_update_requires_complete_four_boot_verification() {
     for missing in [
         "[[step]]\naction = \"end-wall-deadline\"\n\n",
         "[[step]]\naction = \"wait-usb-controller\"\nguest_timeout_ms = 180000\nwall_timeout_s = 300\n\n",
-        "[[step]]\naction = \"direct-usb-midi-round-trip\"\nguest_timeout_ms = 180000\nwall_timeout_s = 300\n\n",
+        "[[step]]\naction = \"include\"\npath = \"tests/emulator/fragments/host-midi-direct-cable-1.toml\"\ninclude_guest_timeout_ms = 180000\ninclude_wall_timeout_s = 300\n\n",
         "[[step]]\naction = \"include\"\npath = \"patches/midi-sync/tests/emulator/fragments/request-state.toml\"\ninclude_guest_timeout_ms = 180000\ninclude_wall_timeout_s = 300\n\n",
         "[[step]]\naction = \"expect-update-comparison\"\nfield = \"protected-region\"\n\n",
         "[[step]]\naction = \"expect-panel-unchanged\"\n",

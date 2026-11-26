@@ -2752,43 +2752,6 @@
           "additionalProperties": false,
           "properties": {
             "action": {
-              "const": "host-midi-round-trip",
-              "type": "string"
-            },
-            "guest_timeout_ms": {
-              "default": 10000,
-              "format": "uint32",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "models": {
-              "default": [],
-              "items": {
-                "$ref": "#/definitions/Model"
-              },
-              "type": "array"
-            },
-            "setup_input": {
-              "default": false,
-              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
-              "type": "boolean"
-            },
-            "wall_timeout_s": {
-              "default": 180,
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "action"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "action": {
               "const": "midi-probe-begin",
               "type": "string"
             },
@@ -3148,6 +3111,87 @@
           "properties": {
             "action": {
               "const": "host-midi-connect",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "direct-midi-connect",
+              "type": "string"
+            },
+            "cable": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "cable"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "midi-encoder-alternate",
               "type": "string"
             },
             "guest_timeout_ms": {
@@ -3622,6 +3666,80 @@
           "additionalProperties": false,
           "properties": {
             "action": {
+              "const": "host-midi-send-and-expect-ring-unchanged",
+              "type": "string"
+            },
+            "channel": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "checkpoint": {
+              "type": "string"
+            },
+            "controller": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "observe_wall_ms": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "ring": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "value": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "channel",
+            "controller",
+            "value",
+            "ring",
+            "checkpoint",
+            "observe_wall_ms"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
               "const": "expect-ring-changed",
               "type": "string"
             },
@@ -3650,6 +3768,15 @@
               },
               "type": "array"
             },
+            "observe_wall_ms": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "setup_input": {
               "default": false,
               "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
@@ -3666,54 +3793,6 @@
             "action",
             "channel",
             "checkpoint"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "action": {
-              "const": "direct-usb-midi-round-trip",
-              "type": "string"
-            },
-            "cable": {
-              "default": 1,
-              "format": "uint8",
-              "maximum": 255,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "expect_ring_change": {
-              "default": true,
-              "type": "boolean"
-            },
-            "guest_timeout_ms": {
-              "default": 10000,
-              "format": "uint32",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "models": {
-              "default": [],
-              "items": {
-                "$ref": "#/definitions/Model"
-              },
-              "type": "array"
-            },
-            "setup_input": {
-              "default": false,
-              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
-              "type": "boolean"
-            },
-            "wall_timeout_s": {
-              "default": 180,
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "action"
           ],
           "type": "object"
         },
@@ -16846,7 +16925,6 @@
             "usb-midi-set-alternate",
             "usb-midi-set-target",
             "usb-midi-end",
-            "host-midi-round-trip",
             "midi-probe-begin",
             "midi-probe-send-cc",
             "midi-probe-expect-ring",
@@ -16855,6 +16933,8 @@
             "midi-probe-expect-no-events",
             "midi-probe-end",
             "host-midi-connect",
+            "direct-midi-connect",
+            "midi-encoder-alternate",
             "host-midi-begin",
             "host-midi-sync-begin",
             "host-midi-expect-sync",
@@ -16865,8 +16945,8 @@
             "host-midi-expect-cc",
             "host-midi-settle",
             "host-midi-send-cc",
+            "host-midi-send-and-expect-ring-unchanged",
             "expect-ring-changed",
-            "direct-usb-midi-round-trip",
             "l6-midi-probe-begin",
             "l6-midi-probe-inject",
             "l6-midi-probe-expect-hook",

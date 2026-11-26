@@ -639,3 +639,27 @@ own fixture, card, saved state and artifact directory. The case fails at the
 first failing member; `campaign.json` and the case identity retain the results
 and fixture identities of the members that ran. The watcher names the active
 member and its step. The case wall limit covers both members.
+
+### L6 DIN sweep supervision
+
+The L6 DIN sweep requires a case launched under `l6test` process-group supervision.
+The monitor first attempts bounded debugger cancellation and a bounded QMP stop.
+If its worker still cannot exit, it retains the debugger lease and waits for the
+case supervisor: the case has a 900-second wall limit, followed by up to three
+seconds of termination grace before the process group is killed. This final
+containment also terminates the guest; a forced termination may lose the child
+report and its detailed error. The 600-second sweep budget does not bound that
+final join. Running this monitor without the case supervisor is unsupported.
+The private supervised entry point is a trusted internal contract, not a security
+boundary: process-group leadership alone does not establish an active supervisor.
+
+Focused checkpoint: the first decomposed sweep failed on CC 8 with a GDB
+packet deadline error. A subsequent run after separating packet completion
+from first-byte polling passed all 128 messages and ten assertions on its
+first attempt. The change addresses a framing risk; the cause of the first
+failure remains unproven. The passing runner SHA-256 was
+`ae648caf533d253ce6195fb6623a570c6fd06d657d240daf483cd4e9d35abb5b`; the
+external QEMU SHA-256 was
+`99bea36968509cd7cb67b6190e5af81d6bf8be0fb3965a20a788607fc6c76cc7`
+(source unattested), and the L6 package SHA-256 was
+`64f1f36b8383176b5d841911fbf3c16205139a313ee88be906f313b1a98a33fb`.

@@ -9,6 +9,874 @@ no_sd = true
 wall_timeout_s = 900
 
 [[step]]
-action = "l6-din-sweep"
+action = "l6-din-sweep-begin"
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-ready"
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-monitor"
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-baseline"
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 0
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 1
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 2
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 3
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 4
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 5
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 6
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 7
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 8
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 9
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 10
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 11
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 12
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 13
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 14
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 15
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 16
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 17
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 18
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 19
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 20
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 21
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 22
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 23
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 24
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 25
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 26
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 27
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 28
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 29
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 30
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 31
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 32
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 33
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 34
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 35
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 36
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 37
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 38
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 39
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 40
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 41
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 42
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 43
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 44
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 45
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 46
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 47
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 48
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 49
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 50
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 51
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 52
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 53
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 54
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 55
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 56
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 57
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 58
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 59
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 60
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 61
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 62
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 63
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 64
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 65
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 66
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 67
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 68
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 69
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 70
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 71
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 72
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 73
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 74
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 75
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 76
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 77
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 78
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 79
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 80
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 81
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 82
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 83
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 84
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 85
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 86
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 87
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 88
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 89
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 90
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 91
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 92
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 93
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 94
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 95
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 96
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 97
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 98
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 99
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 100
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 101
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 102
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 103
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 104
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 105
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 106
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 107
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 108
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 109
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 110
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 111
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 112
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 113
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 114
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 115
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 116
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 117
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 118
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 119
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 120
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 121
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 122
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 123
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 124
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 125
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 126
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-sample"
+cc = 127
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-trace"
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-drain"
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-stop"
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-capture"
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-assert"
+check = "uart"
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-assert"
+check = "ring-bytes"
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-assert"
+check = "write-index"
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-assert"
+check = "read-index"
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-assert"
+check = "indicator"
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-assert"
+check = "handler"
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-assert"
+check = "submitter"
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-assert"
+check = "reader"
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-assert"
+check = "setter"
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-assert"
+check = "mixer"
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-din-sweep-end"
 guest_timeout_ms = 30000
 wall_timeout_s = 600

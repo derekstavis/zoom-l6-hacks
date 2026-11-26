@@ -15,4 +15,4 @@ pub use scenario::{
     Action, AudioInput, Backend, Fragment, Gesture, ObservationActivity, STATE_SPEC_ENV, Scenario,
     Step, UpdateFixture, control_target, is_switch, spec_path,
 };
-pub use session::{Command, Session, run};
+pub use session::{Command, Session, run, run_supervised_din};

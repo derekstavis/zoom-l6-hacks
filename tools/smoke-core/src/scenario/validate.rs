@@ -2613,6 +2613,46 @@ impl Scenario {
                 .iter()
                 .filter(|step| step.applies_to(*model))
                 .collect();
+            let is_sweep = |action: &Action| {
+                matches!(
+                    action,
+                    Action::L6DinSweepBegin
+                        | Action::L6DinSweepReady
+                        | Action::L6DinSweepMonitor
+                        | Action::L6DinSweepBaseline
+                        | Action::L6DinSweepSample { .. }
+                        | Action::L6DinSweepTrace
+                        | Action::L6DinSweepDrain
+                        | Action::L6DinSweepStop
+                        | Action::L6DinSweepCapture
+                        | Action::L6DinSweepAssert { .. }
+                        | Action::L6DinSweepEnd
+                )
+            };
+            let Some(begin) = steps.iter().position(|step| is_sweep(&step.action)) else {
+                continue;
+            };
+            let Some(scope) = steps.get(begin..begin + 147) else {
+                return Err("incomplete L6 DIN sweep".into());
+            };
+            if *model != l6fw::Model::L6 || !matches!(scope[0].action, Action::L6DinSweepBegin)
+                || !matches!(scope[1].action, Action::L6DinSweepReady) || !matches!(scope[2].action, Action::L6DinSweepMonitor)
+                || !matches!(scope[3].action, Action::L6DinSweepBaseline)
+                || !(0..128).all(|cc| matches!(scope[4+cc].action, Action::L6DinSweepSample { cc: actual } if usize::from(actual) == cc))
+                || !matches!(scope[132].action, Action::L6DinSweepTrace) || !matches!(scope[133].action, Action::L6DinSweepDrain)
+                || !matches!(scope[134].action, Action::L6DinSweepStop) || !matches!(scope[135].action, Action::L6DinSweepCapture)
+                || ![DinSweepCheck::Uart, DinSweepCheck::RingBytes, DinSweepCheck::WriteIndex, DinSweepCheck::ReadIndex, DinSweepCheck::Indicator, DinSweepCheck::Handler, DinSweepCheck::Submitter, DinSweepCheck::Reader, DinSweepCheck::Setter, DinSweepCheck::Mixer].iter().enumerate().all(|(i, expected)| matches!(scope[136+i].action, Action::L6DinSweepAssert { check } if check == *expected))
+                || !matches!(scope[146].action, Action::L6DinSweepEnd)
+                || scope.iter().any(|step| (step.guest_timeout_ms, step.wall_timeout_s) != (scope[0].guest_timeout_ms, scope[0].wall_timeout_s))
+                || steps[begin+147..].iter().any(|step| is_sweep(&step.action))
+            { return Err("L6 DIN sweep requires all 128 ordered CCs, full evidence phases and one shared budget".into()); }
+        }
+        for model in &value.models {
+            let steps: Vec<_> = value
+                .step
+                .iter()
+                .filter(|step| step.applies_to(*model))
+                .collect();
             let has_audio = steps.iter().any(|step| {
                 matches!(
                     step.action,

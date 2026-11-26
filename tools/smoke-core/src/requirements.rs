@@ -82,7 +82,17 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6maxTapHandler => stock_on(L6MAX),
         Action::WaitL6SoundPadFile { .. }
         | Action::L6LevelMeterPwm
-        | Action::L6DinSweep
+        | Action::L6DinSweepBegin
+        | Action::L6DinSweepReady
+        | Action::L6DinSweepMonitor
+        | Action::L6DinSweepBaseline
+        | Action::L6DinSweepSample { .. }
+        | Action::L6DinSweepTrace
+        | Action::L6DinSweepDrain
+        | Action::L6DinSweepStop
+        | Action::L6DinSweepCapture
+        | Action::L6DinSweepAssert { .. }
+        | Action::L6DinSweepEnd
         | Action::PanelEvent { .. }
         | Action::L6MainGpioEvent { .. }
         | Action::L6DinEventDispatch { .. } => stock_on(L6),
@@ -549,7 +559,10 @@ mod tests {
         let unknown = FirmwareIdentity::Unknown {
             sha256: "c".repeat(64),
         };
-        let reads_stock = scenario("['l6']", &["l6-din-sweep"]);
+        let reads_stock = Scenario::from_text(include_str!(
+            "../../../tests/emulator/cases/midi/l6-din-sweep.toml"
+        ))
+        .unwrap();
         let ordinary = scenario("['l6']", &["restart"]);
         assert!(check_firmware(&reads_stock, Model::L6, &stock).is_ok());
         assert!(
@@ -565,11 +578,14 @@ mod tests {
 
     #[test]
     fn scope_and_position_come_from_the_table() {
-        let error = Scenario::from_text(
-            "version=1\nname='t'\nmodels=['l6max']\n[[step]]\naction='l6-din-sweep'\n",
-        )
-        .unwrap_err();
-        assert!(error.contains("l6-din-sweep supports only l6"), "{error}");
+        let source = include_str!("../../../tests/emulator/cases/midi/l6-din-sweep.toml");
+        let error =
+            Scenario::from_text(&source.replace("models = [\"l6\"]", "models = [\"l6max\"]"))
+                .unwrap_err();
+        assert!(
+            error.contains("l6-din-sweep-begin supports only l6"),
+            "{error}"
+        );
         let late = Scenario::from_text(
             "version=1\nname='t'\nmodels=['l6']\nbackends=['headless']\n[[step]]\naction='delay'\nguest_ms=1\n[[step]]\naction='l6-usb-startup'\n",
         )

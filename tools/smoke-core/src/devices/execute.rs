@@ -366,6 +366,11 @@ impl State {
     }
     /// Release held inputs and owned transport scopes before the guest exits.
     pub fn abort_auxiliary_scopes(&mut self) -> Result<(), String> {
+        let din_sweep = self
+            .l6_din_sweep
+            .take()
+            .map(|mut scope| scope.abort())
+            .transpose();
         let audio = self
             .audio_callbacks
             .take()
@@ -391,6 +396,9 @@ impl State {
         self.editor_assignment = None;
         self.signal_pwm = None;
         let mut errors = Vec::new();
+        if let Err(error) = din_sweep {
+            errors.push(error);
+        }
         if let Err(error) = audio {
             errors.push(error);
         }
@@ -2422,8 +2430,48 @@ impl State {
                 }
                 Ok(value)
             }
-            Operation::L6DinSweep => {
-                Ok(run_l6_din_sweep(session, options).map_err(std::io::Error::other)?)
+            Operation::L6DinSweepBegin => {
+                if self.l6_din_sweep.is_some() {
+                    return Err("L6 DIN sweep already active".into());
+                }
+                self.l6_din_sweep = Some(l6_din_sweep::Scope::begin(
+                    session,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            operation @ (Operation::L6DinSweepReady
+            | Operation::L6DinSweepMonitor
+            | Operation::L6DinSweepBaseline
+            | Operation::L6DinSweepSample { .. }
+            | Operation::L6DinSweepTrace
+            | Operation::L6DinSweepDrain
+            | Operation::L6DinSweepStop
+            | Operation::L6DinSweepCapture
+            | Operation::L6DinSweepAssert { .. }
+            | Operation::L6DinSweepEnd) => {
+                let scope = self
+                    .l6_din_sweep
+                    .as_mut()
+                    .ok_or("L6 DIN sweep scope missing")?;
+                let value = match operation {
+                    Operation::L6DinSweepReady => scope.ready(session, options),
+                    Operation::L6DinSweepMonitor => scope.monitor(session),
+                    Operation::L6DinSweepBaseline => scope.baseline(session),
+                    Operation::L6DinSweepSample { cc } => scope.sample(session, cc),
+                    Operation::L6DinSweepTrace => scope.trace(session, options),
+                    Operation::L6DinSweepDrain => scope.drain(session),
+                    Operation::L6DinSweepStop => scope.stop(session),
+                    Operation::L6DinSweepCapture => scope.capture(session, options),
+                    Operation::L6DinSweepAssert { check } => scope.assert(session, check),
+                    Operation::L6DinSweepEnd => scope.finish(),
+                    _ => unreachable!(),
+                }?;
+                if matches!(operation, Operation::L6DinSweepEnd) {
+                    self.l6_din_sweep = None;
+                }
+                Ok(value)
             }
             Operation::L6maxTimingBegin => {
                 if self.l6max_timing.is_some() {

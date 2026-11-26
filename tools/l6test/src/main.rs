@@ -197,7 +197,7 @@ fn git(root: &Path, args: &[&str]) -> String {
         .unwrap_or_default()
 }
 
-fn child_scenario() -> Result<(), String> {
+fn child_scenario(supervised_din: bool) -> Result<(), String> {
     let mut args = env::args_os().skip(2);
     let path = PathBuf::from(args.next().ok_or("missing scenario")?);
     let options = Options::parse_args(args)?;
@@ -209,7 +209,11 @@ fn child_scenario() -> Result<(), String> {
     {
         patch_parity::run(scenario, options)
     } else {
-        smoke_core::run(scenario, options)
+        if supervised_din {
+            smoke_core::run_supervised_din(scenario, options)
+        } else {
+            smoke_core::run(scenario, options)
+        }
     }
 }
 struct RunJournal(PathBuf);
@@ -494,7 +498,12 @@ fn execute() -> Result<i32, String> {
         for package in &build_packages {
             command.arg("-p").arg(package);
         }
-        let built = supervise(command, &output, 600);
+        let built = supervise(
+            command,
+            &output,
+            600,
+            crate::supervise::LaunchMode::FreshGroup,
+        );
         run_timings.build_s = Some(started.elapsed().as_secs_f64());
         if !matches!(built, Ok(true)) {
             let error = built
@@ -552,6 +561,7 @@ fn execute() -> Result<i32, String> {
     };
     run_timings.staging_s = started.elapsed().as_secs_f64();
     let ctx = Context {
+        nested_campaign: false,
         root,
         output: &output,
         config: &config,
@@ -719,7 +729,17 @@ fn main() {
         return;
     }
     if cli_args.first().is_some_and(|arg| arg == "__scenario") {
-        if let Err(error) = child_scenario() {
+        if let Err(error) = child_scenario(false) {
+            tracing::error!(event="scenario_failed",%error,"scenario failed");
+            std::process::exit(1);
+        }
+        return;
+    }
+    if cli_args
+        .first()
+        .is_some_and(|arg| arg == "__supervised-din-scenario")
+    {
+        if let Err(error) = child_scenario(true) {
             tracing::error!(event="scenario_failed",%error,"scenario failed");
             std::process::exit(1);
         }

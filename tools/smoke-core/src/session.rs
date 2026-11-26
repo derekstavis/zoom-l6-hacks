@@ -81,6 +81,7 @@ pub struct Session {
     pub engine: Engine,
     feed: PanelFeed,
     switches: Cell<[bool; 54]>,
+    pub(crate) supervised_din: bool,
 }
 impl Session {
     pub fn start(options: &Options) -> Result<Self, String> {
@@ -90,6 +91,7 @@ impl Session {
             engine,
             feed,
             switches: Cell::new([false; 54]),
+            supervised_din: false,
         })
     }
     pub fn dispatch(&self, command: &Command) -> Result<(), String> {
@@ -334,7 +336,23 @@ fn device_options<'a>(
 }
 
 /// Execute a scenario without GPUI, with the production panel feed and shared assertions.
-pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
+pub fn run(scenario: Scenario, options: Options) -> Result<(), String> {
+    run_with_context(scenario, options, false)
+}
+
+/// Run a direct headless DIN case whose caller owns this fresh process group.
+pub fn run_supervised_din(scenario: Scenario, options: Options) -> Result<(), String> {
+    if unsafe { libc::getpgrp() } != unsafe { libc::getpid() } {
+        return Err("DIN case is not a fresh process-group leader".into());
+    }
+    run_with_context(scenario, options, true)
+}
+
+fn run_with_context(
+    scenario: Scenario,
+    mut options: Options,
+    supervised_din: bool,
+) -> Result<(), String> {
     if !scenario.backends.contains(&crate::Backend::Headless) {
         return Err("scenario does not support headless execution".into());
     }
@@ -385,6 +403,9 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
     } else {
         Some(Session::start(&options)?)
     };
+    if let Some(session) = session.as_mut() {
+        session.supervised_din = supervised_din;
+    }
     progress.emit(crate::progress::CaseEvent::PhaseChanged {
         phase: crate::progress::CasePhase::PreparingScenario,
         started_unix_ms: crate::progress::unix_ms(),

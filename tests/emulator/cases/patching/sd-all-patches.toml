@@ -23,27 +23,8 @@ guest_timeout_ms = 30000
 wall_timeout_s = 300
 
 [[step]]
-action = "expect-sd-loader"
-
-[[step]]
-action = "capture-sd-module"
-loaded = true
-
-[[step]]
-action = "expect-sd-allocation"
-loaded = true
-
-[[step]]
-action = "expect-sd-chains"
-loaded = true
-
-[[step]]
-action = "expect-sd-continuations"
-loaded = true
-
-[[step]]
-action = "expect-sd-module"
-loaded = true
+action = "include"
+path = "tests/emulator/fragments/sd-module-loaded.toml"
 
 [[step]]
 action = "press"
@@ -54,27 +35,8 @@ action = "expect-card-entry"
 path = "RECORDER"
 
 [[step]]
-action = "expect-sd-loader"
-
-[[step]]
-action = "capture-sd-module"
-loaded = true
-
-[[step]]
-action = "expect-sd-allocation"
-loaded = true
-
-[[step]]
-action = "expect-sd-chains"
-loaded = true
-
-[[step]]
-action = "expect-sd-continuations"
-loaded = true
-
-[[step]]
-action = "expect-sd-module"
-loaded = true
+action = "include"
+path = "tests/emulator/fragments/sd-module-loaded.toml"
 
 [[step]]
 action = "include"
@@ -94,27 +56,8 @@ guest_timeout_ms = 60000
 wall_timeout_s = 300
 
 [[step]]
-action = "expect-sd-loader"
-
-[[step]]
-action = "capture-sd-module"
-loaded = true
-
-[[step]]
-action = "expect-sd-allocation"
-loaded = true
-
-[[step]]
-action = "expect-sd-chains"
-loaded = true
-
-[[step]]
-action = "expect-sd-continuations"
-loaded = true
-
-[[step]]
-action = "expect-sd-module"
-loaded = true
+action = "include"
+path = "tests/emulator/fragments/sd-module-loaded.toml"
 
 [[step]]
 action = "knob-dialog-ready"
@@ -210,27 +153,8 @@ guest_timeout_ms = 180000
 wall_timeout_s = 600
 
 [[step]]
-action = "expect-sd-loader"
-
-[[step]]
-action = "capture-sd-module"
-loaded = true
-
-[[step]]
-action = "expect-sd-allocation"
-loaded = true
-
-[[step]]
-action = "expect-sd-chains"
-loaded = true
-
-[[step]]
-action = "expect-sd-continuations"
-loaded = true
-
-[[step]]
-action = "expect-sd-module"
-loaded = true
+action = "include"
+path = "tests/emulator/fragments/sd-module-loaded.toml"
 
 [[step]]
 action = "expect-heap"

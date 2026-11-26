@@ -30,27 +30,8 @@ action = "expect-card-entry"
 path = "RECORDER"
 
 [[step]]
-action = "expect-sd-loader"
-
-[[step]]
-action = "capture-sd-module"
-loaded = true
-
-[[step]]
-action = "expect-sd-allocation"
-loaded = true
-
-[[step]]
-action = "expect-sd-chains"
-loaded = true
-
-[[step]]
-action = "expect-sd-continuations"
-loaded = true
-
-[[step]]
-action = "expect-sd-module"
-loaded = true
+action = "include"
+path = "tests/emulator/fragments/sd-module-loaded.toml"
 
 [[step]]
 action = "include"

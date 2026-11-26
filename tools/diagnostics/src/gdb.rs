@@ -239,7 +239,13 @@ impl Gdb {
     fn request_before(&mut self, command: &str, deadline: Instant) -> io::Result<String> {
         let checksum = command.bytes().fold(0u8, u8::wrapping_add);
         let packet = format!("${command}#{checksum:02x}");
-        let mut remaining_packet = packet.as_bytes();
+        self.write_bytes_before(packet.as_bytes(), deadline)?;
+        let first = self.read_byte(deadline)?;
+        self.receive_packet_from(first, deadline)
+    }
+
+    fn write_bytes_before(&mut self, bytes: &[u8], deadline: Instant) -> io::Result<()> {
+        let mut remaining_packet = bytes;
         while !remaining_packet.is_empty() {
             let remaining = deadline
                 .checked_duration_since(Instant::now())
@@ -260,8 +266,7 @@ impl Gdb {
                 Err(error) => return Err(error),
             }
         }
-        let first = self.read_byte(deadline)?;
-        self.receive_packet_from(first, deadline)
+        Ok(())
     }
 
     fn read_byte(&mut self, deadline: Instant) -> io::Result<u8> {
@@ -419,6 +424,63 @@ impl Gdb {
             "{}0,{address:x},2",
             if enable { "Z" } else { "z" }
         ))
+    }
+    /// Change a breakpoint under an absolute deadline.
+    pub fn breakpoint_before(
+        &mut self,
+        address: u32,
+        enable: bool,
+        deadline: Instant,
+    ) -> io::Result<()> {
+        let command = format!("{}0,{address:x},2", if enable { "Z" } else { "z" });
+        let response = self.request_before(&command, deadline)?;
+        if response != "OK" {
+            return Err(io::Error::other(format!("{command}: {response}")));
+        }
+        Ok(())
+    }
+    /// Read one ARM register under an absolute deadline.
+    pub fn read_register_before(&mut self, index: u32, deadline: Instant) -> io::Result<u32> {
+        let value = self.request_before(&format!("p{index:x}"), deadline)?;
+        if value.len() != 8 {
+            return Err(io::Error::other(format!(
+                "unexpected ARM register: {value}"
+            )));
+        }
+        let mut bytes = [0; 4];
+        for (i, byte) in bytes.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&value[2 * i..2 * i + 2], 16).map_err(io::Error::other)?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+    /// Resume before a shared deadline; use poll_stop_before for its reply.
+    pub fn resume_before(&mut self, deadline: Instant) -> io::Result<()> {
+        self.write_bytes_before(b"$c#63", deadline)
+    }
+    /// Poll for a stop without extending an absolute deadline.
+    pub fn poll_stop_before(&mut self, deadline: Instant) -> io::Result<Option<String>> {
+        loop {
+            match self.read_byte(deadline) {
+                Ok(b'+') => continue,
+                Ok(b'-') => return Err(io::Error::other("GDB rejected the resume request")),
+                Ok(first) => return self.receive_packet_from(first, deadline).map(Some),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    /// Interrupt and read the stop packet before an absolute deadline.
+    pub fn interrupt_before(&mut self, deadline: Instant) -> io::Result<String> {
+        self.write_bytes_before(&[3], deadline)?;
+        let first = self.read_byte(deadline)?;
+        self.receive_packet_from(first, deadline)
     }
     pub fn register(&mut self, index: u32, value: u32) -> io::Result<()> {
         let hex = value

@@ -717,6 +717,7 @@ impl Scenario {
         let mut checkpoints = std::collections::BTreeSet::new();
         for model in &value.models {
             let mut sound_pad: Option<(u8, u32, u64)> = None;
+            let mut recorder: Option<(u8, u32, u64)> = None;
             let mut sd_inspection: Option<(u32, u64)> = None;
 
             let panel_steps: Vec<_> = value
@@ -836,6 +837,45 @@ impl Scenario {
             let mut probe_ring = None;
             let mut probe_tap = None;
             for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                let recorder_phase = match &step.action {
+                    Action::L6RecorderPress => Some(0),
+                    Action::L6RecorderDispatcher => Some(1),
+                    Action::L6RecorderAssertEvent => Some(2),
+                    Action::L6RecorderHandler => Some(3),
+                    Action::L6RecorderAssertSelection => Some(4),
+                    Action::L6RecorderCallback => Some(5),
+                    Action::L6RecorderAssertCallback => Some(6),
+                    Action::L6RecorderObserve => Some(7),
+                    Action::L6RecorderRelease => Some(8),
+                    Action::L6RecorderSample => Some(9),
+                    Action::L6RecorderEvidence => Some(10),
+                    Action::L6RecorderAssertTrace => Some(11),
+                    Action::L6RecorderAssertDma => Some(12),
+                    Action::L6RecorderEnd => Some(13),
+                    _ => None,
+                };
+                match (&step.action, recorder, recorder_phase) {
+                    (Action::L6RecorderBegin { .. }, None, None) => {
+                        recorder = Some((0, step.guest_timeout_ms, step.wall_timeout_s))
+                    }
+                    (_, Some((phase, guest, wall)), Some(actual))
+                        if phase == actual
+                            && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        recorder = if phase == 13 {
+                            None
+                        } else {
+                            Some((phase + 1, guest, wall))
+                        }
+                    }
+                    (_, Some(_), _) | (_, None, Some(_)) => {
+                        return Err(
+                            "recorder transaction requires ordered steps with matching budgets"
+                                .into(),
+                        );
+                    }
+                    _ => {}
+                }
                 let sound_phase = match &step.action {
                     Action::SoundPadPress => Some(0),
                     Action::SoundPadHold => Some(1),
@@ -1013,6 +1053,9 @@ impl Scenario {
                     }
                     _ => {}
                 }
+            }
+            if recorder.is_some() {
+                return Err("recorder transaction is incomplete".into());
             }
             if sound_pad.is_some() {
                 return Err("sound-pad transaction is incomplete".into());
@@ -1693,7 +1736,28 @@ impl Scenario {
                         );
                     }
                 }
-                Action::L6RecorderPlayback { target } => {
+                Action::L6RecorderPress
+                | Action::L6RecorderDispatcher
+                | Action::L6RecorderAssertEvent
+                | Action::L6RecorderHandler
+                | Action::L6RecorderAssertSelection
+                | Action::L6RecorderCallback
+                | Action::L6RecorderAssertCallback
+                | Action::L6RecorderObserve
+                | Action::L6RecorderRelease
+                | Action::L6RecorderSample
+                | Action::L6RecorderEvidence
+                | Action::L6RecorderAssertTrace
+                | Action::L6RecorderAssertDma
+                | Action::L6RecorderEnd => {
+                    if step.models.iter().any(|model| *model != Model::L6)
+                        || (step.models.is_empty()
+                            && value.models.iter().any(|model| *model != Model::L6))
+                    {
+                        return Err("l6-recorder scenarios must be scoped to L6".into());
+                    }
+                }
+                Action::L6RecorderBegin { target } => {
                     if *target != 4 {
                         return Err("l6-recorder-playback requires MAIN target 4".into());
                     }

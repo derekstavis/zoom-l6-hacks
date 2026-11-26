@@ -360,7 +360,21 @@ pub fn of(action: &Action) -> Requirement {
         | Action::ExpectTraceCount { .. }
         | Action::ExpectButtonReport { .. }
         | Action::ExpectStartupReport { .. }
-        | Action::L6RecorderPlayback { .. }
+        | Action::L6RecorderBegin { .. }
+        | Action::L6RecorderPress
+        | Action::L6RecorderDispatcher
+        | Action::L6RecorderAssertEvent
+        | Action::L6RecorderHandler
+        | Action::L6RecorderAssertSelection
+        | Action::L6RecorderCallback
+        | Action::L6RecorderAssertCallback
+        | Action::L6RecorderObserve
+        | Action::L6RecorderRelease
+        | Action::L6RecorderSample
+        | Action::L6RecorderEvidence
+        | Action::L6RecorderAssertTrace
+        | Action::L6RecorderAssertDma
+        | Action::L6RecorderEnd
         | Action::WasmPatch
         | Action::ExpectPowered { .. }
         | Action::Wait { .. }

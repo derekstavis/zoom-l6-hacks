@@ -314,9 +314,23 @@ pub enum Operation {
     SoundPadAssertLed,
     SoundPadAssertMeter,
     SoundPadFinish,
-    L6RecorderPlayback {
+    L6RecorderBegin {
         target: u32,
     },
+    L6RecorderPress,
+    L6RecorderDispatcher,
+    L6RecorderAssertEvent,
+    L6RecorderHandler,
+    L6RecorderAssertSelection,
+    L6RecorderCallback,
+    L6RecorderAssertCallback,
+    L6RecorderObserve,
+    L6RecorderRelease,
+    L6RecorderSample,
+    L6RecorderEvidence,
+    L6RecorderAssertTrace,
+    L6RecorderAssertDma,
+    L6RecorderEnd,
     L6maxRecorderPlayback {
         target: u32,
     },
@@ -1008,6 +1022,7 @@ pub struct State {
     l6_midi_probe: Option<midi::L6MidiProbe>,
     sd_inspection: Option<sd::SdInspectionContext>,
     sound_pad: Option<audio::sound_pad::SoundPadContext>,
+    l6_recorder: Option<audio::recorder::Scope>,
     native_midi: Option<l6ctl::midi::MidiSession>,
     midi_probe: Option<MidiProbeContext>,
 }

@@ -891,10 +891,56 @@ impl Runner {
                 Action::SoundPadFinish => {
                     return Ok(Progress::Device(devices::Operation::SoundPadFinish));
                 }
-                Action::L6RecorderPlayback { target } => {
-                    return Ok(Progress::Device(devices::Operation::L6RecorderPlayback {
+                Action::L6RecorderBegin { target } => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderBegin {
                         target,
                     }));
+                }
+                Action::L6RecorderPress => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderPress));
+                }
+                Action::L6RecorderDispatcher => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderDispatcher));
+                }
+                Action::L6RecorderAssertEvent => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderAssertEvent));
+                }
+                Action::L6RecorderHandler => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderHandler));
+                }
+                Action::L6RecorderAssertSelection => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6RecorderAssertSelection,
+                    ));
+                }
+                Action::L6RecorderCallback => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderCallback));
+                }
+                Action::L6RecorderAssertCallback => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6RecorderAssertCallback,
+                    ));
+                }
+                Action::L6RecorderObserve => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderObserve));
+                }
+                Action::L6RecorderRelease => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderRelease));
+                }
+                Action::L6RecorderSample => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderSample));
+                }
+                Action::L6RecorderEvidence => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderEvidence));
+                }
+                Action::L6RecorderAssertTrace => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderAssertTrace));
+                }
+                Action::L6RecorderAssertDma => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderAssertDma));
+                }
+                Action::L6RecorderEnd => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderEnd));
                 }
                 Action::L6maxRecorderPlayback { target } => {
                     return Ok(Progress::Device(

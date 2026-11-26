@@ -16,6 +16,8 @@ pub fn run(args: Vec<OsString>) -> Result<(), Box<dyn std::error::Error>> {
         std::env::temp_dir().join(format!("l6dbg-popup-trigger-{}.sock", std::process::id()));
     options.gdb_socket = Some(socket.clone());
     let h = Headless::start(&options)?;
+    // Own the stub before any probe input, including the later QMP stop.
+    let lease = gdb::Lease::acquire(&socket)?;
     if h.engine.model() != l6fw::Model::L6max {
         return Err("the popup probe requires L6max firmware".into());
     }
@@ -45,8 +47,8 @@ pub fn run(args: Vec<OsString>) -> Result<(), Box<dyn std::error::Error>> {
         "no initial popup"
     );
     assert_eq!(before["busy"], 0);
+    let mut g = gdb::Gdb::connect_leased(lease)?;
     q.stop()?;
-    let mut g = gdb::Gdb::connect(&socket)?;
     g.breakpoint(l6max::gui_notification_tick, true)?;
     q.resume()?;
     let deadline = Instant::now() + Duration::from_secs(15);

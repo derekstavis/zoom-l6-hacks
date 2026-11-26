@@ -1,3 +1,4 @@
+mod debug_cli;
 mod midi_cli;
 
 use l6ctl::{ControlClient, InputSource, Request, RtosKind};
@@ -40,7 +41,7 @@ fn run() -> Result<(), String> {
     let command = args.first().map(String::as_str).unwrap_or("help");
     if matches!(command, "help" | "--help" | "-h") {
         println!(
-            "Usage: l6ctl [--socket PATH] info\n       l6ctl [--socket PATH] input status main|panel\n       l6ctl [--socket PATH] heap-counters\n       l6ctl [--socket PATH] midi-config\n       l6ctl [--socket PATH] knob-popup [--text]\n       l6ctl [--socket PATH] recorder-state\n       l6ctl [--socket PATH] knob-parameter-state\n       l6ctl [--socket PATH] rtos heap|tasks|scheduler|objects|all [--pretty]\n       l6ctl [--socket PATH] button NAME|TARGET [--hold-ms MS]\n       l6ctl [--socket PATH] down NAME|TARGET DURATION_MS\n       l6ctl [--socket PATH] up NAME|TARGET\n       l6ctl [--socket PATH] encoder CHANNEL STEPS\n       l6ctl [--socket PATH] analog CHANNEL STEPS\n       l6ctl [--socket PATH] set-analog CHANNEL VALUE\n       l6ctl midi listen ENDPOINT [--timeout-ms MS]\n       l6ctl midi observe ENDPOINT --wall-ms MS\n       l6ctl midi send ENDPOINT CHANNEL CONTROLLER VALUE\n       l6ctl midi sync ENDPOINT --count N [--quiet-ms MS] [--timeout-ms MS]\n\nConnects to a running emulator started with --control-socket PATH. Button names use the semantic names documented by l6test; numeric targets 0..53 are also accepted. Encoder channels are one-based. Analog channels are 1..5."
+            "Usage: l6ctl [--socket PATH] info\n       l6ctl [--socket PATH] debug-session\n       l6ctl [--socket PATH] input status main|panel\n       l6ctl [--socket PATH] input ack main|panel SEQUENCE\n       l6ctl [--socket PATH] heap-counters\n       l6ctl [--socket PATH] memory-read ADDRESS LENGTH\n       l6ctl [--socket PATH] midi-config\n       l6ctl [--socket PATH] update-state\n       l6ctl [--socket PATH] installer-outcome\n       l6ctl [--socket PATH] usb attach|release|controller\n       l6ctl [--socket PATH] update-gui-state\n       l6ctl [--socket PATH] knob-popup [--text]\n       l6ctl [--socket PATH] recorder-state\n       l6ctl [--socket PATH] knob-parameter-state\n       l6ctl [--socket PATH] rtos heap|tasks|scheduler|objects|all [--pretty]\n       l6ctl [--socket PATH] button NAME|TARGET [--hold-ms MS]\n       l6ctl [--socket PATH] down NAME|TARGET DURATION_MS\n       l6ctl [--socket PATH] up NAME|TARGET\n       l6ctl [--socket PATH] encoder CHANNEL STEPS\n       l6ctl [--socket PATH] analog CHANNEL STEPS\n       l6ctl [--socket PATH] set-analog CHANNEL VALUE\n       l6ctl midi listen ENDPOINT [--timeout-ms MS]\n       l6ctl midi observe ENDPOINT --wall-ms MS\n       l6ctl midi send ENDPOINT CHANNEL CONTROLLER VALUE\n       l6ctl midi sync ENDPOINT --count N [--quiet-ms MS] [--timeout-ms MS]\n\nConnects to a running emulator started with --control-socket PATH. Button names use the semantic names documented by l6test; numeric targets 0..53 are also accepted. Encoder channels are one-based. Analog channels are 1..5."
         );
         return Ok(());
     }
@@ -49,7 +50,33 @@ fn run() -> Result<(), String> {
     }
     let socket = socket.ok_or("provide --socket PATH or set L6_CONTROL_SOCKET")?;
     let client = ControlClient::new(&socket);
+    if command == "debug-session" {
+        if args.len() != 1 {
+            return Err("Usage: l6ctl debug-session".into());
+        }
+        return debug_cli::run(&client);
+    }
     if command == "input" {
+        if let [_, subcommand, source, sequence] = args.as_slice() {
+            if subcommand == "ack" {
+                let source = match source.as_str() {
+                    "main" => InputSource::Main,
+                    "panel" => InputSource::Panel,
+                    _ => return Err("input source must be main or panel".into()),
+                };
+                let sequence = sequence
+                    .parse::<u32>()
+                    .map_err(|_| "invalid input sequence")?;
+                let ack = client
+                    .input_ack(source, sequence)
+                    .map_err(|error| error.to_string())?;
+                println!(
+                    "{}",
+                    serde_json::to_string(&ack).map_err(|error| error.to_string())?
+                );
+                return Ok(());
+            }
+        }
         let source = match args.as_slice() {
             [_, subcommand, source] if subcommand == "status" && source == "main" => {
                 InputSource::Main
@@ -79,6 +106,26 @@ fn run() -> Result<(), String> {
         );
         return Ok(());
     }
+    if command == "memory-read" {
+        if args.len() != 3 {
+            return Err("Usage: l6ctl memory-read ADDRESS LENGTH".into());
+        }
+        let address = if let Some(hex) = args[1].strip_prefix("0x") {
+            u32::from_str_radix(hex, 16)
+        } else {
+            args[1].parse()
+        }
+        .map_err(|_| "invalid address")?;
+        let length: usize = args[2].parse().map_err(|_| "invalid length")?;
+        let sample = client
+            .read_main_memory(address, length)
+            .map_err(|e| e.to_string())?;
+        println!(
+            "{}",
+            serde_json::to_string(&sample).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
     if command == "midi-config" {
         if args.len() != 1 {
             return Err("Usage: l6ctl midi-config".into());
@@ -87,6 +134,63 @@ fn run() -> Result<(), String> {
         println!(
             "{}",
             serde_json::to_string(&config).map_err(|error| error.to_string())?
+        );
+        return Ok(());
+    }
+    if command == "update-state" {
+        if args.len() != 1 {
+            return Err("Usage: l6ctl update-state".into());
+        }
+        let state = client.update_state().map_err(|error| error.to_string())?;
+        println!(
+            "{}",
+            serde_json::to_string(&state).map_err(|error| error.to_string())?
+        );
+        return Ok(());
+    }
+    if command == "update-gui-state" {
+        if args.len() != 1 {
+            return Err("Usage: l6ctl update-gui-state".into());
+        }
+        let state = client
+            .update_gui_state()
+            .map_err(|error| error.to_string())?;
+        println!(
+            "{}",
+            serde_json::to_string(&state).map_err(|error| error.to_string())?
+        );
+        return Ok(());
+    }
+    if command == "installer-outcome" {
+        if args.len() != 1 {
+            return Err("Usage: l6ctl installer-outcome".into());
+        }
+        let outcome = client
+            .installer_outcome()
+            .map_err(|error| error.to_string())?;
+        println!(
+            "{}",
+            serde_json::to_string(&outcome).map_err(|error| error.to_string())?
+        );
+        return Ok(());
+    }
+    if command == "usb" {
+        let value = match args.as_slice() {
+            [_, sub] if sub == "attach" => {
+                serde_json::to_value(client.usb_attach().map_err(|e| e.to_string())?)
+            }
+            [_, sub] if sub == "release" => {
+                serde_json::to_value(client.usb_release().map_err(|e| e.to_string())?)
+            }
+            [_, sub] if sub == "controller" => {
+                serde_json::to_value(client.usb_controller().map_err(|e| e.to_string())?)
+            }
+            _ => return Err("Usage: l6ctl usb attach|release|controller".into()),
+        }
+        .map_err(|e| e.to_string())?;
+        println!(
+            "{}",
+            serde_json::to_string(&value).map_err(|e| e.to_string())?
         );
         return Ok(());
     }
@@ -263,8 +367,16 @@ fn run() -> Result<(), String> {
         ),
         Request::Info
         | Request::InputStatus { .. }
+        | Request::InputAck { .. }
         | Request::HeapCounters
+        | Request::MemoryRead { .. }
         | Request::MidiConfig
+        | Request::UpdateState
+        | Request::UpdateGuiState
+        | Request::InstallerOutcome
+        | Request::UsbAttach
+        | Request::UsbRelease
+        | Request::UsbController
         | Request::RecorderState
         | Request::KnobParameterState
         | Request::KnobPopup { .. }

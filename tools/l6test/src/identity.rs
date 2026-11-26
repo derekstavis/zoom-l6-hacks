@@ -10,6 +10,10 @@ pub struct CaseIdentity {
     pub runner_sha256: String,
     /// The package the case boots or installs from, if any.
     pub firmware_package_sha256: Option<String>,
+    pub update_package_sha256: Option<String>,
+    pub update_card_package_sha256: Option<String>,
+    pub update_report_sha256: Option<String>,
+    pub verify_firmware: Option<String>,
     /// The unpacked firmware directory the case boots.
     pub firmware: String,
     pub card_sha256: Option<String>,

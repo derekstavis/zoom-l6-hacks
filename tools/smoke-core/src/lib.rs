@@ -13,6 +13,6 @@ mod waveform;
 pub use runner::{Progress, Runner};
 pub use scenario::{
     Action, AudioInput, Backend, Fragment, Gesture, ObservationActivity, STATE_SPEC_ENV, Scenario,
-    Step, control_target, is_switch, spec_path,
+    Step, UpdateFixture, control_target, is_switch, spec_path,
 };
 pub use session::{Command, Session, run};

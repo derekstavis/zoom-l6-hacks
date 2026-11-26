@@ -196,14 +196,18 @@ mod carried_deadline_tests {
 }
 
 impl State {
+    pub(super) fn release_retained_host_midi(&mut self) {
+        if let Some(mut client) = self.host_midi.take() {
+            client.release();
+        }
+    }
+
     pub fn restarted(&mut self) -> Result<(), String> {
         self.abort_midi_probe();
         if let Some(mut client) = self.native_midi.take() {
             client.release();
         }
-        if let Some(mut client) = self.host_midi.take() {
-            client.release();
-        }
+        self.release_retained_host_midi();
         self.midi_round_trip = None;
         self.midi_sync = None;
         self.knob_popup = None;
@@ -248,6 +252,17 @@ impl State {
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
     ) -> Result<Value, String> {
+        if self.l6_midi_probe.is_some()
+            && !matches!(
+                operation,
+                Operation::L6MidiProbeInject
+                    | Operation::L6MidiProbeExpectHook
+                    | Operation::L6MidiProbeExpectReplies
+            )
+        {
+            self.l6_midi_probe.take();
+            return Err("L6 MIDI probe interrupted by another operation".into());
+        }
         if self.midi_sync.is_some()
             && !matches!(
                 operation,
@@ -400,6 +415,29 @@ impl State {
         operation_start: (Instant, u32),
     ) -> Result<Value, Box<dyn std::error::Error>> {
         match operation {
+            Operation::LifecycleStart { .. }
+            | Operation::LifecycleStop
+            | Operation::WaitPanelUptime { .. }
+            | Operation::ExpectUpdateState { .. }
+            | Operation::ExpectUpdateMarkerAbsent
+            | Operation::ExpectLiveUpdateMarkerAbsent
+            | Operation::CaptureUpdateMarkerPending
+            | Operation::MarkL6UpdatePending
+            | Operation::ExpectL6UpdateResetVector
+            | Operation::ExpectL6UpdateComparison { .. }
+            | Operation::ExpectUpdateGui { .. }
+            | Operation::ExpectInstallerOutcome { .. }
+            | Operation::WaitUpdatePanelReady { .. }
+            | Operation::WaitUsbController
+            | Operation::BeginWallDeadline { .. }
+            | Operation::EndWallDeadline
+            | Operation::ExpectUpdateMode { .. }
+            | Operation::ExpectMainMemory { .. }
+            | Operation::ExpectUpdateComparison { .. }
+            | Operation::CaptureInstalledPanel
+            | Operation::ExpectPanelUnchanged => {
+                Err("managed lifecycle operation must run at the session boundary".into())
+            }
             Operation::ExpectRecorder => {
                 let mode = session.engine.management[0].read_memory(0, l6max::system_mode, 4)?;
                 if mode != 0u32.to_le_bytes() {
@@ -1915,7 +1953,16 @@ impl State {
             Operation::L6DinUsbForwarding => {
                 self.run_l6_din_usb_forwarding(session, wall_timeout_s)
             }
-            Operation::L6MidiSync => Ok(self.run_l6_midi_sync(session, options)?),
+            operation @ (Operation::L6MidiProbeBegin
+            | Operation::L6MidiProbeInject
+            | Operation::L6MidiProbeExpectHook
+            | Operation::L6MidiProbeExpectReplies) => Ok(self.run_l6_midi_probe(
+                session,
+                options,
+                operation,
+                guest_timeout_ms,
+                wall_timeout_s,
+            )?),
             Operation::L6MidiRingPinSweep { cc } => {
                 self.run_l6_midi_ring_pin_sweep(session, cc, wall_timeout_s)
             }
@@ -2202,13 +2249,13 @@ impl State {
                 let points = callbacks(session.engine.model());
                 let model = session.engine.model();
                 let qmp = &session.engine.management[0];
-                qmp.stop()?;
                 let mut debugger = l6max_diagnostics::gdb::Gdb::connect(
                     options
                         .gdb_socket
                         .as_ref()
                         .ok_or("missing audio debugger socket")?,
                 )?;
+                qmp.stop()?;
                 for (address, _) in points {
                     debugger.breakpoint(*address, true)?;
                 }
@@ -2421,6 +2468,8 @@ impl State {
                     &mut self.knob_dialog_preflight,
                     guest_timeout_ms,
                     wall_timeout_s,
+                    shared,
+                    operation_start,
                 )
             }
             operation @ (Operation::KnobPopupOpen { .. }

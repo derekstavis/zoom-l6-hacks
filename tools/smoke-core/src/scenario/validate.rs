@@ -9,6 +9,444 @@ impl Scenario {
         }
         validate_models(&value.models)?;
         crate::requirements::check_scope(value)?;
+        if let Some(fixture) = value.update_fixture {
+            let fixture_model = if fixture == UpdateFixture::L6Stock {
+                Model::L6
+            } else {
+                Model::L6max
+            };
+            if value.models != [fixture_model]
+                || value.backends != [Backend::Headless]
+                || value.state.is_some()
+                || value.card.is_some()
+                || (fixture != UpdateFixture::PatchedMidi && !value.update_patches.is_empty())
+                || (fixture == UpdateFixture::PatchedMidi
+                    && (value.update_patches.len() != 1
+                        || value.update_patches.get(&Model::L6max).map(Vec::as_slice)
+                            != Some(&["midi-sync".to_string()][..])))
+                || !value.patches.is_empty()
+                || value.sd_patches.is_some()
+                || !value.installed_patches.is_empty()
+                || !value.installed_sd_patches.is_empty()
+                || !value.effect_replacements.is_empty()
+                || (fixture != UpdateFixture::PatchedMidi
+                    && value
+                        .step
+                        .iter()
+                        .any(|step| !step.models.is_empty() || step.setup_input))
+            {
+                return Err(
+                    "managed update needs a dedicated model-scoped headless stock fixture".into(),
+                );
+            }
+            let actions = value
+                .step
+                .iter()
+                .map(|step| &step.action)
+                .collect::<Vec<_>>();
+            match fixture {
+                UpdateFixture::L6Stock => {
+                    if value.update_goal != Some(UpdateGoal::Install) {
+                        return Err("L6 update requires the full install goal".into());
+                    }
+                    if !matches!(
+                        actions.as_slice(),
+                        [
+                            Action::LifecycleStart {
+                                profile: LifecycleBoot::Initial
+                            },
+                            Action::WaitPanelUptime { guest_ms: 40000.. },
+                            Action::LifecycleStop,
+                            Action::MarkL6UpdatePending,
+                            Action::CaptureUpdateMarkerPending,
+                            Action::LifecycleStart {
+                                profile: LifecycleBoot::Installer
+                            },
+                            Action::ExpectInstallerOutcome {
+                                expected: InstallerExpected::Installed
+                            },
+                            Action::ExpectL6UpdateResetVector,
+                            Action::WaitPanelUptime { guest_ms: 40000.. },
+                            Action::LifecycleStop,
+                            Action::ExpectL6UpdateComparison {
+                                field: L6UpdateField::MainFirmware
+                            },
+                            Action::ExpectL6UpdateComparison {
+                                field: L6UpdateField::MainTrailer
+                            },
+                            Action::ExpectL6UpdateComparison {
+                                field: L6UpdateField::SecondaryFirmware
+                            },
+                            Action::ExpectL6UpdateComparison {
+                                field: L6UpdateField::SecondaryTrailer
+                            },
+                            Action::ExpectL6UpdateComparison {
+                                field: L6UpdateField::PackageFooter
+                            },
+                            Action::ExpectL6UpdateComparison {
+                                field: L6UpdateField::BootRegion
+                            },
+                            Action::ExpectL6UpdateComparison {
+                                field: L6UpdateField::ProtectedRegion
+                            },
+                            Action::ExpectL6UpdateComparison {
+                                field: L6UpdateField::ResourceNor
+                            },
+                            Action::ExpectUpdateMarkerAbsent,
+                        ]
+                    ) {
+                        return Err("L6 stock update requires both complete boots, explicit marker, installed reset vector, every segment, resource and protected-region check".into());
+                    }
+                }
+                UpdateFixture::PatchedMidi => {
+                    if value.update_goal != Some(UpdateGoal::Install) {
+                        return Err("patched update requires the full install goal".into());
+                    }
+                    let semantic = actions
+                        .into_iter()
+                        .filter(|action| {
+                            !matches!(action, Action::WaitInputApplied | Action::Delay { .. })
+                        })
+                        .collect::<Vec<_>>();
+                    if !matches!(semantic.as_slice(), [
+                        Action::LifecycleStart { profile: LifecycleBoot::Initial },
+                        Action::ExpectDisplayImage { image: update_image, .. },
+                        Action::ExpectUpdateState { mode: 6, flags_mask: 9, flags_value: 0 },
+                        Action::ExpectUpdateGui { window: 0x802003b4, progress_mask: 0, progress_value: 0 },
+                        Action::EnqueueTap { target: 2, hold_ms: 50 },
+                        Action::EnqueueTap { target: 3, hold_ms: 50 },
+                        Action::ExpectUpdateGui { window: 0x8020029c, progress_mask: 0x100, progress_value: 0x100 },
+                        Action::ExpectLiveUpdateMarkerAbsent,
+                        Action::EnqueueTap { target: 53, hold_ms: 3500 },
+                        Action::ExpectPowered { powered: false },
+                        Action::LifecycleStop,
+                        Action::CaptureUpdateMarkerPending,
+                        Action::LifecycleStart { profile: LifecycleBoot::Installer },
+                        Action::ExpectInstallerOutcome { expected: InstallerExpected::Installed },
+                        Action::WaitUpdatePanelReady { require_programming: false },
+                        Action::ExpectTrace { contains: install_trace, absent: install_absent },
+                        Action::ExpectUpdateMode { mode: 4 },
+                        Action::LifecycleStop,
+                        Action::ExpectUpdateComparison { field: UpdateComparisonField::MainPayload },
+                        Action::ExpectUpdateComparison { field: UpdateComparisonField::BootRegion },
+                        Action::ExpectUpdateComparison { field: UpdateComparisonField::ProtectedRegion },
+                        Action::ExpectUpdateComparison { field: UpdateComparisonField::PanelImage },
+                        Action::ExpectUpdateMarkerAbsent,
+                        Action::CaptureInstalledPanel,
+                        Action::LifecycleStart { profile: LifecycleBoot::Restart },
+                        Action::ExpectInstallerOutcome { expected: InstallerExpected::NoPending },
+                        Action::WaitPanelUptime { guest_ms: 40000.. },
+                        Action::ExpectTrace { contains: restart_contains, absent: restart_absent },
+                        Action::LifecycleStop,
+                        Action::ExpectPanelUnchanged,
+                        Action::LifecycleStart { profile: LifecycleBoot::Verify },
+                        Action::BeginWallDeadline { duration_s: 300 },
+                        Action::Wait { until: first_boot },
+                        Action::ExpectDisplayImage { image: date_image, .. },
+                        Action::Press { control: first_confirm },
+                        Action::ExpectDisplayImage { image: battery_image, .. },
+                        Action::Press { control: second_confirm },
+                        Action::ExpectDisplayImage { image: home_image, .. },
+                        Action::Wait { until: home_boot },
+                        Action::EndWallDeadline,
+                        Action::WaitUsbController,
+                        Action::DirectUsbMidiRoundTrip { cable: 1, expect_ring_change: true },
+                        Action::HostMidiSyncBegin,
+                        Action::HostMidiDrain { quiet_wall_ms: 500 },
+                        Action::HostMidiSendCc { channel: 0, controller: 127, value: 127 },
+                        Action::HostMidiExpectSync,
+                        Action::HostMidiEnd,
+                        Action::LifecycleStop
+                    ] if update_image == Path::new("tests/smoke/images/l6max-firmware-update-dialog.png")
+                        && install_trace == &["l6 panel RTC response start"] && install_absent.is_empty()
+                        && restart_contains.is_empty() && restart_absent == &["l6 panel ROM erase", "l6 panel ROM mass erase"]
+                        && first_boot == "boot-ready" && home_boot == "boot-ready"
+                        && date_image == Path::new("tests/smoke/images/l6max-fresh-date-time.png")
+                        && battery_image == Path::new("tests/smoke/images/l6max-fresh-battery-type.png")
+                        && home_image == Path::new("tests/smoke/images/l6max-recorder-no-sd.png")
+                        && first_confirm == "recorder-function-4" && second_confirm == first_confirm)
+                    {
+                        return Err("patched update needs complete ordered handoff, installer, restart and MIDI verification checks".into());
+                    }
+                    let verify = value
+                        .step
+                        .iter()
+                        .position(|step| {
+                            matches!(
+                                step.action,
+                                Action::LifecycleStart {
+                                    profile: LifecycleBoot::Verify
+                                }
+                            )
+                        })
+                        .unwrap();
+                    if value.step[verify..].iter().any(|step| {
+                        matches!(
+                            step.action,
+                            Action::WaitUsbController
+                                | Action::DirectUsbMidiRoundTrip { .. }
+                                | Action::HostMidiSyncBegin
+                                | Action::HostMidiDrain { .. }
+                                | Action::HostMidiSendCc { .. }
+                                | Action::HostMidiExpectSync
+                                | Action::HostMidiEnd
+                        ) && (step.guest_timeout_ms < 180000 || step.wall_timeout_s < 300)
+                    }) {
+                        return Err("post-update MIDI verification needs the original guest and wall budgets".into());
+                    }
+                }
+                UpdateFixture::BadChecksum => {
+                    if value.update_goal.is_some() {
+                        return Err("bad-checksum fixture has no install goal".into());
+                    }
+                    if !matches!(
+                        actions.as_slice(),
+                        [
+                            Action::LifecycleStart {
+                                profile: LifecycleBoot::Initial
+                            },
+                            Action::WaitPanelUptime { guest_ms: 40000.. },
+                            Action::ExpectUpdateState {
+                                mode: 1,
+                                flags_mask: 9,
+                                flags_value: 0
+                            },
+                            Action::LifecycleStop,
+                            Action::ExpectUpdateMarkerAbsent
+                        ]
+                    ) {
+                        return Err(
+                            "bad-checksum update needs its complete rejection checks".into()
+                        );
+                    }
+                }
+                UpdateFixture::SyntheticValid => {
+                    let semantic = actions
+                        .into_iter()
+                        .filter(|action| {
+                            !matches!(action, Action::WaitInputApplied | Action::Delay { .. })
+                        })
+                        .collect::<Vec<_>>();
+                    if semantic.len() < 12 {
+                        return Err("valid handoff is incomplete".into());
+                    }
+                    let (handoff, tail) = semantic.split_at(12);
+                    match value.update_goal {
+                        Some(UpdateGoal::Handoff) if !tail.is_empty() => {
+                            return Err("handoff goal must end at pending marker".into());
+                        }
+                        Some(UpdateGoal::Install) if tail.is_empty() => {
+                            return Err("install goal requires installer and restart checks".into());
+                        }
+                        None => {
+                            return Err(
+                                "valid update needs an explicit handoff or install goal".into()
+                            );
+                        }
+                        _ => {}
+                    }
+                    if !matches!(handoff, [
+                        Action::LifecycleStart { profile: LifecycleBoot::Initial },
+                        Action::ExpectDisplayImage { image, .. },
+                        Action::ExpectUpdateState { mode: 6, flags_mask: 9, flags_value: 0 },
+                        Action::ExpectUpdateGui { window: 0x802003b4, progress_mask: 0, progress_value: 0 },
+                        Action::EnqueueTap { target: 2, hold_ms: 50 },
+                        Action::EnqueueTap { target: 3, hold_ms: 50 },
+                        Action::ExpectUpdateGui { window: 0x8020029c, progress_mask: 0x100, progress_value: 0x100 },
+                        Action::ExpectLiveUpdateMarkerAbsent,
+                        Action::EnqueueTap { target: 53, hold_ms: 3500 },
+                        Action::ExpectPowered { powered: false },
+                        Action::LifecycleStop,
+                        Action::CaptureUpdateMarkerPending
+                    ] if image == std::path::Path::new("tests/smoke/images/l6max-firmware-update-dialog.png"))
+                    {
+                        return Err(
+                            "valid handoff needs its complete ordered UI, power and marker checks"
+                                .into(),
+                        );
+                    }
+                    if !tail.is_empty()
+                        && !matches!(tail, [
+                        Action::LifecycleStart { profile: LifecycleBoot::Installer },
+                        Action::ExpectInstallerOutcome { expected: InstallerExpected::Installed },
+                        Action::WaitUpdatePanelReady { require_programming: true },
+                        Action::ExpectTrace { contains: install_traces, absent: install_absent },
+                        Action::ExpectTraceCount { pattern, count: 64, at_least: false, checkpoint: None },
+                        Action::ExpectUpdateMode { mode: 4 },
+                        Action::ExpectMainMemory { address: 0x8000001c, bytes: install_word },
+                        Action::LifecycleStop,
+                        Action::ExpectUpdateComparison { field: UpdateComparisonField::MainPayload },
+                        Action::ExpectUpdateComparison { field: UpdateComparisonField::BootRegion },
+                        Action::ExpectUpdateComparison { field: UpdateComparisonField::ProtectedRegion },
+                        Action::ExpectUpdateComparison { field: UpdateComparisonField::PanelImage },
+                        Action::ExpectUpdateMarkerAbsent,
+                        Action::CaptureInstalledPanel,
+                        Action::LifecycleStart { profile: LifecycleBoot::Restart },
+                        Action::ExpectInstallerOutcome { expected: InstallerExpected::NoPending },
+                        Action::WaitPanelUptime { guest_ms: 40000.. },
+                        Action::ExpectMainMemory { address: 0x8000001c, bytes: restart_word },
+                        Action::ExpectTrace { contains: restart_contains, absent: restart_absent },
+                        Action::LifecycleStop,
+                        Action::ExpectPanelUnchanged
+                    ] if install_traces == &["l6 panel RTC response start", "l6 panel ROM 16 KiB image match: yes"]
+                        && install_absent.is_empty() && pattern == "l6 panel ROM write 080"
+                        && install_word == &[0xdf,0x9b,0x57,0x13] && restart_word == install_word
+                        && restart_contains.is_empty() && restart_absent == &["l6 panel ROM erase", "l6 panel ROM mass erase"])
+                    {
+                        return Err("installed update needs complete ordered installer, NOR, panel and restart checks".into());
+                    }
+                }
+            }
+            let mut active = false;
+            let mut started = false;
+            let mut last_profile = None;
+            for step in &value.step {
+                if fixture == UpdateFixture::PatchedMidi {
+                    let entering_verify = matches!(
+                        step.action,
+                        Action::LifecycleStart {
+                            profile: LifecycleBoot::Verify
+                        }
+                    );
+                    if (!step.models.is_empty() || step.setup_input)
+                        && last_profile != Some(LifecycleBoot::Verify)
+                        && !entering_verify
+                    {
+                        return Err(
+                            "patched update scopes and setup inputs belong only to the verify boot"
+                                .into(),
+                        );
+                    }
+                    if !step.models.is_empty() && step.models != [Model::L6max] {
+                        return Err("patched verify step must target L6max".into());
+                    }
+                    if matches!(step.action, Action::WaitUpdatePanelReady { .. })
+                        && (step.guest_timeout_ms != 60000 || step.wall_timeout_s != 300)
+                    {
+                        return Err(
+                            "patched panel readiness needs the original joint deadline".into()
+                        );
+                    }
+                }
+                match &step.action {
+                    Action::LifecycleStart { profile }
+                        if !active
+                            && match profile {
+                                LifecycleBoot::Initial => last_profile.is_none(),
+                                LifecycleBoot::Installer => {
+                                    last_profile == Some(LifecycleBoot::Initial)
+                                }
+                                LifecycleBoot::Restart => {
+                                    last_profile == Some(LifecycleBoot::Installer)
+                                }
+                                LifecycleBoot::Verify => {
+                                    last_profile == Some(LifecycleBoot::Restart)
+                                }
+                            } =>
+                    {
+                        active = true;
+                        started = true;
+                        last_profile = Some(*profile);
+                    }
+                    Action::LifecycleStop if active => {
+                        active = false;
+                    }
+                    Action::ExpectUpdateMarkerAbsent
+                    | Action::MarkL6UpdatePending
+                    | Action::ExpectL6UpdateComparison { .. }
+                    | Action::CaptureUpdateMarkerPending
+                    | Action::ExpectUpdateComparison { .. }
+                    | Action::CaptureInstalledPanel
+                    | Action::ExpectPanelUnchanged
+                        if !active && started => {}
+                    Action::LifecycleStart { .. }
+                    | Action::LifecycleStop
+                    | Action::ExpectUpdateMarkerAbsent
+                    | Action::MarkL6UpdatePending
+                    | Action::ExpectL6UpdateComparison { .. }
+                    | Action::CaptureUpdateMarkerPending
+                    | Action::ExpectUpdateComparison { .. }
+                    | Action::CaptureInstalledPanel
+                    | Action::ExpectPanelUnchanged => {
+                        return Err("invalid lifecycle guest/state ordering".into());
+                    }
+                    _ if !active => return Err("lifecycle action requires an active guest".into()),
+                    _ => {}
+                }
+                match step.action {
+                    Action::WaitPanelUptime { guest_ms }
+                        if guest_ms == 0 || guest_ms > step.guest_timeout_ms =>
+                    {
+                        return Err("invalid lifecycle uptime".into());
+                    }
+                    Action::ExpectUpdateState {
+                        flags_mask,
+                        flags_value,
+                        ..
+                    } if flags_mask == 0 || flags_value & !flags_mask != 0 => {
+                        return Err("invalid masked flags assertion".into());
+                    }
+                    Action::ExpectUpdateGui {
+                        progress_mask,
+                        progress_value,
+                        ..
+                    } if progress_value & !progress_mask != 0 => {
+                        return Err("invalid masked GUI assertion".into());
+                    }
+                    _ => {}
+                }
+            }
+            let expected_end = match fixture {
+                UpdateFixture::PatchedMidi => matches!(
+                    value.step.last().map(|s| &s.action),
+                    Some(Action::LifecycleStop)
+                ),
+                UpdateFixture::L6Stock => matches!(
+                    value.step.last().map(|s| &s.action),
+                    Some(Action::ExpectUpdateMarkerAbsent)
+                ),
+                UpdateFixture::BadChecksum => matches!(
+                    value.step.last().map(|s| &s.action),
+                    Some(Action::ExpectUpdateMarkerAbsent)
+                ),
+                UpdateFixture::SyntheticValid => matches!(
+                    value.step.last().map(|s| &s.action),
+                    Some(Action::CaptureUpdateMarkerPending | Action::ExpectPanelUnchanged)
+                ),
+            };
+            if active || !started || !expected_end {
+                return Err("lifecycle must end with stopped guest and expected marker".into());
+            }
+        } else if value.update_goal.is_some()
+            || value.step.iter().any(|step| {
+                matches!(
+                    step.action,
+                    Action::LifecycleStart { .. }
+                        | Action::LifecycleStop
+                        | Action::WaitPanelUptime { .. }
+                        | Action::ExpectUpdateState { .. }
+                        | Action::ExpectUpdateMarkerAbsent
+                        | Action::ExpectLiveUpdateMarkerAbsent
+                        | Action::CaptureUpdateMarkerPending
+                        | Action::MarkL6UpdatePending
+                        | Action::ExpectL6UpdateResetVector
+                        | Action::ExpectL6UpdateComparison { .. }
+                        | Action::ExpectUpdateGui { .. }
+                        | Action::ExpectInstallerOutcome { .. }
+                        | Action::WaitUpdatePanelReady { .. }
+                        | Action::WaitUsbController
+                        | Action::BeginWallDeadline { .. }
+                        | Action::EndWallDeadline
+                        | Action::ExpectUpdateMode { .. }
+                        | Action::ExpectMainMemory { .. }
+                        | Action::ExpectUpdateComparison { .. }
+                        | Action::CaptureInstalledPanel
+                        | Action::ExpectPanelUnchanged
+                )
+            })
+        {
+            return Err("managed update lifecycle needs an update fixture".into());
+        }
         if let Some(mode) = &value.sd_bundle_mode {
             if ![
                 "valid",
@@ -71,11 +509,49 @@ impl Scenario {
         let mut checkpoints = std::collections::BTreeSet::new();
         for model in &value.models {
             let mut sync: Option<(u8, u32, u64)> = None;
+            let mut l6_probe: Option<(u8, u32, u64)> = None;
+            let mut l6_probe_finished = false;
             let mut probe_budget = None;
             let mut probe_stimulus = None;
             let mut probe_ring = None;
             let mut probe_tap = None;
             for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                if l6_probe_finished {
+                    return Err(
+                        "L6 MIDI probe must be the final action for L6: it leaves MAIN stopped"
+                            .into(),
+                    );
+                }
+                match (&step.action, l6_probe) {
+                    (Action::L6MidiProbeBegin, None) if *model == l6fw::Model::L6 => {
+                        l6_probe = Some((1, step.guest_timeout_ms, step.wall_timeout_s))
+                    }
+                    (Action::L6MidiProbeInject, Some((1, guest, wall)))
+                        if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        l6_probe = Some((2, guest, wall))
+                    }
+                    (Action::L6MidiProbeExpectHook, Some((2, guest, wall)))
+                        if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        l6_probe = Some((3, guest, wall))
+                    }
+                    (Action::L6MidiProbeExpectReplies, Some((3, guest, wall)))
+                        if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        l6_probe = None;
+                        l6_probe_finished = true;
+                    }
+                    (
+                        Action::L6MidiProbeBegin
+                        | Action::L6MidiProbeInject
+                        | Action::L6MidiProbeExpectHook
+                        | Action::L6MidiProbeExpectReplies,
+                        _,
+                    ) => return Err("invalid L6 MIDI probe sequence, model, or timeouts".into()),
+                    (_, Some(_)) => return Err("L6 MIDI probe sequence was interrupted".into()),
+                    _ => {}
+                }
                 if let Action::HostMidiSyncBegin = step.action {
                     if sync
                         .replace((0, step.guest_timeout_ms, step.wall_timeout_s))
@@ -171,6 +647,9 @@ impl Scenario {
                     }
                     _ => {}
                 }
+            }
+            if l6_probe.is_some() {
+                return Err("L6 MIDI probe transaction is incomplete".into());
             }
             if probe_budget.is_some() {
                 return Err("MIDI probe transaction is not ended".into());
@@ -1014,5 +1493,41 @@ impl Scenario {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod l6_midi_probe_tests {
+    fn parse(steps: &str, model: &str) -> Result<super::super::Scenario, String> {
+        super::super::Scenario::from_text(&format!(
+            "version=1\nname='probe'\nmodels=['{model}']\nbackends=['headless']\n{steps}"
+        ))
+    }
+    fn step(action: &str) -> String {
+        format!("[[step]]\naction='{action}'\nguest_timeout_ms=15000\nwall_timeout_s=180\n")
+    }
+    #[test]
+    fn transaction_must_be_complete_ordered_and_terminal() {
+        let steps = [
+            "l6-midi-probe-begin",
+            "l6-midi-probe-inject",
+            "l6-midi-probe-expect-hook",
+            "l6-midi-probe-expect-replies",
+        ]
+        .map(step)
+        .concat();
+        assert!(parse(&steps, "l6").is_ok());
+        assert!(parse(&steps, "l6max").is_err());
+        assert!(parse(&steps.replace(&step("l6-midi-probe-expect-hook"), ""), "l6").is_err());
+        assert!(parse(&format!("{steps}{}", step("l6-midi-probe-begin")), "l6").is_err());
+        assert!(
+            parse(
+                &steps
+                    .replace("wall_timeout_s=180", "wall_timeout_s=179")
+                    .replacen("wall_timeout_s=179", "wall_timeout_s=180", 1),
+                "l6"
+            )
+            .is_err()
+        );
     }
 }

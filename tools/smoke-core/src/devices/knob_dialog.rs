@@ -2188,12 +2188,47 @@ pub(super) fn end_knob_mode(context: &mut PreflightContext, mode: u8) {
     context.last_mode = Some(mode);
 }
 
+/// Wait for the distinct channel value to be reflected in the firmware's
+/// text. The caller owns both guest and wall deadlines.
+fn wait_for_channel_level(
+    other: u8,
+    mut sample: impl FnMut() -> Result<(u8, String), String>,
+    mut expired: impl FnMut() -> bool,
+    mut sleep: impl FnMut(),
+) -> Result<u8, String> {
+    loop {
+        if expired() {
+            return Err(
+                "channel-2 LEVEL did not reach its expected text before the deadline".into(),
+            );
+        }
+        let (raw, displayed) = sample()?;
+        if expired() {
+            return Err(
+                "channel-2 LEVEL did not reach its expected text before the deadline".into(),
+            );
+        }
+        let expected = format!("{}%", (u32::from(raw) * 100 + 63) / 127);
+        let other_text = format!("{}%", (u32::from(other) * 100 + 63) / 127);
+        if raw != other && expected != other_text && displayed == expected {
+            return Ok(raw);
+        }
+        sleep();
+    }
+}
+
+fn channel_level_turn_clamped(raw: u8, delta: i32) -> bool {
+    (delta < 0 && raw == 0) || (delta > 0 && raw == 127)
+}
+
 pub(super) fn run_knob_dialog(
     session: &Session,
     options: &Options,
     context_slot: &mut Option<PreflightContext>,
     guest_timeout_ms: u32,
     wall_timeout_s: u64,
+    shared: Option<(Instant, u32, u32, u64, u8)>,
+    operation_start: (Instant, u32),
 ) -> Result<Value, Box<dyn std::error::Error>> {
     use std::time::Instant;
 
@@ -2203,6 +2238,20 @@ pub(super) fn run_knob_dialog(
     }
     let inputs = session.engine.inputs.as_ref().unwrap();
     let qmp = &session.engine.management[0];
+    let input_control = l6ctl::OwnedControl::new(&session.engine);
+    let check_deadline = || -> Result<(), Box<dyn std::error::Error>> {
+        let guest_now = inputs.panel.snapshot().guest_ms;
+        if operation_start.0.elapsed() > Duration::from_secs(wall_timeout_s)
+            || guest_now.wrapping_sub(operation_start.1) > guest_timeout_ms
+            || shared.is_some_and(|(start, guest, budget, wall, _)| {
+                start.elapsed() > Duration::from_secs(wall)
+                    || guest_now.wrapping_sub(guest) > budget
+            })
+        {
+            return Err("knob-dialog shared deadline exceeded while awaiting channel value".into());
+        }
+        Ok(())
+    };
     // MAIN 1.10's parameter selector writes this byte before returning;
     // the corresponding getter at 0x8000b4a8 reads it.
     const SELECTED_PARAMETER_MODE: u32 = 0x8046_2d2c;
@@ -2426,16 +2475,74 @@ pub(super) fn run_knob_dialog(
         let channel1_level = l6max::mixer_channel_levels + 1;
         let channel0_raw = qmp.read_memory(0, channel0_level, 1)?[0];
         let mut channel1_raw = qmp.read_memory(0, channel1_level, 1)?[0];
+        let mut observed_change = false;
         for delta in [-1, 1, -2, 2] {
-            inputs.knob(1, delta)?;
+            check_deadline()?;
+            let before = channel1_raw;
+            // Gesture polarity is the inverse of the encoder's wire steps.
+            let receipt = input_control.encoder(2, -delta)?;
+            loop {
+                session.poll()?;
+                check_deadline()?;
+                match input_control
+                    .input_ack(l6ctl::InputSource::Panel, receipt.sequence)?
+                    .state
+                {
+                    l6ctl::InputAckState::Applied => break,
+                    l6ctl::InputAckState::Pending => thread::sleep(Duration::from_millis(5)),
+                    l6ctl::InputAckState::Rejected => {
+                        return Err("channel-2 encoder input rejected".into());
+                    }
+                    l6ctl::InputAckState::Unknown => {
+                        return Err("channel-2 encoder acknowledgement unavailable".into());
+                    }
+                }
+            }
+            // A clamped negative (or positive at the top) is an intentional
+            // no-change probe: wait for its receipt but do not require a new value.
+            let clamped = channel_level_turn_clamped(before, delta);
+            if !clamped {
+                loop {
+                    session.poll()?;
+                    check_deadline()?;
+                    channel1_raw = qmp.read_memory(0, channel1_level, 1)?[0];
+                    if channel1_raw != before {
+                        observed_change = true;
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
             capture(250, "window-scene-channel-2-level")?;
             channel1_raw = qmp.read_memory(0, channel1_level, 1)?[0];
+            if clamped {
+                continue;
+            }
+            // Different raw values can round to the same displayed text.
+            if expected_value(9, channel1_raw) == expected_value(9, channel0_raw) {
+                continue;
+            }
             if channel1_raw != channel0_raw {
+                channel1_raw = wait_for_channel_level(
+                    channel0_raw,
+                    || {
+                        session.poll().map_err(|e| e.to_string())?;
+                        let raw = qmp
+                            .read_memory(0, channel1_level, 1)
+                            .map_err(|e| e.to_string())?[0];
+                        let text = decode_text(text_table + 179 * 4).map_err(|e| e.to_string())?;
+                        Ok((raw, text))
+                    },
+                    || check_deadline().is_err(),
+                    || thread::sleep(Duration::from_millis(5)),
+                )?;
                 break;
             }
         }
         let channel1_display = decode_text(text_table + 179 * 4)?;
-        if channel1_raw == channel0_raw
+        if !observed_change
+            || channel1_raw == channel0_raw
+            || expected_value(9, channel1_raw) == expected_value(9, channel0_raw)
             || !knob_display_matches(9, &expected_value(9, channel1_raw), &channel1_display)
         {
             return Err(format!(
@@ -3480,5 +3587,61 @@ mod task_context_tests {
         let tasks = verify_distinct_task_contexts(0x1000, 0x2000).unwrap();
         assert_eq!((tasks.hook_task, tasks.callback_task), (0x1000, 0x2000));
         assert!(verify_distinct_task_contexts(0x1000, 0x1000).is_err());
+    }
+}
+
+#[cfg(test)]
+mod channel_level_readiness_tests {
+    use super::{channel_level_turn_clamped, wait_for_channel_level};
+    use std::cell::Cell;
+    #[test]
+    fn waits_for_fresh_text_and_fails_wrong_channel_at_deadline() {
+        let time = Cell::new(0);
+        let raw = wait_for_channel_level(
+            0,
+            || Ok((1, if time.get() < 2 { "0%" } else { "1%" }.to_owned())),
+            || time.get() >= 5,
+            || time.set(time.get() + 1),
+        )
+        .unwrap();
+        assert_eq!(raw, 1);
+        assert_eq!(time.get(), 2);
+        let time = Cell::new(0);
+        assert!(
+            wait_for_channel_level(
+                0,
+                || Ok((1, "0%".into())),
+                || time.get() >= 3,
+                || time.set(time.get() + 1)
+            )
+            .is_err()
+        );
+        let time = Cell::new(0);
+        assert!(
+            wait_for_channel_level(
+                0,
+                || Ok((0, "0%".into())),
+                || time.get() >= 3,
+                || time.set(time.get() + 1)
+            )
+            .is_err()
+        );
+        let time = Cell::new(0);
+        assert!(
+            wait_for_channel_level(
+                2,
+                || Ok((3, "2%".into())),
+                || time.get() >= 3,
+                || time.set(time.get() + 1)
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn clamped_no_change_does_not_require_an_impossible_update() {
+        assert!(channel_level_turn_clamped(0, -1));
+        assert!(channel_level_turn_clamped(127, 1));
+        assert!(!channel_level_turn_clamped(0, 1));
+        assert!(!channel_level_turn_clamped(1, -1));
     }
 }

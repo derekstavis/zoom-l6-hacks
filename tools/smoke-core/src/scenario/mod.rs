@@ -55,6 +55,62 @@ pub enum MidiProbePort {
     Din,
 }
 
+/// Case-local synthetic L6max update card variant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, schemars::JsonSchema, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpdateFixture {
+    BadChecksum,
+    L6Stock,
+    SyntheticValid,
+    PatchedMidi,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, schemars::JsonSchema, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpdateGoal {
+    Handoff,
+    Install,
+}
+
+/// One boot generation of a managed update lifecycle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, schemars::JsonSchema, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LifecycleBoot {
+    Initial,
+    Installer,
+    Restart,
+    Verify,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, schemars::JsonSchema, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InstallerExpected {
+    Installed,
+    NoPending,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, schemars::JsonSchema, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpdateComparisonField {
+    MainPayload,
+    BootRegion,
+    ProtectedRegion,
+    PanelImage,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, schemars::JsonSchema, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum L6UpdateField {
+    MainFirmware,
+    MainTrailer,
+    SecondaryFirmware,
+    SecondaryTrailer,
+    PackageFooter,
+    BootRegion,
+    ProtectedRegion,
+    ResourceNor,
+}
+
 impl Backend {
     pub fn name(self) -> &'static str {
         match self {
@@ -109,6 +165,11 @@ pub struct Scenario {
     /// Patches for the update package, per model, applied to the configured package.
     #[serde(default)]
     pub update_patches: std::collections::BTreeMap<Model, Vec<String>>,
+    /// Build a case-local synthetic L6max update card before execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_fixture: Option<UpdateFixture>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_goal: Option<UpdateGoal>,
     #[serde(default)]
     pub gdb: bool,
     pub audio_device: Option<String>,
@@ -221,8 +282,60 @@ pub struct UsbSysexRequest {
 #[derive(Clone, Debug, Deserialize, schemars::JsonSchema, Serialize)]
 #[serde(tag = "action", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Action {
+    LifecycleStart {
+        profile: LifecycleBoot,
+    },
+    LifecycleStop,
+    WaitPanelUptime {
+        guest_ms: u32,
+    },
+    ExpectUpdateState {
+        mode: u32,
+        flags_mask: u8,
+        flags_value: u8,
+    },
+    ExpectUpdateMarkerAbsent,
+    ExpectLiveUpdateMarkerAbsent,
+    CaptureUpdateMarkerPending,
+    MarkL6UpdatePending,
+    ExpectL6UpdateResetVector,
+    ExpectL6UpdateComparison {
+        field: L6UpdateField,
+    },
+    ExpectInstallerOutcome {
+        expected: InstallerExpected,
+    },
+    WaitUpdatePanelReady {
+        require_programming: bool,
+    },
+    WaitUsbController,
+    BeginWallDeadline {
+        duration_s: u64,
+    },
+    EndWallDeadline,
+    ExpectUpdateMode {
+        mode: u32,
+    },
+    ExpectMainMemory {
+        address: u32,
+        bytes: Vec<u8>,
+    },
+    ExpectUpdateComparison {
+        field: UpdateComparisonField,
+    },
+    CaptureInstalledPanel,
+    ExpectPanelUnchanged,
+    ExpectUpdateGui {
+        window: u32,
+        progress_mask: u32,
+        progress_value: u32,
+    },
     Include {
         path: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        include_guest_timeout_ms: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        include_wall_timeout_s: Option<u64>,
     },
     Checkpoint {
         name: String,
@@ -336,7 +449,10 @@ pub enum Action {
         expect_ring_change: bool,
     },
     L6DinUsbForwarding,
-    L6MidiSync,
+    L6MidiProbeBegin,
+    L6MidiProbeInject,
+    L6MidiProbeExpectHook,
+    L6MidiProbeExpectReplies,
     L6MidiRingPinSweep {
         cc: u8,
     },
@@ -837,7 +953,12 @@ fn expand_steps(
 ) -> Result<Vec<Step>, String> {
     let mut expanded = vec![];
     for step in steps {
-        if let Action::Include { path } = &step.action {
+        if let Action::Include {
+            path,
+            include_guest_timeout_ms,
+            include_wall_timeout_s,
+        } = &step.action
+        {
             if stack.len() >= 8 {
                 return Err("scenario include depth exceeds eight".into());
             }
@@ -872,6 +993,34 @@ fn expand_steps(
             nested.retain(|child| {
                 child.models.is_empty() || child.models.iter().any(|m| scope.contains(m))
             });
+            if let Some(timeout) = include_guest_timeout_ms {
+                if *timeout == 0
+                    || nested.first().is_some_and(|first| {
+                        nested
+                            .iter()
+                            .any(|child| child.guest_timeout_ms != first.guest_timeout_ms)
+                    })
+                {
+                    return Err("include guest timeout override requires a positive value and uniform child guest deadlines".into());
+                }
+                for child in &mut nested {
+                    child.guest_timeout_ms = *timeout;
+                }
+            }
+            if let Some(timeout) = include_wall_timeout_s {
+                if *timeout == 0
+                    || nested.first().is_some_and(|first| {
+                        nested
+                            .iter()
+                            .any(|child| child.wall_timeout_s != first.wall_timeout_s)
+                    })
+                {
+                    return Err("include wall timeout override requires a positive value and uniform child wall deadlines".into());
+                }
+                for child in &mut nested {
+                    child.wall_timeout_s = *timeout;
+                }
+            }
             expanded.extend(nested);
         } else {
             expanded.push(step);

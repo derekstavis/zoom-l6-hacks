@@ -125,6 +125,31 @@ pub fn of(action: &Action) -> Requirement {
             models: L6MAX,
             ..ANY
         },
+        Action::ExpectUpdateState { .. }
+        | Action::ExpectLiveUpdateMarkerAbsent
+        | Action::ExpectUpdateGui { .. }
+        | Action::WaitUpdatePanelReady { .. }
+        | Action::WaitUsbController
+        | Action::BeginWallDeadline { .. }
+        | Action::EndWallDeadline
+        | Action::ExpectUpdateMode { .. }
+        | Action::ExpectMainMemory { .. }
+        | Action::ExpectUpdateComparison { .. }
+        | Action::CaptureInstalledPanel
+        | Action::ExpectPanelUnchanged => on(L6MAX),
+        Action::WaitPanelUptime { .. }
+        | Action::LifecycleStart { .. }
+        | Action::LifecycleStop
+        | Action::CaptureUpdateMarkerPending
+        | Action::ExpectInstallerOutcome { .. }
+        | Action::ExpectUpdateMarkerAbsent => ANY,
+        Action::L6MidiProbeBegin
+        | Action::L6MidiProbeInject
+        | Action::L6MidiProbeExpectHook
+        | Action::L6MidiProbeExpectReplies
+        | Action::MarkL6UpdatePending
+        | Action::ExpectL6UpdateResetVector
+        | Action::ExpectL6UpdateComparison { .. } => on(L6),
         Action::SdCard { .. }
         | Action::UsbDescriptors
         | Action::UsbStorage
@@ -145,7 +170,6 @@ pub fn of(action: &Action) -> Requirement {
         | Action::HostMidiSendCc { .. }
         | Action::ExpectRingChanged { .. }
         | Action::DirectUsbMidiRoundTrip { .. }
-        | Action::L6MidiSync
         | Action::L6MidiRingPinSweep { .. }
         | Action::L6MidiMuteIndicators
         | Action::UsbSysex { .. }

@@ -31,7 +31,120 @@ pub struct UsbHost {
     control_lock: Mutex<()>,
     shutdown_socket: UnixStream,
     pumps: Mutex<Vec<(u8, InPump)>>,
+    ownership: Arc<Mutex<UsbOwner>>,
 }
+/// A bridge and direct controller client must not concurrently own USB.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum UsbOwner {
+    #[default]
+    None,
+    Raw,
+    Bridge,
+    Direct,
+    RawDirect,
+}
+
+/// Shared access to the guest USB controller, separate from MIDI bridge ownership.
+#[derive(Clone)]
+pub struct Controller {
+    host: Arc<UsbHost>,
+    owner: Arc<Mutex<UsbOwner>>,
+}
+
+impl Controller {
+    pub(crate) fn new(host: Arc<UsbHost>) -> Self {
+        Self {
+            owner: host.ownership.clone(),
+            host,
+        }
+    }
+    /// Attach and reserve raw USB until release or engine shutdown.
+    pub fn attach(&self) -> Result<(), String> {
+        let mut owner = self
+            .owner
+            .lock()
+            .map_err(|_| "USB ownership lock poisoned")?;
+        match *owner {
+            UsbOwner::Bridge => return Err("USB is owned by the native MIDI bridge".into()),
+            UsbOwner::Direct | UsbOwner::RawDirect => {
+                return Err("USB is owned by a direct MIDI session".into());
+            }
+            UsbOwner::Raw => return Ok(()),
+            UsbOwner::None => {}
+        }
+        self.host.connect(true).map_err(|error| error.to_string())?;
+        *owner = UsbOwner::Raw;
+        Ok(())
+    }
+    /// Release a raw USB attachment and detach the cable.
+    pub fn release(&self) -> Result<(), String> {
+        let mut owner = self
+            .owner
+            .lock()
+            .map_err(|_| "USB ownership lock poisoned")?;
+        match *owner {
+            UsbOwner::Bridge => return Err("USB is owned by the native MIDI bridge".into()),
+            UsbOwner::Direct | UsbOwner::RawDirect => {
+                return Err("USB is owned by a direct MIDI session".into());
+            }
+            UsbOwner::None => return Err("raw USB is not attached".into()),
+            UsbOwner::Raw => {}
+        }
+        self.host
+            .connect(false)
+            .map_err(|error| error.to_string())?;
+        *owner = UsbOwner::None;
+        Ok(())
+    }
+    /// Probe whether the attached guest controller answers tokens.
+    pub fn running(&self) -> Result<bool, String> {
+        let owner = self
+            .owner
+            .lock()
+            .map_err(|_| "USB ownership lock poisoned")?;
+        if *owner == UsbOwner::Bridge {
+            return Err("USB is owned by the native MIDI bridge".into());
+        }
+        if matches!(*owner, UsbOwner::Direct | UsbOwner::RawDirect) {
+            return Err("USB is owned by a direct MIDI session".into());
+        }
+        self.host
+            .controller_running()
+            .map_err(|error| error.to_string())
+    }
+}
+
+/// Releases a direct MIDI reservation even if enumeration fails.
+pub(crate) struct DirectLease {
+    owner: Arc<Mutex<UsbOwner>>,
+}
+impl DirectLease {
+    /// On failed direct setup, detach only if this session attached an unowned cable.
+    pub(crate) fn rollback(&self, host: &UsbHost) -> Result<(), String> {
+        let owner = self
+            .owner
+            .lock()
+            .map_err(|_| "USB ownership lock poisoned")?;
+        if *owner == UsbOwner::Direct {
+            host.connect(false).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+}
+impl Drop for DirectLease {
+    fn drop(&mut self) {
+        let mut owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        *owner = match *owner {
+            UsbOwner::Direct => UsbOwner::None,
+            UsbOwner::RawDirect => UsbOwner::Raw,
+            other => other,
+        };
+    }
+}
+
 /// The token socket, shared with IN pumps so they do not own the host.
 struct Wire {
     socket: Mutex<UnixStream>,
@@ -49,6 +162,25 @@ impl UsbHost {
             }),
             control_lock: Mutex::new(()),
             pumps: Mutex::new(Vec::new()),
+            ownership: Arc::new(Mutex::new(UsbOwner::None)),
+        })
+    }
+    pub(crate) fn ownership(&self) -> Arc<Mutex<UsbOwner>> {
+        self.ownership.clone()
+    }
+    /// Reserve USB for one direct MIDI session, retaining any earlier raw attachment.
+    pub(crate) fn acquire_direct(self: &Arc<Self>) -> Result<DirectLease, String> {
+        let mut owner = self
+            .ownership
+            .lock()
+            .map_err(|_| "USB ownership lock poisoned")?;
+        *owner = match *owner {
+            UsbOwner::None => UsbOwner::Direct,
+            UsbOwner::Raw => UsbOwner::RawDirect,
+            _ => return Err("USB already has a MIDI owner".into()),
+        };
+        Ok(DirectLease {
+            owner: self.ownership.clone(),
         })
     }
     pub fn shutdown(&self) {
@@ -513,6 +645,86 @@ impl Configuration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn controller_attaches_only_without_bridge_and_reports_guest_readiness() {
+        let (socket, mut peer) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || {
+            for (kind, endpoint, status) in [
+                (1u32, 1u32, 0),
+                (3, 0x8f, -libc::ENODEV),
+                (3, 0x8f, -libc::EAGAIN),
+            ] {
+                let mut request = [0; 20];
+                peer.read_exact(&mut request).unwrap();
+                let word =
+                    |i: usize| u32::from_le_bytes(request[i * 4..i * 4 + 4].try_into().unwrap());
+                assert_eq!((word(1), word(3)), (kind, endpoint));
+                let mut reply = Vec::new();
+                for value in [MAGIC, 0x80000000, word(2), status as u32, 0] {
+                    reply.extend(value.to_le_bytes());
+                }
+                peer.write_all(&reply).unwrap();
+            }
+        });
+        let owned = Arc::new(Mutex::new(UsbOwner::Bridge));
+        let controller = Controller {
+            host: Arc::new(UsbHost::new(socket).unwrap()),
+            owner: owned.clone(),
+        };
+        assert!(controller.attach().unwrap_err().contains("bridge"));
+        *owned.lock().unwrap() = UsbOwner::None;
+        controller.attach().unwrap();
+        assert!(!controller.running().unwrap());
+        assert!(controller.running().unwrap());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn direct_reservation_blocks_controller_and_restores_raw_owner() {
+        let (socket, _peer) = UnixStream::pair().unwrap();
+        let host = Arc::new(UsbHost::new(socket).unwrap());
+        let controller = Controller::new(host.clone());
+        *host.ownership.lock().unwrap() = UsbOwner::Raw;
+        let lease = host.acquire_direct().unwrap();
+        assert!(controller.attach().unwrap_err().contains("direct MIDI"));
+        assert!(controller.running().unwrap_err().contains("direct MIDI"));
+        assert!(controller.release().unwrap_err().contains("direct MIDI"));
+        assert!(host.acquire_direct().is_err());
+        drop(lease);
+        assert_eq!(*host.ownership.lock().unwrap(), UsbOwner::Raw);
+        *host.ownership.lock().unwrap() = UsbOwner::Bridge;
+        assert!(host.acquire_direct().is_err());
+        assert!(controller.attach().is_err());
+        assert!(controller.running().is_err());
+    }
+
+    #[test]
+    fn failed_direct_setup_detaches_only_without_preexisting_raw_owner() {
+        let (socket, mut peer) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || {
+            let mut request = [0; 20];
+            peer.read_exact(&mut request).unwrap();
+            let word = |i: usize| u32::from_le_bytes(request[i * 4..i * 4 + 4].try_into().unwrap());
+            assert_eq!((word(1), word(3)), (1, 0));
+            let mut reply = Vec::new();
+            for value in [MAGIC, 0x80000000, word(2), 0, 0] {
+                reply.extend(value.to_le_bytes());
+            }
+            peer.write_all(&reply).unwrap();
+        });
+        let host = Arc::new(UsbHost::new(socket).unwrap());
+        let lease = host.acquire_direct().unwrap();
+        lease.rollback(&host).unwrap();
+        drop(lease);
+        assert_eq!(*host.ownership.lock().unwrap(), UsbOwner::None);
+        *host.ownership.lock().unwrap() = UsbOwner::Raw;
+        let lease = host.acquire_direct().unwrap();
+        lease.rollback(&host).unwrap();
+        drop(lease);
+        assert_eq!(*host.ownership.lock().unwrap(), UsbOwner::Raw);
+        server.join().unwrap();
+    }
+
     fn configuration() -> Vec<u8> {
         let mut d = vec![9, 2, 0, 0, 2, 1, 0, 0xc0, 4];
         d.extend([

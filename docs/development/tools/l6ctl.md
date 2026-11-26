@@ -16,6 +16,12 @@ cargo l6ctl --socket /tmp/l6-control.sock info
 cargo l6ctl --socket /tmp/l6-control.sock input status panel
 cargo l6ctl --socket /tmp/l6-control.sock heap-counters
 cargo l6ctl --socket /tmp/l6-control.sock midi-config
+cargo l6ctl --socket /tmp/l6-control.sock usb attach
+cargo l6ctl --socket /tmp/l6-control.sock usb release
+cargo l6ctl --socket /tmp/l6-control.sock usb controller
+cargo l6ctl --socket /tmp/l6-control.sock installer-outcome
+cargo l6ctl --socket /tmp/l6-control.sock update-state
+cargo l6ctl --socket /tmp/l6-control.sock update-gui-state
 cargo l6ctl --socket /tmp/l6-control.sock button channel.1.mute
 cargo l6ctl --socket /tmp/l6-control.sock down play 500
 cargo l6ctl --socket /tmp/l6-control.sock up play
@@ -40,6 +46,14 @@ not sampled atomically with the running firmware or the other channel. The
 reply reader can observe an applied event before the sender increments `sent`,
 so `applied` can transiently exceed `sent`.
 
+Encoder and analog responses include the enqueued input `sequence`. Use
+`input ack panel SEQUENCE` for an encoder, or `input ack main SEQUENCE` for
+an analog input, to query its individual `pending`, `applied`, or `rejected`
+state. The host tracks the most recent 256 inputs per channel; `unknown` means
+the sequence was never tracked or has been evicted, and does not imply that it
+was applied. Acknowledgement confirms guest input handling, not that a later
+firmware action or display update has completed.
+
 `button` (alias `tap`) presses and releases after 50 ms by default; use
 `--hold-ms MS` to change it. `down NAME|TARGET DURATION_MS` presses for a
 bounded duration, while `up NAME|TARGET` releases it. Names are semantic names
@@ -57,7 +71,7 @@ socket.
 
 The `l6ctl` crate also exposes typed control requests for Rust callers.
 `ControlClient::new(path)` attaches to the existing optional socket;
-`info`, `input_status`, `tap`, `down`, `up`, `encoder`, `analog`, and `set_analog` return
+`info`, `input_status`, `input_ack`, `tap`, `down`, `up`, `encoder`, `analog`, and `set_analog` return
 typed responses. Encoder and analog channels use the same one-based numbering
 as the CLI. Socket input receipts indicate that the request was enqueued,
 not that the guest applied it. `request` and `RtosKind` expose the existing
@@ -261,3 +275,119 @@ MAIN, set `L6_MIDI_TEST_MAIN` to its path and run
 
 `l6ctl --socket PATH knob-parameter-state` reads the L6max 1.10 parameter
 selector and callback slots 0, 2 and 5. The sample is non-atomic.
+
+### L6max update state
+
+`l6ctl --socket PATH update-state` reads the L6max 1.10 startup mode and
+SD status flags as raw `mode` (u32) and `flags` (u8). It checks fingerprints
+of the inspected 1.10 startup, update and SD routines before reading; these
+fingerprints do not identify the whole image or rule out unrelated patches.
+The two values are separate live reads (`atomic: false`). The equivalent Rust
+methods are `ControlClient::update_state` and `OwnedControl::update_state`.
+Mode 1 and flags bits 0 and 3 clear are the existing rejection check; this
+observation alone does not prove that a particular package was rejected.
+
+`l6ctl --socket PATH update-gui-state` reads the raw 32-bit current-window
+pointer and update-progress descriptor flags in L6max 1.10. The equivalent
+Rust methods are `ControlClient::update_gui_state` and
+`OwnedControl::update_gui_state`. The separate reads are non-atomic, and
+revision fingerprints identify inspected startup and confirmation routines,
+not the entire image or unrelated patches. The raw flag bit 0x100 is used by
+the update preparation scenario; pixels are still needed to verify rendering.
+
+### Replacement installer outcome
+
+`l6ctl --socket PATH installer-outcome` reports the result of the emulator's
+replacement installer for this engine start: `installed`, `no-pending`,
+`failed` (with the error), or `previous-failure`. If the replacement
+installer was not enabled, the command reports an unavailable error. This is
+emulator behavior, not an observation of the hardware boot ROM. The matching
+Rust methods are `ControlClient::installer_outcome` and
+`OwnedControl::installer_outcome`; a new engine start has its own result.
+
+`cargo l6ctl --socket PATH memory-read ADDRESS LENGTH` reads 1–4096 bytes of MAIN SDRAM (0x80000000–0x83ffffff) as non-atomic raw data. It does not select a firmware revision or interpret the bytes.
+
+### USB controller
+
+`l6ctl --socket PATH usb attach` attaches the emulated raw USB cable; it
+does not start the native MIDI bridge or wait for the guest. It reserves the USB host until `usb release` or engine shutdown, and fails while
+the native MIDI bridge or a direct MIDI session owns the USB host. A raw
+reservation prevents the bridge from starting; release detaches the cable.
+The guard coordinates these APIs and direct MIDI sessions; legacy in-process
+callers using `UsbHost` directly bypass it and must coordinate separately. `l6ctl --socket PATH usb controller`
+probes whether an attached guest controller answers tokens and prints
+`running`; this is not USB enumeration or MIDI readiness. Both operations
+support the L6 and L6max emulator models. Their Rust equivalents are
+`ControlClient::usb_attach`, `ControlClient::usb_release`, `ControlClient::usb_controller`, and the same
+methods on `OwnedControl`.
+
+## Scoped MAIN debugger
+
+A local emulator can opt into the QEMU MAIN GDB stub as well as the control
+socket. `l6ctl debug-session` keeps one control connection open, pauses MAIN,
+and accepts one JSON command per line, returning one JSON response per line:
+
+```sh
+printf '%s\n' '{"command":"register","index":15}' '{"command":"close"}' |
+  cargo l6ctl --socket /tmp/l6-control.sock debug-session
+```
+
+Start the emulator with both `--control-socket /tmp/l6-control.sock` and
+`--gdb-socket /tmp/l6-main-gdb.sock`. MAIN stays paused between operations;
+the panel continues independently. Commands are `register` (indices 0–15),
+`read` (`address`, `length` up to 4096 bytes in bounded MAIN SDRAM),
+`add-breakpoint` and `remove-breakpoint` (aligned MAIN SDRAM `address`),
+`continue` (`timeout_ms` from 1 to 60000, with an owned breakpoint), `step`,
+`l6-scratch-read`, `l6-scratch-write` (exactly eight `bytes`), and `close`.
+The L6 scratch operations verify the supported L6 1.10 MIDI code before using
+the legacy emulator probe page at `0x841ff000`. This is a scoped diagnostic
+buffer, not evidence that physical firmware reserves that address.
+
+The L6 1.10 MIDI hook probe additionally provides `l6-midi-inject`
+(`expected_hook`, a firmware or SD `binding`, `timeout_ms`, and explicit
+`leave_stopped: true`),
+`l6-midi-sender` (`timeout_ms`), and `l6-midi-finish` (`timeout_ms`). The
+caller must first own breakpoints at the idle routine, MIDI sender, and the
+hook target verified from the matching patch report. Injection checks the
+supported firmware routines, installed hook branch, and for SD the registry and
+module entry; it requires the idle task in thread mode. The
+sender command returns a bounded three-byte observation, and finish requires
+the observed sender to have returned. The caller remains responsible for
+checking the hook and interpreting the ordered MIDI output.
+
+For a firmware patch the binding is `{"kind":"firmware"}`. For an SD patch
+it is `{"kind":"sd","dispatcher":ADDRESS,"site_index":INDEX,"entry_offset":OFFSET}`;
+derive those values from the matching loader report and module, and verify
+the staged fixture identities. All addresses and offsets are JSON numbers.
+`l6-midi-resolve-sd` takes those three fields and `timeout_ms`, and returns
+the current relocated `hook` after checking the installed branch and registry.
+Injection checks the binding again before writing guest state.
+`l6-midi-hook` observes the hook PC and seven event bytes. `l6-midi-step` and
+`l6-midi-breakpoint` (`address`, `enabled`, `timeout_ms`) provide bounded
+stepping and owned breakpoint changes during the injected transaction.
+
+Injection changes CPU execution state that this API cannot fully restore.
+Finish restores scratch and removes breakpoints but deliberately leaves MAIN
+stopped, closes the debug session, and reserves the debugger until the engine
+is destroyed. Failed or cancelled injection also attempts to stop MAIN and
+requires a restart; a failed stop leaves its state unknown. Use this probe on a
+disposable emulator, and explicitly shut it down after collecting results.
+
+The session owns at most four breakpoints. Closing or disconnecting restores
+the scratch bytes, removes owned breakpoints, and restores MAIN's prior run
+state. A socket session expires after 300 seconds. A disconnect during
+`continue` interrupts the target before cleanup. If the debugger stream is
+desynchronized or cleanup cannot be verified, the host attempts to stop MAIN,
+marks its debugger unusable, and reports that the guest must be restarted.
+It does not terminate the emulator. If the stop itself fails, the error says
+so: MAIN's state is then unknown. The existing GDB transport uses an advisory
+cross-process lease shared by repository clients; third-party clients that
+connect directly to the QEMU stub do not honor that lease. The lease cannot
+prevent external QMP clients from changing run state, and cleanup cannot run
+if the host process itself is killed. In either situation, inspect or restart
+the disposable guest before relying on its state.
+
+Rust callers use `OwnedControl::debug_session()` for an owned engine or
+`ControlClient::debug_session()` for the persistent socket. Both accept
+`DebugCommand` and return `DebugObservation`. A caller should explicitly send
+`Close` and check its result; dropping a session also attempts cleanup.

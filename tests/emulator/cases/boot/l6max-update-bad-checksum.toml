@@ -1,0 +1,33 @@
+version = 1
+name = "l6max-update-bad-checksum"
+models = ["l6max"]
+backends = ["headless"]
+state = "none"
+card = "none"
+update_fixture = "bad-checksum"
+
+[case]
+suites = ["full"]
+wall_timeout_s = 1200
+
+[[step]]
+action = "lifecycle-start"
+profile = "initial"
+
+[[step]]
+action = "wait-panel-uptime"
+guest_ms = 40000
+guest_timeout_ms = 300000
+wall_timeout_s = 1200
+
+[[step]]
+action = "expect-update-state"
+mode = 1
+flags_mask = 9
+flags_value = 0
+
+[[step]]
+action = "lifecycle-stop"
+
+[[step]]
+action = "expect-update-marker-absent"

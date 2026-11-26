@@ -1,0 +1,16 @@
+version = 1
+name = "l6max-update-valid-handoff"
+models = ["l6max"]
+backends = ["headless"]
+state = "none"
+card = "none"
+update_fixture = "synthetic-valid"
+update_goal = "handoff"
+
+[case]
+suites = ["full"]
+wall_timeout_s = 1200
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/l6max-update-valid-handoff.toml"

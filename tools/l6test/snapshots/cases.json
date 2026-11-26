@@ -561,7 +561,7 @@
     "suites": [
       "full"
     ],
-    "definition": "3a1ea4dd1180294a7e47bf75483b4d4235947602d3e47136ffbcebc66b78cbdf"
+    "definition": "d53191bc8f62ba95d227b7a059fcad27d0f4e48517ed3fdced2ab76aea8d1a9c"
   },
   {
     "case": "l6-panel-event-map",
@@ -610,6 +610,15 @@
     "backend": "headless",
     "suites": [],
     "definition": "a57dd505c8f76a618648a81e08b7a8ef1cdf604eaa75ffd7479d9f98056e528b"
+  },
+  {
+    "case": "l6-update-stock-install",
+    "model": "l6",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "1a248f32ea9458fbc0d25c202a006a6786404aa1c20df136ec761ae666e02771"
   },
   {
     "case": "l6-usb-startup",
@@ -798,6 +807,42 @@
       "full"
     ],
     "definition": "4747738e8b97d1cbaab4180165fa59fd288e15768b28458899c27a8c9a5d49dd"
+  },
+  {
+    "case": "l6max-update-bad-checksum",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "a8386e89ed52bb0c567bff8df41bfcee3551cfb7cefd43323692a9dae97fab3c"
+  },
+  {
+    "case": "l6max-update-patched-midi",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "1591b056d26bcd2ec1f4cd85fdff8d72546df6924ac6b4a7e6df8a36f11c7e52"
+  },
+  {
+    "case": "l6max-update-valid-handoff",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "616b95b9f1c44ad62c647bb0efc2650bee8902d9105b0bc5048b62f29198d102"
+  },
+  {
+    "case": "l6max-update-valid-install",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "00758694118ba9ca33e95d35121f5644370340d9e59189d1576c2de5aa4ea030"
   },
   {
     "case": "l6max-volume-meter-sweep",
@@ -3113,7 +3158,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "c3cd5d99e2f55d68f868c54eef5691a808f00116bf6335474985c45016e1380b"
+    "definition": "63e77c21ca5b59b173f49ccd51291cb3ccfb6ea79cb353395c21f2e5a08ef30e"
   },
   {
     "case": "sd-midi-sync",

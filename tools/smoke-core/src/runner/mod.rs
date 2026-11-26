@@ -263,6 +263,7 @@ impl Runner {
             .find(|step| step.applies_to(self.model))
             .is_some_and(|step| match &step.action {
                 Action::ExpectPowered { powered: false } => true,
+                Action::LifecycleStop => true,
                 Action::Press { control } if control == "power" => true,
                 Action::Hold { control, .. } if control == "power" => true,
                 Action::Press { control } if self.model == Model::L6 && control == "rec-record" => {
@@ -643,8 +644,19 @@ impl Runner {
                 Action::HostMidiExpectSync => {
                     return Ok(Progress::Device(devices::Operation::HostMidiExpectSync));
                 }
-                Action::L6MidiSync => {
-                    return Ok(Progress::Device(devices::Operation::L6MidiSync));
+                Action::L6MidiProbeBegin => {
+                    return Ok(Progress::Device(devices::Operation::L6MidiProbeBegin));
+                }
+                Action::L6MidiProbeInject => {
+                    return Ok(Progress::Device(devices::Operation::L6MidiProbeInject));
+                }
+                Action::L6MidiProbeExpectHook => {
+                    return Ok(Progress::Device(devices::Operation::L6MidiProbeExpectHook));
+                }
+                Action::L6MidiProbeExpectReplies => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6MidiProbeExpectReplies,
+                    ));
                 }
                 Action::L6MidiRingPinSweep { cc } => {
                     return Ok(Progress::Device(devices::Operation::L6MidiRingPinSweep {
@@ -964,6 +976,114 @@ impl Runner {
                         path,
                         items,
                     }));
+                }
+                Action::LifecycleStart { profile } => {
+                    return Ok(Progress::Device(devices::Operation::LifecycleStart {
+                        profile,
+                    }));
+                }
+                Action::LifecycleStop => {
+                    return Ok(Progress::Device(devices::Operation::LifecycleStop));
+                }
+                Action::ExpectLiveUpdateMarkerAbsent => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectLiveUpdateMarkerAbsent,
+                    ));
+                }
+                Action::MarkL6UpdatePending => {
+                    return Ok(Progress::Device(devices::Operation::MarkL6UpdatePending));
+                }
+                Action::ExpectL6UpdateResetVector => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectL6UpdateResetVector,
+                    ));
+                }
+                Action::ExpectL6UpdateComparison { field } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectL6UpdateComparison { field },
+                    ));
+                }
+                Action::CaptureUpdateMarkerPending => {
+                    return Ok(Progress::Device(
+                        devices::Operation::CaptureUpdateMarkerPending,
+                    ));
+                }
+                Action::ExpectInstallerOutcome { expected } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectInstallerOutcome { expected },
+                    ));
+                }
+                Action::BeginWallDeadline { duration_s } => {
+                    return Ok(Progress::Device(devices::Operation::BeginWallDeadline {
+                        duration_s,
+                    }));
+                }
+                Action::EndWallDeadline => {
+                    return Ok(Progress::Device(devices::Operation::EndWallDeadline));
+                }
+                Action::WaitUsbController => {
+                    return Ok(Progress::Device(devices::Operation::WaitUsbController));
+                }
+                Action::WaitUpdatePanelReady {
+                    require_programming,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::WaitUpdatePanelReady {
+                        require_programming,
+                    }));
+                }
+                Action::ExpectUpdateMode { mode } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectUpdateMode {
+                        mode,
+                    }));
+                }
+                Action::ExpectMainMemory { address, bytes } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectMainMemory {
+                        address,
+                        bytes,
+                    }));
+                }
+                Action::ExpectUpdateComparison { field } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectUpdateComparison { field },
+                    ));
+                }
+                Action::CaptureInstalledPanel => {
+                    return Ok(Progress::Device(devices::Operation::CaptureInstalledPanel));
+                }
+                Action::ExpectPanelUnchanged => {
+                    return Ok(Progress::Device(devices::Operation::ExpectPanelUnchanged));
+                }
+                Action::ExpectUpdateGui {
+                    window,
+                    progress_mask,
+                    progress_value,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectUpdateGui {
+                        window,
+                        progress_mask,
+                        progress_value,
+                    }));
+                }
+                Action::WaitPanelUptime { guest_ms } => {
+                    return Ok(Progress::Device(devices::Operation::WaitPanelUptime {
+                        guest_ms,
+                    }));
+                }
+                Action::ExpectUpdateState {
+                    mode,
+                    flags_mask,
+                    flags_value,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectUpdateState {
+                        mode,
+                        flags_mask,
+                        flags_value,
+                    }));
+                }
+                Action::ExpectUpdateMarkerAbsent => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectUpdateMarkerAbsent,
+                    ));
                 }
                 Action::FirmwareUpdate => {
                     return Ok(Progress::Device(devices::Operation::FirmwareUpdate));
@@ -1579,6 +1699,7 @@ impl Runner {
         self.ring_quiet = None;
         self.last_report_guest = 0;
         self.last = None;
+        self.allowed_rejections = [0, 0];
     }
     pub fn current_step(&self) -> usize {
         self.step

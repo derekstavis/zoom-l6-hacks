@@ -91,6 +91,38 @@ fn input_status_client_and_cli_use_the_same_typed_wire_contract() {
 }
 
 #[test]
+fn input_ack_client_and_cli_preserve_sequence_and_state() {
+    let path = socket_path();
+    let response = json!({"source":"panel", "sequence":17, "state":"applied"});
+    let exchange = (
+        json!({"command":"input-ack", "source":"panel", "sequence":17}),
+        json!({"ok":true,"result":response}),
+    );
+    let server = server(&path, vec![exchange.clone(), exchange]);
+    let ack = ControlClient::new(&path)
+        .input_ack(InputSource::Panel, 17)
+        .unwrap();
+    assert_eq!(ack.state, l6ctl::InputAckState::Applied);
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["input", "ack", "panel", "17"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        response
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn input_status_cli_rejects_unknown_channel_before_connecting() {
     let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
         .arg("--socket")
@@ -114,7 +146,7 @@ fn typed_client_uses_existing_wire_format_and_surfaces_server_errors() {
             ),
             (
                 json!({"command":"encoder","channel":1,"steps":-4}),
-                json!({"ok":true,"result":{"channel":1,"steps":-4}}),
+                json!({"ok":true,"result":{"channel":1,"steps":-4,"sequence":17}}),
             ),
             (
                 json!({"command":"rtos","kind":"tasks"}),
@@ -153,6 +185,47 @@ fn missing_socket_reports_connection_failure() {
     let error = ControlClient::new(&path).info().unwrap_err();
     assert!(matches!(error, ControlError::Connect { .. }));
     assert!(error.to_string().contains("--control-socket"));
+}
+
+#[test]
+fn memory_read_cli_and_client_use_bounded_read_wire_contract() {
+    let path = socket_path();
+    let sample = json!({"address":2147483676u32,"bytes":[223,155,87,19],"atomic":false});
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"memory-read","address":2147483676u32,"length":4}),
+                json!({"ok":true,"result":sample}),
+            ),
+            (
+                json!({"command":"memory-read","address":2147483676u32,"length":4}),
+                json!({"ok":true,"result":sample}),
+            ),
+        ],
+    );
+    let client = ControlClient::new(&path);
+    assert_eq!(
+        client.read_main_memory(0x8000001c, 4).unwrap().bytes,
+        [223, 155, 87, 19]
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["memory-read", "0x8000001c", "4"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        sample
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
 }
 
 #[test]
@@ -257,6 +330,207 @@ fn midi_config_cli_and_client_use_typed_snapshot() {
 }
 
 #[test]
+fn update_state_cli_and_client_preserve_raw_snapshot() {
+    let path = socket_path();
+    let sample =
+        json!({"atomic":false,"revision_guard":"l6max_1_10_update_routines","mode":1,"flags":169});
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"update-state"}),
+                json!({"ok":true,"result":sample}),
+            ),
+            (
+                json!({"command":"update-state"}),
+                json!({"ok":true,"result":sample}),
+            ),
+            (
+                json!({"command":"update-state"}),
+                json!({"ok":false,"error":"unsupported update revision"}),
+            ),
+        ],
+    );
+    let client = ControlClient::new(&path);
+    let state = client.update_state().unwrap();
+    assert_eq!((state.mode, state.flags, state.atomic), (1, 169, false));
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .arg("update-state")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        sample
+    );
+    assert!(
+        matches!(client.update_state(), Err(ControlError::Rejected(message)) if message == "unsupported update revision")
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn update_gui_state_cli_and_client_preserve_raw_snapshot() {
+    let path = socket_path();
+    let sample = json!({"atomic":false,"revision_guard":"l6max_1_10_update_gui_routines","current_window":2149581748u32,"progress_flags":256});
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"update-gui-state"}),
+                json!({"ok":true,"result":sample}),
+            ),
+            (
+                json!({"command":"update-gui-state"}),
+                json!({"ok":true,"result":sample}),
+            ),
+            (
+                json!({"command":"update-gui-state"}),
+                json!({"ok":false,"error":"unsupported update GUI revision"}),
+            ),
+        ],
+    );
+    let client = ControlClient::new(&path);
+    let state = client.update_gui_state().unwrap();
+    assert_eq!(
+        (state.current_window, state.progress_flags, state.atomic),
+        (2149581748, 256, false)
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .arg("update-gui-state")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        sample
+    );
+    assert!(
+        matches!(client.update_gui_state(), Err(ControlError::Rejected(message)) if message == "unsupported update GUI revision")
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn installer_outcome_cli_and_client_preserve_result_and_unavailable() {
+    let path = socket_path();
+    let sample = json!({"status":"installed"});
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"installer-outcome"}),
+                json!({"ok":true,"result":sample}),
+            ),
+            (
+                json!({"command":"installer-outcome"}),
+                json!({"ok":true,"result":sample}),
+            ),
+            (
+                json!({"command":"installer-outcome"}),
+                json!({"ok":true,"result":{"status":"failed","error":"bad card"}}),
+            ),
+            (
+                json!({"command":"installer-outcome"}),
+                json!({"ok":false,"error":"replacement installer was not run for this engine start"}),
+            ),
+        ],
+    );
+    let client = ControlClient::new(&path);
+    assert_eq!(
+        client.installer_outcome().unwrap(),
+        l6ctl::InstallerOutcome::Installed
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .arg("installer-outcome")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        sample
+    );
+    assert_eq!(
+        client.installer_outcome().unwrap(),
+        l6ctl::InstallerOutcome::Failed("bad card".into())
+    );
+    assert!(
+        matches!(client.installer_outcome(), Err(ControlError::Rejected(message)) if message.contains("not run"))
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn usb_controller_cli_and_client_distinguish_attach_and_running() {
+    let path = socket_path();
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"usb-attach"}),
+                json!({"ok":true,"result":{"attached":true}}),
+            ),
+            (
+                json!({"command":"usb-controller"}),
+                json!({"ok":true,"result":{"running":false}}),
+            ),
+            (
+                json!({"command":"usb-controller"}),
+                json!({"ok":true,"result":{"running":true}}),
+            ),
+            (
+                json!({"command":"usb-attach"}),
+                json!({"ok":false,"error":"USB is owned by the native MIDI bridge"}),
+            ),
+        ],
+    );
+    let client = ControlClient::new(&path);
+    assert!(client.usb_attach().unwrap().attached);
+    assert!(!client.usb_controller().unwrap().running);
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["usb", "controller"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        json!({"running":true})
+    );
+    assert!(
+        matches!(client.usb_attach(), Err(ControlError::Rejected(message)) if message.contains("bridge"))
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn cli_keeps_existing_one_based_encoder_and_output_contract() {
     let path = socket_path();
     let server = server(
@@ -268,7 +542,7 @@ fn cli_keeps_existing_one_based_encoder_and_output_contract() {
             ),
             (
                 json!({"command":"encoder","channel":1,"steps":-4}),
-                json!({"ok":true,"result":{"channel":1,"steps":-4}}),
+                json!({"ok":true,"result":{"channel":1,"steps":-4,"sequence":17}}),
             ),
         ],
     );
@@ -285,7 +559,7 @@ fn cli_keeps_existing_one_based_encoder_and_output_contract() {
     );
     assert_eq!(
         serde_json::from_slice::<Value>(&output.stdout).unwrap(),
-        json!({"channel":1,"steps":-4})
+        json!({"channel":1,"steps":-4,"sequence":17})
     );
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();
@@ -410,6 +684,90 @@ fn knob_parameter_state_cli_reports_mode_and_slots() {
     assert_eq!(result["mode"], 9);
     assert_eq!(result["callback_slots"], json!([0, 0, 0]));
     assert_eq!(result["atomic"], false);
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn debugger_uses_one_persistent_typed_connection_for_api_and_cli() {
+    use l6ctl::{DebugCommand, DebugObservation};
+    use std::process::Stdio;
+    let path = socket_path();
+    let listener = UnixListener::bind(&path).unwrap();
+    let server = thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut input = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            input.read_line(&mut line).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&line).unwrap(),
+                json!({"command":"debug-begin"})
+            );
+            writeln!(stream, "{}", json!({"ok":true,"result":{"started":true}})).unwrap();
+            line.clear();
+            input.read_line(&mut line).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&line).unwrap(),
+                json!({"command":"register","index":15})
+            );
+            writeln!(
+                stream,
+                "{}",
+                json!({"ok":true,"result":{"kind":"register","index":15,"value":42}})
+            )
+            .unwrap();
+            line.clear();
+            input.read_line(&mut line).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&line).unwrap(),
+                json!({"command":"close"})
+            );
+            writeln!(stream, "{}", json!({"ok":true,"result":{"kind":"closed"}})).unwrap();
+        }
+    });
+    let mut session = ControlClient::new(&path).debug_session().unwrap();
+    assert!(matches!(
+        session
+            .execute(DebugCommand::Register { index: 15 })
+            .unwrap(),
+        DebugObservation::Register {
+            index: 15,
+            value: 42
+        }
+    ));
+    assert!(matches!(
+        session.execute(DebugCommand::Close).unwrap(),
+        DebugObservation::Closed
+    ));
+    assert!(
+        session
+            .execute(DebugCommand::Register { index: 15 })
+            .is_err()
+    );
+    let mut child = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .arg("debug-session")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    writeln!(stdin, "{{\"command\":\"register\",\"index\":15}}").unwrap();
+    drop(stdin);
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let lines = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        lines.contains("\"value\":42") && lines.contains("\"kind\":\"closed\""),
+        "{lines}"
+    );
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();
 }

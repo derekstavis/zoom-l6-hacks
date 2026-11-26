@@ -10,12 +10,14 @@ l6fw.workspace = true
 patch-core.workspace = true
 
 [dependencies]
+l6max-diagnostics = { path = "../../tools/diagnostics" }
 firmware-api.workspace = true
 tracing-subscriber.workspace = true
 tracing.workspace = true
 l6fw.workspace = true
 patch-core.workspace = true
 patch-wasm.workspace = true
+patch-abi = { path = "../../tools/patch-abi" }
 qemu-build.workspace = true
 sha2.workspace = true
 sd-image.workspace = true

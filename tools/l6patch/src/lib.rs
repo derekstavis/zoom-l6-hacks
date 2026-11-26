@@ -1,6 +1,7 @@
 //! The patch tool: builds patched firmware and SD modules from stock
 //! firmware, lists the patch catalog, and regenerates the prebuilt files.
 //! Never edits its input.
+pub mod hook_report;
 pub mod prebuilt;
 use patch_compile::{
     FunctionHookSiteMetadata, HookRegistration, compile, compile_l6_patch_loader,

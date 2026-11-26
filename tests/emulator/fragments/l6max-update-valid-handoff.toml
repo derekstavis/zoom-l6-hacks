@@ -1,0 +1,74 @@
+[[step]]
+action = "lifecycle-start"
+profile = "initial"
+
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-firmware-update-dialog.png"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "expect-update-state"
+mode = 6
+flags_mask = 9
+flags_value = 0
+
+[[step]]
+action = "expect-update-gui"
+window = 0x802003b4
+progress_mask = 0
+progress_value = 0
+
+[[step]]
+action = "enqueue-tap"
+target = 2
+hold_ms = 50
+
+[[step]]
+action = "wait-input-applied"
+
+[[step]]
+action = "delay"
+guest_ms = 1050
+
+[[step]]
+action = "enqueue-tap"
+target = 3
+hold_ms = 50
+
+[[step]]
+action = "wait-input-applied"
+
+[[step]]
+action = "delay"
+guest_ms = 1050
+
+[[step]]
+action = "expect-update-gui"
+window = 0x8020029c
+progress_mask = 0x100
+progress_value = 0x100
+
+[[step]]
+action = "expect-live-update-marker-absent"
+
+[[step]]
+action = "enqueue-tap"
+target = 53
+hold_ms = 3500
+
+[[step]]
+action = "wait-input-applied"
+
+[[step]]
+action = "expect-powered"
+powered = false
+guest_timeout_ms = 4294967295
+wall_timeout_s = 30
+
+[[step]]
+action = "lifecycle-stop"
+
+[[step]]
+action = "capture-update-marker-pending"

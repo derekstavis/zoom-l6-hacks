@@ -28,6 +28,51 @@ use std::{
     time::Instant,
 };
 
+/// The same synthetic bad-checksum package used by the legacy L6max lifecycle.
+fn synthetic_update(
+    mut package: Vec<u8>,
+    fixture: smoke_core::UpdateFixture,
+) -> Result<Vec<u8>, String> {
+    l6fw::update::validate(&package).map_err(|error| error.to_string())?;
+    for offset in [0x1a31fc, 0x1a81fc] {
+        package[offset..offset + 4].copy_from_slice(&l6fw::PATCHED_VERSION);
+    }
+    package[0x1a71fc..0x1a7200].copy_from_slice(b"0101");
+    package[0x21c..0x220].copy_from_slice(&0x13579bdfu32.to_le_bytes());
+    package[0x1a321c..0x1a3220].copy_from_slice(&0x2468ace0u32.to_le_bytes());
+    match fixture {
+        smoke_core::UpdateFixture::BadChecksum => {
+            if !l6fw::update::validate(&package)
+                .is_err_and(|error| error.to_string().contains("checksum"))
+            {
+                return Err("synthetic update did not have the intended checksum failure".into());
+            }
+        }
+        smoke_core::UpdateFixture::PatchedMidi | smoke_core::UpdateFixture::L6Stock => {
+            return Err("update is not synthetic".into());
+        }
+        smoke_core::UpdateFixture::SyntheticValid => {
+            l6fw::update::recompute_checksum(&mut package).map_err(|error| error.to_string())?;
+            l6fw::update::validate(&package).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(package)
+}
+
+fn checked_update(
+    source_bytes: Vec<u8>,
+    recorded: Option<&str>,
+    fixture: smoke_core::UpdateFixture,
+) -> Result<Vec<u8>, String> {
+    let source_hash = format!("{:x}", Sha256::digest(&source_bytes));
+    if source_hash != smoke_core::firmware::STOCK_L6MAX_PACKAGE_SHA256
+        || recorded != Some(source_hash.as_str())
+    {
+        return Err("bad-checksum update needs the hash-pinned L6max 1.10 package matching its staged identity".into());
+    }
+    synthetic_update(source_bytes, fixture)
+}
+
 /// What every case of a run shares.
 pub(crate) struct Context<'a> {
     pub(crate) root: &'a Path,
@@ -261,6 +306,160 @@ fn build_fixture(
     drop(timer);
     let (mut options, mut inputs) =
         fixture_options(ctx.config, &selected, dir, ctx.cache, stages).failed_in(Phase::Fixture)?;
+    if let Some(fixture) = scenario.as_ref().and_then(|s| s.update_fixture) {
+        if case.no_sd
+            || case.volatile
+            || selected.state_spec.is_some()
+            || selected.card_spec.is_some()
+        {
+            return Err(failed(
+                "managed update needs an isolated persistent state and its own card".into(),
+            ));
+        }
+        let expected_model = if fixture == smoke_core::UpdateFixture::L6Stock {
+            Model::L6
+        } else {
+            Model::L6max
+        };
+        if inputs.firmware.get("main_firmware.bin").map(String::as_str)
+            != Some(expected_model.stock_main_sha256())
+        {
+            return Err(failed(
+                "managed update needs the model’s hash-pinned stock MAIN".into(),
+            ));
+        }
+        let source = selected
+            .firmware_package
+            .as_ref()
+            .ok_or_else(|| failed("update card needs a firmware package".into()))?;
+        let source_bytes = fs::read(source).failed_in(Phase::Fixture)?;
+        let package = if fixture == smoke_core::UpdateFixture::L6Stock {
+            let hash = format!("{:x}", Sha256::digest(&source_bytes));
+            if hash != smoke_core::firmware::STOCK_L6_PACKAGE_SHA256
+                || inputs.package_sha256.as_deref() != Some(hash.as_str())
+            {
+                return Err(failed("L6 update requires the pinned stock package".into()));
+            }
+            if l6fw::model_from_package(&source_bytes).map_err(|e| failed(e.to_string()))?
+                != Model::L6
+            {
+                return Err(failed("L6 update package model mismatch".into()));
+            }
+            source_bytes
+        } else if fixture == smoke_core::UpdateFixture::PatchedMidi {
+            let stock_hash = format!("{:x}", Sha256::digest(&source_bytes));
+            if stock_hash != smoke_core::firmware::STOCK_L6MAX_PACKAGE_SHA256
+                || inputs.package_sha256.as_deref() != Some(stock_hash.as_str())
+            {
+                return Err(failed(
+                    "patched update requires the pinned stock package".into(),
+                ));
+            }
+            let patched = selected
+                .update_package
+                .as_ref()
+                .ok_or_else(|| failed("missing patched update".into()))?;
+            let bytes = fs::read(patched).failed_in(Phase::Fixture)?;
+            l6fw::update::validate(&bytes).map_err(|e| failed(e.to_string()))?;
+            l6max_host::package::check_layout(&bytes).map_err(|e| failed(e.to_string()))?;
+            l6max_host::update_bootloader::validate(&bytes).map_err(|e| failed(e.to_string()))?;
+            if bytes.get(0x1a31fc..0x1a3200) != Some(l6fw::PATCHED_VERSION.as_slice()) {
+                return Err(failed(
+                    "patched L6max update must carry the patched version".into(),
+                ));
+            }
+            if inputs.update_package_sha256.as_deref()
+                != Some(format!("{:x}", Sha256::digest(&bytes)).as_str())
+            {
+                return Err(failed(
+                    "patched update differs from its recorded identity".into(),
+                ));
+            }
+            bytes
+        } else {
+            checked_update(source_bytes, inputs.package_sha256.as_deref(), fixture)
+                .map_err(failed)?
+        };
+        let update = dir.join("staged-update.bin");
+        fs::write(&update, &package).failed_in(Phase::Fixture)?;
+        if fixture == smoke_core::UpdateFixture::PatchedMidi {
+            let report = dir.join(layout::PATCHED_UPDATE.replace(".bin", ".json"));
+            let report_bytes = fs::read(&report).failed_in(Phase::Fixture)?;
+            let report_json: Value =
+                serde_json::from_slice(&report_bytes).failed_in(Phase::Fixture)?;
+            let package_hash = format!("{:x}", Sha256::digest(&package));
+            let patch_names = report_json["patches"]
+                .as_array()
+                .ok_or_else(|| failed("update report lacks patches".into()))?;
+            let plan = patch_core::Plan::new(
+                Model::L6max,
+                patch_core::Delivery::Browser,
+                &update_patches,
+                &[],
+            )
+            .map_err(failed)?;
+            let reported: Vec<_> = patch_names
+                .iter()
+                .filter_map(|patch| patch["name"].as_str())
+                .filter(|name| *name != "patch-loader")
+                .collect();
+            if report_json["model"].as_str() != Some(Model::L6max.label())
+                || report_json["update_sha256"].as_str() != Some(package_hash.as_str())
+                || reported != plan.patches.iter().map(String::as_str).collect::<Vec<_>>()
+            {
+                return Err(failed(
+                    "update report does not identify requested patches and package".into(),
+                ));
+            }
+            let verify = dir.join("verify-firmware");
+            let unpacked = crate::fixture::unpacked(ctx.cache, &update).map_err(failed)?;
+            crate::cache::copy_tree(&unpacked, &verify).map_err(failed)?;
+            fs::write(verify.join(layout::FIRMWARE_REPORT), &report_bytes)
+                .failed_in(Phase::Fixture)?;
+            fs::write(verify.join(layout::PATCH_REPORT), &report_bytes)
+                .failed_in(Phase::Fixture)?;
+            let main = fs::read(verify.join("main_firmware.bin")).failed_in(Phase::Fixture)?;
+            if !matches!(
+                smoke_core::firmware::identify(&main, &verify),
+                smoke_core::firmware::FirmwareIdentity::Built { .. }
+            ) {
+                return Err(failed(
+                    "update report does not identify unpacked patched MAIN".into(),
+                ));
+            }
+            inputs.update_report_sha256 = Some(format!("{:x}", Sha256::digest(&report_bytes)));
+            inputs.verify_firmware = Some(files(&verify).map_err(failed)?);
+        }
+        let card = dir.join("staged-update-card.img");
+        let filename = if fixture == smoke_core::UpdateFixture::L6Stock {
+            "L6.BIN"
+        } else {
+            "L6max.BIN"
+        };
+        if fixture == smoke_core::UpdateFixture::L6Stock {
+            sd_image::create(&card, &update).map_err(|e| failed(e.to_string()))?;
+        } else {
+            let mut volume =
+                sd_image::create_empty(&card, "L6MAX").map_err(|e| failed(e.to_string()))?;
+            volume
+                .write(filename, &package)
+                .and_then(|()| volume.flush())
+                .map_err(|e| failed(e.to_string()))?;
+            drop(volume);
+        }
+        if sd_image::read_file(&card, filename, package.len() as u64 + 1)
+            .map_err(|error| failed(error.to_string()))?
+            != package
+        {
+            return Err(failed(
+                "update card content differs from staged package".into(),
+            ));
+        }
+        inputs.update_card_package_sha256 = Some(hash(&update).failed_in(Phase::Fixture)?);
+        inputs.sd_sha256 = Some(hash_sparse(&card).failed_in(Phase::Fixture)?);
+        options.sd_image = Some(card);
+        options.no_sd = false;
+    }
     let timer = stages.start(Stage::ScenarioPreparation);
     if case.volatile && selected.state_spec.is_none() {
         options.state_dir = None;
@@ -470,6 +669,13 @@ fn identify(ctx: &Context, prepared: &Prepared, invocation: &Invocation) -> Opti
         qemu_sha256: ctx.config.qemu_sha256.clone(),
         runner_sha256: invocation.binary_sha256.clone(),
         firmware_package_sha256: inputs.package_sha256.clone(),
+        update_package_sha256: inputs.update_package_sha256.clone(),
+        update_card_package_sha256: inputs.update_card_package_sha256.clone(),
+        update_report_sha256: inputs.update_report_sha256.clone(),
+        verify_firmware: inputs
+            .verify_firmware
+            .as_ref()
+            .map(|files| digest(&json!(files))),
         firmware: digest(&json!(inputs.firmware)),
         card_sha256: execution.sd_sha256.clone(),
         state: digest(&json!(execution.state_sha256)),
@@ -568,6 +774,64 @@ fn apply_expected(result: &mut CaseResult, scenario: &Value, expected: &[Expecte
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bad_checksum_fixture_rejects_invalid_source() {
+        assert!(synthetic_update(vec![0; 100], smoke_core::UpdateFixture::BadChecksum).is_err());
+        assert!(
+            checked_update(
+                vec![0; 100],
+                Some(smoke_core::firmware::STOCK_L6MAX_PACKAGE_SHA256),
+                smoke_core::UpdateFixture::BadChecksum
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    #[ignore = "requires L6MAX_UPDATE_TEST_PACKAGE pointing at stock 1.10"]
+    fn bad_checksum_fixture_matches_legacy_mutations() {
+        let path = std::env::var_os("L6MAX_UPDATE_TEST_PACKAGE").unwrap();
+        let original = fs::read(path).unwrap();
+        assert!(
+            checked_update(
+                original.clone(),
+                Some("incorrect identity"),
+                smoke_core::UpdateFixture::BadChecksum
+            )
+            .is_err()
+        );
+        let mut changed = original.clone();
+        changed[0x300] ^= 1;
+        assert!(
+            checked_update(
+                changed,
+                Some(smoke_core::firmware::STOCK_L6MAX_PACKAGE_SHA256),
+                smoke_core::UpdateFixture::BadChecksum
+            )
+            .is_err()
+        );
+        let mutated =
+            synthetic_update(original.clone(), smoke_core::UpdateFixture::BadChecksum).unwrap();
+        let valid =
+            synthetic_update(original.clone(), smoke_core::UpdateFixture::SyntheticValid).unwrap();
+        assert!(l6fw::update::validate(&valid).is_ok());
+        assert_eq!(&valid[0x200..], &mutated[0x200..]);
+        assert_ne!(&valid[0x1fc..0x200], &mutated[0x1fc..0x200]);
+        let mut expected = original;
+        for offset in [0x1a31fc, 0x1a81fc] {
+            expected[offset..offset + 4].copy_from_slice(&l6fw::PATCHED_VERSION);
+        }
+        expected[0x1a71fc..0x1a7200].copy_from_slice(b"0101");
+        expected[0x21c..0x220].copy_from_slice(&0x13579bdfu32.to_le_bytes());
+        expected[0x1a321c..0x1a3220].copy_from_slice(&0x2468ace0u32.to_le_bytes());
+        assert_eq!(mutated, expected);
+        assert!(
+            l6fw::update::validate(&mutated)
+                .unwrap_err()
+                .to_string()
+                .contains("checksum")
+        );
+    }
     #[test]
     fn expected_failures_match_the_exact_step_and_error_and_expose_unexpected_passes() {
         let failures = [

@@ -9,6 +9,32 @@ const EMBEDDED_MODE_WALK: &str =
 const EMBEDDED_MIDI_SYNC: &str =
     include_str!("../../../../patches/midi-sync/tests/emulator/fragments/request-state.toml");
 
+const EMBEDDED_L6_HOOK_PROBE: &str =
+    include_str!("../../../../patches/midi-sync/tests/emulator/fragments/l6-hook-probe.toml");
+
+pub(super) fn embedded_l6_hook_operations() -> Result<Vec<Operation>, String> {
+    let source = format!(
+        "version=1\nname='embedded-l6-hook'\nmodels=['l6']\nbackends=['headless']\n{EMBEDDED_L6_HOOK_PROBE}"
+    );
+    let scenario = crate::Scenario::parse(&source)
+        .map_err(|e| format!("invalid embedded L6 hook fragment: {e}"))?;
+    let operations: Vec<_> = scenario
+        .step
+        .iter()
+        .map(|step| match step.action {
+            crate::Action::L6MidiProbeBegin => Ok(Operation::L6MidiProbeBegin),
+            crate::Action::L6MidiProbeInject => Ok(Operation::L6MidiProbeInject),
+            crate::Action::L6MidiProbeExpectHook => Ok(Operation::L6MidiProbeExpectHook),
+            crate::Action::L6MidiProbeExpectReplies => Ok(Operation::L6MidiProbeExpectReplies),
+            _ => Err("invalid embedded L6 hook action".to_owned()),
+        })
+        .collect::<Result<_, _>>()?;
+    if operations.len() != 4 {
+        return Err("embedded L6 hook probe requires a complete transaction".into());
+    }
+    Ok(operations)
+}
+
 pub(super) fn embedded_midi_sync_operations() -> Result<Vec<(String, Operation)>, String> {
     midi_sync_operations(EMBEDDED_MIDI_SYNC)
 }

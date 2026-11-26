@@ -1062,6 +1062,44 @@ fn includes_are_confined_cycle_checked_and_preserve_model_scope() {
     }
     fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn include_deadline_overrides_preserve_scope_and_reject_mixed_deadlines() {
+    let (dir, rel) = include_test_dir("deadline-override");
+    fs::write(dir.join("inner.toml"), "[[step]]\naction='delay'\nguest_ms=2\nguest_timeout_ms=100\nwall_timeout_s=5\n[[step]]\naction='delay'\nguest_ms=3\nguest_timeout_ms=100\nwall_timeout_s=5\n").unwrap();
+    fs::write(
+        dir.join("outer.toml"),
+        format!("[[step]]\naction='include'\npath='{rel}/inner.toml'\n"),
+    )
+    .unwrap();
+    let source = format!(
+        "version=1\nname='include'\nmodels=['l6max']\n[[step]]\nmodels=['l6max']\nsetup_input=true\naction='include'\npath='{rel}/outer.toml'\ninclude_guest_timeout_ms=200\ninclude_wall_timeout_s=9\n"
+    );
+    let scenario = Scenario::from_text(&source).unwrap();
+    assert_eq!(scenario.step.len(), 2);
+    assert!(
+        scenario
+            .step
+            .iter()
+            .all(|step| step.models == [Model::L6max]
+                && step.setup_input
+                && step.guest_timeout_ms == 200
+                && step.wall_timeout_s == 9)
+    );
+    assert!(
+        Scenario::from_text(
+            &source.replace("include_guest_timeout_ms=200", "include_guest_timeout_ms=0")
+        )
+        .is_err()
+    );
+    fs::write(dir.join("inner.toml"), "[[step]]\naction='delay'\nguest_ms=2\nguest_timeout_ms=100\nwall_timeout_s=5\n[[step]]\naction='delay'\nguest_ms=3\nguest_timeout_ms=99\nwall_timeout_s=5\n").unwrap();
+    assert!(
+        Scenario::from_text(&source)
+            .unwrap_err()
+            .contains("uniform child")
+    );
+    fs::remove_dir_all(dir).unwrap();
+}
 #[test]
 fn l6max_tap_tempo_lamp_does_not_block_panel_settling() {
     let mut rows = [0x28, 0x1000, 0x40002, 0x8000, 0x110, 4, 1, 0];
@@ -1418,5 +1456,188 @@ fn midi_sync_requires_ordered_complete_scope_and_matching_deadlines() {
             )
         ))
         .is_err()
+    );
+}
+
+#[test]
+fn update_lifecycle_requires_isolated_fixture_and_ordered_steps() {
+    let prefix = "version=1\nname='bad-update'\nmodels=['l6max']\nbackends=['headless']\nstate='none'\ncard='none'\nupdate_fixture='bad-checksum'\n";
+    let start = "[[step]]\naction='lifecycle-start'\nprofile='initial'\n";
+    let wait = "[[step]]\naction='wait-panel-uptime'\nguest_ms=40000\nguest_timeout_ms=300000\n";
+    let state = "[[step]]\naction='expect-update-state'\nmode=1\nflags_mask=9\nflags_value=0\n";
+    let stop = "[[step]]\naction='lifecycle-stop'\n";
+    let marker = "[[step]]\naction='expect-update-marker-absent'\n";
+    assert!(Scenario::parse(&format!("{prefix}{start}{wait}{state}{stop}{marker}")).is_ok());
+    assert!(
+        Scenario::parse(
+            &format!("{prefix}{start}{wait}{state}{stop}{marker}")
+                .replace("guest_ms=40000", "guest_ms=1")
+        )
+        .is_err()
+    );
+    assert!(Scenario::parse(&format!("{prefix}{start}{wait}{state}{marker}")).is_err());
+    assert!(
+        Scenario::parse(
+            &format!("{prefix}{start}{wait}{state}{stop}{marker}")
+                .replace("models=['l6max']", "models=['l6']")
+        )
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(
+            &format!("{prefix}{start}{wait}{state}{stop}{marker}")
+                .replace("flags_value=0", "flags_value=2")
+        )
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(
+            &format!("{prefix}{start}{wait}{state}{stop}{marker}")
+                .replace("guest_ms=40000", "guest_ms=0")
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn synthetic_valid_handoff_requires_all_semantic_checks() {
+    let fragment =
+        include_str!("../../../../tests/emulator/fragments/l6max-update-valid-handoff.toml");
+    let source = format!(
+        "version=1\nname='handoff'\nmodels=['l6max']\nbackends=['headless']\nstate='none'\ncard='none'\nupdate_fixture='synthetic-valid'\nupdate_goal='handoff'\n{fragment}"
+    );
+    assert!(Scenario::parse(&source).is_ok());
+    for missing in [
+        "[[step]]\naction = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-firmware-update-dialog.png\"\nguest_timeout_ms = 60000\nwall_timeout_s = 300\n\n",
+        "[[step]]\naction = \"expect-update-state\"\nmode = 6\nflags_mask = 9\nflags_value = 0\n\n",
+        "[[step]]\naction = \"expect-update-gui\"\nwindow = 0x8020029c\nprogress_mask = 0x100\nprogress_value = 0x100\n\n",
+        "[[step]]\naction = \"expect-live-update-marker-absent\"\n\n",
+        "[[step]]\naction = \"expect-powered\"\npowered = false\nguest_timeout_ms = 4294967295\nwall_timeout_s = 30\n\n",
+    ] {
+        assert!(source.contains(missing));
+        assert!(
+            Scenario::parse(&source.replace(missing, "")).is_err(),
+            "missing {missing}"
+        );
+    }
+}
+
+#[test]
+fn synthetic_install_requires_all_boot_and_storage_checks() {
+    let source =
+        include_str!("../../../../tests/emulator/cases/boot/l6max-update-valid-install.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    let first_installer = source
+        .find("[[step]]\naction = \"lifecycle-start\"\nprofile = \"installer\"")
+        .unwrap();
+    assert!(Scenario::from_text(&source[..first_installer]).is_err());
+    for missing in [
+        "[[step]]\naction = \"expect-installer-outcome\"\nexpected = \"installed\"\n\n",
+        "[[step]]\naction = \"wait-update-panel-ready\"\nrequire_programming = true\nguest_timeout_ms = 60000\nwall_timeout_s = 300\n\n",
+        "[[step]]\naction = \"expect-update-comparison\"\nfield = \"protected-region\"\n\n",
+        "[[step]]\naction = \"expect-installer-outcome\"\nexpected = \"no-pending\"\n\n",
+        "[[step]]\naction = \"expect-panel-unchanged\"\n",
+    ] {
+        assert!(source.contains(missing));
+        assert!(
+            Scenario::from_text(&source.replace(missing, "")).is_err(),
+            "missing {missing}"
+        );
+    }
+    assert!(
+        Scenario::from_text(&source.replace("profile = \"restart\"", "profile = \"installer\""))
+            .is_err()
+    );
+}
+
+#[test]
+fn patched_update_requires_complete_four_boot_verification() {
+    let source =
+        include_str!("../../../../tests/emulator/cases/boot/l6max-update-patched-midi.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    for missing in [
+        "[[step]]\naction = \"end-wall-deadline\"\n\n",
+        "[[step]]\naction = \"wait-usb-controller\"\nguest_timeout_ms = 180000\nwall_timeout_s = 300\n\n",
+        "[[step]]\naction = \"direct-usb-midi-round-trip\"\nguest_timeout_ms = 180000\nwall_timeout_s = 300\n\n",
+        "[[step]]\naction = \"include\"\npath = \"patches/midi-sync/tests/emulator/fragments/request-state.toml\"\ninclude_guest_timeout_ms = 180000\ninclude_wall_timeout_s = 300\n\n",
+        "[[step]]\naction = \"expect-update-comparison\"\nfield = \"protected-region\"\n\n",
+        "[[step]]\naction = \"expect-panel-unchanged\"\n",
+    ] {
+        assert!(source.contains(missing));
+        assert!(
+            Scenario::from_text(&source.replace(missing, "")).is_err(),
+            "missing {missing}"
+        );
+    }
+    assert!(
+        Scenario::from_text(
+            &source.replace("require_programming = false", "require_programming = true")
+        )
+        .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replace(
+            "include_guest_timeout_ms = 180000",
+            "include_guest_timeout_ms = 30000"
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replace(
+            "update_patches.l6max = [\"midi-sync\"]",
+            "update_patches.l6max = [\"knob-dialog\"]"
+        ))
+        .is_err()
+    );
+}
+
+#[test]
+fn l6_stock_update_requires_both_boots_and_all_comparisons() {
+    let source = include_str!("../../../../tests/emulator/cases/boot/l6-update-stock-install.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    for action in [
+        "mark-l6-update-pending",
+        "capture-update-marker-pending",
+        "expect-installer-outcome",
+        "expect-l6-update-reset-vector",
+        "expect-update-marker-absent",
+    ] {
+        let needle = format!("action = \"{action}\"");
+        assert!(
+            Scenario::from_text(
+                &source.replace(&needle, "action = \"checkpoint\"\nname = \"removed\"")
+            )
+            .is_err(),
+            "{action}"
+        );
+    }
+    for field in [
+        "main-firmware",
+        "main-trailer",
+        "secondary-firmware",
+        "secondary-trailer",
+        "package-footer",
+        "boot-region",
+        "protected-region",
+        "resource-nor",
+    ] {
+        let needle = format!("field = \"{field}\"");
+        let replacement = if field == "resource-nor" {
+            "field = \"boot-region\""
+        } else {
+            "field = \"resource-nor\""
+        };
+        assert!(
+            Scenario::from_text(&source.replace(&needle, replacement)).is_err(),
+            "{field}"
+        );
+    }
+    assert!(Scenario::from_text(&source.replacen("guest_ms = 40000", "guest_ms = 1", 1)).is_err());
+    assert!(
+        Scenario::from_text(&source.replace("models = [\"l6\"]", "models = [\"l6max\"]")).is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replace("profile = \"installer\"", "profile = \"restart\""))
+            .is_err()
     );
 }

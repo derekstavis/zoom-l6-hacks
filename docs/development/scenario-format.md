@@ -48,6 +48,8 @@ tables. Unknown header fields fail parsing.
 | `installed_patches` | no | Patches the engine installs on a device seeded with the model's stock package, as `--patch` does. |
 | `installed_sd_patches` | no | Patches the engine delivers on the case's card, as `--sd-patch` does: it installs the Patch loader and writes the hosted modules to `PATCHES/`. Requires `card`; cannot combine with `sd_patches`. |
 | `update_patches` | no | Patches per model for the case's update package, built from the model's package. |
+| `update_fixture` | no | Build a case-local update card: stock L6 `l6-stock`, synthetic L6max `bad-checksum` or `synthetic-valid`, or browser-built L6max `patched-midi`. Managed update scenarios require an isolated headless lifecycle. |
+| `update_goal` | no | Select the complete valid-update `handoff` or `install` lifecycle. |
 | `gdb` | no | Enable the debugger socket. |
 | `audio_device` | no | QEMU audio-device syntax; `{logs}` expands to the case's log directory. |
 | `audio_input` | no | Array of tables assigning audio to input channels: `channel` plus one card-file source such as `loop-tone` or `copy`. Nothing plays until an `audio-input-transport` step. See [audio input](../emulator/audio.md#input). |
@@ -72,6 +74,13 @@ reference, is written from the repository root, whichever file it appears in:
 and `..` are rejected, so a generated scenario composes the same way from its
 text alone. A fragment's steps scoped only to models the scenario does not run
 are left out, so a single-model scenario can include a shared fragment.
+
+An include may set `include_guest_timeout_ms` and/or `include_wall_timeout_s`
+to replace the respective outer deadline of each included step. Overrides must
+be positive and all applicable steps must have the same original deadline;
+mixed deadlines are rejected so a shorter intentional budget is not silently
+extended. Nested includes expand inside out. These overrides do not change
+observation durations or other timing parameters inside an action.
 
 Mark only input whose result a state spec reproduces with `setup_input`. Input
 that is the behavior under test, or that sets runtime-only state (for example
@@ -180,6 +189,15 @@ The probe releases its own sessions on completion, failure or restart, without
 discarding an earlier mixer session. DIN receive uses the existing legacy
 control-observation behavior, including its documented ALSA limitations.
 
+The L6 firmware and SD MIDI hook checks use the shared
+`patches/midi-sync/tests/emulator/fragments/l6-hook-probe.toml` fragment.
+Its four actions resolve and verify the selected hook, inject a request, check
+the hook input, and compare sender output against the configured CC map in
+channel-major order, including duplicates. They share one guest/wall deadline.
+The injected execution cannot yet be fully restored, so the final action leaves
+MAIN stopped and the disposable emulator must be restarted. It must be the last
+L6 action; mixed-model scenarios can scope the include to L6.
+
 `midi-probe-send-cc` captures the declared ring channel immediately before the
 stimulus. `midi-probe-expect-ring` compares against that capture, with its wall
 window anchored to the send; a negative result requires the whole declared
@@ -214,7 +232,10 @@ message delivered just after the interval.
 | `l6-din-usb-forwarding` | — | Verify L6 DIN-to-USB forwarding behavior |
 | `host-midi-sync-begin` | — | Capture the L6 MIDI map and configured channel, or the L6max reply count, using a retained MIDI session. Begin the shared guest deadline. |
 | `host-midi-expect-sync` | — | Assert the captured L6 channel and CC multiset, including duplicate mappings, or 94 L6max Control Change replies. Follow with `host-midi-end`. |
-| `l6-midi-sync` | — | Exercise the L6 MIDI synchronization path |
+| `l6-midi-probe-begin` | — | Verify fixture identity, acquire a scoped debugger, and wait for L6 idle |
+| `l6-midi-probe-inject` | — | Inject the guarded sync request; the guest must be restarted afterwards |
+| `l6-midi-probe-expect-hook` | — | Verify the request reaches the selected firmware or SD hook unchanged |
+| `l6-midi-probe-expect-replies` | — | Check the ordered configured CC replies, wait for the last sender return, and leave MAIN stopped |
 | `l6-midi-ring-pin-sweep` | `cc` | Sweep L6 MIDI CC values and compare ring-pin output |
 | `l6-midi-mute-indicators` | — | Check L6 MIDI mute-indicator responses |
 | `usb-sysex` | `requests` with `bytes`, optional `expect_prefix`, `expect_reply`, `min_reply_bytes`; optional `complete_on_match` | Send cable-2 SysEx requests and check replies. When `complete_on_match` is true, a positive request completes on its matching complete reply; no-reply requests, rejected-prefix checks and explicit reply windows still observe the full interval |
@@ -264,6 +285,26 @@ message delivered just after the interval.
 | `expect-menu` | `menu`, optional `path`, `items` | L6max; read a menu's children from guest memory and require exactly the titles in `items`. `menu` is `main`, `project`, `sound-pad`, `mixer` or `system`; `path` descends through child titles. Menu Loader adds its rows when the menu is first entered |
 | `effect-replacement-state` | optional `expected_effect_type`, `expected_processor_type`, `expected_effect`, `require_output`, `wait_for_slot` and other module fields | L6max effect replacement bundle; compare the selected stock slot and the loader's state with the expectations. `expected_effect` is the effect ID running in the selected slot; `require_output` requires that slot's replacement to have produced nonzero output; `wait_for_slot` waits for the selected slot and processor and, when output is required, a fresh nonzero output count |
 | `firmware-update` | — | L6 and L6max disposable-state update lifecycle, corrupt-checksum rejection, NOR segment install, L6max panel programming, protected-region preservation and clean restart; an `update_patches` package additionally checks model-specific post-install behavior |
+| `lifecycle-start` | `profile` | Start `initial`, `installer`, cardless `restart`, or cardless `verify` on the same case-local state with fresh clocks and logs. The verify profile uses the frozen patched MAIN and report, and attaches USB at power-on. |
+| `wait-panel-uptime` | `guest_ms` | Wait for absolute panel guest uptime, with a wall deadline and a 60-second stall deadline reset by progress on either guest clock. |
+| `expect-update-state` | `mode`, `flags_mask`, `flags_value` | Require the guarded L6max update mode and masked package flags. |
+| `lifecycle-stop` | — | Request QMP shutdown and require successful child exits before reading persistent state. |
+| `expect-update-marker-absent` | — | With the guest stopped, use `l6nor` to assert that neither a pending nor failed update marker exists. |
+| `expect-live-update-marker-absent` | — | Assert the marker is absent from the live state file before power handoff; this sample is non-atomic. |
+| `expect-update-gui` | `window`, `progress_mask`, `progress_value` | Assert the guarded current update window and masked progress flags. |
+| `capture-update-marker-pending` | — | Require the stopped guest's pending marker and save/hash its case-local MAIN NOR snapshot. |
+| `mark-l6-update-pending` | — | Explicitly set and flush the replacement-installer marker in a stopped L6 fixture; this does not emulate a firmware handoff. |
+| `expect-l6-update-reset-vector` | — | Compare the live L6 MAIN reset vector against the frozen package. |
+| `expect-l6-update-comparison` | `field` | Compare one of the five installed L6 package segments, boot/protected NOR, or entire resource NOR against frozen package and pending-state data. |
+| `expect-installer-outcome` | `expected` | Assert the typed emulator replacement-installer result for this boot. |
+| `wait-update-panel-ready` | `require_programming` | Under one guest/wall deadline, wait until the expected panel image, mode and RTC response agree simultaneously. When `require_programming` is true, require 64 writes and the image-verification trace too. |
+| `wait-usb-controller` | — | Attach raw USB and wait for controller readiness within the step’s guest and wall deadlines. |
+| `begin-wall-deadline`, `end-wall-deadline` | `duration_s` on begin | Enclose sequential managed lifecycle steps in one shared wall-clock budget; it remains active across all enclosed steps and nesting is rejected. |
+| `expect-update-mode` | `mode` | Assert the guarded update mode. |
+| `expect-main-memory` | `address`, `bytes` | Compare a bounded non-atomic MAIN SDRAM read with scenario data. |
+| `expect-update-comparison` | `field` | Assert one stopped-state package, protected NOR or panel comparison. |
+| `capture-installed-panel` | — | Save/hash the stopped installed panel flash before restart. |
+| `expect-panel-unchanged` | — | Compare the stopped panel flash against the captured install snapshot. |
 | `power-press` | `hold_ms`, `powered` | Check expected power result, model cutoff timing and stopped clock |
 | `restart` | — | Retire the session before reopening its isolated persistent state; reset readiness, trace counters and action baselines |
 | `expect-recorder` | — | L6max startup mode restored after restart |

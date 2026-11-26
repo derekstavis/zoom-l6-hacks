@@ -76,6 +76,54 @@ fn midi_namespace() -> Option<String> {
 
 #[derive(Clone, Debug)]
 pub enum Operation {
+    LifecycleStart {
+        profile: crate::scenario::LifecycleBoot,
+    },
+    LifecycleStop,
+    WaitPanelUptime {
+        guest_ms: u32,
+    },
+    ExpectUpdateState {
+        mode: u32,
+        flags_mask: u8,
+        flags_value: u8,
+    },
+    ExpectUpdateMarkerAbsent,
+    ExpectLiveUpdateMarkerAbsent,
+    CaptureUpdateMarkerPending,
+    MarkL6UpdatePending,
+    ExpectL6UpdateResetVector,
+    ExpectL6UpdateComparison {
+        field: crate::scenario::L6UpdateField,
+    },
+    ExpectInstallerOutcome {
+        expected: crate::scenario::InstallerExpected,
+    },
+    WaitUpdatePanelReady {
+        require_programming: bool,
+    },
+    WaitUsbController,
+    BeginWallDeadline {
+        duration_s: u64,
+    },
+    EndWallDeadline,
+    ExpectUpdateMode {
+        mode: u32,
+    },
+    ExpectMainMemory {
+        address: u32,
+        bytes: Vec<u8>,
+    },
+    ExpectUpdateComparison {
+        field: crate::scenario::UpdateComparisonField,
+    },
+    CaptureInstalledPanel,
+    ExpectPanelUnchanged,
+    ExpectUpdateGui {
+        window: u32,
+        progress_mask: u32,
+        progress_value: u32,
+    },
     SdCard {
         inserted: bool,
     },
@@ -153,7 +201,10 @@ pub enum Operation {
         expect_ring_change: bool,
     },
     L6DinUsbForwarding,
-    L6MidiSync,
+    L6MidiProbeBegin,
+    L6MidiProbeInject,
+    L6MidiProbeExpectHook,
+    L6MidiProbeExpectReplies,
     L6MidiRingPinSweep {
         cc: u8,
     },
@@ -399,7 +450,7 @@ fn validate_native_midi_capabilities(
                     | crate::Action::EditorPadPlayback { .. }
                     | crate::Action::L6maxUiPadVerify { .. }
                     | crate::Action::L6DinSweep
-                    | crate::Action::L6MidiSync
+                    | crate::Action::L6MidiProbeBegin
                     | crate::Action::L6UsbStartup
                     | crate::Action::L6DinEventDispatch { .. }
                     | crate::Action::L6maxChannelSignalPwm
@@ -414,6 +465,28 @@ fn validate_native_midi_capabilities(
 
 /// Configure only the hardware instrumentation explicitly requested by a scenario.
 pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String> {
+    // Managed patched updates boot stock before the verification generation.
+    // Apply hardware requirements and firmware guards to that phase only;
+    // the verify generation is checked against its own frozen build at startup.
+    let mut initial_phase = None;
+    if scenario.update_fixture == Some(crate::scenario::UpdateFixture::PatchedMidi) {
+        let mut initial = scenario.clone();
+        let boundary = initial
+            .step
+            .iter()
+            .position(|step| {
+                matches!(
+                    step.action,
+                    crate::Action::LifecycleStart {
+                        profile: crate::scenario::LifecycleBoot::Verify
+                    }
+                )
+            })
+            .ok_or("patched update has no verify boot")?;
+        initial.step.truncate(boundary);
+        initial_phase = Some(initial);
+    }
+    let scenario = initial_phase.as_ref().unwrap_or(scenario);
     if scenario.step.iter().any(|step| {
         matches!(
             step.action,
@@ -523,7 +596,7 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
     if scenario
         .step
         .iter()
-        .any(|s| s.applies_to(model) && matches!(s.action, crate::Action::L6MidiSync))
+        .any(|s| s.applies_to(model) && matches!(s.action, crate::Action::L6MidiProbeBegin))
     {
         options.usb_enabled = false;
         options.midi_enabled = false;
@@ -620,6 +693,7 @@ pub struct State {
     captured_display: Option<CapturedDisplay>,
     midi_round_trip: Option<MidiRoundTrip>,
     midi_sync: Option<midi::MidiSync>,
+    l6_midi_probe: Option<midi::L6MidiProbe>,
     native_midi: Option<l6ctl::midi::MidiSession>,
     midi_probe: Option<MidiProbeContext>,
 }
@@ -953,7 +1027,7 @@ mod native_midi_capability_tests {
             crate::Action::EditorPadPlayback { pad: 1 },
             crate::Action::L6maxUiPadVerify { pad: 1 },
             crate::Action::L6DinSweep,
-            crate::Action::L6MidiSync,
+            crate::Action::L6MidiProbeBegin,
             crate::Action::L6UsbStartup,
             crate::Action::L6DinEventDispatch {
                 group: 0,

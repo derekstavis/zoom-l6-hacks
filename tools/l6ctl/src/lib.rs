@@ -3,17 +3,21 @@
 //! The socket interface is deliberately narrower than direct access. In
 //! particular its input replies confirm enqueueing, not guest acknowledgement.
 pub use l6max_host::control::Info;
+pub use l6max_host::debug::{Command as DebugCommand, Observation as DebugObservation};
 pub use l6max_host::heap::Counters as HeapCounters;
 pub use l6max_host::input::button_source;
-pub use l6max_host::input::{InputCounters, InputSource};
+pub use l6max_host::input::{InputAck, InputAckState, InputCounters, InputSource};
 pub use l6max_host::knob_popup::{ParameterState, RecorderState, Snapshot as KnobPopupSnapshot};
+pub use l6max_host::memory::MemoryRead;
 pub use l6max_host::midi_config::Config as MidiConfig;
+pub use l6max_host::update_bootloader::Outcome as InstallerOutcome;
+pub use l6max_host::update_state::{UpdateGuiState, UpdateState};
 use l6max_host::{control, engine::Engine, freertos, qmp};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::{
     fmt,
-    io::{self, BufRead, BufReader, Write},
+    io::{self, BufRead, BufReader, Read, Write},
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
     time::Duration,
@@ -36,8 +40,16 @@ pub enum RtosKind {
 pub enum Request {
     Info,
     InputStatus { source: InputSource },
+    InputAck { source: InputSource, sequence: u32 },
     HeapCounters,
+    MemoryRead { address: u32, length: usize },
     MidiConfig,
+    UpdateState,
+    UpdateGuiState,
+    InstallerOutcome,
+    UsbAttach,
+    UsbRelease,
+    UsbController,
     KnobPopup { with_text: bool },
     RecorderState,
     KnobParameterState,
@@ -48,6 +60,17 @@ pub enum Request {
     Encoder { channel: u32, steps: i32 },
     Analog { channel: u32, steps: i32 },
     SetAnalog { channel: u32, value: u16 },
+}
+
+/// The attach request only signals cable attachment, not enumeration.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct UsbAttachReceipt {
+    pub attached: bool,
+}
+/// `running` means the attached guest controller answers tokens; it does not prove enumeration.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct UsbControllerStatus {
+    pub running: bool,
 }
 
 /// The socket reports the accepted command, not a guest acknowledgement.
@@ -61,6 +84,7 @@ pub struct ButtonReceipt {
 pub struct AxisReceipt {
     pub channel: u32,
     pub steps: i32,
+    pub sequence: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -105,6 +129,64 @@ impl std::error::Error for ControlError {
     }
 }
 
+/// One persistent local control connection owns one debugger lease. Dropping
+/// the client closes the connection and causes the host to clean up.
+pub struct SocketDebugSession {
+    writer: UnixStream,
+    reader: BufReader<UnixStream>,
+    closed: bool,
+}
+impl SocketDebugSession {
+    fn read_reply(&mut self) -> Result<Value, ControlError> {
+        let mut line = String::new();
+        let bytes = (&mut self.reader)
+            .take(65537)
+            .read_line(&mut line)
+            .map_err(ControlError::Io)?;
+        if bytes == 0 || bytes > 65536 || !line.ends_with('\n') {
+            return Err(ControlError::Rejected(
+                "debug session reply ended or exceeded its limit".into(),
+            ));
+        }
+        let reply: Value = serde_json::from_str(&line).map_err(ControlError::Protocol)?;
+        if reply.get("ok").and_then(Value::as_bool) != Some(true) {
+            return Err(ControlError::Rejected(
+                reply
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("debug request failed")
+                    .to_owned(),
+            ));
+        }
+        Ok(reply.get("result").cloned().unwrap_or(Value::Null))
+    }
+    pub fn execute(&mut self, command: DebugCommand) -> Result<DebugObservation, ControlError> {
+        if self.closed {
+            return Err(ControlError::Rejected("debug session is closed".into()));
+        }
+        let close = matches!(
+            command,
+            DebugCommand::Close | DebugCommand::L6MidiFinish { .. }
+        );
+        let result = (|| {
+            serde_json::to_writer(&mut self.writer, &command).map_err(ControlError::Protocol)?;
+            writeln!(self.writer).map_err(ControlError::Io)?;
+            let value = self.read_reply()?;
+            serde_json::from_value(value).map_err(ControlError::Protocol)
+        })();
+        if close || result.is_err() {
+            self.closed = true;
+            let _ = self.writer.shutdown(std::net::Shutdown::Both);
+        }
+        result
+    }
+}
+impl Drop for SocketDebugSession {
+    fn drop(&mut self) {
+        let _ = self.writer.shutdown(std::net::Shutdown::Both);
+    }
+}
+
 /// Client for an emulator explicitly started with `--control-socket`.
 #[derive(Clone, Debug)]
 pub struct ControlClient {
@@ -118,6 +200,32 @@ impl ControlClient {
         }
     }
 
+    /// Pause MAIN and begin a scoped, exclusive debug session over this connection.
+    pub fn debug_session(&self) -> Result<SocketDebugSession, ControlError> {
+        let mut writer =
+            UnixStream::connect(&self.socket).map_err(|source| ControlError::Connect {
+                path: self.socket.clone(),
+                source,
+            })?;
+        // A maximum-length continue may need an interrupt plus bounded
+        // breakpoint/scratch cleanup before the host can return its error.
+        writer
+            .set_read_timeout(Some(Duration::from_secs(100)))
+            .map_err(ControlError::Io)?;
+        writer
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .map_err(ControlError::Io)?;
+        writeln!(writer, "{{\"command\":\"debug-begin\"}}").map_err(ControlError::Io)?;
+        let reader = BufReader::new(writer.try_clone().map_err(ControlError::Io)?);
+        let mut session = SocketDebugSession {
+            writer,
+            reader,
+            closed: false,
+        };
+        session.read_reply()?;
+        Ok(session)
+    }
+
     pub fn socket(&self) -> &Path {
         &self.socket
     }
@@ -125,6 +233,9 @@ impl ControlClient {
     /// Sample aggregate counters for one running emulator input channel.
     pub fn input_status(&self, source: InputSource) -> Result<InputCounters, ControlError> {
         self.request_as(&Request::InputStatus { source })
+    }
+    pub fn input_ack(&self, source: InputSource, sequence: u32) -> Result<InputAck, ControlError> {
+        self.request_as(&Request::InputAck { source, sequence })
     }
 
     /// Send one typed request. RTOS response bodies are currently the host's
@@ -140,7 +251,10 @@ impl ControlClient {
             request,
             Request::Rtos { .. }
                 | Request::HeapCounters
+                | Request::MemoryRead { .. }
                 | Request::MidiConfig
+                | Request::UpdateState
+                | Request::UpdateGuiState
                 | Request::KnobPopup { .. }
                 | Request::RecorderState
                 | Request::KnobParameterState
@@ -180,8 +294,38 @@ impl ControlClient {
         self.request_as(&Request::HeapCounters)
     }
 
+    pub fn read_main_memory(
+        &self,
+        address: u32,
+        length: usize,
+    ) -> Result<MemoryRead, ControlError> {
+        self.request_as(&Request::MemoryRead { address, length })
+    }
+
     pub fn midi_config(&self) -> Result<MidiConfig, ControlError> {
         self.request_as(&Request::MidiConfig)
+    }
+
+    pub fn installer_outcome(&self) -> Result<InstallerOutcome, ControlError> {
+        self.request_as(&Request::InstallerOutcome)
+    }
+
+    pub fn usb_attach(&self) -> Result<UsbAttachReceipt, ControlError> {
+        self.request_as(&Request::UsbAttach)
+    }
+    pub fn usb_release(&self) -> Result<UsbAttachReceipt, ControlError> {
+        self.request_as(&Request::UsbRelease)
+    }
+    pub fn usb_controller(&self) -> Result<UsbControllerStatus, ControlError> {
+        self.request_as(&Request::UsbController)
+    }
+
+    pub fn update_state(&self) -> Result<UpdateState, ControlError> {
+        self.request_as(&Request::UpdateState)
+    }
+
+    pub fn update_gui_state(&self) -> Result<UpdateGuiState, ControlError> {
+        self.request_as(&Request::UpdateGuiState)
     }
 
     /// Request the host's existing versioned RTOS JSON snapshot.
@@ -250,6 +394,16 @@ impl<'a> OwnedControl<'a> {
         Self { engine }
     }
 
+    pub fn debug_session(&self) -> Result<l6max_host::debug::Session, ControlError> {
+        self.engine
+            .debugger()
+            .ok_or(ControlError::Unavailable(
+                "debugger unavailable; launch with --gdb-socket",
+            ))?
+            .begin()
+            .map_err(ControlError::Rejected)
+    }
+
     pub fn info(&self) -> Result<Info, ControlError> {
         let inputs = self
             .engine
@@ -268,6 +422,14 @@ impl<'a> OwnedControl<'a> {
             .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
         Ok(inputs.counters(source))
     }
+    pub fn input_ack(&self, source: InputSource, sequence: u32) -> Result<InputAck, ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
+        Ok(inputs.acknowledgement(source, sequence))
+    }
 
     fn main_qmp(&self) -> Result<&qmp::QmpClient, ControlError> {
         self.engine
@@ -283,9 +445,63 @@ impl<'a> OwnedControl<'a> {
             .map_err(ControlError::Rejected)
     }
 
+    pub fn read_main_memory(
+        &self,
+        address: u32,
+        length: usize,
+    ) -> Result<MemoryRead, ControlError> {
+        l6max_host::memory::read_main(self.main_qmp()?, address, length)
+            .map_err(ControlError::Rejected)
+    }
+
     pub fn midi_config(&self) -> Result<MidiConfig, ControlError> {
         l6max_host::midi_config::config(self.main_qmp()?, self.engine.model())
             .map_err(ControlError::Rejected)
+    }
+
+    pub fn update_state(&self) -> Result<UpdateState, ControlError> {
+        l6max_host::update_state::update_state(self.main_qmp()?, self.engine.model())
+            .map_err(ControlError::Rejected)
+    }
+
+    pub fn update_gui_state(&self) -> Result<UpdateGuiState, ControlError> {
+        l6max_host::update_state::update_gui_state(self.main_qmp()?, self.engine.model())
+            .map_err(ControlError::Rejected)
+    }
+
+    pub fn installer_outcome(&self) -> Result<InstallerOutcome, ControlError> {
+        self.engine
+            .installer_outcome()
+            .cloned()
+            .ok_or(ControlError::Unavailable(
+                "replacement installer was not run for this engine start",
+            ))
+    }
+
+    pub fn usb_attach(&self) -> Result<UsbAttachReceipt, ControlError> {
+        self.engine
+            .usb_controller()
+            .ok_or(ControlError::Unavailable("USB controller unavailable"))?
+            .attach()
+            .map_err(ControlError::Rejected)?;
+        Ok(UsbAttachReceipt { attached: true })
+    }
+    pub fn usb_release(&self) -> Result<UsbAttachReceipt, ControlError> {
+        self.engine
+            .usb_controller()
+            .ok_or(ControlError::Unavailable("USB controller unavailable"))?
+            .release()
+            .map_err(ControlError::Rejected)?;
+        Ok(UsbAttachReceipt { attached: false })
+    }
+    pub fn usb_controller(&self) -> Result<UsbControllerStatus, ControlError> {
+        let running = self
+            .engine
+            .usb_controller()
+            .ok_or(ControlError::Unavailable("USB controller unavailable"))?
+            .running()
+            .map_err(ControlError::Rejected)?;
+        Ok(UsbControllerStatus { running })
     }
 
     /// Enqueue a one-based encoder input, without waiting for guest acknowledgment.
@@ -295,9 +511,13 @@ impl<'a> OwnedControl<'a> {
             .inputs
             .as_ref()
             .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
-        control::enqueue_encoder(inputs, self.engine.model(), channel, steps)
+        let sequence = control::enqueue_encoder(inputs, self.engine.model(), channel, steps)
             .map_err(ControlError::Rejected)?;
-        Ok(AxisReceipt { channel, steps })
+        Ok(AxisReceipt {
+            channel,
+            steps,
+            sequence,
+        })
     }
 
     /// Enqueue a tap without waiting for the guest to apply it.

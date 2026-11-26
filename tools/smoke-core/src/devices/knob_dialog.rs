@@ -99,6 +99,19 @@ impl KnobDebugSession {
         }
         result
     }
+    fn resume_guest_before(&mut self, deadline: Instant) -> std::io::Result<()> {
+        if !self.synchronized {
+            return Err(std::io::Error::other(
+                "debugger transport not synchronized; guest left stopped",
+            ));
+        }
+        self.registers.clear();
+        let result = self.qmp.resume_before(deadline);
+        if result.is_err() {
+            self.synchronized = false;
+        }
+        result
+    }
     fn breakpoint(&mut self, address: u32, enable: bool) -> std::io::Result<()> {
         if enable && !self.breakpoints.contains(&address) {
             self.breakpoints.push(address);
@@ -115,15 +128,6 @@ impl KnobDebugSession {
     }
     fn read_register(&mut self, index: u32) -> std::io::Result<u32> {
         let result = self.gdb.read_register(index);
-        if result.is_err() {
-            self.synchronized = false;
-        }
-        result
-    }
-    fn register(&mut self, index: u32, value: u32) -> std::io::Result<()> {
-        let before = self.read_register(index)?;
-        self.registers.push((index, before));
-        let result = self.gdb.register(index, value);
         if result.is_err() {
             self.synchronized = false;
         }
@@ -3492,6 +3496,9 @@ struct PendingNotification {
     text_before: Vec<u8>,
     breakpoint_deadline: Option<Instant>,
     guest_start: Option<u32>,
+    main_tick_start: Option<u32>,
+    main_guest_start: Option<u32>,
+    main_clock_updates: Option<u64>,
     frame: Option<[u8; 1024]>,
     after: Option<[u8; 1024]>,
     timeout_start: Option<u32>,
@@ -3529,6 +3536,9 @@ pub(super) fn prepare_notification(
         text_before,
         breakpoint_deadline: None,
         guest_start: None,
+        main_tick_start: None,
+        main_guest_start: None,
+        main_clock_updates: None,
         frame: None,
         after: None,
         timeout_start: None,
@@ -3599,18 +3609,80 @@ pub(super) fn wait_notification_callback(
     Ok(json!({}))
 }
 
+fn notification_observation_check(
+    session: &Session,
+    shared: (Instant, u32, u32, u64, u16),
+    wall_timeout_s: u64,
+) -> Result<(), String> {
+    let now = session
+        .engine
+        .inputs
+        .as_ref()
+        .ok_or("missing inputs")?
+        .panel
+        .snapshot()
+        .guest_ms;
+    remaining_debug_wait(shared, now, wall_timeout_s)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 pub(super) fn invoke_notification(
     session: &Session,
     context: &mut PreflightContext,
     message: u32,
+    shared: (Instant, u32, u32, u64, u16),
+    wall_timeout_s: u64,
 ) -> Result<Value, Box<dyn std::error::Error>> {
     if context.final_phase != 16 {
         return Err("notification invocation out of order".into());
     }
+    let deadline = (Instant::now() + Duration::from_secs(wall_timeout_s))
+        .min(shared.0 + Duration::from_secs(shared.3));
+    let check = || notification_observation_check(session, shared, wall_timeout_s);
+    let qmp = &session.engine.management[0];
+    let tick =
+        l6max_host::freertos::ticks_before_checked(qmp, l6fw::Model::L6max, deadline, &check)?;
+    l6max_host::knob_popup::notification_state_before_checked(
+        qmp,
+        l6fw::Model::L6max,
+        deadline,
+        &check,
+    )?;
+    let main = session
+        .engine
+        .inputs
+        .as_ref()
+        .ok_or("missing inputs")?
+        .main
+        .snapshot();
+    if !main.connected || main.clock_updates == 0 {
+        return Err("MAIN virtual clock unavailable".into());
+    }
     let debugger = context.debugger.as_mut().ok_or("missing knob debugger")?;
-    debugger.register(0, message)?;
-    debugger.register(15, l6max::gui_notification_show)?;
-    debugger.resume_guest()?;
+    for (index, value) in [(0, message), (15, l6max::gui_notification_show)] {
+        check()?;
+        debugger
+            .gdb
+            .set_request_timeout(deadline.saturating_duration_since(Instant::now()))?;
+        let before = debugger.read_register(index)?;
+        check()?;
+        debugger.registers.push((index, before));
+        debugger
+            .gdb
+            .set_request_timeout(deadline.saturating_duration_since(Instant::now()))?;
+        if let Err(error) = debugger.gdb.register(index, value) {
+            debugger.synchronized = false;
+            return Err(error.into());
+        }
+    }
+    // Keep later debugger operations' default request budget.
+    debugger.gdb.set_request_timeout(Duration::from_secs(5))?;
+    check()?;
+    if Instant::now() >= deadline {
+        return Err("notification invocation exceeded its wall deadline".into());
+    }
+    debugger.resume_guest_before(deadline)?;
     let now = session
         .engine
         .inputs
@@ -3624,6 +3696,21 @@ pub(super) fn invoke_notification(
         .as_mut()
         .ok_or("missing notification context")?
         .guest_start = Some(now);
+    context
+        .pending_notification
+        .as_mut()
+        .unwrap()
+        .main_tick_start = Some(tick);
+    context
+        .pending_notification
+        .as_mut()
+        .unwrap()
+        .main_guest_start = Some(main.guest_ms);
+    context
+        .pending_notification
+        .as_mut()
+        .unwrap()
+        .main_clock_updates = Some(main.clock_updates);
     context.final_phase += 1;
     Ok(json!({"message":message}))
 }
@@ -3650,6 +3737,39 @@ fn notification_frame_wait(
     }
 }
 
+fn notification_visible(changed: bool, active: u8) -> bool {
+    changed && active != 0
+}
+
+fn notification_cleared(
+    changed: bool,
+    active: u8,
+    invocation_ticks: u32,
+    clear_start: u32,
+    now: u32,
+) -> bool {
+    changed
+        && active == 0
+        && now.wrapping_sub(invocation_ticks) != 0
+        && now.wrapping_sub(clear_start) != 0
+}
+
+fn notification_clear_decision(
+    ready: bool,
+    start_ms: u32,
+    now_ms: u32,
+    limit_ms: u32,
+    wall_expired: bool,
+) -> NotificationFrameWait {
+    if wall_expired || now_ms.wrapping_sub(start_ms) >= limit_ms {
+        NotificationFrameWait::Expired
+    } else if ready {
+        NotificationFrameWait::Changed
+    } else {
+        NotificationFrameWait::Pending
+    }
+}
+
 pub(super) fn wait_notification_frame(
     session: &Session,
     options: &Options,
@@ -3660,6 +3780,7 @@ pub(super) fn wait_notification_frame(
     limit_ms: u32,
     guest_timeout_ms: u32,
     wall_timeout_s: u64,
+    shared: (Instant, u32, u32, u64, u16),
 ) -> Result<Value, Box<dyn std::error::Error>> {
     if context.final_phase != if clear { 19 } else { 17 } {
         return Err("notification frame wait out of order".into());
@@ -3669,6 +3790,15 @@ pub(super) fn wait_notification_frame(
         .as_ref()
         .ok_or("missing notification context")?;
     let start = pending.guest_start.ok_or("missing notification start")?;
+    let main_start = pending
+        .main_tick_start
+        .ok_or("missing MAIN tick baseline")?;
+    let main_guest_start = pending
+        .main_guest_start
+        .ok_or("missing MAIN clock baseline")?;
+    let main_clock_updates = pending
+        .main_clock_updates
+        .ok_or("missing MAIN clock generation")?;
     let baseline = if clear {
         pending.frame.ok_or("missing notification frame")?
     } else {
@@ -3678,18 +3808,128 @@ pub(super) fn wait_notification_frame(
             .ok_or("missing active snapshot")?
             .refreshed
     };
+    let deadline = (Instant::now() + Duration::from_secs(wall_timeout_s))
+        .min(shared.0 + Duration::from_secs(shared.3));
+    let check = || notification_observation_check(session, shared, wall_timeout_s);
+    let qmp = &session.engine.management[0];
+    let clear_start = if clear {
+        Some(l6max_host::freertos::ticks_before_checked(
+            qmp,
+            l6fw::Model::L6max,
+            deadline,
+            &check,
+        )?)
+    } else {
+        None
+    };
+    let clear_clock_updates = session
+        .engine
+        .inputs
+        .as_ref()
+        .ok_or("missing inputs")?
+        .main
+        .snapshot()
+        .clock_updates;
     let frame = loop {
-        let frame = capture_knob_frame(
+        let frame = capture_knob_frame_checked(
             session,
             options,
             guest_ms,
             artifact,
             guest_timeout_ms,
             wall_timeout_s,
+            || {
+                let panel_now = session
+                    .engine
+                    .inputs
+                    .as_ref()
+                    .ok_or("missing inputs")?
+                    .panel
+                    .snapshot()
+                    .guest_ms;
+                remaining_debug_wait(shared, panel_now, wall_timeout_s)?;
+                if Instant::now() >= deadline {
+                    Err("stock notification wait exceeded its wall deadline".into())
+                } else {
+                    Ok(())
+                }
+            },
         )?;
-        if notification_frame_wait(frame != baseline, start, start, limit_ms)
-            == NotificationFrameWait::Changed
-        {
+        let (active, _timer) = l6max_host::knob_popup::notification_state_before_checked(
+            qmp,
+            l6fw::Model::L6max,
+            deadline,
+            &check,
+        )?;
+        remaining_debug_wait(
+            shared,
+            session
+                .engine
+                .inputs
+                .as_ref()
+                .ok_or("missing inputs")?
+                .panel
+                .snapshot()
+                .guest_ms,
+            wall_timeout_s,
+        )?;
+        if clear {
+            let ticks = l6max_host::freertos::ticks_before_checked(
+                qmp,
+                l6fw::Model::L6max,
+                deadline,
+                &check,
+            )?;
+            let main = session
+                .engine
+                .inputs
+                .as_ref()
+                .ok_or("missing inputs")?
+                .main
+                .snapshot();
+            if !main.connected {
+                return Err("MAIN virtual clock disconnected".into());
+            }
+            remaining_debug_wait(
+                shared,
+                session
+                    .engine
+                    .inputs
+                    .as_ref()
+                    .ok_or("missing inputs")?
+                    .panel
+                    .snapshot()
+                    .guest_ms,
+                wall_timeout_s,
+            )?;
+            if Instant::now() >= deadline {
+                return Err("stock notification wait exceeded its wall deadline".into());
+            }
+            match notification_clear_decision(
+                main.clock_updates > main_clock_updates
+                    && main.clock_updates > clear_clock_updates
+                    && notification_cleared(
+                        frame != baseline,
+                        active,
+                        main_start,
+                        clear_start.unwrap(),
+                        ticks,
+                    ),
+                main_guest_start,
+                main.guest_ms,
+                limit_ms,
+                Instant::now() >= deadline,
+            ) {
+                NotificationFrameWait::Changed => break frame,
+                NotificationFrameWait::Expired => {
+                    return Err(
+                        "stock notification did not clear after its MAIN guest-time timeout".into(),
+                    );
+                }
+                NotificationFrameWait::Pending => continue,
+            }
+        }
+        if notification_visible(frame != baseline, active) {
             break frame;
         }
         let now = session
@@ -5028,6 +5268,53 @@ mod settle_level_observation_tests {
 #[cfg(test)]
 mod notification_frame_wait_tests {
     use super::*;
+    #[test]
+    fn clear_uses_main_progress_not_panel_time_and_requires_changed_pixels() {
+        // Panel can advance arbitrarily faster; only MAIN's guarded counter matters.
+        assert!(!notification_visible(true, 0));
+        assert!(!notification_visible(false, 1));
+        assert!(notification_visible(true, 1));
+        // Diverging panel time is deliberately absent; MAIN ms and wall bound decide.
+        assert_eq!(
+            notification_clear_decision(false, 100, 5099, 5000, false),
+            NotificationFrameWait::Pending
+        );
+        assert_eq!(
+            notification_clear_decision(false, 100, 5100, 5000, false),
+            NotificationFrameWait::Expired
+        );
+        assert_eq!(
+            notification_clear_decision(false, 100, 100, 5000, true),
+            NotificationFrameWait::Expired
+        );
+        assert_eq!(
+            notification_clear_decision(true, 100, 200, 5000, true),
+            NotificationFrameWait::Expired
+        );
+        assert_eq!(
+            notification_clear_decision(true, 100, 5100, 5000, false),
+            NotificationFrameWait::Expired
+        );
+        assert_eq!(
+            notification_clear_decision(true, u32::MAX - 10, 0, 5000, false),
+            NotificationFrameWait::Changed
+        );
+        assert!(!notification_cleared(true, 1, 100, 110, 120));
+        assert!(!notification_cleared(false, 0, 100, 110, 120));
+        assert!(!notification_cleared(true, 0, 100, 110, 110));
+        assert!(notification_cleared(true, 0, 100, 110, 120));
+        assert!(notification_cleared(true, 0, u32::MAX - 3, u32::MAX - 1, 1));
+    }
+    #[test]
+    fn late_notification_entry_honors_shared_wall_and_panel_guest_budgets() {
+        let now = Instant::now();
+        assert!(
+            remaining_debug_wait((now - Duration::from_secs(11), 100, 1000, 10, 0), 101, 600)
+                .is_err()
+        );
+        assert!(remaining_debug_wait((now, 100, 1000, 10, 0), 1101, 600).is_err());
+        assert!(remaining_debug_wait((now, 100, 1000, 10, 0), 1099, 600).is_ok());
+    }
     #[test]
     fn uses_original_guest_start_across_wrap_and_accepts_changed_frame_first() {
         let start = u32::MAX - 499;

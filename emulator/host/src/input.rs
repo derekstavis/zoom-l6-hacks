@@ -26,6 +26,8 @@ pub struct InputStatus {
     pub rejected: u64,
     pub frame_ready: u64,
     pub frame_guest_ms: u32,
+    /// CLOCK generation at the last MAIN frame, to reject stale clock samples.
+    pub frame_clock_updates: u64,
     pub indicator_updates: u64,
     pub indicators: [u32; 8],
     pub indicator_levels: [[u8; 24]; 8],
@@ -252,6 +254,7 @@ impl EngineInput {
                                 .unwrap_or_else(|error| error.into_inner());
                             state.frame_ready += 1;
                             state.frame_guest_ms = message.duration_ms;
+                            state.frame_clock_updates = state.clock_updates;
                         }
                         Ok(message)
                             if matches!(
@@ -693,6 +696,41 @@ mod tests {
         hub.down(53, 50).unwrap();
         let power = Message::read(&mut wire).unwrap();
         assert_eq!((power.kind, power.target), (protocol::DOWN, 53));
+    }
+
+    #[test]
+    fn frame_records_clock_generation_and_freshness() {
+        let (host, mut wire) = EngineInput::pair().unwrap();
+        for (kind, seq, target, ms) in [
+            (protocol::CLOCK, 1, 0, 100),
+            (protocol::FRAME_READY, 2, 0, 110),
+            (protocol::CLOCK, 3, 0, 200),
+        ] {
+            Message {
+                kind,
+                sequence: seq,
+                target,
+                value: 0,
+                duration_ms: ms,
+            }
+            .write(&mut wire)
+            .unwrap();
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while host.snapshot().clock_updates < 2 {
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(1));
+        }
+        let state = host.snapshot();
+        assert_eq!(
+            (
+                state.frame_ready,
+                state.frame_guest_ms,
+                state.frame_clock_updates
+            ),
+            (1, 110, 1)
+        );
+        assert_eq!((state.clock_updates, state.guest_ms), (2, 200));
     }
 
     #[test]

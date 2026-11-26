@@ -1996,3 +1996,32 @@ fn l6_indicator_campaign_requires_scope_coverage_and_previous_mute_snapshot() {
     let mute = "version=1\nname='mute'\nmodels=['l6']\nbackends=['headless']\n[[step]]\naction='l6-indicator-begin'\n[[step]]\naction='l6-mute-sample'\ncc=93\nvalue=0\nguest_ms=500\nexpected=[0,0,0,0,2048,0,0,0]\nreuse_previous=true\n[[step]]\naction='l6-indicator-end'\n";
     assert!(Scenario::parse(mute).is_err());
 }
+
+#[test]
+fn boot_ready_main_frame_quiet_uses_fresh_main_clock_across_wrap() {
+    let mut main = InputStatus {
+        connected: true,
+        frame_ready: 1,
+        frame_guest_ms: 10_000,
+        frame_clock_updates: 12,
+        clock_updates: 12,
+        guest_ms: 90_000,
+        ..Default::default()
+    };
+    // A fast panel clock and a stale MAIN heartbeat cannot establish readiness.
+    assert!(!main_display_quiet(&main));
+    main.clock_updates = 13;
+    main.guest_ms = 9_999; // heartbeat predates frame, despite its later arrival
+    assert!(!main_display_quiet(&main));
+    main.guest_ms = 10_999;
+    assert!(!main_display_quiet(&main));
+    main.guest_ms = 11_000;
+    assert!(main_display_quiet(&main));
+    main.frame_guest_ms = u32::MAX - 499;
+    main.guest_ms = 500;
+    assert!(main_display_quiet(&main));
+    main.connected = false;
+    assert!(!main_display_quiet(&main));
+    // A new guest/session must wait for both a frame and a new clock.
+    assert!(!main_display_quiet(&InputStatus::default()));
+}

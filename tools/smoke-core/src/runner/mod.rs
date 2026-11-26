@@ -36,6 +36,17 @@ struct SceneSaveState {
     release_count: u64,
 }
 
+// MAIN and panel have independent virtual clocks. A CLOCK sampled before the
+// last frame cannot establish how long MAIN has held that frame. Half-range
+// arithmetic rejects a stale sample while permitting the u32 millisecond wrap.
+fn main_display_quiet(main: &InputStatus) -> bool {
+    let elapsed = main.guest_ms.wrapping_sub(main.frame_guest_ms);
+    main.connected
+        && main.frame_ready > 0
+        && main.clock_updates > main.frame_clock_updates
+        && (1000..=i32::MAX as u32).contains(&elapsed)
+}
+
 fn panel_led_state(model: Model, data: PanelData, index: usize) -> bool {
     if model == Model::L6 {
         return l6_button_leds(data.indicators)[index];
@@ -52,7 +63,7 @@ impl Observation {
     fn summary(&self) -> Value {
         json!({"guest_ms": self.panel.guest_ms, "rings": rings(self.data.indicators), "rows": self.data.indicators,
             "ring_levels": l6max_host::indicators::ring_levels(self.data.indicator_levels),
-            "main": {"sent":self.main.sent,"applied":self.main.applied,"released":self.main.released,"frames":self.main.frame_ready,"frame_guest_ms":self.main.frame_guest_ms},
+            "main": {"sent":self.main.sent,"applied":self.main.applied,"released":self.main.released,"frames":self.main.frame_ready,"frame_guest_ms":self.main.frame_guest_ms,"guest_ms":self.main.guest_ms,"clock_updates":self.main.clock_updates},
             "panel": {"sent":self.panel.sent,"applied":self.panel.applied,"released":self.panel.released}, "encoder_reports":self.reports,"trace_counts":self.traces})
     }
 }
@@ -1781,8 +1792,8 @@ impl Runner {
                     if until == "boot-ready" {
                         // Without the setup floor, L6max also needs its screen
                         // to have held one frame for a guest second.
-                        let display_settled = !self.scenario.spec_state
-                            || obs.panel.guest_ms.wrapping_sub(obs.main.frame_guest_ms) >= 1000;
+                        let display_settled =
+                            !self.scenario.spec_state || main_display_quiet(&obs.main);
                         ready
                             && (self.model == Model::L6
                                 || (obs.data.display.iter().any(|b| *b != 0) && display_settled))

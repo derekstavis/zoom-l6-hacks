@@ -657,8 +657,9 @@ impl State {
                 Operation::EditorAssignCount { pad } => Some((5, Some(pad))),
                 Operation::EditorAssignFilename { pad } => Some((6, Some(pad))),
                 Operation::EditorAssignSend { pad } => Some((7, Some(pad))),
-                Operation::EditorAssignState { pad } => Some((8, Some(pad))),
-                Operation::EditorAssignEnd => Some((9, None)),
+                Operation::EditorAssignDialog { pad } => Some((8, Some(pad))),
+                Operation::EditorAssignState { pad } => Some((9, Some(pad))),
+                Operation::EditorAssignEnd => Some((10, None)),
                 _ => None,
             };
             if !expected.is_some_and(|(phase, pad)| {
@@ -3528,6 +3529,7 @@ impl State {
             | Operation::EditorAssignCount { .. }
             | Operation::EditorAssignFilename { .. }
             | Operation::EditorAssignSend { .. }
+            | Operation::EditorAssignDialog { .. }
             | Operation::EditorAssignState { .. }
             | Operation::EditorAssignEnd) => {
                 let scope = self
@@ -3558,6 +3560,7 @@ impl State {
                     Operation::EditorAssignCount { pad } => scope.count(session, pad)?,
                     Operation::EditorAssignFilename { pad } => scope.filename(session, pad)?,
                     Operation::EditorAssignSend { pad } => scope.assign(session, pad)?,
+                    Operation::EditorAssignDialog { pad } => scope.dialog(session, pad)?,
                     Operation::EditorAssignState { pad } => scope.state(session, pad)?,
                     Operation::EditorAssignEnd => scope.finish(options)?,
                     _ => unreachable!(),
@@ -3565,7 +3568,7 @@ impl State {
                 scope.check(session, guest_timeout_ms, wall_timeout_s)?;
                 if matches!(operation, Operation::EditorAssignState { .. }) {
                     scope.pad += 1;
-                    scope.phase = if scope.pad == 4 { 9 } else { 5 };
+                    scope.phase = if scope.pad == 4 { 10 } else { 5 };
                 } else {
                     scope.phase += 1;
                 }

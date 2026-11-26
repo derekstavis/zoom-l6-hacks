@@ -47,6 +47,12 @@ guest_timeout_ms = 60000
 wall_timeout_s = 900
 
 [[step]]
+action = "editor-assign-dialog"
+pad = 0
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
 action = "editor-assign-state"
 pad = 0
 guest_timeout_ms = 60000
@@ -71,6 +77,12 @@ guest_timeout_ms = 60000
 wall_timeout_s = 900
 
 [[step]]
+action = "editor-assign-dialog"
+pad = 1
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
 action = "editor-assign-state"
 pad = 1
 guest_timeout_ms = 60000
@@ -95,6 +107,12 @@ guest_timeout_ms = 60000
 wall_timeout_s = 900
 
 [[step]]
+action = "editor-assign-dialog"
+pad = 2
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
 action = "editor-assign-state"
 pad = 2
 guest_timeout_ms = 60000
@@ -114,6 +132,12 @@ wall_timeout_s = 900
 
 [[step]]
 action = "editor-assign-send"
+pad = 3
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-dialog"
 pad = 3
 guest_timeout_ms = 60000
 wall_timeout_s = 900

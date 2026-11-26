@@ -866,6 +866,11 @@ impl Runner {
                         pad,
                     }));
                 }
+                Action::EditorAssignDialog { pad } => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignDialog {
+                        pad,
+                    }));
+                }
                 Action::EditorAssignState { pad } => {
                     return Ok(Progress::Device(devices::Operation::EditorAssignState {
                         pad,

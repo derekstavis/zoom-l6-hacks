@@ -645,6 +645,9 @@ pub enum Action {
     EditorAssignSend {
         pad: u8,
     },
+    EditorAssignDialog {
+        pad: u8,
+    },
     EditorAssignState {
         pad: u8,
     },

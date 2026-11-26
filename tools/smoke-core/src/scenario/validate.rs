@@ -2142,8 +2142,9 @@ impl Scenario {
                     Action::EditorAssignCount { pad } => Some((5, Some(*pad))),
                     Action::EditorAssignFilename { pad } => Some((6, Some(*pad))),
                     Action::EditorAssignSend { pad } => Some((7, Some(*pad))),
-                    Action::EditorAssignState { pad } => Some((8, Some(*pad))),
-                    Action::EditorAssignEnd => Some((9, None)),
+                    Action::EditorAssignDialog { pad } => Some((8, Some(*pad))),
+                    Action::EditorAssignState { pad } => Some((9, Some(*pad))),
+                    Action::EditorAssignEnd => Some((10, None)),
                     _ => None,
                 };
                 match (scope, phase) {
@@ -2152,10 +2153,10 @@ impl Scenario {
                             && actual_pad.is_none_or(|v| v == pad)
                             && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
                     {
-                        scope = if actual == 9 {
+                        scope = if actual == 10 {
                             None
-                        } else if actual == 8 {
-                            Some((if pad == 3 { 9 } else { 5 }, pad + 1, guest, wall))
+                        } else if actual == 9 {
+                            Some((if pad == 3 { 10 } else { 5 }, pad + 1, guest, wall))
                         } else {
                             Some((want + 1, pad, guest, wall))
                         };

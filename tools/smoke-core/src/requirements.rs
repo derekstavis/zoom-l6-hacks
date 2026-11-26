@@ -430,6 +430,7 @@ pub fn of(action: &Action) -> Requirement {
         | Action::EditorAssignCount { .. }
         | Action::EditorAssignFilename { .. }
         | Action::EditorAssignSend { .. }
+        | Action::EditorAssignDialog { .. }
         | Action::EditorAssignState { .. }
         | Action::EditorAssignEnd
         | Action::EditorPlaybackBegin { .. }

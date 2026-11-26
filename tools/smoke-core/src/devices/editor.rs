@@ -832,13 +832,22 @@ impl EditorAssignmentScope {
             self.guest_budget,
             self.deadline,
         )?;
-        self.check(session, self.guest_budget, self.wall_budget)?;
-        if answer_editor_pad_dialog(
+        Ok(json!({"pad":pad+1,"assignment_replies":self.assignment_replies}))
+    }
+    pub(super) fn dialog(
+        &mut self,
+        session: &Session,
+        pad: u8,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        let control = l6ctl::OwnedControl::new(&session.engine);
+        let usb = &control;
+        let answered = answer_editor_pad_dialog(
             usb,
             self.endpoints.output,
             &mut self.encoder,
             &self.assignment_replies,
-        )? {
+        )?;
+        if answered {
             self.assignment_replies.extend(collect_editor_sysex(
                 session,
                 usb,
@@ -849,7 +858,9 @@ impl EditorAssignmentScope {
                 self.deadline,
             )?);
         }
-        Ok(json!({"pad":pad+1,"assignment_replies":self.assignment_replies}))
+        Ok(
+            json!({"pad":pad+1,"dialog_answered":answered,"assignment_replies":self.assignment_replies}),
+        )
     }
     pub(super) fn state(
         &mut self,

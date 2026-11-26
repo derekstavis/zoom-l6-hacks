@@ -4,19 +4,12 @@ use serde_json::{Value, json};
 
 /// Decode a 16-bit PCM or 32-bit float WAV; mono is copied to both channels.
 pub fn decode_wav(bytes: &[u8]) -> Result<Vec<[f64; 2]>, String> {
-    if bytes.len() < 12 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
-        return Err("source is not a RIFF/WAVE file".into());
-    }
+    let chunks = l6ctl::WavChunks::new(bytes).ok_or("source is not a RIFF/WAVE file")?;
     let mut format = None;
-    let mut offset = 12;
-    while offset + 8 <= bytes.len() {
-        let size = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
-        let body = offset + 8;
-        let end = body.saturating_add(size).min(bytes.len());
-        match &bytes[offset..offset + 4] {
-            b"fmt " if end - body >= 16 => {
-                let field =
-                    |at: usize| u16::from_le_bytes([bytes[body + at], bytes[body + at + 1]]);
+    for (id, body) in chunks {
+        match id {
+            b"fmt " if body.len() >= 16 => {
+                let field = |at: usize| u16::from_le_bytes([body[at], body[at + 1]]);
                 format = Some((field(0), field(2), field(14)));
             }
             b"data" => {
@@ -26,11 +19,11 @@ pub fn decode_wav(bytes: &[u8]) -> Result<Vec<[f64; 2]>, String> {
                 }
                 let channels = usize::from(channels);
                 let samples: Vec<f64> = match (tag, bits) {
-                    (1, 16) => bytes[body..end]
+                    (1, 16) => body
                         .chunks_exact(2)
                         .map(|s| f64::from(i16::from_le_bytes(s.try_into().unwrap())) / 32768.)
                         .collect(),
-                    (3, 32) => bytes[body..end]
+                    (3, 32) => body
                         .chunks_exact(4)
                         .map(|s| f64::from(f32::from_le_bytes(s.try_into().unwrap())))
                         .collect(),
@@ -43,7 +36,6 @@ pub fn decode_wav(bytes: &[u8]) -> Result<Vec<[f64; 2]>, String> {
             }
             _ => {}
         }
-        offset = body.saturating_add(size + (size & 1));
     }
     Err("WAV has no data chunk".into())
 }
@@ -246,5 +238,12 @@ mod tests {
             .collect();
         assert_eq!(decode_wav(&wav(3, 2, 32, &float)).unwrap(), [[0.25, -0.5]]);
         assert!(decode_wav(&wav(1, 2, 24, &[0; 6])).is_err());
+        // Analysis accepts a zero sample rate but limits channels and formats.
+        assert_eq!(
+            decode_wav(&wav(1, 1, 16, &[0, 0x40])).unwrap(),
+            [[0.5, 0.5]]
+        );
+        assert!(decode_wav(&wav(1, 3, 16, &[0; 6])).is_err());
+        assert!(decode_wav(&wav(0xfffe, 1, 16, &[0; 2])).is_err());
     }
 }

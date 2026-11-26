@@ -32,6 +32,7 @@ pub mod sd_loader;
 pub mod sd_patches;
 pub mod shared_memory;
 pub mod sound_pad;
+pub mod wav;
 
 pub mod controls;
 pub mod indicators;

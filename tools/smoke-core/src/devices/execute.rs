@@ -17,8 +17,8 @@ fn knob_dialog_phase(
     bitmap_capture: Option<u8>,
 ) -> Option<u16> {
     match operation {
-        Operation::KnobBitmapReactivate { .. } => return Some(82),
-        Operation::KnobBitmapWaitActive => return Some(83),
+        Operation::KnobBitmapReactivate { .. } => return Some(86),
+        Operation::KnobBitmapWaitActive => return Some(87),
         _ => {}
     }
     let fixed = match operation {
@@ -41,7 +41,11 @@ fn knob_dialog_phase(
         Operation::KnobRaceSample => Some(38),
         Operation::KnobRaceRestore => Some(39),
         Operation::KnobRaceAssert => Some(40),
-        Operation::KnobDialogFirstActivation => Some(41),
+        Operation::KnobActivationTrigger => return Some(41),
+        Operation::KnobActivationWait => return Some(42),
+        Operation::KnobActivationSample => return Some(43),
+        Operation::KnobActivationRestore => return Some(44),
+        Operation::KnobActivationAssert => return Some(45),
         Operation::KnobActiveBegin => Some(42),
         Operation::EnqueueEncoderNoAck { .. } if active_display => Some(43),
         Operation::CaptureDisplay { .. } if active_display => Some(44),
@@ -155,7 +159,7 @@ fn knob_dialog_phase(
         _ => None,
     };
     if let Some(phase) = fixed {
-        return Some(phase + u16::from(phase >= 82) * 2);
+        return Some(phase + u16::from(phase >= 42) * 4 + u16::from(phase >= 82) * 2);
     }
     let scope = scope?;
     let offset = match operation {
@@ -176,7 +180,7 @@ fn knob_dialog_phase(
         Operation::KnobDialogModeEnd => 10,
         _ => return None,
     };
-    Some(111 + scope.index as u16 * 11 + offset)
+    Some(115 + scope.index as u16 * 11 + offset)
 }
 
 type KnobDeadline = (Instant, u32, u32, u64, u16);
@@ -3668,19 +3672,41 @@ impl State {
                     .as_mut()
                     .ok_or("missing knob-dialog preflight")?,
             ),
-            Operation::KnobDialogFirstActivation => {
-                let context = self
-                    .knob_dialog_preflight
+            Operation::KnobActivationTrigger => activation_trigger(
+                session,
+                self.knob_dialog_preflight
                     .as_mut()
-                    .ok_or("missing knob-dialog preflight")?;
-                run_first_activation(
-                    session,
-                    context,
-                    guest_timeout_ms,
-                    wall_timeout_s,
-                    shared.ok_or("missing shared deadline")?,
-                )
-            }
+                    .ok_or("missing knob-dialog preflight")?,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobActivationWait => activation_wait(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                guest_timeout_ms,
+                wall_timeout_s,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobActivationSample => activation_sample(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobActivationRestore => activation_restore(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobActivationAssert => activation_assert(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
             Operation::KnobActiveBegin => begin_active_display(
                 options,
                 self.knob_dialog_preflight
@@ -4594,7 +4620,11 @@ mod knob_phase_tests {
             Operation::KnobRaceSample,
             Operation::KnobRaceRestore,
             Operation::KnobRaceAssert,
-            Operation::KnobDialogFirstActivation,
+            Operation::KnobActivationTrigger,
+            Operation::KnobActivationWait,
+            Operation::KnobActivationSample,
+            Operation::KnobActivationRestore,
+            Operation::KnobActivationAssert,
             Operation::KnobActiveBegin,
             Operation::EnqueueEncoderNoAck {
                 channel: 1,
@@ -4756,31 +4786,31 @@ mod knob_phase_tests {
                     pending,
                     next_mode,
                     Some(0),
-                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 100,
-                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 109,
-                    (matches!(operation, Operation::EnqueueEncoderNoAck { .. }) && before.4 == 43)
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 104,
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 113,
+                    (matches!(operation, Operation::EnqueueEncoderNoAck { .. }) && before.4 == 47)
                         || (matches!(operation, Operation::CaptureDisplay { .. })
-                            && before.4 == 44),
+                            && before.4 == 48),
                     if (3..33).contains(&before.4) {
                         Some(usize::from((before.4 - 3) / 6))
                     } else {
                         None
                     },
-                    matches!(operation, Operation::EnqueueEncoderNoAck { .. }) && before.4 == 59,
-                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 65,
-                    if matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 52 {
+                    matches!(operation, Operation::EnqueueEncoderNoAck { .. }) && before.4 == 63,
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 69,
+                    if matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 56 {
                         Some(2)
                     } else if matches!(operation, Operation::CaptureDisplay { .. })
-                        && before.4 == 55
+                        && before.4 == 59
                     {
                         Some(5)
                     } else {
                         None
                     },
-                    if matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 86 {
+                    if matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 90 {
                         Some(1)
                     } else if matches!(operation, Operation::CaptureDisplay { .. })
-                        && before.4 == 91
+                        && before.4 == 95
                     {
                         Some(6)
                     } else {

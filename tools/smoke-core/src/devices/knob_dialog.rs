@@ -78,6 +78,35 @@ impl KnobDebugSession {
         finish_temporary_write(&mut self.writes, restoring);
         Ok(())
     }
+    fn write_before(
+        &mut self,
+        address: u32,
+        data: &[u8],
+        deadline: Instant,
+        mut check: impl FnMut() -> std::io::Result<()>,
+    ) -> std::io::Result<()> {
+        check()?;
+        let before = self
+            .qmp
+            .read_memory_before(0, address, data.len(), deadline)?;
+        check()?;
+        let restoring = begin_temporary_write(&mut self.writes, address, before, data)?;
+        let result = self.gdb.write_before(address, data, deadline);
+        if result.is_err() {
+            self.synchronized = false;
+        }
+        result?;
+        check()?;
+        finish_temporary_write(&mut self.writes, restoring);
+        Ok(())
+    }
+    fn read_register_before(&mut self, index: u32, deadline: Instant) -> std::io::Result<u32> {
+        let result = self.gdb.read_register_before(index, deadline);
+        if result.is_err() {
+            self.synchronized = false;
+        }
+        result
+    }
     fn handoff_mailbox(&mut self, address: u32) {
         self.writes.retain(|(at, _)| *at != address);
         self.mailbox_pending = true;
@@ -779,6 +808,9 @@ pub(super) struct PreflightContext {
     callback_race: Option<CallbackRace>,
     activation_semaphore_count: Option<Vec<u8>>,
     activation_callback: Option<u32>,
+    activation_phase: u8,
+    activation_started: Option<(u32, Instant)>,
+    activation_snapshot: Option<FirstActivationSnapshot>,
     active: Option<ActiveSnapshot>,
     opened: Option<OpenedOverlay>,
     task_contexts: Option<TaskContexts>,
@@ -934,6 +966,9 @@ pub(super) fn begin_preflight(
         callback_race: None,
         activation_semaphore_count: None,
         activation_callback: None,
+        activation_phase: 0,
+        activation_started: None,
+        activation_snapshot: None,
         active: None,
         opened: None,
         task_contexts: None,
@@ -1454,162 +1489,376 @@ fn activation_baseline_ready(state: &[u8], slot: u32, callback: u32, semaphore: 
         && semaphore == 0u32.to_le_bytes()
 }
 
-pub(super) fn run_first_activation(
+#[derive(Clone)]
+struct FirstActivationSnapshot {
+    state: Vec<u8>,
+    slot: u32,
+    heap: Vec<u32>,
+    held: bool,
+    diagnostic: Option<String>,
+    failed: bool,
+}
+type ActivationBudget = (Instant, u32, u32, u64, u16);
+const ACTIVATION_KNOB_DELTA: i32 = -1;
+fn activation_encoder_steps() -> i32 {
+    ACTIVATION_KNOB_DELTA.saturating_neg()
+}
+fn activation_read(
+    session: &Session,
+    address: u32,
+    length: usize,
+    shared: ActivationBudget,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    let deadline = shared.0 + Duration::from_secs(shared.3);
+    let bytes = l6ctl::OwnedControl::new(&session.engine)
+        .read_main_memory_before(address, length, deadline)?
+        .bytes;
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    Ok(bytes)
+}
+fn activation_word(
+    session: &Session,
+    address: u32,
+    shared: ActivationBudget,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    Ok(u32::from_le_bytes(
+        activation_read(session, address, 4, shared)?
+            .try_into()
+            .map_err(|_| "short activation word")?,
+    ))
+}
+fn activation_local_expired(
+    now: Instant,
+    deadline: Instant,
+    guest_now: u32,
+    start: u32,
+    guest: u32,
+) -> bool {
+    now >= deadline || guest_now.wrapping_sub(start) >= guest.min(10_000)
+}
+fn activation_local_check(
+    session: &Session,
+    start: u32,
+    guest: u32,
+    deadline: Instant,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if activation_local_expired(
+        Instant::now(),
+        deadline,
+        session
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or("missing inputs")?
+            .panel
+            .snapshot()
+            .guest_ms,
+        start,
+        guest,
+    ) {
+        Err("knob dialog did not render while the notification lock was held".into())
+    } else {
+        Ok(())
+    }
+}
+fn activation_read_local(
+    session: &Session,
+    address: u32,
+    length: usize,
+    shared: ActivationBudget,
+    start: u32,
+    guest: u32,
+    deadline: Instant,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    activation_local_check(session, start, guest, deadline)?;
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    let bytes = l6ctl::OwnedControl::new(&session.engine)
+        .read_main_memory_before(
+            address,
+            length,
+            deadline.min(shared.0 + Duration::from_secs(shared.3)),
+        )?
+        .bytes;
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    activation_local_check(session, start, guest, deadline)?;
+    Ok(bytes)
+}
+fn activation_word_local(
+    session: &Session,
+    address: u32,
+    shared: ActivationBudget,
+    start: u32,
+    guest: u32,
+    deadline: Instant,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    Ok(u32::from_le_bytes(
+        activation_read_local(session, address, 4, shared, start, guest, deadline)?
+            .try_into()
+            .map_err(|_| "short activation word")?,
+    ))
+}
+pub(super) fn activation_trigger(
     session: &Session,
     context: &mut PreflightContext,
-    guest_timeout_ms: u32,
-    wall_timeout_s: u64,
-    shared: (std::time::Instant, u32, u32, u64, u16),
+    shared: ActivationBudget,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    use std::time::Instant;
-    if context.next != 6 {
-        return Err("knob-dialog activation step is out of order".into());
+    if context.next != 6 || context.activation_phase != 0 {
+        return Err("activation trigger out of order".into());
     }
-    let qmp = &session.engine.management[0];
-    let inputs = session.engine.inputs.as_ref().unwrap();
-    let notification_semaphore = context.notification_semaphore;
-    let widget7 = context.widget7;
-    let widget33 = context.widget33;
-    let background10 = context.background10;
-    let original_widget7 = &context.original_widget7;
-    let original_background_layers = &context.original_background_layers;
-    let heap_before = &context.heap_before;
-    let semaphore_count = context
-        .activation_semaphore_count
-        .as_ref()
-        .ok_or("missing saved semaphore")?;
-    let callback_pointer = context
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    let callback = context
         .activation_callback
         .ok_or("missing callback pointer")?;
-    let debugger = context
+    if context.activation_semaphore_count.is_none() {
+        return Err("missing saved semaphore".into());
+    }
+    let deadline = shared.0 + Duration::from_secs(shared.3);
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    session.engine.management[0].stop_before(deadline)?;
+    let before = activation_read(session, l6max::gui_bitmap_table_entry_0, 4, shared)?;
+    let slot = activation_word(session, l6max::gui_display_callback_table + 20, shared)?;
+    let semaphore = activation_read(session, context.notification_semaphore + 56, 4, shared)?;
+    if !activation_baseline_ready(&before, slot, callback, &semaphore) {
+        return Err(format!("knob-dialog activation baseline changed: state={before:02x?}, slot={slot:#010x}, semaphore={semaphore:02x?}").into());
+    }
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    // `InputHub::knob(0, -1)` uses the opposite raw encoder polarity.
+    l6ctl::OwnedControl::new(&session.engine).encoder(1, activation_encoder_steps())?;
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    context
         .debugger
         .as_mut()
-        .ok_or("missing knob-dialog debugger")?;
-    let word = |address: u32| -> Result<u32, Box<dyn std::error::Error>> {
-        Ok(u32::from_le_bytes(
-            qmp.read_memory(0, address, 4)?.try_into().unwrap(),
-        ))
-    };
-    let heap = || -> Result<Vec<u32>, Box<dyn std::error::Error>> {
-        Ok(qmp
-            .read_memory(0, l6max::xFreeBytesRemaining, 16)?
-            .chunks_exact(4)
-            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
-            .collect())
-    };
-    // Recheck the cross-step baseline while stopped: no previous event or
-    // callback can satisfy the return observation for this retry.
-    qmp.stop()?;
-    let before = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
-    let before_slot = word(l6max::gui_display_callback_table + 20)?;
-    let before_semaphore = qmp.read_memory(0, notification_semaphore + 56, 4)?;
-    if !activation_baseline_ready(&before, before_slot, callback_pointer, &before_semaphore) {
-        return Err(format!("knob-dialog activation baseline changed: state={before:02x?}, slot={before_slot:#010x}, semaphore={before_semaphore:02x?}").into());
+        .ok_or("missing knob-dialog debugger")?
+        .resume_guest_before(deadline)?;
+    context.activation_started = Some((inputs.panel.snapshot().guest_ms, Instant::now()));
+    context.activation_phase = 1;
+    Ok(json!({"baseline":before,"callback":slot,"semaphore":semaphore,"delta":-1}))
+}
+pub(super) fn activation_wait(
+    session: &Session,
+    context: &mut PreflightContext,
+    guest: u32,
+    wall: u64,
+    shared: ActivationBudget,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.activation_phase != 1 {
+        return Err("activation wait out of order".into());
     }
-    if super::execute::deadline_exceeded(
-        shared.0.elapsed(),
-        shared.1,
-        inputs.panel.snapshot().guest_ms,
-        shared.2,
-        shared.3,
-    ) {
-        return Err("knob-dialog activation exceeded its shared deadline before retry".into());
-    }
-    // Enqueue while MAIN is stopped, then resume it. Panel/UART work may
-    // still be in flight independently.
-    inputs.knob(0, -1)?;
-    debugger.resume_guest()?;
-    let contention_start = inputs.panel.snapshot().guest_ms;
-    let contention_deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(180));
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    let (start, wall_start) = context
+        .activation_started
+        .ok_or("missing activation start")?;
+    let deadline = (shared.0 + Duration::from_secs(shared.3))
+        .min(wall_start + Duration::from_secs(wall.min(180)));
+    let callback = context
+        .activation_callback
+        .ok_or("missing callback pointer")?;
     loop {
+        remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+        if inputs.panel.snapshot().guest_ms.wrapping_sub(start) >= guest.min(10_000)
+            || Instant::now() >= deadline
+        {
+            return Err("knob dialog did not render while the notification lock was held".into());
+        }
         session.poll()?;
-        let state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
-        let slot = word(l6max::gui_display_callback_table + 20)?;
+        activation_local_check(session, start, guest, deadline)?;
+        let state = activation_read_local(
+            session,
+            l6max::gui_bitmap_table_entry_0,
+            4,
+            shared,
+            start,
+            guest,
+            deadline,
+        )?;
+        let slot = activation_word_local(
+            session,
+            l6max::gui_display_callback_table + 20,
+            shared,
+            start,
+            guest,
+            deadline,
+        )?;
         if state.len() == 4
             && u16::from_le_bytes([state[0], state[1]]) == 0x4b4e
             && state[2] != 0
             && state[3] == u8::MAX
             && slot & 1 == 1
         {
-            // Coherently sample the running word after stopping QEMU. A
-            // zero here proves the callback that set ticks returned.
-            qmp.stop()?;
-            let stopped_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
-            let stopped_slot = word(l6max::gui_display_callback_table + 20)?;
-            let running = word(DISPLAY_CYCLE2_SLOT5_RUNNING)?;
-            if callback_first_use_ready(&stopped_state, stopped_slot, callback_pointer, running) {
-                break;
+            if Instant::now() >= deadline
+                || inputs.panel.snapshot().guest_ms.wrapping_sub(start) >= guest.min(10_000)
+            {
+                return Err(
+                    "knob dialog did not render while the notification lock was held".into(),
+                );
             }
-            debugger.resume_guest()?;
+            session.engine.management[0].stop_before(deadline)?;
+            activation_local_check(session, start, guest, deadline)?;
+            let stopped = activation_read_local(
+                session,
+                l6max::gui_bitmap_table_entry_0,
+                4,
+                shared,
+                start,
+                guest,
+                deadline,
+            )?;
+            let stopped_slot = activation_word_local(
+                session,
+                l6max::gui_display_callback_table + 20,
+                shared,
+                start,
+                guest,
+                deadline,
+            )?;
+            let running = activation_word_local(
+                session,
+                DISPLAY_CYCLE2_SLOT5_RUNNING,
+                shared,
+                start,
+                guest,
+                deadline,
+            )?;
+            if Instant::now() >= deadline
+                || inputs.panel.snapshot().guest_ms.wrapping_sub(start) >= guest.min(10_000)
+            {
+                return Err(
+                    "knob dialog did not render while the notification lock was held".into(),
+                );
+            }
+            if callback_first_use_ready(&stopped, stopped_slot, callback, running) {
+                context.activation_phase = 2;
+                return Ok(json!({"callback":stopped_slot,"state":stopped,"running":running}));
+            }
+            context
+                .debugger
+                .as_mut()
+                .ok_or("missing knob-dialog debugger")?
+                .resume_guest_before(deadline)?;
+            activation_local_check(session, start, guest, deadline)?;
         }
-        if inputs
-            .panel
-            .snapshot()
-            .guest_ms
-            .wrapping_sub(contention_start)
-            >= guest_timeout_ms.min(10_000)
-            || Instant::now() >= contention_deadline
-        {
-            return Err("knob dialog did not render while the notification lock was held".into());
-        }
-        thread::sleep(Duration::from_millis(5));
+        std::thread::sleep(Duration::from_millis(5));
     }
-    let first_state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
-    let first_slot5 = u32::from_le_bytes(
-        qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?
-            .try_into()
-            .unwrap(),
-    );
-    let heap_while_locked = heap()?;
-    let notification_lock_still_held =
-        qmp.read_memory(0, notification_semaphore + 56, 4)? == 0u32.to_le_bytes();
-    let dialog_without_notification_lock = u16::from_le_bytes(first_state[..2].try_into().unwrap())
-== 0x4b4e
-&& first_slot5 & 1 == 1
-&& qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 3, 1)? == u8::MAX.to_le_bytes()
-// A nonzero timeout means a scene is showing; its descriptors are
-// already back on their stock layers.
-&& first_state[2] != 0
-&& qmp.read_memory(0, widget7, 16)? == *original_widget7
-&& qmp.read_memory(0, background10, 1)? == original_background_layers[0]
-&& notification_lock_still_held;
-    let first_use_failed = !dialog_without_notification_lock
-        || heap_while_locked[2] != heap_before[2]
-        || heap_while_locked[3] != heap_before[3];
-    // Preserve the stopped snapshot before releasing the lock: ticks and
-    // mailbox acknowledgement can become visible before rendering returns.
-    let diagnostic = if first_use_failed {
-        let widget7_read = qmp
-            .read_memory(0, widget7, 16)
-            .map_err(|error| error.to_string());
-        let widget33_read = qmp
-            .read_memory(0, widget33, 16)
-            .map_err(|error| error.to_string());
-        let background10_read = qmp
-            .read_memory(0, background10, 1)
-            .map_err(|error| error.to_string());
-        let pc = match debugger.read_register(15) {
-        Ok(pc) => pc,
-        Err(error) => return Err(format!(
-            "dialog first use failed: state={first_state:02x?}, slot5={first_slot5:#010x}, heap={heap_while_locked:?}, notification_lock_still_held={notification_lock_still_held}, actual_widget7={widget7_read:02x?}, actual_widget33={widget33_read:02x?}, actual_background10={background10_read:02x?}, stopped_pc_error={error}"
-        ).into()),
-    };
-        Some((widget7_read, widget33_read, background10_read, pc))
+}
+pub(super) fn activation_sample(
+    session: &Session,
+    context: &mut PreflightContext,
+    shared: ActivationBudget,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.activation_phase != 2 {
+        return Err("activation sample out of order".into());
+    }
+    let state = activation_read(session, l6max::gui_bitmap_table_entry_0, 4, shared)?;
+    let slot = activation_word(session, l6max::gui_display_callback_table + 20, shared)?;
+    let heap = activation_read(session, l6max::xFreeBytesRemaining, 16, shared)?
+        .chunks_exact(4)
+        .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    let held = activation_read(session, context.notification_semaphore + 56, 4, shared)?
+        == 0u32.to_le_bytes();
+    let valid = u16::from_le_bytes(state[..2].try_into().unwrap()) == 0x4b4e
+        && slot & 1 == 1
+        && activation_read(session, l6max::gui_bitmap_table_entry_0 + 3, 1, shared)?
+            == u8::MAX.to_le_bytes()
+        && state[2] != 0
+        && activation_read(session, context.widget7, 16, shared)? == context.original_widget7
+        && activation_read(session, context.background10, 1, shared)?
+            == context.original_background_layers[0]
+        && held;
+    let failed = !valid || heap[2] != context.heap_before[2] || heap[3] != context.heap_before[3];
+    let diagnostic = if failed {
+        let widget7 =
+            activation_read(session, context.widget7, 16, shared).map_err(|e| e.to_string());
+        let widget33 =
+            activation_read(session, context.widget33, 16, shared).map_err(|e| e.to_string());
+        let background =
+            activation_read(session, context.background10, 1, shared).map_err(|e| e.to_string());
+        let pc = (|| -> Result<u32, String> {
+            let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+            remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)
+                .map_err(|e| e.to_string())?;
+            let pc = context
+                .debugger
+                .as_mut()
+                .ok_or("missing knob-dialog debugger")?
+                .read_register_before(15, shared.0 + Duration::from_secs(shared.3))
+                .map_err(|e| e.to_string())?;
+            remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)
+                .map_err(|e| e.to_string())?;
+            Ok(pc)
+        })();
+        Some(format!(
+            "actual_widget7={widget7:02x?}, actual_widget33={widget33:02x?}, actual_background10={background:02x?}, stopped_pc={pc:?}"
+        ))
     } else {
         None
     };
-    debugger.write(notification_semaphore + 56, semaphore_count)?;
-    debugger.resume_guest()?;
-    if first_use_failed {
-        return Err(format!(
-        "dialog first use failed: state={first_state:02x?}, slot5={first_slot5:#010x}, heap={heap_while_locked:?}, notification_lock_still_held={notification_lock_still_held}, actual_widget7_widget33_background10_pc={diagnostic:02x?}"
-    ).into());
+    context.activation_snapshot = Some(FirstActivationSnapshot {
+        state: state.clone(),
+        slot,
+        heap: heap.clone(),
+        held,
+        diagnostic,
+        failed,
+    });
+    context.activation_phase = 3;
+    Ok(json!({"state":state,"callback":slot,"heap":heap,"notification_lock_still_held":held}))
+}
+pub(super) fn activation_restore(
+    session: &Session,
+    context: &mut PreflightContext,
+    shared: ActivationBudget,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.activation_phase != 3 {
+        return Err("activation restore out of order".into());
     }
-
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    let deadline = shared.0 + Duration::from_secs(shared.3);
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    let debugger = context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob-dialog debugger")?;
+    debugger.write_before(
+        context.notification_semaphore + 56,
+        context
+            .activation_semaphore_count
+            .as_ref()
+            .ok_or("missing saved semaphore")?,
+        deadline,
+        || {
+            remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)
+                .map(|_| ())
+                .map_err(|e| std::io::Error::other(e.to_string()))
+        },
+    )?;
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    debugger.resume_guest_before(deadline)?;
     context.activation_semaphore_count = None;
+    context.activation_phase = 4;
+    Ok(json!({"semaphore_restored":true}))
+}
+pub(super) fn activation_assert(
+    context: &mut PreflightContext,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    if context.activation_phase != 4 {
+        return Err("activation assertion out of order".into());
+    }
+    let sample = context
+        .activation_snapshot
+        .take()
+        .ok_or("missing activation snapshot")?;
+    if sample.failed {
+        return Err(format!("dialog first use failed: state={:02x?}, slot5={:#010x}, heap={:?}, notification_lock_still_held={}, {}",sample.state,sample.slot,sample.heap,sample.held,sample.diagnostic.as_deref().unwrap_or("diagnostics unavailable")).into());
+    }
+    context.activation_phase = 0;
+    context.activation_started = None;
     context.next = 7;
     Ok(
-        json!({"dialog_without_notification_lock": true, "state": first_state, "callback":first_slot5, "heap":heap_while_locked, "notification_lock_still_held":notification_lock_still_held}),
+        json!({"dialog_without_notification_lock":true,"state":sample.state,"callback":sample.slot,"heap":sample.heap,"notification_lock_still_held":sample.held}),
     )
 }
 
@@ -5712,5 +5961,45 @@ mod callback_race_deadline_tests {
             deadline + Duration::from_secs(1),
             deadline
         ));
+    }
+}
+
+#[cfg(test)]
+mod activation_deadline_tests {
+    use super::*;
+    #[test]
+    fn typed_encoder_matches_legacy_knob_polarity() {
+        use std::os::unix::net::UnixStream;
+        let (main, _main_peer) = UnixStream::pair().unwrap();
+        let (panel, mut panel_peer) = UnixStream::pair().unwrap();
+        let inputs = l6max_host::input::InputHub::new(
+            l6max_host::input::EngineInput::new(main).unwrap(),
+            l6max_host::input::EngineInput::new(panel).unwrap(),
+            l6fw::Model::L6max,
+        );
+        inputs.knob(0, ACTIVATION_KNOB_DELTA).unwrap();
+        let message = l6max_host::protocol::Message::read(&mut panel_peer).unwrap();
+        assert_eq!(
+            (message.kind, message.target, message.value),
+            (
+                l6max_host::protocol::ENCODER_STEP,
+                0,
+                activation_encoder_steps()
+            )
+        );
+    }
+    #[test]
+    fn local_deadline_rejects_late_read_and_handles_guest_wrap() {
+        let now = Instant::now();
+        let deadline = now + Duration::from_secs(1);
+        assert!(!activation_local_expired(
+            now,
+            deadline,
+            2,
+            u32::MAX - 5,
+            10
+        ));
+        assert!(activation_local_expired(now, deadline, 4, u32::MAX - 5, 10));
+        assert!(activation_local_expired(deadline, deadline, 0, 0, 10_000));
     }
 }

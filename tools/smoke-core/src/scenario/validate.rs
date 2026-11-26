@@ -1626,8 +1626,8 @@ impl Scenario {
                 Action::KnobDialogBaseline => "knob-dialog-guard",
                 Action::KnobDialogPreflightBegin => "knob-dialog-baseline",
                 Action::KnobRaceBegin => "knob-probe-assert",
-                Action::KnobDialogFirstActivation => "knob-race-assert",
-                Action::KnobActiveBegin => "knob-dialog-first-activation",
+                Action::KnobActivationTrigger => "knob-race-assert",
+                Action::KnobActiveBegin => "knob-activation-assert",
                 Action::KnobLevelBegin => "knob-active-finish",
                 Action::KnobTaskBegin => "knob-level-finish",
                 Action::KnobOverlayBegin => "knob-task-finish",
@@ -1662,8 +1662,8 @@ impl Scenario {
                         "knob-race-assert" => {
                             matches!(previous.action, Action::KnobRaceAssert)
                         }
-                        "knob-dialog-first-activation" => {
-                            matches!(previous.action, Action::KnobDialogFirstActivation)
+                        "knob-activation-assert" => {
+                            matches!(previous.action, Action::KnobActivationAssert)
                         }
                         "knob-active-finish" => {
                             matches!(previous.action, Action::KnobActiveFinish)
@@ -1747,18 +1747,33 @@ impl Scenario {
                     return Err("knob-dialog preflight must end with the diagnostic".into());
                 };
                 let subsequent = &applicable[..=end];
-                if subsequent.len() < 182
+                if subsequent.len() < 186
                     || !super::valid_preflight_probe_steps(&subsequent[0..30])
                     || !super::valid_callback_race_steps(&subsequent[30..38])
-                    || !matches!(subsequent[38].action, Action::KnobDialogFirstActivation)
-                    || !super::valid_active_display_steps(&subsequent[39..46])
-                    || !super::valid_level_demo_steps(&subsequent[46..54])
-                    || !super::valid_task_context_steps(&subsequent[54..64])
-                    || !super::valid_overlay_invariant_steps(&subsequent[64..79])
-                    || !super::valid_bitmap_probe_steps(&subsequent[79..93])
-                    || !super::valid_refreshed_overlay_steps(&subsequent[93..100])
-                    || !super::valid_locked_update_steps(&subsequent[100..108])
-                    || !valid_knob_mode_steps(&subsequent[108..subsequent.len().saturating_sub(63)])
+                    || !matches!(
+                        (
+                            &subsequent[38].action,
+                            &subsequent[39].action,
+                            &subsequent[40].action,
+                            &subsequent[41].action,
+                            &subsequent[42].action
+                        ),
+                        (
+                            Action::KnobActivationTrigger,
+                            Action::KnobActivationWait,
+                            Action::KnobActivationSample,
+                            Action::KnobActivationRestore,
+                            Action::KnobActivationAssert
+                        )
+                    )
+                    || !super::valid_active_display_steps(&subsequent[43..50])
+                    || !super::valid_level_demo_steps(&subsequent[50..58])
+                    || !super::valid_task_context_steps(&subsequent[58..68])
+                    || !super::valid_overlay_invariant_steps(&subsequent[68..83])
+                    || !super::valid_bitmap_probe_steps(&subsequent[83..97])
+                    || !super::valid_refreshed_overlay_steps(&subsequent[97..104])
+                    || !super::valid_locked_update_steps(&subsequent[104..112])
+                    || !valid_knob_mode_steps(&subsequent[112..subsequent.len().saturating_sub(63)])
                     || !valid_invalid_tag_steps(
                         &subsequent[subsequent.len().saturating_sub(63)
                             ..subsequent.len().saturating_sub(56)],

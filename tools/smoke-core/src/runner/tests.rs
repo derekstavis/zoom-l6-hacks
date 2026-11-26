@@ -1641,7 +1641,9 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
     );
     let activation = concat!(
         include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/callback-race.toml"),
-        "\n[[step]]\naction='knob-dialog-first-activation'\nguest_timeout_ms=180000\nwall_timeout_s=600\n"
+        include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/first-activation.toml"
+        )
     );
     let active_demo = concat!(
         include_str!(

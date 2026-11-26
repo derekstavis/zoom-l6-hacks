@@ -138,9 +138,10 @@ path = "patches/knob-dialog/tests/emulator/fragments/callback-race.toml"
 include_guest_timeout_ms = 180000
 include_wall_timeout_s = 300
 [[step]]
-action = "knob-dialog-first-activation"
-guest_timeout_ms = 180000
-wall_timeout_s = 300
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/first-activation.toml"
+include_guest_timeout_ms = 180000
+include_wall_timeout_s = 300
 [[step]]
 action = "include"
 path = "patches/knob-dialog/tests/emulator/fragments/active-display.toml"

@@ -229,7 +229,11 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobRaceRestore
         | Action::KnobRaceAssert
         | Action::KnobRaceCapture { .. }
-        | Action::KnobDialogFirstActivation
+        | Action::KnobActivationTrigger
+        | Action::KnobActivationWait
+        | Action::KnobActivationSample
+        | Action::KnobActivationRestore
+        | Action::KnobActivationAssert
         | Action::KnobActiveBegin
         | Action::KnobActiveSampleCallbacks
         | Action::KnobActiveCheckCallbacks

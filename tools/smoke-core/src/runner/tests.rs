@@ -1061,11 +1061,19 @@ fn unsupported_schema_and_zero_timeouts_fail_before_boot() {
 }
 #[test]
 fn l6_main_gpio_event_scenario_rejects_wrong_model_and_mapping() {
-    let base = "version=1\nname='gpio'\nmodels=['l6']\nbackends=['headless']\n[[step]]\naction='l6-main-gpio-event'\ntarget=48\nevent=25\n";
+    let base = include_str!("../../../../tests/emulator/cases/panel/l6-main-gpio-events.toml");
     assert!(Scenario::parse(base).is_ok());
-    assert!(Scenario::parse(&base.replace("models=['l6']", "models=['l6max']")).is_err());
-    assert!(Scenario::parse(&base.replace("event=25", "event=26")).is_err());
-    assert!(Scenario::parse(&base.replace("target=48", "target=53")).is_err());
+    assert!(Scenario::parse(&base.replace("models = [\"l6\"]", "models = [\"l6max\"]")).is_err());
+    assert!(Scenario::parse(&base.replace("event = 25", "event = 26")).is_err());
+    assert!(Scenario::parse(&base.replace("target = 48", "target = 53")).is_err());
+    assert!(
+        Scenario::parse(&base.replacen(
+            "action = \"l6-gpio-dispatch\"",
+            "action = \"l6-gpio-end\"",
+            1
+        ))
+        .is_err()
+    );
 }
 #[test]
 fn l6_usb_startup_requires_first_step_and_l6_scope() {

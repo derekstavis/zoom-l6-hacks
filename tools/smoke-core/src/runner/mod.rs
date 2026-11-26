@@ -1905,12 +1905,31 @@ impl Runner {
                         event,
                     }));
                 }
-                Action::L6MainGpioEvent { target, event } => {
-                    return Ok(Progress::Device(devices::Operation::L6MainGpioEvent {
+                Action::L6GpioBegin { target, event } => {
+                    return Ok(Progress::Device(devices::Operation::L6GpioBegin {
                         target,
                         event,
                     }));
                 }
+                Action::L6GpioPress => {
+                    return Ok(Progress::Device(devices::Operation::L6GpioPress));
+                }
+                Action::L6GpioSubmit => {
+                    return Ok(Progress::Device(devices::Operation::L6GpioSubmit));
+                }
+                Action::L6GpioAssert => {
+                    return Ok(Progress::Device(devices::Operation::L6GpioAssert));
+                }
+                Action::L6GpioDispatch => {
+                    return Ok(Progress::Device(devices::Operation::L6GpioDispatch));
+                }
+                Action::L6GpioRelease => {
+                    return Ok(Progress::Device(devices::Operation::L6GpioRelease));
+                }
+                Action::L6GpioSettle => {
+                    return Ok(Progress::Device(devices::Operation::L6GpioSettle));
+                }
+                Action::L6GpioEnd => return Ok(Progress::Device(devices::Operation::L6GpioEnd)),
                 Action::ExpectCardEntry {
                     path,
                     size,

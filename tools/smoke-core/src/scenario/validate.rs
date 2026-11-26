@@ -689,6 +689,54 @@ impl Scenario {
             return Err("backends must contain headless and/or gui".into());
         }
         for model in &value.models {
+            let steps: Vec<_> = value.step.iter().filter(|s| s.applies_to(*model)).collect();
+            let is_gpio = |a: &Action| {
+                matches!(
+                    a,
+                    Action::L6GpioBegin { .. }
+                        | Action::L6GpioPress
+                        | Action::L6GpioSubmit
+                        | Action::L6GpioAssert
+                        | Action::L6GpioDispatch
+                        | Action::L6GpioRelease
+                        | Action::L6GpioSettle
+                        | Action::L6GpioEnd
+                )
+            };
+            let mut index = 0;
+            while index < steps.len() {
+                if !is_gpio(&steps[index].action) {
+                    index += 1;
+                    continue;
+                }
+                let Action::L6GpioBegin { event, .. } = steps[index].action else {
+                    return Err("GPIO scope must start with begin".into());
+                };
+                let pad = event != 25;
+                let count = if pad { 8 } else { 7 };
+                let scope = steps
+                    .get(index..index + count)
+                    .ok_or("incomplete GPIO scope")?;
+                let tail = if pad { 5 } else { 4 };
+                if *model != l6fw::Model::L6
+                    || !matches!(scope[1].action, Action::L6GpioPress)
+                    || !matches!(scope[2].action, Action::L6GpioSubmit)
+                    || !matches!(scope[3].action, Action::L6GpioAssert)
+                    || (pad && !matches!(scope[4].action, Action::L6GpioDispatch))
+                    || !matches!(scope[tail].action, Action::L6GpioRelease)
+                    || !matches!(scope[tail + 1].action, Action::L6GpioSettle)
+                    || !matches!(scope[tail + 2].action, Action::L6GpioEnd)
+                    || scope.iter().any(|step| {
+                        (step.guest_timeout_ms, step.wall_timeout_s)
+                            != (scope[0].guest_timeout_ms, scope[0].wall_timeout_s)
+                    })
+                {
+                    return Err("GPIO requires a complete L6 scope with shared deadlines".into());
+                }
+                index += count;
+            }
+        }
+        for model in &value.models {
             let steps: Vec<_> = value
                 .step
                 .iter()
@@ -2055,16 +2103,10 @@ impl Scenario {
                 }
             }
 
-            if let Action::L6MainGpioEvent { target, event } = step.action
-                && (!matches!(
-                    (target, event),
-                    (48, 0x19) | (49, 0x15) | (50, 0x16) | (51, 0x17) | (52, 0x18)
-                ))
+            if let Action::L6GpioBegin { target, event } = step.action
+                && (!(48..=52).contains(&target) || !(21..=25).contains(&event))
             {
-                return Err(
-                    "l6-main-gpio-event requires L6 target/event pairs 48/0x19 or 49–52/0x15–0x18"
-                        .into(),
-                );
+                return Err("l6-gpio-begin requires target 48–52 and event 21–25".into());
             }
 
             if let Action::ExpectMenu { menu, .. } = &step.action

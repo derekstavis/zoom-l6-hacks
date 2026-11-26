@@ -366,6 +366,11 @@ impl State {
     }
     /// Release held inputs and owned transport scopes before the guest exits.
     pub fn abort_auxiliary_scopes(&mut self) -> Result<(), String> {
+        let gpio = self
+            .gpio_event
+            .take()
+            .map(|mut scope| scope.abort())
+            .transpose();
         let tap = self
             .tap_handler
             .take()
@@ -401,6 +406,9 @@ impl State {
         self.editor_assignment = None;
         self.signal_pwm = None;
         let mut errors = Vec::new();
+        if let Err(error) = gpio {
+            errors.push(error);
+        }
         if let Err(error) = tap {
             errors.push(error);
         }
@@ -2261,94 +2269,41 @@ impl State {
                 }
                 Ok(result)
             }
-            Operation::L6MainGpioEvent { target, event } => {
-                use firmware_api::l6::main_event_submit;
-                use firmware_api::l6::sound_pad_event_handler;
-                let inputs = &session.engine.inputs.as_ref().unwrap().main;
-                let qmp = &session.engine.management[0];
-                let socket = options
-                    .gdb_socket
-                    .as_ref()
-                    .ok_or("l6-main-gpio-event requires a configured GDB socket")?;
-                if self.gdb.is_none() {
-                    self.gdb = Some(l6max_diagnostics::gdb::Gdb::connect(socket)?);
+            Operation::L6GpioBegin { target, event } => {
+                if self.gpio_event.is_some() {
+                    return Err("GPIO event scope already active".into());
                 }
-                let gdb = self.gdb.as_mut().unwrap();
-                qmp.stop()?;
-                gdb.breakpoint(main_event_submit, true)?;
-                let applied = inputs.snapshot().applied;
-                inputs.down(target, 0)?;
-                wait_l6_input(
+                self.gpio_event = Some(gpio_event::Scope::begin(
                     session,
-                    || inputs.snapshot().applied > applied,
-                    "MAIN GPIO press acknowledgement",
-                )?;
-                gdb.continue_until_stop(Duration::from_secs(15))?;
-                let pc = gdb.read_register(15)? & !1;
-                if pc != main_event_submit {
-                    return Err(format!(
-                        "L6 MAIN target {target} stopped at {pc:#010x}, expected event submit {main_event_submit:#010x}"
-                    )
-                    .into());
+                    target,
+                    event,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"target":target,"event":event}))
+            }
+            operation @ (Operation::L6GpioPress
+            | Operation::L6GpioSubmit
+            | Operation::L6GpioAssert
+            | Operation::L6GpioDispatch
+            | Operation::L6GpioRelease
+            | Operation::L6GpioSettle
+            | Operation::L6GpioEnd) => {
+                let scope = self.gpio_event.as_mut().ok_or("GPIO event scope missing")?;
+                let result = match operation {
+                    Operation::L6GpioPress => scope.press(session),
+                    Operation::L6GpioSubmit => scope.submit(session),
+                    Operation::L6GpioAssert => scope.assert(session),
+                    Operation::L6GpioDispatch => scope.dispatch(session),
+                    Operation::L6GpioRelease => scope.release(session),
+                    Operation::L6GpioSettle => scope.settle(session),
+                    Operation::L6GpioEnd => scope.finish(session),
+                    _ => unreachable!(),
+                }?;
+                if matches!(operation, Operation::L6GpioEnd) {
+                    self.gpio_event = None;
                 }
-                let args = (0..4)
-                    .map(|register| gdb.read_register(register))
-                    .collect::<Result<Vec<_>, _>>()?;
-                if args[2] != u32::from(event) {
-                    return Err(format!(
-                        "L6 MAIN target {target} submitted event {:#04x}, expected {event:#04x}",
-                        args[2]
-                    )
-                    .into());
-                }
-                let dispatch_arguments = if (0x15..=0x18).contains(&event) {
-                    gdb.breakpoint(main_event_submit, false)?;
-                    gdb.breakpoint(sound_pad_event_handler, true)?;
-                    match gdb.continue_until_stop(Duration::from_secs(15)) {
-                        Ok(_) => {
-                            let dispatch_pc = gdb.read_register(15)? & !1;
-                            if dispatch_pc != sound_pad_event_handler {
-                                return Err(format!(
-                                    "L6 MAIN target {target} stopped at {dispatch_pc:#010x}, expected sound-pad event handler {sound_pad_event_handler:#010x}"
-                                )
-                                .into());
-                            }
-                            let dispatch_args = (0..3)
-                                .map(|register| gdb.read_register(register))
-                                .collect::<Result<Vec<_>, _>>()?;
-                            gdb.breakpoint(sound_pad_event_handler, false)?;
-                            Some(dispatch_args)
-                        }
-                        Err(error) => {
-                            let _ = gdb.interrupt();
-                            let _ = gdb.breakpoint(sound_pad_event_handler, false);
-                            let _ = qmp.resume();
-                            return Err(format!(
-                                "L6 MAIN target {target} submitted event {event:#04x} but did not reach the sound-pad event handler: {error}"
-                            )
-                            .into());
-                        }
-                    }
-                } else {
-                    gdb.breakpoint(main_event_submit, false)?;
-                    None
-                };
-                qmp.resume()?;
-                let applied = inputs.snapshot().applied;
-                inputs.up(target)?;
-                wait_l6_input(
-                    session,
-                    || inputs.snapshot().applied > applied,
-                    "MAIN GPIO release acknowledgement",
-                )?;
-                wait_guest_duration(
-                    session,
-                    100,
-                    Instant::now() + Duration::from_secs(wall_timeout_s),
-                )?;
-                Ok(
-                    json!({"target":target,"event":event,"arguments":args,"dispatch_arguments":dispatch_arguments}),
-                )
+                Ok(result)
             }
             Operation::L6UsbStartup => {
                 Ok(

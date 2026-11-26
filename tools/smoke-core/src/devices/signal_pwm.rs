@@ -199,6 +199,7 @@ impl Scope {
             .iter()
             .map(|row| row[channel as usize])
             .collect::<Vec<_>>();
+        let failure_start = self.failures.len();
         for stage in 0..means.len() {
             if means[stage][channel as usize] == 0.0
                 || (stage > 0
@@ -212,7 +213,10 @@ impl Scope {
                 self.failures.push(format!("SIGNAL LED {} did not produce five distinct increasing sampled PWM levels in {name}: {details:?}",channel+1));
             }
         }
-        Ok(json!({"channel":channel+1,"means":details}))
+        let failures = &self.failures[failure_start..];
+        Ok(
+            json!({"channel":channel+1,"means":details,"passed":failures.is_empty(),"failures":failures}),
+        )
     }
     pub(super) fn finish(&self, options: &Options) -> Result<Value, String> {
         let evidence = json!({"stimulus":"firmware_shared_channel_level_accumulators","sweeps":[{"group":"signal-1-to-4","accumulator_indices":{"start":0,"end":4},"output_channels":{"start":0,"end":4},"levels":self.samples[0]},{"group":"signal-5-to-8","accumulator_indices":{"start":4,"end":12},"output_channels":{"start":4,"end":8},"levels":self.samples[1]}]});
@@ -252,11 +256,16 @@ mod tests {
     fn channel_assertions_accumulate_nonzero_and_monotonic_failures() {
         let mut scope = scope();
         scope.means[0] = vec![[1.0; 8], [2.0; 8], [3.0; 8], [4.0; 8], [5.0; 8]];
-        scope.assert_channel(0, 0).unwrap();
+        let passing = scope.assert_channel(0, 0).unwrap();
+        assert_eq!(passing["passed"], true);
+        assert_eq!(passing["failures"], json!([]));
         assert!(scope.failures.is_empty());
         scope.means[0][0][1] = 0.0;
         scope.means[0][3][1] = scope.means[0][2][1];
-        scope.assert_channel(0, 1).unwrap();
+        let failing = scope.assert_channel(0, 1).unwrap();
+        assert_eq!(failing["passed"], false);
+        assert_eq!(failing["channel"], 2);
+        assert_eq!(failing["failures"].as_array().unwrap().len(), 2);
         assert_eq!(scope.failures.len(), 2);
         scope.means[0][4][2] = scope.means[0][3][2];
         scope.assert_channel(0, 2).unwrap();

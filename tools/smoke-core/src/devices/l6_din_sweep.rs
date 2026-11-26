@@ -234,13 +234,9 @@ impl Scope {
             }
         });
         let cancel = self.cancel.clone();
-        let panel = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("DIN sweep needs panel inputs")?
-            .panel
-            .clone();
+        let panel = l6ctl::OwnedControl::new(&session.engine)
+            .input_observer()
+            .map_err(|_| "DIN sweep needs panel inputs")?;
         let (started, guest_start, guest, wall) = (
             self.started,
             self.guest_start,
@@ -251,7 +247,11 @@ impl Scope {
             let cancelled = || {
                 cancel.load(Ordering::Acquire)
                     || started.elapsed() > Duration::from_secs(wall)
-                    || panel.snapshot().guest_ms.wrapping_sub(guest_start) > guest
+                    || panel
+                        .status(l6ctl::InputSource::Panel)
+                        .guest_ms
+                        .wrapping_sub(guest_start)
+                        > guest
             };
             let mut hits = [0u32; 4];
             let result = loop {
@@ -321,14 +321,10 @@ impl Scope {
         self.check(session)?;
         let deadline = self.deadline();
         let before_ring = l6max_host::indicators::rings(
-            session
-                .engine
-                .inputs
-                .as_ref()
-                .ok_or("DIN sweep needs inputs")?
-                .panel
-                .snapshot()
-                .indicators,
+            l6ctl::OwnedControl::new(&session.engine)
+                .info()
+                .map_err(|_| "DIN sweep needs inputs")?
+                .panel_indicators,
         )[0];
         let check = || self.check(session);
         let queue = self.reader.queue(deadline, &check)?;
@@ -358,14 +354,10 @@ impl Scope {
         }
         self.check(session)?;
         let ring = l6max_host::indicators::rings(
-            session
-                .engine
-                .inputs
-                .as_ref()
-                .ok_or("DIN sweep needs inputs")?
-                .panel
-                .snapshot()
-                .indicators,
+            l6ctl::OwnedControl::new(&session.engine)
+                .info()
+                .map_err(|_| "DIN sweep needs inputs")?
+                .panel_indicators,
         )[0];
         if ring != self.previous_ring {
             self.changes.push((cc, self.previous_ring, ring));

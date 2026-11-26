@@ -25,16 +25,18 @@ fn budget_expired(
         || guest_now.wrapping_sub(guest_start) > guest
 }
 fn expired(session: &Session, started: Instant, guest_start: u32, guest: u32, wall: u64) -> bool {
-    session.engine.inputs.as_ref().is_none_or(|inputs| {
-        budget_expired(
-            started,
-            Instant::now(),
-            guest_start,
-            inputs.panel.snapshot().guest_ms,
-            guest,
-            wall,
-        )
-    })
+    l6ctl::OwnedControl::new(&session.engine)
+        .input_status(l6ctl::InputSource::Panel)
+        .map_or(true, |status| {
+            budget_expired(
+                started,
+                Instant::now(),
+                guest_start,
+                status.guest_ms,
+                guest,
+                wall,
+            )
+        })
 }
 fn checked_debug_op<T>(
     mut cancelled: impl FnMut() -> bool,
@@ -84,13 +86,9 @@ impl Scope {
     ) -> Result<Self, String> {
         let started = Instant::now();
         let deadline = started + Duration::from_secs(wall);
-        let guest_start = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("audio callbacks need inputs")?
-            .panel
-            .snapshot()
+        let guest_start = l6ctl::OwnedControl::new(&session.engine)
+            .input_status(l6ctl::InputSource::Panel)
+            .map_err(|_| "audio callbacks need inputs")?
             .guest_ms;
         let model = session.engine.model();
         let stock =
@@ -204,13 +202,9 @@ impl Scope {
             || expired(session, started, guest_start, guest, wall),
             || debugger.register_before(14, deadline),
         )?;
-        let guest_ms = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("audio callbacks need inputs")?
-            .panel
-            .snapshot()
+        let guest_ms = l6ctl::OwnedControl::new(&session.engine)
+            .input_status(l6ctl::InputSource::Panel)
+            .map_err(|_| "audio callbacks need inputs")?
             .guest_ms;
         checked_debug_op(
             || expired(session, started, guest_start, guest, wall),

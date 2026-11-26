@@ -664,6 +664,18 @@ impl HeldButton {
     }
 }
 
+/// A clonable in-process view of input counters for background observers.
+/// It exposes the same snapshots as `input status` and does not own the guest.
+#[derive(Clone)]
+pub struct InputObserver {
+    inputs: std::sync::Arc<l6max_host::input::InputHub>,
+}
+impl InputObserver {
+    pub fn status(&self, source: InputSource) -> InputCounters {
+        self.inputs.counters(source)
+    }
+}
+
 /// Access the same host-owned guest directly without opening a control socket.
 /// The engine and its QMP/input resources remain owned by the caller.
 pub struct OwnedControl<'a> {
@@ -974,6 +986,16 @@ impl<'a> OwnedControl<'a> {
         self.main_qmp()?
             .query_status()
             .map_err(|e| ControlError::Rejected(e.to_string()))
+    }
+    /// Retain a read-only input view for a worker that outlives this borrow.
+    pub fn input_observer(&self) -> Result<InputObserver, ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .clone();
+        Ok(InputObserver { inputs })
     }
     pub fn input_status(&self, source: InputSource) -> Result<InputCounters, ControlError> {
         let inputs = self
@@ -1544,6 +1566,23 @@ mod usb_panel_budget_tests {
     fn guest_budget_retains_boundary_and_clock_wrap_behavior() {
         assert!(!super::usb_panel_guest_expired(50, u32::MAX - 49, 100));
         assert!(super::usb_panel_guest_expired(51, u32::MAX - 49, 100));
+    }
+}
+
+#[cfg(test)]
+mod input_observer_tests {
+    #[test]
+    fn cloned_observer_reads_the_same_channel_counters() {
+        use l6max_host::input::{EngineInput, InputHub, InputSource};
+        use std::sync::Arc;
+        let (main, _main_peer) = EngineInput::pair().unwrap();
+        let (panel, _panel_peer) = EngineInput::pair().unwrap();
+        let inputs = Arc::new(InputHub::new(main, panel, l6fw::Model::L6));
+        let observer = super::InputObserver {
+            inputs: inputs.clone(),
+        };
+        let worker = std::thread::spawn(move || observer.status(InputSource::Panel));
+        assert_eq!(worker.join().unwrap(), inputs.counters(InputSource::Panel));
     }
 }
 

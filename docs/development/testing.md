@@ -532,9 +532,9 @@ the dynamic checks; placement selection and case composition stay unchanged.
 
   | Patch | Check |
   | --- | --- |
-  | Any SD module | `expect-sd-loader`, `capture-sd-module`, `expect-sd-allocation`, `expect-sd-chains`, `expect-sd-continuations`, then `expect-sd-module` |
+  | Any SD module | `sd-module-loaded.toml`: loader readiness, registry capture, allocation, chains, continuations and relocated module bytes |
   | knob-dialog | `knob-popup-open`, `knob-popup-expect-open`, `knob-popup-expect-value` |
-  | Effect replacements | `expect-heap`, then for each slot `effect-replacement-state` with the assigned effect ID and nonzero output, or no replacement |
+  | Effect replacements | `expect-heap`, then for each slot wait for and capture state, assert type and processor, and check the assigned effect name and nonzero output when applicable |
   | midi-sync | declarative direct MIDI round trip, then the MIDI state request fragment |
   | din-mixer-control | Declared mixer/DIN CC, ring and no-echo observations |
   | menu-loader | `capture-menu` and `expect-menu-items` for System and System > Patches, then System > Patches as drawn against `patches/menu-loader/tests/emulator/references/patches-suite/` (skipped with knob-dialog; see below) |

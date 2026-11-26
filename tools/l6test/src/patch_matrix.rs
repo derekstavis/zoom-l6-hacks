@@ -411,12 +411,7 @@ fn include(text: &mut String, path: &str) {
 /// The steps that check every patch a combination installs, in check order.
 fn checks(text: &mut String, combination: &Combination, all: &Checks) -> Result<(), String> {
     if !combination.sd.is_empty() {
-        step(text, "action = \"expect-sd-loader\"");
-        step(text, "action = \"capture-sd-module\"\nloaded = true");
-        step(text, "action = \"expect-sd-allocation\"\nloaded = true");
-        step(text, "action = \"expect-sd-chains\"\nloaded = true");
-        step(text, "action = \"expect-sd-continuations\"\nloaded = true");
-        step(text, "action = \"expect-sd-module\"\nloaded = true");
+        include(text, "tests/emulator/fragments/sd-module-loaded.toml");
     }
     for (name, patch) in &all.order {
         let active = if patch.checks_effect_slots {
@@ -1381,86 +1376,54 @@ wall_timeout_s = 120
     }
 
     #[test]
-    fn generated_sd_combinations_check_loader_before_module() {
+    fn generated_sd_combinations_preserve_expanded_checks() {
+        use smoke_core::Action;
+        let fragment = "tests/emulator/fragments/sd-module-loaded.toml";
+        let original = r#"[[step]]
+action = "expect-sd-loader"
+[[step]]
+action = "capture-sd-module"
+loaded = true
+[[step]]
+action = "expect-sd-allocation"
+loaded = true
+[[step]]
+action = "expect-sd-chains"
+loaded = true
+[[step]]
+action = "expect-sd-continuations"
+loaded = true
+[[step]]
+action = "expect-sd-module"
+loaded = true
+"#;
+        let include = format!("[[step]]\naction = \"include\"\npath = {fragment:?}\n");
         let mut checked = 0;
         for case in generate().unwrap() {
-            let doc: toml::Value = toml::from_str(&case.scenario).unwrap();
-            let has_sd = doc
-                .get("sd_patches")
-                .and_then(toml::Value::as_array)
+            let scenario = smoke_core::Scenario::from_text(&case.scenario).unwrap();
+            let has_sd = scenario
+                .sd_patches
+                .as_ref()
                 .is_some_and(|patches| !patches.is_empty());
-            let steps = doc.get("step").and_then(toml::Value::as_array).unwrap();
-            let loaders: Vec<_> = steps
-                .iter()
-                .enumerate()
-                .filter(|(_, step)| {
-                    step.get("action").and_then(toml::Value::as_str) == Some("expect-sd-loader")
-                })
-                .collect();
-            assert_eq!(loaders.len(), usize::from(has_sd), "{}", case.id);
-            if let Some((index, _)) = loaders.first() {
-                let capture = &steps[index + 1];
+            let occurrences = case.scenario.matches(&include).count();
+            assert_eq!(occurrences, usize::from(has_sd), "{}", case.id);
+            if has_sd {
+                let previous =
+                    smoke_core::Scenario::from_text(&case.scenario.replace(&include, original))
+                        .unwrap();
                 assert_eq!(
-                    capture.get("action").and_then(toml::Value::as_str),
-                    Some("capture-sd-module"),
+                    serde_json::to_value(&scenario.step).unwrap(),
+                    serde_json::to_value(&previous.step).unwrap(),
                     "{}",
                     case.id
                 );
                 assert_eq!(
-                    capture.get("loaded").and_then(toml::Value::as_bool),
-                    Some(true),
-                    "{}",
-                    case.id
-                );
-                let allocation = &steps[index + 2];
-                assert_eq!(
-                    allocation.get("action").and_then(toml::Value::as_str),
-                    Some("expect-sd-allocation"),
-                    "{}",
-                    case.id
-                );
-                assert_eq!(
-                    allocation.get("loaded").and_then(toml::Value::as_bool),
-                    Some(true),
-                    "{}",
-                    case.id
-                );
-                let chains = &steps[index + 3];
-                assert_eq!(
-                    chains.get("action").and_then(toml::Value::as_str),
-                    Some("expect-sd-chains"),
-                    "{}",
-                    case.id
-                );
-                assert_eq!(
-                    chains.get("loaded").and_then(toml::Value::as_bool),
-                    Some(true),
-                    "{}",
-                    case.id
-                );
-                let continuations = &steps[index + 4];
-                assert_eq!(
-                    continuations.get("action").and_then(toml::Value::as_str),
-                    Some("expect-sd-continuations"),
-                    "{}",
-                    case.id
-                );
-                assert_eq!(
-                    continuations.get("loaded").and_then(toml::Value::as_bool),
-                    Some(true),
-                    "{}",
-                    case.id
-                );
-                let module = &steps[index + 5];
-                assert_eq!(
-                    module.get("action").and_then(toml::Value::as_str),
-                    Some("expect-sd-module"),
-                    "{}",
-                    case.id
-                );
-                assert_eq!(
-                    module.get("loaded").and_then(toml::Value::as_bool),
-                    Some(true),
+                    scenario
+                        .step
+                        .iter()
+                        .filter(|step| matches!(step.action, Action::ExpectSdLoader))
+                        .count(),
+                    1,
                     "{}",
                     case.id
                 );

@@ -162,7 +162,7 @@ impl State {
         wall_timeout_s: u64,
         started: (Instant, u32),
     ) -> Result<Value, Box<dyn std::error::Error>> {
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         let guest = || {
             control
                 .input_status(l6ctl::InputSource::Panel)
@@ -179,12 +179,12 @@ impl State {
             if self.midi_probe.is_some() {
                 return Err("MIDI probe already active".into());
             }
-            if session.engine.model() != l6fw::Model::L6max {
+            if session.model() != l6fw::Model::L6max {
                 return Err("MIDI mixer/DIN probe requires L6max".into());
             }
             let endpoint = l6max_host::host_midi::endpoint_name(
                 &l6max_host::host_midi::din_port_name_for_model_with_namespace(
-                    session.engine.model(),
+                    session.model(),
                     midi_namespace().as_deref(),
                 ),
             );
@@ -208,12 +208,16 @@ impl State {
                 }
             };
             let direct_mixer = if self.native_midi.is_none() && self.host_midi.is_none() {
-                let usb = session
-                    .engine
-                    .usb
-                    .clone()
-                    .ok_or("USB host unavailable for mixer-control reference path")?;
-                Some(MidiSession::connect_direct(usb, 1).map_err(std::io::Error::other)?)
+                let budget = l6max_host::usb::Budget::new(
+                    started.0 + Duration::from_secs(wall_timeout_s),
+                    || false,
+                );
+                Some(
+                    session
+                        .control()
+                        .direct_midi_before(1, &budget)
+                        .map_err(std::io::Error::other)?,
+                )
             } else {
                 None
             };

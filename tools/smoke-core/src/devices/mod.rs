@@ -1337,7 +1337,8 @@ impl State {
 }
 
 fn guest_now(session: &Session) -> u32 {
-    l6ctl::OwnedControl::new(&session.engine)
+    session
+        .control()
         .input_status(l6ctl::InputSource::Panel)
         .map_or(0, |status| status.guest_ms)
 }
@@ -1347,7 +1348,7 @@ fn wait_guest_duration(
     duration_ms: u32,
     deadline: Instant,
 ) -> Result<(), String> {
-    let control = l6ctl::OwnedControl::new(&session.engine);
+    let control = session.control();
     let clock = || {
         control
             .input_status(l6ctl::InputSource::Panel)
@@ -1377,7 +1378,8 @@ fn wait_guest(
     let wall = Instant::now();
     loop {
         session.poll()?;
-        let elapsed = l6ctl::OwnedControl::new(&session.engine)
+        let elapsed = session
+            .control()
             .input_status(l6ctl::InputSource::Panel)?
             .guest_ms
             .wrapping_sub(start);

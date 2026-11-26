@@ -21,7 +21,8 @@ pub(in crate::devices) struct Scope {
 }
 fn cancelled(session: &Session, start: Instant, guest_start: u32, guest: u32, wall: u64) -> bool {
     start.elapsed() >= Duration::from_secs(wall)
-        || l6ctl::OwnedControl::new(&session.engine)
+        || session
+            .control()
             .input_status(InputSource::Panel)
             .map(|s| s.guest_ms.wrapping_sub(guest_start) > guest)
             .unwrap_or(true)
@@ -54,7 +55,7 @@ impl Scope {
         guest: u32,
         wall: u64,
     ) -> Result<Self, String> {
-        if session.engine.model() != l6fw::Model::L6max || target != 4 {
+        if session.model() != l6fw::Model::L6max || target != 4 {
             return Err("L6max recorder requires MAIN target 4".into());
         }
         if std::env::var_os("L6_AUDIO_SAMPLE_TRACE").is_none() || guest < 10000 {
@@ -62,7 +63,7 @@ impl Scope {
         }
         let start = Instant::now();
         let deadline = start + Duration::from_secs(wall);
-        let c = l6ctl::OwnedControl::new(&session.engine);
+        let c = session.control();
         let guest_start = c
             .input_status(InputSource::Panel)
             .map_err(|e| e.to_string())?
@@ -159,7 +160,7 @@ impl Scope {
         Ok(self.dbg()?.register_before(15, d)? & !1)
     }
     pub(in crate::devices) fn press(&mut self, s: &Session) -> Result<Value, String> {
-        let c = l6ctl::OwnedControl::new(&s.engine);
+        let c = s.control();
         let before = c
             .input_status(InputSource::Main)
             .map_err(|e| e.to_string())?
@@ -327,13 +328,15 @@ impl Scope {
             .take()
             .ok_or("debugger missing")?
             .close_before(d)?;
-        let start = l6ctl::OwnedControl::new(&s.engine)
+        let start = s
+            .control()
             .input_status(InputSource::Panel)
             .map_err(|e| e.to_string())?
             .guest_ms;
         loop {
             self.check(s, self.guest_budget, self.wall_budget)?;
-            let now = l6ctl::OwnedControl::new(&s.engine)
+            let now = s
+                .control()
                 .input_status(InputSource::Panel)
                 .map_err(|e| e.to_string())?
                 .guest_ms;
@@ -352,7 +355,7 @@ impl Scope {
         let trace =
             fs::read_to_string(options.logs.join("engine.trace")).map_err(|e| e.to_string())?;
         let summary = l6max_host::audio_trace::l6max_recorder_summary(&trace, &self.baseline);
-        let c = l6ctl::OwnedControl::new(&s.engine);
+        let c = s.control();
         let mut debug = c
             .debug_session_before(self.deadline())
             .map_err(|e| e.to_string())?;
@@ -401,7 +404,7 @@ impl Scope {
     pub(in crate::devices) fn abort(&mut self, s: &Session) -> Result<(), String> {
         let mut errors = vec![];
         if self.held {
-            match l6ctl::OwnedControl::new(&s.engine).up_with_sequence(self.target) {
+            match s.control().up_with_sequence(self.target) {
                 Ok(_) => self.held = false,
                 Err(e) => errors.push(format!("release PLAY: {e}")),
             }

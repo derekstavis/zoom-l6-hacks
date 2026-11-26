@@ -82,15 +82,11 @@ impl Scope {
         guest: u32,
         wall: u64,
     ) -> Result<Self, String> {
-        if session.engine.model() != l6fw::Model::L6
-            || target >= 54
-            || column > 3
-            || row > 7
-            || event > 31
+        if session.model() != l6fw::Model::L6 || target >= 54 || column > 3 || row > 7 || event > 31
         {
             return Err("invalid L6 panel event".into());
         }
-        let ctl = l6ctl::OwnedControl::new(&session.engine);
+        let ctl = session.control();
         let inputs = ctl
             .input_observer()
             .map_err(|_| "panel input unavailable")?;
@@ -176,7 +172,7 @@ impl Scope {
             .capture_deadline
             .ok_or("panel press missing")?
             .min(self.started + Duration::from_secs(self.wall_budget));
-        let ctl = l6ctl::OwnedControl::new(&session.engine);
+        let ctl = session.control();
         self.check(session)?;
         let debug = self
             .debugger
@@ -341,7 +337,8 @@ impl Scope {
         } else {
             l6::PANEL_EVENT_TABLE + u32::from(self.column) * 0xa0 + u32::from(self.row) * 0x14
         };
-        let bytes = l6ctl::OwnedControl::new(&session.engine)
+        let bytes = session
+            .control()
             .read_main_memory_before(
                 entry + 8,
                 4,

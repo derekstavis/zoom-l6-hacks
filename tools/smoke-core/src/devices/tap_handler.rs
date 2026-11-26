@@ -42,7 +42,7 @@ impl Scope {
         Ok(())
     }
     pub(super) fn begin(session: &Session, guest: u32, wall: u64) -> Result<Self, String> {
-        if session.engine.model() != l6fw::Model::L6max {
+        if session.model() != l6fw::Model::L6max {
             return Err("TAP handler requires L6max".into());
         }
         let started = Instant::now();
@@ -50,7 +50,7 @@ impl Scope {
             .checked_add(Duration::from_secs(wall))
             .ok_or("TAP deadline overflow")?;
         let panel_start = guest_now(session);
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         let inputs = control
             .input_observer()
             .map_err(|_| "TAP input unavailable")?;
@@ -91,7 +91,7 @@ impl Scope {
     }
     fn ack(&self, session: &Session, sequence: u32) -> Result<(), String> {
         let deadline = (Instant::now() + Duration::from_secs(10)).min(self.deadline);
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         loop {
             self.check(session)?;
             if Instant::now() >= deadline {
@@ -117,7 +117,8 @@ impl Scope {
     }
     pub(super) fn press(&mut self, session: &Session) -> Result<Value, String> {
         self.check(session)?;
-        let (receipt, held) = l6ctl::OwnedControl::new(&session.engine)
+        let (receipt, held) = session
+            .control()
             .hold_button(TARGET, 0)
             .map_err(|e| e.to_string())?;
         self.held = Some(held);
@@ -188,9 +189,7 @@ impl Scope {
             .close_before(self.deadline)?;
         self.debugger = None;
         self.check(session)?;
-        let receipt = l6ctl::OwnedControl::new(&session.engine)
-            .up(TARGET)
-            .map_err(|e| e.to_string())?;
+        let receipt = session.control().up(TARGET).map_err(|e| e.to_string())?;
         self.ack(session, receipt.sequence)?;
         self.held = None;
         self.released = true;

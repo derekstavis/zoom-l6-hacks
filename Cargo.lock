@@ -3574,6 +3574,7 @@ dependencies = [
  "gpui-pre",
  "gpui-pre-platform",
  "image",
+ "l6ctl",
  "l6fw",
  "l6max-host",
  "libc",

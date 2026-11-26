@@ -7,14 +7,14 @@ use gpui::{
     App, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, ScrollDelta,
     ScrollEvent, Window, point, px,
 };
-use l6max_host::input::InputHub;
+use l6ctl::InputObserver;
 use smoke_core::{Command, Gesture, Progress, Runner};
 use std::sync::atomic::AtomicU32;
 
 pub fn tick(
     runner: &mut Runner,
     layout: &Layout,
-    inputs: Option<&InputHub>,
+    inputs: Option<&InputObserver>,
     data: PanelData,
     press_duration: &AtomicU32,
     window: &mut Window,

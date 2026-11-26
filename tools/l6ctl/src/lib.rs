@@ -19,7 +19,7 @@ pub use l6max_host::indicators::rings as decode_indicator_rings;
 pub use l6max_host::input::button_source;
 pub use l6max_host::input::{
     AudioInputReceipt, AudioInputStatus, AudioTransport, InputAck, InputAckState, InputCounters,
-    InputSource,
+    InputSnapshot, InputSource,
 };
 pub use l6max_host::knob_binding::{
     FirmwareBinding as KnobFirmwareBinding, PreflightTargets as KnobPreflightTargets,
@@ -106,6 +106,9 @@ pub enum Request {
     InputStatus {
         source: InputSource,
     },
+    InputSnapshot {
+        source: InputSource,
+    },
     InputAck {
         source: InputSource,
         sequence: u32,
@@ -176,6 +179,10 @@ pub enum Request {
         steps: i32,
     },
     Analog {
+        channel: u32,
+        steps: i32,
+    },
+    PanelKnob {
         channel: u32,
         steps: i32,
     },
@@ -393,6 +400,9 @@ impl ControlClient {
     pub fn input_status(&self, source: InputSource) -> Result<InputCounters, ControlError> {
         self.request_as(&Request::InputStatus { source })
     }
+    pub fn input_snapshot(&self, source: InputSource) -> Result<InputSnapshot, ControlError> {
+        self.request_as(&Request::InputSnapshot { source })
+    }
     pub fn input_ack(&self, source: InputSource, sequence: u32) -> Result<InputAck, ControlError> {
         self.request_as(&Request::InputAck { source, sequence })
     }
@@ -609,6 +619,12 @@ impl ControlClient {
         self.request_as(&Request::Analog { channel, steps })
     }
 
+    /// Apply a physical panel-knob gesture, including the panel encoder's
+    /// polarity mapping.
+    pub fn panel_knob(&self, channel: u32, steps: i32) -> Result<AxisReceipt, ControlError> {
+        self.request_as(&Request::PanelKnob { channel, steps })
+    }
+
     pub fn set_analog(
         &self,
         channel: u32,
@@ -722,8 +738,17 @@ pub struct InputObserver {
     inputs: std::sync::Arc<l6max_host::input::InputHub>,
 }
 impl InputObserver {
+    /// Observe input state from an already-owned host input hub.
+    pub fn from_hub(inputs: std::sync::Arc<l6max_host::input::InputHub>) -> Self {
+        Self { inputs }
+    }
+
     pub fn status(&self, source: InputSource) -> InputCounters {
         self.inputs.counters(source)
+    }
+
+    pub fn snapshot(&self, source: InputSource) -> InputSnapshot {
+        self.inputs.snapshot(source)
     }
 }
 
@@ -745,6 +770,16 @@ impl<'a> OwnedControl<'a> {
         }
         self.engine.connect_midi();
         Ok(())
+    }
+    /// Return the current status text for the in-process USB MIDI bridge.
+    pub fn midi_bridge_status(&self) -> Option<String> {
+        self.engine.midi.as_ref().map(|bridge| {
+            bridge
+                .status
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+        })
     }
     /// Connect a direct MIDI consumer without exposing the engine's USB transport.
     pub fn direct_midi_before(
@@ -923,6 +958,52 @@ impl<'a> OwnedControl<'a> {
             reset: "qmp-system-reset".into(),
         })
     }
+
+    /// Enqueue a one-based analog-knob gesture on the MAIN input channel.
+    pub fn analog(&self, channel: u32, steps: i32) -> Result<AxisReceipt, ControlError> {
+        if !(1..=5).contains(&channel) || steps == 0 || steps.unsigned_abs() > 1000 {
+            return Err(ControlError::Rejected(
+                "invalid analog channel or steps".into(),
+            ));
+        }
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
+        let sequence = inputs
+            .knob(8 + channel as usize - 1, steps)
+            .map_err(|error| ControlError::Rejected(error.to_string()))?;
+        Ok(AxisReceipt {
+            channel,
+            steps,
+            sequence,
+        })
+    }
+
+    /// Apply a one-based physical panel-knob gesture. The host input mapping
+    /// owns the polarity conversion from gesture direction to encoder steps.
+    pub fn panel_knob(&self, channel: u32, steps: i32) -> Result<AxisReceipt, ControlError> {
+        if channel == 0 || channel > self.engine.model().channels() as u32 {
+            return Err(ControlError::Rejected("invalid panel knob channel".into()));
+        }
+        if steps == 0 || steps.unsigned_abs() > 1000 {
+            return Err(ControlError::Rejected("invalid panel knob steps".into()));
+        }
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
+        let sequence = inputs
+            .knob(channel as usize - 1, steps)
+            .map_err(|error| ControlError::Rejected(error.to_string()))?;
+        Ok(AxisReceipt {
+            channel,
+            steps,
+            sequence,
+        })
+    }
     pub fn sd_card(&self, path: Option<&std::path::Path>) -> Result<SdCardReceipt, ControlError> {
         let qmp = self.main_qmp()?;
         match path {
@@ -1068,6 +1149,14 @@ impl<'a> OwnedControl<'a> {
             .as_ref()
             .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
         Ok(inputs.counters(source))
+    }
+    pub fn input_snapshot(&self, source: InputSource) -> Result<InputSnapshot, ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
+        Ok(inputs.snapshot(source))
     }
     pub fn input_ack(&self, source: InputSource, sequence: u32) -> Result<InputAck, ControlError> {
         let inputs = self

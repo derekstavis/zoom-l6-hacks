@@ -43,7 +43,7 @@ impl Scope {
         guest: u32,
         wall: u64,
     ) -> Result<Self, String> {
-        if session.engine.model() != l6fw::Model::L6
+        if session.model() != l6fw::Model::L6
             || !(48..=52).contains(&target)
             || !(21..=25).contains(&event)
         {
@@ -53,7 +53,7 @@ impl Scope {
             .checked_add(Duration::from_secs(wall))
             .ok_or("GPIO deadline overflow")?;
         let panel_start = guest_now(session);
-        let ctl = l6ctl::OwnedControl::new(&session.engine);
+        let ctl = session.control();
         let inputs = ctl.input_observer().map_err(|_| "GPIO input unavailable")?;
         let mut debugger = ctl
             .debug_session_before(deadline)
@@ -106,7 +106,7 @@ impl Scope {
     }
     fn ack(&self, session: &Session, seq: u32) -> Result<(), String> {
         let deadline = self.deadline.min(Instant::now() + Duration::from_secs(10));
-        let ctl = l6ctl::OwnedControl::new(&session.engine);
+        let ctl = session.control();
         loop {
             self.check(session)?;
             if Instant::now() >= deadline {
@@ -133,7 +133,8 @@ impl Scope {
     }
     pub(super) fn press(&mut self, session: &Session) -> Result<Value, String> {
         self.check(session)?;
-        let (r, held) = l6ctl::OwnedControl::new(&session.engine)
+        let (r, held) = session
+            .control()
             .hold_button(self.target, 0)
             .map_err(|e| e.to_string())?;
         self.held = Some(held);
@@ -242,7 +243,8 @@ impl Scope {
             .close_resuming_before(self.deadline)?;
         self.debugger = None;
         self.check(session)?;
-        let r = l6ctl::OwnedControl::new(&session.engine)
+        let r = session
+            .control()
             .up(self.target)
             .map_err(|e| e.to_string())?;
         self.ack(session, r.sequence)?;

@@ -38,19 +38,21 @@ pub enum Command {
 }
 impl Command {
     pub fn headless(&self, engine: &Engine) -> Result<(), String> {
-        let inputs = engine.inputs.as_ref().ok_or("input hub unavailable")?;
+        let control = l6ctl::OwnedControl::new(engine);
         match *self {
             Self::Switch { target, enabled } => {
                 if enabled {
-                    inputs.down(target, 0)
+                    control.down(target, 0)
                 } else {
-                    inputs.up(target)
+                    control.up(target)
                 }
-                .map_err(|e| e.to_string())?;
+                .map_err(|error| error.to_string())?;
             }
             Self::Press { target } => {
-                inputs.down(target, 100).map_err(|e| e.to_string())?;
-                inputs.up(target).map_err(|e| e.to_string())?;
+                control
+                    .down(target, 100)
+                    .map_err(|error| error.to_string())?;
+                control.up(target).map_err(|error| error.to_string())?;
             }
             Self::HoldDown {
                 target,
@@ -66,12 +68,14 @@ impl Command {
                     .map_err(|e| e.to_string())?;
             }
             Self::Encoder { channel, steps, .. } => {
-                inputs.knob(channel - 1, steps).map_err(|e| e.to_string())?;
+                control
+                    .panel_knob(channel as u32, steps)
+                    .map_err(|error| error.to_string())?;
             }
             Self::Analog { channel, steps, .. } => {
-                inputs
-                    .knob(8 + channel - 1, steps)
-                    .map_err(|e| e.to_string())?;
+                control
+                    .analog(channel as u32, steps)
+                    .map_err(|error| error.to_string())?;
             }
         }
         Ok(())
@@ -80,7 +84,7 @@ impl Command {
 
 /// Owns the same engine, display consumer and snapshot builder used by GPUI.
 pub struct Session {
-    pub engine: Engine,
+    engine: Engine,
     feed: PanelFeed,
     switches: Cell<[bool; 54]>,
     pub(crate) supervised_din: bool,
@@ -105,15 +109,28 @@ impl Session {
         }
         Ok(())
     }
+    pub fn model(&self) -> l6fw::Model {
+        self.engine.model()
+    }
+    pub fn control(&self) -> l6ctl::OwnedControl<'_> {
+        l6ctl::OwnedControl::new(&self.engine)
+    }
+    pub fn input_snapshot(
+        &self,
+        source: l6ctl::InputSource,
+    ) -> Result<l6ctl::InputSnapshot, l6ctl::ControlError> {
+        self.control().input_snapshot(source)
+    }
+    pub fn input_observer(&self) -> Result<l6ctl::InputObserver, String> {
+        self.control()
+            .input_observer()
+            .map_err(|error| error.to_string())
+    }
     pub fn poll(&self) -> Result<PanelData, String> {
         self.feed.sample().map_err(|e| e.to_string())?;
         let powered = !self
-            .engine
-            .inputs
-            .as_ref()
-            .unwrap()
-            .main
-            .snapshot()
+            .input_snapshot(l6ctl::InputSource::Main)
+            .map_err(|error| error.to_string())?
             .powered_off;
         Ok(self.feed.data(self.switches.get(), powered))
     }
@@ -142,7 +159,7 @@ impl DualClockWatch {
 }
 
 fn wait_panel_uptime(session: &Session, target: u32, wall_timeout_s: u64) -> Result<u32, String> {
-    let control = l6ctl::OwnedControl::new(&session.engine);
+    let control = session.control();
     let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
     let mut watch = DualClockWatch::new(Instant::now());
     loop {
@@ -207,7 +224,7 @@ fn wait_update_panel_ready(
     wall_timeout_s: u64,
     require_programming: bool,
 ) -> Result<(), String> {
-    let control = l6ctl::OwnedControl::new(&session.engine);
+    let control = session.control();
     let (started, start) = anchor;
     let deadline = started + Duration::from_secs(wall_timeout_s);
     loop {
@@ -415,7 +432,7 @@ fn run_with_context(
     let mut runner = Runner::with_progress(
         scenario,
         if let Some(session) = &session {
-            session.engine.model()
+            session.model()
         } else {
             let main = std::fs::read(options.firmware_dir.join("main_firmware.bin"))
                 .map_err(|error| error.to_string())?;
@@ -451,7 +468,7 @@ fn run_with_context(
             let progress = {
                 if let Some(current) = &session {
                     let data = current.poll()?;
-                    runner.tick(data, current.engine.inputs.as_ref().unwrap())?
+                    runner.tick(data, &current.input_observer()?)?
                 } else {
                     runner.tick_without_input(PanelData {
                         powered: true,
@@ -666,7 +683,8 @@ fn run_with_context(
                     installer_anchor = if profile == LifecycleBoot::Installer {
                         let started = Instant::now();
                         let current = session.as_ref().unwrap();
-                        let guest = l6ctl::OwnedControl::new(&current.engine)
+                        let guest = current
+                            .control()
                             .input_status(l6ctl::InputSource::Panel)
                             .map_err(|e| e.to_string())?
                             .guest_ms;
@@ -765,7 +783,7 @@ fn run_with_context(
                     let current = session
                         .as_ref()
                         .ok_or("reset vector check needs active guest")?;
-                    if current.engine.model() != l6fw::Model::L6 {
+                    if current.model() != l6fw::Model::L6 {
                         return Err("reset vector check requires L6".into());
                     }
                     let package = managed_package
@@ -777,7 +795,8 @@ fn run_with_context(
                         .ok_or("package lacks MAIN")?;
                     let expected = main.get(4..8).ok_or("package MAIN lacks reset vector")?;
                     let address = l6fw::Model::L6.main_base() + 4;
-                    let sample = l6ctl::OwnedControl::new(&current.engine)
+                    let sample = current
+                        .control()
                         .read_main_memory(address, 4)
                         .map_err(|e| e.to_string())?;
                     if sample.bytes != expected {
@@ -888,7 +907,8 @@ fn run_with_context(
                     let current = session
                         .as_ref()
                         .ok_or("update state requires an active guest")?;
-                    let sample = l6ctl::OwnedControl::new(&current.engine)
+                    let sample = current
+                        .control()
                         .update_state()
                         .map_err(|e| e.to_string())?;
                     if sample.mode != mode || sample.flags & flags_mask != flags_value {
@@ -907,7 +927,8 @@ fn run_with_context(
                     let current = session
                         .as_ref()
                         .ok_or("update GUI requires an active guest")?;
-                    let sample = l6ctl::OwnedControl::new(&current.engine)
+                    let sample = current
+                        .control()
                         .update_gui_state()
                         .map_err(|e| e.to_string())?;
                     if sample.current_window != window
@@ -924,7 +945,8 @@ fn run_with_context(
                     let current = session
                         .as_ref()
                         .ok_or("installer outcome requires an active guest")?;
-                    let actual = l6ctl::OwnedControl::new(&current.engine)
+                    let actual = current
+                        .control()
                         .installer_outcome()
                         .map_err(|e| e.to_string())?;
                     let matches = matches!(
@@ -950,7 +972,7 @@ fn run_with_context(
                     let current = session
                         .as_ref()
                         .ok_or("USB readiness requires an active guest")?;
-                    let control = l6ctl::OwnedControl::new(&current.engine);
+                    let control = current.control();
                     control.usb_attach().map_err(|e| e.to_string())?;
                     let step = &runner.scenario.step[runner.current_step()];
                     let start = control
@@ -1006,7 +1028,8 @@ fn run_with_context(
                     let current = session
                         .as_ref()
                         .ok_or("update mode requires an active guest")?;
-                    let sample = l6ctl::OwnedControl::new(&current.engine)
+                    let sample = current
+                        .control()
                         .update_state()
                         .map_err(|e| e.to_string())?;
                     if sample.mode != mode {
@@ -1021,7 +1044,8 @@ fn run_with_context(
                     let current = session
                         .as_ref()
                         .ok_or("memory observation requires an active guest")?;
-                    let sample = l6ctl::OwnedControl::new(&current.engine)
+                    let sample = current
+                        .control()
                         .read_main_memory(address, bytes.len())
                         .map_err(|e| e.to_string())?;
                     if sample.bytes != bytes {
@@ -1161,18 +1185,17 @@ fn run_with_context(
                     runner.device_finished(json!({"restarted":true,"logs":options.logs}));
                 }
                 Progress::Device(operation) => {
-                    let warm_reset_panel =
-                        matches!(operation, devices::Operation::WarmReset).then(|| {
+                    let warm_reset_panel = if matches!(operation, devices::Operation::WarmReset) {
+                        Some(
                             session
                                 .as_ref()
                                 .unwrap()
-                                .engine
-                                .inputs
-                                .as_ref()
-                                .unwrap()
-                                .panel
-                                .snapshot()
-                        });
+                                .input_snapshot(l6ctl::InputSource::Panel)
+                                .map_err(|error| error.to_string())?,
+                        )
+                    } else {
+                        None
+                    };
                     let card_change = match &operation {
                         devices::Operation::SdCard { inserted } => Some(*inserted),
                         _ => None,
@@ -1209,12 +1232,8 @@ fn run_with_context(
                         let barrier = session
                             .as_ref()
                             .unwrap()
-                            .engine
-                            .inputs
-                            .as_ref()
-                            .unwrap()
-                            .panel
-                            .snapshot();
+                            .input_snapshot(l6ctl::InputSource::Panel)
+                            .map_err(|error| error.to_string())?;
                         runner.warm_reset(panel.indicators, barrier.indicator_updates);
                     }
                     runner.device_finished(evidence);

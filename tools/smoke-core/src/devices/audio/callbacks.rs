@@ -25,7 +25,8 @@ fn budget_expired(
         || guest_now.wrapping_sub(guest_start) > guest
 }
 fn expired(session: &Session, started: Instant, guest_start: u32, guest: u32, wall: u64) -> bool {
-    l6ctl::OwnedControl::new(&session.engine)
+    session
+        .control()
         .input_status(l6ctl::InputSource::Panel)
         .map_or(true, |status| {
             budget_expired(
@@ -86,11 +87,12 @@ impl Scope {
     ) -> Result<Self, String> {
         let started = Instant::now();
         let deadline = started + Duration::from_secs(wall);
-        let guest_start = l6ctl::OwnedControl::new(&session.engine)
+        let guest_start = session
+            .control()
             .input_status(l6ctl::InputSource::Panel)
             .map_err(|_| "audio callbacks need inputs")?
             .guest_ms;
-        let model = session.engine.model();
+        let model = session.model();
         let stock =
             fs::read(options.firmware_dir.join("main_firmware.bin")).map_err(|e| e.to_string())?;
         if !crate::firmware::is_stock(&stock, model) {
@@ -100,7 +102,7 @@ impl Scope {
         if cancelled() {
             return Err("audio callback setup exceeded shared deadline".into());
         }
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         let mut debugger = control
             .debug_session_before(deadline)
             .map_err(|e| e.to_string())?;
@@ -202,7 +204,8 @@ impl Scope {
             || expired(session, started, guest_start, guest, wall),
             || debugger.register_before(14, deadline),
         )?;
-        let guest_ms = l6ctl::OwnedControl::new(&session.engine)
+        let guest_ms = session
+            .control()
             .input_status(l6ctl::InputSource::Panel)
             .map_err(|_| "audio callbacks need inputs")?
             .guest_ms;

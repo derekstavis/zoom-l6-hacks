@@ -42,7 +42,7 @@ fn run() -> Result<(), String> {
     let command = args.first().map(String::as_str).unwrap_or("help");
     if matches!(command, "help" | "--help" | "-h") {
         println!(
-            "Usage: l6ctl [--socket PATH] info\n       l6ctl [--socket PATH] debug-session\n       l6ctl [--socket PATH] sd-loader status|site INDEX\n       l6ctl [--socket PATH] qmp-status\n       l6ctl [--socket PATH] warm-reset [TIMEOUT_S]\n       l6ctl [--socket PATH] sd-card insert PATH|eject\n       l6ctl [--socket PATH] audio-input status|load CHANNEL true|false|play|pause|stop|seek MS\n       l6ctl [--socket PATH] input status main|panel\n       l6ctl [--socket PATH] input ack main|panel SEQUENCE\n       l6ctl [--socket PATH] heap-counters\n       l6ctl [--socket PATH] menu NAME [PATH ...]\n       l6ctl [--socket PATH] memory-read ADDRESS LENGTH\n       l6ctl [--socket PATH] symbol-read SYMBOL LENGTH\n       l6ctl [--socket PATH] midi-config\n       l6ctl [--socket PATH] l6-din-state\n       l6ctl [--socket PATH] mixer-level\n       l6ctl [--socket PATH] panel-key CODE\n       l6ctl [--socket PATH] sound-pad-assignment PAD [PATH]\n       l6ctl [--socket PATH] effect-editor REPORT MODULE\n       l6ctl [--socket PATH] effect-slot REPORT MODULE [OPTIONS]\n       l6ctl [--socket PATH] update-state\n       l6ctl [--socket PATH] installer-outcome\n       l6ctl [--socket PATH] usb attach|release|controller|enumerate\n       l6ctl [--socket PATH] update-gui-state\n       l6ctl [--socket PATH] knob-popup [--text]\n       l6ctl knob-sd-inspect REPORT MODULE\n       l6ctl knob-firmware-inspect REPORT MAIN\n       l6ctl [--socket PATH] recorder-state\n       l6ctl [--socket PATH] knob-parameter-state\n       l6ctl [--socket PATH] rtos heap|tasks|scheduler|objects|all [--pretty]\n       l6ctl [--socket PATH] button NAME|TARGET [--hold-ms MS]\n       l6ctl [--socket PATH] down NAME|TARGET DURATION_MS\n       l6ctl [--socket PATH] up NAME|TARGET\n       l6ctl [--socket PATH] encoder CHANNEL STEPS\n       l6ctl [--socket PATH] analog CHANNEL STEPS\n       l6ctl [--socket PATH] set-analog CHANNEL VALUE\n       l6ctl audio prepare SOURCE.wav DIRECTORY CHANNEL\n       l6ctl audio inspect SOURCE.wav\n       l6ctl audio compare SOURCE.wav CAPTURE.s32le\n       l6ctl audio tone CAPTURE.s32le HZ RATE\n       l6ctl midi listen ENDPOINT [--timeout-ms MS]\n       l6ctl midi observe ENDPOINT --wall-ms MS\n       l6ctl midi send ENDPOINT CHANNEL CONTROLLER VALUE\n       l6ctl midi send-bytes ENDPOINT HEX_BYTE...\n       l6ctl midi sync ENDPOINT --count N [--quiet-ms MS] [--timeout-ms MS]\n\nConnects to a running emulator started with --control-socket PATH. Button names use the semantic names documented by l6test; numeric targets 0..53 are also accepted. Encoder channels are one-based. Analog channels are 1..5."
+            "Usage: l6ctl [--socket PATH] info\n       l6ctl [--socket PATH] debug-session\n       l6ctl [--socket PATH] sd-loader status|site INDEX\n       l6ctl [--socket PATH] qmp-status\n       l6ctl [--socket PATH] warm-reset [TIMEOUT_S]\n       l6ctl [--socket PATH] sd-card insert PATH|eject\n       l6ctl [--socket PATH] audio-input status|load CHANNEL true|false|play|pause|stop|seek MS\n       l6ctl [--socket PATH] input status|snapshot main|panel\n       l6ctl [--socket PATH] input ack main|panel SEQUENCE\n       l6ctl [--socket PATH] heap-counters\n       l6ctl [--socket PATH] menu NAME [PATH ...]\n       l6ctl [--socket PATH] memory-read ADDRESS LENGTH\n       l6ctl [--socket PATH] symbol-read SYMBOL LENGTH\n       l6ctl [--socket PATH] midi-config\n       l6ctl [--socket PATH] l6-din-state\n       l6ctl [--socket PATH] mixer-level\n       l6ctl [--socket PATH] panel-key CODE\n       l6ctl [--socket PATH] sound-pad-assignment PAD [PATH]\n       l6ctl [--socket PATH] effect-editor REPORT MODULE\n       l6ctl [--socket PATH] effect-slot REPORT MODULE [OPTIONS]\n       l6ctl [--socket PATH] update-state\n       l6ctl [--socket PATH] installer-outcome\n       l6ctl [--socket PATH] usb attach|release|controller|enumerate\n       l6ctl [--socket PATH] update-gui-state\n       l6ctl [--socket PATH] knob-popup [--text]\n       l6ctl knob-sd-inspect REPORT MODULE\n       l6ctl knob-firmware-inspect REPORT MAIN\n       l6ctl [--socket PATH] recorder-state\n       l6ctl [--socket PATH] knob-parameter-state\n       l6ctl [--socket PATH] rtos heap|tasks|scheduler|objects|all [--pretty]\n       l6ctl [--socket PATH] button NAME|TARGET [--hold-ms MS]\n       l6ctl [--socket PATH] down NAME|TARGET DURATION_MS\n       l6ctl [--socket PATH] up NAME|TARGET\n       l6ctl [--socket PATH] encoder CHANNEL STEPS\n       l6ctl [--socket PATH] panel-knob CHANNEL STEPS\n       l6ctl [--socket PATH] analog CHANNEL STEPS\n       l6ctl [--socket PATH] set-analog CHANNEL VALUE\n       l6ctl audio prepare SOURCE.wav DIRECTORY CHANNEL\n       l6ctl audio inspect SOURCE.wav\n       l6ctl audio compare SOURCE.wav CAPTURE.s32le\n       l6ctl audio tone CAPTURE.s32le HZ RATE\n       l6ctl midi listen ENDPOINT [--timeout-ms MS]\n       l6ctl midi observe ENDPOINT --wall-ms MS\n       l6ctl midi send ENDPOINT CHANNEL CONTROLLER VALUE\n       l6ctl midi send-bytes ENDPOINT HEX_BYTE...\n       l6ctl midi sync ENDPOINT --count N [--quiet-ms MS] [--timeout-ms MS]\n\nConnects to a running emulator started with --control-socket PATH. Button names use the semantic names documented by l6test; numeric targets 0..53 are also accepted. Encoder channels are one-based. Analog channels are 1..5."
         );
         return Ok(());
     }
@@ -156,7 +156,27 @@ fn run() -> Result<(), String> {
             [_, subcommand, source] if subcommand == "status" && source == "panel" => {
                 InputSource::Panel
             }
-            _ => return Err("Usage: l6ctl input status main|panel".into()),
+            [_, subcommand, source] if subcommand == "snapshot" && source == "main" => {
+                let snapshot = client
+                    .input_snapshot(InputSource::Main)
+                    .map_err(|error| error.to_string())?;
+                println!(
+                    "{}",
+                    serde_json::to_string(&snapshot).map_err(|e| e.to_string())?
+                );
+                return Ok(());
+            }
+            [_, subcommand, source] if subcommand == "snapshot" && source == "panel" => {
+                let snapshot = client
+                    .input_snapshot(InputSource::Panel)
+                    .map_err(|error| error.to_string())?;
+                println!(
+                    "{}",
+                    serde_json::to_string(&snapshot).map_err(|e| e.to_string())?
+                );
+                return Ok(());
+            }
+            _ => return Err("Usage: l6ctl input status|snapshot main|panel".into()),
         };
         let status = client
             .input_status(source)
@@ -578,6 +598,14 @@ fn run() -> Result<(), String> {
             let steps: i32 = parse_int(args.get(2), "steps")?;
             Request::Encoder { channel, steps }
         }
+        "panel-knob" => {
+            if args.len() != 3 {
+                return Err("Usage: l6ctl panel-knob CHANNEL STEPS".into());
+            }
+            let channel: u32 = parse_int(args.get(1), "channel")?;
+            let steps: i32 = parse_int(args.get(2), "steps")?;
+            Request::PanelKnob { channel, steps }
+        }
         "analog" => {
             if args.len() != 3 {
                 return Err("Usage: l6ctl analog CHANNEL STEPS".into());
@@ -617,6 +645,11 @@ fn run() -> Result<(), String> {
         Request::Analog { channel, steps } => {
             serde_json::to_value(client.analog(channel, steps).map_err(|e| e.to_string())?)
         }
+        Request::PanelKnob { channel, steps } => serde_json::to_value(
+            client
+                .panel_knob(channel, steps)
+                .map_err(|e| e.to_string())?,
+        ),
         Request::SetAnalog { channel, value } => serde_json::to_value(
             client
                 .set_analog(channel, value)
@@ -630,6 +663,7 @@ fn run() -> Result<(), String> {
         | Request::WarmReset { .. }
         | Request::SdCard { .. }
         | Request::InputStatus { .. }
+        | Request::InputSnapshot { .. }
         | Request::InputAck { .. }
         | Request::SdLoaderStatus
         | Request::SdLoaderSite { .. }

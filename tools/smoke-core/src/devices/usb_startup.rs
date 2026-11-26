@@ -36,7 +36,8 @@ fn capture_deadline(resumed: Instant, wall_budget: u64) -> Result<Instant, Strin
         .ok_or("USB capture deadline overflow".into())
 }
 fn panel_ms(session: &Session) -> Result<u32, String> {
-    Ok(l6ctl::OwnedControl::new(&session.engine)
+    Ok(session
+        .control()
         .input_status(l6ctl::InputSource::Panel)
         .map_err(|e| e.to_string())?
         .guest_ms)
@@ -73,7 +74,7 @@ impl Scope {
         guest: u32,
         wall: u64,
     ) -> Result<Self, String> {
-        if session.engine.model() != l6fw::Model::L6 {
+        if session.model() != l6fw::Model::L6 {
             return Err("L6 USB startup requires L6".into());
         }
         let deadline = Instant::now()
@@ -84,7 +85,7 @@ impl Scope {
         if !crate::firmware::is_stock(&stock, l6fw::Model::L6) {
             return Err("L6 USB startup requires stock MAIN".into());
         }
-        let ctl = l6ctl::OwnedControl::new(&session.engine);
+        let ctl = session.control();
         let mut observer = ctl
             .debug_observer_before(deadline)
             .map_err(|e| e.to_string())?;
@@ -162,7 +163,7 @@ impl Scope {
         // Legacy capture starts its wall clock after both guests resume.
         // Setup is independently bounded by the initial deadline above.
         self.deadline = capture_deadline(Instant::now(), self.wall_budget)?;
-        let ctl = l6ctl::OwnedControl::new(&session.engine);
+        let ctl = session.control();
         while panel_ms(session)? < 60_000 {
             self.check(session)?;
             session.poll()?;

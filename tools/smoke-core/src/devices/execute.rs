@@ -974,7 +974,7 @@ impl State {
             return Err("MIDI probe transaction interrupted by another operation".into());
         }
         let started = Instant::now();
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         let guest_start = control
             .input_status(l6ctl::InputSource::Panel)
             .map_err(|e| e.to_string())?
@@ -1193,7 +1193,8 @@ impl State {
                 Err("managed lifecycle operation must run at the session boundary".into())
             }
             Operation::ExpectRecorder => {
-                let mode = l6ctl::OwnedControl::new(&session.engine)
+                let mode = session
+                    .control()
                     .read_main_memory(l6max::system_mode, 4)?
                     .bytes;
                 if mode != 0u32.to_le_bytes() {
@@ -1208,9 +1209,7 @@ impl State {
                 address,
                 bytes,
             } => {
-                let actual = l6ctl::OwnedControl::new(&session.engine)
-                    .read_symbol(&symbol, bytes.len())?
-                    .bytes;
+                let actual = session.control().read_symbol(&symbol, bytes.len())?.bytes;
                 if actual != bytes {
                     return Err(format!(
                         "{symbol} ({address:#010x}) is {actual:02x?}, expected {bytes:02x?}"
@@ -1232,7 +1231,8 @@ impl State {
                     Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
                 loop {
                     session.poll()?;
-                    let actual = l6ctl::OwnedControl::new(&session.engine)
+                    let actual = session
+                        .control()
                         .read_symbol_before(&symbol, bytes.len(), deadline)?
                         .bytes;
                     if actual == bytes {
@@ -1597,7 +1597,7 @@ impl State {
                     .checked_add(Duration::from_secs(wall_timeout_s))
                     .ok_or("SD inspection deadline overflow")?;
                 let main = selected_main_image(options).map_err(std::io::Error::other)?;
-                let fixture = freeze_sd_fixture(options, &main, session.engine.model())
+                let fixture = freeze_sd_fixture(options, &main, session.model())
                     .map_err(std::io::Error::other)?;
                 let guarded = verify_sd_loader_hooks(
                     session,
@@ -1630,7 +1630,7 @@ impl State {
                 if context.snapshot.is_some() {
                     return Err("SD module snapshot already captured".into());
                 }
-                let control = l6ctl::OwnedControl::new(&session.engine);
+                let control = session.control();
                 let reader = control.sd_loader_reader(context.wall_deadline)?;
                 let snapshot = if loaded {
                     wait_sd_loader_snapshot(
@@ -1691,7 +1691,7 @@ impl State {
                 let inspection_guest_start = context.guest_start;
                 let inspection_guest_budget = context.guest_timeout_ms;
                 let (edits, _, _, _, _, module_hooks, _) = &context.fixture.edits;
-                let control = l6ctl::OwnedControl::new(&session.engine);
+                let control = session.control();
                 let reader = control.sd_loader_reader(inspection_deadline)?;
                 let read_live =
                     |address: u32, length: usize| -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -1859,7 +1859,7 @@ impl State {
                     let inspection_deadline = context.wall_deadline;
                     let inspection_guest_start = context.guest_start;
                     let inspection_guest_budget = context.guest_timeout_ms;
-                    let control = l6ctl::OwnedControl::new(&session.engine);
+                    let control = session.control();
                     let reader = control.sd_loader_reader(inspection_deadline)?;
                     let read_live =
                         |address: u32,
@@ -1989,7 +1989,7 @@ impl State {
                 Ok(value)
             }
             Operation::ExpectHeap { minimum_free } => {
-                let heap = l6ctl::OwnedControl::new(&session.engine).checked_heap()?;
+                let heap = session.control().checked_heap()?;
                 if heap.minimum_ever_free < minimum_free {
                     return Err(format!(
                         "heap fell to {} free bytes, below the required {minimum_free}: {heap:?}",
@@ -2123,14 +2123,14 @@ impl State {
                     "seek" => l6ctl::AudioTransport::Seek,
                     other => return Err(format!("unknown audio input command {other}").into()),
                 };
-                let control = l6ctl::OwnedControl::new(&session.engine);
+                let control = session.control();
                 let receipt = control.audio_input_transport(operation, position_ms)?;
                 Ok(
                     json!({"command": command, "position_ms": position_ms, "sequence": receipt.sequence}),
                 )
             }
             Operation::AudioInputLoad { channel, loaded } => {
-                let control = l6ctl::OwnedControl::new(&session.engine);
+                let control = session.control();
                 let before = control.audio_input_status()?.rejected;
                 let sequence = control.audio_input_load(channel, loaded)?.sequence;
                 let deadline =
@@ -2159,7 +2159,7 @@ impl State {
                     Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
                 loop {
                     session.poll()?;
-                    let status = l6ctl::OwnedControl::new(&session.engine).audio_input_status()?;
+                    let status = session.control().audio_input_status()?;
                     if status.playing == playing && (min_ms..=max_ms).contains(&status.position_ms)
                     {
                         break Ok(json!({"playing": playing, "position_ms": status.position_ms}));
@@ -2178,7 +2178,7 @@ impl State {
                 min_ms,
                 max_ms,
             } => {
-                let status = l6ctl::OwnedControl::new(&session.engine).audio_input_status()?;
+                let status = session.control().audio_input_status()?;
                 let evidence = json!({
                     "playing": status.playing,
                     "position_ms": status.position_ms,
@@ -2639,10 +2639,11 @@ impl State {
                 Ok(value)
             }
             Operation::L6maxPanelKeyBegin => {
-                if session.engine.model() != l6fw::Model::L6max || self.panel_keys.is_some() {
+                if session.model() != l6fw::Model::L6max || self.panel_keys.is_some() {
                     return Err("panel key scope requires a fresh L6max".into());
                 }
-                l6ctl::OwnedControl::new(&session.engine)
+                session
+                    .control()
                     .input_observer()
                     .map_err(|_| "panel inputs unavailable")?;
                 self.panel_keys = Some(PanelKeyScope {
@@ -2661,7 +2662,7 @@ impl State {
                 {
                     return Err("panel key held state mismatch".into());
                 }
-                let control = l6ctl::OwnedControl::new(&session.engine);
+                let control = session.control();
                 let before = control.input_status(l6ctl::InputSource::Panel)?.applied;
                 if pressed {
                     let source = l6ctl::button_source(target).ok_or("invalid held button")?;
@@ -2695,7 +2696,7 @@ impl State {
                 wait,
             } => {
                 let scope = self.panel_keys.as_ref().ok_or("missing panel key scope")?;
-                let control = l6ctl::OwnedControl::new(&session.engine);
+                let control = session.control();
                 let start = guest_now(session);
                 loop {
                     if Instant::now() >= scope.deadline {
@@ -2833,7 +2834,8 @@ impl State {
             }
             Operation::Restart => Err("restart is supervised by the session runner".into()),
             Operation::WarmReset => {
-                let receipt = l6ctl::OwnedControl::new(&session.engine)
+                let receipt = session
+                    .control()
                     .warm_reset(Duration::from_secs(wall_timeout_s))?;
                 Ok(serde_json::to_value(receipt)?)
             }
@@ -2900,14 +2902,14 @@ impl State {
                 } else {
                     None
                 };
-                let receipt = l6ctl::OwnedControl::new(&session.engine).sd_card(path)?;
+                let receipt = session.control().sd_card(path)?;
                 Ok(serde_json::to_value(receipt)?)
             }
             Operation::UsbControllerReady => {
                 if self.usb_descriptor_budget.is_some() {
                     return Err("USB descriptor transaction already active".into());
                 }
-                let control = l6ctl::OwnedControl::new(&session.engine);
+                let control = session.control();
                 let budget = control.usb_panel_budget(
                     operation_start.0 + Duration::from_secs(wall_timeout_s),
                     operation_start.1,
@@ -2946,7 +2948,7 @@ impl State {
                     .ok_or("missing USB controller readiness")?;
                 budget.check()?;
                 let (descriptor, config, configuration) =
-                    l6ctl::OwnedControl::new(&session.engine).usb_enumerate_before(&budget)?;
+                    session.control().usb_enumerate_before(&budget)?;
                 budget.check()?;
                 self.midi = configuration.midi;
                 budget.check()?;
@@ -3036,7 +3038,7 @@ impl State {
             | Operation::DinUsbExpect { .. }
             | Operation::DinUsbEnd) => self.run_din_usb(session, operation),
             Operation::L6IndicatorBegin => {
-                if session.engine.model() != l6fw::Model::L6 {
+                if session.model() != l6fw::Model::L6 {
                     return Err("L6 indicator campaign requires L6".into());
                 }
                 if self.host_midi_client().is_none() {
@@ -3099,7 +3101,8 @@ impl State {
                 if self.midi.is_none() {
                     return Err("usb-sysex needs a preceding USB MIDI enumeration".into());
                 }
-                let guest = l6ctl::OwnedControl::new(&session.engine)
+                let guest = session
+                    .control()
                     .input_status(l6ctl::InputSource::Panel)?
                     .guest_ms;
                 self.sysex_deadline =
@@ -3114,7 +3117,8 @@ impl State {
                 if sysex_deadline_expired(
                     start.elapsed(),
                     guest,
-                    l6ctl::OwnedControl::new(&session.engine)
+                    session
+                        .control()
                         .input_status(l6ctl::InputSource::Panel)?
                         .guest_ms,
                     budget,
@@ -3128,7 +3132,7 @@ impl State {
                 request,
                 complete_on_match,
             } => {
-                let control = l6ctl::OwnedControl::new(&session.engine);
+                let control = session.control();
                 let endpoints = self
                     .midi
                     .ok_or("usb-sysex needs a preceding USB MIDI enumeration")?;
@@ -3136,7 +3140,8 @@ impl State {
                     .sysex_deadline
                     .ok_or("USB SysEx campaign is not active")?;
                 let check = || -> Result<(), Box<dyn std::error::Error>> {
-                    let now = l6ctl::OwnedControl::new(&session.engine)
+                    let now = session
+                        .control()
                         .input_status(l6ctl::InputSource::Panel)?
                         .guest_ms;
                     if sysex_deadline_expired(
@@ -3160,7 +3165,8 @@ impl State {
                     .usb_sysex_send(endpoints, 2, &request.bytes)
                     .map_err(|error| error.to_string())?;
                 check()?;
-                let request_start = l6ctl::OwnedControl::new(&session.engine)
+                let request_start = session
+                    .control()
                     .input_status(l6ctl::InputSource::Panel)?
                     .guest_ms;
                 let mut decoder = l6ctl::UsbSysexDecoder::default();
@@ -3172,7 +3178,8 @@ impl State {
                         .usb_sysex_poll(endpoints, 2, &mut decoder)
                         .map_err(|error| error.to_string())?;
                     check()?;
-                    let elapsed = l6ctl::OwnedControl::new(&session.engine)
+                    let elapsed = session
+                        .control()
                         .input_status(l6ctl::InputSource::Panel)?
                         .guest_ms
                         .wrapping_sub(request_start);
@@ -3677,7 +3684,7 @@ impl State {
                     sd_knob,
                     shared.ok_or("missing shared deadline")?,
                 )?);
-                let control = l6ctl::OwnedControl::new(&session.engine);
+                let control = session.control();
                 self.overlay_reader = Some(control.knob_overlay_reader()?);
                 self.knob_heap_reader = Some(control.heap_counter_reader()?);
                 Ok(json!({"preflight": "begin"}))
@@ -3940,8 +3947,7 @@ impl State {
                         .as_mut()
                         .ok_or("missing knob-dialog preflight")?,
                 )?;
-                self.task_reader =
-                    Some(l6ctl::OwnedControl::new(&session.engine).current_task_reader()?);
+                self.task_reader = Some(session.control().current_task_reader()?);
                 Ok(result)
             }
             Operation::KnobTaskArmHook => arm_task_hook(
@@ -4001,8 +4007,7 @@ impl State {
                         .as_mut()
                         .ok_or("missing knob-dialog preflight")?,
                 )?;
-                self.overlay_reader =
-                    Some(l6ctl::OwnedControl::new(&session.engine).knob_overlay_reader()?);
+                self.overlay_reader = Some(session.control().knob_overlay_reader()?);
                 Ok(json!({"overlay": "opened"}))
             }
             Operation::KnobOverlayCheckWindow => {
@@ -4097,12 +4102,10 @@ impl State {
             Operation::KnobBitmapReactivate { delta } => {
                 let budget = shared.ok_or("missing shared deadline")?;
                 let check = || notification_observation_check(session, budget, budget.3);
-                self.overlay_reader = Some(
-                    l6ctl::OwnedControl::new(&session.engine).knob_overlay_reader_before_checked(
-                        budget.0 + Duration::from_secs(budget.3),
-                        &check,
-                    )?,
-                );
+                self.overlay_reader = Some(session.control().knob_overlay_reader_before_checked(
+                    budget.0 + Duration::from_secs(budget.3),
+                    &check,
+                )?);
                 reactivate_zero_overlay(
                     session,
                     self.knob_dialog_preflight
@@ -4141,12 +4144,10 @@ impl State {
                 )?;
                 let budget = shared.ok_or("missing shared deadline")?;
                 let check = || notification_observation_check(session, budget, budget.3);
-                self.overlay_reader = Some(
-                    l6ctl::OwnedControl::new(&session.engine).knob_overlay_reader_before_checked(
-                        budget.0 + Duration::from_secs(budget.3),
-                        &check,
-                    )?,
-                );
+                self.overlay_reader = Some(session.control().knob_overlay_reader_before_checked(
+                    budget.0 + Duration::from_secs(budget.3),
+                    &check,
+                )?);
                 Ok(value)
             }
             Operation::KnobBitmapCheckBackground {
@@ -4235,8 +4236,7 @@ impl State {
                 Ok(value)
             }
             Operation::KnobOverlayReactivate { delta } => {
-                self.overlay_reader =
-                    Some(l6ctl::OwnedControl::new(&session.engine).knob_overlay_reader()?);
+                self.overlay_reader = Some(session.control().knob_overlay_reader()?);
                 reactivate_zero_overlay(
                     session,
                     self.knob_dialog_preflight
@@ -4308,8 +4308,7 @@ impl State {
                 )
             }
             Operation::KnobLockAcquire => {
-                self.overlay_reader =
-                    Some(l6ctl::OwnedControl::new(&session.engine).knob_overlay_reader()?);
+                self.overlay_reader = Some(session.control().knob_overlay_reader()?);
                 acquire_locked_update(
                     session,
                     self.knob_dialog_preflight
@@ -4582,10 +4581,10 @@ impl State {
                     .as_mut()
                     .ok_or("missing knob-dialog preflight")?;
                 if expecting_active_display(context) {
-                    l6ctl::OwnedControl::new(&session.engine).encoder(channel, steps)?;
+                    session.control().encoder(channel, steps)?;
                     Ok(json!({"channel":channel,"steps":steps}))
                 } else if expecting_task_probe(context) {
-                    l6ctl::OwnedControl::new(&session.engine).encoder(channel, steps)?;
+                    session.control().encoder(channel, steps)?;
                     mark_task_hook_input(context)?;
                     Ok(json!({"channel":channel,"steps":steps}))
                 } else {

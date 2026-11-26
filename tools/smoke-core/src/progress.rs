@@ -249,6 +249,38 @@ pub fn step_label(action: &crate::Action) -> String {
         Action::L6RingCoverage { mask } => format!("Check L6 ring segment coverage {mask:#05x}"),
         Action::L6MuteSample { cc, value, .. } => format!("Observe L6 mute CC {cc} value {value}"),
         Action::L6IndicatorEnd => "End L6 indicator campaign".into(),
+        Action::ExpectSdLoader => "Check SD patch loader".into(),
+        Action::CaptureSdModule { loaded } => format!(
+            "Capture {} SD module state",
+            if *loaded { "loaded" } else { "unloaded" }
+        ),
+        Action::ExpectSdAllocation { loaded } => format!(
+            "Check {} SD module allocation",
+            if *loaded { "loaded" } else { "unloaded" }
+        ),
+        Action::ExpectSdChains {
+            loaded,
+            chain_count,
+        } => match chain_count {
+            Some(count) => format!(
+                "Check SD hook chains ({}; {count} links)",
+                if *loaded { "loaded" } else { "unloaded" }
+            ),
+            None => format!(
+                "Check {} SD hook chains",
+                if *loaded { "loaded" } else { "unloaded" }
+            ),
+        },
+        Action::ExpectSdContinuations { loaded } => format!(
+            "Check {} SD hook continuations",
+            if *loaded { "loaded" } else { "unloaded" }
+        ),
+        Action::ExpectSdModule { loaded } => if *loaded {
+            "Check loaded SD module bytes"
+        } else {
+            "Check SD module absence"
+        }
+        .into(),
         Action::EffectPacedTurn { channel, steps } => {
             format!("Apply {steps} paced effect edits on channel {channel}")
         }
@@ -362,7 +394,9 @@ pub fn step_label(action: &crate::Action) -> String {
         Action::EditorAssignCount { pad } => format!("Check pad {} file count", pad + 1),
         Action::EditorAssignFilename { pad } => format!("Select pad {} filename", pad + 1),
         Action::EditorAssignSend { pad } => format!("Assign pad {} file", pad + 1),
-        Action::EditorAssignState { pad } => format!("Check pad {} assignment", pad + 1),
+        Action::EditorAssignDialog { pad } => format!("Handle pad {} assignment dialog", pad + 1),
+        Action::EditorAssignState { pad } => format!("Poll pad {} assignment readback", pad + 1),
+        Action::EditorAssignAssert { pad } => format!("Check pad {} assignment", pad + 1),
         Action::EditorAssignEnd => "Finish Editor pad assignments".into(),
         Action::EditorPlaybackBegin { pad } => {
             format!("Prepare Editor playback for pad {}", pad + 1)
@@ -572,6 +606,29 @@ mod tests {
 
     #[test]
     fn labels_include_meaningful_action_parameters() {
+        assert_eq!(
+            step_label(&crate::Action::EditorAssignDialog { pad: 1 }),
+            "Handle pad 2 assignment dialog"
+        );
+        assert_eq!(
+            step_label(&crate::Action::EditorAssignState { pad: 1 }),
+            "Poll pad 2 assignment readback"
+        );
+        assert_eq!(
+            step_label(&crate::Action::EditorAssignAssert { pad: 1 }),
+            "Check pad 2 assignment"
+        );
+        assert_eq!(
+            step_label(&crate::Action::ExpectSdChains {
+                loaded: true,
+                chain_count: Some(2)
+            }),
+            "Check SD hook chains (loaded; 2 links)"
+        );
+        assert_eq!(
+            step_label(&crate::Action::ExpectSdModule { loaded: false }),
+            "Check SD module absence"
+        );
         assert_eq!(
             step_label(&crate::Action::Wait {
                 until: "mixer-ready".into()

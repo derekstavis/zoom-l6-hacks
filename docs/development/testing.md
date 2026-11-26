@@ -536,7 +536,7 @@ shows every case.
 - **Delivery:** each patch the browser patcher supports is also installed by
   the engine on stock firmware (`installed_patches`, with the same checks)
   and through a firmware update (`update_patches`). After an update,
-  `firmware-update` checks the installed image and runs knob-dialog's full
+  The managed update campaign checks the installed image and runs knob-dialog's full
   check or the MIDI state request for the patches the update installs. Each
   hosted SD module is loaded as the website delivers it
   (`installed_sd_patches`).
@@ -561,7 +561,7 @@ cargo run --offline --locked -p l6test -- run --config config.toml \
 
 Patch, factory, and update cases need explicit local configuration and matching
 firmware. Use `knob-dialog`, `patched-update`,
-`firmware-update`, and `wasm-patch` as appropriate. `l6-patch-heap` and
+the managed update campaigns, and `wasm-patch` as appropriate. `l6-patch-heap` and
 `l6max-patch-heap` check heap headroom for the patch selections declared in
 each case; they do not cover every available patch or SD-loaded module.
 

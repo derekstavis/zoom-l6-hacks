@@ -134,6 +134,7 @@ pub enum UpdateFixture {
     BadChecksum,
     BadChecksumStock,
     L6Stock,
+    L6Matching,
     L6PatchedMidi,
     SyntheticValid,
     PatchedMidi,
@@ -144,7 +145,7 @@ pub enum UpdateFixture {
 
 impl UpdateFixture {
     pub fn is_l6(self) -> bool {
-        matches!(self, Self::L6Stock | Self::L6PatchedMidi)
+        matches!(self, Self::L6Stock | Self::L6Matching | Self::L6PatchedMidi)
     }
 
     pub fn is_patched(self) -> bool {
@@ -960,7 +961,6 @@ pub enum Action {
         path: Vec<String>,
         items: Vec<String>,
     },
-    FirmwareUpdate,
     WasmPatch,
     WarmReset,
     Restart,

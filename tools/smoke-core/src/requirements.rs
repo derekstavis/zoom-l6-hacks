@@ -352,7 +352,6 @@ pub fn of(action: &Action) -> Requirement {
         | Action::EffectReplacementState { .. }
         | Action::ExpectHeap { .. }
         | Action::HoldChord { .. }
-        | Action::FirmwareUpdate
         | Action::WarmReset
         | Action::Restart
         | Action::PowerPress { .. }

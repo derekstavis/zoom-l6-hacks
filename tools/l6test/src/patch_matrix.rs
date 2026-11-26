@@ -756,12 +756,14 @@ fn delivery_cases(model: Model, all: &Checks) -> Result<Vec<GeneratedCase>, Stri
                 campaign = vec![
                     crate::catalog::CampaignMember {
                         name: "stock-checksum-rejection".into(),
+                        model,
                         scenario: "tests/emulator/cases/boot/l6max-update-stock-bad-checksum.toml"
                             .into(),
                         fingerprint: String::new(),
                     },
                     crate::catalog::CampaignMember {
                         name: name.into(),
+                        model,
                         scenario: path.into(),
                         fingerprint: String::new(),
                     },
@@ -783,10 +785,9 @@ fn delivery_cases(model: Model, all: &Checks) -> Result<Vec<GeneratedCase>, Stri
                 );
                 step(&mut text, "action = \"lifecycle-stop\"");
             } else {
-                step(
-                    &mut text,
-                    "action = \"firmware-update\"\nguest_timeout_ms = 300000\nwall_timeout_s = 1200",
-                );
+                return Err(format!(
+                    "no managed update campaign for {name} patch {patch}"
+                ));
             }
             cases.push(GeneratedCase {
                 id,

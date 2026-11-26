@@ -61,6 +61,7 @@ fn synthetic_update(
         | smoke_core::UpdateFixture::PatchedKnobMidi
         | smoke_core::UpdateFixture::BadChecksumStock
         | smoke_core::UpdateFixture::L6Stock
+        | smoke_core::UpdateFixture::L6Matching
         | smoke_core::UpdateFixture::L6PatchedMidi => {
             return Err("update is not synthetic".into());
         }
@@ -248,13 +249,18 @@ fn run_campaign(
         "completed"
     }
     .into();
-    for (index, member) in case.campaign.iter().enumerate() {
+    let selected: Vec<_> = case
+        .campaign
+        .iter()
+        .filter(|member| member.model == fixture.model)
+        .collect();
+    for (index, member) in selected.iter().enumerate() {
         let member_dir = dir.join(format!("{:02}-{}", index + 1, member.name));
         progress.campaign_member_started(
             progress_id.clone(),
             member.name.clone(),
             index + 1,
-            case.campaign.len(),
+            selected.len(),
             member_dir
                 .strip_prefix(ctx.output)
                 .expect("member belongs to run")
@@ -680,9 +686,13 @@ fn build_fixture(
             .as_ref()
             .ok_or_else(|| failed("update card needs a firmware package".into()))?;
         let source_bytes = fs::read(source).failed_in(Phase::Fixture)?;
-        let package = if fixture == smoke_core::UpdateFixture::L6Stock {
+        let package = if matches!(
+            fixture,
+            smoke_core::UpdateFixture::L6Stock | smoke_core::UpdateFixture::L6Matching
+        ) {
             let hash = format!("{:x}", Sha256::digest(&source_bytes));
-            if hash != smoke_core::firmware::STOCK_L6_PACKAGE_SHA256
+            if (fixture == smoke_core::UpdateFixture::L6Stock
+                && hash != smoke_core::firmware::STOCK_L6_PACKAGE_SHA256)
                 || inputs.package_sha256.as_deref() != Some(hash.as_str())
             {
                 return Err(failed("L6 update requires the pinned stock package".into()));
@@ -691,6 +701,15 @@ fn build_fixture(
                 != Model::L6
             {
                 return Err(failed("L6 update package model mismatch".into()));
+            }
+            let (_, segments) = l6fw::unpack_bytes(&source_bytes).map_err(failed)?;
+            let main = segments
+                .get("main_firmware.bin")
+                .ok_or_else(|| failed("L6 update package has no MAIN".into()))?;
+            if format!("{:x}", Sha256::digest(main)) != inputs.firmware["main_firmware.bin"] {
+                return Err(failed(
+                    "L6 update package MAIN differs from selected firmware".into(),
+                ));
             }
             source_bytes
         } else if fixture.is_patched() {
@@ -1137,6 +1156,70 @@ fn apply_expected(result: &mut CaseResult, scenario: &Value, expected: &[Expecte
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn failed_first_campaign_member_prevents_second_and_keeps_partial_result() {
+        let root = l6max_host::paths::repository_root();
+        let catalog = crate::catalog::load(root).unwrap();
+        let case = catalog
+            .cases
+            .iter()
+            .find(|case| case.id == "firmware-update")
+            .unwrap();
+        let dir =
+            std::env::temp_dir().join(format!("l6test-failed-campaign-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = crate::config::Config {
+            firmware: [(l6fw::Model::L6max, dir.join("missing-package"))]
+                .into_iter()
+                .collect(),
+            qemu: dir.join("missing-qemu"),
+            qemu_sha256: String::new(),
+            app: None,
+        };
+        let fixture =
+            crate::fixture::case_fixture(&config, l6fw::Model::L6max, &case.id, None).unwrap();
+        let cache = crate::cache::RunCache::new(dir.join("cache"));
+        let ctx = super::Context {
+            root,
+            output: &dir,
+            config: &config,
+            cache: &cache,
+            patch_artifact_dir: &dir,
+            fixtures_only: false,
+            update_references: false,
+        };
+        let progress = crate::progress::Journal::new(&dir, 1);
+        let id = smoke_core::progress::AttemptId {
+            case: smoke_core::progress::CaseId {
+                case: case.id.clone(),
+                model: l6fw::Model::L6max,
+                backend: smoke_core::Backend::Headless,
+            },
+            attempt: 1,
+        };
+        // The test harness executable rejects the private member subcommand,
+        // exercising the real supervised failure path without any firmware.
+        let result = super::run_campaign(
+            &ctx,
+            &fixture,
+            case,
+            smoke_core::Backend::Headless,
+            &dir,
+            "test",
+            &id,
+            &progress,
+        );
+        assert_eq!(result.outcome, crate::report::Outcome::Fail);
+        assert!(result.detail.contains("synthetic-checksum-rejection"));
+        let members: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.join("campaign.json")).unwrap()).unwrap();
+        assert_eq!(members.as_array().unwrap().len(), 1);
+        assert!(!dir.join("02-synthetic-install").exists());
+        drop(progress);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn campaign_keeps_supervision_errors_and_requires_successful_stats() {
         let dir =

@@ -403,6 +403,18 @@ fn execute(
             serde_json::to_value(crate::effect_editor::Reader::new(qmp, model, binding)?.read()?)
                 .map_err(|e| e.to_string())
         }
+        "sound-pad-assignment" => {
+            let pad = request
+                .get("pad")
+                .and_then(Value::as_u64)
+                .and_then(|v| u8::try_from(v).ok())
+                .ok_or("sound-pad-assignment needs pad")?;
+            let path = request.get("path").and_then(Value::as_str);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            let reader = crate::sound_pad::Reader::new_before(qmp, model, deadline)?;
+            serde_json::to_value(reader.sample_before(pad, path, deadline)?)
+                .map_err(|e| e.to_string())
+        }
         "panel-key" => {
             let code = request
                 .get("code")

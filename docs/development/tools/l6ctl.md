@@ -529,3 +529,5 @@ The in-process `OwnedControl` API offers USB SysEx send and poll against an alre
 `l6ctl panel-key CODE` reads the L6max 1.10 sound-pad key lookup and six state words for codes 25–28. The revision guard is checked before reading. The table and state reads are non-atomic; the returned input state is not evidence of an OLED rendering.
 
 `l6ctl midi send-bytes ENDPOINT HEX_BYTE...` sends raw MIDI to a native endpoint; bytes are two hexadecimal digits. In-process callers can also reserve USB with `l6ctl::midi::RawUsbReceiver`, enumerate it with their own timeout policy, and poll complete USB transfers with cable and packet boundaries preserved. The raw USB receiver is unavailable through the control socket.
+
+`l6ctl sound-pad-assignment PAD [PATH]` reads the L6 1.10 saved-assignment pending byte for a zero-based pad index (0–3). For pad 0, an optional card-relative path also compares the firmware's raw UTF-16 path. The assignment-worker fingerprint guards the observation; the path and pending reads are non-atomic.

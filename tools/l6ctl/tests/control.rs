@@ -1,6 +1,6 @@
 use l6ctl::{ControlClient, ControlError, InputSource, Request, RtosKind};
 use l6fw::Model;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     io::{BufRead, BufReader, Write},
     os::unix::net::UnixListener,
@@ -827,11 +827,9 @@ fn debugger_uses_one_persistent_typed_connection_for_api_and_cli() {
         session.execute(DebugCommand::Close).unwrap(),
         DebugObservation::Closed
     ));
-    assert!(
-        session
-            .execute(DebugCommand::Register { index: 15 })
-            .is_err()
-    );
+    assert!(session
+        .execute(DebugCommand::Register { index: 15 })
+        .is_err());
     let mut child = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
         .arg("--socket")
         .arg(&path)
@@ -1069,11 +1067,9 @@ fn meter_finish_closes_typed_client_and_cli_session() {
             requires_restart: true
         }
     ));
-    assert!(
-        session
-            .execute(DebugCommand::Register { index: 15 })
-            .is_err()
-    );
+    assert!(session
+        .execute(DebugCommand::Register { index: 15 })
+        .is_err());
     let mut child = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
         .arg("--socket")
         .arg(&path)
@@ -1094,11 +1090,9 @@ fn meter_finish_closes_typed_client_and_cli_session() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        String::from_utf8(output.stdout)
-            .unwrap()
-            .contains("\"requires_restart\":true")
-    );
+    assert!(String::from_utf8(output.stdout)
+        .unwrap()
+        .contains("\"requires_restart\":true"));
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();
 }
@@ -1163,6 +1157,41 @@ fn usb_enumerate_cli_uses_reserved_controller_and_returns_endpoints() {
     assert_eq!(
         serde_json::from_slice::<Value>(&output.stdout).unwrap(),
         result
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn sound_pad_assignment_client_and_cli_use_typed_wire_contract() {
+    let path = socket_path();
+    let value = json!({"revision_guard":"l6_1_10_sound_pad_assignment_worker","atomic":false,"pad":0,"pending":0,"path_matches":true});
+    let request = json!({"command":"sound-pad-assignment","pad":0,"path":"SOUND/x.wav"});
+    let server = server(
+        &path,
+        vec![
+            (request.clone(), json!({"ok":true,"result":value})),
+            (request, json!({"ok":true,"result":value})),
+        ],
+    );
+    let sample = ControlClient::new(&path)
+        .sound_pad_assignment(0, Some("SOUND/x.wav".into()))
+        .unwrap();
+    assert_eq!(sample.path_matches, Some(true));
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["sound-pad-assignment", "0", "SOUND/x.wav"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        value
     );
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();

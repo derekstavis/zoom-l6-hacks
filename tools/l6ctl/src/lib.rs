@@ -46,6 +46,7 @@ pub use l6max_host::l6_recorder::{
 };
 pub use l6max_host::mixer_level::MixerLevel;
 pub use l6max_host::panel_keys::Snapshot as PanelKeySnapshot;
+pub use l6max_host::sound_pad::Assignment as SoundPadAssignment;
 pub use l6max_host::update_bootloader::Outcome as InstallerOutcome;
 pub use l6max_host::update_state::{UpdateGuiState, UpdateState};
 pub use l6max_host::usb_midi::SysexDecoder as UsbSysexDecoder;
@@ -110,6 +111,10 @@ pub enum Request {
     MixerLevel,
     PanelKey {
         code: u32,
+    },
+    SoundPadAssignment {
+        pad: u8,
+        path: Option<String>,
     },
     UpdateState,
     UpdateGuiState,
@@ -441,6 +446,14 @@ impl ControlClient {
 
     pub fn l6_din_state(&self) -> Result<L6DinSnapshot, ControlError> {
         self.request_as(&Request::L6DinState)
+    }
+
+    pub fn sound_pad_assignment(
+        &self,
+        pad: u8,
+        path: Option<String>,
+    ) -> Result<SoundPadAssignment, ControlError> {
+        self.request_as(&Request::SoundPadAssignment { pad, path })
     }
 
     pub fn panel_key(&self, code: u32) -> Result<PanelKeySnapshot, ControlError> {
@@ -1040,6 +1053,14 @@ impl<'a> OwnedControl<'a> {
             command: "up".into(),
             sequence,
         })
+    }
+
+    pub fn sound_pad_reader_before(
+        &self,
+        deadline: std::time::Instant,
+    ) -> Result<l6max_host::sound_pad::Reader, ControlError> {
+        l6max_host::sound_pad::Reader::new_before(self.main_qmp()?, self.engine.model(), deadline)
+            .map_err(ControlError::Rejected)
     }
 
     pub fn panel_key(&self, code: u32) -> Result<PanelKeySnapshot, ControlError> {

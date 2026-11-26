@@ -2915,7 +2915,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "9551ca5d72019a2917ad993ae9206a40d130ee803e16346cf15996d8f573cace"
+    "definition": "b3f27c1964bac3105117d1f926c21f2a9e01618fe782643e45f845f318a5d4fd"
   },
   {
     "case": "patches-l6max_update_knob-dialog",
@@ -2926,7 +2926,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "f5f1ea6019d3fd140280c71898d33a72ae8b6efdef97ebf54c1db6d1c8677548"
+    "definition": "238e599b184b5990f74d60363345c0691d86a641b481132cde2346779e8bc6af"
   },
   {
     "case": "patches-l6max_update_midi-sync",

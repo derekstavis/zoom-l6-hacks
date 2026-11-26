@@ -17,6 +17,7 @@ impl Scenario {
             };
             let expected_patches = match fixture {
                 UpdateFixture::PatchedKnob => vec!["knob-dialog".to_string()],
+                UpdateFixture::PatchedDin => vec!["din-mixer-control".to_string()],
                 UpdateFixture::PatchedKnobMidi => {
                     vec!["knob-dialog".to_string(), "midi-sync".to_string()]
                 }
@@ -39,6 +40,7 @@ impl Scenario {
                 || (!matches!(
                     fixture,
                     UpdateFixture::PatchedMidi
+                        | UpdateFixture::PatchedDin
                         | UpdateFixture::PatchedKnob
                         | UpdateFixture::PatchedKnobMidi
                 ) && value
@@ -149,6 +151,7 @@ impl Scenario {
                     }
                 }
                 UpdateFixture::PatchedMidi
+                | UpdateFixture::PatchedDin
                 | UpdateFixture::PatchedKnob
                 | UpdateFixture::PatchedKnobMidi => {
                     if value.update_goal != Some(UpdateGoal::Install) {
@@ -218,7 +221,9 @@ impl Scenario {
                     {
                         return Err("patched update needs complete ordered handoff, installer, restart and MIDI verification checks".into());
                     }
-                    let tail_valid = if fixture == UpdateFixture::PatchedMidi {
+                    let tail_valid = if fixture == UpdateFixture::PatchedDin {
+                        matches!(tail, [Action::LifecycleStop])
+                    } else if fixture == UpdateFixture::PatchedMidi {
                         matches!(
                             tail,
                             [
@@ -439,6 +444,7 @@ impl Scenario {
                 if matches!(
                     fixture,
                     UpdateFixture::PatchedMidi
+                        | UpdateFixture::PatchedDin
                         | UpdateFixture::PatchedKnob
                         | UpdateFixture::PatchedKnobMidi
                 ) {
@@ -543,6 +549,7 @@ impl Scenario {
             }
             let expected_end = match fixture {
                 UpdateFixture::PatchedMidi
+                | UpdateFixture::PatchedDin
                 | UpdateFixture::PatchedKnob
                 | UpdateFixture::PatchedKnobMidi
                 | UpdateFixture::L6PatchedMidi => matches!(

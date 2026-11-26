@@ -3059,18 +3059,16 @@ impl State {
                 if self.usb_descriptor_budget.is_some() {
                     return Err("USB descriptor transaction already active".into());
                 }
-                let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
-                let panel = inputs.panel.clone();
-                let start = operation_start.1;
-                let budget = l6max_host::usb::Budget::new(
-                    operation_start.0 + Duration::from_secs(wall_timeout_s),
-                    move || panel.snapshot().guest_ms.wrapping_sub(start) > guest_timeout_ms,
-                );
                 let control = l6ctl::OwnedControl::new(&session.engine);
+                let budget = control.usb_panel_budget(
+                    operation_start.0 + Duration::from_secs(wall_timeout_s),
+                    operation_start.1,
+                    guest_timeout_ms,
+                )?;
                 control.usb_attach_before(&budget)?;
                 // Legacy readiness starts after attach, independently of the
                 // enclosing operation's original guest and wall anchors.
-                let ready_start = inputs.panel.snapshot().guest_ms;
+                let ready_start = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
                 let ready_deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
                 loop {
                     budget.check()?;
@@ -3078,7 +3076,10 @@ impl State {
                         break;
                     }
                     if Instant::now() >= ready_deadline
-                        || inputs.panel.snapshot().guest_ms.wrapping_sub(ready_start)
+                        || control
+                            .input_status(l6ctl::InputSource::Panel)?
+                            .guest_ms
+                            .wrapping_sub(ready_start)
                             > guest_timeout_ms
                     {
                         return Err("USB device controller did not start".into());

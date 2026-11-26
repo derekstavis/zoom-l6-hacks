@@ -112,7 +112,7 @@ child titles in order. It checks the GUI and menu submenu routine fingerprints;
 the running guest's tree is non-atomic, and the result does not verify pixels.
 The control socket limits this observation to 30 seconds.
 
-In-process callers can attach, poll and enumerate USB with a shared `usb::Budget`;
+In-process callers can create a retained panel-guest-time budget with `OwnedControl::usb_panel_budget`, then attach, poll and enumerate USB with that shared `usb::Budget`;
 these operations use the engine's raw-controller reservation, return raw
 descriptors and retain its MIDI IN pump. Control-socket `usb attach`,
 `usb controller`, `usb enumerate` and `usb release` use the same controller

@@ -572,13 +572,13 @@ impl State {
             self.release_retained_host_midi();
             let started = Instant::now();
             let guest_start = inputs.panel.snapshot().guest_ms;
-            let panel = inputs.panel.clone();
-            let budget = l6max_host::usb::Budget::new(
+            let control = l6ctl::OwnedControl::new(&session.engine);
+            let budget = control.usb_panel_budget(
                 started + Duration::from_secs(wall_timeout_s),
-                move || panel.snapshot().guest_ms.wrapping_sub(guest_start) > guest_timeout_ms,
-            );
-            let client =
-                l6ctl::OwnedControl::new(&session.engine).direct_midi_before(cable, &budget)?;
+                guest_start,
+                guest_timeout_ms,
+            )?;
+            let client = control.direct_midi_before(cable, &budget)?;
             budget.check()?;
             let now = Instant::now();
             self.native_midi = Some(client);

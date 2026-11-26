@@ -635,6 +635,10 @@ impl MainStopHandle {
     }
 }
 
+fn usb_panel_guest_expired(now: u32, start: u32, timeout_ms: u32) -> bool {
+    now.wrapping_sub(start) > timeout_ms
+}
+
 /// Access the same host-owned guest directly without opening a control socket.
 /// The engine and its QMP/input resources remain owned by the caller.
 pub struct OwnedControl<'a> {
@@ -712,6 +716,26 @@ impl<'a> OwnedControl<'a> {
         )
         .map_err(ControlError::Rejected)
     }
+    /// Retain a panel-guest-time cancellation condition across USB steps.
+    /// The wall deadline and guest-time anchor remain those supplied by the caller.
+    pub fn usb_panel_budget(
+        &self,
+        deadline: std::time::Instant,
+        guest_start: u32,
+        guest_timeout_ms: u32,
+    ) -> Result<l6max_host::usb::Budget, ControlError> {
+        let panel = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .panel
+            .clone();
+        Ok(l6max_host::usb::Budget::new(deadline, move || {
+            usb_panel_guest_expired(panel.snapshot().guest_ms, guest_start, guest_timeout_ms)
+        }))
+    }
+
     /// Enumerate the engine's reserved raw controller without replacing its pump.
     pub fn usb_enumerate_before(
         &self,
@@ -1466,3 +1490,12 @@ impl<'a> OwnedControl<'a> {
 
 /// Host and direct USB MIDI consumer sessions.
 pub mod midi;
+
+#[cfg(test)]
+mod usb_panel_budget_tests {
+    #[test]
+    fn guest_budget_retains_boundary_and_clock_wrap_behavior() {
+        assert!(!super::usb_panel_guest_expired(50, u32::MAX - 49, 100));
+        assert!(super::usb_panel_guest_expired(51, u32::MAX - 49, 100));
+    }
+}

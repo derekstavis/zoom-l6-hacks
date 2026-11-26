@@ -739,23 +739,48 @@ impl Scenario {
                 return Err("menu capture missing ordered-items assertion".into());
             }
         }
-        // A mode snapshot is checked without further guest reads. Keep its
-        // assertions adjacent and under the capture's original deadline.
+        // Assertions consume one immutable sample and share its deadline.
         for model in &value.models {
-            let mut scope: Option<(u32, u64, bool, bool)> = None;
+            let mut scope: Option<(u32, u64, u8)> = None;
             for step in value.step.iter().filter(|step| step.applies_to(*model)) {
-                match (&step.action, &mut scope) {
-                    (Action::CaptureEffectModes, None) => scope = Some((step.guest_timeout_ms, step.wall_timeout_s, false, false)),
-                    (Action::ExpectEffectPanelMode { .. }, Some((guest, wall, panel, _))) if !*panel && (*guest,*wall)==(step.guest_timeout_ms,step.wall_timeout_s) => *panel = true,
-                    (Action::ExpectEffectEditMode { .. }, Some((guest, wall, _, edit))) if !*edit && (*guest,*wall)==(step.guest_timeout_ms,step.wall_timeout_s) => *edit = true,
-                    (Action::EffectModesEnd, Some((guest, wall, panel, edit))) if (*panel || *edit) && (*guest,*wall)==(step.guest_timeout_ms,step.wall_timeout_s) => scope = None,
-                    (Action::CaptureEffectModes | Action::ExpectEffectPanelMode { .. } | Action::ExpectEffectEditMode { .. } | Action::EffectModesEnd, _) => return Err("effect mode checks need one snapshot, unique assertions and matching deadlines".into()),
-                    (_, Some(_)) => return Err("effect mode snapshot must be followed by its assertions".into()),
+                let flag = match step.action {
+                    Action::ExpectEffectType { .. } => Some(1),
+                    Action::ExpectEffectProcessor { .. } => Some(2),
+                    Action::ExpectEffectPanelMode { .. } => Some(4),
+                    Action::ExpectEffectEditMode { .. } => Some(8),
+                    _ => None,
+                };
+                match (&step.action, &mut scope, flag) {
+                    (Action::CaptureEffectState, None, _) => {
+                        scope = Some((step.guest_timeout_ms, step.wall_timeout_s, 0))
+                    }
+                    (_, Some((guest, wall, flags)), Some(bit))
+                        if *flags & bit == 0
+                            && (*guest, *wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        *flags |= bit
+                    }
+                    (Action::EffectStateEnd, Some((guest, wall, flags)), _)
+                        if *flags != 0
+                            && (*guest, *wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        scope = None
+                    }
+                    (Action::CaptureEffectState | Action::EffectStateEnd, _, _)
+                    | (_, _, Some(_)) => return Err(
+                        "effect state needs one snapshot, unique assertions and matching deadlines"
+                            .into(),
+                    ),
+                    (_, Some(_), _) => {
+                        return Err(
+                            "effect state snapshot must be followed by its assertions".into()
+                        );
+                    }
                     _ => (),
                 }
             }
             if scope.is_some() {
-                return Err("effect mode snapshot is unfinished".into());
+                return Err("effect state snapshot is unfinished".into());
             }
         }
         // A baseline belongs to one guest generation and one encoder. Avoid
@@ -3066,10 +3091,24 @@ impl Scenario {
                     let next = steps
                         .get(index + 1)
                         .ok_or("effect slot wait needs a following assertion")?;
+                    let legacy = matches!(&next.action, Action::EffectReplacementState { expected_effect_type: Some(effect), expected_processor_type: Some(processor), expected_effect: actual_effect, require_output: actual_output, .. }
+                            if effect == expected_effect_type && processor == expected_processor_type && actual_effect == expected_effect && actual_output == require_output);
+                    let split = matches!(&next.action, Action::CaptureEffectState)
+                        && expected_effect.is_none()
+                        && !*require_output
+                        && {
+                            let checks = steps[index + 2..]
+                                .iter()
+                                .take_while(|candidate| {
+                                    !matches!(candidate.action, Action::EffectStateEnd)
+                                })
+                                .collect::<Vec<_>>();
+                            checks.iter().any(|candidate| matches!(candidate.action, Action::ExpectEffectType { value } if value == *expected_effect_type))
+                            && checks.iter().any(|candidate| matches!(candidate.action, Action::ExpectEffectProcessor { value } if value == *expected_processor_type))
+                        };
                     if (step.guest_timeout_ms, step.wall_timeout_s)
                         != (next.guest_timeout_ms, next.wall_timeout_s)
-                        || !matches!(&next.action, Action::EffectReplacementState { expected_effect_type: Some(effect), expected_processor_type: Some(processor), expected_effect: actual_effect, require_output: actual_output, .. }
-                            if effect == expected_effect_type && processor == expected_processor_type && actual_effect == expected_effect && actual_output == require_output)
+                        || !(legacy || split)
                     {
                         return Err("effect slot wait needs a matching adjacent assertion with the same budget".into());
                     }
@@ -3469,18 +3508,45 @@ mod menu_scope_tests {
 }
 
 #[cfg(test)]
-mod effect_modes_scope_tests {
+mod effect_state_scope_tests {
     fn parse(steps: &str) -> Result<super::super::Scenario, String> {
         super::super::Scenario::from_text(&format!(
             "version=1\nname='modes'\nmodels=['l6max']\nbackends=['headless']\n{steps}"
         ))
     }
     #[test]
+    fn wait_requires_matching_type_and_processor_assertions() {
+        let wait = "[[step]]\naction='wait-effect-slot'\nexpected_effect_type=1\nexpected_processor_type=1\n";
+        let capture = "[[step]]\naction='capture-effect-state'\n";
+        let effect = "[[step]]\naction='expect-effect-type'\nvalue=1\n";
+        let processor = "[[step]]\naction='expect-effect-processor'\nvalue=1\n";
+        let end = "[[step]]\naction='effect-state-end'\n";
+        assert!(parse(&format!("{wait}{capture}{effect}{processor}{end}")).is_ok());
+        assert!(parse(&format!("{wait}{capture}{effect}{end}")).is_err());
+        assert!(
+            parse(&format!(
+                "{wait}{capture}{effect}{}{end}",
+                processor.replace("value=1", "value=2")
+            ))
+            .is_err()
+        );
+        assert!(
+            parse(&format!(
+                "{}{capture}{effect}{processor}{end}",
+                wait.replace(
+                    "expected_processor_type=1",
+                    "expected_processor_type=1\nrequire_output=true"
+                )
+            ))
+            .is_err()
+        );
+    }
+    #[test]
     fn snapshot_requires_unique_adjacent_assertions_and_shared_deadlines() {
-        let capture = "[[step]]\naction='capture-effect-modes'\n";
+        let capture = "[[step]]\naction='capture-effect-state'\n";
         let panel = "[[step]]\naction='expect-effect-panel-mode'\nvalue=6\n";
         let edit = "[[step]]\naction='expect-effect-edit-mode'\nenabled=true\n";
-        let end = "[[step]]\naction='effect-modes-end'\n";
+        let end = "[[step]]\naction='effect-state-end'\n";
         assert!(parse(&format!("{capture}{panel}{edit}{end}")).is_ok());
         assert!(parse(&format!("{capture}{edit}{end}")).is_ok());
         assert!(parse(&format!("{capture}{panel}{panel}{end}")).is_err());

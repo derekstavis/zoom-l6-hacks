@@ -3057,7 +3057,7 @@
       "sd-matrix",
       "effect-replacement-matrix"
     ],
-    "definition": "c5fcfa8af42a153cf83e2a1ae4eddb2f84c5b779ef367df0760e474a131d9097"
+    "definition": "cec2de79e99c0ba13b331b461411fbc98c4edb6bc9d01d028368a005603894c7"
   },
   {
     "case": "sd-effect-replacement-map",
@@ -3067,7 +3067,7 @@
       "sd-matrix",
       "effect-replacement-matrix"
     ],
-    "definition": "9bc369452e4c144a2adc0a00f51f16e10908109e3235433204ff04d5a212f58f"
+    "definition": "dfb05d12ba46d9beb10fbab6e82755c756df3232a3bb63b3aca8c988b6c986ea"
   },
   {
     "case": "sd-effect-replacement-plateau",
@@ -3077,7 +3077,7 @@
       "sd-matrix",
       "effect-replacement-matrix"
     ],
-    "definition": "353f71092ec97fe86e383338bab2c41fb4f74a20de1c74ce9faf1b9927ca4c43"
+    "definition": "a55228569de151862700173b9ae8e344e7c0dd544e29557bf355b7beb7cac3bc"
   },
   {
     "case": "sd-effect-velvet-ring-scale",
@@ -3087,7 +3087,7 @@
       "sd-matrix",
       "effect-replacement-matrix"
     ],
-    "definition": "98f55a9c536140122da5bea1cdd86d92f1892126d781961101654a47accca886"
+    "definition": "80b50a1e877e29783070035bd42363e4e56cc4cd98f7d5eabd02ca1df574d3b9"
   },
   {
     "case": "sd-hook-chain",

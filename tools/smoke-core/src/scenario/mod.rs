@@ -758,14 +758,20 @@ pub enum Action {
     ExpectEffectRingChanged {
         encoder: u8,
     },
-    CaptureEffectModes,
+    CaptureEffectState,
+    ExpectEffectType {
+        value: u8,
+    },
+    ExpectEffectProcessor {
+        value: u8,
+    },
     ExpectEffectPanelMode {
         value: u8,
     },
     ExpectEffectEditMode {
         enabled: bool,
     },
-    EffectModesEnd,
+    EffectStateEnd,
     /// Wait for effect editor and panel-mode state in the loaded module.
     WaitEffectMode {
         #[serde(default)]

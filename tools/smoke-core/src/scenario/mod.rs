@@ -1202,7 +1202,13 @@ pub enum Action {
         #[serde(default = "default_tone_tolerance_db")]
         tolerance_db: f64,
     },
-    L6UsbStartup,
+    L6UsbStartupBegin,
+    L6UsbStartupCapture,
+    L6UsbStartupAssertHits,
+    L6UsbStartupAssertWrites,
+    L6UsbStartupAssertReplay,
+    L6UsbStartupEnd,
+
     L6DispatchBegin {
         group: u8,
         cc: u8,

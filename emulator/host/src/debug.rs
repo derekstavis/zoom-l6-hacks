@@ -257,6 +257,7 @@ trait Guest: Send + Sync {
     fn running(&self) -> Result<bool, String>;
     fn running_before(&self, deadline: Instant) -> Result<bool, String>;
     fn resume_before(&self, deadline: Instant) -> Result<(), String>;
+    fn resume_for_breakpoint_before(&self, deadline: Instant) -> Result<(), String>;
     fn stop(&self) -> Result<(), String>;
     fn resume(&self) -> Result<(), String>;
     fn guard_l6_scratch(&self) -> Result<(), String>;
@@ -291,6 +292,9 @@ struct MainGuest {
     model: Model,
 }
 impl Guest for MainGuest {
+    fn resume_for_breakpoint_before(&self, deadline: Instant) -> Result<(), String> {
+        self.qmp.resume_before(deadline).map_err(|e| e.to_string())
+    }
     fn guard_l6_din_dispatch(
         &self,
         deadline: Instant,
@@ -951,6 +955,24 @@ impl Session {
             return Err("register deadline exceeded".into());
         }
         Ok(value)
+    }
+    /// Resume MAIN under the retained debugger lease while an in-process
+    /// observer polls for owned breakpoints and handles concurrent inputs.
+    pub fn resume_owned_before(&mut self, deadline: Instant) -> Result<(), String> {
+        if self.poisoned || self.transport.is_none() || Instant::now() >= deadline {
+            return Err("debug resume requires a live session and a valid deadline".into());
+        }
+        // A breakpoint may stop MAIN before a subsequent status query. The
+        // caller owns the session and observes that stop itself.
+        if let Err(error) = self.guest.resume_for_breakpoint_before(deadline) {
+            self.poisoned = true;
+            return Err(error);
+        }
+        if Instant::now() >= deadline {
+            self.poisoned = true;
+            return Err("debug resume deadline exceeded".into());
+        }
+        Ok(())
     }
     /// Continue to an owned breakpoint with an absolute deadline and cancellation.
     pub fn continue_before(
@@ -1929,6 +1951,116 @@ impl Drop for Session {
     }
 }
 
+/// In-process coordination of a retained debugger and two initially paused
+/// guests. The caller owns timing, input replay and interpretation of stops.
+pub struct Observer {
+    main: QmpClient,
+    panel: QmpClient,
+    session: Option<Session>,
+}
+impl Observer {
+    pub fn acquire(
+        controller: &Controller,
+        main: &QmpClient,
+        panel: &QmpClient,
+        deadline: Instant,
+    ) -> Result<Self, String> {
+        if main.running_before(deadline).map_err(|e| e.to_string())?
+            || panel.running_before(deadline).map_err(|e| e.to_string())?
+        {
+            return Err("debug observer requires both guests initially paused".into());
+        }
+        let mut session = controller.begin_before(deadline)?;
+        let panel_status = panel.running_before(deadline).map_err(|e| e.to_string());
+        if session.was_running || !matches!(panel_status, Ok(false)) {
+            let reason = match panel_status {
+                Err(error) => format!("panel status during observer acquisition: {error}"),
+                _ => "debug observer guests changed from paused during acquisition".into(),
+            };
+            let cleanup = session.close_before(Instant::now() + Duration::from_secs(3));
+            return Err(match cleanup {
+                Ok(()) => reason,
+                Err(error) => format!("{reason}; cleanup: {error}"),
+            });
+        }
+        Ok(Self {
+            main: main.clone(),
+            panel: panel.clone(),
+            session: Some(session),
+        })
+    }
+    fn session(&mut self) -> Result<&mut Session, String> {
+        self.session.as_mut().ok_or("debug observer closed".into())
+    }
+    pub fn breakpoint_before(
+        &mut self,
+        address: u32,
+        enabled: bool,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        self.session()?
+            .breakpoint_before(address, enabled, deadline)
+    }
+    pub fn register_before(&mut self, index: u32, deadline: Instant) -> Result<u32, String> {
+        self.session()?.register_before(index, deadline)
+    }
+    pub fn resume_panel_before(&self, deadline: Instant) -> Result<(), String> {
+        self.panel
+            .resume_before(deadline)
+            .map_err(|e| e.to_string())
+    }
+    pub fn resume_main_before(&mut self, deadline: Instant) -> Result<(), String> {
+        self.session()?.resume_owned_before(deadline)
+    }
+    pub fn main_running_before(&self, deadline: Instant) -> Result<bool, String> {
+        self.main
+            .running_before(deadline)
+            .map_err(|e| e.to_string())
+    }
+    pub fn stop_main_before(&self, deadline: Instant) -> Result<(), String> {
+        self.main.stop_before(deadline).map_err(|e| e.to_string())
+    }
+    pub fn close_stopped_before(&mut self, deadline: Instant) -> Result<(), String> {
+        self.stop_main_before(deadline)?;
+        self.session()?.close_stopped_before(deadline)?;
+        self.session = None;
+        Ok(())
+    }
+    pub fn abort(&mut self) -> Result<(), String> {
+        if self.session.is_none() {
+            return Ok(());
+        }
+        let deadline = Instant::now() + Duration::from_secs(3);
+        if let Err(error) = self.stop_main_before(deadline) {
+            // A failed stop makes subsequent breakpoint writes unsafe.
+            self.session()?.poisoned = true;
+            let cleanup = self.session()?.close_stopped_before(deadline);
+            self.session = None;
+            return Err(match cleanup {
+                Ok(()) => error,
+                Err(cleanup) => format!("{error}; debugger cleanup: {cleanup}"),
+            });
+        }
+        let panel = self.panel.stop_before(deadline).map_err(|e| e.to_string());
+        let close = self.session()?.close_stopped_before(deadline);
+        self.session = None;
+        match (panel, close) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+            (Err(error), Err(cleanup)) => {
+                Err(format!("panel stop: {error}; debugger cleanup: {cleanup}"))
+            }
+        }
+    }
+}
+impl Drop for Observer {
+    fn drop(&mut self) {
+        if let Err(error) = self.abort() {
+            tracing::error!(%error, "debug observer cleanup failed");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1951,6 +2083,9 @@ mod tests {
     }
     struct FakeGuest(Arc<Mutex<FakeState>>);
     impl Guest for FakeGuest {
+        fn resume_for_breakpoint_before(&self, deadline: Instant) -> Result<(), String> {
+            self.resume_before(deadline)
+        }
         fn guard_l6_din_dispatch(
             &self,
             _: Instant,
@@ -2489,6 +2624,24 @@ mod tests {
             .position(|operation| operation == "resume-before")
             .unwrap();
         assert!(remove < disconnect && disconnect < resume);
+    }
+
+    #[test]
+    fn owned_observer_resume_failure_poisoned_before_cleanup() {
+        let (mut session, state) = fake(true, true);
+        state.lock().unwrap().fail = Some("resume-before");
+        assert!(
+            session
+                .resume_owned_before(Instant::now() + Duration::from_secs(1))
+                .is_err()
+        );
+        assert!(session.poisoned);
+        assert!(
+            session
+                .close_stopped_before(Instant::now() + Duration::from_secs(1))
+                .is_err()
+        );
+        assert!(session.unusable.load(Ordering::Acquire));
     }
 
     #[test]

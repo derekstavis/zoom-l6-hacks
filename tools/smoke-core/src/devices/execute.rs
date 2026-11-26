@@ -366,6 +366,11 @@ impl State {
     }
     /// Release held inputs and owned transport scopes before the guest exits.
     pub fn abort_auxiliary_scopes(&mut self) -> Result<(), String> {
+        let startup = self
+            .usb_startup
+            .take()
+            .map(|mut scope| scope.abort())
+            .transpose();
         let dispatch = self
             .l6_dispatch
             .take()
@@ -412,6 +417,9 @@ impl State {
         self.editor_assignment = None;
         self.signal_pwm = None;
         let mut errors = Vec::new();
+        if let Err(error) = startup {
+            errors.push(error);
+        }
         if let Err(error) = dispatch {
             errors.push(error);
         }
@@ -2314,11 +2322,39 @@ impl State {
                 }
                 Ok(result)
             }
-            Operation::L6UsbStartup => {
-                Ok(
-                    run_l6_usb_startup(session, options, guest_timeout_ms, wall_timeout_s)
-                        .map_err(std::io::Error::other)?,
-                )
+            Operation::L6UsbStartupBegin => {
+                if self.usb_startup.is_some() {
+                    return Err("USB startup scope already active".into());
+                }
+                self.usb_startup = Some(usb_startup::Scope::begin(
+                    session,
+                    options,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            operation @ (Operation::L6UsbStartupCapture
+            | Operation::L6UsbStartupAssertHits
+            | Operation::L6UsbStartupAssertWrites
+            | Operation::L6UsbStartupAssertReplay
+            | Operation::L6UsbStartupEnd) => {
+                let scope = self
+                    .usb_startup
+                    .as_mut()
+                    .ok_or("USB startup scope missing")?;
+                let value = match operation {
+                    Operation::L6UsbStartupCapture => scope.capture(session, options),
+                    Operation::L6UsbStartupAssertHits => scope.assert_hits(session),
+                    Operation::L6UsbStartupAssertWrites => scope.assert_writes(session),
+                    Operation::L6UsbStartupAssertReplay => scope.assert_replay(session),
+                    Operation::L6UsbStartupEnd => scope.finish(session),
+                    _ => unreachable!(),
+                }?;
+                if matches!(operation, Operation::L6UsbStartupEnd) {
+                    self.usb_startup = None;
+                }
+                Ok(value)
             }
             Operation::L6DispatchBegin { group, cc, value } => {
                 if self.l6_dispatch.is_some() {

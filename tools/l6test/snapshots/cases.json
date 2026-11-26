@@ -634,7 +634,7 @@
     "model": "l6",
     "backend": "headless",
     "suites": [],
-    "definition": "859e27faa31333d89a91b65f64eb2ac47ec19eeac57771b5d1636581e5645cf0"
+    "definition": "70f3a834083ff6f626665c90fb21975907905d31bc9ada346ce28f7fe9f77886"
   },
   {
     "case": "l6-volume-meter-playback",

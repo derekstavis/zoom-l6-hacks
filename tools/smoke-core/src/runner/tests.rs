@@ -1228,26 +1228,31 @@ fn l6_main_gpio_event_scenario_rejects_wrong_model_and_mapping() {
 }
 #[test]
 fn l6_usb_startup_requires_first_step_and_l6_scope() {
-    let base = "version=1
-name='usb'
-models=['l6']
-backends=['headless']
-[[step]]
-action='l6-usb-startup'
-";
+    let base = include_str!("../../../../tests/emulator/cases/usb/l6-usb-startup.toml");
     assert!(Scenario::parse(base).is_ok());
-    assert!(Scenario::parse(&base.replace("models=['l6']", "models=['l6max']")).is_err());
-    let late = base.replace(
-        "[[step]]
-action='l6-usb-startup'",
-        "[[step]]
-action='delay'
-guest_ms=1
-[[step]]
-action='l6-usb-startup'",
+    assert!(Scenario::parse(&base.replace("models = [\"l6\"]", "models = [\"l6max\"]")).is_err());
+    assert!(
+        Scenario::parse(&base.replacen(
+            "[[step]]",
+            "[[step]]\naction='delay'\nguest_ms=1\n[[step]]",
+            1
+        ))
+        .is_err()
     );
-    assert!(Scenario::parse(&late).is_err());
+    assert!(
+        Scenario::parse(&base.replacen(
+            "action = \"l6-usb-startup-assert-replay\"",
+            "action = \"l6-usb-startup-end\"",
+            1
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&base.replacen("guest_timeout_ms = 65000", "guest_timeout_ms = 64999", 1))
+            .is_err()
+    );
 }
+
 #[test]
 fn l6_din_sweep_is_scoped_to_l6() {
     let path =

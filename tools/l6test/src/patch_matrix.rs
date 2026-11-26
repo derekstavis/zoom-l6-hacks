@@ -574,17 +574,22 @@ fn menu_checks(
         text,
         "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-sound-assign/menu-project.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
     );
+    step(text, "action = \"capture-menu\"\nmenu = \"system\"");
     step(
         text,
         &format!(
-            "action = \"expect-menu\"\nmenu = \"system\"\nitems = {}",
+            "action = \"expect-menu-items\"\nitems = {}",
             quoted_list(&items)
         ),
     );
     step(
         text,
+        "action = \"capture-menu\"\nmenu = \"system\"\npath = [\"Patches\"]",
+    );
+    step(
+        text,
         &format!(
-            "action = \"expect-menu\"\nmenu = \"system\"\npath = [\"Patches\"]\nitems = {}",
+            "action = \"expect-menu-items\"\nitems = {}",
             quoted_list(&rows)
         ),
     );

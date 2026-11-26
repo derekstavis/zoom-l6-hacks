@@ -631,9 +631,11 @@ pub enum Operation {
     },
     KnobPopupExpectOpen,
     KnobPopupExpectValue,
-    ExpectMenu {
+    CaptureMenu {
         menu: String,
         path: Vec<String>,
+    },
+    ExpectMenuItems {
         items: Vec<String>,
     },
     PatchParityHostOnly,
@@ -1163,6 +1165,7 @@ pub struct State {
     panel_keys: Option<PanelKeyScope>,
     saved: Option<(Vec<u8>, usize)>,
     settings: Option<settings::Scope>,
+    menu_snapshot: Option<l6ctl::MenuSnapshot>,
     midi: Option<l6max_host::usb::Endpoints>,
     sysex_deadline: Option<(Instant, u32, u32, u64)>,
     ui_pad: Option<editor::UiPadScope>,

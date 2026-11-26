@@ -1102,3 +1102,38 @@ fn meter_finish_closes_typed_client_and_cli_session() {
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn menu_client_and_cli_preserve_path_and_snapshot() {
+    let path = socket_path();
+    let snapshot = json!({"menu":"system","path":["Patches"],"items":["Knob","MIDI"],"window":123,"atomic":false,"revision_guard":"L6max 1.10 GUI and menu submenu routine fingerprints"});
+    let request = json!({"command":"menu","menu":"system","path":["Patches"]});
+    let server = server(
+        &path,
+        vec![
+            (request.clone(), json!({"ok":true,"result":snapshot})),
+            (request, json!({"ok":true,"result":snapshot})),
+        ],
+    );
+    let actual = ControlClient::new(&path)
+        .menu("system", &["Patches".into()])
+        .unwrap();
+    assert_eq!(actual.items, ["Knob", "MIDI"]);
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["menu", "system", "Patches"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        snapshot
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}

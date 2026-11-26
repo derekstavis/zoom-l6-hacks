@@ -686,6 +686,32 @@ impl Scenario {
             }
         }
         for model in &value.models {
+            let mut pending_menu = false;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                match &step.action {
+                    Action::CaptureMenu { .. } if !pending_menu && *model == Model::L6max => {
+                        pending_menu = true
+                    }
+                    Action::ExpectMenuItems { .. } if pending_menu => pending_menu = false,
+                    Action::CaptureMenu { .. } | Action::ExpectMenuItems { .. } => {
+                        return Err(
+                            "menu capture requires L6max and one following ordered-items assertion"
+                                .into(),
+                        );
+                    }
+                    _ if pending_menu => {
+                        return Err(
+                            "menu capture must be followed by ordered-items assertion".into()
+                        );
+                    }
+                    _ => (),
+                }
+            }
+            if pending_menu {
+                return Err("menu capture missing ordered-items assertion".into());
+            }
+        }
+        for model in &value.models {
             let mut panel_event: Option<(u8, u32, u64)> = None;
             for step in value.step.iter().filter(|step| step.applies_to(*model)) {
                 let phase = match step.action {
@@ -2403,7 +2429,7 @@ impl Scenario {
                 return Err("l6-gpio-begin requires target 48–52 and event 21–25".into());
             }
 
-            if let Action::ExpectMenu { menu, .. } = &step.action
+            if let Action::CaptureMenu { menu, .. } = &step.action
                 && !["main", "project", "sound-pad", "mixer", "system"].contains(&menu.as_str())
             {
                 return Err(format!("expect-menu names an unknown menu {menu:?}"));
@@ -3344,4 +3370,29 @@ fn validate_power_steps(scenario: &Scenario) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod menu_scope_tests {
+    fn parse(steps: &str, model: &str) -> Result<super::super::Scenario, String> {
+        super::super::Scenario::from_text(&format!(
+            "version=1\nname='menu'\nmodels=['{model}']\nbackends=['headless']\n{steps}"
+        ))
+    }
+    #[test]
+    fn capture_and_ordered_assertion_are_adjacent_and_l6max_only() {
+        let capture = "[[step]]\naction='capture-menu'\nmenu='system'\n";
+        let assertion = "[[step]]\naction='expect-menu-items'\nitems=['Patches']\n";
+        assert!(parse(&format!("{capture}{assertion}"), "l6max").is_ok());
+        assert!(parse(capture, "l6max").is_err());
+        assert!(parse(assertion, "l6max").is_err());
+        assert!(parse(&format!("{capture}{assertion}"), "l6").is_err());
+        assert!(
+            parse(
+                &format!("{capture}[[step]]\naction='wait'\nguest_ms=1\n{assertion}"),
+                "l6max"
+            )
+            .is_err()
+        );
+    }
 }

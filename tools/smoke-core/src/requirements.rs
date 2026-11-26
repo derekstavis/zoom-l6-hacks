@@ -325,7 +325,8 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobPopupOpen { .. }
         | Action::KnobPopupExpectOpen
         | Action::KnobPopupExpectValue
-        | Action::ExpectMenu { .. }
+        | Action::CaptureMenu { .. }
+        | Action::ExpectMenuItems { .. }
         | Action::WaitEffectMode { .. } => on(L6MAX),
         Action::ExpectDisplayAfterPress => Requirement {
             models: L6MAX,

@@ -1008,10 +1008,12 @@ pub enum Action {
     /// Compare a menu's child titles with `items`. `menu` names a stock menu
     /// (`main`, `project`, `sound-pad`, `mixer` or `system`); `path` then
     /// descends through child titles.
-    ExpectMenu {
+    CaptureMenu {
         menu: String,
         #[serde(default)]
         path: Vec<String>,
+    },
+    ExpectMenuItems {
         items: Vec<String>,
     },
     PatchParityPrepare,

@@ -342,6 +342,7 @@ impl State {
     }
 
     pub fn restarted(&mut self) -> Result<(), String> {
+        self.menu_snapshot = None;
         self.direct_midi = false;
         let auxiliary_cleanup = self.abort_auxiliary_scopes();
         self.ui_pad = None;
@@ -4506,8 +4507,23 @@ impl State {
             | Operation::KnobPopupExpectValue) => {
                 self.run_knob_popup(session, operation, guest_timeout_ms, wall_timeout_s)
             }
-            Operation::ExpectMenu { menu, path, items } => {
-                Ok(expect_menu(session, &menu, &path, &items).map_err(std::io::Error::other)?)
+            Operation::CaptureMenu { menu, path } => {
+                let snapshot =
+                    capture_menu(session, &menu, &path, guest_timeout_ms, wall_timeout_s)
+                        .map_err(std::io::Error::other)?;
+                self.menu_snapshot = Some(snapshot.clone());
+                Ok(serde_json::to_value(snapshot)?)
+            }
+            Operation::ExpectMenuItems { items } => {
+                let snapshot = self.menu_snapshot.take().ok_or("missing menu snapshot")?;
+                if snapshot.items != items {
+                    return Err(format!(
+                        "menu {} {:?} lists {:?}, expected {items:?}",
+                        snapshot.menu, snapshot.path, snapshot.items
+                    )
+                    .into());
+                }
+                Ok(json!({"menu":snapshot.menu,"path":snapshot.path,"items":snapshot.items}))
             }
             Operation::PatchParityHostOnly => {
                 Err("patch parity must run in the host-only test runner".into())

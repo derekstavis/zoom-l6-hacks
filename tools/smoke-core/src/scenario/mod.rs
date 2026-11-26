@@ -1115,10 +1115,18 @@ pub enum Action {
         row: u8,
         event: u8,
     },
-    L6MainGpioEvent {
+    L6GpioBegin {
         target: u32,
         event: u8,
     },
+    L6GpioPress,
+    L6GpioSubmit,
+    L6GpioAssert,
+    L6GpioDispatch,
+    L6GpioRelease,
+    L6GpioSettle,
+    L6GpioEnd,
+
     L6maxTapBegin,
     L6maxTapPress,
     L6maxTapWait,

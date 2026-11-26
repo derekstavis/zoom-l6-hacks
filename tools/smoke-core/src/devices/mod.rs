@@ -15,6 +15,7 @@ mod audio;
 mod display;
 mod editor;
 mod execute;
+mod gpio_event;
 mod knob_dialog;
 mod l6_din_sweep;
 mod l6_input_sweep;
@@ -655,10 +656,18 @@ pub enum Operation {
         row: u8,
         event: u8,
     },
-    L6MainGpioEvent {
+    L6GpioBegin {
         target: u32,
         event: u8,
     },
+    L6GpioPress,
+    L6GpioSubmit,
+    L6GpioAssert,
+    L6GpioDispatch,
+    L6GpioRelease,
+    L6GpioSettle,
+    L6GpioEnd,
+
     L6UsbStartup,
     L6DinEventDispatch {
         group: u8,
@@ -958,7 +967,7 @@ pub(crate) fn prepare_with_report(
     if scenario
         .step
         .iter()
-        .any(|s| matches!(s.action, crate::Action::L6MainGpioEvent { .. }))
+        .any(|s| matches!(s.action, crate::Action::L6GpioBegin { .. }))
     {
         options.gdb_socket = Some(gdb_socket_path(&options.logs, "l6-main-gpio-event"));
     }
@@ -1130,6 +1139,7 @@ pub struct State {
     audio_callbacks: Option<audio::callbacks::Scope>,
     l6_din_sweep: Option<l6_din_sweep::Scope>,
     tap_handler: Option<tap_handler::Scope>,
+    gpio_event: Option<gpio_event::Scope>,
     effect_slot_deadline: Option<sd::EffectSlotScope>,
     l6max_timing: Option<timing::Scope>,
     usb_storage_scope: Option<usb_storage_steps::Scope>,
@@ -1217,24 +1227,6 @@ impl State {
             Some(client) => Some(client.as_mut()),
             None => None,
         }
-    }
-}
-
-fn wait_l6_input(
-    session: &Session,
-    mut ready: impl FnMut() -> bool,
-    what: &str,
-) -> Result<(), String> {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        session.poll()?;
-        if ready() {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            return Err(format!("timed out waiting for L6 {what}"));
-        }
-        thread::sleep(Duration::from_millis(5));
     }
 }
 

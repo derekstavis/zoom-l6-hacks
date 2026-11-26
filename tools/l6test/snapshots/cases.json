@@ -552,7 +552,7 @@
     "model": "l6",
     "backend": "headless",
     "suites": [],
-    "definition": "be1fbc5537625847d71f7480abcca8da11ddb9d4f9ae91edd19299d337310b1d"
+    "definition": "a83a2547cdbeff2973b14df531172aad1b0360c26c300370fe7250aa56b307ec"
   },
   {
     "case": "l6-midi-sync",

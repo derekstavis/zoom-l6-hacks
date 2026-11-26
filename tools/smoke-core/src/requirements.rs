@@ -99,7 +99,14 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6DinSweepAssert { .. }
         | Action::L6DinSweepEnd
         | Action::PanelEvent { .. }
-        | Action::L6MainGpioEvent { .. }
+        | Action::L6GpioBegin { .. }
+        | Action::L6GpioPress
+        | Action::L6GpioSubmit
+        | Action::L6GpioAssert
+        | Action::L6GpioDispatch
+        | Action::L6GpioRelease
+        | Action::L6GpioSettle
+        | Action::L6GpioEnd
         | Action::L6DinEventDispatch { .. } => stock_on(L6),
         Action::L6UsbStartup => Requirement {
             first: true,

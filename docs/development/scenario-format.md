@@ -334,7 +334,7 @@ message delivered just after the interval.
 | `l6max-panel-key-map` | — | Verify that L6max sound-pad targets 15, 20, 25 and 30 set their MAIN key-state bits and clear them after release |
 | `signal-pwm-*` | `band`, `start`, `end`, `value`, `channel` on selected steps | Seed L6max 1.10 channel accumulators and verify five increasing PWM levels on eight SIGNAL lamps. A contiguous scope shares deadlines and requires GDB. This tests firmware-to-panel brightness, not audio-input routing. |
 | `l6-level-meter-pwm` | — | Seed ten L6 1.10 level accumulators at the measured brightness thresholds and sample the raw panel matrix; require at least one output cell with five distinct nonzero duty means. Uses GDB and no SD, USB, MIDI, or host audio. |
-| `l6-main-gpio-event` | `target`, `event` | L6 GDB check that Tap target 48 submits event `0x19` and Sound Pad targets 49–52 submit `0x15`–`0x18` |
+| `l6-gpio-begin`, `l6-gpio-press`, `l6-gpio-submit`, `l6-gpio-assert`, `l6-gpio-dispatch`, `l6-gpio-release`, `l6-gpio-settle`, `l6-gpio-end` | `target`, `event` on begin | Scoped L6 GPIO event probe. Sound Pad events include dispatch observation; the scenario provides target and expected event. |
 | `audio-input-transport` | `command` (`play`, `pause`, `stop` or `seek`), `position_ms` for `seek` | Control input playback |
 | `audio-input-load` | `channel`, `loaded` | Map a channel's prepared audio again, or drop it |
 | `expect-audio-input` | `playing`, `min_ms`, `max_ms` | Check the reported input playback state |

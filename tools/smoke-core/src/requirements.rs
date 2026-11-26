@@ -60,10 +60,14 @@ const fn stock_on(models: &'static [Model]) -> Requirement {
 /// The requirement of `action`.
 pub fn of(action: &Action) -> Requirement {
     match action {
-        Action::AudioCallbacks => Requirement {
+        Action::AudioCallbacksBegin => Requirement {
             first: true,
             ..stock_on(&[])
         },
+        Action::AudioCallbacksNext
+        | Action::AudioCallbacksCapture
+        | Action::AudioCallbacksAssert
+        | Action::AudioCallbacksEnd => stock_on(&[]),
         Action::HoldChord {
             until: Some(crate::scenario::ChordCondition::FactoryMode),
             ..

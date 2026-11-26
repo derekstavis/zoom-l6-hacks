@@ -2574,6 +2574,54 @@ impl Scenario {
                 }
             }
         }
+        for model in &value.models {
+            let steps: Vec<_> = value
+                .step
+                .iter()
+                .filter(|step| step.applies_to(*model))
+                .collect();
+            let has_audio = steps.iter().any(|step| {
+                matches!(
+                    step.action,
+                    Action::AudioCallbacksBegin
+                        | Action::AudioCallbacksNext
+                        | Action::AudioCallbacksCapture
+                        | Action::AudioCallbacksAssert
+                        | Action::AudioCallbacksEnd
+                )
+            });
+            if !has_audio {
+                continue;
+            }
+            let count = if *model == l6fw::Model::L6 { 5 } else { 2 };
+            if steps.len() < count + 4
+                || !matches!(steps[0].action, Action::AudioCallbacksBegin)
+                || !steps[1..1 + count]
+                    .iter()
+                    .all(|step| matches!(step.action, Action::AudioCallbacksNext))
+                || !matches!(steps[1 + count].action, Action::AudioCallbacksCapture)
+                || !matches!(steps[2 + count].action, Action::AudioCallbacksAssert)
+                || !matches!(steps[3 + count].action, Action::AudioCallbacksEnd)
+                || steps[1..count + 4].iter().any(|step| {
+                    (step.guest_timeout_ms, step.wall_timeout_s)
+                        != (steps[0].guest_timeout_ms, steps[0].wall_timeout_s)
+                })
+                || steps[count + 4..].iter().any(|step| {
+                    matches!(
+                        step.action,
+                        Action::AudioCallbacksBegin
+                            | Action::AudioCallbacksNext
+                            | Action::AudioCallbacksCapture
+                            | Action::AudioCallbacksAssert
+                            | Action::AudioCallbacksEnd
+                    )
+                })
+            {
+                return Err(format!(
+                    "{model}: audio callbacks require the full ordered scope and one shared budget"
+                ));
+            }
+        }
         Ok(())
     }
 }

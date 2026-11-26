@@ -366,6 +366,11 @@ impl State {
     }
     /// Release held inputs and owned transport scopes before the guest exits.
     pub fn abort_auxiliary_scopes(&mut self) -> Result<(), String> {
+        let audio = self
+            .audio_callbacks
+            .take()
+            .map(|mut scope| scope.abort())
+            .transpose();
         let power = self
             .power
             .take()
@@ -384,10 +389,20 @@ impl State {
         self.editor_playback = None;
         self.editor_assignment = None;
         self.signal_pwm = None;
-        match (power, panel) {
-            (Ok(_), Ok(_)) => Ok(()),
-            (Err(error), Ok(_)) | (Ok(_), Err(error)) => Err(error),
-            (Err(a), Err(b)) => Err(format!("{a}; {b}")),
+        let mut errors = Vec::new();
+        if let Err(error) = audio {
+            errors.push(error);
+        }
+        if let Err(error) = power {
+            errors.push(error);
+        }
+        if let Err(error) = panel {
+            errors.push(error);
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
         }
     }
     pub fn has_signal_pwm(&self) -> bool {
@@ -3387,76 +3402,39 @@ impl State {
                 }
                 Ok(value)
             }
-            Operation::AudioCallbacks => {
-                let points = callbacks(session.engine.model());
-                let model = session.engine.model();
-                let qmp = &session.engine.management[0];
-                let mut debugger = l6max_diagnostics::gdb::Gdb::connect(
-                    options
-                        .gdb_socket
-                        .as_ref()
-                        .ok_or("missing audio debugger socket")?,
-                )?;
-                qmp.stop()?;
-                for (address, _) in points {
-                    debugger.breakpoint(*address, true)?;
+            Operation::AudioCallbacksBegin => {
+                if self.audio_callbacks.is_some() {
+                    return Err("audio callbacks already active".into());
                 }
-                let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
-                let start = session
-                    .engine
-                    .inputs
-                    .as_ref()
-                    .unwrap()
-                    .panel
-                    .snapshot()
-                    .guest_ms;
-                qmp.resume()?;
-                let mut hits: Vec<Value> = Vec::new();
-                while hits.len() < points.len() {
-                    session.poll()?;
-                    if Instant::now() > deadline
-                        || session
-                            .engine
-                            .inputs
-                            .as_ref()
-                            .unwrap()
-                            .panel
-                            .snapshot()
-                            .guest_ms
-                            .wrapping_sub(start)
-                            > guest_timeout_ms
-                    {
-                        let missing: Vec<_> = points
-                            .iter()
-                            .map(|(_, name)| *name)
-                            .filter(|name| !hits.iter().any(|hit| hit["callback"] == *name))
-                            .collect();
-                        return Err(format!(
-                            "audio callback deadline exceeded; not reached: {missing:?}"
-                        )
-                        .into());
-                    }
-                    if !qmp.query_status()?.running {
-                        let pc = debugger.read_register(15)? & !1;
-                        let (_, name) = points
-                            .iter()
-                            .find(|(a, _)| *a == pc)
-                            .ok_or_else(|| format!("unexpected audio stop at {pc:#x}"))?;
-                        hits.push(json!({"callback":name,"address":format!("{pc:#010x}"),"r0_r3":(0..4).map(|i| debugger.read_register(i)).collect::<Result<Vec<_>,_>>()?,"lr":debugger.read_register(14)?,"guest_ms":session.engine.inputs.as_ref().unwrap().panel.snapshot().guest_ms}));
-                        debugger.breakpoint(pc, false)?;
-                        qmp.resume()?;
-                    } else {
-                        thread::sleep(Duration::from_millis(5));
-                    }
+                self.audio_callbacks = Some(audio::callbacks::Scope::begin(
+                    session,
+                    options,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            operation @ (Operation::AudioCallbacksNext
+            | Operation::AudioCallbacksCapture
+            | Operation::AudioCallbacksAssert
+            | Operation::AudioCallbacksEnd) => {
+                let scope = self
+                    .audio_callbacks
+                    .as_mut()
+                    .ok_or("audio callbacks scope missing")?;
+                scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+                let value = match operation {
+                    Operation::AudioCallbacksNext => scope.next(session),
+                    Operation::AudioCallbacksCapture => scope.capture(session, options),
+                    Operation::AudioCallbacksAssert => scope.assert_trace(options),
+                    Operation::AudioCallbacksEnd => scope.finish(),
+                    _ => unreachable!(),
+                }?;
+                scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+                if matches!(operation, Operation::AudioCallbacksEnd) {
+                    self.audio_callbacks = None;
                 }
-                let trace = fs::read_to_string(options.logs.join("engine.trace"))?;
-                let dma = verify_sai_edma_trace(model, &trace)?;
-                let evidence = json!({"breakpoint_hits":hits,"sai_edma":dma});
-                fs::write(
-                    options.logs.join("audio-path-smoke.json"),
-                    serde_json::to_vec_pretty(&evidence)?,
-                )?;
-                Ok(evidence)
+                Ok(value)
             }
             Operation::KnobDialogReady => {
                 run_knob_dialog_ready(session, options, guest_timeout_ms, wall_timeout_s)

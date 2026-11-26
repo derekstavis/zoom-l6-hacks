@@ -1,5 +1,6 @@
 //! Audio callbacks, sound pads and recorder playback.
 use super::*;
+pub(super) mod callbacks;
 pub(super) mod max_recorder;
 pub(super) mod recorder;
 pub(super) mod sound_pad;

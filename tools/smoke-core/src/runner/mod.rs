@@ -1250,8 +1250,20 @@ impl Runner {
                         restored,
                     }));
                 }
-                Action::AudioCallbacks => {
-                    return Ok(Progress::Device(devices::Operation::AudioCallbacks));
+                Action::AudioCallbacksBegin => {
+                    return Ok(Progress::Device(devices::Operation::AudioCallbacksBegin));
+                }
+                Action::AudioCallbacksNext => {
+                    return Ok(Progress::Device(devices::Operation::AudioCallbacksNext));
+                }
+                Action::AudioCallbacksCapture => {
+                    return Ok(Progress::Device(devices::Operation::AudioCallbacksCapture));
+                }
+                Action::AudioCallbacksAssert => {
+                    return Ok(Progress::Device(devices::Operation::AudioCallbacksAssert));
+                }
+                Action::AudioCallbacksEnd => {
+                    return Ok(Progress::Device(devices::Operation::AudioCallbacksEnd));
                 }
                 Action::KnobDialogReady => {
                     return Ok(Progress::Device(devices::Operation::KnobDialogReady));

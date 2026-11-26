@@ -20,7 +20,7 @@ use std::{
 
 const SCRATCH: u32 = 0x841f_f000;
 const SCRATCH_LEN: usize = 8;
-const MAX_BREAKPOINTS: usize = 4;
+const MAX_BREAKPOINTS: usize = 5;
 const MAX_CONTINUE_MS: u64 = 60_000;
 const IDLE_GUARD: &str = "f4870ac4ce0c3cb238f92e437a9f5511912eee645168943b43a0166622b85ba2";
 const SENDER_GUARD: &str = "f07c456c512bff15fb7112a0f8ad5993dab518b4fbfd4ed1544de2208681c27d";
@@ -866,6 +866,13 @@ impl Session {
             }
         }
     }
+    /// Restore owned debug state and explicitly resume MAIN before releasing its lease.
+    /// Callers must own the guest lifecycle and intend to start a previously paused guest.
+    pub fn close_resuming_before(&mut self, deadline: Instant) -> Result<(), String> {
+        self.was_running = true;
+        self.close_before(deadline)
+    }
+
     /// Restore any scratch and owned breakpoints, then restore the prior run state.
     pub fn close_before(&mut self, deadline: Instant) -> Result<(), String> {
         if self.transport.is_none() {
@@ -1711,6 +1718,57 @@ mod tests {
         drop(retained);
         drop(listener);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn explicit_close_resume_keeps_lease_through_resume() {
+        let (mut session, state) = fake(false, true);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        session
+            .breakpoint_before(0x8000_1000, true, deadline)
+            .unwrap();
+        session.close_resuming_before(deadline).unwrap();
+        let operations = &state.lock().unwrap().operations;
+        let remove = operations
+            .iter()
+            .position(|operation| operation == "remove")
+            .unwrap();
+        let disconnect = operations
+            .iter()
+            .position(|operation| operation == "disconnect")
+            .unwrap();
+        let resume = operations
+            .iter()
+            .position(|operation| operation == "resume-before")
+            .unwrap();
+        assert!(remove < disconnect && disconnect < resume);
+    }
+
+    #[test]
+    fn five_audio_breakpoints_are_owned_and_cleaned_up() {
+        let (mut session, state) = fake(false, true);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        for index in 0..5 {
+            session
+                .breakpoint_before(0x8000_1000 + index * 2, true, deadline)
+                .unwrap();
+        }
+        assert!(
+            session
+                .breakpoint_before(0x8000_2000, true, deadline)
+                .is_err()
+        );
+        session.close_before(deadline).unwrap();
+        assert_eq!(
+            state
+                .lock()
+                .unwrap()
+                .operations
+                .iter()
+                .filter(|operation| *operation == "remove")
+                .count(),
+            5
+        );
     }
 
     #[test]

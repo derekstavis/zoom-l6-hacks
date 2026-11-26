@@ -216,7 +216,9 @@ impl Scope {
             }
         }
         let failures = &self.failures[failure_start..];
-        self.pending_failure = (!failures.is_empty()).then(|| failures.join("; "));
+        // Each failed stage has the same channel-level diagnosis and full
+        // measurements. Emit it once while retaining all stage evidence.
+        self.pending_failure = failures.first().cloned();
         Ok(
             json!({"channel":channel+1,"means":details,"passed":failures.is_empty(),"failures":failures}),
         )
@@ -271,6 +273,10 @@ mod tests {
         assert_eq!(failing["passed"], false);
         assert_eq!(failing["channel"], 2);
         assert_eq!(failing["failures"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            scope.take_pending_failure().as_deref(),
+            Some(scope.failures[0].as_str())
+        );
         assert_eq!(scope.failures.len(), 2);
         scope.means[0][4][2] = scope.means[0][3][2];
         scope.assert_channel(0, 2).unwrap();

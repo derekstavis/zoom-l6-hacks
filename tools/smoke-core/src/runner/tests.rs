@@ -643,7 +643,9 @@ fn explicit_up_is_acked_with_applied_not_the_automatic_tap_release_counter() {
 }
 #[test]
 fn scene_save_holds_until_the_lamp_changes_then_checks_both_panel_edges() {
-    let mut runner = test_runner("[[step]]\naction='save-scene'\nscene=1\n");
+    let mut runner = test_runner(
+        "[[step]]\naction='momentary-down'\ncontrol='scene-a'\nduration_ms=50\n[[step]]\naction='expect-scene'\nscene=1\nlit=true\n[[step]]\naction='momentary-up'\ncontrol='scene-a'\n",
+    );
     let now = Instant::now();
     assert!(matches!(
         runner.advance(sample(0), now).unwrap(),
@@ -675,7 +677,9 @@ fn scene_save_holds_until_the_lamp_changes_then_checks_both_panel_edges() {
 }
 #[test]
 fn scene_save_rejects_duplicate_press_before_releasing() {
-    let mut runner = test_runner("[[step]]\naction='save-scene'\nscene=1\n");
+    let mut runner = test_runner(
+        "[[step]]\naction='momentary-down'\ncontrol='scene-a'\nduration_ms=50\n[[step]]\naction='expect-scene'\nscene=1\nlit=true\n[[step]]\naction='momentary-up'\ncontrol='scene-a'\n",
+    );
     let now = Instant::now();
     runner.advance(sample(0), now).unwrap();
     let [press, _] = trace::button_packets(Model::L6, "scene-a").unwrap();
@@ -688,14 +692,77 @@ fn scene_save_rejects_duplicate_press_before_releasing() {
         runner
             .advance(held, now)
             .unwrap_err()
-            .contains("duplicate L6 scene 1 press")
+            .contains("duplicate scene-a press")
     );
     fs::remove_dir_all(&runner.logs).unwrap();
 }
 
 #[test]
+fn momentary_scope_detects_duplicate_during_lamp_wait_and_exposes_cleanup() {
+    let mut runner = test_runner(
+        "[[step]]\naction='momentary-down'\ncontrol='scene-a'\nduration_ms=50\n[[step]]\naction='expect-scene'\nscene=1\nlit=true\n[[step]]\naction='momentary-up'\ncontrol='scene-a'\n",
+    );
+    let now = Instant::now();
+    runner.advance(sample(0), now).unwrap();
+    let [press, _] = trace::button_packets(Model::L6, "scene-a").unwrap();
+    let mut held = sample(100);
+    held.panel.sent = 1;
+    held.panel.applied = 1;
+    held.traces.insert(press.clone(), 1);
+    assert!(matches!(
+        runner.advance(held.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    held.traces.insert(press, 2);
+    assert!(
+        runner
+            .advance(held, now)
+            .unwrap_err()
+            .contains("duplicate scene-a press")
+    );
+    assert!(matches!(
+        runner.take_held_release(),
+        Some(Command::Release { target: 15 })
+    ));
+    assert!(runner.take_held_release().is_none());
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+
+#[test]
+fn momentary_scope_keeps_initial_guest_deadline_across_lamp_wait() {
+    let mut runner = test_runner(
+        "[[step]]\naction='momentary-down'\ncontrol='scene-a'\nduration_ms=50\nguest_timeout_ms=100\n[[step]]\naction='expect-scene'\nscene=1\nlit=true\nguest_timeout_ms=100\n[[step]]\naction='momentary-up'\ncontrol='scene-a'\nguest_timeout_ms=100\n",
+    );
+    let now = Instant::now();
+    runner.advance(sample(0), now).unwrap();
+    let [press, _] = trace::button_packets(Model::L6, "scene-a").unwrap();
+    let mut held = sample(80);
+    held.panel.sent = 1;
+    held.panel.applied = 1;
+    held.traces.insert(press, 1);
+    assert!(matches!(
+        runner.advance(held.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    held.panel.guest_ms = 101;
+    assert!(
+        runner
+            .advance(held, now)
+            .unwrap_err()
+            .contains("shared deadline")
+    );
+    assert!(matches!(
+        runner.take_held_release(),
+        Some(Command::Release { target: 15 })
+    ));
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+
+#[test]
 fn scene_save_rejects_duplicate_release_after_the_lamp() {
-    let mut runner = test_runner("[[step]]\naction='save-scene'\nscene=1\n");
+    let mut runner = test_runner(
+        "[[step]]\naction='momentary-down'\ncontrol='scene-a'\nduration_ms=50\n[[step]]\naction='expect-scene'\nscene=1\nlit=true\n[[step]]\naction='momentary-up'\ncontrol='scene-a'\n",
+    );
     let now = Instant::now();
     runner.advance(sample(0), now).unwrap();
     let [press, release] = trace::button_packets(Model::L6, "scene-a").unwrap();
@@ -715,14 +782,16 @@ fn scene_save_rejects_duplicate_release_after_the_lamp() {
         runner
             .advance(held, now)
             .unwrap_err()
-            .contains("duplicate L6 scene 1 release")
+            .contains("duplicate scene-a release")
     );
     fs::remove_dir_all(&runner.logs).unwrap();
 }
 
 #[test]
 fn scene_save_waits_for_its_own_lamp_and_press_acknowledgement() {
-    let mut runner = test_runner("[[step]]\naction='save-scene'\nscene=1\n");
+    let mut runner = test_runner(
+        "[[step]]\naction='momentary-down'\ncontrol='scene-a'\nduration_ms=50\n[[step]]\naction='expect-scene'\nscene=1\nlit=true\n[[step]]\naction='momentary-up'\ncontrol='scene-a'\n",
+    );
     let now = Instant::now();
     runner.advance(sample(0), now).unwrap();
     let [press, _] = trace::button_packets(Model::L6, "scene-a").unwrap();
@@ -825,10 +894,18 @@ fn parser_rejects_typos_and_unavailable_model_controls() {
         ))
         .is_err()
     );
-    assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='save-scene'\nscene=1\n")).is_ok());
-    assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='save-scene'\nscene=4\n")).is_err());
+    assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='momentary-down'\ncontrol='scene-a'\nduration_ms=50\n[[step]]\naction='expect-scene'\nscene=1\nlit=true\n[[step]]\naction='momentary-up'\ncontrol='scene-a'\n")).is_ok());
+    let sequence = "[[step]]\naction='momentary-down'\ncontrol='scene-a'\nduration_ms=50\n[[step]]\naction='expect-scene'\nscene=1\nlit=true\n[[step]]\naction='momentary-up'\ncontrol='scene-a'\n";
+    assert!(Scenario::parse(&format!("{prefix}{sequence}")).is_ok());
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}{}",
+            sequence.replace("scene=1", "scene=4")
+        ))
+        .is_err()
+    );
     let l6max = prefix.replace("['l6']", "['l6max']");
-    assert!(Scenario::parse(&format!("{l6max}[[step]]\naction='save-scene'\nscene=1\n")).is_err());
+    assert!(Scenario::parse(&format!("{l6max}{sequence}")).is_err());
 }
 
 #[test]

@@ -1312,6 +1312,18 @@ fn run_with_context(
             });
         }
     }
+    if let Some(command) = runner.take_held_release() {
+        let cleanup = session
+            .as_ref()
+            .ok_or("no active guest for momentary release".to_owned())
+            .and_then(|guest| guest.dispatch(&command));
+        if let Err(cleanup) = cleanup {
+            result = Err(match result {
+                Ok(()) => format!("momentary cleanup failed: {cleanup}"),
+                Err(error) => format!("{error}; momentary cleanup failed: {cleanup}"),
+            });
+        }
+    }
     if let Err(cleanup) = device_state.abort_auxiliary_scopes() {
         result = Err(match result {
             Ok(()) => format!("device scope cleanup failed: {cleanup}"),

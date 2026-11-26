@@ -1067,8 +1067,12 @@ pub enum Action {
         control: String,
         duration_ms: u32,
     },
-    SaveScene {
-        scene: usize,
+    MomentaryDown {
+        control: String,
+        duration_ms: u32,
+    },
+    MomentaryUp {
+        control: String,
     },
     ExpectScene {
         scene: usize,

@@ -476,7 +476,8 @@ pub fn of(action: &Action) -> Requirement {
         | Action::ObserveDuration { .. }
         | Action::Press { .. }
         | Action::Hold { .. }
-        | Action::SaveScene { .. }
+        | Action::MomentaryDown { .. }
+        | Action::MomentaryUp { .. }
         | Action::ExpectScene { .. }
         | Action::ExpectButtonLed { .. }
         | Action::ExpectEffect { .. }

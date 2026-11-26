@@ -20,12 +20,33 @@ pub fn tick(
     window: &mut Window,
     cx: &mut App,
 ) -> Result<bool, String> {
-    let progress = match inputs {
-        Some(inputs) => runner.tick(data, inputs)?,
-        None => runner.tick_without_input(data)?,
+    let progress = match match inputs {
+        Some(inputs) => runner.tick(data, inputs),
+        None => runner.tick_without_input(data),
+    } {
+        Ok(progress) => progress,
+        Err(error) => {
+            return Err(cleanup_momentary(
+                runner,
+                error,
+                layout,
+                data,
+                press_duration,
+                window,
+                cx,
+            ));
+        }
     };
     match progress {
-        Progress::Device(_) => Err("device operation requires the headless backend".into()),
+        Progress::Device(_) => Err(cleanup_momentary(
+            runner,
+            "device operation requires the headless backend".into(),
+            layout,
+            data,
+            press_duration,
+            window,
+            cx,
+        )),
         Progress::Complete => {
             runner.finish("PASS", None)?;
             Ok(true)
@@ -33,12 +54,30 @@ pub fn tick(
         Progress::Waiting => Ok(false),
         Progress::Dispatch(command) => {
             if let Err(error) = dispatch(command, layout, data, press_duration, window, cx) {
+                let error =
+                    cleanup_momentary(runner, error, layout, data, press_duration, window, cx);
                 runner.finish("FAIL", Some(&error))?;
                 return Err(error);
             }
             Ok(false)
         }
     }
+}
+fn cleanup_momentary(
+    runner: &mut Runner,
+    error: String,
+    layout: &Layout,
+    data: PanelData,
+    duration: &AtomicU32,
+    window: &mut Window,
+    cx: &mut App,
+) -> String {
+    if let Some(command) = runner.take_held_release() {
+        if let Err(cleanup) = dispatch(command, layout, data, duration, window, cx) {
+            return format!("{error}; momentary cleanup failed: {cleanup}");
+        }
+    }
+    error
 }
 fn dispatch(
     command: Command,

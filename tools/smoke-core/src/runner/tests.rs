@@ -674,6 +674,80 @@ fn scene_save_holds_until_the_lamp_changes_then_checks_both_panel_edges() {
     fs::remove_dir_all(&runner.logs).unwrap();
 }
 #[test]
+fn scene_save_rejects_duplicate_press_before_releasing() {
+    let mut runner = test_runner("[[step]]\naction='save-scene'\nscene=1\n");
+    let now = Instant::now();
+    runner.advance(sample(0), now).unwrap();
+    let [press, _] = trace::button_packets(Model::L6, "scene-a").unwrap();
+    let mut held = sample(100);
+    held.panel.sent = 1;
+    held.panel.applied = 1;
+    held.traces.insert(press, 2);
+    held.data.indicators[2] |= 1 << 11;
+    assert!(
+        runner
+            .advance(held, now)
+            .unwrap_err()
+            .contains("duplicate L6 scene 1 press")
+    );
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+
+#[test]
+fn scene_save_rejects_duplicate_release_after_the_lamp() {
+    let mut runner = test_runner("[[step]]\naction='save-scene'\nscene=1\n");
+    let now = Instant::now();
+    runner.advance(sample(0), now).unwrap();
+    let [press, release] = trace::button_packets(Model::L6, "scene-a").unwrap();
+    let mut held = sample(100);
+    held.panel.sent = 1;
+    held.panel.applied = 1;
+    held.traces.insert(press, 1);
+    held.data.indicators[2] |= 1 << 11;
+    assert!(matches!(
+        runner.advance(held.clone(), now).unwrap(),
+        Progress::Dispatch(Command::Release { target: 15 })
+    ));
+    held.panel.sent = 2;
+    held.panel.applied = 2;
+    held.traces.insert(release, 2);
+    assert!(
+        runner
+            .advance(held, now)
+            .unwrap_err()
+            .contains("duplicate L6 scene 1 release")
+    );
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+
+#[test]
+fn scene_save_waits_for_its_own_lamp_and_press_acknowledgement() {
+    let mut runner = test_runner("[[step]]\naction='save-scene'\nscene=1\n");
+    let now = Instant::now();
+    runner.advance(sample(0), now).unwrap();
+    let [press, _] = trace::button_packets(Model::L6, "scene-a").unwrap();
+    let mut held = sample(100);
+    held.panel.sent = 1;
+    held.traces.insert(press, 1);
+    held.data.indicators[2] |= 1 << 11;
+    assert!(matches!(
+        runner.advance(held.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    held.panel.applied = 1;
+    held.data.indicators[2] &= !(1 << 11);
+    assert!(matches!(
+        runner.advance(held.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    held.data.indicators[2] |= 1 << 11;
+    assert!(matches!(
+        runner.advance(held, now).unwrap(),
+        Progress::Dispatch(Command::Release { target: 15 })
+    ));
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+#[test]
 fn l6_button_lamps_in_unused_generic_ring_slots_are_not_other_encoders() {
     let mut runner = test_runner(
         "[[step]]\naction='encoder'\nchannel=1\nsteps=12\n[[step]]\naction='expect-ring'\nchannel=1\nmask=31\nonly=true\n",

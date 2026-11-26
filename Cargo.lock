@@ -6549,7 +6549,6 @@ dependencies = [
  "libc",
  "patch-abi",
  "patch-core",
- "patch-wasm",
  "schemars",
  "sd-image",
  "serde",

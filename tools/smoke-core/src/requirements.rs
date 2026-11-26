@@ -404,7 +404,11 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6RecorderAssertTrace
         | Action::L6RecorderAssertDma
         | Action::L6RecorderEnd
-        | Action::WasmPatch
+        | Action::PatchParityPrepare
+        | Action::PatchParityFirmware { .. }
+        | Action::PatchParityLoader { .. }
+        | Action::PatchParityUnsupported { .. }
+        | Action::PatchParityFinish
         | Action::ExpectPowered { .. }
         | Action::Wait { .. }
         | Action::Delay { .. }

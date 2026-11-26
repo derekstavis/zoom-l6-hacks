@@ -961,7 +961,17 @@ pub enum Action {
         path: Vec<String>,
         items: Vec<String>,
     },
-    WasmPatch,
+    PatchParityPrepare,
+    PatchParityFirmware {
+        patches: Vec<String>,
+    },
+    PatchParityLoader {
+        patches: Vec<String>,
+    },
+    PatchParityUnsupported {
+        patch: String,
+    },
+    PatchParityFinish,
     WarmReset,
     Restart,
     ExpectRecorder,
@@ -1305,7 +1315,7 @@ impl Scenario {
             || self
                 .step
                 .iter()
-                .any(|step| matches!(step.action, Action::WasmPatch))
+                .any(|step| matches!(step.action, Action::PatchParityPrepare))
     }
 }
 /// Resolve a path written in a scenario or fragment (an include or a

@@ -4423,8 +4423,8 @@ impl State {
             Operation::ExpectMenu { menu, path, items } => {
                 Ok(expect_menu(session, &menu, &path, &items).map_err(std::io::Error::other)?)
             }
-            Operation::WasmPatch => {
-                Err("wasm-patch scenario must run at the host lifecycle boundary".into())
+            Operation::PatchParityHostOnly => {
+                Err("patch parity must run in the host-only test runner".into())
             }
         }
     }

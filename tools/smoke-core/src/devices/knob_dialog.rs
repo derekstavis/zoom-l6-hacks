@@ -727,6 +727,7 @@ pub(super) struct PreflightContext {
     callback_race: Option<CallbackRace>,
     activation_semaphore_count: Option<Vec<u8>>,
     activation_callback: Option<u32>,
+    sd_expected_callback: Option<u32>,
     activation_phase: u8,
     activation_started: Option<(u32, Instant)>,
     activation_snapshot: Option<FirstActivationSnapshot>,
@@ -754,9 +755,104 @@ pub(super) struct PreflightContext {
     pending_invalid_tag: Option<PendingInvalidTag>,
 }
 
+fn verify_sd_callback(expected: Option<u32>, callback: u32) -> Result<(), String> {
+    if expected.is_some_and(|value| value != callback) {
+        Err(format!(
+            "registered callback {callback:#010x} does not match loaded knob SD module"
+        ))
+    } else {
+        Ok(())
+    }
+}
+fn load_sd_knob_fixture(
+    options: &Options,
+    sd_knob: bool,
+) -> Result<Option<(PathBuf, l6max_host::knob_binding::SdBinding)>, Box<dyn std::error::Error>> {
+    if !sd_knob {
+        return Ok(None);
+    }
+    let root = sd_fixture_root(options)?;
+    let output = root.join(crate::fixture_layout::SD_BUNDLE_BUILD);
+    let report_path = output.join(crate::fixture_layout::PATCH_REPORT);
+    let report_bytes = fs::read(report_path)?;
+    let report: Value = serde_json::from_slice(&report_bytes)?;
+    let patches = report["patches"]
+        .as_array()
+        .ok_or("SD module report missing patches")?;
+    if !patches.iter().any(|patch| {
+        patch["members"].as_array().is_some_and(|members| {
+            members
+                .iter()
+                .any(|member| member.as_str() == Some("knob-dialog"))
+        })
+    }) {
+        return Err("expected knob-dialog SD module missing from fixture report".into());
+    }
+    if patches.len() != 1 {
+        return Err("knob preflight requires one composed SD module".into());
+    }
+    let name = patches[0]["file"]
+        .as_str()
+        .and_then(|name| Path::new(name).file_name())
+        .ok_or("knob SD module filename missing")?;
+    let module = fs::read(output.join("PATCHES").join(name))?;
+    let binding = l6max_host::knob_binding::SdBinding::from_fixture(&report_bytes, &module)?;
+    Ok(Some((root.to_path_buf(), binding)))
+}
+fn verify_sd_knob_fixture(
+    session: &Session,
+    options: &Options,
+    debugger: &mut KnobDebugSession,
+    sd_knob: bool,
+    shared: (Instant, u32, u32, u64, u16),
+) -> Result<Option<u32>, Box<dyn std::error::Error>> {
+    let Some((root, binding)) = load_sd_knob_fixture(options, sd_knob)? else {
+        return Ok(None);
+    };
+    let main = selected_main_image(options).map_err(std::io::Error::other)?;
+    let loader = fs::read(
+        root.join(crate::fixture_layout::LOADER_BUILD)
+            .join(crate::fixture_layout::PATCH_REPORT),
+    )?;
+    let site = l6patch::hook_report::dispatch_site(
+        &loader,
+        &main,
+        "L6max",
+        l6max::mixer_apply_channel_parameter,
+    )?;
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    let deadline = shared.0 + Duration::from_secs(shared.3);
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    let qmp = &session.engine.management[0];
+    qmp.stop_before(deadline)?;
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    let result = (|| -> Result<u32, Box<dyn std::error::Error>> {
+        let ctl = l6ctl::OwnedControl::new(&session.engine);
+        let reader = ctl.sd_loader_reader_cancellable(deadline, || {
+            remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3).is_err()
+        })?;
+        Ok(binding.verify_live(&reader, site.index, deadline, || {
+            remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3).is_err()
+        })?)
+    })();
+    let resume = remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)
+        .map_err(|e| std::io::Error::other(e.to_string()))
+        .and_then(|_| debugger.resume_guest_before(deadline));
+    match (result, resume) {
+        (Ok(callback), Ok(())) => Ok(Some(callback)),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(format!("SD knob verification resume failed: {error}").into()),
+        (Err(error), Err(resume)) => {
+            Err(format!("{error}; SD knob verification resume failed: {resume}").into())
+        }
+    }
+}
+
 pub(super) fn begin_preflight(
     session: &Session,
     options: &Options,
+    sd_knob: bool,
+    shared: (Instant, u32, u32, u64, u16),
 ) -> Result<PreflightContext, Box<dyn std::error::Error>> {
     let qmp = &session.engine.management[0];
     let heap = || -> Result<Vec<u32>, Box<dyn std::error::Error>> {
@@ -856,7 +952,9 @@ pub(super) fn begin_preflight(
         .gdb_socket
         .as_ref()
         .ok_or("knob-dialog lock-contention check needs GDB")?;
-    let debugger = KnobDebugSession::connect(qmp, socket)?;
+    let mut debugger = KnobDebugSession::connect(qmp, socket)?;
+    let sd_expected_callback =
+        verify_sd_knob_fixture(session, options, &mut debugger, sd_knob, shared)?;
     Ok(PreflightContext {
         original_window,
         original_bitmap,
@@ -885,6 +983,7 @@ pub(super) fn begin_preflight(
         callback_race: None,
         activation_semaphore_count: None,
         activation_callback: None,
+        sd_expected_callback,
         activation_phase: 0,
         activation_started: None,
         activation_snapshot: None,
@@ -1197,6 +1296,7 @@ pub(super) fn wait_race_registration(
     if pc != firmware_api::l6max::gui_display_callback_register || slot != 5 || callback & 1 == 0 {
         return Err(format!("unexpected display callback registration: pc={pc:#010x}, slot={slot}, callback={callback:#010x}").into());
     }
+    verify_sd_callback(context.sd_expected_callback, callback)?;
     race.callback = Some(callback);
     Ok(json!({"pc": pc, "slot": slot, "callback": callback}))
 }
@@ -5931,5 +6031,44 @@ mod activation_deadline_tests {
         ));
         assert!(activation_local_expired(now, deadline, 4, u32::MAX - 5, 10));
         assert!(activation_local_expired(deadline, deadline, 0, 0, 10_000));
+    }
+}
+
+#[cfg(test)]
+mod sd_knob_binding_tests {
+    use super::*;
+    #[test]
+    fn sd_registration_requires_the_exact_relocated_callback() {
+        assert!(verify_sd_callback(Some(0x81001001), 0x81001001).is_ok());
+        assert!(verify_sd_callback(Some(0x81001001), 0x81001003).is_err());
+        assert!(verify_sd_callback(None, 0x80101001).is_ok());
+    }
+    #[test]
+    fn sd_fixture_is_required_only_when_the_plan_selects_sd_knob() {
+        let root = std::env::temp_dir().join(format!(
+            "knob-sd-binding-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(root.join("sd-stock-firmware")).unwrap();
+        fs::write(root.join("sd-stock-firmware/main_firmware.bin"), []).unwrap();
+        let mut options = Options::parse_args(std::iter::empty()).unwrap();
+        options.logs = root.clone();
+        assert!(load_sd_knob_fixture(&options, false).unwrap().is_none());
+        assert!(load_sd_knob_fixture(&options, true).is_err());
+        fs::create_dir_all(root.join("sd-patches-build")).unwrap();
+        fs::write(
+            root.join("sd-patches-build/patch.json"),
+            br#"{"patches":[{"members":["midi-sync"],"file":"PATCHES/midi.bin"}]}"#,
+        )
+        .unwrap();
+        assert!(load_sd_knob_fixture(&options, true).is_err());
+        fs::write(
+            root.join("sd-patches-build/patch.json"),
+            br#"{"patches":[{"members":["knob-dialog"],"file":"PATCHES/knob.bin"}]}"#,
+        )
+        .unwrap();
+        assert!(load_sd_knob_fixture(&options, true).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 }

@@ -18,6 +18,7 @@ pub use l6max_host::heap::Counters as HeapCounters;
 pub use l6max_host::indicators::rings as decode_indicator_rings;
 pub use l6max_host::input::button_source;
 pub use l6max_host::input::{InputAck, InputAckState, InputCounters, InputSource};
+pub use l6max_host::knob_binding::SdBinding as KnobSdBinding;
 pub use l6max_host::knob_popup::{
     NavigationSnapshot, OverlayDescriptors, ParameterState, RecorderState, RestorationPointers,
     RestorationSnapshot, Snapshot as KnobPopupSnapshot,
@@ -716,6 +717,19 @@ impl<'a> OwnedControl<'a> {
     ) -> Result<l6max_host::sd_loader::Reader<'_>, ControlError> {
         l6max_host::sd_loader::Reader::new(self.main_qmp()?, self.engine.model(), deadline)
             .map_err(ControlError::Rejected)
+    }
+    pub fn sd_loader_reader_cancellable(
+        &self,
+        deadline: std::time::Instant,
+        cancelled: impl FnMut() -> bool,
+    ) -> Result<l6max_host::sd_loader::Reader<'_>, ControlError> {
+        l6max_host::sd_loader::Reader::new_cancellable(
+            self.main_qmp()?,
+            self.engine.model(),
+            deadline,
+            cancelled,
+        )
+        .map_err(ControlError::Rejected)
     }
     pub fn sd_loader_status(&self) -> Result<SdLoaderSnapshot, ControlError> {
         l6max_host::sd_loader::snapshot(self.main_qmp()?, self.engine.model())

@@ -1337,7 +1337,9 @@ impl Runner {
                 }
                 Action::KnobDialogPreflightBegin => {
                     return Ok(Progress::Device(
-                        devices::Operation::KnobDialogPreflightBegin,
+                        devices::Operation::KnobDialogPreflightBegin {
+                            sd_knob: self.scenario.expects_sd_knob(),
+                        },
                     ));
                 }
                 Action::KnobProbePrepare { probe } => {

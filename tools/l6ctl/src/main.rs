@@ -41,12 +41,25 @@ fn run() -> Result<(), String> {
     let command = args.first().map(String::as_str).unwrap_or("help");
     if matches!(command, "help" | "--help" | "-h") {
         println!(
-            "Usage: l6ctl [--socket PATH] info\n       l6ctl [--socket PATH] debug-session\n       l6ctl [--socket PATH] sd-loader status|site INDEX\n       l6ctl [--socket PATH] qmp-status\n       l6ctl [--socket PATH] input status main|panel\n       l6ctl [--socket PATH] input ack main|panel SEQUENCE\n       l6ctl [--socket PATH] heap-counters\n       l6ctl [--socket PATH] memory-read ADDRESS LENGTH\n       l6ctl [--socket PATH] midi-config\n       l6ctl [--socket PATH] l6-din-state\n       l6ctl [--socket PATH] mixer-level\n       l6ctl [--socket PATH] panel-key CODE\n       l6ctl [--socket PATH] effect-editor REPORT MODULE\n       l6ctl [--socket PATH] effect-slot REPORT MODULE [OPTIONS]\n       l6ctl [--socket PATH] update-state\n       l6ctl [--socket PATH] installer-outcome\n       l6ctl [--socket PATH] usb attach|release|controller\n       l6ctl [--socket PATH] update-gui-state\n       l6ctl [--socket PATH] knob-popup [--text]\n       l6ctl [--socket PATH] recorder-state\n       l6ctl [--socket PATH] knob-parameter-state\n       l6ctl [--socket PATH] rtos heap|tasks|scheduler|objects|all [--pretty]\n       l6ctl [--socket PATH] button NAME|TARGET [--hold-ms MS]\n       l6ctl [--socket PATH] down NAME|TARGET DURATION_MS\n       l6ctl [--socket PATH] up NAME|TARGET\n       l6ctl [--socket PATH] encoder CHANNEL STEPS\n       l6ctl [--socket PATH] analog CHANNEL STEPS\n       l6ctl [--socket PATH] set-analog CHANNEL VALUE\n       l6ctl midi listen ENDPOINT [--timeout-ms MS]\n       l6ctl midi observe ENDPOINT --wall-ms MS\n       l6ctl midi send ENDPOINT CHANNEL CONTROLLER VALUE\n       l6ctl midi send-bytes ENDPOINT HEX_BYTE...\n       l6ctl midi sync ENDPOINT --count N [--quiet-ms MS] [--timeout-ms MS]\n\nConnects to a running emulator started with --control-socket PATH. Button names use the semantic names documented by l6test; numeric targets 0..53 are also accepted. Encoder channels are one-based. Analog channels are 1..5."
+            "Usage: l6ctl [--socket PATH] info\n       l6ctl [--socket PATH] debug-session\n       l6ctl [--socket PATH] sd-loader status|site INDEX\n       l6ctl [--socket PATH] qmp-status\n       l6ctl [--socket PATH] input status main|panel\n       l6ctl [--socket PATH] input ack main|panel SEQUENCE\n       l6ctl [--socket PATH] heap-counters\n       l6ctl [--socket PATH] memory-read ADDRESS LENGTH\n       l6ctl [--socket PATH] midi-config\n       l6ctl [--socket PATH] l6-din-state\n       l6ctl [--socket PATH] mixer-level\n       l6ctl [--socket PATH] panel-key CODE\n       l6ctl [--socket PATH] effect-editor REPORT MODULE\n       l6ctl [--socket PATH] effect-slot REPORT MODULE [OPTIONS]\n       l6ctl [--socket PATH] update-state\n       l6ctl [--socket PATH] installer-outcome\n       l6ctl [--socket PATH] usb attach|release|controller\n       l6ctl [--socket PATH] update-gui-state\n       l6ctl [--socket PATH] knob-popup [--text]\n       l6ctl knob-sd-inspect REPORT MODULE\n       l6ctl [--socket PATH] recorder-state\n       l6ctl [--socket PATH] knob-parameter-state\n       l6ctl [--socket PATH] rtos heap|tasks|scheduler|objects|all [--pretty]\n       l6ctl [--socket PATH] button NAME|TARGET [--hold-ms MS]\n       l6ctl [--socket PATH] down NAME|TARGET DURATION_MS\n       l6ctl [--socket PATH] up NAME|TARGET\n       l6ctl [--socket PATH] encoder CHANNEL STEPS\n       l6ctl [--socket PATH] analog CHANNEL STEPS\n       l6ctl [--socket PATH] set-analog CHANNEL VALUE\n       l6ctl midi listen ENDPOINT [--timeout-ms MS]\n       l6ctl midi observe ENDPOINT --wall-ms MS\n       l6ctl midi send ENDPOINT CHANNEL CONTROLLER VALUE\n       l6ctl midi send-bytes ENDPOINT HEX_BYTE...\n       l6ctl midi sync ENDPOINT --count N [--quiet-ms MS] [--timeout-ms MS]\n\nConnects to a running emulator started with --control-socket PATH. Button names use the semantic names documented by l6test; numeric targets 0..53 are also accepted. Encoder channels are one-based. Analog channels are 1..5."
         );
         return Ok(());
     }
     if command == "midi" {
         return midi_cli::run(&args[1..]).map_err(|error| error.json());
+    }
+    if command == "knob-sd-inspect" {
+        if args.len() != 3 {
+            return Err("Usage: l6ctl knob-sd-inspect REPORT MODULE".into());
+        }
+        let report = std::fs::read(&args[1]).map_err(|e| e.to_string())?;
+        let module = std::fs::read(&args[2]).map_err(|e| e.to_string())?;
+        let binding = l6ctl::KnobSdBinding::from_fixture(&report, &module)?;
+        println!(
+            "{}",
+            serde_json::to_string(&binding).map_err(|e| e.to_string())?
+        );
+        return Ok(());
     }
     let socket = socket.ok_or("provide --socket PATH or set L6_CONTROL_SOCKET")?;
     let client = ControlClient::new(&socket);

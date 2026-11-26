@@ -366,6 +366,7 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6MidiProbeInject
         | Action::L6MidiProbeExpectHook
         | Action::L6MidiProbeExpectReplies
+        | Action::L6MidiProbeFinish
         | Action::MarkL6UpdatePending
         | Action::ExpectL6UpdateResetVector
         | Action::ExpectL6UpdateComparison { .. }

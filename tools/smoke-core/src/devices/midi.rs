@@ -1544,6 +1544,7 @@ pub(super) struct L6MidiProbe {
     guest_timeout: u32,
     event: Vec<u8>,
     expected: Vec<u8>,
+    sender_return: Option<(u32, usize)>,
     phase: u8,
 }
 fn l6_midi_expected_ccs(map: &[u8]) -> Result<Vec<u8>, String> {
@@ -1698,6 +1699,7 @@ impl State {
                 guest_timeout: guest_timeout_ms,
                 event: vec![],
                 expected: vec![],
+                sender_return: None,
                 phase: 0,
             };
             scope.command(session, C::AddBreakpoint { address: idle_loop })?;
@@ -1829,54 +1831,9 @@ impl State {
                     let complete = l6_accept_ordered_cc(&scope.expected, &mut index, bytes[1]);
                     replies.push(bytes);
                     if complete {
-                        let timeout_ms = scope.remaining_ms(session, 60_000)?;
-                        scope
-                            .command(
-                                session,
-                                C::L6MidiBreakpoint {
-                                    address: midi_send,
-                                    enabled: false,
-                                    timeout_ms,
-                                },
-                            )
-                            .map_err(|e| {
-                                l6_reply_error(
-                                    attempt,
-                                    index,
-                                    total,
-                                    "remove sender breakpoint",
-                                    &e,
-                                )
-                            })?;
-                        let timeout_ms = scope.remaining_ms(session, 60_000)?;
-                        scope
-                            .command(
-                                session,
-                                C::L6MidiBreakpoint {
-                                    address: return_pc,
-                                    enabled: true,
-                                    timeout_ms,
-                                },
-                            )
-                            .map_err(|e| {
-                                l6_reply_error(attempt, index, total, "arm return breakpoint", &e)
-                            })?;
-                        scope.advance(session, 10_000).map_err(|e| {
-                            l6_reply_error(attempt, index, total, "advance to return", &e)
-                        })?;
-                        let timeout_ms = scope.remaining_ms(session, 60_000)?;
-                        let O::L6MidiFinished {
-                            requires_restart: true,
-                        } = scope
-                            .command(session, C::L6MidiFinish { timeout_ms })
-                            .map_err(|e| {
-                                l6_reply_error(attempt, index, total, "finish probe", &e)
-                            })?
-                        else {
-                            return Err("L6 MIDI probe did not finish stopped".into());
-                        };
-                        self.l6_midi_probe.take();
-                        return Ok(json!({"replies":replies,"requires_restart":true}));
+                        scope.sender_return = Some((return_pc, attempt));
+                        scope.phase = 4;
+                        return Ok(json!({"replies": replies}));
                     }
                     let timeout_ms = scope.remaining_ms(session, 60_000)?;
                     scope
@@ -1892,6 +1849,52 @@ impl State {
                     "L6 MIDI sync matched {index}/{} expected CCs",
                     scope.expected.len()
                 ))
+            }
+            Operation::L6MidiProbeFinish if scope.phase == 4 => {
+                let (return_pc, attempt) =
+                    scope.sender_return.ok_or("missing L6 MIDI sender return")?;
+                let total = scope.expected.len();
+                let index = total;
+                let timeout_ms = scope.remaining_ms(session, 60_000)?;
+                scope
+                    .command(
+                        session,
+                        C::L6MidiBreakpoint {
+                            address: midi_send,
+                            enabled: false,
+                            timeout_ms,
+                        },
+                    )
+                    .map_err(|e| {
+                        l6_reply_error(attempt, index, total, "remove sender breakpoint", &e)
+                    })?;
+                let timeout_ms = scope.remaining_ms(session, 60_000)?;
+                scope
+                    .command(
+                        session,
+                        C::L6MidiBreakpoint {
+                            address: return_pc,
+                            enabled: true,
+                            timeout_ms,
+                        },
+                    )
+                    .map_err(|e| {
+                        l6_reply_error(attempt, index, total, "arm return breakpoint", &e)
+                    })?;
+                scope
+                    .advance(session, 10_000)
+                    .map_err(|e| l6_reply_error(attempt, index, total, "advance to return", &e))?;
+                let timeout_ms = scope.remaining_ms(session, 60_000)?;
+                let O::L6MidiFinished {
+                    requires_restart: true,
+                } = scope
+                    .command(session, C::L6MidiFinish { timeout_ms })
+                    .map_err(|e| l6_reply_error(attempt, index, total, "finish probe", &e))?
+                else {
+                    return Err("L6 MIDI probe did not finish stopped".into());
+                };
+                self.l6_midi_probe.take();
+                Ok(json!({"requires_restart": true}))
             }
             _ => Err("L6 MIDI probe actions must execute in order".into()),
         }

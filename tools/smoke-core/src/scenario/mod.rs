@@ -592,6 +592,7 @@ pub enum Action {
     L6MidiProbeInject,
     L6MidiProbeExpectHook,
     L6MidiProbeExpectReplies,
+    L6MidiProbeFinish,
     DinUsbBegin,
     DinUsbAttach,
     DinUsbSend {

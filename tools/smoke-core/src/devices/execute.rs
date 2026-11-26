@@ -906,6 +906,7 @@ impl State {
                 Operation::L6MidiProbeInject
                     | Operation::L6MidiProbeExpectHook
                     | Operation::L6MidiProbeExpectReplies
+                    | Operation::L6MidiProbeFinish
             )
         {
             self.l6_midi_probe.take();
@@ -3174,7 +3175,8 @@ impl State {
             operation @ (Operation::L6MidiProbeBegin
             | Operation::L6MidiProbeInject
             | Operation::L6MidiProbeExpectHook
-            | Operation::L6MidiProbeExpectReplies) => Ok(self.run_l6_midi_probe(
+            | Operation::L6MidiProbeExpectReplies
+            | Operation::L6MidiProbeFinish) => Ok(self.run_l6_midi_probe(
                 session,
                 options,
                 operation,

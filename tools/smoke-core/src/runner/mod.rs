@@ -773,6 +773,9 @@ impl Runner {
                         devices::Operation::L6MidiProbeExpectReplies,
                     ));
                 }
+                Action::L6MidiProbeFinish => {
+                    return Ok(Progress::Device(devices::Operation::L6MidiProbeFinish));
+                }
                 Action::L6IndicatorBegin => {
                     return Ok(Progress::Device(devices::Operation::L6IndicatorBegin));
                 }

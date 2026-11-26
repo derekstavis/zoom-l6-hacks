@@ -18,3 +18,8 @@ wall_timeout_s = 180
 action = "l6-midi-probe-expect-replies"
 guest_timeout_ms = 15000
 wall_timeout_s = 180
+
+[[step]]
+action = "l6-midi-probe-finish"
+guest_timeout_ms = 15000
+wall_timeout_s = 180

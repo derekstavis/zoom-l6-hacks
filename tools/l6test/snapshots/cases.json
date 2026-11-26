@@ -561,7 +561,7 @@
     "suites": [
       "full"
     ],
-    "definition": "d53191bc8f62ba95d227b7a059fcad27d0f4e48517ed3fdced2ab76aea8d1a9c"
+    "definition": "af09bee3693d5453a68d41790065281391b2a1d0fedc1cb876caaa9c78cd1f6d"
   },
   {
     "case": "l6-panel-event-map",
@@ -618,7 +618,7 @@
     "suites": [
       "full"
     ],
-    "definition": "6371edb783502d745bb40343805d7a133ef3d6a4fbd39229e6f9896065dfea2e"
+    "definition": "6e419e2cedb6a22d3d2a541804c442d6a7724122d69ea49d0fad0e22ac86ab89"
   },
   {
     "case": "l6-update-stock-install",
@@ -975,7 +975,7 @@
     "suites": [
       "full"
     ],
-    "definition": "ee5f5547f05b1db3e6607bb6d98ecb8d1409cbf37a77144d978b07516a637ade"
+    "definition": "bb8c2bf7d9a15bf1809666ff6aae5e929d669d1b51bfdb8a1d038900836e744b"
   },
   {
     "case": "patched-update",
@@ -1048,7 +1048,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "6371edb783502d745bb40343805d7a133ef3d6a4fbd39229e6f9896065dfea2e"
+    "definition": "6e419e2cedb6a22d3d2a541804c442d6a7724122d69ea49d0fad0e22ac86ab89"
   },
   {
     "case": "patches-l6max_din-mixer-control.fw",
@@ -3194,7 +3194,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "0ed8a4ab7e37592d6070109fe05ad08d613ea40c940fc20fc4ec71bcf9786623"
+    "definition": "4115202e6950f5a8ccf71b5681427fbff897bfbee9476be453a769a9f4a8fbca"
   },
   {
     "case": "sd-midi-sync",

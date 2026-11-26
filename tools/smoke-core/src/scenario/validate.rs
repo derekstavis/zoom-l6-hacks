@@ -78,7 +78,7 @@ impl Scenario {
                         return Err("L6 update requires the full install goal".into());
                     }
                     let prefix = if fixture == UpdateFixture::L6PatchedMidi {
-                        &actions[..actions.len().saturating_sub(7)]
+                        &actions[..actions.len().saturating_sub(8)]
                     } else {
                         actions.as_slice()
                     };
@@ -143,6 +143,7 @@ impl Scenario {
                                 Action::L6MidiProbeInject,
                                 Action::L6MidiProbeExpectHook,
                                 Action::L6MidiProbeExpectReplies,
+                                Action::L6MidiProbeFinish,
                                 Action::LifecycleStop
                             ]
                         )
@@ -152,9 +153,9 @@ impl Scenario {
                         );
                     }
                     if fixture == UpdateFixture::L6PatchedMidi {
-                        let tail = &value.step[value.step.len() - 7..];
+                        let tail = &value.step[value.step.len() - 8..];
                         if tail[1].wall_timeout_s != 180
-                            || tail[2..6].iter().any(|step| {
+                            || tail[2..7].iter().any(|step| {
                                 step.guest_timeout_ms != 120_000 || step.wall_timeout_s != 300
                             })
                         {
@@ -1576,6 +1577,11 @@ impl Scenario {
                     (Action::L6MidiProbeExpectReplies, Some((3, guest, wall)))
                         if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
                     {
+                        l6_probe = Some((4, guest, wall));
+                    }
+                    (Action::L6MidiProbeFinish, Some((4, guest, wall)))
+                        if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
                         l6_probe = None;
                         l6_probe_finished = true;
                     }
@@ -1583,7 +1589,8 @@ impl Scenario {
                         Action::L6MidiProbeBegin
                         | Action::L6MidiProbeInject
                         | Action::L6MidiProbeExpectHook
-                        | Action::L6MidiProbeExpectReplies,
+                        | Action::L6MidiProbeExpectReplies
+                        | Action::L6MidiProbeFinish,
                         _,
                     ) => return Err("invalid L6 MIDI probe sequence, model, or timeouts".into()),
                     (_, Some(_)) => return Err("L6 MIDI probe sequence was interrupted".into()),
@@ -3208,12 +3215,14 @@ mod l6_midi_probe_tests {
             "l6-midi-probe-inject",
             "l6-midi-probe-expect-hook",
             "l6-midi-probe-expect-replies",
+            "l6-midi-probe-finish",
         ]
         .map(step)
         .concat();
         assert!(parse(&steps, "l6").is_ok());
         assert!(parse(&steps, "l6max").is_err());
         assert!(parse(&steps.replace(&step("l6-midi-probe-expect-hook"), ""), "l6").is_err());
+        assert!(parse(&steps.replace(&step("l6-midi-probe-finish"), ""), "l6").is_err());
         assert!(parse(&format!("{steps}{}", step("l6-midi-probe-begin")), "l6").is_err());
         assert!(
             parse(

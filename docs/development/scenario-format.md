@@ -255,7 +255,8 @@ message delivered just after the interval.
 | `l6-midi-probe-begin` | — | Verify fixture identity, acquire a scoped debugger, and wait for L6 idle |
 | `l6-midi-probe-inject` | — | Inject the guarded sync request; the guest must be restarted afterwards |
 | `l6-midi-probe-expect-hook` | — | Verify the request reaches the selected firmware or SD hook unchanged |
-| `l6-midi-probe-expect-replies` | — | Check the ordered configured CC replies, wait for the last sender return, and leave MAIN stopped |
+| `l6-midi-probe-expect-replies` | — | Check the ordered configured CC replies while retaining the stopped sender |
+| `l6-midi-probe-finish` | — | Wait for the last sender return and leave MAIN stopped |
 | `l6-indicator-begin`, `l6-indicator-end` | Begin carries shared guest/wall deadline | Bound an L6 MIDI indicator campaign using the retained direct MIDI session. |
 | `l6-ring-sample`, `l6-ring-coverage` | `cc`, `value`, `guest_ms`, optional `ring`; coverage `mask` | Send a CC, observe for the declared guest duration, reject unrelated ring changes, and check the accumulated segment mask. |
 | `l6-mute-sample` | `cc`, `value`, `guest_ms`, `expected`, optional `reuse_previous` | Compare all eight panel indicator rows; `reuse_previous` uses the preceding sample as the baseline for a release edge. |

@@ -739,6 +739,31 @@ impl Scenario {
                 return Err("menu capture missing ordered-items assertion".into());
             }
         }
+        // A baseline belongs to one guest generation and one encoder. Avoid
+        // silently comparing a later edit against a stale or replaced capture.
+        for model in &value.models {
+            let mut ring: Option<u8> = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                match step.action {
+                    Action::CaptureEffectRing { encoder } if ring.is_none() => ring = Some(encoder),
+                    Action::ExpectEffectRingChanged { encoder } if ring == Some(encoder) => {
+                        ring = None
+                    }
+                    Action::CaptureEffectRing { .. } | Action::ExpectEffectRingChanged { .. } => {
+                        return Err(
+                            "effect ring capture and assertion must match one encoder".into()
+                        );
+                    }
+                    Action::Restart | Action::WarmReset if ring.is_some() => {
+                        return Err("effect ring baseline cannot cross a restart".into());
+                    }
+                    _ => (),
+                }
+            }
+            if ring.is_some() {
+                return Err("effect ring capture needs a matching assertion".into());
+            }
+        }
         for model in &value.models {
             let mut panel_event: Option<(u8, u32, u64)> = None;
             for step in value.step.iter().filter(|step| step.applies_to(*model)) {
@@ -3417,6 +3442,38 @@ mod menu_scope_tests {
             )
             .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod effect_ring_scope_tests {
+    fn parse(steps: &str, model: &str) -> Result<super::super::Scenario, String> {
+        super::super::Scenario::from_text(&format!(
+            "version=1\nname='ring'\nmodels=['{model}']\nbackends=['headless']\n{steps}"
+        ))
+    }
+    #[test]
+    fn baseline_requires_matching_encoder_and_guest_generation() {
+        let capture = "[[step]]\naction='capture-effect-ring'\nencoder=1\n";
+        let assertion = "[[step]]\naction='expect-effect-ring-changed'\nencoder=1\n";
+        assert!(parse(&format!("{capture}{assertion}"), "l6max").is_ok());
+        assert!(parse(capture, "l6max").is_err());
+        assert!(parse(assertion, "l6max").is_err());
+        assert!(
+            parse(
+                &format!("{capture}{}", assertion.replace("encoder=1", "encoder=2")),
+                "l6max"
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                &format!("{capture}[[step]]\naction='restart'\n{assertion}"),
+                "l6max"
+            )
+            .is_err()
+        );
+        assert!(parse(&format!("{capture}{assertion}"), "l6").is_err());
     }
 }
 

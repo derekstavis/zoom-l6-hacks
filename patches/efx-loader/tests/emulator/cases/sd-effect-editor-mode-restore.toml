@@ -96,11 +96,28 @@ action = "delay"
 guest_ms = 300
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 6
-expected_edit_mode = true
-minimum_parameter_edits = 1
-expected_dialog_active = true
+action = "capture-effect-state"
+edits = true
+dialog = true
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 6
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = true
+
+[[step]]
+action = "expect-effect-edits"
+minimum = 1
+
+[[step]]
+action = "expect-effect-dialog"
+active = true
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-ring"

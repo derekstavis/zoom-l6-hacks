@@ -402,7 +402,16 @@ pub enum Operation {
     ExpectEffectRingChanged {
         encoder: u8,
     },
-    CaptureEffectState,
+    CaptureEffectState {
+        edits: bool,
+        dialog: bool,
+    },
+    ExpectEffectEdits {
+        minimum: u32,
+    },
+    ExpectEffectDialog {
+        active: bool,
+    },
     ExpectEffectType {
         value: u8,
     },

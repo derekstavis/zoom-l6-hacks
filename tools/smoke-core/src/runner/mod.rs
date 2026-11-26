@@ -1129,8 +1129,21 @@ impl Runner {
                         devices::Operation::ExpectEffectProcessor { value },
                     ));
                 }
-                Action::CaptureEffectState => {
-                    return Ok(Progress::Device(devices::Operation::CaptureEffectState));
+                Action::CaptureEffectState { edits, dialog } => {
+                    return Ok(Progress::Device(devices::Operation::CaptureEffectState {
+                        edits,
+                        dialog,
+                    }));
+                }
+                Action::ExpectEffectEdits { minimum } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectEffectEdits {
+                        minimum,
+                    }));
+                }
+                Action::ExpectEffectDialog { active } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectEffectDialog {
+                        active,
+                    }));
                 }
                 Action::ExpectEffectPanelMode { value } => {
                     return Ok(Progress::Device(

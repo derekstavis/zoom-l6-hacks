@@ -741,41 +741,23 @@ impl Scenario {
         }
         // Assertions consume one immutable sample and share its deadline.
         for model in &value.models {
-            let mut scope: Option<(u32, u64, u8)> = None;
+            let mut scope: Option<(u32, u64, u16)> = None;
             for step in value.step.iter().filter(|step| step.applies_to(*model)) {
                 let flag = match step.action {
-                    Action::ExpectEffectType { .. } => Some(1),
-                    Action::ExpectEffectProcessor { .. } => Some(2),
-                    Action::ExpectEffectPanelMode { .. } => Some(4),
-                    Action::ExpectEffectEditMode { .. } => Some(8),
+                    Action::ExpectEffectType { .. } => Some((1, 0)),
+                    Action::ExpectEffectProcessor { .. } => Some((2, 0)),
+                    Action::ExpectEffectPanelMode { .. } => Some((4, 0)),
+                    Action::ExpectEffectEditMode { .. } => Some((8, 0)),
+                    Action::ExpectEffectEdits { .. } => Some((16, 256)),
+                    Action::ExpectEffectDialog { .. } => Some((32, 512)),
                     _ => None,
                 };
                 match (&step.action, &mut scope, flag) {
-                    (Action::CaptureEffectState, None, _) => {
-                        scope = Some((step.guest_timeout_ms, step.wall_timeout_s, 0))
-                    }
-                    (_, Some((guest, wall, flags)), Some(bit))
-                        if *flags & bit == 0
-                            && (*guest, *wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
-                    {
-                        *flags |= bit
-                    }
-                    (Action::EffectStateEnd, Some((guest, wall, flags)), _)
-                        if *flags != 0
-                            && (*guest, *wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
-                    {
-                        scope = None
-                    }
-                    (Action::CaptureEffectState | Action::EffectStateEnd, _, _)
-                    | (_, _, Some(_)) => return Err(
-                        "effect state needs one snapshot, unique assertions and matching deadlines"
-                            .into(),
-                    ),
-                    (_, Some(_), _) => {
-                        return Err(
-                            "effect state snapshot must be followed by its assertions".into()
-                        );
-                    }
+                    (Action::CaptureEffectState { edits, dialog }, None, _) => scope = Some((step.guest_timeout_ms, step.wall_timeout_s, (if *edits { 256 } else { 0 }) | (if *dialog { 512 } else { 0 }))),
+                    (_, Some((guest, wall, flags)), Some((bit, required))) if *flags & bit == 0 && *flags & required == required && (*guest,*wall)==(step.guest_timeout_ms,step.wall_timeout_s) => *flags |= bit,
+                    (Action::EffectStateEnd, Some((guest, wall, flags)), _) if *flags & 0xff != 0 && (*guest,*wall)==(step.guest_timeout_ms,step.wall_timeout_s) => scope = None,
+                    (Action::CaptureEffectState { .. } | Action::EffectStateEnd, _, _) | (_, _, Some(_)) => return Err("effect state needs one snapshot, captured fields, unique assertions and matching deadlines".into()),
+                    (_, Some(_), _) => return Err("effect state snapshot must be followed by its assertions".into()),
                     _ => (),
                 }
             }
@@ -3093,7 +3075,7 @@ impl Scenario {
                         .ok_or("effect slot wait needs a following assertion")?;
                     let legacy = matches!(&next.action, Action::EffectReplacementState { expected_effect_type: Some(effect), expected_processor_type: Some(processor), expected_effect: actual_effect, require_output: actual_output, .. }
                             if effect == expected_effect_type && processor == expected_processor_type && actual_effect == expected_effect && actual_output == require_output);
-                    let split = matches!(&next.action, Action::CaptureEffectState)
+                    let split = matches!(&next.action, Action::CaptureEffectState { .. })
                         && expected_effect.is_none()
                         && !*require_output
                         && {
@@ -3540,6 +3522,29 @@ mod effect_state_scope_tests {
             ))
             .is_err()
         );
+    }
+    #[test]
+    fn optional_checks_require_their_fields_in_the_capture() {
+        let capture = "[[step]]\naction='capture-effect-state'\nedits=true\ndialog=true\n";
+        let edits = "[[step]]\naction='expect-effect-edits'\nminimum=1\n";
+        let dialog = "[[step]]\naction='expect-effect-dialog'\nactive=true\n";
+        let end = "[[step]]\naction='effect-state-end'\n";
+        assert!(parse(&format!("{capture}{edits}{dialog}{end}")).is_ok());
+        assert!(
+            parse(&format!(
+                "{}{edits}{dialog}{end}",
+                capture.replace("edits=true", "edits=false")
+            ))
+            .is_err()
+        );
+        assert!(
+            parse(&format!(
+                "{}{edits}{dialog}{end}",
+                capture.replace("dialog=true", "dialog=false")
+            ))
+            .is_err()
+        );
+        assert!(parse(&format!("{capture}{edits}{edits}{end}")).is_err());
     }
     #[test]
     fn snapshot_requires_unique_adjacent_assertions_and_shared_deadlines() {

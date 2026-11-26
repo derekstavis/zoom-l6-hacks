@@ -758,7 +758,18 @@ pub enum Action {
     ExpectEffectRingChanged {
         encoder: u8,
     },
-    CaptureEffectState,
+    CaptureEffectState {
+        #[serde(default)]
+        edits: bool,
+        #[serde(default)]
+        dialog: bool,
+    },
+    ExpectEffectEdits {
+        minimum: u32,
+    },
+    ExpectEffectDialog {
+        active: bool,
+    },
     ExpectEffectType {
         value: u8,
     },

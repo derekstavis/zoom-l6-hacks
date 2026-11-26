@@ -582,7 +582,7 @@ impl State {
         if self.effect_slot_deadline.is_some()
             && !matches!(
                 operation,
-                Operation::EffectReplacementState { .. } | Operation::CaptureEffectState
+                Operation::EffectReplacementState { .. } | Operation::CaptureEffectState { .. }
             )
         {
             self.effect_slot_deadline = None;
@@ -1316,7 +1316,7 @@ impl State {
                     Ok(json!({"encoder":encoder,"position":value}))
                 }
             }
-            Operation::CaptureEffectState => {
+            Operation::CaptureEffectState { edits, dialog } => {
                 if self.effect_state.is_some() {
                     return Err("effect state snapshot already active".into());
                 }
@@ -1355,16 +1355,22 @@ impl State {
                     None => effect_slot_reader(options, session, deadline, &check)?,
                 };
                 let snapshot = reader.snapshot_before_checked(
-                    &l6ctl::EffectSlotFields::default(),
+                    &l6ctl::EffectSlotFields {
+                        applied: edits,
+                        dialog_active: dialog,
+                        ..Default::default()
+                    },
                     deadline,
                     &check,
                 )?;
-                let evidence = json!({"effect_type":snapshot.effect_type,"processor_type":snapshot.processor_type,"active_effect":"","nonzero_output_blocks":0,"panel_mode":snapshot.panel_mode,"edit_mode":snapshot.edit_mode,"parameter_edits_applied":0,"parameter_id":null,"parameter_value":null,"knob_dialog_active":0,"exit_ring_refreshes":0,"atomic":false,"fixture_module_sha256":snapshot.fixture_module_sha256});
+                let evidence = json!({"effect_type":snapshot.effect_type,"processor_type":snapshot.processor_type,"active_effect":"","nonzero_output_blocks":0,"panel_mode":snapshot.panel_mode,"edit_mode":snapshot.edit_mode,"parameter_edits_applied":snapshot.applied.unwrap_or(0),"parameter_id":null,"parameter_value":null,"knob_dialog_active":snapshot.dialog_active.unwrap_or(0),"exit_ring_refreshes":0,"atomic":false,"fixture_module_sha256":snapshot.fixture_module_sha256});
                 self.effect_state =
                     Some((snapshot, started, guest_start, guest_budget, wall_budget));
                 Ok(evidence)
             }
-            Operation::ExpectEffectType { .. }
+            Operation::ExpectEffectEdits { .. }
+            | Operation::ExpectEffectDialog { .. }
+            | Operation::ExpectEffectType { .. }
             | Operation::ExpectEffectProcessor { .. }
             | Operation::ExpectEffectPanelMode { .. }
             | Operation::ExpectEffectEditMode { .. } => {
@@ -1382,6 +1388,29 @@ impl State {
                     );
                 }
                 match operation {
+                    Operation::ExpectEffectEdits { minimum } => {
+                        let applied = snapshot
+                            .applied
+                            .ok_or("effect edit count was not captured")?;
+                        if applied < minimum {
+                            return Err(format!("effect replacement applied {applied} parameter edits, expected at least {minimum}").into());
+                        }
+                        Ok(json!({"parameter_edits_applied":applied}))
+                    }
+                    Operation::ExpectEffectDialog { active } => {
+                        let value = match (snapshot.dialog_active, active) {
+                            (Some(value), _) => value,
+                            (None, false) => 0,
+                            (None, true) => return Err("Knob Dialog active-state symbol is missing from the composed module report".into()),
+                        };
+                        if value != u8::from(active) {
+                            return Err(format!(
+                                "Knob Dialog active state is {value}, expected {active}"
+                            )
+                            .into());
+                        }
+                        Ok(json!({"dialog_active":value}))
+                    }
                     Operation::ExpectEffectType { value } => {
                         if snapshot.effect_type != value {
                             return Err(format!(

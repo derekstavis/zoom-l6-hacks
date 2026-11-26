@@ -1,6 +1,5 @@
 //! L6 panel event observation with simultaneous dispatcher and submit breakpoints.
 use super::*;
-use std::sync::Arc;
 const DISPATCH: u32 = l6::panel_event_dispatcher;
 const SUBMIT: u32 = l6::main_event_submit;
 const GUARDS: [(u32, &str); 2] = [
@@ -45,12 +44,12 @@ struct Evidence {
 }
 pub(super) struct Scope {
     debugger: Option<l6max_host::debug::Session>,
-    inputs: Arc<l6max_host::input::InputHub>,
+    inputs: l6ctl::InputObserver,
+    button: l6ctl::RawHeldButton,
     target: u32,
     column: u8,
     row: u8,
     event: u8,
-    held: bool,
     dispatcher: bool,
     evidence: Option<Evidence>,
     report_ok: bool,
@@ -91,13 +90,13 @@ impl Scope {
         {
             return Err("invalid L6 panel event".into());
         }
-        let inputs = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("panel input unavailable")?
-            .clone();
         let ctl = l6ctl::OwnedControl::new(&session.engine);
+        let inputs = ctl
+            .input_observer()
+            .map_err(|_| "panel input unavailable")?;
+        let button = ctl
+            .raw_button(l6ctl::InputSource::Panel, target)
+            .map_err(|_| "panel input unavailable")?;
         let started = Instant::now();
         let guest_start = guest_now(session);
         let deadline = started
@@ -141,11 +140,11 @@ impl Scope {
         Ok(Self {
             debugger: Some(debugger),
             inputs,
+            button,
             target,
             column,
             row,
             event,
-            held: false,
             dispatcher: true,
             evidence: None,
             report_ok: false,
@@ -164,16 +163,13 @@ impl Scope {
         self.check(session)?;
         // A failed write may have delivered a partial message; attempt release
         // on every failure once a press has been attempted.
-        self.held = true;
-        let receipt = l6ctl::OwnedControl::new(&session.engine)
-            .raw_down(l6ctl::InputSource::Panel, self.target, 0)
-            .map_err(|e| e.to_string())?;
+        let receipt = self.button.press(0).map_err(|e| e.to_string())?;
         self.capture_deadline = Some(Instant::now() + Duration::from_secs(15));
         self.check(session)?;
         Ok(json!({"target":self.target,"sequence":receipt}))
     }
     pub(super) fn capture(&mut self, session: &Session) -> Result<Value, String> {
-        if !self.held || self.evidence.is_some() {
+        if !self.button.is_held() || self.evidence.is_some() {
             return Err("panel event capture out of order".into());
         }
         let deadline = self
@@ -402,12 +398,13 @@ impl Scope {
         debug.close_resuming_before(deadline)?;
         self.debugger = None;
         self.check(session)?;
-        let receipt = l6ctl::OwnedControl::new(&session.engine)
-            .raw_up(l6ctl::InputSource::Panel, self.target)
-            .map_err(|e| e.to_string())?;
-        self.held = false;
+        let receipt = self
+            .button
+            .release()
+            .map_err(|e| e.to_string())?
+            .ok_or("panel button was not held")?;
         self.released = true;
-        self.release_start = self.inputs.panel.snapshot().guest_ms;
+        self.release_start = self.inputs.status(l6ctl::InputSource::Panel).guest_ms;
         self.release_deadline = Some(Instant::now() + Duration::from_secs(wall));
         self.check(session)?;
         Ok(json!({"sequence":receipt}))
@@ -419,8 +416,7 @@ impl Scope {
             self.check(session)?;
             let elapsed = self
                 .inputs
-                .panel
-                .snapshot()
+                .status(l6ctl::InputSource::Panel)
                 .guest_ms
                 .wrapping_sub(self.release_start);
             if settled(elapsed, Instant::now() > deadline)? {
@@ -440,15 +436,7 @@ impl Scope {
         Ok(json!({"target":self.target,"column":self.column,"row":self.row,"event":self.event}))
     }
     pub(super) fn abort(&mut self) -> Result<(), String> {
-        let up = if self.held {
-            self.inputs
-                .panel
-                .up(self.target)
-                .map(|_| ())
-                .map_err(|e| e.to_string())
-        } else {
-            Ok(())
-        };
+        let up = self.button.release().map(|_| ()).map_err(|e| e.to_string());
         let close = self
             .debugger
             .as_mut()
@@ -465,44 +453,6 @@ impl Scope {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn abort_releases_held_target_on_panel_even_for_main_routed_target() {
-        use std::os::unix::net::UnixStream;
-        let (main_host, _main_peer) = UnixStream::pair().unwrap();
-        let (panel_host, mut panel_peer) = UnixStream::pair().unwrap();
-        let inputs = Arc::new(l6max_host::input::InputHub::new(
-            l6max_host::input::EngineInput::new(main_host).unwrap(),
-            l6max_host::input::EngineInput::new(panel_host).unwrap(),
-            l6fw::Model::L6,
-        ));
-        let mut scope = Scope {
-            debugger: None,
-            inputs,
-            target: 0,
-            column: 0,
-            row: 0,
-            event: 0,
-            held: true,
-            dispatcher: false,
-            evidence: None,
-            report_ok: false,
-            mapping_ok: false,
-            released: false,
-            capture_deadline: None,
-            release_start: 0,
-            release_deadline: None,
-            started: Instant::now(),
-            guest_start: 0,
-            guest_budget: 1000,
-            wall_budget: 1,
-        };
-        scope.abort().unwrap();
-        let message = l6max_host::protocol::Message::read(&mut panel_peer).unwrap();
-        assert_eq!(
-            (message.kind, message.target),
-            (l6max_host::protocol::UP, 0)
-        );
-    }
     #[test]
     fn release_window_rejects_completion_after_deadline() {
         assert!(!settled(249, false).unwrap());

@@ -673,6 +673,47 @@ impl HeldButton {
     }
 }
 
+/// Explicit-channel button transaction for protocol probes. A failed press
+/// remains held because a partial write may have reached the guest.
+pub struct RawHeldButton {
+    inputs: std::sync::Arc<l6max_host::input::InputHub>,
+    source: InputSource,
+    target: u32,
+    held: bool,
+}
+impl RawHeldButton {
+    pub fn press(&mut self, duration_ms: u32) -> Result<u32, ControlError> {
+        if self.held {
+            return Err(ControlError::Rejected("raw button already held".into()));
+        }
+        self.held = true;
+        let input = match self.source {
+            InputSource::Main => &self.inputs.main,
+            InputSource::Panel => &self.inputs.panel,
+        };
+        input
+            .down(self.target, duration_ms)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+    pub fn release(&mut self) -> Result<Option<u32>, ControlError> {
+        if !self.held {
+            return Ok(None);
+        }
+        let input = match self.source {
+            InputSource::Main => &self.inputs.main,
+            InputSource::Panel => &self.inputs.panel,
+        };
+        let sequence = input
+            .up(self.target)
+            .map_err(|error| ControlError::Rejected(error.to_string()))?;
+        self.held = false;
+        Ok(Some(sequence))
+    }
+    pub fn is_held(&self) -> bool {
+        self.held
+    }
+}
+
 /// A clonable in-process view of input counters for background observers.
 /// It exposes the same snapshots as `input status` and does not own the guest.
 #[derive(Clone)]
@@ -1227,6 +1268,26 @@ impl<'a> OwnedControl<'a> {
             .map_err(ControlError::Rejected)
     }
 
+    /// Prepare an explicit-channel button without sending input yet.
+    pub fn raw_button(
+        &self,
+        source: InputSource,
+        target: u32,
+    ) -> Result<RawHeldButton, ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .clone();
+        Ok(RawHeldButton {
+            inputs,
+            source,
+            target,
+            held: false,
+        })
+    }
+
     /// Enqueue an input on a specific emulated channel, including unsupported
     /// targets used by protocol rejection diagnostics. Returns its sequence.
     pub fn raw_tap(
@@ -1575,6 +1636,57 @@ mod usb_panel_budget_tests {
     fn guest_budget_retains_boundary_and_clock_wrap_behavior() {
         assert!(!super::usb_panel_guest_expired(50, u32::MAX - 49, 100));
         assert!(super::usb_panel_guest_expired(51, u32::MAX - 49, 100));
+    }
+}
+
+#[cfg(test)]
+mod raw_button_tests {
+    use super::*;
+    use l6max_host::input::{EngineInput, InputHub};
+    use std::sync::Arc;
+
+    #[test]
+    fn explicit_channel_is_preserved_even_for_main_routed_targets() {
+        let (main, _main_peer) = EngineInput::pair().unwrap();
+        let (panel, mut panel_peer) = EngineInput::pair().unwrap();
+        let inputs = Arc::new(InputHub::new(main, panel, l6fw::Model::L6));
+        let mut button = RawHeldButton {
+            inputs: inputs.clone(),
+            source: InputSource::Panel,
+            target: 0,
+            held: false,
+        };
+        button.press(0).unwrap();
+        button.release().unwrap();
+        for kind in [l6max_host::protocol::DOWN, l6max_host::protocol::UP] {
+            let message = l6max_host::protocol::Message::read(&mut panel_peer).unwrap();
+            assert_eq!((message.kind, message.target), (kind, 0));
+        }
+        assert_eq!(inputs.main.snapshot().sent, 0);
+        assert!(!button.is_held());
+        assert_eq!(button.release().unwrap(), None);
+    }
+    #[test]
+    fn failed_press_keeps_release_pending() {
+        let (main, _main_peer) = EngineInput::pair().unwrap();
+        let (panel, panel_peer) = EngineInput::pair().unwrap();
+        let inputs = Arc::new(InputHub::new(main, panel, l6fw::Model::L6));
+        drop(panel_peer);
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while inputs.panel.snapshot().connected && std::time::Instant::now() < until {
+            std::thread::yield_now();
+        }
+        assert!(!inputs.panel.snapshot().connected);
+        let mut button = RawHeldButton {
+            inputs,
+            source: InputSource::Panel,
+            target: 0,
+            held: false,
+        };
+        assert!(button.press(0).is_err());
+        assert!(button.is_held());
+        assert!(button.release().is_err());
+        assert!(button.is_held());
     }
 }
 

@@ -243,10 +243,14 @@ impl Scenario {
                             tail,
                             [
                                 Action::WaitUsbController,
-                                Action::DirectUsbMidiRoundTrip {
-                                    cable: 1,
-                                    expect_ring_change: true
-                                },
+                                Action::DirectMidiConnect { cable: 1 },
+                                Action::MidiEncoderAlternate,
+                                Action::HostMidiExpectCc { channel: 0, controller: 81 },
+                                Action::HostMidiSettle { guest_ms: 1000 },
+                                Action::Checkpoint { name: checkpoint },
+                                Action::HostMidiSendCc { channel: 0, controller: 81, value: 100 },
+                                Action::ExpectRingChanged { channel: 1, checkpoint: ring_checkpoint, observe_wall_ms: Some(3000), midi_transaction: true },
+                                Action::HostMidiEnd,
                                 Action::HostMidiSyncBegin,
                                 Action::HostMidiDrain { quiet_wall_ms: 500 },
                                 Action::HostMidiSendCc {
@@ -257,7 +261,7 @@ impl Scenario {
                                 Action::HostMidiExpectSync,
                                 Action::HostMidiEnd,
                                 Action::LifecycleStop
-                            ]
+                            ] if checkpoint == "before-midi-cc-1" && ring_checkpoint == checkpoint
                         )
                     } else if fixture == UpdateFixture::PatchedKnobMidi {
                         matches!(
@@ -270,10 +274,14 @@ impl Scenario {
                                 ..,
                                 Action::KnobDialog,
                                 Action::WaitUsbController,
-                                Action::DirectUsbMidiRoundTrip {
-                                    cable: 1,
-                                    expect_ring_change: true
-                                },
+                                Action::DirectMidiConnect { cable: 1 },
+                                Action::MidiEncoderAlternate,
+                                Action::HostMidiExpectCc { channel: 0, controller: 81 },
+                                Action::HostMidiSettle { guest_ms: 1000 },
+                                Action::Checkpoint { name: checkpoint },
+                                Action::HostMidiSendCc { channel: 0, controller: 81, value: 100 },
+                                Action::ExpectRingChanged { channel: 1, checkpoint: ring_checkpoint, observe_wall_ms: Some(3000), midi_transaction: true },
+                                Action::HostMidiEnd,
                                 Action::HostMidiSyncBegin,
                                 Action::HostMidiDrain { quiet_wall_ms: 500 },
                                 Action::HostMidiSendCc {
@@ -284,7 +292,7 @@ impl Scenario {
                                 Action::HostMidiExpectSync,
                                 Action::HostMidiEnd,
                                 Action::LifecycleStop
-                            ]
+                            ] if checkpoint == "before-midi-cc-1" && ring_checkpoint == checkpoint
                         )
                     } else {
                         matches!(
@@ -321,7 +329,11 @@ impl Scenario {
                         matches!(
                             step.action,
                             Action::WaitUsbController
-                                | Action::DirectUsbMidiRoundTrip { .. }
+                                | Action::DirectMidiConnect { .. }
+                                | Action::MidiEncoderAlternate
+                                | Action::HostMidiExpectCc { .. }
+                                | Action::HostMidiSettle { .. }
+                                | Action::ExpectRingChanged { .. }
                                 | Action::HostMidiSyncBegin
                                 | Action::HostMidiDrain { .. }
                                 | Action::HostMidiSendCc { .. }
@@ -2220,6 +2232,7 @@ impl Scenario {
                     }
                 }
                 Action::ExpectRingChanged { checkpoint, .. }
+                | Action::HostMidiSendAndExpectRingUnchanged { checkpoint, .. }
                 | Action::ExpectDisplay { checkpoint, .. }
                 | Action::ExpectScene {
                     checkpoint: Some(checkpoint),
@@ -2512,10 +2525,53 @@ impl Scenario {
             }
         }
         for step in &value.step {
-            if let Action::DirectUsbMidiRoundTrip { cable, .. } = &step.action
+            if let Action::DirectMidiConnect { cable } = &step.action
                 && *cable > 15
             {
-                return Err("direct-usb-midi-round-trip cable must be 0..15".into());
+                return Err("direct-midi-connect cable must be 0..15".into());
+            }
+        }
+        for step in &value.step {
+            if let Action::HostMidiSendAndExpectRingUnchanged {
+                channel,
+                controller,
+                value: midi_value,
+                ring,
+                observe_wall_ms,
+                ..
+            } = &step.action
+            {
+                if *channel > 15
+                    || *controller > 127
+                    || *midi_value > 127
+                    || *ring == 0
+                    || *observe_wall_ms == 0
+                    || u64::from(*observe_wall_ms) > step.wall_timeout_s.saturating_mul(1000)
+                    || value
+                        .models
+                        .iter()
+                        .any(|model| step.applies_to(*model) && *ring > model.channels())
+                {
+                    return Err(
+                        "negative MIDI ring observation needs a valid ring and bounded wall window"
+                            .into(),
+                    );
+                }
+            }
+        }
+        for step in &value.step {
+            if let Action::ExpectRingChanged {
+                observe_wall_ms, ..
+            } = &step.action
+            {
+                if observe_wall_ms.is_some_and(|ms| {
+                    ms == 0 || u64::from(ms) > step.wall_timeout_s.saturating_mul(1000)
+                }) {
+                    return Err(
+                        "ring observation needs a positive wall window within its step timeout"
+                            .into(),
+                    );
+                }
             }
         }
         Ok(())

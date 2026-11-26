@@ -1,7 +1,8 @@
 [[step]]
-action = "direct-usb-midi-round-trip"
-guest_timeout_ms = 60000
-wall_timeout_s = 180
+action = "include"
+path = "tests/emulator/fragments/host-midi-direct-cable-1.toml"
+include_guest_timeout_ms = 60000
+include_wall_timeout_s = 180
 
 [[step]]
 action = "include"

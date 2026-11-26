@@ -338,6 +338,7 @@ impl State {
     }
 
     pub fn restarted(&mut self) -> Result<(), String> {
+        self.direct_midi = false;
         let auxiliary_cleanup = self.abort_auxiliary_scopes();
         self.ui_pad = None;
         self.abort_midi_probe();
@@ -2732,7 +2733,9 @@ impl State {
                 wall_timeout_s,
                 shared,
             ),
-            operation @ (Operation::HostMidiBegin
+            operation @ (Operation::DirectMidiConnect { .. }
+            | Operation::MidiEncoderAlternate
+            | Operation::HostMidiBegin
             | Operation::HostMidiSyncBegin
             | Operation::HostMidiExpectSync
             | Operation::HostMidiDrain { .. }
@@ -2742,11 +2745,9 @@ impl State {
             | Operation::HostMidiExpectCc { .. }
             | Operation::HostMidiSettle { .. }
             | Operation::HostMidiSendCc { .. }
+            | Operation::HostMidiSendAndExpectRingUnchanged { .. }
             | Operation::ExpectRingChanged { .. }) => {
                 self.run_declarative_midi(session, operation, guest_timeout_ms, wall_timeout_s)
-            }
-            Operation::HostMidiRoundTrip => {
-                self.run_host_midi_round_trip(session, guest_timeout_ms, wall_timeout_s, None, true)
             }
             operation @ (Operation::MidiProbeBegin
             | Operation::MidiProbeSendCc { .. }
@@ -2760,16 +2761,6 @@ impl State {
                 guest_timeout_ms,
                 wall_timeout_s,
                 operation_start,
-            ),
-            Operation::DirectUsbMidiRoundTrip {
-                cable,
-                expect_ring_change,
-            } => self.run_host_midi_round_trip(
-                session,
-                guest_timeout_ms,
-                wall_timeout_s,
-                Some(cable),
-                expect_ring_change,
             ),
             operation @ (Operation::L6MidiProbeBegin
             | Operation::L6MidiProbeInject

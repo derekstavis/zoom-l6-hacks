@@ -1,0 +1,18 @@
+[[step]]
+models = ["l6"]
+action = "host-midi-send-cc"
+channel = 0
+controller = 83
+value = 100
+guest_timeout_ms = 15000
+wall_timeout_s = 120
+
+[[step]]
+models = ["l6max"]
+action = "host-midi-send-cc"
+channel = 0
+controller = 81
+value = 100
+guest_timeout_ms = 15000
+wall_timeout_s = 120
+

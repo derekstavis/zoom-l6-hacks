@@ -413,6 +413,10 @@ impl UsbHost {
         }
         self.request(1, connected as u32, 0, &[]).map(|_| ())
     }
+    /// Attach within a caller-owned wall deadline and cancellation budget.
+    pub fn attach_before(&self, budget: &Budget) -> io::Result<()> {
+        self.wire.request_before(1, 1, 0, &[], budget).map(|_| ())
+    }
     fn token(&self, kind: u32, endpoint: u8, length: usize, data: &[u8]) -> io::Result<Vec<u8>> {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {

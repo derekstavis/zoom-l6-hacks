@@ -30,9 +30,8 @@ loaded = true
 chain_count = 2
 
 [[step]]
-action = "host-midi-round-trip"
-guest_timeout_ms = 15000
-wall_timeout_s = 120
+action = "include"
+path = "tests/emulator/fragments/host-midi-native-round-trip.toml"
 
 [[step]]
 action = "include"

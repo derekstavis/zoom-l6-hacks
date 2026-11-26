@@ -321,8 +321,9 @@ pub fn of(action: &Action) -> Requirement {
         | Action::UsbMidiSetAlternate
         | Action::UsbMidiSetTarget
         | Action::UsbMidiEnd
-        | Action::HostMidiRoundTrip
         | Action::HostMidiConnect
+        | Action::DirectMidiConnect { .. }
+        | Action::MidiEncoderAlternate
         | Action::HostMidiBegin
         | Action::HostMidiSyncBegin
         | Action::HostMidiExpectSync
@@ -335,8 +336,8 @@ pub fn of(action: &Action) -> Requirement {
         | Action::HostMidiExpectCc { .. }
         | Action::HostMidiSettle { .. }
         | Action::HostMidiSendCc { .. }
+        | Action::HostMidiSendAndExpectRingUnchanged { .. }
         | Action::ExpectRingChanged { .. }
-        | Action::DirectUsbMidiRoundTrip { .. }
         | Action::UsbSysexBegin
         | Action::UsbSysexExchange { .. }
         | Action::UsbSysexEnd

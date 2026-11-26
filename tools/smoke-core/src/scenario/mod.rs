@@ -317,9 +317,6 @@ impl Step {
 fn default_backends() -> Vec<Backend> {
     vec![Backend::Headless, Backend::Gui]
 }
-fn default_midi_cable() -> u8 {
-    1
-}
 fn default_true() -> bool {
     true
 }
@@ -497,7 +494,6 @@ pub enum Action {
     UsbMidiSetAlternate,
     UsbMidiSetTarget,
     UsbMidiEnd,
-    HostMidiRoundTrip,
     MidiProbeBegin,
     MidiProbeSendCc {
         port: MidiProbePort,
@@ -528,6 +524,10 @@ pub enum Action {
     },
     MidiProbeEnd,
     HostMidiConnect,
+    DirectMidiConnect {
+        cable: u8,
+    },
+    MidiEncoderAlternate,
     HostMidiBegin,
     HostMidiSyncBegin,
     HostMidiExpectSync,
@@ -556,19 +556,23 @@ pub enum Action {
         controller: u8,
         value: u8,
     },
+    HostMidiSendAndExpectRingUnchanged {
+        channel: u8,
+        controller: u8,
+        value: u8,
+        ring: usize,
+        checkpoint: String,
+        observe_wall_ms: u32,
+    },
     ExpectRingChanged {
         channel: usize,
         checkpoint: String,
         #[serde(default)]
+        observe_wall_ms: Option<u32>,
+        #[serde(default)]
         midi_transaction: bool,
     },
 
-    DirectUsbMidiRoundTrip {
-        #[serde(default = "default_midi_cable")]
-        cable: u8,
-        #[serde(default = "default_true")]
-        expect_ring_change: bool,
-    },
     L6MidiProbeBegin,
     L6MidiProbeInject,
     L6MidiProbeExpectHook,

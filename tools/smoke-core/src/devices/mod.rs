@@ -161,7 +161,6 @@ pub enum Operation {
     UsbMidiSetAlternate,
     UsbMidiSetTarget,
     UsbMidiEnd,
-    HostMidiRoundTrip,
     MidiProbeBegin,
     MidiProbeSendCc {
         port: crate::scenario::MidiProbePort,
@@ -192,6 +191,10 @@ pub enum Operation {
     },
     MidiProbeEnd,
     HostMidiConnect,
+    DirectMidiConnect {
+        cable: u8,
+    },
+    MidiEncoderAlternate,
     HostMidiBegin,
     HostMidiSyncBegin,
     HostMidiExpectSync,
@@ -219,16 +222,22 @@ pub enum Operation {
         controller: u8,
         value: u8,
     },
+    HostMidiSendAndExpectRingUnchanged {
+        channel: u8,
+        controller: u8,
+        value: u8,
+        ring: usize,
+        before: [u32; 8],
+        observe_wall_ms: u32,
+    },
     ExpectRingChanged {
         channel: usize,
         before: [u32; 8],
+        expected_change: bool,
+        observe_wall_ms: Option<u32>,
         midi_transaction: bool,
     },
 
-    DirectUsbMidiRoundTrip {
-        cable: u8,
-        expect_ring_change: bool,
-    },
     L6MidiProbeBegin,
     L6MidiProbeInject,
     L6MidiProbeExpectHook,
@@ -768,20 +777,16 @@ pub enum Operation {
 }
 
 fn uses_native_host_midi(scenario: &Scenario, model: l6fw::Model) -> bool {
-    scenario.step.iter().any(|step| {
-        step.applies_to(model)
-            && matches!(
-                step.action,
-                crate::Action::HostMidiRoundTrip | crate::Action::HostMidiConnect
-            )
-    })
+    scenario
+        .step
+        .iter()
+        .any(|step| step.applies_to(model) && matches!(step.action, crate::Action::HostMidiConnect))
 }
 
 fn midi_bridge_options(scenario: &Scenario, model: l6fw::Model) -> Option<(bool, bool)> {
     let native = uses_native_host_midi(scenario, model);
     let direct = scenario.step.iter().any(|step| {
-        step.applies_to(model)
-            && matches!(step.action, crate::Action::DirectUsbMidiRoundTrip { .. })
+        step.applies_to(model) && matches!(step.action, crate::Action::DirectMidiConnect { .. })
     });
     let din = scenario
         .step
@@ -801,9 +806,8 @@ fn validate_native_midi_capabilities(
         step.applies_to(model)
             && matches!(
                 step.action,
-                crate::Action::DirectUsbMidiRoundTrip { .. }
+                crate::Action::DirectMidiConnect { .. }
                     | crate::Action::DinUsbBegin
-                    | crate::Action::HostMidiRoundTrip
                     | crate::Action::UsbDescriptors
                     | crate::Action::UsbStorageBegin
                     | crate::Action::UsbMidiOpen
@@ -1096,6 +1100,7 @@ pub struct State {
     l6max_timing: Option<timing::Scope>,
     usb_storage_scope: Option<usb_storage_steps::Scope>,
     native_midi: Option<l6ctl::midi::MidiSession>,
+    direct_midi: bool,
     midi_probe: Option<MidiProbeContext>,
 }
 
@@ -1163,6 +1168,7 @@ impl State {
         self.adaptive_index = index;
     }
     pub fn take_host_midi(&mut self) -> Option<Box<dyn crate::host_midi::Client>> {
+        self.direct_midi = false;
         self.native_midi
             .take()
             .map(|client| Box::new(client) as Box<dyn crate::host_midi::Client>)
@@ -1508,7 +1514,7 @@ mod native_midi_capability_tests {
                 Some((true, false)),
             ),
             (
-                "[[step]]\naction='direct-usb-midi-round-trip'\n",
+                "[[step]]\naction='direct-midi-connect'\ncable=1\n",
                 Some((false, false)),
             ),
             (
@@ -1537,15 +1543,11 @@ mod native_midi_capability_tests {
     fn native_midi_rejects_direct_usb_endpoint_conflicts() {
         let mut scenario = Scenario::from_text("version=1\nname='midi'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='host-midi-connect'\n").unwrap();
         for action in [
-            crate::Action::HostMidiRoundTrip,
             crate::Action::UsbDescriptors,
             crate::Action::UsbStorageBegin,
             crate::Action::UsbMidiOpen,
             crate::Action::UsbSysexBegin,
-            crate::Action::DirectUsbMidiRoundTrip {
-                cable: 1,
-                expect_ring_change: true,
-            },
+            crate::Action::DirectMidiConnect { cable: 1 },
             crate::Action::EditorAssignBegin,
             crate::Action::EditorPlaybackBegin { pad: 1 },
             crate::Action::UiPadBegin { pad: 1 },
@@ -1579,20 +1581,14 @@ mod native_midi_capability_tests {
     }
 
     #[test]
-    fn native_round_trip_and_connection_enable_native_midi() {
-        for (action, expected) in [
-            ("host-midi-round-trip", true),
-            ("host-midi-connect", true),
-            ("direct-usb-midi-round-trip", false),
-        ] {
-            let scenario = Scenario::from_text(&format!(
-                "version=1\nname='midi'\nmodels=['l6','l6max']\nbackends=['headless']\n[[step]]\naction='{action}'\n"
-            )).unwrap();
-            assert_eq!(
-                uses_native_host_midi(&scenario, l6fw::Model::L6max),
-                expected,
-                "{action}"
-            );
-        }
+    fn native_and_direct_connections_select_the_right_transport() {
+        let native = Scenario::from_text("version=1\nname='native'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='host-midi-connect'\n").unwrap();
+        let direct = Scenario::from_text("version=1\nname='direct'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='direct-midi-connect'\ncable=1\n").unwrap();
+        assert!(uses_native_host_midi(&native, l6fw::Model::L6max));
+        assert!(!uses_native_host_midi(&direct, l6fw::Model::L6max));
+        assert_eq!(
+            midi_bridge_options(&direct, l6fw::Model::L6max),
+            Some((false, false))
+        );
     }
 }

@@ -546,6 +546,14 @@ impl Runner {
                 Action::HostMidiConnect => {
                     return Ok(Progress::Device(devices::Operation::HostMidiConnect));
                 }
+                Action::DirectMidiConnect { cable } => {
+                    return Ok(Progress::Device(devices::Operation::DirectMidiConnect {
+                        cable,
+                    }));
+                }
+                Action::MidiEncoderAlternate => {
+                    return Ok(Progress::Device(devices::Operation::MidiEncoderAlternate));
+                }
                 Action::HostMidiDrain { quiet_wall_ms } => {
                     return Ok(Progress::Device(devices::Operation::HostMidiDrain {
                         quiet_wall_ms,
@@ -598,9 +606,35 @@ impl Runner {
                         value,
                     }));
                 }
+                Action::HostMidiSendAndExpectRingUnchanged {
+                    channel,
+                    controller,
+                    value,
+                    ring,
+                    checkpoint,
+                    observe_wall_ms,
+                } => {
+                    let before = self
+                        .checkpoints
+                        .get(&checkpoint)
+                        .ok_or("checkpoint not executed for this model")?
+                        .data
+                        .indicators;
+                    return Ok(Progress::Device(
+                        devices::Operation::HostMidiSendAndExpectRingUnchanged {
+                            channel,
+                            controller,
+                            value,
+                            ring,
+                            before,
+                            observe_wall_ms,
+                        },
+                    ));
+                }
                 Action::ExpectRingChanged {
                     channel,
                     checkpoint,
+                    observe_wall_ms,
                     midi_transaction,
                 } => {
                     let before = self
@@ -612,11 +646,10 @@ impl Runner {
                     return Ok(Progress::Device(devices::Operation::ExpectRingChanged {
                         channel,
                         before,
+                        expected_change: true,
+                        observe_wall_ms,
                         midi_transaction,
                     }));
-                }
-                Action::HostMidiRoundTrip => {
-                    return Ok(Progress::Device(devices::Operation::HostMidiRoundTrip));
                 }
                 Action::MidiProbeBegin => {
                     return Ok(Progress::Device(devices::Operation::MidiProbeBegin));
@@ -680,17 +713,6 @@ impl Runner {
                 }
                 Action::MidiProbeEnd => {
                     return Ok(Progress::Device(devices::Operation::MidiProbeEnd));
-                }
-                Action::DirectUsbMidiRoundTrip {
-                    cable,
-                    expect_ring_change,
-                } => {
-                    return Ok(Progress::Device(
-                        devices::Operation::DirectUsbMidiRoundTrip {
-                            cable,
-                            expect_ring_change,
-                        },
-                    ));
                 }
                 Action::DinUsbBegin => {
                     return Ok(Progress::Device(devices::Operation::DinUsbBegin));

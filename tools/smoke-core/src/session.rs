@@ -2,7 +2,6 @@
 use crate::{Gesture, Progress, Runner, Scenario, devices};
 use l6max_host::{
     engine::{Engine, Options},
-    input::InputHub,
     panel::{PanelData, PanelFeed},
 };
 use serde_json::json;
@@ -38,7 +37,8 @@ pub enum Command {
     },
 }
 impl Command {
-    pub fn headless(&self, inputs: &InputHub) -> Result<(), String> {
+    pub fn headless(&self, engine: &Engine) -> Result<(), String> {
+        let inputs = engine.inputs.as_ref().ok_or("input hub unavailable")?;
         match *self {
             Self::Switch { target, enabled } => {
                 if enabled {
@@ -56,12 +56,14 @@ impl Command {
                 target,
                 duration_ms,
             } => {
-                inputs
+                l6ctl::OwnedControl::new(engine)
                     .down(target, duration_ms)
                     .map_err(|e| e.to_string())?;
             }
             Self::Release { target } => {
-                inputs.up(target).map_err(|e| e.to_string())?;
+                l6ctl::OwnedControl::new(engine)
+                    .up(target)
+                    .map_err(|e| e.to_string())?;
             }
             Self::Encoder { channel, steps, .. } => {
                 inputs.knob(channel - 1, steps).map_err(|e| e.to_string())?;
@@ -95,7 +97,7 @@ impl Session {
         })
     }
     pub fn dispatch(&self, command: &Command) -> Result<(), String> {
-        command.headless(self.engine.inputs.as_ref().unwrap())?;
+        command.headless(&self.engine)?;
         if let Command::Switch { target, enabled } = command {
             let mut switches = self.switches.get();
             switches[*target as usize] = *enabled;

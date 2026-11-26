@@ -53,9 +53,75 @@ pub fn read_main_before(
     })
 }
 
+/// Resolve a declared firmware API symbol for the selected model. This is a
+/// catalog lookup, not proof that the running firmware matches that revision.
+fn symbol_address(model: l6fw::Model, name: &str, length: usize) -> Result<u32, String> {
+    if length == 0 || length > 4096 {
+        return Err("symbol read length must be 1..4096".into());
+    }
+    let address = match model {
+        l6fw::Model::L6 => firmware_api::l6::symbol(name),
+        l6fw::Model::L6max => firmware_api::l6max::symbol(name),
+    }
+    .ok_or_else(|| format!("symbol {name} is not declared for {}", model.name()))?;
+    address
+        .checked_add(length as u32)
+        .ok_or("symbol read address overflow")?;
+    Ok(address)
+}
+
+pub fn read_symbol(
+    qmp: &QmpClient,
+    model: l6fw::Model,
+    name: &str,
+    length: usize,
+) -> Result<MemoryRead, String> {
+    let address = symbol_address(model, name, length)?;
+    let bytes = qmp
+        .read_memory(0, address, length)
+        .map_err(|e| e.to_string())?;
+    Ok(MemoryRead {
+        address,
+        bytes,
+        atomic: false,
+    })
+}
+
+pub fn read_symbol_before(
+    qmp: &QmpClient,
+    model: l6fw::Model,
+    name: &str,
+    length: usize,
+    deadline: std::time::Instant,
+) -> Result<MemoryRead, String> {
+    let address = symbol_address(model, name, length)?;
+    let bytes = qmp
+        .read_memory_before(0, address, length, deadline)
+        .map_err(|e| e.to_string())?;
+    Ok(MemoryRead {
+        address,
+        bytes,
+        atomic: false,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn resolves_model_specific_symbols_outside_sdram() {
+        assert_eq!(
+            symbol_address(l6fw::Model::L6, "dsp_eq_coefficients", 12).unwrap(),
+            firmware_api::l6::dsp_eq_coefficients
+        );
+        assert_eq!(
+            symbol_address(l6fw::Model::L6max, "dsp_eq_coefficients", 12).unwrap(),
+            firmware_api::l6max::dsp_eq_coefficients
+        );
+        assert!(symbol_address(l6fw::Model::L6, "not_a_symbol", 4).is_err());
+        assert!(symbol_address(l6fw::Model::L6, "dsp_eq_coefficients", 0).is_err());
+        assert!(symbol_address(l6fw::Model::L6, "dsp_eq_coefficients", 4097).is_err());
+    }
     #[test]
     fn rejects_zero_oversize_out_of_range_and_overflow() {
         assert!(validate(0x8000_0000, 1).is_ok());

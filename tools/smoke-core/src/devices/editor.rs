@@ -6,14 +6,13 @@ pub(super) fn editor_exchange(
     session: &Session,
     usb: &l6ctl::OwnedControl<'_>,
     endpoints: l6max_host::usb::Endpoints,
-    encoder: &mut l6max_host::usb_midi::Encoder,
     message: &[u8],
     timeout_ms: u32,
     start_guest: u32,
     guest_timeout_ms: u32,
     wall_deadline: Instant,
 ) -> Result<Vec<Vec<u8>>, Box<dyn std::error::Error>> {
-    usb.usb_midi_send(endpoints.output, encoder, 2, message)?;
+    usb.usb_sysex_send(endpoints, 2, message)?;
     collect_editor_sysex(
         session,
         usb,
@@ -32,7 +31,6 @@ fn editor_exchange_expected(
     session: &Session,
     usb: &l6ctl::OwnedControl<'_>,
     endpoints: l6max_host::usb::Endpoints,
-    encoder: &mut l6max_host::usb_midi::Encoder,
     message: &[u8],
     expected: &[u8],
     start_guest: u32,
@@ -41,7 +39,7 @@ fn editor_exchange_expected(
 ) -> Result<Vec<Vec<u8>>, Box<dyn std::error::Error>> {
     const RESPONSE_GUEST_TIMEOUT_MS: u32 = 2_000;
     const RESPONSE_WALL_TIMEOUT_S: u64 = 30;
-    usb.usb_midi_send(endpoints.output, encoder, 2, message)?;
+    usb.usb_sysex_send(endpoints, 2, message)?;
     let matches = |reply: &[u8]| reply.starts_with(expected);
     collect_editor_sysex_inner(
         session,
@@ -59,7 +57,6 @@ pub(super) fn refresh_editor_session(
     session: &Session,
     usb: &l6ctl::OwnedControl<'_>,
     endpoints: l6max_host::usb::Endpoints,
-    encoder: &mut l6max_host::usb_midi::Encoder,
     start_guest: u32,
     guest_timeout_ms: u32,
     wall_deadline: Instant,
@@ -71,7 +68,6 @@ pub(super) fn refresh_editor_session(
         session,
         usb,
         endpoints,
-        encoder,
         &l6ctl::EditorRequest::KeepAlive.encode(),
         &[0xf0, 0x52, 0, 0, 0, 0x0b],
         start_guest,
@@ -168,29 +164,26 @@ fn collect_editor_sysex_inner(
 
 pub(super) fn answer_editor_pad_dialog(
     usb: &l6ctl::OwnedControl<'_>,
-    output: u8,
-    encoder: &mut l6max_host::usb_midi::Encoder,
+    endpoints: l6max_host::usb::Endpoints,
     replies: &[Vec<u8>],
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let pending = l6ctl::editor_pad_dialog_pending(replies);
     if !pending {
         return Ok(false);
     }
-    usb.usb_midi_send(
-        output,
-        encoder,
+    usb.usb_sysex_send(
+        endpoints,
         2,
         &l6ctl::EditorRequest::AcceptPadDialog.encode(),
     )?;
     Ok(true)
 }
 
-/// One Editor verification retains the original endpoint, encoder and clock
+/// One Editor verification retains the original endpoint and clock
 /// across separately reported scenario steps.
 pub(super) struct UiPadScope {
     pad: u8,
     endpoints: l6max_host::usb::Endpoints,
-    encoder: l6max_host::usb_midi::Encoder,
     start_guest: u32,
     deadline: Instant,
     guest_budget: u32,
@@ -222,7 +215,6 @@ impl UiPadScope {
         Ok(Self {
             pad,
             endpoints,
-            encoder: Default::default(),
             start_guest,
             deadline: Instant::now() + Duration::from_secs(wall_budget),
             guest_budget,
@@ -264,12 +256,7 @@ impl UiPadScope {
     ) -> Result<Value, Box<dyn std::error::Error>> {
         let control = l6ctl::OwnedControl::new(&session.engine);
         let usb = &control;
-        usb.usb_midi_send(
-            self.endpoints.output,
-            &mut self.encoder,
-            2,
-            &l6ctl::EditorRequest::Identity.encode(),
-        )?;
+        usb.usb_sysex_send(self.endpoints, 2, &l6ctl::EditorRequest::Identity.encode())?;
         self.identity = collect_editor_sysex(
             session,
             usb,
@@ -306,7 +293,6 @@ impl UiPadScope {
             session,
             usb,
             self.endpoints,
-            &mut self.encoder,
             request,
             expected,
             self.start_guest,
@@ -326,7 +312,6 @@ impl UiPadScope {
                 session,
                 usb,
                 self.endpoints,
-                &mut self.encoder,
                 &l6ctl::EditorRequest::PadAssignment { pad: self.pad }.encode(),
                 300,
                 self.start_guest,
@@ -379,11 +364,10 @@ impl UiPadScope {
     }
 }
 
-/// Editor-controlled playback retains one USB encoder, endpoint and deadline.
+/// Editor-controlled playback retains its USB endpoint and deadline.
 pub(super) struct EditorPlaybackScope {
     pad: u8,
     endpoints: l6max_host::usb::Endpoints,
-    encoder: l6max_host::usb_midi::Encoder,
     start_guest: u32,
     deadline: Instant,
     guest_budget: u32,
@@ -422,7 +406,6 @@ impl EditorPlaybackScope {
         Ok(Self {
             pad,
             endpoints,
-            encoder: Default::default(),
             start_guest,
             deadline: Instant::now() + Duration::from_secs(wall_budget),
             guest_budget,
@@ -476,7 +459,6 @@ impl EditorPlaybackScope {
             session,
             usb,
             self.endpoints,
-            &mut self.encoder,
             &l6ctl::EditorRequest::PlayPad { pad: self.pad }.encode(),
             100,
             self.start_guest,
@@ -484,8 +466,7 @@ impl EditorPlaybackScope {
             self.deadline,
         )?;
         self.check(session, self.guest_budget, self.wall_budget)?;
-        self.dialog_answered =
-            answer_editor_pad_dialog(usb, self.endpoints.output, &mut self.encoder, &self.play)?;
+        self.dialog_answered = answer_editor_pad_dialog(usb, self.endpoints, &self.play)?;
         Ok(json!({"play_replies":self.play,"assignment_dialog_answered":self.dialog_answered}))
     }
     pub(super) fn wait_playing(
@@ -500,7 +481,6 @@ impl EditorPlaybackScope {
                 session,
                 usb,
                 self.endpoints,
-                &mut self.encoder,
                 &l6ctl::EditorRequest::PadPlaybackState { pad: self.pad }.encode(),
                 250,
                 self.start_guest,
@@ -511,8 +491,7 @@ impl EditorPlaybackScope {
             if l6ctl::editor_pad_playing(&self.state, self.pad) {
                 return Ok(json!({"state_replies":self.state,"playing_state":true}));
             }
-            if answer_editor_pad_dialog(usb, self.endpoints.output, &mut self.encoder, &self.state)?
-            {
+            if answer_editor_pad_dialog(usb, self.endpoints, &self.state)? {
                 let _ = collect_editor_sysex(
                     session,
                     usb,
@@ -590,10 +569,9 @@ impl EditorPlaybackScope {
 }
 
 /// Editor assignment transaction. The scenario chooses each pad and phase;
-/// this scope owns the USB encoder, exact reply data and shared deadline.
+/// this scope retains the USB endpoint, exact reply data and shared deadline.
 pub(super) struct EditorAssignmentScope {
     endpoints: l6max_host::usb::Endpoints,
-    encoder: l6max_host::usb_midi::Encoder,
     start_guest: u32,
     deadline: Instant,
     guest_budget: u32,
@@ -624,7 +602,6 @@ impl EditorAssignmentScope {
             .guest_ms;
         Ok(Self {
             endpoints,
-            encoder: Default::default(),
             start_guest,
             deadline: Instant::now() + Duration::from_secs(wall_budget),
             guest_budget,
@@ -667,12 +644,7 @@ impl EditorAssignmentScope {
     ) -> Result<Value, Box<dyn std::error::Error>> {
         let control = l6ctl::OwnedControl::new(&session.engine);
         let usb = &control;
-        usb.usb_midi_send(
-            self.endpoints.output,
-            &mut self.encoder,
-            2,
-            &l6ctl::EditorRequest::Identity.encode(),
-        )?;
+        usb.usb_sysex_send(self.endpoints, 2, &l6ctl::EditorRequest::Identity.encode())?;
         let replies = collect_editor_sysex(
             session,
             usb,
@@ -703,7 +675,6 @@ impl EditorAssignmentScope {
             session,
             usb,
             self.endpoints,
-            &mut self.encoder,
             request,
             expected,
             self.start_guest,
@@ -721,7 +692,6 @@ impl EditorAssignmentScope {
             session,
             usb,
             self.endpoints,
-            &mut self.encoder,
             self.start_guest,
             self.guest_budget,
             self.deadline,
@@ -743,9 +713,8 @@ impl EditorAssignmentScope {
         self.check(session, self.guest_budget, self.wall_budget)?;
         let control = l6ctl::OwnedControl::new(&session.engine);
         let usb = &control;
-        usb.usb_midi_send(
-            self.endpoints.output,
-            &mut self.encoder,
+        usb.usb_sysex_send(
+            self.endpoints,
             2,
             &l6ctl::EditorRequest::PadFileCount { pad }.encode(),
         )?;
@@ -781,9 +750,8 @@ impl EditorAssignmentScope {
             self.check(session, self.guest_budget, self.wall_budget)?;
             let control = l6ctl::OwnedControl::new(&session.engine);
             let usb = &control;
-            usb.usb_midi_send(
-                self.endpoints.output,
-                &mut self.encoder,
+            usb.usb_sysex_send(
+                self.endpoints,
                 2,
                 &l6ctl::EditorRequest::PadFilename { pad }.encode(),
             )?;
@@ -824,7 +792,7 @@ impl EditorAssignmentScope {
         let request = l6ctl::EditorRequest::AssignPad { args: args.clone() }.encode();
         let control = l6ctl::OwnedControl::new(&session.engine);
         let usb = &control;
-        usb.usb_midi_send(self.endpoints.output, &mut self.encoder, 2, &request)?;
+        usb.usb_sysex_send(self.endpoints, 2, &request)?;
         self.assignment_replies = collect_editor_sysex(
             session,
             usb,
@@ -843,12 +811,7 @@ impl EditorAssignmentScope {
     ) -> Result<Value, Box<dyn std::error::Error>> {
         let control = l6ctl::OwnedControl::new(&session.engine);
         let usb = &control;
-        let answered = answer_editor_pad_dialog(
-            usb,
-            self.endpoints.output,
-            &mut self.encoder,
-            &self.assignment_replies,
-        )?;
+        let answered = answer_editor_pad_dialog(usb, self.endpoints, &self.assignment_replies)?;
         if answered {
             self.assignment_replies.extend(collect_editor_sysex(
                 session,
@@ -879,9 +842,8 @@ impl EditorAssignmentScope {
             self.check(session, self.guest_budget, self.wall_budget)?;
             let control = l6ctl::OwnedControl::new(&session.engine);
             let usb = &control;
-            usb.usb_midi_send(
-                self.endpoints.output,
-                &mut self.encoder,
+            usb.usb_sysex_send(
+                self.endpoints,
                 2,
                 &l6ctl::EditorRequest::PadAssignment { pad }.encode(),
             )?;
@@ -895,7 +857,7 @@ impl EditorAssignmentScope {
                 self.deadline,
             )?;
             self.check(session, self.guest_budget, self.wall_budget)?;
-            if answer_editor_pad_dialog(usb, self.endpoints.output, &mut self.encoder, &replies)? {
+            if answer_editor_pad_dialog(usb, self.endpoints, &replies)? {
                 replies.extend(collect_editor_sysex(
                     session,
                     usb,

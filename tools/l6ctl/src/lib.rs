@@ -963,31 +963,6 @@ impl<'a> OwnedControl<'a> {
             .map_err(ControlError::Rejected)
     }
 
-    /// Send MIDI through a configured raw endpoint, preserving encoder state.
-    pub fn usb_midi_send(
-        &self,
-        output: u8,
-        encoder: &mut l6max_host::usb_midi::Encoder,
-        cable: u8,
-        bytes: &[u8],
-    ) -> std::io::Result<()> {
-        let usb = self
-            .engine
-            .usb
-            .as_ref()
-            .ok_or_else(|| std::io::Error::other("USB backend unavailable"))?;
-        usb.send(output, &encoder.push(cable, bytes))
-    }
-    /// Poll and decode one transfer, retaining cable and packet ordering.
-    pub fn usb_midi_poll(&self, input: u8) -> std::io::Result<Option<Vec<(u8, Vec<u8>)>>> {
-        let usb = self
-            .engine
-            .usb
-            .as_ref()
-            .ok_or_else(|| std::io::Error::other("USB backend unavailable"))?;
-        l6max_host::usb_midi::poll_endpoint(usb, input)
-    }
-
     /// Send through an already-enumerated USB endpoint owned by the caller.
     pub fn usb_sysex_send(
         &self,

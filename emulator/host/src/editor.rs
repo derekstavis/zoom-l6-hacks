@@ -145,6 +145,30 @@ mod tests {
     }
 
     #[test]
+    fn complete_requests_encode_equally_with_shared_or_fresh_usb_midi_encoder() {
+        let requests = [
+            Request::Identity,
+            Request::GlobalSettings,
+            Request::KeepAlive,
+            Request::PadFileCount { pad: 0 },
+            Request::PadFilename { pad: 0 },
+            Request::AssignPad {
+                args: vec![0, 1, 2, 3, 4],
+            },
+            Request::AcceptPadDialog,
+            Request::PadAssignment { pad: 0 },
+            Request::PlayPad { pad: 3 },
+            Request::PadPlaybackState { pad: 3 },
+        ];
+        let mut shared = crate::usb_midi::Encoder::default();
+        for request in requests {
+            let bytes = request.encode();
+            let independent = crate::usb_midi::Encoder::default().push(2, &bytes);
+            assert_eq!(shared.push(2, &bytes), independent, "{request:?}");
+        }
+    }
+
+    #[test]
     fn recognizes_dialog_forms_and_pad_playback_without_accepting_partial_replies() {
         assert!(pad_dialog_pending(&[vec![0xf0, 0x52, 0, 0, 0x45, 6]]));
         assert!(pad_dialog_pending(&[vec![0xf0, 0x52, 0, 0, 0x31, 0x10, 6]]));

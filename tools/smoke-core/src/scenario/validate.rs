@@ -58,7 +58,9 @@ impl Scenario {
                 .map(|step| &step.action)
                 .collect::<Vec<_>>();
             match fixture {
-                UpdateFixture::L6Stock | UpdateFixture::L6PatchedMidi => {
+                UpdateFixture::L6Stock
+                | UpdateFixture::L6Matching
+                | UpdateFixture::L6PatchedMidi => {
                     if value.update_goal != Some(UpdateGoal::Install) {
                         return Err("L6 update requires the full install goal".into());
                     }
@@ -556,7 +558,7 @@ impl Scenario {
                     value.step.last().map(|s| &s.action),
                     Some(Action::LifecycleStop)
                 ),
-                UpdateFixture::L6Stock => matches!(
+                UpdateFixture::L6Stock | UpdateFixture::L6Matching => matches!(
                     value.step.last().map(|s| &s.action),
                     Some(Action::ExpectUpdateMarkerAbsent)
                 ),
@@ -1914,11 +1916,6 @@ impl Scenario {
                 && !["main", "project", "sound-pad", "mixer", "system"].contains(&menu.as_str())
             {
                 return Err(format!("expect-menu names an unknown menu {menu:?}"));
-            }
-            if matches!(step.action, Action::FirmwareUpdate)
-                && (value.models.is_empty() || value.step.len() != 1)
-            {
-                return Err("firmware-update is a standalone L6/L6max scenario operation".into());
             }
             if matches!(step.action, Action::WasmPatch)
                 && (value.models.is_empty() || value.step.len() != 1)

@@ -250,7 +250,7 @@
     "suites": [
       "full"
     ],
-    "definition": "c82ad5d4f12b8b3f335b554f6039c07aac4e67b85d70fdaac5dca62db8727682"
+    "definition": "771255cd166bb1c853d86c0e80e7121769e4e1c6711889d082d3a64d8020602d"
   },
   {
     "case": "firmware-update",
@@ -259,7 +259,7 @@
     "suites": [
       "full"
     ],
-    "definition": "3c55a89b09bd8898e4b134fd571b5dda9e8309b357036ec403bb14dd3ccfc89b"
+    "definition": "4425b751f8b606d6eb5ee2111153286cea6d2ae58f69cb7d08d60d8d6acae666"
   },
   {
     "case": "gestures",
@@ -975,7 +975,7 @@
     "suites": [
       "full"
     ],
-    "definition": "7f2bc5f0fbd1be97d52d1f49a38acb4d98e62c34a48eafeef9106eb51b0798da"
+    "definition": "ee5f5547f05b1db3e6607bb6d98ecb8d1409cbf37a77144d978b07516a637ade"
   },
   {
     "case": "patched-update",
@@ -984,7 +984,7 @@
     "suites": [
       "full"
     ],
-    "definition": "7f2bc5f0fbd1be97d52d1f49a38acb4d98e62c34a48eafeef9106eb51b0798da"
+    "definition": "85e8999a4ac5fc6b4e274fcbeb2136d6ea6d7d577fe9c170f1c9e8f11c6b84e0"
   },
   {
     "case": "patched-update-knob-midi",
@@ -993,7 +993,7 @@
     "suites": [
       "full"
     ],
-    "definition": "926e3755ea7840e316a5888f56691762b794f0d989237154e2a41d80682b1992"
+    "definition": "14784facbefac37a7a29f2b78f3835cf3a2a657b317cd86fe85a6057dda9811a"
   },
   {
     "case": "patches-l6_hosted-sd_midi-sync",

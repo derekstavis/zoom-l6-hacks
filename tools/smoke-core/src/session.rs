@@ -339,45 +339,6 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
         return Err("scenario does not support headless execution".into());
     }
     let progress = crate::progress::CaseProgress::from_env();
-    if scenario.step.len() == 1 && matches!(scenario.step[0].action, crate::Action::FirmwareUpdate)
-    {
-        progress.emit(crate::progress::CaseEvent::ScenarioStarted { total_steps: 1 });
-        progress.emit(crate::progress::CaseEvent::StepStarted {
-            index: 1,
-            label: crate::progress::step_label(&scenario.step[0].action),
-            started_unix_ms: crate::progress::unix_ms(),
-        });
-        devices::prepare(&scenario, &mut options)?;
-        let started = std::time::Instant::now();
-        let result = devices::run_firmware_update(&options, progress.clone());
-        let model = std::fs::read(options.firmware_dir.join("main_firmware.bin"))
-            .map_err(|error| error.to_string())
-            .and_then(|main| l6fw::model_from_main(&main).map_err(|error| error.to_string()))?;
-        let report = json!({
-            "schema": 1,
-            "scenario": scenario.name,
-            "model": model.name(),
-            "outcome": if result.is_ok() { "PASS" } else { "FAIL" },
-            "failed_step": if result.is_err() { Some(1) } else { None },
-            "error": result.as_ref().err(),
-            "wall_seconds": started.elapsed().as_secs_f64(),
-            "completed_steps": if result.is_ok() { vec![json!({"step":1,"device":true})] } else { vec![] }
-        });
-        std::fs::write(
-            options.logs.join("scenario.json"),
-            serde_json::to_vec_pretty(&report).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?;
-        progress.emit(crate::progress::CaseEvent::ScenarioFinished {
-            finished_unix_ms: crate::progress::unix_ms(),
-            outcome: if result.is_ok() {
-                crate::progress::Outcome::Pass
-            } else {
-                crate::progress::Outcome::Fail
-            },
-        });
-        return result;
-    }
     if scenario.step.len() == 1 && matches!(scenario.step[0].action, crate::Action::WasmPatch) {
         progress.emit(crate::progress::CaseEvent::ScenarioStarted { total_steps: 1 });
         progress.emit(crate::progress::CaseEvent::StepStarted {

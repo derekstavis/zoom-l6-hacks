@@ -4319,9 +4319,6 @@ impl State {
             Operation::ExpectMenu { menu, path, items } => {
                 Ok(expect_menu(session, &menu, &path, &items).map_err(std::io::Error::other)?)
             }
-            Operation::FirmwareUpdate => {
-                Err("firmware-update scenario must run at the host lifecycle boundary".into())
-            }
             Operation::WasmPatch => {
                 Err("wasm-patch scenario must run at the host lifecycle boundary".into())
             }

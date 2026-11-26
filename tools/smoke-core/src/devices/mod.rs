@@ -1,12 +1,11 @@
 //! Typed peripheral operations. Sequencing, timing and artifacts stay in the runner.
 use crate::{Scenario, Session, scenario::PadAssignmentSource, waveform};
 use firmware_api::{l6, l6max};
-use l6max_host::{engine::Options, headless::Headless};
+use l6max_host::engine::Options;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
-    io::{Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
@@ -33,16 +32,7 @@ pub use knob_dialog::*;
 pub use lifecycle::*;
 use midi::*;
 use midi_probe::*;
-use mode_primitives::{
-    embedded_active_display_operations, embedded_bitmap_probe_operations,
-    embedded_callback_race_operations, embedded_expiry_operations,
-    embedded_invalid_signature_operations, embedded_invalid_tag_operations,
-    embedded_level_demo_operations, embedded_locked_update_operations,
-    embedded_midi_sync_operations, embedded_mode_operations, embedded_navigation_operations,
-    embedded_notification_operations, embedded_overlay_operations,
-    embedded_preflight_probe_operations, embedded_refreshed_overlay_operations,
-    embedded_restoration_operations, embedded_task_context_operations, wait_parameter_mode_checked,
-};
+use mode_primitives::wait_parameter_mode_checked;
 use panel::*;
 use sd::*;
 use usb::*;
@@ -592,7 +582,6 @@ pub enum Operation {
         path: Vec<String>,
         items: Vec<String>,
     },
-    FirmwareUpdate,
     WasmPatch,
     WarmReset,
     Restart,

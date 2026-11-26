@@ -264,7 +264,7 @@ fn execute() -> Result<i32, String> {
                     .collect::<Vec<_>>()
                     .join(","),
                 case.suites.join(","),
-                if case.scenario.is_none() {
+                if case.scenario.is_none() && case.campaign.is_empty() {
                     " [packaged app required]"
                 } else {
                     ""
@@ -443,12 +443,22 @@ fn execute() -> Result<i32, String> {
     let mut needs_patch_macros = false;
     for job in &jobs {
         let case = job.case;
-        if case.blocked.is_some() || case.scenario.is_none() && config.app.is_none() {
+        if case.blocked.is_some()
+            || case.scenario.is_none() && case.campaign.is_empty() && config.app.is_none()
+        {
             continue;
         }
         if job.backend == Backend::Gui && case.scenario.is_some() {
             packages.insert("l6max-gui");
         }
+        needs_patch_macros |= case
+            .campaign
+            .iter()
+            .filter(|member| member.model == job.model)
+            .any(|member| {
+                Scenario::load(&catalog::scenario_file(&member.scenario))
+                    .is_ok_and(|scenario| scenario.needs_patch_builder())
+            });
         needs_patch_macros |= case
             .scenario
             .as_ref()

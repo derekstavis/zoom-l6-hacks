@@ -1,15 +1,19 @@
-version = 1
-name = "firmware-update"
-models = ["l6", "l6max"]
-backends = ["headless"]
-
 [case]
+models = ["l6", "l6max"]
 suites = ["full"]
-volatile = true
-no_sd = true
 wall_timeout_s = 1200
 
-[[step]]
-action = "firmware-update"
-guest_timeout_ms = 300000
-wall_timeout_s = 1200
+[[case.campaign]]
+name = "stock-install"
+model = "l6"
+scenario = "tests/emulator/scenarios/l6-update-matching-install.toml"
+
+[[case.campaign]]
+name = "synthetic-checksum-rejection"
+model = "l6max"
+scenario = "tests/emulator/cases/boot/l6max-update-bad-checksum.toml"
+
+[[case.campaign]]
+name = "synthetic-install"
+model = "l6max"
+scenario = "tests/emulator/cases/boot/l6max-update-valid-install.toml"

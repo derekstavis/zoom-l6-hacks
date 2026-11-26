@@ -101,6 +101,8 @@ pub struct ExpectedFailure {
 pub(crate) struct Header {
     /// Another case's scenario, for a file without one of its own.
     scenario: Option<PathBuf>,
+    #[serde(default)]
+    campaign: Option<Vec<HeaderCampaignMember>>,
     /// The models of a case without a scenario of its own; otherwise the
     /// scenario's `models` decide.
     models: Option<Vec<Model>>,
@@ -121,9 +123,18 @@ pub(crate) struct Header {
     wall_timeout_s: u64,
 }
 
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct HeaderCampaignMember {
+    name: String,
+    model: Model,
+    scenario: PathBuf,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CampaignMember {
     pub name: String,
+    pub model: Model,
     pub scenario: PathBuf,
     pub fingerprint: String,
 }
@@ -231,8 +242,34 @@ fn load_case(root: &Path, file: &Path) -> Result<(Case, Option<Scenario>), Strin
         (None, Some(scenario)) => scenario.models.clone(),
         (None, None) => unreachable!(),
     };
-    let case = Case {
-        campaign: Vec::new(),
+    if header.campaign.as_ref().is_some_and(Vec::is_empty) {
+        return Err("campaign must have at least one member".into());
+    }
+    if header.campaign.is_some()
+        && (!table.is_empty()
+            || scenario_path.is_some()
+            || header.gui
+            || header.volatile
+            || header.no_sd
+            || !header.expected_failure.is_empty())
+    {
+        return Err(
+            "campaign cases require only model-scoped members and isolated headless fixtures"
+                .into(),
+        );
+    }
+    let mut case = Case {
+        campaign: header
+            .campaign
+            .unwrap_or_default()
+            .into_iter()
+            .map(|member| CampaignMember {
+                name: member.name,
+                model: member.model,
+                scenario: member.scenario,
+                fingerprint: String::new(),
+            })
+            .collect(),
         expected_failure: header.expected_failure,
         id,
         suites: header.suites,
@@ -245,7 +282,57 @@ fn load_case(root: &Path, file: &Path) -> Result<(Case, Option<Scenario>), Strin
         blocked: header.blocked,
         wall_timeout_s: header.wall_timeout_s,
     };
+    validate_campaign(&mut case.campaign, &case.models, &case.id)?;
     Ok((case, scenario))
+}
+
+fn validate_campaign(
+    members: &mut [CampaignMember],
+    models: &[Model],
+    id: &str,
+) -> Result<(), String> {
+    if members.is_empty() {
+        return Ok(());
+    }
+    if models.is_empty()
+        || models
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != models.len()
+    {
+        return Err(format!("{id}: campaign needs distinct models"));
+    }
+    let mut names = std::collections::BTreeSet::new();
+    for member in members.iter_mut() {
+        if member.name.is_empty()
+            || !member
+                .name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            || !names.insert((member.model, member.name.clone()))
+            || !models.contains(&member.model)
+        {
+            return Err(format!("{id} has an invalid or duplicate campaign member"));
+        }
+        let scenario = Scenario::load(&scenario_file(&member.scenario))?;
+        if !scenario.models.contains(&member.model)
+            || !scenario.backends.contains(&Backend::Headless)
+        {
+            return Err(format!(
+                "{id}: campaign member {} is incompatible",
+                member.name
+            ));
+        }
+        member.fingerprint = crate::hashing::digest(&resolved_scenario(&scenario, member.model)?);
+    }
+    if models
+        .iter()
+        .any(|model| !members.iter().any(|member| member.model == *model))
+    {
+        return Err(format!("{id}: campaign has a model without members"));
+    }
+    Ok(())
 }
 
 /// Load every case under `root` (the repository), append the generated
@@ -284,32 +371,7 @@ pub fn load(root: &Path) -> Result<Catalog, String> {
     }
     let mut generated = patch_matrix::generate()?;
     for case in &mut generated {
-        let mut names = std::collections::BTreeSet::new();
-        for member in &mut case.campaign {
-            if member.name.is_empty()
-                || !member
-                    .name
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-                || !names.insert(&member.name)
-            {
-                return Err(format!(
-                    "{} has an invalid or duplicate campaign member",
-                    case.id
-                ));
-            }
-            let scenario = Scenario::load(&scenario_file(&member.scenario))?;
-            member.fingerprint =
-                crate::hashing::digest(&resolved_scenario(&scenario, case.model.parse()?)?);
-            if !scenario.models.contains(&case.model.parse()?)
-                || !scenario.backends.contains(&Backend::Headless)
-            {
-                return Err(format!(
-                    "{}: campaign member {} is incompatible",
-                    case.id, member.name
-                ));
-            }
-        }
+        validate_campaign(&mut case.campaign, &[case.model.parse()?], &case.id)?;
         if origins.contains_key(&case.id) {
             return Err(format!("generated case {} duplicates a case file", case.id));
         }
@@ -379,6 +441,13 @@ pub fn write_generated(catalog: &mut Catalog, dir: &Path) -> Result<(), String> 
 /// case runs on the GUI whatever was requested; a case without a scenario runs
 /// on its declared backend.
 pub fn backends(case: &Case, scenario: Option<&Scenario>, requested: &[Backend]) -> Vec<Backend> {
+    if !case.campaign.is_empty() {
+        return requested
+            .iter()
+            .copied()
+            .filter(|backend| *backend == Backend::Headless)
+            .collect();
+    }
     match scenario {
         Some(_) if case.gui => vec![Backend::Gui],
         Some(scenario) => requested
@@ -455,6 +524,7 @@ fn definition(case: &Case, scenario: Option<&Scenario>, model: Model) -> Result<
         let members = case
             .campaign
             .iter()
+            .filter(|member| member.model == model)
             .map(|member| {
                 Scenario::load(&scenario_file(&member.scenario))
                     .and_then(|scenario| resolved_scenario(&scenario, model))
@@ -531,6 +601,78 @@ pub fn matrix(catalog: &Catalog) -> Result<Vec<Row>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn static_update_direct_selection_keeps_model_scoped_order() {
+        use smoke_core::UpdateFixture::*;
+        let catalog = load(l6max_host::paths::repository_root()).unwrap();
+        for (id, model, expected, wall) in [
+            ("firmware-update", Model::L6, vec![L6Matching], 1200),
+            (
+                "firmware-update",
+                Model::L6max,
+                vec![BadChecksum, SyntheticValid],
+                1200,
+            ),
+            ("patched-update", Model::L6, vec![L6PatchedMidi], 900),
+            (
+                "patched-update",
+                Model::L6max,
+                vec![BadChecksumStock, PatchedKnob],
+                900,
+            ),
+            (
+                "patched-update-knob-midi",
+                Model::L6max,
+                vec![BadChecksumStock, PatchedKnobMidi],
+                1200,
+            ),
+        ] {
+            let case = catalog.cases.iter().find(|case| case.id == id).unwrap();
+            let actual = case
+                .campaign
+                .iter()
+                .filter(|member| member.model == model)
+                .map(|member| {
+                    Scenario::load(&scenario_file(&member.scenario))
+                        .unwrap()
+                        .update_fixture
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected, "{id}/{model}");
+            assert_eq!(case.wall_timeout_s, wall);
+            assert_eq!(backends(case, None, &[Backend::Gui]), Vec::<Backend>::new());
+        }
+    }
+
+    #[test]
+    fn static_campaign_rejects_empty_duplicate_and_wrong_model_members() {
+        let root = l6max_host::paths::repository_root();
+        let file = std::env::temp_dir().join(format!(
+            "l6test-campaign-header-{}.toml",
+            std::process::id()
+        ));
+        let prefix = "[case]\nmodels=['l6', 'l6max']\nsuites=['full']\n";
+        let l6 = "[[case.campaign]]\nname='l6'\nmodel='l6'\nscenario='tests/emulator/cases/boot/l6-update-stock-install.toml'\n";
+        let l6max = "[[case.campaign]]\nname='l6max'\nmodel='l6max'\nscenario='tests/emulator/cases/boot/l6max-update-bad-checksum.toml'\n";
+        for source in [
+            format!("{prefix}campaign=[]\n"),
+            format!("{prefix}{l6}"),
+            format!("{prefix}{l6}{l6}{l6max}"),
+            format!(
+                "{prefix}{}{}",
+                l6.replace("model='l6'", "model='l6max'"),
+                l6max
+            ),
+        ] {
+            fs::write(&file, source).unwrap();
+            assert!(load_case(root, &file).is_err());
+        }
+        fs::write(&file, format!("{prefix}{l6}{l6max}")).unwrap();
+        assert!(load_case(root, &file).is_ok());
+        fs::remove_file(file).unwrap();
+    }
 
     /// The case matrix is reviewed: a change that adds, removes or moves cases
     /// between models, backends or suites, or changes a generated scenario,

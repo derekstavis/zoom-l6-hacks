@@ -1,0 +1,77 @@
+version = 1
+name = "l6-update-matching-install"
+models = ["l6"]
+backends = ["headless"]
+state = "none"
+card = "none"
+update_fixture = "l6-matching"
+update_goal = "install"
+
+[[step]]
+action = "lifecycle-start"
+profile = "initial"
+
+[[step]]
+action = "wait-panel-uptime"
+guest_ms = 40000
+guest_timeout_ms = 300000
+wall_timeout_s = 1200
+
+[[step]]
+action = "lifecycle-stop"
+
+# This reproduces the replacement installer fixture; it is not a claim that
+# the L6 firmware itself initiated a real hardware update handoff.
+[[step]]
+action = "mark-l6-update-pending"
+
+[[step]]
+action = "capture-update-marker-pending"
+
+[[step]]
+action = "lifecycle-start"
+profile = "installer"
+
+[[step]]
+action = "expect-installer-outcome"
+expected = "installed"
+
+[[step]]
+action = "expect-l6-update-reset-vector"
+
+[[step]]
+action = "wait-panel-uptime"
+guest_ms = 40000
+guest_timeout_ms = 300000
+wall_timeout_s = 1200
+
+[[step]]
+action = "lifecycle-stop"
+
+[[step]]
+action = "expect-l6-update-comparison"
+field = "main-firmware"
+[[step]]
+action = "expect-l6-update-comparison"
+field = "main-trailer"
+[[step]]
+action = "expect-l6-update-comparison"
+field = "secondary-firmware"
+[[step]]
+action = "expect-l6-update-comparison"
+field = "secondary-trailer"
+[[step]]
+action = "expect-l6-update-comparison"
+field = "package-footer"
+[[step]]
+action = "expect-l6-update-comparison"
+field = "boot-region"
+[[step]]
+action = "expect-l6-update-comparison"
+field = "protected-region"
+[[step]]
+action = "expect-l6-update-comparison"
+field = "resource-nor"
+
+[[step]]
+action = "expect-update-marker-absent"

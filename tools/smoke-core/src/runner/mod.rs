@@ -1726,9 +1726,6 @@ impl Runner {
                         devices::Operation::ExpectUpdateMarkerAbsent,
                     ));
                 }
-                Action::FirmwareUpdate => {
-                    return Ok(Progress::Device(devices::Operation::FirmwareUpdate));
-                }
                 Action::WasmPatch => {
                     return Ok(Progress::Device(devices::Operation::WasmPatch));
                 }

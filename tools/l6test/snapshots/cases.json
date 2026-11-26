@@ -3020,7 +3020,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "b67a91907eac412b4f5cb6300f57faf19a6fbeae5c0f28a4cddc3486b1e4995f"
+    "definition": "2ea0f2949fe395c54847c19c9325d395d5d710427927cab89be78c2e82696198"
   },
   {
     "case": "sd-din-mixer-control",
@@ -3029,7 +3029,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "c4ddf5c7737aa235fd05176ebc0b594aae72e8b77fcffa4ec74c57a221bf416a"
+    "definition": "1baa70dc40a3c75147b95b1ce9e3fd6507cf061fabdd3921cf10d06bcd7b9a87"
   },
   {
     "case": "sd-duplicate-bundle",
@@ -3226,7 +3226,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "943f9338abc0368da459e694c239751740475749ec754253f669c3ff6d0b54b9"
+    "definition": "ccb945b75d2c986d1bb6e128baf81a0cd7e81e2e06884f08cad65896140972a2"
   },
   {
     "case": "sd-older-module",

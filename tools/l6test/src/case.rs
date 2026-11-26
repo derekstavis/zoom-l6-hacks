@@ -198,13 +198,7 @@ pub(crate) fn run_case(
                     "child failed; inspect stdout.log and stderr.log"
                 })
                 .into();
-            if let (Some(index), Some(label)) = (
-                scenario["failed_step"].as_u64(),
-                scenario["failed_step_label"].as_str(),
-            ) {
-                result.detail = format!("step {index} ({label}): {}", result.detail);
-            }
-            apply_expected(&mut result, &scenario, &case.expected_failure);
+            classify_and_label_failure(&mut result, &scenario, &case.expected_failure);
         }
         Ok(CaseRun::FixturesOnly) => {
             result.outcome = Outcome::Pass;
@@ -1157,6 +1151,21 @@ fn execute(
     Ok(CaseRun::Ran { success, scenario })
 }
 
+/// Match the original error before adding the human-readable step label.
+fn classify_and_label_failure(
+    result: &mut CaseResult,
+    scenario: &Value,
+    expected: &[ExpectedFailure],
+) {
+    apply_expected(result, scenario, expected);
+    if let (Some(index), Some(label)) = (
+        scenario["failed_step"].as_u64(),
+        scenario["failed_step_label"].as_str(),
+    ) {
+        result.detail = format!("step {index} ({label}): {}", result.detail);
+    }
+}
+
 /// Apply a case's expected failures for this model. A failure matching any of
 /// them at its exact step and error is XFAIL; a pass despite them is XPASS.
 fn apply_expected(result: &mut CaseResult, scenario: &Value, expected: &[ExpectedFailure]) {
@@ -1425,6 +1434,33 @@ mod tests {
                 .contains("checksum")
         );
     }
+    #[test]
+    fn expected_failure_does_not_match_a_step_label_instead_of_the_error() {
+        let expected = [ExpectedFailure {
+            model: Model::L6,
+            step: 2,
+            contains: "expected failure".into(),
+            reason: "known issue".into(),
+        }];
+        let scenario = json!({"failed_step":2,"failed_step_label":"expected failure"});
+        let mut result = CaseResult {
+            outcome: Outcome::Fail,
+            detail: "different error".into(),
+            ..CaseResult::new("case", Model::L6, Backend::Headless, Path::new(""))
+        };
+        classify_and_label_failure(&mut result, &scenario, &expected);
+        assert_eq!(result.outcome, Outcome::Fail);
+        assert_eq!(result.detail, "step 2 (expected failure): different error");
+        let mut result = CaseResult {
+            outcome: Outcome::Fail,
+            detail: "expected failure: timeout".into(),
+            ..CaseResult::new("case", Model::L6, Backend::Headless, Path::new(""))
+        };
+        classify_and_label_failure(&mut result, &scenario, &expected);
+        assert_eq!(result.outcome, Outcome::Xfail);
+        assert!(result.detail.contains("known issue"));
+    }
+
     #[test]
     fn expected_failures_match_the_exact_step_and_error_and_expose_unexpected_passes() {
         let failures = [

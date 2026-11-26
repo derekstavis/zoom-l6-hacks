@@ -1,0 +1,13 @@
+[[step]]
+action = "wait-memory"
+symbol = "notification_busy"
+bytes = [0]
+guest_timeout_ms = 30000
+wall_timeout_s = 120
+
+[[step]]
+action = "wait-memory"
+symbol = "notification_active"
+bytes = [0]
+guest_timeout_ms = 30000
+wall_timeout_s = 120

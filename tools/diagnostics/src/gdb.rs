@@ -457,6 +457,10 @@ impl Gdb {
     pub fn resume_before(&mut self, deadline: Instant) -> io::Result<()> {
         self.write_bytes_before(b"$c#63", deadline)
     }
+    /// Start a single instruction under an absolute deadline.
+    pub fn step_start_before(&mut self, deadline: Instant) -> io::Result<()> {
+        self.write_bytes_before(b"$s#73", deadline)
+    }
     /// Poll for a stop without extending an absolute deadline.
     pub fn poll_stop_before(&mut self, deadline: Instant) -> io::Result<Option<String>> {
         loop {

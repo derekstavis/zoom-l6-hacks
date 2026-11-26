@@ -15,6 +15,7 @@ pub mod input;
 pub mod input_trace;
 pub mod knob_popup;
 pub mod l6_recorder;
+pub mod l6max_recorder;
 pub mod memory;
 pub mod midi_config;
 pub mod mixer_level;

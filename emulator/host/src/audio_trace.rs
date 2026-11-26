@@ -153,3 +153,60 @@ mod tests {
         assert!(sai1_tx_nonzero(&sai1_tx_samples(trace, 0)));
     }
 }
+
+/// L6max recorder counts every TX window, including partially parsed lines.
+#[derive(Clone, Debug)]
+pub struct L6maxRecorderSummary {
+    pub windows: usize,
+    pub nonzero_windows: usize,
+    pub signature_changed: bool,
+}
+pub fn l6max_recorder_summary(trace: &str, baseline: &L6RecorderBaseline) -> L6maxRecorderSummary {
+    let lines: Vec<_> = trace
+        .lines()
+        .filter(|line| line.starts_with("l6 audio TX samples sai=00384000"))
+        .skip(baseline.count)
+        .collect();
+    let nonzero_windows = lines
+        .iter()
+        .filter(|line| {
+            field(line, "nonzero")
+                .and_then(|value| {
+                    value
+                        .strip_suffix("ms")
+                        .unwrap_or(value)
+                        .parse::<u64>()
+                        .ok()
+                })
+                .unwrap_or(0)
+                > 0
+        })
+        .count();
+    let signature_changed = lines.iter().any(|line| {
+        let current = signature(line);
+        current.is_some() && current != baseline.signature
+    });
+    L6maxRecorderSummary {
+        windows: lines.len(),
+        nonzero_windows,
+        signature_changed,
+    }
+}
+
+#[cfg(test)]
+mod max_recorder_tests {
+    use super::*;
+    #[test]
+    fn partial_windows_and_absent_baseline_signature_preserve_legacy_rules() {
+        let base = l6_recorder_baseline("l6 audio TX samples sai=00384000 missing=true\n");
+        let s = l6max_recorder_summary(
+            "l6 audio TX samples sai=00384000 missing=true\nl6 audio TX samples sai=00384000 nonzero=2ms first=AB last=CD\nl6 audio TX samples sai=00384000 nonzero=bad first=x\n",
+            &base,
+        );
+        assert_eq!(s.windows, 2);
+        assert_eq!(s.nonzero_windows, 1);
+        assert!(s.signature_changed);
+        let base = l6_recorder_baseline("l6 audio TX samples sai=00384000 first=AB last=CD\n");
+        assert!(!l6max_recorder_summary("l6 audio TX samples sai=00384000 first=AB last=CD\nl6 audio TX samples sai=00384000 nonzero=1 first=ab last=cd\n",&base).signature_changed);
+    }
+}

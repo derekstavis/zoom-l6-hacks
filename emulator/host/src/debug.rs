@@ -419,6 +419,7 @@ trait Transport: Send {
     ) -> Result<(), String>;
     fn register_before(&mut self, index: u32, deadline: Instant) -> Result<u32, String>;
     fn resume_before(&mut self, deadline: Instant) -> Result<(), String>;
+    fn step_start_before(&mut self, deadline: Instant) -> Result<(), String>;
     fn poll_stop_before(&mut self, deadline: Instant) -> Result<Option<String>, String>;
     fn interrupt_before(&mut self, deadline: Instant) -> Result<String, String>;
     fn resume(&mut self) -> Result<(), String>;
@@ -464,6 +465,9 @@ impl Transport for Gdb {
     }
     fn resume_before(&mut self, deadline: Instant) -> Result<(), String> {
         Gdb::resume_before(self, deadline).map_err(|e| e.to_string())
+    }
+    fn step_start_before(&mut self, deadline: Instant) -> Result<(), String> {
+        Gdb::step_start_before(self, deadline).map_err(|e| e.to_string())
     }
     fn poll_stop_before(&mut self, deadline: Instant) -> Result<Option<String>, String> {
         Gdb::poll_stop_before(self, deadline).map_err(|e| e.to_string())
@@ -796,28 +800,58 @@ impl Session {
     pub fn continue_before(
         &mut self,
         deadline: Instant,
-        mut cancelled: impl FnMut() -> bool,
+        cancelled: impl FnMut() -> bool,
     ) -> Result<String, String> {
-        if self.breakpoints.is_empty() {
+        self.run_before(deadline, cancelled, false)?
+            .ok_or_else(|| "debug continue deadline exceeded".into())
+    }
+    /// Continue until a stop or a local deadline. A timeout is returned only after a verified interrupt.
+    pub fn continue_optional_before(
+        &mut self,
+        deadline: Instant,
+        cancelled: impl FnMut() -> bool,
+    ) -> Result<Option<String>, String> {
+        self.run_before(deadline, cancelled, false)
+    }
+    /// Step one instruction and verify the resulting stop.
+    pub fn step_before(
+        &mut self,
+        deadline: Instant,
+        cancelled: impl FnMut() -> bool,
+    ) -> Result<String, String> {
+        self.run_before(deadline, cancelled, true)?
+            .ok_or_else(|| "debug step deadline exceeded".into())
+    }
+    fn run_before(
+        &mut self,
+        deadline: Instant,
+        mut cancelled: impl FnMut() -> bool,
+        step: bool,
+    ) -> Result<Option<String>, String> {
+        if !step && self.breakpoints.is_empty() {
             return Err("continue requires an owned breakpoint".into());
         }
         if cancelled() || Instant::now() >= deadline {
-            return Err("debug continue cancelled or deadline exceeded".into());
+            return Err("debug execution cancelled or deadline exceeded".into());
         }
-        self.transact(|g| g.resume_before(deadline))?;
+        if step {
+            self.transact(|g| g.step_start_before(deadline))?;
+        } else {
+            self.transact(|g| g.resume_before(deadline))?;
+        }
         loop {
             let now = Instant::now();
-            if cancelled() || now >= deadline {
+            let was_cancelled = cancelled();
+            if was_cancelled || now >= deadline {
                 let stop = self.transact(|g| {
                     g.interrupt_before(Instant::now() + Duration::from_secs(3))
                         .and_then(validate_stop)
                 });
-                return Err(match stop {
-                    Ok(_) => "debug continue cancelled or deadline exceeded".into(),
-                    Err(error) => format!(
-                        "debug continue cancelled or deadline exceeded; interrupt failed: {error}"
-                    ),
-                });
+                stop.map_err(|error| format!("debug execution interrupt failed: {error}"))?;
+                if was_cancelled || cancelled() {
+                    return Err("debug execution cancelled".into());
+                }
+                return Ok(None);
             }
             let until = (now + Duration::from_millis(50)).min(deadline);
             if let Some(reply) = self.transact(|g| g.poll_stop_before(until))? {
@@ -826,9 +860,9 @@ impl Session {
                     error
                 })?;
                 if cancelled() || Instant::now() >= deadline {
-                    return Err("debug continue cancelled or deadline exceeded".into());
+                    return Err("debug execution cancelled or deadline exceeded".into());
                 }
-                return Ok(reply);
+                return Ok(Some(reply));
             }
         }
     }
@@ -1535,6 +1569,12 @@ mod tests {
             }
             self.resume()
         }
+        fn step_start_before(&mut self, deadline: Instant) -> Result<(), String> {
+            if Instant::now() >= deadline {
+                return Err("timeout".into());
+            }
+            self.record("step-start")
+        }
         fn poll_stop_before(&mut self, deadline: Instant) -> Result<Option<String>, String> {
             self.poll_stop(deadline.saturating_duration_since(Instant::now()))
         }
@@ -1739,6 +1779,37 @@ mod tests {
             .unwrap();
     }
 
+    #[test]
+    fn bounded_optional_continue_interrupts_timeout_and_step_uses_verified_stop() {
+        let (mut session, state) = fake(true, true);
+        let setup = Instant::now() + Duration::from_secs(1);
+        session.breakpoint_before(0x80001000, true, setup).unwrap();
+        state.lock().unwrap().pending = true;
+        assert!(
+            session
+                .continue_optional_before(Instant::now() + Duration::from_millis(15), || false)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            state
+                .lock()
+                .unwrap()
+                .operations
+                .contains(&"interrupt".into())
+        );
+        state.lock().unwrap().pending = false;
+        session.breakpoint_before(0x80001000, false, setup).unwrap();
+        session.step_before(setup, || false).unwrap();
+        assert!(
+            state
+                .lock()
+                .unwrap()
+                .operations
+                .contains(&"step-start".into())
+        );
+        session.close_before(setup).unwrap();
+    }
     #[test]
     fn bounded_signal_close_reports_when_emergency_stop_cannot_be_verified() {
         let (mut session, state) = fake(true, true);

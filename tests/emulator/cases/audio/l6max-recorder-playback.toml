@@ -25,7 +25,72 @@ guest_timeout_ms = 30000
 wall_timeout_s = 180
 
 [[step]]
-action = "l6max-recorder-playback"
+action = "l6max-recorder-begin"
 target = 4
+guest_timeout_ms = 20000
+wall_timeout_s = 900
+
+[[step]]
+action = "l6max-recorder-press"
+guest_timeout_ms = 20000
+wall_timeout_s = 900
+
+[[step]]
+action = "l6max-recorder-submit"
+guest_timeout_ms = 20000
+wall_timeout_s = 900
+
+[[step]]
+action = "l6max-recorder-queue"
+guest_timeout_ms = 20000
+wall_timeout_s = 900
+
+[[step]]
+action = "l6max-recorder-dispatch"
+guest_timeout_ms = 20000
+wall_timeout_s = 900
+
+[[step]]
+action = "l6max-recorder-scheduler"
+guest_timeout_ms = 20000
+wall_timeout_s = 900
+
+[[step]]
+action = "l6max-recorder-callback"
+guest_timeout_ms = 20000
+wall_timeout_s = 900
+
+[[step]]
+action = "l6max-recorder-action"
+guest_timeout_ms = 20000
+wall_timeout_s = 900
+
+[[step]]
+action = "l6max-recorder-stream"
+guest_timeout_ms = 20000
+wall_timeout_s = 900
+
+[[step]]
+action = "l6max-recorder-observe"
+guest_timeout_ms = 20000
+wall_timeout_s = 900
+
+[[step]]
+action = "l6max-recorder-sample"
+guest_timeout_ms = 20000
+wall_timeout_s = 900
+
+[[step]]
+action = "l6max-recorder-evidence"
+guest_timeout_ms = 20000
+wall_timeout_s = 900
+
+[[step]]
+action = "l6max-recorder-assert-audio"
+guest_timeout_ms = 20000
+wall_timeout_s = 900
+
+[[step]]
+action = "l6max-recorder-end"
 guest_timeout_ms = 20000
 wall_timeout_s = 900

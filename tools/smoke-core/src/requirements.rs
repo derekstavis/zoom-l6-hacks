@@ -106,7 +106,20 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6SweepRejectPanel
         | Action::L6SweepRejectEncoder
         | Action::L6SweepEnd => on(L6),
-        Action::L6maxRecorderPlayback { .. }
+        Action::L6maxRecorderBegin { .. }
+        | Action::L6maxRecorderPress
+        | Action::L6maxRecorderSubmit
+        | Action::L6maxRecorderQueue
+        | Action::L6maxRecorderDispatch
+        | Action::L6maxRecorderScheduler
+        | Action::L6maxRecorderCallback
+        | Action::L6maxRecorderAction
+        | Action::L6maxRecorderStream
+        | Action::L6maxRecorderObserve
+        | Action::L6maxRecorderSample
+        | Action::L6maxRecorderEvidence
+        | Action::L6maxRecorderAssertAudio
+        | Action::L6maxRecorderEnd
         | Action::L6maxInputTiming
         | Action::L6maxPanelKeyBegin
         | Action::L6maxPanelKeyCheck { .. }

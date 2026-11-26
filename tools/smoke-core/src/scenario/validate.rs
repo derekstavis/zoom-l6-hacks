@@ -754,8 +754,12 @@ impl Scenario {
                             "effect ring capture and assertion must match one encoder".into()
                         );
                     }
-                    Action::Restart | Action::WarmReset if ring.is_some() => {
-                        return Err("effect ring baseline cannot cross a restart".into());
+                    Action::Restart | Action::WarmReset | Action::SdCard { .. }
+                        if ring.is_some() =>
+                    {
+                        return Err(
+                            "effect ring baseline cannot cross a restart or SD card change".into(),
+                        );
                     }
                     _ => (),
                 }
@@ -3469,6 +3473,13 @@ mod effect_ring_scope_tests {
         assert!(
             parse(
                 &format!("{capture}[[step]]\naction='restart'\n{assertion}"),
+                "l6max"
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                &format!("{capture}[[step]]\naction='sd-card'\ninserted=false\n{assertion}"),
                 "l6max"
             )
             .is_err()

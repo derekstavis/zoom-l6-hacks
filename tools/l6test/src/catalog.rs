@@ -121,8 +121,16 @@ pub(crate) struct Header {
     wall_timeout_s: u64,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CampaignMember {
+    pub name: String,
+    pub scenario: PathBuf,
+    pub fingerprint: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Case {
+    pub campaign: Vec<CampaignMember>,
     /// Known failures at an exact step and error. A pass becomes XPASS.
     pub expected_failure: Vec<ExpectedFailure>,
     pub id: String,
@@ -224,6 +232,7 @@ fn load_case(root: &Path, file: &Path) -> Result<(Case, Option<Scenario>), Strin
         (None, None) => unreachable!(),
     };
     let case = Case {
+        campaign: Vec::new(),
         expected_failure: header.expected_failure,
         id,
         suites: header.suites,
@@ -273,12 +282,39 @@ pub fn load(root: &Path) -> Result<Catalog, String> {
         }
         cases.push(case);
     }
-    let generated = patch_matrix::generate()?;
-    for case in &generated {
+    let mut generated = patch_matrix::generate()?;
+    for case in &mut generated {
+        let mut names = std::collections::BTreeSet::new();
+        for member in &mut case.campaign {
+            if member.name.is_empty()
+                || !member
+                    .name
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                || !names.insert(&member.name)
+            {
+                return Err(format!(
+                    "{} has an invalid or duplicate campaign member",
+                    case.id
+                ));
+            }
+            let scenario = Scenario::load(&scenario_file(&member.scenario))?;
+            member.fingerprint =
+                crate::hashing::digest(&resolved_scenario(&scenario, case.model.parse()?)?);
+            if !scenario.models.contains(&case.model.parse()?)
+                || !scenario.backends.contains(&Backend::Headless)
+            {
+                return Err(format!(
+                    "{}: campaign member {} is incompatible",
+                    case.id, member.name
+                ));
+            }
+        }
         if origins.contains_key(&case.id) {
             return Err(format!("generated case {} duplicates a case file", case.id));
         }
         cases.push(Case {
+            campaign: case.campaign.clone(),
             expected_failure: Vec::new(),
             id: case.id.clone(),
             suites: case.suites.iter().map(|suite| (*suite).into()).collect(),
@@ -398,7 +434,7 @@ fn definition(case: &Case, scenario: Option<&Scenario>, model: Model) -> Result<
         ),
         None => (None, None, None),
     };
-    Ok(crate::hashing::digest(&json!({
+    let mut value = json!({
         "scenario": scenario,
         "state": state,
         "card": card,
@@ -414,7 +450,20 @@ fn definition(case: &Case, scenario: Option<&Scenario>, model: Model) -> Result<
             .filter(|e| e.model == model)
             .map(|e| json!([e.step, e.contains]))
             .collect::<Vec<_>>(),
-    })))
+    });
+    if !case.campaign.is_empty() {
+        let members = case
+            .campaign
+            .iter()
+            .map(|member| {
+                Scenario::load(&scenario_file(&member.scenario))
+                    .and_then(|scenario| resolved_scenario(&scenario, model))
+                    .map(|scenario| json!({"name": member.name, "scenario": scenario}))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        value["campaign"] = json!(members);
+    }
+    Ok(crate::hashing::digest(&value))
 }
 
 /// What a scenario runs on `model`, independent of where its files live and

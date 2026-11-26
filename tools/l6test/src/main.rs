@@ -586,6 +586,7 @@ fn execute() -> Result<i32, String> {
                     &namespace,
                     &id,
                     &progress,
+                    None,
                 );
                 progress.attempt_finished(id, result.outcome);
                 result
@@ -683,6 +684,20 @@ fn main() {
     }
     let context = l6max_host::logging::context("driver");
     let _entered = context.enter();
+    if cli_args
+        .first()
+        .is_some_and(|arg| arg == "__campaign-member")
+    {
+        let result = cli_args
+            .get(1)
+            .ok_or_else(|| "missing campaign request".to_string())
+            .and_then(|path| case::campaign_member_entry(std::path::Path::new(path)));
+        if let Err(error) = result {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if cli_args.first().is_some_and(|arg| arg == "__scenario") {
         if let Err(error) = child_scenario() {
             tracing::error!(event="scenario_failed",%error,"scenario failed");

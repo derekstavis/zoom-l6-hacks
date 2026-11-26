@@ -27,6 +27,11 @@ pub struct Journal {
     writer: Mutex<Option<Writer>>,
 }
 impl Journal {
+    pub fn disabled() -> Self {
+        Self {
+            writer: Mutex::new(None),
+        }
+    }
     pub fn new(dir: &Path, total: usize) -> Self {
         let run_id = dir.display().to_string();
         let writer = Writer::create(&dir.join("progress.jsonl"))
@@ -57,6 +62,22 @@ impl Journal {
         self.emit(SuiteEvent::AttemptStarted {
             id,
             progress_path: path,
+        });
+    }
+    pub fn campaign_member_started(
+        &self,
+        id: AttemptId,
+        name: String,
+        index: usize,
+        total: usize,
+        progress_path: PathBuf,
+    ) {
+        self.emit(SuiteEvent::CampaignMemberStarted {
+            id,
+            name,
+            index,
+            total,
+            progress_path,
         });
     }
     pub fn run_phase(&self, phase: progress::RunPhase) {
@@ -121,6 +142,7 @@ impl Tail {
 struct Active {
     id: AttemptId,
     path: PathBuf,
+    member: Option<(String, usize, usize)>,
     tail: Tail,
     header: bool,
     total: Option<usize>,
@@ -169,6 +191,7 @@ impl View {
                     Active {
                         id,
                         path: progress_path,
+                        member: None,
                         tail: Tail::default(),
                         header: false,
                         total: None,
@@ -180,6 +203,28 @@ impl View {
                         error: None,
                     },
                 );
+            }
+            SuiteEvent::CampaignMemberStarted {
+                id,
+                name,
+                index,
+                total,
+                progress_path,
+            } => {
+                if let Some(active) = self.active.get_mut(&id.case)
+                    && active.id == id
+                {
+                    active.path = progress_path;
+                    active.member = Some((name, index, total));
+                    active.tail = Tail::default();
+                    active.header = false;
+                    active.total = None;
+                    active.step = None;
+                    active.subprogress = None;
+                    active.adaptive = None;
+                    active.case_phase = None;
+                    active.error = None;
+                }
             }
             SuiteEvent::AttemptPhaseChanged { id, phase } => {
                 if let Some(active) = self.active.get_mut(&id.case)
@@ -375,6 +420,9 @@ fn render(view: &View, color: bool) -> String {
         }
         if a.id.attempt > 1 {
             s.push_str(&format!(" · attempt {}", a.id.attempt));
+        }
+        if let Some((name, index, total)) = &a.member {
+            s.push_str(&format!("\n    Member {index}/{total} · {name}"));
         }
         if a.step.is_none()
             && let Some(phase) = &a.case_phase
@@ -671,6 +719,48 @@ mod tests {
         drop(suite);
         std::fs::remove_dir_all(dir).unwrap();
     }
+    #[test]
+    fn campaign_member_switch_resets_progress_and_replays_current_member() {
+        let mut view = View::default();
+        view.suite(SuiteEvent::Header {
+            version: progress::VERSION,
+            run_id: "run".into(),
+        })
+        .unwrap();
+        let attempt = AttemptId {
+            case: id(),
+            attempt: 1,
+        };
+        view.suite(SuiteEvent::AttemptStarted {
+            id: attempt.clone(),
+            progress_path: "initial".into(),
+        })
+        .unwrap();
+        view.suite(SuiteEvent::CampaignMemberStarted {
+            id: attempt.clone(),
+            name: "rejection".into(),
+            index: 1,
+            total: 2,
+            progress_path: "first/progress.jsonl".into(),
+        })
+        .unwrap();
+        let active = view.active.get_mut(&id()).unwrap();
+        active.step = Some((3, "old step".into(), 0));
+        active.header = true;
+        view.suite(SuiteEvent::CampaignMemberStarted {
+            id: attempt,
+            name: "install".into(),
+            index: 2,
+            total: 2,
+            progress_path: "second/progress.jsonl".into(),
+        })
+        .unwrap();
+        let active = view.active.get(&id()).unwrap();
+        assert_eq!(active.member.as_ref().unwrap(), &("install".into(), 2, 2));
+        assert_eq!(active.path, std::path::Path::new("second/progress.jsonl"));
+        assert!(active.step.is_none() && !active.header);
+    }
+
     #[test]
     fn replay_tracks_retries_and_counts_the_final_case_once() {
         let mut view = View::default();

@@ -145,7 +145,20 @@ pub(crate) fn run_case(
     midi_namespace: &str,
     progress_id: &smoke_core::progress::AttemptId,
     progress: &crate::progress::Journal,
+    campaign_deadline: Option<Instant>,
 ) -> CaseResult {
+    if !case.campaign.is_empty() {
+        return run_campaign(
+            ctx,
+            fixture,
+            case,
+            backend,
+            dir,
+            midi_namespace,
+            progress_id,
+            progress,
+        );
+    }
     let started = Instant::now();
     let mut result = CaseResult::new(&case.id, fixture.model, backend, dir);
     let stages = StageRecorder::default();
@@ -160,6 +173,7 @@ pub(crate) fn run_case(
         progress,
         &mut result,
         &stages,
+        campaign_deadline,
     ) {
         Ok(CaseRun::Ran { success, scenario }) => {
             result.phase = Phase::Execute;
@@ -200,6 +214,302 @@ pub(crate) fn run_case(
     result
 }
 
+#[derive(serde::Serialize)]
+struct CampaignMemberResult {
+    name: String,
+    result: CaseResult,
+}
+
+/// Run isolated members in order while keeping one selectable result and attempt.
+fn run_campaign(
+    ctx: &Context,
+    fixture: &Fixture,
+    case: &Case,
+    backend: Backend,
+    dir: &Path,
+    midi_namespace: &str,
+    progress_id: &smoke_core::progress::AttemptId,
+    progress: &crate::progress::Journal,
+) -> CaseResult {
+    let start = Instant::now();
+    let mut result = CaseResult::new(&case.id, fixture.model, backend, dir);
+    let mut members = Vec::new();
+    let campaign_deadline = start + std::time::Duration::from_secs(case.wall_timeout_s);
+    result.outcome = Outcome::Pass;
+    result.phase = if ctx.fixtures_only {
+        Phase::Fixture
+    } else {
+        Phase::Execute
+    };
+    result.detail = if ctx.fixtures_only {
+        "fixtures built; not run"
+    } else {
+        "completed"
+    }
+    .into();
+    for (index, member) in case.campaign.iter().enumerate() {
+        let member_dir = dir.join(format!("{:02}-{}", index + 1, member.name));
+        progress.campaign_member_started(
+            progress_id.clone(),
+            member.name.clone(),
+            index + 1,
+            case.campaign.len(),
+            member_dir
+                .strip_prefix(ctx.output)
+                .expect("member belongs to run")
+                .join("progress.jsonl"),
+        );
+        progress.attempt_phase(
+            progress_id.clone(),
+            smoke_core::progress::Phase::PreparingFixture,
+        );
+        let child_result = run_campaign_member_process(
+            ctx,
+            case,
+            fixture.model,
+            backend,
+            &member_dir,
+            midi_namespace,
+            progress_id,
+            member,
+            campaign_deadline,
+        )
+        .unwrap_or_else(|error| {
+            let mut failed = CaseResult::new(&case.id, fixture.model, backend, &member_dir);
+            failed.outcome = if cancelled() {
+                Outcome::Blocked
+            } else {
+                Outcome::Fail
+            };
+            failed.detail = error;
+            failed
+        });
+        result.timings.fixture_s += child_result.timings.fixture_s;
+        result.timings.execute_s += child_result.timings.execute_s;
+        let passed = child_result.outcome == Outcome::Pass;
+        if !passed {
+            result.outcome = child_result.outcome;
+            result.phase = child_result.phase;
+            result.detail = format!("member {}: {}", member.name, child_result.detail);
+        }
+        members.push(CampaignMemberResult {
+            name: member.name.clone(),
+            result: child_result,
+        });
+        if !passed {
+            break;
+        }
+    }
+    result.duration_s = start.elapsed().as_secs_f64();
+    result.identity = Some(
+        json!({"members": members.iter().map(|member| json!({"name": member.name, "identity": member.result.identity})).collect::<Vec<_>>()}),
+    );
+    let save = fs::create_dir_all(dir).and_then(|()| {
+        let bytes = serde_json::to_vec_pretty(&members).map_err(std::io::Error::other)?;
+        fs::write(dir.join("campaign.json"), bytes)
+    });
+    if let Err(error) = save {
+        result.detail = format!(
+            "{}; could not save campaign evidence: {error}",
+            result.detail
+        );
+        if result.outcome == Outcome::Pass {
+            result.outcome = Outcome::Blocked;
+            result.phase = Phase::Execute;
+        }
+    }
+    let _ = fs::write(
+        dir.join("result.json"),
+        serde_json::to_vec_pretty(&result).unwrap(),
+    );
+    result
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CampaignRequest {
+    root: PathBuf,
+    output: PathBuf,
+    config: crate::config::Config,
+    patch_artifact_dir: PathBuf,
+    cache: crate::cache::SharedCacheConfig,
+    fixtures_only: bool,
+    update_references: bool,
+    case: Case,
+    member: crate::catalog::CampaignMember,
+    model: Model,
+    backend: Backend,
+    directory: PathBuf,
+    midi_namespace: String,
+    progress_id: smoke_core::progress::AttemptId,
+}
+
+fn run_campaign_member_process(
+    ctx: &Context,
+    case: &Case,
+    model: Model,
+    backend: Backend,
+    dir: &Path,
+    midi_namespace: &str,
+    progress_id: &smoke_core::progress::AttemptId,
+    member: &crate::catalog::CampaignMember,
+    deadline: Instant,
+) -> Result<CaseResult, String> {
+    let request = CampaignRequest {
+        root: ctx.root.to_owned(),
+        output: ctx.output.to_owned(),
+        config: ctx.config.clone(),
+        patch_artifact_dir: ctx.patch_artifact_dir.to_owned(),
+        cache: ctx.cache.shared_config(),
+        fixtures_only: ctx.fixtures_only,
+        update_references: ctx.update_references,
+        case: case.clone(),
+        member: member.clone(),
+        model,
+        backend,
+        directory: dir.to_owned(),
+        midi_namespace: midi_namespace.into(),
+        progress_id: progress_id.clone(),
+    };
+    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let request_path = dir.join("campaign-request.json");
+    fs::write(
+        &request_path,
+        serde_json::to_vec(&request).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let supervisor_dir = dir.join("supervisor");
+    fs::create_dir_all(&supervisor_dir).map_err(|e| e.to_string())?;
+    let remaining = deadline.saturating_duration_since(Instant::now()).as_secs();
+    if remaining == 0 {
+        return Err("campaign wall deadline expired before member preparation".into());
+    }
+    let mut command = Command::new(env::current_exe().map_err(|e| e.to_string())?);
+    command
+        .arg("__campaign-member")
+        .arg(&request_path)
+        .env("L6TEST_CAMPAIGN_MEMBER", "1");
+    let supervised = supervise(command, &supervisor_dir, remaining).and_then(|success| {
+        if success {
+            return Ok(());
+        }
+        let stderr = fs::read_to_string(supervisor_dir.join("stderr.log")).unwrap_or_default();
+        let detail: String = stderr.chars().take(1000).collect();
+        Err(format!(
+            "campaign member process failed: {detail}; inspect supervisor logs"
+        ))
+    });
+    finish_campaign_supervision(ctx.cache, dir, supervised)?;
+    let bytes =
+        fs::read(dir.join("result.json")).map_err(|e| format!("missing member result: {e}"))?;
+    serde_json::from_slice(&bytes).map_err(|e| format!("invalid member result: {e}"))
+}
+
+fn finish_campaign_supervision(
+    cache: &RunCache,
+    dir: &Path,
+    supervised: Result<(), String>,
+) -> Result<(), String> {
+    let stats = fs::read(dir.join("cache-stats.json"))
+        .map_err(|e| format!("missing member cache statistics: {e}"))
+        .and_then(|bytes| {
+            serde_json::from_slice(&bytes)
+                .map_err(|e| format!("invalid member cache statistics: {e}"))
+        })
+        .and_then(|stats| cache.merge_stats(&stats));
+    match (supervised, stats) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Ok(()), Err(stats)) => Err(stats),
+        (Err(primary), Ok(())) => Err(primary),
+        (Err(primary), Err(stats)) => {
+            Err(format!("{primary}; cache statistics unavailable: {stats}"))
+        }
+    }
+}
+
+fn check_campaign_scenario(
+    scenario: &Scenario,
+    model: Model,
+    expected: &str,
+) -> Result<(), String> {
+    let digest = crate::hashing::digest(&crate::catalog::resolved_scenario(scenario, model)?);
+    if digest != expected {
+        return Err("campaign member changed since catalog selection".into());
+    }
+    Ok(())
+}
+
+fn freeze_scenario(scenario: &Scenario) -> Result<String, String> {
+    let mut value = toml::Value::try_from(scenario).map_err(|e| e.to_string())?;
+    let table = value.as_table_mut().ok_or("scenario is not a TOML table")?;
+    // None is the normalized form of the explicit `none` fixture. Omitting
+    // it on reparse would restore the default state/card instead.
+    if scenario.state.is_none() {
+        table.insert("state".into(), toml::Value::String("none".into()));
+    }
+    if scenario.card.is_none() {
+        table.insert("card".into(), toml::Value::String("none".into()));
+    }
+    toml::to_string(&value).map_err(|e| e.to_string())
+}
+
+/// Private supervised member entry point. Freeze the expanded scenario once and
+/// derive both the fixture and child execution from that frozen artifact.
+pub(crate) fn campaign_member_entry(path: &Path) -> Result<(), String> {
+    let req: CampaignRequest = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    let scenario = Scenario::load(&crate::catalog::scenario_file(&req.member.scenario))?;
+    check_campaign_scenario(&scenario, req.model, &req.member.fingerprint)?;
+    let digest = req.member.fingerprint.clone();
+    let snapshot = freeze_scenario(&scenario)?;
+    let frozen = req.directory.join("frozen-scenario.toml");
+    fs::write(&frozen, snapshot).map_err(|e| e.to_string())?;
+    let frozen_scenario = Scenario::load(&frozen)?;
+    if crate::hashing::digest(&crate::catalog::resolved_scenario(
+        &frozen_scenario,
+        req.model,
+    )?) != digest
+    {
+        return Err("frozen campaign scenario does not match its catalog identity".into());
+    }
+    let fixture =
+        crate::fixture::case_fixture(&req.config, req.model, &req.case.id, Some(&frozen_scenario))?;
+    let mut case = req.case;
+    case.campaign.clear();
+    case.scenario = Some(frozen);
+    let cache = RunCache::from_shared(req.cache);
+    let ctx = Context {
+        root: &req.root,
+        output: &req.output,
+        config: &req.config,
+        cache: &cache,
+        patch_artifact_dir: &req.patch_artifact_dir,
+        fixtures_only: req.fixtures_only,
+        update_references: req.update_references,
+    };
+    let progress = crate::progress::Journal::disabled();
+    let result = run_case(
+        &ctx,
+        &fixture,
+        &case,
+        req.backend,
+        &req.directory,
+        &req.midi_namespace,
+        &req.progress_id,
+        &progress,
+        None,
+    );
+    fs::write(
+        req.directory.join("cache-stats.json"),
+        serde_json::to_vec(&cache.stats()).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    fs::write(
+        req.directory.join("result.json"),
+        serde_json::to_vec_pretty(&result).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())
+}
+
 fn attempt(
     ctx: &Context,
     fixture: &Fixture,
@@ -211,6 +521,7 @@ fn attempt(
     progress: &crate::progress::Journal,
     result: &mut CaseResult,
     stages: &StageRecorder,
+    campaign_deadline: Option<Instant>,
 ) -> Result<CaseRun, CaseError> {
     let timer = stages.start(Stage::Preflight);
     let scenario = preflight(ctx, fixture, case, backend)?;
@@ -241,7 +552,18 @@ fn attempt(
         return Ok(CaseRun::FixturesOnly);
     }
     progress.attempt_phase(progress_id.clone(), smoke_core::progress::Phase::Executing);
-    execute(ctx, case, dir, invocation, result, stages)
+    let mut bounded_case = case.clone();
+    if let Some(deadline) = campaign_deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now()).as_secs();
+        if remaining == 0 {
+            return Err(CaseError::failed(
+                Phase::Execute,
+                "campaign wall deadline expired",
+            ));
+        }
+        bounded_case.wall_timeout_s = bounded_case.wall_timeout_s.min(remaining);
+    }
+    execute(ctx, &bounded_case, dir, invocation, result, stages)
 }
 
 /// Whether the case can run here at all. Problems are BLOCKED.
@@ -814,6 +1136,60 @@ fn apply_expected(result: &mut CaseResult, scenario: &Value, expected: &[Expecte
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn campaign_keeps_supervision_errors_and_requires_successful_stats() {
+        let dir =
+            std::env::temp_dir().join(format!("l6test-campaign-stats-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cache = crate::cache::RunCache::new(dir.join("cache"));
+        let missing = super::finish_campaign_supervision(&cache, &dir, Ok(())).unwrap_err();
+        assert!(missing.contains("missing member cache statistics"));
+        std::fs::write(dir.join("cache-stats.json"), b"invalid").unwrap();
+        let primary = super::finish_campaign_supervision(
+            &cache,
+            &dir,
+            Err("child exceeded wall-clock limit".into()),
+        )
+        .unwrap_err();
+        assert!(primary.starts_with("child exceeded wall-clock limit"));
+        assert!(primary.contains("invalid member cache statistics"));
+        assert!(
+            super::finish_campaign_supervision(&cache, &dir, Ok(()))
+                .unwrap_err()
+                .contains("invalid member cache statistics")
+        );
+        std::fs::write(
+            dir.join("cache-stats.json"),
+            br#"{"unpacked":{"hits":2,"builds":1}}"#,
+        )
+        .unwrap();
+        super::finish_campaign_supervision(&cache, &dir, Ok(())).unwrap();
+        assert_eq!(cache.stats()["unpacked"]["hits"], 2);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn expanded_campaign_scenarios_round_trip_with_identity() {
+        for path in [
+            "tests/emulator/cases/boot/l6max-update-stock-bad-checksum.toml",
+            "tests/emulator/cases/boot/l6max-update-patched-midi.toml",
+        ] {
+            let scenario = smoke_core::Scenario::load(&crate::catalog::scenario_file(
+                std::path::Path::new(path),
+            ))
+            .unwrap();
+            let frozen = super::freeze_scenario(&scenario).unwrap();
+            let restored = smoke_core::Scenario::from_text(&frozen).unwrap();
+            let before = crate::catalog::resolved_scenario(&scenario, l6fw::Model::L6max).unwrap();
+            let after = crate::catalog::resolved_scenario(&restored, l6fw::Model::L6max).unwrap();
+            assert_eq!(before, after);
+            let digest = crate::hashing::digest(&before);
+            assert!(super::check_campaign_scenario(&restored, l6fw::Model::L6max, &digest).is_ok());
+            let mut changed = restored;
+            changed.step.pop();
+            assert!(super::check_campaign_scenario(&changed, l6fw::Model::L6max, &digest).is_err());
+        }
+    }
     #[test]
     fn l6_patched_main_cannot_be_identical_to_stock() {
         use sha2::{Digest, Sha256};

@@ -1205,7 +1205,7 @@ pub struct State {
     l6_dispatch: Option<l6_dispatch::Scope>,
     usb_startup: Option<usb_startup::Scope>,
     effect_slot_deadline: Option<sd::EffectSlotScope>,
-    effect_ring: Option<(u8, u32, String)>,
+    effect_ring: Option<(u8, u8, u32, l6max_host::effect_editor::SlotReader)>,
     l6max_timing: Option<timing::Scope>,
     usb_storage_scope: Option<usb_storage_steps::Scope>,
     native_midi: Option<l6ctl::midi::MidiSession>,

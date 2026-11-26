@@ -113,15 +113,14 @@ the running guest's tree is non-atomic, and the result does not verify pixels.
 The control socket limits this observation to 30 seconds.
 
 In-process callers can attach, poll and enumerate USB with a shared `usb::Budget`;
-enumeration returns the raw descriptors and retains the engine's MIDI IN pump.
-These raw operations require the caller to coordinate USB ownership. For
-control-socket use, `usb attach` reserves raw USB, `usb controller` checks
-readiness, and `usb enumerate` returns descriptors and endpoints while the
-engine retains the IN pump and reservation. `usb release` detaches and ends
-that ownership. A second enumeration is rejected until release, preserving
-queued input. A failed or cancelled enumeration makes the transport unusable until guest
-restart. This reserved socket path and the in-process raw path have distinct
-ownership contracts; callers must not use them concurrently.
+these operations use the engine's raw-controller reservation, return raw
+descriptors and retain its MIDI IN pump. Control-socket `usb attach`,
+`usb controller`, `usb enumerate` and `usb release` use the same controller
+ownership. A second enumeration is rejected until release, preserving queued
+input. A failed or cancelled bounded attach, probe or enumeration makes the
+transport unusable until guest restart. A raw reservation coordinates against
+native and direct MIDI owners; callers sharing that reservation must still
+coordinate their own operations.
 
 `ControlClient::heap_counters()` returns one guarded, non-atomic sample of the
 four allocator counters. In-process callers can create

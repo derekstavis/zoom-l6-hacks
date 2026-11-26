@@ -610,37 +610,35 @@ impl<'a> OwnedControl<'a> {
         )
         .map_err(ControlError::Rejected)
     }
-    /// In-process USB enumeration retains its MIDI pump on this engine. This
-    /// is not a control-socket operation; callers must coordinate USB ownership.
+    /// Enumerate the engine's reserved raw controller without replacing its pump.
     pub fn usb_enumerate_before(
         &self,
         budget: &l6max_host::usb::Budget,
     ) -> Result<(Vec<u8>, Vec<u8>, l6max_host::usb::Configuration), ControlError> {
-        self.engine
-            .usb
-            .as_ref()
-            .ok_or(ControlError::Unavailable("USB host unavailable"))?
-            .enumerate_with_descriptors_before(budget)
-            .map_err(|e| ControlError::Rejected(e.to_string()))
+        let result = self
+            .engine
+            .usb_controller()
+            .ok_or(ControlError::Unavailable("USB controller unavailable"))?
+            .enumerate_before(budget)
+            .map_err(ControlError::Rejected)?;
+        Ok((result.device, result.configuration, result.parsed))
     }
     pub fn usb_attach_before(&self, budget: &l6max_host::usb::Budget) -> Result<(), ControlError> {
         self.engine
-            .usb
-            .as_ref()
-            .ok_or(ControlError::Unavailable("USB host unavailable"))?
+            .usb_controller()
+            .ok_or(ControlError::Unavailable("USB controller unavailable"))?
             .attach_before(budget)
-            .map_err(|e| ControlError::Rejected(e.to_string()))
+            .map_err(ControlError::Rejected)
     }
     pub fn usb_controller_before(
         &self,
         budget: &l6max_host::usb::Budget,
     ) -> Result<bool, ControlError> {
         self.engine
-            .usb
-            .as_ref()
-            .ok_or(ControlError::Unavailable("USB host unavailable"))?
-            .controller_running_before(budget)
-            .map_err(|e| ControlError::Rejected(e.to_string()))
+            .usb_controller()
+            .ok_or(ControlError::Unavailable("USB controller unavailable"))?
+            .running_before(budget)
+            .map_err(ControlError::Rejected)
     }
     pub fn debug_session(&self) -> Result<l6max_host::debug::Session, ControlError> {
         self.engine

@@ -1630,7 +1630,10 @@ loaded = true
 action = "expect-sd-continuations"
 loaded = true
 [[step]]
-action = "expect-sd-module"
+action = "expect-sd-module-images"
+loaded = true
+[[step]]
+action = "expect-sd-latest-module"
 loaded = true
 "#;
         let include = format!("[[step]]\naction = \"include\"\npath = {fragment:?}\n");
@@ -1658,6 +1661,26 @@ loaded = true
                         .step
                         .iter()
                         .filter(|step| matches!(step.action, Action::ExpectSdLoader))
+                        .count(),
+                    1,
+                    "{}",
+                    case.id
+                );
+                assert_eq!(
+                    scenario
+                        .step
+                        .iter()
+                        .filter(|step| matches!(step.action, Action::ExpectSdModuleImages { .. }))
+                        .count(),
+                    1,
+                    "{}",
+                    case.id
+                );
+                assert_eq!(
+                    scenario
+                        .step
+                        .iter()
+                        .filter(|step| matches!(step.action, Action::ExpectSdLatestModule { .. }))
                         .count(),
                     1,
                     "{}",

@@ -22,6 +22,7 @@ pub(super) struct SdInspectionContext {
     pub allocation_checked: bool,
     pub chains: Option<SdChainEvidence>,
     pub continuation_modules: Option<Vec<usize>>,
+    pub module_images_checked: bool,
     pub wall_deadline: Instant,
     pub guest_start: u32,
     pub guest_timeout_ms: u32,
@@ -33,6 +34,244 @@ pub(super) struct SdChainEvidence {
     pub count: u32,
     pub links: Vec<(u32, u32, u32, u32)>,
     pub expected_count: Option<u8>,
+}
+
+fn mutable_module_ranges(report: &Value, size: usize) -> Vec<(usize, usize)> {
+    let patch = report["patches"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|patch| patch["memory_length"].as_u64() == Some(size as u64));
+    let mut ranges = patch
+        .and_then(|patch| patch["writable_data"].as_object())
+        .and_then(|data| {
+            Some((
+                usize::try_from(data["offset"].as_u64()?).ok()?,
+                usize::try_from(data["length"].as_u64()?).ok()?,
+            ))
+        })
+        .filter(|(_, length)| *length > 0)
+        .into_iter()
+        .collect::<Vec<_>>();
+    if let Some(code_len) = patch
+        .and_then(|patch| patch["payload_length"].as_u64())
+        .and_then(|length| usize::try_from(length).ok())
+        && code_len < size
+    {
+        // The loader zeroes this NOBITS tail before module initialization.
+        // It is writable module state after startup, not immutable code.
+        ranges.push((code_len, size - code_len));
+    }
+    ranges
+}
+
+/// Check the active hook-chain module images against the frozen fixture.
+pub(super) fn verify_module_images(
+    session: &Session,
+    context: &SdInspectionContext,
+    loaded: bool,
+) -> Result<Value, String> {
+    if !context.allocation_checked {
+        return Err("SD allocation assertion missing".into());
+    }
+    let (captured_loaded, snapshot) = context
+        .snapshot
+        .as_ref()
+        .ok_or("SD module snapshot missing")?;
+    if *captured_loaded != loaded {
+        return Err("SD module-image assertion does not match captured state".into());
+    }
+    let chains = context
+        .chains
+        .as_ref()
+        .ok_or("SD chain assertion missing")?;
+    let chain_links = &chains.links;
+    let continuation_modules = context
+        .continuation_modules
+        .as_ref()
+        .ok_or("SD continuation assertion missing")?;
+    let (edits, link_base, payload, _, _, _, module_images) = &context.fixture.edits;
+    if snapshot.registry.is_none() {
+        return Ok(json!({"loaded":false,"registry":null,"guarded_hooks":edits.len()}));
+    }
+    if !loaded {
+        return Ok(
+            json!({"loaded":false,"guarded_hooks":edits.len(),"module_bytes":0,"hook_chain_count":chains.count,"hook_chain_orders":chains.links.iter().map(|link|link.2).collect::<Vec<_>>()}),
+        );
+    }
+    let patch_report = context
+        .fixture
+        .patch_report
+        .as_ref()
+        .ok_or("dynamic report missing")?;
+    let ordered_chain = context.fixture.chain_first.is_some();
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let reader = control
+        .sd_loader_reader(context.wall_deadline)
+        .map_err(|error| error.to_string())?;
+    let read_live = |address: u32, length: usize| -> Result<Vec<u8>, String> {
+        reader
+            .read_chunk_cancellable(address, length, context.wall_deadline, || {
+                guest_now(session).wrapping_sub(context.guest_start) >= context.guest_timeout_ms
+            })
+            .map_err(|error| error.to_string())
+    };
+    for (index, (entry, _, _, module)) in chain_links.iter().enumerate() {
+        let module_index = *continuation_modules
+            .get(index)
+            .ok_or("SD continuation evidence missing")?;
+        let (module_payload, relocations, hooks) = module_images
+            .get(module_index)
+            .ok_or("SD continuation module missing")?;
+        let mutable_ranges = mutable_module_ranges(patch_report, module_payload.len());
+        let mut expected = module_payload.clone();
+        if ordered_chain && index == 0 {
+            let file = context
+                .fixture
+                .chain_first
+                .as_ref()
+                .ok_or("ordered-chain fixture missing")?;
+            let start = patch_abi::dynamic::HEADER_LEN_V1;
+            expected = file
+                .get(start..start + expected.len())
+                .ok_or("ordered-chain fixture is shorter than its module")?
+                .to_vec();
+        }
+        patch_abi::relocation::relocate(
+            &mut expected,
+            relocations.clone().into_iter(),
+            *link_base,
+            *module,
+        )
+        .map_err(|error| format!("invalid fixture relocations: {error:?}"))?;
+        for hook in hooks {
+            if hook.next_slot_offset == u32::MAX {
+                continue;
+            }
+            let slot = *module + hook.next_slot_offset;
+            let target = read_live(slot, 4)?;
+            let offset = hook.next_slot_offset as usize;
+            expected[offset..offset + 4].copy_from_slice(&target);
+        }
+        for (chunk_index, chunk) in expected.chunks(4096).enumerate() {
+            let address = *module + (chunk_index * 4096) as u32;
+            let actual = read_live(address, chunk.len())?;
+            if let Some((offset, (actual_byte, expected_byte))) = actual
+                .iter()
+                .zip(chunk)
+                .enumerate()
+                .find(|(index, (actual, expected))| {
+                    let module_offset = chunk_index * 4096 + index;
+                    actual != expected
+                        && !mutable_ranges.iter().any(|(start, length)| {
+                            module_offset >= *start && module_offset < *start + *length
+                        })
+                })
+            {
+                return Err(format!(
+                    "allocated SD module {index} differs from its relocated bundle at {:#010x} (expected {:#04x}, got {:#04x})",
+                    address + offset as u32,
+                    expected_byte,
+                    actual_byte,
+                ));
+            }
+        }
+        if (*entry & !1) < *module {
+            return Err(format!("hook {index} entry precedes its module"));
+        }
+    }
+    Ok(
+        json!({"loaded":loaded,"guarded_hooks":edits.len(),"module_bytes":payload.len(),"hook_chain_count":chains.count,"hook_chain_orders":chain_links.iter().map(|link|link.2).collect::<Vec<_>>()}),
+    )
+}
+
+/// Check the separately allocated latest module image against the same frozen
+/// fixture and deadline used by the hook-chain image check.
+pub(super) fn verify_latest_module(
+    session: &Session,
+    context: &SdInspectionContext,
+    loaded: bool,
+) -> Result<Value, String> {
+    let (captured_loaded, snapshot) = context
+        .snapshot
+        .as_ref()
+        .ok_or("SD module snapshot missing")?;
+    if *captured_loaded != loaded {
+        return Err("latest SD allocation assertion does not match captured state".into());
+    }
+    if !context.module_images_checked {
+        return Err("SD module-image assertion missing".into());
+    }
+    if !loaded || snapshot.registry.is_none() {
+        return Ok(json!({"loaded":false,"latest_allocation":null}));
+    }
+    let loaded_base = snapshot.module_base.ok_or("SD module base missing")?;
+    let loaded_len = snapshot.module_len.ok_or("SD module length missing")?;
+    let (_, link_base, _, _, _, _, module_images) = &context.fixture.edits;
+    let patch_report = context
+        .fixture
+        .patch_report
+        .as_ref()
+        .ok_or("dynamic report missing")?;
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let reader = control
+        .sd_loader_reader(context.wall_deadline)
+        .map_err(|error| error.to_string())?;
+    let read_live = |address: u32, length: usize| -> Result<Vec<u8>, String> {
+        reader
+            .read_chunk_cancellable(address, length, context.wall_deadline, || {
+                guest_now(session).wrapping_sub(context.guest_start) >= context.guest_timeout_ms
+            })
+            .map_err(|error| error.to_string())
+    };
+    let Some((payload, relocations, hooks)) = module_images
+        .iter()
+        .find(|(payload, _, _)| payload.len() == loaded_len as usize)
+    else {
+        return Ok(json!({"loaded":true,"latest_allocation":null}));
+    };
+    let mutable_ranges = mutable_module_ranges(patch_report, payload.len());
+    let mut expected = payload.clone();
+    patch_abi::relocation::relocate(
+        &mut expected,
+        relocations.clone().into_iter(),
+        *link_base,
+        loaded_base,
+    )
+    .map_err(|error| format!("invalid latest module relocations: {error:?}"))?;
+    for hook in hooks {
+        if hook.next_slot_offset == u32::MAX {
+            continue;
+        }
+        let slot = loaded_base + hook.next_slot_offset;
+        let target = read_live(slot, 4)?;
+        let offset = hook.next_slot_offset as usize;
+        expected[offset..offset + 4].copy_from_slice(&target);
+    }
+    for (chunk_index, chunk) in expected.chunks(4096).enumerate() {
+        let address = loaded_base + (chunk_index * 4096) as u32;
+        let actual = read_live(address, chunk.len())?;
+        if let Some((offset, (actual_byte, expected_byte))) = actual
+            .iter()
+            .zip(chunk)
+            .enumerate()
+            .find(|(index, (actual, expected))| {
+                let module_offset = chunk_index * 4096 + index;
+                actual != expected
+                    && !mutable_ranges.iter().any(|(start, length)| {
+                        module_offset >= *start && module_offset < *start + *length
+                    })
+            })
+        {
+            return Err(format!(
+                "latest allocated SD module at {loaded_base:#010x} differs from its relocated bundle at {:#010x} (expected {:#04x}, got {:#04x})",
+                address + offset as u32,
+                expected_byte,
+                actual_byte,
+            ));
+        }
+    }
+    Ok(json!({"loaded":true,"latest_allocation":loaded_base,"module_bytes":loaded_len}))
 }
 
 /// Validate the captured allocation and claim against the frozen module sizes.

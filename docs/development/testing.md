@@ -538,7 +538,7 @@ the dynamic checks; placement selection and case composition stay unchanged.
 
   | Patch | Check |
   | --- | --- |
-  | Any SD module | `sd-module-loaded.toml`: loader readiness, registry capture, allocation, chains, continuations and relocated module bytes |
+  | Any SD module | `sd-module-loaded.toml`: loader readiness, registry capture, allocation, chains, continuations, active hook-chain module images and the latest allocation image |
   | knob-dialog | `knob-popup-open`, `knob-popup-expect-open`, `knob-popup-expect-value` |
   | Effect replacements | `expect-heap`, then for each slot wait for and capture state, assert type and processor, and check the assigned effect name and nonzero output when applicable |
   | midi-sync | declarative direct MIDI round trip, then the MIDI state request fragment |

@@ -289,10 +289,16 @@ pub fn step_label(action: &crate::Action) -> String {
             "Check {} SD hook continuations",
             if *loaded { "loaded" } else { "unloaded" }
         ),
-        Action::ExpectSdModule { loaded } => if *loaded {
-            "Check loaded SD module bytes"
+        Action::ExpectSdModuleImages { loaded } => if *loaded {
+            "Check loaded SD module images"
         } else {
             "Check SD module absence"
+        }
+        .into(),
+        Action::ExpectSdLatestModule { loaded } => if *loaded {
+            "Check latest SD allocation image"
+        } else {
+            "Check latest SD allocation is absent"
         }
         .into(),
         Action::EffectPacedTurn { channel, steps } => {
@@ -645,7 +651,7 @@ mod tests {
             "Check SD hook chains (loaded; 2 links)"
         );
         assert_eq!(
-            step_label(&crate::Action::ExpectSdModule { loaded: false }),
+            step_label(&crate::Action::ExpectSdModuleImages { loaded: false }),
             "Check SD module absence"
         );
         assert_eq!(

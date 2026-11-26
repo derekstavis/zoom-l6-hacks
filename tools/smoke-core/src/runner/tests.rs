@@ -2222,7 +2222,7 @@ fn tap_handler_requires_complete_ordered_scope_and_shared_budget() {
 fn l6_din_sweep_requires_all_128_ordered_samples_and_shared_budget() {
     let source = include_str!("../../../../tests/emulator/cases/midi/l6-din-sweep.toml");
     assert!(Scenario::from_text(source).is_ok());
-    let sample = "[[step]]\naction = \"l6-din-sweep-sample\"\ncc = 64\nguest_timeout_ms = 30000\nwall_timeout_s = 600\n\n";
+    let sample = "[[step]]\naction = \"l6-din-sweep-sample\"\ncc = 64\nguest_timeout_ms = 120000\nwall_timeout_s = 600\n\n";
     assert!(source.contains(sample));
     assert!(Scenario::from_text(&source.replace(sample, "")).is_err());
     assert!(Scenario::from_text(&source.replacen("cc = 64\n", "cc = 65\n", 1)).is_err());

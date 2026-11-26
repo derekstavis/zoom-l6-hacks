@@ -23,6 +23,7 @@ pub(super) struct Scope {
     before_mixer: Vec<u8>,
     next_cc: u16,
     accepted_bytes: Option<usize>,
+    uart_messages: Option<Vec<[u8; 3]>>,
     ring_state: Option<Vec<u8>>,
     ring: Option<Vec<u8>>,
     hits: Option<[u32; 4]>,
@@ -32,6 +33,9 @@ pub(super) struct Scope {
 
 struct Evidence {
     accepted: usize,
+    uart_messages: usize,
+    uart_matching: usize,
+    ring_messages: usize,
     matching: usize,
     write: u32,
     read: u32,
@@ -45,9 +49,9 @@ impl Evidence {
     fn passes(&self, check: crate::scenario::DinSweepCheck) -> bool {
         use crate::scenario::DinSweepCheck::*;
         match check {
-            Uart => self.accepted == 384,
-            RingBytes => self.matching == 384,
-            WriteIndex => self.write == 384,
+            Uart => self.uart_messages == 128 && self.uart_matching == 128,
+            RingBytes => self.ring_messages == 128 && self.matching == 128,
+            WriteIndex => self.write as usize == self.accepted,
             ReadIndex => self.read == self.write,
             Indicator => self.changes > 0,
             Handler => self.hits[0] == 128,
@@ -57,6 +61,51 @@ impl Evidence {
             Mixer => self.changed > 0,
         }
     }
+}
+
+fn decode_control_changes(bytes: &[u8]) -> Vec<[u8; 3]> {
+    let mut status = None;
+    let mut data = [0; 2];
+    let mut data_len = 0;
+    let mut messages = Vec::new();
+    for &byte in bytes {
+        if byte & 0x80 != 0 {
+            if byte >= 0xf8 {
+                continue;
+            }
+            status = (byte & 0xf0 == 0xb0).then_some(byte);
+            data_len = 0;
+        } else if let Some(status) = status {
+            data[data_len] = byte;
+            data_len += 1;
+            if data_len == 2 {
+                messages.push([status, data[0], data[1]]);
+                data_len = 0;
+            }
+        }
+    }
+    messages
+}
+
+fn matching_sweep_messages(messages: &[[u8; 3]]) -> usize {
+    messages
+        .iter()
+        .zip((0..=127u8).map(|cc| [0xb0, cc, 0x7f]))
+        .filter(|(actual, expected)| *actual == expected)
+        .count()
+}
+
+fn uart_data_reads(trace: &str) -> Vec<u8> {
+    trace
+        .lines()
+        .filter_map(|line| {
+            line.split_once("LPUART2 (MIDI jacks) DATA read ")?
+                .1
+                .split_whitespace()
+                .next()
+                .and_then(|byte| u8::from_str_radix(byte, 16).ok())
+        })
+        .collect()
 }
 
 fn expired(session: &Session, started: Instant, guest_start: u32, guest: u32, wall: u64) -> bool {
@@ -148,6 +197,7 @@ impl Scope {
             before_mixer: Vec::new(),
             next_cc: 0,
             accepted_bytes: None,
+            uart_messages: None,
             ring_state: None,
             ring: None,
             hits: None,
@@ -387,16 +437,44 @@ impl Scope {
                     .ok()
             })
             .sum();
+        let uart_messages = decode_control_changes(&uart_data_reads(&trace));
+        let uart_matching = matching_sweep_messages(&uart_messages);
         self.accepted_bytes = Some(accepted);
-        Ok(json!({"uart_bytes":accepted}))
+        self.uart_messages = Some(uart_messages);
+        Ok(json!({
+            "uart_bytes":accepted,
+            "uart_messages":self.uart_messages.as_ref().unwrap().len(),
+            "matching_messages":uart_matching
+        }))
     }
-    pub(super) fn drain(&mut self, session: &Session) -> Result<Value, String> {
+    pub(super) fn drain(
+        &mut self,
+        session: &Session,
+        guest_timeout_ms: u32,
+        wall_timeout_s: u64,
+    ) -> Result<Value, String> {
+        let started = Instant::now();
+        let guest_start = guest_now(session);
         let deadline = self
             .deadline()
-            .min(Instant::now() + Duration::from_secs(10));
+            .min(started + Duration::from_secs(wall_timeout_s));
         loop {
-            self.check(session)?;
-            if Instant::now() >= deadline {
+            if let Err(error) = self.check(session) {
+                let state = self.reader.ring_state(self.deadline(), &|| Ok(())).ok();
+                return match state {
+                    Some(state) => {
+                        let write = u32::from_le_bytes(state[4..8].try_into().unwrap());
+                        let read = u32::from_le_bytes(state[12..16].try_into().unwrap());
+                        Err(format!(
+                            "{error}; DIN ring at timeout: write={write}, read={read}"
+                        ))
+                    }
+                    None => Err(error),
+                };
+            }
+            if Instant::now() >= deadline
+                || guest_now(session).wrapping_sub(guest_start) > guest_timeout_ms
+            {
                 return Err("L6 DIN ring did not drain".into());
             }
             session.poll()?;
@@ -404,7 +482,7 @@ impl Scope {
             let state = self.reader.ring_state(deadline, &check)?;
             let write = u32::from_le_bytes(state[4..8].try_into().unwrap());
             let read = u32::from_le_bytes(state[12..16].try_into().unwrap());
-            if write >= 384 && read >= 384 {
+            if self.accepted_bytes == Some(write as usize) && read == write {
                 self.ring = Some(self.reader.ring(deadline, &check)?);
                 self.ring_state = Some(state);
                 return Ok(json!({"write":write,"read":read}));
@@ -438,13 +516,21 @@ impl Scope {
             .count();
         let state = self.ring_state.as_ref().ok_or("DIN ring state missing")?;
         let ring = self.ring.as_ref().ok_or("DIN ring bytes missing")?;
-        let expected: Vec<_> = (0..=127u8).flat_map(|cc| [0xb0, cc, 0x7f]).collect();
-        let matching = ring.iter().zip(&expected).filter(|(a, b)| a == b).count();
         let write = u32::from_le_bytes(state[4..8].try_into().unwrap());
         let read = u32::from_le_bytes(state[12..16].try_into().unwrap());
         let accepted = self.accepted_bytes.ok_or("DIN UART trace missing")?;
+        let uart_messages = self
+            .uart_messages
+            .as_ref()
+            .ok_or("DIN UART trace missing")?;
+        let ring_messages = decode_control_changes(
+            ring.get(..read as usize)
+                .ok_or("DIN ring read index exceeds captured bytes")?,
+        );
+        let uart_matching = matching_sweep_messages(uart_messages);
+        let matching = matching_sweep_messages(&ring_messages);
         let hits = self.hits.ok_or("DIN monitor counts missing")?;
-        let evidence = json!({"sent_messages":128,"uart_bytes":accepted,"ring_bytes":matching,"write_index":write,"read_index":read,"indicator_before":self.before_ring,"indicator_after":self.previous_ring,"indicator_changes":self.changes,"main_queue_items_before":self.before_queue,"main_queue_items_after":queue_after,"mapped_cc_count":mapped,"mixer_state_changed_bytes":changed});
+        let evidence = json!({"sent_messages":128,"uart_bytes":accepted,"uart_messages":uart_messages.len(),"uart_matching_messages":uart_matching,"ring_messages":ring_messages.len(),"ring_matching_messages":matching,"write_index":write,"read_index":read,"indicator_before":self.before_ring,"indicator_after":self.previous_ring,"indicator_changes":self.changes,"main_queue_items_before":self.before_queue,"main_queue_items_after":queue_after,"mapped_cc_count":mapped,"mixer_state_changed_bytes":changed});
         fs::write(
             options.logs.join("l6-din-sweep.json"),
             serde_json::to_vec_pretty(&evidence).map_err(|e| e.to_string())?,
@@ -452,6 +538,9 @@ impl Scope {
         .map_err(|e| e.to_string())?;
         self.evidence = Some(Evidence {
             accepted,
+            uart_messages: uart_messages.len(),
+            uart_matching,
+            ring_messages: ring_messages.len(),
             matching,
             write,
             read,
@@ -473,8 +562,18 @@ impl Scope {
         let pass = e.passes(check);
         if !pass {
             return Err(format!(
-                "L6 DIN sweep {check:?} assertion failed: UART {}/384, ring {}/384, indices {}/{}, changes {}, mapped {}, dispatch {:?}, mixer changed {}",
-                e.accepted, e.matching, e.write, e.read, e.changes, e.mapped, e.hits, e.changed
+                "L6 DIN sweep {check:?} assertion failed: UART {}/128 messages ({} matching), ring {}/128 messages ({} matching), {} bytes at indices {}/{}, changes {}, mapped {}, dispatch {:?}, mixer changed {}",
+                e.uart_messages,
+                e.uart_matching,
+                e.ring_messages,
+                e.matching,
+                e.accepted,
+                e.write,
+                e.read,
+                e.changes,
+                e.mapped,
+                e.hits,
+                e.changed
             ));
         }
         if check == Mixer {
@@ -546,10 +645,13 @@ mod tests {
     fn each_named_check_rejects_its_own_bad_evidence() {
         use crate::scenario::DinSweepCheck::*;
         let good = || Evidence {
-            accepted: 384,
-            matching: 384,
-            write: 384,
-            read: 384,
+            accepted: 257,
+            uart_messages: 128,
+            uart_matching: 128,
+            ring_messages: 128,
+            matching: 128,
+            write: 257,
+            read: 257,
             changes: 1,
             hits: [128, 4, 4, 1],
             mapped: 4,
@@ -563,10 +665,10 @@ mod tests {
         for check in checks {
             let mut e = good();
             match check {
-                Uart => e.accepted = 383,
-                RingBytes => e.matching = 383,
-                WriteIndex => e.write = 383,
-                ReadIndex => e.read = 383,
+                Uart => e.uart_matching = 127,
+                RingBytes => e.matching = 127,
+                WriteIndex => e.write = 256,
+                ReadIndex => e.read = 256,
                 Indicator => e.changes = 0,
                 Handler => e.hits[0] = 127,
                 Submitter => e.hits[1] = 3,
@@ -576,6 +678,26 @@ mod tests {
             }
             assert!(!e.passes(check), "{check:?}");
         }
+    }
+    #[test]
+    fn decodes_repeated_status_bytes() {
+        let bytes: Vec<_> = (0..=127u8).flat_map(|cc| [0xb0, cc, 0x7f]).collect();
+        let messages = decode_control_changes(&bytes);
+        assert_eq!(messages.len(), 128);
+        assert_eq!(matching_sweep_messages(&messages), 128);
+    }
+    #[test]
+    fn decodes_running_status_bytes_and_realtime_interleaving() {
+        let mut bytes = vec![0xb0];
+        for cc in 0..=127u8 {
+            bytes.extend([cc, 0x7f]);
+            if cc == 63 {
+                bytes.push(0xf8);
+            }
+        }
+        let messages = decode_control_changes(&bytes);
+        assert_eq!(messages.len(), 128);
+        assert_eq!(matching_sweep_messages(&messages), 128);
     }
     #[test]
     fn delayed_non_io_worker_is_detected_before_join() {

@@ -42,7 +42,11 @@ action = "expect-sd-continuations"
 loaded = true
 
 [[step]]
-action = "expect-sd-module"
+action = "expect-sd-module-images"
+loaded = true
+
+[[step]]
+action = "expect-sd-latest-module"
 loaded = true
 
 [[step]]

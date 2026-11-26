@@ -1123,8 +1123,13 @@ impl Runner {
                         devices::Operation::ExpectSdContinuations { loaded },
                     ));
                 }
-                Action::ExpectSdModule { loaded } => {
-                    return Ok(Progress::Device(devices::Operation::ExpectSdModule {
+                Action::ExpectSdModuleImages { loaded } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectSdModuleImages {
+                        loaded,
+                    }));
+                }
+                Action::ExpectSdLatestModule { loaded } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectSdLatestModule {
                         loaded,
                     }));
                 }

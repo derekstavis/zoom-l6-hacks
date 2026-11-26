@@ -228,10 +228,20 @@ fn llvm_tool(
     toolchain_bin()
         .map(|bin| bin.join(bundled))
         .filter(|path| path.is_file())
+        .or_else(|| executable_on_path(bundled))
         .ok_or_else(|| {
-            format!("{bundled} not found; run `rustup component add llvm-tools` or set {variable}")
-                .into()
+            format!(
+                "{bundled} not found in the Rust toolchain or PATH; install LLVM tools or set {variable}"
+            )
+            .into()
         })
+}
+
+fn executable_on_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|directory| directory.join(name))
+        .find(|path| path.is_file())
 }
 
 fn payload_tools() -> Result<(PathBuf, Vec<PathBuf>), Box<dyn std::error::Error>> {

@@ -1549,8 +1549,9 @@ impl Scenario {
                     (Action::ExpectSdAllocation { loaded }, Some((1, expected, guest, wall))) if *loaded == expected && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = Some((2, expected, guest, wall)),
                     (Action::ExpectSdChains { loaded, .. }, Some((2, expected, guest, wall))) if *loaded == expected && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = Some((3, expected, guest, wall)),
                     (Action::ExpectSdContinuations { loaded }, Some((3, expected, guest, wall))) if *loaded == expected && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = Some((4, expected, guest, wall)),
-                    (Action::ExpectSdModule { loaded }, Some((4, expected, guest, wall))) if *loaded == expected && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = None,
-                    (Action::ExpectSdLoader | Action::CaptureSdModule { .. } | Action::ExpectSdAllocation { .. } | Action::ExpectSdChains { .. } | Action::ExpectSdContinuations { .. } | Action::ExpectSdModule { .. }, _) => return Err("SD inspection requires adjacent loader, capture, allocation, chains, continuations and module steps with matching state and timeouts".into()),
+                    (Action::ExpectSdModuleImages { loaded }, Some((4, expected, guest, wall))) if *loaded == expected && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = Some((5, expected, guest, wall)),
+                    (Action::ExpectSdLatestModule { loaded }, Some((5, expected, guest, wall))) if *loaded == expected && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = None,
+                    (Action::ExpectSdLoader | Action::CaptureSdModule { .. } | Action::ExpectSdAllocation { .. } | Action::ExpectSdChains { .. } | Action::ExpectSdContinuations { .. } | Action::ExpectSdModuleImages { .. } | Action::ExpectSdLatestModule { .. }, _) => return Err("SD inspection requires adjacent loader, capture, allocation, chains, continuations, module-image and latest-allocation steps with matching state and timeouts".into()),
                     (_, Some(_)) => return Err("SD inspection cannot be interrupted".into()),
                     _ => {},
                 }
@@ -3315,7 +3316,7 @@ mod sd_inspection_tests {
     fn phases_are_adjacent_and_share_budget_and_fixture() {
         let begin =
             "[[step]]\naction='expect-sd-loader'\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
-        let end = "[[step]]\naction='expect-sd-module'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
+        let end = "[[step]]\naction='expect-sd-module-images'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n[[step]]\naction='expect-sd-latest-module'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
         let capture = "[[step]]\naction='capture-sd-module'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
         let allocation = "[[step]]\naction='expect-sd-allocation'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
         let chains = "[[step]]\naction='expect-sd-chains'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
@@ -3328,6 +3329,7 @@ mod sd_inspection_tests {
             )
             .is_ok()
         );
+        assert!(parse(&format!("{begin}{capture}{allocation}{chains}{continuations}[[step]]\naction='expect-sd-module-images'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n"), fixture).is_err());
         assert!(
             parse(
                 &format!("{begin}{capture}{allocation}{chains}{end}"),

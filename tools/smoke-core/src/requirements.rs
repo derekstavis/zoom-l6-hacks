@@ -471,7 +471,8 @@ pub fn of(action: &Action) -> Requirement {
         | Action::ExpectSdAllocation { .. }
         | Action::ExpectSdChains { .. }
         | Action::ExpectSdContinuations { .. }
-        | Action::ExpectSdModule { .. }
+        | Action::ExpectSdModuleImages { .. }
+        | Action::ExpectSdLatestModule { .. }
         | Action::EffectPacedTurn { .. }
         | Action::WaitEffectSlot { .. }
         | Action::ExpectHeap { .. }

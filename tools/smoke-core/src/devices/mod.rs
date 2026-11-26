@@ -402,7 +402,10 @@ pub enum Operation {
     ExpectSdContinuations {
         loaded: bool,
     },
-    ExpectSdModule {
+    ExpectSdModuleImages {
+        loaded: bool,
+    },
+    ExpectSdLatestModule {
         loaded: bool,
     },
     EffectPacedTurn {

@@ -24,6 +24,7 @@ mod mode_primitives;
 mod panel;
 mod sd;
 mod signal_pwm;
+mod timing;
 mod usb;
 
 use audio::*;
@@ -664,7 +665,37 @@ pub enum Operation {
     L6SweepRejectEncoder,
     L6SweepEnd,
     L6DinSweep,
-    L6maxInputTiming,
+    L6maxTimingBegin,
+    L6maxTimingSettle {
+        wall_ms: u32,
+    },
+    L6maxTimingBaseline,
+    L6maxTimingEnqueue {
+        target: u32,
+        hold_ms: u32,
+        pairs: u32,
+    },
+    L6maxTimingWaitFirst,
+    L6maxTimingObservePaused {
+        wall_ms: u32,
+    },
+    L6maxTimingAssertPaused,
+    L6maxTimingResume,
+    L6maxTimingWaitQueued,
+    L6maxTimingWaitReports,
+    L6maxTimingAssertReports,
+    L6maxTimingObserveDisplay {
+        guest_ms: u32,
+    },
+    L6maxTimingAssertDisplay,
+    L6maxTimingEncoder {
+        index: u32,
+        steps: i32,
+    },
+    L6maxTimingWaitEncoder,
+    L6maxTimingWaitEncoderReport,
+    L6maxTimingAssertEncoder,
+    L6maxTimingEnd,
     L6maxPanelKeyBegin,
     L6maxPanelKeyCheck {
         code: u32,
@@ -1026,6 +1057,7 @@ pub struct State {
     sound_pad: Option<audio::sound_pad::SoundPadContext>,
     l6_recorder: Option<audio::recorder::Scope>,
     l6max_recorder: Option<audio::max_recorder::Scope>,
+    l6max_timing: Option<timing::Scope>,
     native_midi: Option<l6ctl::midi::MidiSession>,
     midi_probe: Option<MidiProbeContext>,
 }

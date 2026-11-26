@@ -386,6 +386,12 @@ unmapped reads; these reads are non-atomic. The caller owns the deadline and
 cancellation and must recreate the reader after restarting or changing firmware.
 This reader and bounded single-step/optional-stop helpers are in-process APIs.
 
+`OwnedControl::pause_all_before` creates an in-process scope that pauses both
+QEMU processors under one wall deadline and cancellation check. Explicitly
+close it to restore their previous run states and inspect errors. A failed
+restore is reported as an uncertain state requiring a guest restart; dropping
+the scope makes a bounded best-effort restore. It is not exposed on the CLI.
+
 The L6 scratch operations verify the supported L6 1.10 MIDI code before using
 the legacy emulator probe page at `0x841ff000`. This is a scoped diagnostic
 buffer, not evidence that physical firmware reserves that address.

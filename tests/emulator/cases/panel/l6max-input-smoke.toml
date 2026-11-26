@@ -16,7 +16,100 @@ guest_timeout_ms = 600000
 wall_timeout_s = 1800
 
 [[step]]
-action = "l6max-input-timing"
+action = "l6max-timing-begin"
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "l6max-timing-settle"
+wall_ms = 100
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "l6max-timing-baseline"
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "l6max-timing-enqueue"
+target = 1
+hold_ms = 50
+pairs = 2
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "l6max-timing-wait-first"
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "l6max-timing-observe-paused"
+wall_ms = 700
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "l6max-timing-assert-paused"
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "l6max-timing-resume"
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "l6max-timing-wait-queued"
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "l6max-timing-wait-reports"
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "l6max-timing-assert-reports"
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "l6max-timing-observe-display"
+guest_ms = 1500
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "l6max-timing-assert-display"
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "l6max-timing-encoder"
+index = 2
+steps = 1
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "l6max-timing-wait-encoder"
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "l6max-timing-wait-encoder-report"
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "l6max-timing-assert-encoder"
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "l6max-timing-end"
 guest_timeout_ms = 60000
 wall_timeout_s = 120
 

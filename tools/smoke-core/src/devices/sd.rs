@@ -457,47 +457,22 @@ pub(super) fn wait_effect_mode(
     const GUEST_TIMEOUT_MS: u32 = 10_000;
     const WALL_TIMEOUT_S: u64 = 180;
     const POLL_INTERVAL_MS: u64 = 10;
-    let report: Value = serde_json::from_slice(
-        &fs::read(
-            sd_fixture_root(options)?
-                .join(crate::fixture_layout::SD_BUNDLE_BUILD)
-                .join(crate::fixture_layout::PATCH_REPORT),
-        )
-        .map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
-    let symbols = composed_module_report(&report)
-        .and_then(|p| p["exports"].as_object())
-        .ok_or("effect replacement debug symbols are missing")?;
-    let offset = |name: &str| -> Result<u32, String> {
-        symbols
-            .get(name)
-            .and_then(Value::as_u64)
-            .and_then(|v| u32::try_from(v).ok())
-            .ok_or_else(|| format!("effect replacement symbol {name} is missing"))
-    };
-    let panel_offset = offset("DUAL_EFFECT_PANEL_MODE")?;
-    let edit_offset = offset("DUAL_EFFECT_PARAMETER_EDIT_MODE")?;
-    let qmp = &session.engine.management[0];
-    let registry = sd_registry(qmp, session.engine.model()).map_err(|e| e.to_string())?;
-    let read = |addr| -> Result<u32, String> {
-        Ok(u32::from_le_bytes(
-            qmp.read_memory(0, addr, 4)
-                .map_err(|e| e.to_string())?
-                .try_into()
-                .unwrap(),
-        ))
-    };
-    let base = read(registry + patch_abi::registry::MODULE_PTR_OFFSET)?;
-    if base == 0 {
-        return Err("effect replacement module is not loaded".into());
-    }
+    // Bind the live module to the frozen fixture before polling, as other
+    // effect-slot observations do. Keep the wait's own clocks anchored after
+    // setup, matching the original readiness condition.
+    let setup_deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
+    let reader = effect_slot_reader(options, session, setup_deadline, &|| Ok(()))?;
     let start = guest_now(session);
     let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
     loop {
         session.poll()?;
-        let panel = read(base + panel_offset)?;
-        let edit = read(base + edit_offset)?;
+        let state = reader.snapshot_before_checked(
+            &l6ctl::EffectSlotFields::default(),
+            deadline,
+            &|| Ok(()),
+        )?;
+        let panel = state.panel_mode;
+        let edit = state.edit_mode;
         if panel_mode.is_none_or(|v| panel == u32::from(v))
             && edit_mode.is_none_or(|v| edit == u32::from(v))
         {
@@ -899,37 +874,6 @@ fn wait_sd_patch_result(
         }
         thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
     }
-}
-
-pub(super) fn sd_registry(
-    qmp: &l6max_host::qmp::QmpClient,
-    model: l6fw::Model,
-) -> Result<u32, Box<dyn std::error::Error>> {
-    sd_registry_if_allocated(qmp, model)?
-        .ok_or_else(|| "the Patch loader has not allocated its registry".into())
-}
-
-/// The registry, or `None` while the root word still holds its stock value.
-pub(super) fn sd_registry_if_allocated(
-    qmp: &l6max_host::qmp::QmpClient,
-    model: l6fw::Model,
-) -> Result<Option<u32>, Box<dyn std::error::Error>> {
-    use patch_abi::registry;
-    let (pointer, stock) = match model {
-        l6fw::Model::L6 => (registry::L6_POINTER, registry::L6_POINTER_STOCK),
-        l6fw::Model::L6max => (registry::L6MAX_POINTER, registry::L6MAX_POINTER_STOCK),
-    };
-    let base = u32::from_le_bytes(qmp.read_memory(0, pointer, 4)?.try_into().unwrap());
-    if base == stock {
-        return Ok(None);
-    }
-    let magic = u32::from_le_bytes(qmp.read_memory(0, base, 4)?.try_into().unwrap());
-    if magic != registry::MAGIC {
-        return Err(
-            format!("Patch loader registry at {base:#010x} has magic {magic:#010x}").into(),
-        );
-    }
-    Ok(Some(base))
 }
 
 pub(super) fn sd_frozen_handler_slot(

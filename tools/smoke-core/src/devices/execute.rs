@@ -2168,85 +2168,14 @@ impl State {
                 targets,
                 duration_ms,
                 until,
-            } => {
-                let inputs = session.engine.inputs.as_ref().unwrap();
-                let start = inputs.panel.snapshot().guest_ms;
-                let factory_mode =
-                    matches!(until, Some(crate::scenario::ChordCondition::FactoryMode));
-                if factory_mode {
-                    let initial = l6ctl::OwnedControl::new(&session.engine)
-                        .read_main_memory(l6max::system_mode, 4)?
-                        .bytes;
-                    if initial == 7u32.to_le_bytes() {
-                        return Err("factory mode was already active before the chord".into());
-                    }
-                }
-                // DOWN duration is a minimum hold in the emulator; a
-                // condition-based chord requests the normal button minimum.
-                let hold =
-                    duration_ms.map_or(0, |duration| duration.saturating_add(1000).min(60_000));
-                for target in &targets {
-                    inputs.down(*target, hold)?;
-                }
-                let deadline = Instant::now()
-                    + Duration::from_secs(if factory_mode {
-                        wall_timeout_s.min(180)
-                    } else {
-                        wall_timeout_s
-                    });
-                let guest_limit = if factory_mode {
-                    guest_timeout_ms.min(10_000)
-                } else {
-                    guest_timeout_ms
-                };
-                let mut next_mode_poll = Instant::now();
-                let mut factory_reached = false;
-                loop {
-                    session.poll()?;
-                    let main = inputs.main.snapshot();
-                    let panel = inputs.panel.snapshot();
-                    if main.powered_off || panel.powered_off {
-                        return Err("guest powered off during held chord".into());
-                    }
-                    let elapsed = panel.guest_ms.wrapping_sub(start);
-                    if factory_mode && !factory_reached && Instant::now() >= next_mode_poll {
-                        factory_reached = l6ctl::OwnedControl::new(&session.engine)
-                            .read_main_memory_before(l6max::system_mode, 4, deadline)?
-                            .bytes
-                            == 7u32.to_le_bytes();
-                        next_mode_poll = Instant::now() + Duration::from_millis(10);
-                    }
-                    if main.applied >= main.sent
-                        && panel.applied >= panel.sent
-                        && (factory_reached
-                            || duration_ms.is_some_and(|duration| elapsed >= duration))
-                    {
-                        break;
-                    }
-                    if Instant::now() > deadline || elapsed > guest_limit {
-                        return Err("held chord was not applied within its deadline".into());
-                    }
-                    thread::sleep(Duration::from_millis(5));
-                }
-                for target in targets.iter().rev() {
-                    inputs.up(*target)?;
-                }
-                loop {
-                    session.poll()?;
-                    let main = inputs.main.snapshot();
-                    let panel = inputs.panel.snapshot();
-                    if main.applied >= main.sent && panel.applied >= panel.sent {
-                        break;
-                    }
-                    if Instant::now() > deadline {
-                        return Err("held chord release was not acknowledged".into());
-                    }
-                    thread::sleep(Duration::from_millis(5));
-                }
-                Ok(
-                    json!({"targets":targets,"held_guest_ms":inputs.panel.snapshot().guest_ms.wrapping_sub(start)}),
-                )
-            }
+            } => chord::hold(
+                session,
+                targets,
+                duration_ms,
+                until,
+                guest_timeout_ms,
+                wall_timeout_s,
+            ),
             Operation::PanelEventBegin {
                 target,
                 column,

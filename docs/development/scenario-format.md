@@ -123,7 +123,7 @@ card-reader mode), stays unmarked.
 | `expect-mode` | `mode` | Verify the model-specific mode lamp before taking ring baselines |
 | `expect-mute` | `channel` | Verify the model-specific mute lamp toggled relative to the preceding action |
 | `hold` | `control`, `duration_ms` | Keep a semantic control held for a bounded duration |
-| `hold-chord` | `controls` and either `duration_ms` or `until = "factory-mode"` | Hold multiple semantic controls together for the specified guest time or until L6max factory mode is entered. Factory-mode readiness is polled every 10 ms of wall time, bounded by 10 guest seconds and 180 wall seconds |
+| `hold-chord` | `controls` and either `duration_ms` or `until = "factory-mode"` | Hold multiple semantic controls together for the specified guest time or until L6max factory mode is entered. Factory-mode readiness is polled every 10 ms of wall time, bounded by 10 guest seconds and 180 wall seconds. Successfully pressed controls are released in reverse order on completion or failure; release errors are reported |
 | `momentary-down`, `momentary-up` | `control`; `duration_ms` on down | Hold and release an L6 panel button around an observation, checking its press/release reports and acknowledgements under one shared deadline. |
 | `expect-scene` | `scene`, `lit`, optional `checkpoint`, `changed` | Check a scene indicator, optionally against a checkpoint |
 | `expect-button-led` | `control`, optional `lit`, `checkpoint`, `changed` | Check a mapped button lamp's level or change |

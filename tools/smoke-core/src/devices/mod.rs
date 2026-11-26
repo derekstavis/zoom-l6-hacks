@@ -12,6 +12,7 @@ use std::{
 };
 
 mod audio;
+mod chord;
 mod display;
 mod editor;
 mod execute;

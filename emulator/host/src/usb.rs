@@ -121,6 +121,54 @@ impl Controller {
         *owner = UsbOwner::Raw;
         Ok(())
     }
+    /// Reserve and attach within the caller's guest and wall budget.
+    pub fn attach_before(&self, budget: &Budget) -> Result<(), String> {
+        let mut owner = loop {
+            budget.check().map_err(|e| e.to_string())?;
+            match self.owner.try_lock() {
+                Ok(owner) => break owner,
+                Err(std::sync::TryLockError::WouldBlock) => thread::sleep(Duration::from_millis(1)),
+                Err(_) => return Err("USB ownership lock poisoned".into()),
+            }
+        };
+        match *owner {
+            UsbOwner::Raw => return Ok(()),
+            UsbOwner::None => {}
+            UsbOwner::Unusable => return Err("USB transport unusable; restart guest".into()),
+            _ => return Err("USB already has an owner".into()),
+        }
+        if let Err(error) = self.host.attach_before(budget) {
+            *owner = UsbOwner::Unusable;
+            self.host.shutdown();
+            return Err(format!("USB attach failed: {error}; restart guest"));
+        }
+        *owner = UsbOwner::Raw;
+        Ok(())
+    }
+    /// Probe an attached raw controller within the same budget.
+    pub fn running_before(&self, budget: &Budget) -> Result<bool, String> {
+        let mut owner = loop {
+            budget.check().map_err(|e| e.to_string())?;
+            match self.owner.try_lock() {
+                Ok(owner) => break owner,
+                Err(std::sync::TryLockError::WouldBlock) => thread::sleep(Duration::from_millis(1)),
+                Err(_) => return Err("USB ownership lock poisoned".into()),
+            }
+        };
+        if *owner != UsbOwner::Raw {
+            return Err("USB controller probe requires a raw attachment".into());
+        }
+        match self.host.controller_running_before(budget) {
+            Ok(running) => Ok(running),
+            Err(error) => {
+                *owner = UsbOwner::Unusable;
+                self.host.shutdown();
+                Err(format!(
+                    "USB controller probe failed: {error}; restart guest"
+                ))
+            }
+        }
+    }
     /// Release a raw USB attachment and detach the cable.
     pub fn release(&self) -> Result<(), String> {
         let mut owner = self
@@ -1271,11 +1319,12 @@ mod tests {
             host: Arc::new(UsbHost::new(socket).unwrap()),
             owner: owned.clone(),
         };
-        assert!(controller.attach().unwrap_err().contains("bridge"));
+        let budget = Budget::new(Instant::now() + Duration::from_secs(2), || false);
+        assert!(controller.attach_before(&budget).is_err());
         *owned.lock().unwrap() = UsbOwner::None;
-        controller.attach().unwrap();
-        assert!(!controller.running().unwrap());
-        assert!(controller.running().unwrap());
+        controller.attach_before(&budget).unwrap();
+        assert!(!controller.running_before(&budget).unwrap());
+        assert!(controller.running_before(&budget).unwrap());
         server.join().unwrap();
     }
 

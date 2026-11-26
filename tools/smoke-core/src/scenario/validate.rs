@@ -1056,7 +1056,8 @@ impl Scenario {
                 Action::KnobLevelBegin => "knob-active-finish",
                 Action::KnobTaskBegin => "knob-level-finish",
                 Action::KnobOverlayBegin => "knob-task-finish",
-                Action::KnobBitmapBegin => "knob-overlay-finish",
+                Action::KnobBitmapReactivate { .. } => "knob-overlay-finish",
+                Action::KnobBitmapBegin => "knob-bitmap-wait-active",
                 Action::KnobOverlayReactivate { .. } => "knob-bitmap-finish",
                 Action::KnobOverlayRefreshBegin => "knob-overlay-wait-active",
                 Action::KnobLockAcquire => "knob-overlay-refresh-finish",
@@ -1100,6 +1101,9 @@ impl Scenario {
                         }
                         "knob-overlay-finish" => {
                             matches!(previous.action, Action::KnobOverlayFinish)
+                        }
+                        "knob-bitmap-wait-active" => {
+                            matches!(previous.action, Action::KnobBitmapWaitActive)
                         }
                         "knob-bitmap-finish" => {
                             matches!(previous.action, Action::KnobBitmapFinish)
@@ -1168,7 +1172,7 @@ impl Scenario {
                     return Err("knob-dialog preflight must end with the diagnostic".into());
                 };
                 let subsequent = &applicable[..=end];
-                if subsequent.len() < 180
+                if subsequent.len() < 182
                     || !super::valid_preflight_probe_steps(&subsequent[0..30])
                     || !super::valid_callback_race_steps(&subsequent[30..38])
                     || !matches!(subsequent[38].action, Action::KnobDialogFirstActivation)
@@ -1176,10 +1180,10 @@ impl Scenario {
                     || !super::valid_level_demo_steps(&subsequent[46..54])
                     || !super::valid_task_context_steps(&subsequent[54..64])
                     || !super::valid_overlay_invariant_steps(&subsequent[64..79])
-                    || !super::valid_bitmap_probe_steps(&subsequent[79..91])
-                    || !super::valid_refreshed_overlay_steps(&subsequent[91..98])
-                    || !super::valid_locked_update_steps(&subsequent[98..106])
-                    || !valid_knob_mode_steps(&subsequent[106..subsequent.len().saturating_sub(63)])
+                    || !super::valid_bitmap_probe_steps(&subsequent[79..93])
+                    || !super::valid_refreshed_overlay_steps(&subsequent[93..100])
+                    || !super::valid_locked_update_steps(&subsequent[100..108])
+                    || !valid_knob_mode_steps(&subsequent[108..subsequent.len().saturating_sub(63)])
                     || !valid_invalid_tag_steps(
                         &subsequent[subsequent.len().saturating_sub(63)
                             ..subsequent.len().saturating_sub(56)],

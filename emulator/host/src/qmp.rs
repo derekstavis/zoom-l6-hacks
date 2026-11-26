@@ -386,6 +386,17 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("deadline"), "{error}");
+        let deadline = Instant::now() + Duration::from_millis(20);
+        let error = match crate::knob_popup::overlay_reader_before_checked(
+            &client,
+            l6fw::Model::L6max,
+            deadline,
+            &|| Ok(()),
+        ) {
+            Ok(_) => panic!("busy QMP unexpectedly returned overlay reader"),
+            Err(error) => error,
+        };
+        assert!(error.contains("deadline"), "{error}");
         drop(lock);
         drop(client);
         server.join().unwrap();

@@ -16,6 +16,11 @@ fn knob_dialog_phase(
     level_phase: Option<u8>,
     bitmap_capture: Option<u8>,
 ) -> Option<u16> {
+    match operation {
+        Operation::KnobBitmapReactivate { .. } => return Some(82),
+        Operation::KnobBitmapWaitActive => return Some(83),
+        _ => {}
+    }
     let fixed = match operation {
         Operation::KnobDialogGuard => Some(0),
         Operation::KnobDialogBaseline => Some(1),
@@ -149,8 +154,8 @@ fn knob_dialog_phase(
         }
         _ => None,
     };
-    if fixed.is_some() {
-        return fixed;
+    if let Some(phase) = fixed {
+        return Some(phase + u16::from(phase >= 82) * 2);
     }
     let scope = scope?;
     let offset = match operation {
@@ -171,7 +176,7 @@ fn knob_dialog_phase(
         Operation::KnobDialogModeEnd => 10,
         _ => return None,
     };
-    Some(109 + scope.index as u16 * 11 + offset)
+    Some(111 + scope.index as u16 * 11 + offset)
 }
 
 type KnobDeadline = (Instant, u32, u32, u64, u16);
@@ -3516,6 +3521,43 @@ impl State {
                 self.overlay_reader = None;
                 Ok(value)
             }
+            Operation::KnobBitmapReactivate { delta } => {
+                let budget = shared.ok_or("missing shared deadline")?;
+                let check = || notification_observation_check(session, budget, budget.3);
+                self.overlay_reader = Some(l6max_host::knob_popup::overlay_reader_before_checked(
+                    &session.engine.management[0],
+                    l6fw::Model::L6max,
+                    budget.0 + Duration::from_secs(budget.3),
+                    &check,
+                )?);
+                reactivate_zero_overlay(
+                    session,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob preflight")?,
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing bitmap overlay reader")?,
+                    delta,
+                    shared.ok_or("missing shared deadline")?,
+                    11,
+                )
+            }
+            Operation::KnobBitmapWaitActive => {
+                let value = wait_zero_overlay_active(
+                    session,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob preflight")?,
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing bitmap overlay reader")?,
+                    shared.ok_or("missing shared deadline")?,
+                    15,
+                )?;
+                self.overlay_reader = None;
+                Ok(value)
+            }
             Operation::KnobBitmapBegin => {
                 let value = begin_bitmap_probe(
                     session,
@@ -3524,14 +3566,21 @@ impl State {
                         .as_mut()
                         .ok_or("missing knob-dialog preflight")?,
                 )?;
-                self.overlay_reader =
-                    Some(l6ctl::OwnedControl::new(&session.engine).knob_overlay_reader()?);
+                let budget = shared.ok_or("missing shared deadline")?;
+                let check = || notification_observation_check(session, budget, budget.3);
+                self.overlay_reader = Some(l6max_host::knob_popup::overlay_reader_before_checked(
+                    &session.engine.management[0],
+                    l6fw::Model::L6max,
+                    budget.0 + Duration::from_secs(budget.3),
+                    &check,
+                )?);
                 Ok(value)
             }
             Operation::KnobBitmapCheckBackground {
                 background,
                 expected,
             } => check_bitmap_background(
+                session,
                 self.knob_dialog_preflight
                     .as_mut()
                     .ok_or("missing knob-dialog preflight")?,
@@ -3540,6 +3589,7 @@ impl State {
                     .ok_or("missing bitmap reader")?,
                 background,
                 expected,
+                shared.ok_or("missing shared deadline")?,
             ),
             Operation::KnobBitmapStoreBefore => {
                 let frame = self
@@ -3624,6 +3674,7 @@ impl State {
                         .ok_or("missing overlay reactivation reader")?,
                     delta,
                     shared.ok_or("missing shared deadline")?,
+                    12,
                 )
             }
             Operation::KnobOverlayWaitActive => {
@@ -3636,6 +3687,7 @@ impl State {
                         .as_ref()
                         .ok_or("missing overlay reactivation reader")?,
                     shared.ok_or("missing shared deadline")?,
+                    1,
                 )?;
                 self.overlay_reader = None;
                 Ok(value)
@@ -4226,6 +4278,8 @@ mod knob_phase_tests {
             Operation::KnobOverlayCheckBitmap,
             Operation::KnobOverlayCheckHeap,
             Operation::KnobOverlayFinish,
+            Operation::KnobBitmapReactivate { delta: -1 },
+            Operation::KnobBitmapWaitActive,
             Operation::KnobBitmapBegin,
             Operation::KnobBitmapCheckBackground {
                 background: 47,
@@ -4284,8 +4338,8 @@ mod knob_phase_tests {
                     pending,
                     next_mode,
                     Some(0),
-                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 98,
-                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 107,
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 100,
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 109,
                     (matches!(operation, Operation::EnqueueEncoderNoAck { .. }) && before.4 == 43)
                         || (matches!(operation, Operation::CaptureDisplay { .. })
                             && before.4 == 44),
@@ -4305,10 +4359,10 @@ mod knob_phase_tests {
                     } else {
                         None
                     },
-                    if matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 84 {
+                    if matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 86 {
                         Some(1)
                     } else if matches!(operation, Operation::CaptureDisplay { .. })
-                        && before.4 == 89
+                        && before.4 == 91
                     {
                         Some(6)
                     } else {

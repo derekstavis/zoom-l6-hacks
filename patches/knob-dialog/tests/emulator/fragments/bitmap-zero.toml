@@ -1,3 +1,15 @@
+# Refresh at the unchanged zero endpoint before capturing the bitmap baseline.
+[[step]]
+action = "knob-bitmap-reactivate"
+delta = -1
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-bitmap-wait-active"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
 [[step]]
 action = "knob-bitmap-begin"
 guest_timeout_ms = 180000

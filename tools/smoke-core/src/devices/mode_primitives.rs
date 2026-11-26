@@ -417,6 +417,10 @@ pub(super) fn embedded_bitmap_probe_operations() -> Result<Vec<(String, Operatio
         .into_iter()
         .map(|step| {
             let operation = match &step.action {
+                crate::Action::KnobBitmapReactivate { delta } => {
+                    Operation::KnobBitmapReactivate { delta: *delta }
+                }
+                crate::Action::KnobBitmapWaitActive => Operation::KnobBitmapWaitActive,
                 crate::Action::KnobBitmapBegin => Operation::KnobBitmapBegin,
                 crate::Action::KnobBitmapCheckBackground {
                     background,

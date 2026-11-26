@@ -411,6 +411,16 @@ trait Transport: Send {
     fn write_before(&mut self, address: u32, bytes: &[u8], deadline: Instant)
     -> Result<(), String>;
     fn breakpoint(&mut self, address: u32, enable: bool) -> Result<(), String>;
+    fn breakpoint_before(
+        &mut self,
+        address: u32,
+        enable: bool,
+        deadline: Instant,
+    ) -> Result<(), String>;
+    fn register_before(&mut self, index: u32, deadline: Instant) -> Result<u32, String>;
+    fn resume_before(&mut self, deadline: Instant) -> Result<(), String>;
+    fn poll_stop_before(&mut self, deadline: Instant) -> Result<Option<String>, String>;
+    fn interrupt_before(&mut self, deadline: Instant) -> Result<String, String>;
     fn resume(&mut self) -> Result<(), String>;
     fn poll_stop(&mut self, wait: Duration) -> Result<Option<String>, String>;
     fn interrupt(&mut self) -> Result<String, String>;
@@ -440,6 +450,26 @@ impl Transport for Gdb {
         deadline: Instant,
     ) -> Result<(), String> {
         Gdb::write_before(self, address, bytes, deadline).map_err(|e| e.to_string())
+    }
+    fn breakpoint_before(
+        &mut self,
+        address: u32,
+        enable: bool,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        Gdb::breakpoint_before(self, address, enable, deadline).map_err(|e| e.to_string())
+    }
+    fn register_before(&mut self, index: u32, deadline: Instant) -> Result<u32, String> {
+        Gdb::read_register_before(self, index, deadline).map_err(|e| e.to_string())
+    }
+    fn resume_before(&mut self, deadline: Instant) -> Result<(), String> {
+        Gdb::resume_before(self, deadline).map_err(|e| e.to_string())
+    }
+    fn poll_stop_before(&mut self, deadline: Instant) -> Result<Option<String>, String> {
+        Gdb::poll_stop_before(self, deadline).map_err(|e| e.to_string())
+    }
+    fn interrupt_before(&mut self, deadline: Instant) -> Result<String, String> {
+        Gdb::interrupt_before(self, deadline).map_err(|e| e.to_string())
     }
     fn breakpoint(&mut self, address: u32, enable: bool) -> Result<(), String> {
         Gdb::breakpoint(self, address, enable).map_err(|e| e.to_string())
@@ -717,6 +747,124 @@ impl Session {
         Ok(Observation::SignalWritten {
             address: SIGNAL_ACCUMULATORS,
         })
+    }
+
+    /// Change one owned breakpoint under a shared wall deadline.
+    pub fn breakpoint_before(
+        &mut self,
+        address: u32,
+        enable: bool,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        if address & 1 != 0 || !(0x8000_0000..0x8420_0000).contains(&address) {
+            return Err("breakpoint must be aligned MAIN SDRAM".into());
+        }
+        if enable
+            && (self.breakpoints.contains(&address) || self.breakpoints.len() >= MAX_BREAKPOINTS)
+        {
+            return Err("breakpoint already owned or limit reached".into());
+        }
+        if !enable && !self.breakpoints.contains(&address) {
+            return Err("breakpoint is not owned".into());
+        }
+        if Instant::now() >= deadline {
+            return Err("breakpoint deadline exceeded".into());
+        }
+        self.transact(|g| g.breakpoint_before(address, enable, deadline))?;
+        if enable {
+            self.breakpoints.insert(address);
+        } else {
+            self.breakpoints.remove(&address);
+        }
+        if Instant::now() >= deadline {
+            return Err("breakpoint deadline exceeded".into());
+        }
+        Ok(())
+    }
+    /// Read a register under the caller's absolute deadline.
+    pub fn register_before(&mut self, index: u32, deadline: Instant) -> Result<u32, String> {
+        if index > 15 || Instant::now() >= deadline {
+            return Err("invalid register or deadline exceeded".into());
+        }
+        let value = self.transact(|g| g.register_before(index, deadline))?;
+        if Instant::now() >= deadline {
+            return Err("register deadline exceeded".into());
+        }
+        Ok(value)
+    }
+    /// Continue to an owned breakpoint with an absolute deadline and cancellation.
+    pub fn continue_before(
+        &mut self,
+        deadline: Instant,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<String, String> {
+        if self.breakpoints.is_empty() {
+            return Err("continue requires an owned breakpoint".into());
+        }
+        if cancelled() || Instant::now() >= deadline {
+            return Err("debug continue cancelled or deadline exceeded".into());
+        }
+        self.transact(|g| g.resume_before(deadline))?;
+        loop {
+            let now = Instant::now();
+            if cancelled() || now >= deadline {
+                let stop = self.transact(|g| {
+                    g.interrupt_before(Instant::now() + Duration::from_secs(3))
+                        .and_then(validate_stop)
+                });
+                return Err(match stop {
+                    Ok(_) => "debug continue cancelled or deadline exceeded".into(),
+                    Err(error) => format!(
+                        "debug continue cancelled or deadline exceeded; interrupt failed: {error}"
+                    ),
+                });
+            }
+            let until = (now + Duration::from_millis(50)).min(deadline);
+            if let Some(reply) = self.transact(|g| g.poll_stop_before(until))? {
+                let reply = validate_stop(reply).map_err(|error| {
+                    self.poisoned = true;
+                    error
+                })?;
+                if cancelled() || Instant::now() >= deadline {
+                    return Err("debug continue cancelled or deadline exceeded".into());
+                }
+                return Ok(reply);
+            }
+        }
+    }
+    /// Restore any scratch and owned breakpoints, then restore the prior run state.
+    pub fn close_before(&mut self, deadline: Instant) -> Result<(), String> {
+        if self.transport.is_none() {
+            return Ok(());
+        }
+        let mut error = None;
+        if !self.poisoned && self.l6_midi.is_none() {
+            if let Some(bytes) = self.scratch.clone() {
+                match self.transact(|g| g.write_before(SCRATCH, &bytes, deadline)) {
+                    Ok(()) => self.scratch = None,
+                    Err(e) => error = Some(format!("restore scratch: {e}")),
+                }
+            }
+            if error.is_none() {
+                for address in self.breakpoints.clone() {
+                    match self.transact(|g| g.breakpoint_before(address, false, deadline)) {
+                        Ok(()) => {
+                            self.breakpoints.remove(&address);
+                        }
+                        Err(e) => {
+                            error = Some(format!("remove breakpoint {address:#x}: {e}"));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        let close = self.close_signal_before(deadline);
+        match (error, close) {
+            (None, Ok(())) => Ok(()),
+            (Some(error), Ok(())) | (None, Err(error)) => Err(error),
+            (Some(error), Err(cleanup)) => Err(format!("{error}; {cleanup}")),
+        }
     }
 
     pub fn execute(&mut self, command: Command) -> Result<Observation, String> {
@@ -1364,6 +1512,38 @@ mod tests {
             }
             self.write(address, bytes)
         }
+        fn breakpoint_before(
+            &mut self,
+            address: u32,
+            enable: bool,
+            deadline: Instant,
+        ) -> Result<(), String> {
+            if Instant::now() >= deadline {
+                return Err("timeout".into());
+            }
+            self.breakpoint(address, enable)
+        }
+        fn register_before(&mut self, index: u32, deadline: Instant) -> Result<u32, String> {
+            if Instant::now() >= deadline {
+                return Err("timeout".into());
+            }
+            self.read_register(index)
+        }
+        fn resume_before(&mut self, deadline: Instant) -> Result<(), String> {
+            if Instant::now() >= deadline {
+                return Err("timeout".into());
+            }
+            self.resume()
+        }
+        fn poll_stop_before(&mut self, deadline: Instant) -> Result<Option<String>, String> {
+            self.poll_stop(deadline.saturating_duration_since(Instant::now()))
+        }
+        fn interrupt_before(&mut self, deadline: Instant) -> Result<String, String> {
+            if Instant::now() >= deadline {
+                return Err("timeout".into());
+            }
+            self.interrupt()
+        }
         fn breakpoint(&mut self, _: u32, enable: bool) -> Result<(), String> {
             self.record(if enable { "add" } else { "remove" })
         }
@@ -1491,6 +1671,72 @@ mod tests {
         drop(retained);
         drop(listener);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn bounded_close_removes_owned_breakpoints_before_restoring_run_state() {
+        let (mut session, state) = fake(true, true);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        session
+            .breakpoint_before(0x8000_1000, true, deadline)
+            .unwrap();
+        session
+            .breakpoint_before(0x8000_2000, true, deadline)
+            .unwrap();
+        session.close_before(deadline).unwrap();
+        let operations = &state.lock().unwrap().operations;
+        let removals = operations
+            .iter()
+            .enumerate()
+            .filter(|(_, operation)| *operation == "remove")
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        let disconnected = operations
+            .iter()
+            .position(|operation| operation == "disconnect")
+            .unwrap();
+        let resumed = operations
+            .iter()
+            .position(|operation| operation == "resume-before")
+            .unwrap();
+        assert_eq!(removals.len(), 2);
+        assert!(removals[1] < disconnected && disconnected < resumed);
+    }
+    #[test]
+    fn bounded_close_failed_breakpoint_removal_stops_and_retains_unusable_state() {
+        let (mut session, state) = fake(true, true);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        session
+            .breakpoint_before(0x8000_1000, true, deadline)
+            .unwrap();
+        state.lock().unwrap().fail = Some("remove");
+        assert!(session.close_before(deadline).is_err());
+        let state = state.lock().unwrap();
+        assert!(state.operations.contains(&"stop".into()));
+        assert!(!state.operations.contains(&"resume-before".into()));
+        assert!(session.unusable.load(Ordering::Acquire));
+    }
+    #[test]
+    fn bounded_continue_interrupts_on_deadline() {
+        let (mut session, state) = fake(true, true);
+        let setup = Instant::now() + Duration::from_secs(1);
+        session.breakpoint_before(0x8000_1000, true, setup).unwrap();
+        state.lock().unwrap().pending = true;
+        assert!(
+            session
+                .continue_before(Instant::now() + Duration::from_millis(15), || false)
+                .is_err()
+        );
+        assert!(
+            state
+                .lock()
+                .unwrap()
+                .operations
+                .contains(&"interrupt".into())
+        );
+        session
+            .close_before(Instant::now() + Duration::from_secs(1))
+            .unwrap();
     }
 
     #[test]

@@ -371,6 +371,14 @@ verify MAIN is stopped, it reports that uncertainty, retains the lease and
 requires a guest restart. A failed cleanup may spend up to three additional
 seconds attempting an emergency stop.
 
+For in-process L6 recorder diagnostics, `l6_recorder_reader_before` checks
+three immutable L6 1.10 code spans and provides typed event, selection and
+SAI DMA observations. The caller must keep MAIN stopped, supply an absolute
+deadline and cancellation check, and recreate the reader after guest restart
+or firmware changes. Pointer reads require an entire non-wrapping span in a
+mapped MAIN RAM region; observations are separate reads and are not atomic.
+The reader and bounded recorder breakpoint methods are not socket or CLI APIs.
+
 The L6 scratch operations verify the supported L6 1.10 MIDI code before using
 the legacy emulator probe page at `0x841ff000`. This is a scoped diagnostic
 buffer, not evidence that physical firmware reserves that address.

@@ -980,8 +980,45 @@ fn sound_pad_playback_supports_editor_or_saved_assignment() {
 #[test]
 fn l6_recorder_playback_is_scoped_to_the_verified_play_gpio() {
     let prefix = "version=1\nname='recorder-playback'\nmodels=['l6']\nbackends=['headless']\n";
-    let scenario = format!("{prefix}[[step]]\naction='l6-recorder-playback'\ntarget=4\n");
+    let mut scenario = format!("{prefix}[[step]]\naction='l6-recorder-begin'\ntarget=4\n");
+    for action in [
+        "press",
+        "dispatcher",
+        "assert-event",
+        "handler",
+        "assert-selection",
+        "callback",
+        "assert-callback",
+        "observe",
+        "release",
+        "sample",
+        "evidence",
+        "assert-trace",
+        "assert-dma",
+        "end",
+    ] {
+        scenario.push_str(&format!("[[step]]\naction='l6-recorder-{action}'\n"));
+    }
     assert!(Scenario::parse(&scenario).is_ok());
+    assert!(
+        Scenario::parse(&scenario.replace("l6-recorder-assert-event", "l6-recorder-assert-dma"))
+            .unwrap_err()
+            .contains("ordered steps")
+    );
+    assert!(
+        Scenario::parse(&scenario.replace(
+            "action='l6-recorder-press'",
+            "action='l6-recorder-press'\nwall_timeout_s=1"
+        ))
+        .unwrap_err()
+        .contains("matching budgets")
+    );
+    assert!(
+        Scenario::parse(&scenario.replace("[[step]]\naction='l6-recorder-end'\n", ""))
+            .unwrap_err()
+            .contains("incomplete")
+    );
+
     assert!(
         Scenario::parse(&scenario.replace("target=4", "target=5"))
             .unwrap_err()

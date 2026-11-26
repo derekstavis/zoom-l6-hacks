@@ -401,6 +401,15 @@ impl State {
     pub fn has_ui_pad(&self) -> bool {
         self.ui_pad.is_some()
     }
+    pub fn has_l6_recorder(&self) -> bool {
+        self.l6_recorder.is_some()
+    }
+    pub fn abort_l6_recorder(&mut self, session: &Session) -> Result<(), String> {
+        match self.l6_recorder.take() {
+            Some(mut context) => context.abort(session),
+            None => Ok(()),
+        }
+    }
     pub fn has_sound_pad(&self) -> bool {
         self.sound_pad.is_some()
     }
@@ -599,6 +608,36 @@ impl State {
             ) {
                 self.l6_indicator = None;
                 return Err("L6 indicator campaign exceeded its shared deadline".into());
+            }
+        }
+        if let Some(context) = self.l6_recorder.as_ref() {
+            let expected = match operation {
+                Operation::L6RecorderPress => Some(0),
+                Operation::L6RecorderDispatcher => Some(1),
+                Operation::L6RecorderAssertEvent => Some(2),
+                Operation::L6RecorderHandler => Some(3),
+                Operation::L6RecorderAssertSelection => Some(4),
+                Operation::L6RecorderCallback => Some(5),
+                Operation::L6RecorderAssertCallback => Some(6),
+                Operation::L6RecorderObserve => Some(7),
+                Operation::L6RecorderRelease => Some(8),
+                Operation::L6RecorderSample => Some(9),
+                Operation::L6RecorderEvidence => Some(10),
+                Operation::L6RecorderAssertTrace => Some(11),
+                Operation::L6RecorderAssertDma => Some(12),
+                Operation::L6RecorderEnd => Some(13),
+                _ => None,
+            };
+            if expected != Some(context.phase)
+                || context
+                    .check(session, guest_timeout_ms, wall_timeout_s)
+                    .is_err()
+            {
+                let error = "recorder transaction interrupted or exceeded its shared deadline";
+                return match self.abort_l6_recorder(session) {
+                    Ok(()) => Err(error.into()),
+                    Err(cleanup) => Err(format!("{error}; cleanup failed: {cleanup}")),
+                };
             }
         }
         if self.sound_pad.is_some() {
@@ -3068,8 +3107,59 @@ impl State {
                 }
                 Ok(result)
             }
-            Operation::L6RecorderPlayback { target } => {
-                run_l6_recorder_playback(session, options, target, guest_timeout_ms, wall_timeout_s)
+            Operation::L6RecorderBegin { target } => {
+                if self.l6_recorder.is_some() {
+                    return Err("recorder transaction already active".into());
+                }
+                self.l6_recorder = Some(audio::recorder::Scope::begin(
+                    session,
+                    options,
+                    target,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started": true}))
+            }
+            operation @ (Operation::L6RecorderPress
+            | Operation::L6RecorderDispatcher
+            | Operation::L6RecorderAssertEvent
+            | Operation::L6RecorderHandler
+            | Operation::L6RecorderAssertSelection
+            | Operation::L6RecorderCallback
+            | Operation::L6RecorderAssertCallback
+            | Operation::L6RecorderObserve
+            | Operation::L6RecorderRelease
+            | Operation::L6RecorderSample
+            | Operation::L6RecorderEvidence
+            | Operation::L6RecorderAssertTrace
+            | Operation::L6RecorderAssertDma
+            | Operation::L6RecorderEnd) => {
+                let context = self
+                    .l6_recorder
+                    .as_mut()
+                    .ok_or("missing recorder transaction")?;
+                let result = match operation {
+                    Operation::L6RecorderPress => context.press(session),
+                    Operation::L6RecorderDispatcher => context.dispatcher(session),
+                    Operation::L6RecorderAssertEvent => context.assert_event(),
+                    Operation::L6RecorderHandler => context.handler(session),
+                    Operation::L6RecorderAssertSelection => context.assert_selection(),
+                    Operation::L6RecorderCallback => context.callback(session),
+                    Operation::L6RecorderAssertCallback => context.assert_callback(),
+                    Operation::L6RecorderObserve => context.observe(session),
+                    Operation::L6RecorderRelease => context.release(session),
+                    Operation::L6RecorderSample => context.sample(session, options),
+                    Operation::L6RecorderEvidence => context.save(options),
+                    Operation::L6RecorderAssertTrace => context.assert_trace(),
+                    Operation::L6RecorderAssertDma => context.assert_dma(),
+                    Operation::L6RecorderEnd => Ok(json!({"finished": true})),
+                    _ => unreachable!(),
+                }?;
+                context.phase += 1;
+                if matches!(operation, Operation::L6RecorderEnd) {
+                    self.l6_recorder = None;
+                }
+                Ok(result)
             }
             Operation::L6maxRecorderPlayback { target } => self.run_l6max_recorder_playback(
                 session,

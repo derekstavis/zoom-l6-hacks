@@ -60,9 +60,83 @@ pub fn sai1_tx_nonzero_counts(trace: &str, skip: usize) -> Vec<u64> {
         .collect()
 }
 
+/// Baseline used by the L6 recorder probe. The last line may have no signature.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct L6RecorderBaseline {
+    pub count: usize,
+    pub signature: Option<(String, String)>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct L6RecorderSample {
+    pub at_ms: u64,
+    pub first: String,
+    pub last: String,
+}
+fn field<'a>(line: &'a str, name: &str) -> Option<&'a str> {
+    line.split_whitespace()
+        .find_map(|part| part.strip_prefix(&format!("{name}=")))
+}
+fn signature(line: &str) -> Option<(String, String)> {
+    Some((
+        field(line, "first")?.to_ascii_lowercase(),
+        field(line, "last")?.to_ascii_lowercase(),
+    ))
+}
+pub fn l6_recorder_baseline(trace: &str) -> L6RecorderBaseline {
+    let lines = trace
+        .lines()
+        .filter(|line| line.starts_with(SAI1_TX_PREFIX))
+        .collect::<Vec<_>>();
+    L6RecorderBaseline {
+        count: lines.len(),
+        signature: lines.last().and_then(|line| signature(line)),
+    }
+}
+pub fn l6_recorder_samples(trace: &str, baseline: &L6RecorderBaseline) -> Vec<L6RecorderSample> {
+    trace
+        .lines()
+        .filter(|line| line.starts_with(SAI1_TX_PREFIX))
+        .skip(baseline.count)
+        .filter_map(|line| {
+            let at = field(line, "at")?;
+            let at_ms = at.strip_suffix("ms").unwrap_or(at).parse().ok()?;
+            let (first, last) = signature(line)?;
+            Some(L6RecorderSample { at_ms, first, last })
+        })
+        .collect()
+}
+pub fn l6_recorder_signature_changed(
+    baseline: &L6RecorderBaseline,
+    samples: &[L6RecorderSample],
+) -> bool {
+    baseline.signature.as_ref().is_some_and(|(first, last)| {
+        samples
+            .iter()
+            .any(|sample| sample.first != *first || sample.last != *last)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn l6_recorder_trace_preserves_partial_fields_case_and_baseline_rules() {
+        let baseline =
+            l6_recorder_baseline("l6 audio TX samples sai=00384000 first=ABCD last=FFFF\n");
+        assert_eq!(baseline.signature, Some(("abcd".into(), "ffff".into())));
+        let trace = "l6 audio TX samples sai=00384000 first=ABCD last=FFFF\nl6 audio TX samples sai=00384000 at=17ms first=ABCD last=ffff\nl6 audio TX samples sai=00384000 at=18 first=1234 last=ffff\nl6 audio TX samples sai=00384000 first=9999 last=ffff\n";
+        let samples = l6_recorder_samples(trace, &baseline);
+        assert_eq!(samples.len(), 2);
+        assert_eq!(samples[0].at_ms, 17);
+        assert!(l6_recorder_signature_changed(&baseline, &samples));
+        assert!(!l6_recorder_signature_changed(
+            &L6RecorderBaseline {
+                count: 0,
+                signature: None
+            },
+            &samples
+        ));
+    }
     #[test]
     fn counts_accept_missing_other_fields_and_skip_baseline() {
         let trace = "l6 audio TX samples sai=00384000 nonzero=9\nl6 audio TX samples sai=00384000 nonzero=broken\nl6 audio TX samples sai=00384000 nonzero=2\n";

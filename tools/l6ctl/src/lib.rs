@@ -3,8 +3,9 @@
 //! The socket interface is deliberately narrower than direct access. In
 //! particular its input replies confirm enqueueing, not guest acknowledgement.
 pub use l6max_host::audio_trace::{
-    SAI1_TX_PREFIX, TxSample as Sai1TxSample, sai1_tx_nonzero, sai1_tx_nonzero_counts,
-    sai1_tx_samples,
+    L6RecorderBaseline, L6RecorderSample, SAI1_TX_PREFIX, TxSample as Sai1TxSample,
+    l6_recorder_baseline, l6_recorder_samples, l6_recorder_signature_changed, sai1_tx_nonzero,
+    sai1_tx_nonzero_counts, sai1_tx_samples,
 };
 pub use l6max_host::control::Info;
 pub use l6max_host::debug::{Command as DebugCommand, Observation as DebugObservation};
@@ -29,6 +30,9 @@ pub use l6max_host::editor::{
     pad_file_count as editor_pad_file_count, pad_filename_valid as editor_pad_filename_valid,
 };
 pub use l6max_host::input_trace::panel_uart_count;
+pub use l6max_host::l6_recorder::{
+    Dma as L6RecorderDma, Event as L6RecorderEvent, Selection as L6RecorderSelection,
+};
 pub use l6max_host::mixer_level::MixerLevel;
 pub use l6max_host::panel_keys::Snapshot as PanelKeySnapshot;
 pub use l6max_host::update_bootloader::Outcome as InstallerOutcome;
@@ -518,6 +522,21 @@ impl<'a> OwnedControl<'a> {
             .as_ref()
             .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
         Ok(control::info(inputs, self.engine.model()))
+    }
+
+    /// Create a revision-guarded L6 recorder reader for a bounded transaction.
+    pub fn l6_recorder_reader_before(
+        &self,
+        deadline: std::time::Instant,
+        cancelled: impl FnMut() -> bool,
+    ) -> Result<l6max_host::l6_recorder::Reader, ControlError> {
+        l6max_host::l6_recorder::Reader::new(
+            self.main_qmp()?,
+            self.engine.model(),
+            deadline,
+            cancelled,
+        )
+        .map_err(ControlError::Rejected)
     }
 
     /// Sample the host's channel counters without opening a control socket.

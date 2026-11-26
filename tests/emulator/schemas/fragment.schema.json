@@ -5358,7 +5358,7 @@
           "additionalProperties": false,
           "properties": {
             "action": {
-              "const": "l6-recorder-playback",
+              "const": "l6-recorder-begin",
               "type": "string"
             },
             "guest_timeout_ms": {
@@ -5394,6 +5394,524 @@
           "required": [
             "action",
             "target"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "l6-recorder-press",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "l6-recorder-dispatcher",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "l6-recorder-assert-event",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "l6-recorder-handler",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "l6-recorder-assert-selection",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "l6-recorder-callback",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "l6-recorder-assert-callback",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "l6-recorder-observe",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "l6-recorder-release",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "l6-recorder-sample",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "l6-recorder-evidence",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "l6-recorder-assert-trace",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "l6-recorder-assert-dma",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "l6-recorder-end",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
           ],
           "type": "object"
         },
@@ -14272,7 +14790,21 @@
             "sound-pad-assert-led",
             "sound-pad-assert-meter",
             "sound-pad-finish",
-            "l6-recorder-playback",
+            "l6-recorder-begin",
+            "l6-recorder-press",
+            "l6-recorder-dispatcher",
+            "l6-recorder-assert-event",
+            "l6-recorder-handler",
+            "l6-recorder-assert-selection",
+            "l6-recorder-callback",
+            "l6-recorder-assert-callback",
+            "l6-recorder-observe",
+            "l6-recorder-release",
+            "l6-recorder-sample",
+            "l6-recorder-evidence",
+            "l6-recorder-assert-trace",
+            "l6-recorder-assert-dma",
+            "l6-recorder-end",
             "l6max-recorder-playback",
             "expect-memory",
             "wait-memory",

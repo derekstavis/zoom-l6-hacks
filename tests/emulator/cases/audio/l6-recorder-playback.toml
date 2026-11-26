@@ -24,7 +24,77 @@ symbol = "rec_selected_key"
 bytes = [0, 166, 14, 0, 0, 0, 0, 0]
 
 [[step]]
-action = "l6-recorder-playback"
+action = "l6-recorder-begin"
 target = 4
+guest_timeout_ms = 20000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-recorder-press"
+guest_timeout_ms = 20000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-recorder-dispatcher"
+guest_timeout_ms = 20000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-recorder-assert-event"
+guest_timeout_ms = 20000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-recorder-handler"
+guest_timeout_ms = 20000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-recorder-assert-selection"
+guest_timeout_ms = 20000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-recorder-callback"
+guest_timeout_ms = 20000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-recorder-assert-callback"
+guest_timeout_ms = 20000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-recorder-observe"
+guest_timeout_ms = 20000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-recorder-release"
+guest_timeout_ms = 20000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-recorder-sample"
+guest_timeout_ms = 20000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-recorder-evidence"
+guest_timeout_ms = 20000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-recorder-assert-trace"
+guest_timeout_ms = 20000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-recorder-assert-dma"
+guest_timeout_ms = 20000
+wall_timeout_s = 600
+
+[[step]]
+action = "l6-recorder-end"
 guest_timeout_ms = 20000
 wall_timeout_s = 600

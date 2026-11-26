@@ -18,6 +18,177 @@ guest_timeout_ms = 60000
 wall_timeout_s = 900
 
 [[step]]
-action = "l6max-channel-signal-pwm"
+action = "signal-pwm-begin"
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-warmup"
+start = 0
+end = 4
+value = 8000000.0
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-drain"
+band = 0
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-stage"
+band = 0
+start = 0
+end = 4
+value = 1600000.0
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-stage"
+band = 0
+start = 0
+end = 4
+value = 2250000.0
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-stage"
+band = 0
+start = 0
+end = 4
+value = 3200000.0
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-stage"
+band = 0
+start = 0
+end = 4
+value = 4550000.0
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-stage"
+band = 0
+start = 0
+end = 4
+value = 8000000.0
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-assert"
+band = 0
+channel = 0
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-assert"
+band = 0
+channel = 1
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-assert"
+band = 0
+channel = 2
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-assert"
+band = 0
+channel = 3
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-drain"
+band = 1
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-stage"
+band = 1
+start = 4
+end = 12
+value = 9000000.0
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-stage"
+band = 1
+start = 4
+end = 12
+value = 12800000.0
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-stage"
+band = 1
+start = 4
+end = 12
+value = 18000000.0
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-stage"
+band = 1
+start = 4
+end = 12
+value = 25500000.0
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-stage"
+band = 1
+start = 4
+end = 12
+value = 40000000.0
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-assert"
+band = 1
+channel = 4
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-assert"
+band = 1
+channel = 5
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-assert"
+band = 1
+channel = 6
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-assert"
+band = 1
+channel = 7
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "signal-pwm-end"
 guest_timeout_ms = 60000
 wall_timeout_s = 120

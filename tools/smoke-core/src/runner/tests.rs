@@ -1263,6 +1263,25 @@ fn unsupported_operations_and_switch_semantics_fail_before_boot() {
 }
 
 #[test]
+fn signal_pwm_requires_two_complete_ordered_bands_and_bounded_stimuli() {
+    let text = include_str!("../../../../tests/emulator/cases/panel/l6max-channel-signal-pwm.toml");
+    assert!(Scenario::parse(text).is_ok());
+    assert!(Scenario::parse(&text.replacen("value = 2250000.0", "value = 1600000.0", 1)).is_err());
+    assert!(Scenario::parse(&text.replacen("channel = 1", "channel = 0", 1)).is_err());
+    assert!(
+        Scenario::parse(&text.replacen(
+            "action = \"signal-pwm-end\"",
+            "action = \"signal-pwm-drain\"\nband = 1",
+            1
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&text.replacen("models = [\"l6max\"]", "models = [\"l6\"]", 1)).is_err()
+    );
+}
+
+#[test]
 fn l6_sweep_requires_complete_unique_targets_and_unchanged_budget() {
     let text = include_str!("../../../../tests/emulator/cases/panel/l6-input-sweep.toml");
     assert!(Scenario::parse(text).is_ok());

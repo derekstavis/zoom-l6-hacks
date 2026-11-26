@@ -24,6 +24,7 @@ mod midi_probe;
 mod mode_primitives;
 mod panel;
 mod sd;
+mod signal_pwm;
 mod usb;
 
 use audio::*;
@@ -661,7 +662,26 @@ pub enum Operation {
         pressed: bool,
     },
     L6maxPanelKeyEnd,
-    L6maxChannelSignalPwm,
+    SignalPwmBegin,
+    SignalPwmWarmup {
+        start: u8,
+        end: u8,
+        value: f32,
+    },
+    SignalPwmDrain {
+        band: u8,
+    },
+    SignalPwmStage {
+        band: u8,
+        start: u8,
+        end: u8,
+        value: f32,
+    },
+    SignalPwmAssert {
+        band: u8,
+        channel: u8,
+    },
+    SignalPwmEnd,
     L6LevelMeterPwm,
 }
 
@@ -715,7 +735,7 @@ fn validate_native_midi_capabilities(
                     | crate::Action::L6MidiProbeBegin
                     | crate::Action::L6UsbStartup
                     | crate::Action::L6DinEventDispatch { .. }
-                    | crate::Action::L6maxChannelSignalPwm
+                    | crate::Action::SignalPwmBegin
                     | crate::Action::L6LevelMeterPwm
             )
     });
@@ -763,7 +783,7 @@ pub(crate) fn prepare_with_report(
     if scenario.step.iter().any(|step| {
         matches!(
             step.action,
-            crate::Action::L6maxChannelSignalPwm | crate::Action::L6LevelMeterPwm
+            crate::Action::SignalPwmBegin | crate::Action::L6LevelMeterPwm
         )
     }) {
         options.usb_enabled = false;
@@ -968,6 +988,7 @@ pub struct State {
     editor_playback: Option<editor::EditorPlaybackScope>,
     editor_assignment: Option<editor::EditorAssignmentScope>,
     l6_input_sweep: Option<l6_input_sweep::Scope>,
+    signal_pwm: Option<signal_pwm::Scope>,
     l6_indicator: Option<L6IndicatorScope>,
     gdb: Option<l6max_diagnostics::gdb::Gdb>,
     host_midi: Option<Box<dyn crate::host_midi::Client>>,
@@ -1450,7 +1471,7 @@ mod native_midi_capability_tests {
                 cc: 1,
                 value: 1,
             },
-            crate::Action::L6maxChannelSignalPwm,
+            crate::Action::SignalPwmBegin,
             crate::Action::L6LevelMeterPwm,
         ] {
             let mut step = scenario.step[0].clone();

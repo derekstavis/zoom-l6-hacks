@@ -377,7 +377,11 @@ impl State {
         self.ui_pad = None;
         self.editor_playback = None;
         self.editor_assignment = None;
+        self.signal_pwm = None;
         panel.map(|_| ())
+    }
+    pub fn has_signal_pwm(&self) -> bool {
+        self.signal_pwm.is_some()
     }
     pub fn has_l6_sweep(&self) -> bool {
         self.l6_input_sweep.is_some()
@@ -448,6 +452,44 @@ impl State {
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
     ) -> Result<Value, String> {
+        if let Some(scope) = self.signal_pwm.as_ref() {
+            let valid = match operation {
+                Operation::SignalPwmWarmup {
+                    start: 0,
+                    end: 4,
+                    value,
+                } => scope.phase == 0 && value.is_finite() && value > 0.0 && value <= 40_000_000.0,
+                Operation::SignalPwmDrain { band } => scope.phase == 1 && band == scope.band,
+                Operation::SignalPwmStage {
+                    band,
+                    start,
+                    end,
+                    value,
+                } => {
+                    scope.phase == 2
+                        && band == scope.band
+                        && (start, end) == if band == 0 { (0, 4) } else { (4, 12) }
+                        && value.is_finite()
+                        && value > 0.0
+                        && value <= 40_000_000.0
+                }
+                Operation::SignalPwmAssert { band, channel } => {
+                    scope.phase == 3
+                        && band == scope.band
+                        && channel == band * 4 + scope.assertions as u8
+                }
+                Operation::SignalPwmEnd => scope.phase == 4,
+                _ => false,
+            };
+            if !valid {
+                self.signal_pwm = None;
+                return Err("SIGNAL PWM interrupted or out of order".into());
+            }
+            if let Err(error) = scope.check(session, guest_timeout_ms, wall_timeout_s) {
+                self.signal_pwm = None;
+                return Err(error);
+            }
+        }
         if let Some(scope) = self.l6_input_sweep.as_ref() {
             let expected = match operation {
                 Operation::L6SweepRejectMain { target: 0 } => Some(0),
@@ -2241,13 +2283,70 @@ impl State {
                 self.panel_keys.take();
                 Ok(json!({"complete":true}))
             }
-            Operation::L6maxChannelSignalPwm => Ok(run_l6max_channel_signal_pwm(
-                session,
-                options,
-                guest_timeout_ms,
-                wall_timeout_s,
-            )
-            .map_err(std::io::Error::other)?),
+            Operation::SignalPwmBegin => {
+                self.signal_pwm = Some(signal_pwm::Scope::begin(
+                    session,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            operation @ (Operation::SignalPwmWarmup { .. }
+            | Operation::SignalPwmDrain { .. }
+            | Operation::SignalPwmStage { .. }
+            | Operation::SignalPwmAssert { .. }
+            | Operation::SignalPwmEnd) => {
+                let scope = self
+                    .signal_pwm
+                    .as_mut()
+                    .ok_or("SIGNAL PWM scope is not active")?;
+                let value = match operation {
+                    Operation::SignalPwmWarmup { start, end, value } => {
+                        scope.warmup(session, start, end, value)?
+                    }
+                    Operation::SignalPwmDrain { .. } => scope.drain(session)?,
+                    Operation::SignalPwmStage {
+                        band,
+                        start,
+                        end,
+                        value,
+                    } => scope.stage(session, band, start, end, value)?,
+                    Operation::SignalPwmAssert { band, channel } => {
+                        scope.assert_channel(band, channel)?
+                    }
+                    Operation::SignalPwmEnd => scope.finish(options)?,
+                    _ => unreachable!(),
+                };
+                scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+                match operation {
+                    Operation::SignalPwmWarmup { .. } => scope.phase = 1,
+                    Operation::SignalPwmDrain { .. } => {
+                        scope.phase = 2;
+                        scope.stages = 0;
+                    }
+                    Operation::SignalPwmStage { .. } => {
+                        scope.stages += 1;
+                        if scope.stages == 5 {
+                            scope.phase = 3;
+                            scope.assertions = 0;
+                        }
+                    }
+                    Operation::SignalPwmAssert { .. } => {
+                        scope.assertions += 1;
+                        if scope.assertions == 4 {
+                            if scope.band == 0 {
+                                scope.band = 1;
+                                scope.phase = 1;
+                            } else {
+                                scope.phase = 4;
+                            }
+                        }
+                    }
+                    Operation::SignalPwmEnd => self.signal_pwm = None,
+                    _ => unreachable!(),
+                };
+                Ok(value)
+            }
             Operation::L6LevelMeterPwm => {
                 Ok(
                     run_l6_level_meter_pwm(session, options, guest_timeout_ms, wall_timeout_s)

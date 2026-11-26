@@ -359,7 +359,7 @@ message delivered just after the interval.
 | `l6-usb-startup-begin`, `l6-usb-startup-capture`, `l6-usb-startup-assert-hits`, `l6-usb-startup-assert-writes`, `l6-usb-startup-assert-replay`, `l6-usb-startup-end` | — | First-step L6 scope. The capture interleaves three breakpoint observations and timed input replay, then freezes the controller trace for separate assertions. |
 | `l6-sweep-*` | `target`, `index` on selected steps | Exercise all L6 panel targets and encoders, compare UART reports, and check unsupported inputs are rejected. The contiguous L6-only scope shares a deadline; only successfully verified rejection steps update the runner’s permitted counts. |
 | `l6-din-sweep` | — | Sweep supported L6 DIN values and record dispatch behavior |
-| `l6max-timing-*` | `wall_ms`, `guest_ms`, `target`, `hold_ms`, `pairs`, `index` and `steps` on selected steps | L6max: an ordered, shared-deadline scope pauses MAIN and panel, verifies queued input and clock behavior, resumes, checks UART reports and display change, then checks one encoder report. Wall observations and guest-time observations are separate. |
+| `l6max-timing-*` | `wall_ms`, `guest_ms`, `target`, `hold_ms`, `pairs`, `index` and `steps` on selected steps | L6max: an ordered, shared-deadline scope pauses MAIN and panel, captures one input snapshot and separately checks queued input and clock behavior, resumes, checks UART reports and display change, then checks one encoder report. Wall observations and guest-time observations are separate. |
 
 First activation shares the existing knob preflight debugger. Journal state
 and cleanup ordering live in `l6max-host`; the debugger lease, semaphore

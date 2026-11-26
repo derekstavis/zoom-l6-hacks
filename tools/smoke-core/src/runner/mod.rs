@@ -2357,9 +2357,19 @@ impl Runner {
                         devices::Operation::L6maxTimingObservePaused { wall_ms },
                     ));
                 }
-                Action::L6maxTimingAssertPaused => {
+                Action::L6maxTimingCapturePaused => {
                     return Ok(Progress::Device(
-                        devices::Operation::L6maxTimingAssertPaused,
+                        devices::Operation::L6maxTimingCapturePaused,
+                    ));
+                }
+                Action::L6maxTimingAssertPausedClock => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6maxTimingAssertPausedClock,
+                    ));
+                }
+                Action::L6maxTimingAssertPausedInput => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6maxTimingAssertPausedInput,
                     ));
                 }
                 Action::L6maxTimingResume => {

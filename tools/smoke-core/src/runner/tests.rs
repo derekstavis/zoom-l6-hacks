@@ -2511,7 +2511,9 @@ fn l6max_timing_requires_ordered_scope_and_matching_budgets() {
         ("enqueue", "target=1\nhold_ms=50\npairs=2\n"),
         ("wait-first", ""),
         ("observe-paused", "wall_ms=700\n"),
-        ("assert-paused", ""),
+        ("capture-paused", ""),
+        ("assert-paused-clock", ""),
+        ("assert-paused-input", ""),
         ("resume", ""),
         ("wait-queued", ""),
         ("wait-reports", ""),
@@ -2537,6 +2539,19 @@ fn l6max_timing_requires_ordered_scope_and_matching_budgets() {
         ))
         .is_err()
     );
+    for action in [
+        "capture-paused",
+        "assert-paused-clock",
+        "assert-paused-input",
+    ] {
+        assert!(
+            Scenario::parse(
+                &scenario.replace(&format!("[[step]]\naction='l6max-timing-{action}'\n"), "")
+            )
+            .is_err(),
+            "missing {action}"
+        );
+    }
     assert!(Scenario::parse(&scenario.replace("models=['l6max']", "models=['l6']")).is_err());
 }
 

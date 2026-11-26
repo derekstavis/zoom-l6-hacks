@@ -1395,18 +1395,20 @@ impl Scenario {
                     Action::L6maxTimingEnqueue { .. } => Some(2),
                     Action::L6maxTimingWaitFirst => Some(3),
                     Action::L6maxTimingObservePaused { .. } => Some(4),
-                    Action::L6maxTimingAssertPaused => Some(5),
-                    Action::L6maxTimingResume => Some(6),
-                    Action::L6maxTimingWaitQueued => Some(7),
-                    Action::L6maxTimingWaitReports => Some(8),
-                    Action::L6maxTimingAssertReports => Some(9),
-                    Action::L6maxTimingObserveDisplay { .. } => Some(10),
-                    Action::L6maxTimingAssertDisplay => Some(11),
-                    Action::L6maxTimingEncoder { .. } => Some(12),
-                    Action::L6maxTimingWaitEncoder => Some(13),
-                    Action::L6maxTimingWaitEncoderReport => Some(14),
-                    Action::L6maxTimingAssertEncoder => Some(15),
-                    Action::L6maxTimingEnd => Some(16),
+                    Action::L6maxTimingCapturePaused => Some(5),
+                    Action::L6maxTimingAssertPausedClock => Some(6),
+                    Action::L6maxTimingAssertPausedInput => Some(7),
+                    Action::L6maxTimingResume => Some(8),
+                    Action::L6maxTimingWaitQueued => Some(9),
+                    Action::L6maxTimingWaitReports => Some(10),
+                    Action::L6maxTimingAssertReports => Some(11),
+                    Action::L6maxTimingObserveDisplay { .. } => Some(12),
+                    Action::L6maxTimingAssertDisplay => Some(13),
+                    Action::L6maxTimingEncoder { .. } => Some(14),
+                    Action::L6maxTimingWaitEncoder => Some(15),
+                    Action::L6maxTimingWaitEncoderReport => Some(16),
+                    Action::L6maxTimingAssertEncoder => Some(17),
+                    Action::L6maxTimingEnd => Some(18),
                     _ => None,
                 };
                 match (&step.action, input_timing, timing_phase) {
@@ -1417,7 +1419,7 @@ impl Scenario {
                         if phase == actual
                             && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
                     {
-                        input_timing = if phase == 16 {
+                        input_timing = if phase == 18 {
                             None
                         } else {
                             Some((phase + 1, guest, wall))

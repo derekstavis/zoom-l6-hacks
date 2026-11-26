@@ -13,6 +13,7 @@ pub(super) struct Scope {
     paused_at: Instant,
     before_display: [u8; 1024],
     before: Option<InputCounters>,
+    paused: Option<InputCounters>,
     presses: usize,
     releases: usize,
     pressed: usize,
@@ -100,6 +101,7 @@ impl Scope {
             paused_at,
             before_display,
             before: None,
+            paused: None,
             presses: 0,
             releases: 0,
             pressed: 0,
@@ -223,15 +225,39 @@ impl Scope {
         )?;
         Ok(json!({"observed_wall_ms":ms}))
     }
-    pub(super) fn assert_paused(&self, s: &Session) -> Result<Value, String> {
-        let before = self.before.as_ref().ok_or("missing input baseline")?;
+    pub(super) fn capture_paused(&mut self, s: &Session) -> Result<Value, String> {
         let now = Self::input(s)?;
-        if now.applied != before.applied + 1 || now.guest_ms != before.guest_ms {
+        let result = json!({"guest_ms":now.guest_ms,"applied":now.applied});
+        self.paused = Some(now);
+        Ok(result)
+    }
+    pub(super) fn assert_paused_clock(&self) -> Result<Value, String> {
+        let before = self.before.as_ref().ok_or("missing input baseline")?;
+        let now = self
+            .paused
+            .as_ref()
+            .ok_or("missing paused input snapshot")?;
+        if now.guest_ms != before.guest_ms {
             return Err(format!(
-                "input progressed while paused: before={before:?}, after={now:?}"
+                "guest clock advanced while paused: before={}, after={}",
+                before.guest_ms, now.guest_ms
             ));
         }
-        Ok(json!({"guest_clock_stopped":true,"applied":1}))
+        Ok(json!({"guest_clock_stopped":true}))
+    }
+    pub(super) fn assert_paused_input(&self) -> Result<Value, String> {
+        let before = self.before.as_ref().ok_or("missing input baseline")?;
+        let now = self
+            .paused
+            .as_ref()
+            .ok_or("missing paused input snapshot")?;
+        if now.applied != before.applied + 1 {
+            return Err(format!(
+                "expected one applied input while paused: before={}, after={}",
+                before.applied, now.applied
+            ));
+        }
+        Ok(json!({"applied":1}))
     }
     pub(super) fn resume(&mut self, s: &Session) -> Result<Value, String> {
         self.check(s, self.guest_budget, self.wall_budget)?;

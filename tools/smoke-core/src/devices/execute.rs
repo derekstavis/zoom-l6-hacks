@@ -749,18 +749,20 @@ impl State {
                 Operation::L6maxTimingEnqueue { .. } => Some(2),
                 Operation::L6maxTimingWaitFirst => Some(3),
                 Operation::L6maxTimingObservePaused { .. } => Some(4),
-                Operation::L6maxTimingAssertPaused => Some(5),
-                Operation::L6maxTimingResume => Some(6),
-                Operation::L6maxTimingWaitQueued => Some(7),
-                Operation::L6maxTimingWaitReports => Some(8),
-                Operation::L6maxTimingAssertReports => Some(9),
-                Operation::L6maxTimingObserveDisplay { .. } => Some(10),
-                Operation::L6maxTimingAssertDisplay => Some(11),
-                Operation::L6maxTimingEncoder { .. } => Some(12),
-                Operation::L6maxTimingWaitEncoder => Some(13),
-                Operation::L6maxTimingWaitEncoderReport => Some(14),
-                Operation::L6maxTimingAssertEncoder => Some(15),
-                Operation::L6maxTimingEnd => Some(16),
+                Operation::L6maxTimingCapturePaused => Some(5),
+                Operation::L6maxTimingAssertPausedClock => Some(6),
+                Operation::L6maxTimingAssertPausedInput => Some(7),
+                Operation::L6maxTimingResume => Some(8),
+                Operation::L6maxTimingWaitQueued => Some(9),
+                Operation::L6maxTimingWaitReports => Some(10),
+                Operation::L6maxTimingAssertReports => Some(11),
+                Operation::L6maxTimingObserveDisplay { .. } => Some(12),
+                Operation::L6maxTimingAssertDisplay => Some(13),
+                Operation::L6maxTimingEncoder { .. } => Some(14),
+                Operation::L6maxTimingWaitEncoder => Some(15),
+                Operation::L6maxTimingWaitEncoderReport => Some(16),
+                Operation::L6maxTimingAssertEncoder => Some(17),
+                Operation::L6maxTimingEnd => Some(18),
                 _ => None,
             };
             if expected != Some(context.phase)
@@ -2745,7 +2747,9 @@ impl State {
             | Operation::L6maxTimingEnqueue { .. }
             | Operation::L6maxTimingWaitFirst
             | Operation::L6maxTimingObservePaused { .. }
-            | Operation::L6maxTimingAssertPaused
+            | Operation::L6maxTimingCapturePaused
+            | Operation::L6maxTimingAssertPausedClock
+            | Operation::L6maxTimingAssertPausedInput
             | Operation::L6maxTimingResume
             | Operation::L6maxTimingWaitQueued
             | Operation::L6maxTimingWaitReports
@@ -2773,7 +2777,9 @@ impl State {
                     Operation::L6maxTimingObservePaused { wall_ms } => {
                         context.observe_paused(session, wall_ms)
                     }
-                    Operation::L6maxTimingAssertPaused => context.assert_paused(session),
+                    Operation::L6maxTimingCapturePaused => context.capture_paused(session),
+                    Operation::L6maxTimingAssertPausedClock => context.assert_paused_clock(),
+                    Operation::L6maxTimingAssertPausedInput => context.assert_paused_input(),
                     Operation::L6maxTimingResume => context.resume(session),
                     Operation::L6maxTimingWaitQueued => context.wait_queued(session),
                     Operation::L6maxTimingWaitReports => context.wait_reports(session, options),

@@ -1319,7 +1319,9 @@ pub enum Action {
     L6maxTimingObservePaused {
         wall_ms: u32,
     },
-    L6maxTimingAssertPaused,
+    L6maxTimingCapturePaused,
+    L6maxTimingAssertPausedClock,
+    L6maxTimingAssertPausedInput,
     L6maxTimingResume,
     L6maxTimingWaitQueued,
     L6maxTimingWaitReports,

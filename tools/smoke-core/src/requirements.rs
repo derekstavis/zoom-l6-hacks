@@ -188,7 +188,9 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6maxTimingEnqueue { .. }
         | Action::L6maxTimingWaitFirst
         | Action::L6maxTimingObservePaused { .. }
-        | Action::L6maxTimingAssertPaused
+        | Action::L6maxTimingCapturePaused
+        | Action::L6maxTimingAssertPausedClock
+        | Action::L6maxTimingAssertPausedInput
         | Action::L6maxTimingResume
         | Action::L6maxTimingWaitQueued
         | Action::L6maxTimingWaitReports

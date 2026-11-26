@@ -635,11 +635,8 @@ impl Runner {
                         value,
                     }));
                 }
-                Action::HostMidiSendAndExpectRingUnchanged {
+                Action::ExpectRingUnchanged {
                     channel,
-                    controller,
-                    value,
-                    ring,
                     checkpoint,
                     observe_wall_ms,
                 } => {
@@ -649,16 +646,13 @@ impl Runner {
                         .ok_or("checkpoint not executed for this model")?
                         .data
                         .indicators;
-                    return Ok(Progress::Device(
-                        devices::Operation::HostMidiSendAndExpectRingUnchanged {
-                            channel,
-                            controller,
-                            value,
-                            ring,
-                            before,
-                            observe_wall_ms,
-                        },
-                    ));
+                    return Ok(Progress::Device(devices::Operation::ExpectRingChanged {
+                        channel,
+                        before,
+                        expected_change: false,
+                        observe_wall_ms: Some(observe_wall_ms),
+                        midi_transaction: true,
+                    }));
                 }
                 Action::ExpectRingChanged {
                     channel,

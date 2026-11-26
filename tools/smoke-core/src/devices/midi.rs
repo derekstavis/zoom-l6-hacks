@@ -815,38 +815,6 @@ impl State {
             let receipt = l6ctl::OwnedControl::new(&session.engine).encoder(1, steps)?;
             return Ok(json!({"channel":receipt.channel,"steps":receipt.steps}));
         }
-        if let Operation::HostMidiSendAndExpectRingUnchanged {
-            channel,
-            controller,
-            value,
-            ring,
-            before,
-            observe_wall_ms,
-        } = operation
-        {
-            self.run_declarative_midi(
-                session,
-                Operation::HostMidiSendCc {
-                    channel,
-                    controller,
-                    value,
-                },
-                guest_timeout_ms,
-                wall_timeout_s,
-            )?;
-            return self.run_declarative_midi(
-                session,
-                Operation::ExpectRingChanged {
-                    channel: ring,
-                    before,
-                    expected_change: false,
-                    observe_wall_ms: Some(observe_wall_ms),
-                    midi_transaction: true,
-                },
-                guest_timeout_ms,
-                wall_timeout_s,
-            );
-        }
         let result = match operation {
             Operation::EnqueueEncoder {
                 channel,

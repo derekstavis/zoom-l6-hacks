@@ -572,11 +572,8 @@ pub enum Action {
         controller: u8,
         value: u8,
     },
-    HostMidiSendAndExpectRingUnchanged {
-        channel: u8,
-        controller: u8,
-        value: u8,
-        ring: usize,
+    ExpectRingUnchanged {
+        channel: usize,
         checkpoint: String,
         observe_wall_ms: u32,
     },

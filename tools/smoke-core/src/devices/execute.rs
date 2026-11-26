@@ -3260,7 +3260,6 @@ impl State {
             | Operation::HostMidiExpectCc { .. }
             | Operation::HostMidiSettle { .. }
             | Operation::HostMidiSendCc { .. }
-            | Operation::HostMidiSendAndExpectRingUnchanged { .. }
             | Operation::ExpectRingChanged { .. }) => {
                 self.run_declarative_midi(session, operation, guest_timeout_ms, wall_timeout_s)
             }

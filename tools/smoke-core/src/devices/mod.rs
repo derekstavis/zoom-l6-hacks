@@ -228,14 +228,6 @@ pub enum Operation {
         controller: u8,
         value: u8,
     },
-    HostMidiSendAndExpectRingUnchanged {
-        channel: u8,
-        controller: u8,
-        value: u8,
-        ring: usize,
-        before: [u32; 8],
-        observe_wall_ms: u32,
-    },
     ExpectRingChanged {
         channel: usize,
         before: [u32; 8],

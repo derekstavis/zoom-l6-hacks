@@ -574,6 +574,11 @@ pub fn step_label(action: &crate::Action) -> String {
         }
         Action::HostMidiExpectCount { count } => format!("Wait for {count} MIDI messages"),
         Action::HostMidiSettle { guest_ms } => format!("Settle MIDI for {guest_ms} ms guest time"),
+        Action::ExpectRingUnchanged {
+            channel,
+            observe_wall_ms,
+            ..
+        } => format!("Observe ring {channel} unchanged ({observe_wall_ms} ms wall time)"),
         Action::ExpectRingChanged { channel, .. } => {
             format!("Wait for channel {channel} ring change")
         }

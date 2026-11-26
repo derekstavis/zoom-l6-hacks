@@ -721,14 +721,14 @@
     "suites": [
       "full"
     ],
-    "definition": "cf125ba602067dd3376dcf4d54299c08d1451ef8575df14679d7bb1e71cdfc49"
+    "definition": "71ad991ec6f0e07738c61a2eed44a367558e2ffe10598ad229ca56b7bfad5164"
   },
   {
     "case": "l6max-direct-midi-sync-fresh",
     "model": "l6max",
     "backend": "headless",
     "suites": [],
-    "definition": "df690fce9873912e0fa589c65ae7061a9faf8860616380fb86b5fc159fd449b3"
+    "definition": "8f8a145eb748732fc89720de1c11454d1af300498882635698c8439c22f58c2c"
   },
   {
     "case": "l6max-eq-audio-update",
@@ -757,7 +757,7 @@
     "suites": [
       "full"
     ],
-    "definition": "0d0108eead545849cd942998951210025c841108acab7308429e4b79376e9bd4"
+    "definition": "ae3fbdd0919cab7b664b3eb3789dcbb7c06f1b9461f9c5d3526a61e9f9fad023"
   },
   {
     "case": "l6max-patch-heap",

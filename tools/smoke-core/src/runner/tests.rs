@@ -108,6 +108,42 @@ fn direct_midi_cable_is_range_checked() {
     assert!(Scenario::parse(&source.replace("cable=5", "cable=16")).is_err());
 }
 #[test]
+fn negative_midi_ring_observation_requires_adjacent_send_and_matching_budget() {
+    let prefix = "version=1\nname='negative-midi'\nmodels=['l6','l6max']\nbackends=['headless']\n[[step]]\naction='checkpoint'\nname='before'\n";
+    let send = "[[step]]\naction='host-midi-send-cc'\nchannel=0\ncontroller=81\nvalue=100\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
+    let observe = "[[step]]\naction='expect-ring-unchanged'\nchannel=1\ncheckpoint='before'\nobserve_wall_ms=3000\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
+    assert!(Scenario::parse(&format!("{prefix}{send}{observe}")).is_ok());
+    assert!(Scenario::parse(&format!("{prefix}{observe}")).is_err());
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}{send}[[step]]\naction='delay'\nguest_ms=1\n{observe}"
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}{send}{}",
+            observe.replace("wall_timeout_s=30", "wall_timeout_s=29")
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}{send}{}",
+            observe.replace("channel=1", "channel=7")
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}{send}{}",
+            observe.replace("observe_wall_ms=3000", "observe_wall_ms=0")
+        ))
+        .is_err()
+    );
+}
+
+#[test]
 fn display_after_press_requires_ack_and_new_display() {
     let scenario = Scenario::parse("version=1\nname='press-screen'\nmodels=['l6max']\n[[step]]\naction='press'\ncontrol='recorder.down'\n[[step]]\naction='expect-display-after-press'\n").unwrap();
     let logs = std::env::temp_dir().join(format!(

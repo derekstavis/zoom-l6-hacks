@@ -416,7 +416,7 @@ pub fn of(action: &Action) -> Requirement {
         | Action::HostMidiExpectCc { .. }
         | Action::HostMidiSettle { .. }
         | Action::HostMidiSendCc { .. }
-        | Action::HostMidiSendAndExpectRingUnchanged { .. }
+        | Action::ExpectRingUnchanged { .. }
         | Action::ExpectRingChanged { .. }
         | Action::UsbSysexBegin
         | Action::UsbSysexExchange { .. }

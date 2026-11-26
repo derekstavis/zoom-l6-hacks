@@ -184,9 +184,9 @@ USB endpoints with direct USB operations in the same scenario. The existing
 L6max DIN mixer setup uses direct USB descriptors and SysEx, so it cannot be
 combined with the native bridge in one scenario under this policy.
 `midi-encoder-alternate` alternates -4 and +4 turns so repeated checks avoid saturation.
-The negative cable check sends its CC and observes the ring in one operation; it
-samples immediately after sending and requires the entire declared wall window
-from that sample. Like the original polling check, it observes sampled states;
+The negative cable check declares the CC send and ring observation as adjacent
+steps with matching budgets. It requires the entire declared wall window from
+the first observation sample. Like the original polling check, it observes sampled states;
 a transient between samples is not guaranteed to be detected. Typed MIDI receive filters non-CC ALSA events. Connection
 retries honor the shared guest and wall limits while retaining the independent
 10-second discovery cap. Ring observations at or after the declared wall deadline
@@ -232,7 +232,7 @@ message delivered just after the interval.
 | `host-midi-connect` | — | Connect the model's native mixer endpoint and start the first MIDI transaction |
 | `direct-midi-connect` | `cable` | Start a bounded direct USB MIDI transaction on cable 0–15 |
 | `midi-encoder-alternate` | — | Enqueue the next alternating channel-1 encoder turn |
-| `host-midi-send-and-expect-ring-unchanged` | `channel`, `controller`, `value`, `ring`, `checkpoint`, `observe_wall_ms` | Send a CC and observe the specified ring for the full bounded wall interval in one operation |
+| `expect-ring-unchanged` | `channel`, `checkpoint`, `observe_wall_ms` | After an adjacent CC send, observe the ring for the full bounded wall interval from its first sample |
 | `host-midi-drain` | `quiet_wall_ms` | Drain the retained native session until no legacy control observation arrives for the declared wall interval, within the transaction budget |
 | `host-midi-expect-count` | `count` | Collect that many legacy control observations on the retained native session; preserve their order and remaining queue |
 | `host-midi-begin` | — | Start a new bounded transaction on the retained session |

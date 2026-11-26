@@ -2726,7 +2726,7 @@ impl Scenario {
                     }
                 }
                 Action::ExpectRingChanged { checkpoint, .. }
-                | Action::HostMidiSendAndExpectRingUnchanged { checkpoint, .. }
+                | Action::ExpectRingUnchanged { checkpoint, .. }
                 | Action::ExpectDisplay { checkpoint, .. }
                 | Action::ExpectScene {
                     checkpoint: Some(checkpoint),
@@ -3014,32 +3014,29 @@ impl Scenario {
                 return Err("direct-midi-connect cable must be 0..15".into());
             }
         }
-        for step in &value.step {
-            if let Action::HostMidiSendAndExpectRingUnchanged {
-                channel,
-                controller,
-                value: midi_value,
-                ring,
-                observe_wall_ms,
-                ..
-            } = &step.action
-            {
-                if *channel > 15
-                    || *controller > 127
-                    || *midi_value > 127
-                    || *ring == 0
-                    || *observe_wall_ms == 0
-                    || u64::from(*observe_wall_ms) > step.wall_timeout_s.saturating_mul(1000)
-                    || value
-                        .models
-                        .iter()
-                        .any(|model| step.applies_to(*model) && *ring > model.channels())
+        for model in &value.models {
+            let mut previous: Option<&super::Step> = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                if let Action::ExpectRingUnchanged {
+                    channel,
+                    observe_wall_ms,
+                    ..
+                } = &step.action
                 {
-                    return Err(
-                        "negative MIDI ring observation needs a valid ring and bounded wall window"
-                            .into(),
-                    );
+                    if *channel == 0
+                        || *channel > model.channels()
+                        || *observe_wall_ms == 0
+                        || u64::from(*observe_wall_ms) > step.wall_timeout_s.saturating_mul(1000)
+                        || !previous.is_some_and(|p| {
+                            matches!(p.action, Action::HostMidiSendCc { .. })
+                                && (p.guest_timeout_ms, p.wall_timeout_s)
+                                    == (step.guest_timeout_ms, step.wall_timeout_s)
+                        })
+                    {
+                        return Err("negative MIDI ring observation requires an adjacent CC send, valid ring and shared bounded window".into());
+                    }
                 }
+                previous = Some(step);
             }
         }
         for step in &value.step {

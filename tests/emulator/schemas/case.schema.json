@@ -4083,23 +4083,16 @@
           "additionalProperties": false,
           "properties": {
             "action": {
-              "const": "host-midi-send-and-expect-ring-unchanged",
+              "const": "expect-ring-unchanged",
               "type": "string"
             },
             "channel": {
-              "format": "uint8",
-              "maximum": 255,
+              "format": "uint",
               "minimum": 0,
               "type": "integer"
             },
             "checkpoint": {
               "type": "string"
-            },
-            "controller": {
-              "format": "uint8",
-              "maximum": 255,
-              "minimum": 0,
-              "type": "integer"
             },
             "guest_timeout_ms": {
               "default": 10000,
@@ -4119,21 +4112,10 @@
               "minimum": 0,
               "type": "integer"
             },
-            "ring": {
-              "format": "uint",
-              "minimum": 0,
-              "type": "integer"
-            },
             "setup_input": {
               "default": false,
               "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
               "type": "boolean"
-            },
-            "value": {
-              "format": "uint8",
-              "maximum": 255,
-              "minimum": 0,
-              "type": "integer"
             },
             "wall_timeout_s": {
               "default": 180,
@@ -4145,9 +4127,6 @@
           "required": [
             "action",
             "channel",
-            "controller",
-            "value",
-            "ring",
             "checkpoint",
             "observe_wall_ms"
           ],
@@ -20518,7 +20497,7 @@
             "host-midi-expect-cc",
             "host-midi-settle",
             "host-midi-send-cc",
-            "host-midi-send-and-expect-ring-unchanged",
+            "expect-ring-unchanged",
             "expect-ring-changed",
             "l6-midi-probe-begin",
             "l6-midi-probe-inject",

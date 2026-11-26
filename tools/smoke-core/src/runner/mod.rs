@@ -2078,8 +2078,27 @@ impl Runner {
                 Action::L6maxTapEnd => {
                     return Ok(Progress::Device(devices::Operation::L6maxTapEnd));
                 }
-                Action::L6UsbStartup => {
-                    return Ok(Progress::Device(devices::Operation::L6UsbStartup));
+                Action::L6UsbStartupBegin => {
+                    return Ok(Progress::Device(devices::Operation::L6UsbStartupBegin));
+                }
+                Action::L6UsbStartupCapture => {
+                    return Ok(Progress::Device(devices::Operation::L6UsbStartupCapture));
+                }
+                Action::L6UsbStartupAssertHits => {
+                    return Ok(Progress::Device(devices::Operation::L6UsbStartupAssertHits));
+                }
+                Action::L6UsbStartupAssertWrites => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6UsbStartupAssertWrites,
+                    ));
+                }
+                Action::L6UsbStartupAssertReplay => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6UsbStartupAssertReplay,
+                    ));
+                }
+                Action::L6UsbStartupEnd => {
+                    return Ok(Progress::Device(devices::Operation::L6UsbStartupEnd));
                 }
                 Action::L6DispatchBegin { group, cc, value } => {
                     return Ok(Progress::Device(devices::Operation::L6DispatchBegin {

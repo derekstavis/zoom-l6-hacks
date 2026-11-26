@@ -798,6 +798,43 @@ impl Scenario {
                 );
             }
         }
+        for model in &value.models {
+            let steps: Vec<_> = value.step.iter().filter(|s| s.applies_to(*model)).collect();
+            let is_usb_startup = |a: &Action| {
+                matches!(
+                    a,
+                    Action::L6UsbStartupBegin
+                        | Action::L6UsbStartupCapture
+                        | Action::L6UsbStartupAssertHits
+                        | Action::L6UsbStartupAssertWrites
+                        | Action::L6UsbStartupAssertReplay
+                        | Action::L6UsbStartupEnd
+                )
+            };
+            if let Some(start) = steps.iter().position(|s| is_usb_startup(&s.action)) {
+                let scope = steps
+                    .get(start..start + 6)
+                    .ok_or("incomplete L6 USB startup scope")?;
+                if *model != Model::L6
+                    || start != 0
+                    || !matches!(scope[0].action, Action::L6UsbStartupBegin)
+                    || !matches!(scope[1].action, Action::L6UsbStartupCapture)
+                    || !matches!(scope[2].action, Action::L6UsbStartupAssertHits)
+                    || !matches!(scope[3].action, Action::L6UsbStartupAssertWrites)
+                    || !matches!(scope[4].action, Action::L6UsbStartupAssertReplay)
+                    || !matches!(scope[5].action, Action::L6UsbStartupEnd)
+                    || scope.iter().any(|s| {
+                        (s.guest_timeout_ms, s.wall_timeout_s)
+                            != (scope[0].guest_timeout_ms, scope[0].wall_timeout_s)
+                    })
+                    || steps[start + 6..].iter().any(|s| is_usb_startup(&s.action))
+                {
+                    return Err(
+                        "L6 USB startup requires a first-step L6 scope and shared deadline".into(),
+                    );
+                }
+            }
+        }
         if value.backends.is_empty() {
             return Err("backends must contain headless and/or gui".into());
         }

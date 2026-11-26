@@ -11,6 +11,31 @@ no_sd = true
 wall_timeout_s = 600
 
 [[step]]
-action = "l6-usb-startup"
+action = "l6-usb-startup-begin"
+guest_timeout_ms = 65000
+wall_timeout_s = 300
+
+[[step]]
+action = "l6-usb-startup-capture"
+guest_timeout_ms = 65000
+wall_timeout_s = 300
+
+[[step]]
+action = "l6-usb-startup-assert-hits"
+guest_timeout_ms = 65000
+wall_timeout_s = 300
+
+[[step]]
+action = "l6-usb-startup-assert-writes"
+guest_timeout_ms = 65000
+wall_timeout_s = 300
+
+[[step]]
+action = "l6-usb-startup-assert-replay"
+guest_timeout_ms = 65000
+wall_timeout_s = 300
+
+[[step]]
+action = "l6-usb-startup-end"
 guest_timeout_ms = 65000
 wall_timeout_s = 300

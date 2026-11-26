@@ -392,6 +392,12 @@ close it to restore their previous run states and inspect errors. A failed
 restore is reported as an uncertain state requiring a guest restart; dropping
 the scope makes a bounded best-effort restore. It is not exposed on the CLI.
 
+`OwnedControl::debug_observer_before` coordinates an owned debugger with two
+initially paused guests for in-process breakpoint observations that interleave
+input replay. It owns the MAIN debugger lease and bounded guest status,
+resume and stop operations; the caller interprets observations and controls
+replay. This coordination API is not exposed on the socket or CLI.
+
 `OwnedControl::usb_storage_before` acquires exclusive in-process USB ownership
 and creates a mass-storage session with an absolute wall deadline and panel
 guest-time budget. Enumeration, BOT commands and FAT sector I/O use the same

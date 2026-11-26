@@ -129,7 +129,12 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6DispatchObserve
         | Action::L6DispatchSetter { .. }
         | Action::L6DispatchFinish => stock_on(L6),
-        Action::L6UsbStartup => Requirement {
+        Action::L6UsbStartupCapture
+        | Action::L6UsbStartupAssertHits
+        | Action::L6UsbStartupAssertWrites
+        | Action::L6UsbStartupAssertReplay
+        | Action::L6UsbStartupEnd => stock_on(L6),
+        Action::L6UsbStartupBegin => Requirement {
             first: true,
             ..stock_on(L6)
         },
@@ -620,11 +625,17 @@ mod tests {
             error.contains("l6-din-sweep-begin supports only l6"),
             "{error}"
         );
-        let late = Scenario::from_text(
-            "version=1\nname='t'\nmodels=['l6']\nbackends=['headless']\n[[step]]\naction='delay'\nguest_ms=1\n[[step]]\naction='l6-usb-startup'\n",
-        )
+        let usb = include_str!("../../../tests/emulator/cases/usb/l6-usb-startup.toml");
+        let late = Scenario::from_text(&usb.replacen(
+            "[[step]]",
+            "[[step]]\naction='delay'\nguest_ms=1\n[[step]]",
+            1,
+        ))
         .unwrap_err();
-        assert!(late.contains("first step"), "{late}");
+        assert!(
+            late.contains("first") || late.contains("first-step"),
+            "{late}"
+        );
         let gui = Scenario::from_text(
             "version=1\nname='t'\nmodels=['l6max']\nbackends=['headless','gui']\n[[step]]\naction='usb-descriptors'\n",
         )

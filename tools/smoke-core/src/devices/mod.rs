@@ -32,6 +32,7 @@ mod signal_pwm;
 mod tap_handler;
 mod timing;
 mod usb;
+mod usb_startup;
 mod usb_storage_steps;
 
 use audio::*;
@@ -679,7 +680,13 @@ pub enum Operation {
     L6GpioSettle,
     L6GpioEnd,
 
-    L6UsbStartup,
+    L6UsbStartupBegin,
+    L6UsbStartupCapture,
+    L6UsbStartupAssertHits,
+    L6UsbStartupAssertWrites,
+    L6UsbStartupAssertReplay,
+    L6UsbStartupEnd,
+
     L6DispatchBegin {
         group: u8,
         cc: u8,
@@ -885,7 +892,7 @@ fn validate_native_midi_capabilities(
                     | crate::Action::UiPadBegin { .. }
                     | crate::Action::L6DinSweepBegin
                     | crate::Action::L6MidiProbeBegin
-                    | crate::Action::L6UsbStartup
+                    | crate::Action::L6UsbStartupBegin
                     | crate::Action::L6DispatchBegin { .. }
                     | crate::Action::SignalPwmBegin
                     | crate::Action::L6LevelMeterPwm
@@ -1008,7 +1015,7 @@ pub(crate) fn prepare_with_report(
     if scenario
         .step
         .iter()
-        .any(|s| s.applies_to(model) && matches!(s.action, crate::Action::L6UsbStartup))
+        .any(|s| s.applies_to(model) && matches!(s.action, crate::Action::L6UsbStartupBegin))
     {
         options.start_paused = true;
         options.usb_enabled = false;
@@ -1171,6 +1178,7 @@ pub struct State {
     tap_handler: Option<tap_handler::Scope>,
     gpio_event: Option<gpio_event::Scope>,
     l6_dispatch: Option<l6_dispatch::Scope>,
+    usb_startup: Option<usb_startup::Scope>,
     effect_slot_deadline: Option<sd::EffectSlotScope>,
     l6max_timing: Option<timing::Scope>,
     usb_storage_scope: Option<usb_storage_steps::Scope>,
@@ -1574,7 +1582,7 @@ mod native_midi_capability_tests {
             crate::Action::L6DinSweepBegin,
             crate::Action::L6MidiProbeBegin,
             crate::Action::DinUsbBegin,
-            crate::Action::L6UsbStartup,
+            crate::Action::L6UsbStartupBegin,
             crate::Action::L6DispatchBegin {
                 group: 0,
                 cc: 1,

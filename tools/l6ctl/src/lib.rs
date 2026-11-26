@@ -580,6 +580,29 @@ impl<'a> OwnedControl<'a> {
             .map_err(ControlError::Rejected)
     }
 
+    /// Coordinate breakpoints while both initially paused guests and input
+    /// replay are observed by the caller. This is an in-process API only.
+    pub fn debug_observer_before(
+        &self,
+        deadline: std::time::Instant,
+    ) -> Result<l6max_host::debug::Observer, ControlError> {
+        let controller = self.engine.debugger().ok_or(ControlError::Unavailable(
+            "debugger unavailable; launch with --gdb-socket",
+        ))?;
+        let main = self
+            .engine
+            .management
+            .first()
+            .ok_or(ControlError::Unavailable("MAIN management unavailable"))?;
+        let panel = self
+            .engine
+            .management
+            .get(1)
+            .ok_or(ControlError::Unavailable("panel management unavailable"))?;
+        l6max_host::debug::Observer::acquire(controller, main, panel, deadline)
+            .map_err(ControlError::Rejected)
+    }
+
     pub fn info(&self) -> Result<Info, ControlError> {
         let inputs = self
             .engine

@@ -392,130 +392,6 @@ pub(super) fn run_editor_pad_playback(
     Ok(evidence)
 }
 
-pub(super) fn run_l6max_ui_pad_verify(
-    session: &Session,
-    options: &Options,
-    endpoints: l6max_host::usb::Endpoints,
-    pad: u8,
-    guest_timeout_ms: u32,
-    wall_timeout_s: u64,
-) -> Result<Value, Box<dyn std::error::Error>> {
-    if session.engine.model() != l6fw::Model::L6max || pad > 3 {
-        return Err(
-            std::io::Error::other("l6max-ui-pad-verify requires L6max and pad 0..3").into(),
-        );
-    }
-    let usb = session
-        .engine
-        .usb
-        .as_ref()
-        .ok_or("USB backend unavailable")?
-        .clone();
-    let inputs = session
-        .engine
-        .inputs
-        .as_ref()
-        .ok_or("L6max UI pad assignment needs panel inputs")?;
-    let start_guest = inputs.panel.snapshot().guest_ms;
-    let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
-    // Verify the UI assignment through the same Editor state query used by
-    // the original probe, after opening an Editor session on cable 2.
-    let mut encoder = l6max_host::usb_midi::Encoder::default();
-    let identity = encoder.push(2, &[0xf0, 0x7e, 0, 0x06, 0x01, 0xf7]);
-    usb.send(endpoints.output, &identity)?;
-    let identity_replies = collect_editor_sysex(
-        session,
-        &usb,
-        endpoints.input,
-        500,
-        start_guest,
-        guest_timeout_ms,
-        deadline,
-    )?;
-    if !identity_replies
-        .iter()
-        .any(|reply| reply.starts_with(&[0xf0, 0x7e, 0, 0x06, 0x02, 0x52, 0x72, 0]))
-    {
-        return Err(format!(
-            "L6max Editor identity reply missing after UI assignment: {identity_replies:02x?}"
-        )
-        .into());
-    }
-    let global = editor_exchange_expected(
-        session,
-        &usb,
-        endpoints,
-        &mut encoder,
-        &[0xf0, 0x52, 0, 0, 0x2b, 0xf7],
-        &[0xf0, 0x52, 0, 0, 0x2a],
-        start_guest,
-        guest_timeout_ms,
-        deadline,
-    )?;
-    require_editor_reply(&global, &[0xf0, 0x52, 0, 0, 0x2a], "global settings")?;
-    let keep_alive = editor_exchange_expected(
-        session,
-        &usb,
-        endpoints,
-        &mut encoder,
-        &[0xf0, 0x52, 0, 0, 0x31, 0x0b, 0xf7],
-        &[0xf0, 0x52, 0, 0, 0, 0x0b],
-        start_guest,
-        guest_timeout_ms,
-        deadline,
-    )?;
-    require_editor_reply(&keep_alive, &[0xf0, 0x52, 0, 0, 0, 0x0b], "keep-alive")?;
-    let mut assignment_replies = Vec::new();
-    for _ in 0..8 {
-        assignment_replies = editor_exchange(
-            session,
-            &usb,
-            endpoints,
-            &mut encoder,
-            &[0xf0, 0x52, 0, 0, 0x46, 0x02, pad, 0xf7],
-            300,
-            start_guest,
-            guest_timeout_ms,
-            deadline,
-        )?;
-        if assignment_replies.iter().any(|reply| {
-            reply.get(4..7) == Some(&[0x45, 0x02, pad])
-                && reply.len() >= 12
-                && reply.get(7..9) != Some(&[0x7f, 0x7f])
-                && reply.get(9..11) != Some(&[0, 0])
-        }) {
-            break;
-        }
-    }
-    let assigned = assignment_replies.iter().any(|reply| {
-        reply.get(4..7) == Some(&[0x45, 0x02, pad])
-            && reply.len() >= 12
-            && reply.get(7..9) != Some(&[0x7f, 0x7f])
-            && reply.get(9..11) != Some(&[0, 0])
-    });
-    let evidence = json!({
-        "pad": pad + 1,
-        "identity_replies": identity_replies,
-        "assignment_replies": assignment_replies,
-        "assigned": assigned,
-        "guest_elapsed_ms": inputs.panel.snapshot().guest_ms.wrapping_sub(start_guest),
-    });
-    fs::write(
-        options
-            .logs
-            .join(format!("l6max-ui-pad-verify-{}.json", pad + 1)),
-        serde_json::to_vec_pretty(&evidence)?,
-    )?;
-    if !assigned {
-        return Err(format!(
-            "L6max UI did not assign a WAV to Sound Pad {}: {evidence}",
-            pad + 1
-        )
-        .into());
-    }
-    Ok(evidence)
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn editor_exchange(
     session: &Session,
@@ -739,4 +615,203 @@ pub(super) fn editor_pad_assignment_matches(replies: &[Vec<u8>], pad: u8, args: 
         reply.get(4..7) == Some(&[0x45, 0x02, pad])
             && reply.get(6..reply.len().saturating_sub(1)) == Some(args)
     })
+}
+
+/// One Editor verification retains the original endpoint, encoder and clock
+/// across separately reported scenario steps.
+pub(super) struct UiPadScope {
+    pad: u8,
+    endpoints: l6max_host::usb::Endpoints,
+    encoder: l6max_host::usb_midi::Encoder,
+    start_guest: u32,
+    deadline: Instant,
+    guest_budget: u32,
+    wall_budget: u64,
+    pub phase: u8,
+    identity: Vec<Vec<u8>>,
+    assignments: Vec<Vec<u8>>,
+}
+
+impl UiPadScope {
+    pub(super) fn begin(
+        session: &Session,
+        endpoints: l6max_host::usb::Endpoints,
+        pad: u8,
+        guest_budget: u32,
+        wall_budget: u64,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        if session.engine.model() != l6fw::Model::L6max || pad > 3 {
+            return Err("UI pad verification requires L6max and pad 0..3".into());
+        }
+        let start_guest = session
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or("panel input unavailable")?
+            .panel
+            .snapshot()
+            .guest_ms;
+        Ok(Self {
+            pad,
+            endpoints,
+            encoder: Default::default(),
+            start_guest,
+            deadline: Instant::now() + Duration::from_secs(wall_budget),
+            guest_budget,
+            wall_budget,
+            phase: 0,
+            identity: vec![],
+            assignments: vec![],
+        })
+    }
+
+    pub(super) fn check(
+        &self,
+        session: &Session,
+        guest_budget: u32,
+        wall_budget: u64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let guest = session
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or("panel input unavailable")?
+            .panel
+            .snapshot()
+            .guest_ms;
+        if (guest_budget, wall_budget) != (self.guest_budget, self.wall_budget)
+            || Instant::now() >= self.deadline
+            || guest.wrapping_sub(self.start_guest) > self.guest_budget
+        {
+            return Err(
+                "UI pad verification exceeded its shared deadline or changed budget".into(),
+            );
+        }
+        Ok(())
+    }
+
+    pub(super) fn identity(
+        &mut self,
+        session: &Session,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        let usb = session
+            .engine
+            .usb
+            .as_ref()
+            .ok_or("USB backend unavailable")?;
+        let wire = self.encoder.push(2, &[0xf0, 0x7e, 0, 0x06, 0x01, 0xf7]);
+        usb.send(self.endpoints.output, &wire)?;
+        self.identity = collect_editor_sysex(
+            session,
+            usb,
+            self.endpoints.input,
+            500,
+            self.start_guest,
+            self.guest_budget,
+            self.deadline,
+        )?;
+        if !self
+            .identity
+            .iter()
+            .any(|r| r.starts_with(&[0xf0, 0x7e, 0, 0x06, 0x02, 0x52, 0x72, 0]))
+        {
+            return Err(format!(
+                "L6max Editor identity reply missing after UI assignment: {:02x?}",
+                self.identity
+            )
+            .into());
+        }
+        Ok(json!({"identity_replies": self.identity}))
+    }
+
+    pub(super) fn expected(
+        &mut self,
+        session: &Session,
+        request: &[u8],
+        expected: &[u8],
+        label: &str,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        let usb = session
+            .engine
+            .usb
+            .as_ref()
+            .ok_or("USB backend unavailable")?;
+        let replies = editor_exchange_expected(
+            session,
+            usb,
+            self.endpoints,
+            &mut self.encoder,
+            request,
+            expected,
+            self.start_guest,
+            self.guest_budget,
+            self.deadline,
+        )?;
+        require_editor_reply(&replies, expected, label)?;
+        Ok(json!({"replies": replies}))
+    }
+
+    pub(super) fn query(&mut self, session: &Session) -> Result<Value, Box<dyn std::error::Error>> {
+        let usb = session
+            .engine
+            .usb
+            .as_ref()
+            .ok_or("USB backend unavailable")?;
+        for _ in 0..8 {
+            self.check(session, self.guest_budget, self.wall_budget)?;
+            self.assignments = editor_exchange(
+                session,
+                usb,
+                self.endpoints,
+                &mut self.encoder,
+                &[0xf0, 0x52, 0, 0, 0x46, 0x02, self.pad, 0xf7],
+                300,
+                self.start_guest,
+                self.guest_budget,
+                self.deadline,
+            )?;
+            if self
+                .assignments
+                .iter()
+                .any(|reply| l6ctl::editor_pad_assignment_present(reply, self.pad))
+            {
+                break;
+            }
+        }
+        Ok(json!({"assignment_replies": self.assignments}))
+    }
+
+    pub(super) fn assert_assignment(
+        &self,
+        session: &Session,
+        options: &Options,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        let assigned = self
+            .assignments
+            .iter()
+            .any(|reply| l6ctl::editor_pad_assignment_present(reply, self.pad));
+        let guest = session
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or("panel input unavailable")?
+            .panel
+            .snapshot()
+            .guest_ms;
+        let evidence = json!({"pad": self.pad + 1, "identity_replies": self.identity, "assignment_replies": self.assignments, "assigned": assigned, "guest_elapsed_ms": guest.wrapping_sub(self.start_guest)});
+        fs::write(
+            options
+                .logs
+                .join(format!("l6max-ui-pad-verify-{}.json", self.pad + 1)),
+            serde_json::to_vec_pretty(&evidence)?,
+        )?;
+        if !assigned {
+            return Err(format!(
+                "L6max UI did not assign a WAV to Sound Pad {}: {evidence}",
+                self.pad + 1
+            )
+            .into());
+        }
+        Ok(evidence)
+    }
 }

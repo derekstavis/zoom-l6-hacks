@@ -751,11 +751,23 @@ impl Runner {
                         pad,
                     }));
                 }
-                Action::L6maxUiPadVerify { pad } => {
-                    return Ok(Progress::Device(devices::Operation::L6maxUiPadVerify {
-                        pad,
-                    }));
+                Action::UiPadBegin { pad } => {
+                    return Ok(Progress::Device(devices::Operation::UiPadBegin { pad }));
                 }
+                Action::UiPadIdentity => {
+                    return Ok(Progress::Device(devices::Operation::UiPadIdentity));
+                }
+                Action::UiPadGlobal => {
+                    return Ok(Progress::Device(devices::Operation::UiPadGlobal));
+                }
+                Action::UiPadKeepAlive => {
+                    return Ok(Progress::Device(devices::Operation::UiPadKeepAlive));
+                }
+                Action::UiPadQuery => return Ok(Progress::Device(devices::Operation::UiPadQuery)),
+                Action::UiPadAssert => {
+                    return Ok(Progress::Device(devices::Operation::UiPadAssert));
+                }
+                Action::UiPadEnd => return Ok(Progress::Device(devices::Operation::UiPadEnd)),
                 Action::SoundPadBegin {
                     pad,
                     target,

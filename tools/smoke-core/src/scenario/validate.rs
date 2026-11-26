@@ -1329,6 +1329,49 @@ impl Scenario {
                 return Err("unterminated USB SysEx campaign".into());
             }
         }
+        for model in &value.models {
+            let mut scope: Option<(u8, u32, u64)> = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                let phase = match &step.action {
+                    Action::UiPadBegin { pad } => {
+                        if *model != Model::L6max || *pad > 3 || scope.is_some() {
+                            return Err(
+                                "UI pad verification requires L6max, pad 0..3, and no active scope"
+                                    .into(),
+                            );
+                        }
+                        scope = Some((0, step.guest_timeout_ms, step.wall_timeout_s));
+                        continue;
+                    }
+                    Action::UiPadIdentity => Some(0),
+                    Action::UiPadGlobal => Some(1),
+                    Action::UiPadKeepAlive => Some(2),
+                    Action::UiPadQuery => Some(3),
+                    Action::UiPadAssert => Some(4),
+                    Action::UiPadEnd => Some(5),
+                    _ => None,
+                };
+                match (scope, phase) {
+                    (Some((want, guest, wall)), Some(actual))
+                        if want == actual
+                            && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        scope = if actual == 5 {
+                            None
+                        } else {
+                            Some((want + 1, guest, wall))
+                        };
+                    }
+                    (Some(_), _) | (None, Some(_)) => {
+                        return Err("invalid UI pad verification sequence or shared budget".into());
+                    }
+                    _ => {}
+                }
+            }
+            if scope.is_some() {
+                return Err("unterminated UI pad verification".into());
+            }
+        }
         for step in &value.step {
             if let Action::KnobDialogAdaptive { plan } = &step.action {
                 plan.validate()?;
@@ -1343,7 +1386,7 @@ impl Scenario {
             }
             match &step.action {
                 Action::EditorPadAssignments => pad_assignments_seen = true,
-                Action::L6maxUiPadVerify { pad } => {
+                Action::UiPadBegin { pad } => {
                     if !usb_descriptors_seen {
                         return Err(
                             "l6max-ui-pad-verify requires a preceding usb-descriptors step".into(),

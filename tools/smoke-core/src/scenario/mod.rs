@@ -588,9 +588,15 @@ pub enum Action {
     EditorPadPlayback {
         pad: u8,
     },
-    L6maxUiPadVerify {
+    UiPadBegin {
         pad: u8,
     },
+    UiPadIdentity,
+    UiPadGlobal,
+    UiPadKeepAlive,
+    UiPadQuery,
+    UiPadAssert,
+    UiPadEnd,
     SoundPadBegin {
         pad: u8,
         target: u32,

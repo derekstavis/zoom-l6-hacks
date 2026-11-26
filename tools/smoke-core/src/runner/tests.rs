@@ -838,15 +838,42 @@ fn editor_pad_assignment_requires_prior_usb_midi_enumeration() {
         "{l6_prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n[[step]]\naction='editor-pad-playback'\npad=4\n"
     ));
     assert!(invalid_pad.unwrap_err().contains("pad must be 0..3"));
+    let ui_steps = "[[step]]\naction='ui-pad-begin'\npad=2\n[[step]]\naction='ui-pad-identity'\n[[step]]\naction='ui-pad-global'\n[[step]]\naction='ui-pad-keep-alive'\n[[step]]\naction='ui-pad-query'\n[[step]]\naction='ui-pad-assert'\n[[step]]\naction='ui-pad-end'\n";
     let ui_playback = Scenario::parse(&format!(
-        "{prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='l6max-ui-pad-verify'\npad=2\n"
+        "{prefix}[[step]]\naction='usb-descriptors'\n{ui_steps}"
     ));
-    assert!(ui_playback.is_ok());
+    assert!(ui_playback.is_ok(), "{ui_playback:?}");
     let wrong_model = prefix.replace("l6max", "l6");
-    let wrong_model = Scenario::parse(&format!(
-        "{wrong_model}[[step]]\naction='usb-descriptors'\n[[step]]\naction='l6max-ui-pad-verify'\npad=2\n"
-    ));
-    assert!(wrong_model.unwrap_err().contains("scoped to L6max"));
+    assert!(
+        Scenario::parse(&format!(
+            "{wrong_model}[[step]]\naction='usb-descriptors'\n{ui_steps}"
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}[[step]]\naction='usb-descriptors'\n{}",
+            ui_steps.replace("action='ui-pad-query'", "action='ui-pad-identity'")
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}[[step]]\naction='usb-descriptors'\n{}",
+            ui_steps.replace("pad=2", "pad=4")
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}[[step]]\naction='usb-descriptors'\n{}",
+            ui_steps.replace(
+                "action='ui-pad-end'",
+                "action='ui-pad-end'\nguest_timeout_ms=10"
+            )
+        ))
+        .is_err()
+    );
 }
 #[test]
 fn sound_pad_playback_supports_editor_or_saved_assignment() {

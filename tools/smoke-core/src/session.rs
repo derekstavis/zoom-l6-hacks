@@ -722,7 +722,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     runner.device_finished(json!({"started":true,"profile":label,"card": !boot.no_sd && boot.sd_image.is_some(),"replacement_installer":boot.update_bootloader}));
                 }
                 Progress::Device(devices::Operation::LifecycleStop) => {
-                    if device_state.has_sound_pad() {
+                    if device_state.has_sound_pad() || device_state.has_ui_pad() {
                         return Err("sound-pad transaction interrupted by guest shutdown".into());
                     }
                     device_state.restarted()?;
@@ -1159,7 +1159,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     if options.state_dir.is_none() {
                         return Err("restart requires isolated persistent state".into());
                     }
-                    if device_state.has_sound_pad() {
+                    if device_state.has_sound_pad() || device_state.has_ui_pad() {
                         return Err("sound-pad transaction interrupted by guest shutdown".into());
                     }
                     device_state.restarted()?;
@@ -1216,6 +1216,9 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
     }
     if result.is_ok() && device_state.has_midi_sync() {
         result = Err("MIDI sync transaction ended before completion".into());
+    }
+    if result.is_ok() && device_state.has_ui_pad() {
+        result = Err("UI pad verification ended before completion".into());
     }
     if result.is_ok() && device_state.has_sound_pad() {
         result = Err("sound-pad transaction ended before completion".into());

@@ -50,6 +50,10 @@ action = "capture-sd-module"
 loaded = true
 
 [[step]]
+action = "expect-sd-allocation"
+loaded = true
+
+[[step]]
 action = "expect-sd-module"
 loaded = true
 

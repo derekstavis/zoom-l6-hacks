@@ -746,6 +746,9 @@ pub enum Action {
     CaptureSdModule {
         loaded: bool,
     },
+    ExpectSdAllocation {
+        loaded: bool,
+    },
     ExpectSdModule {
         loaded: bool,
         #[serde(default)]

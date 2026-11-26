@@ -1541,8 +1541,9 @@ impl Scenario {
                 match (&step.action, sd_inspection) {
                     (Action::ExpectSdLoader, None) => sd_inspection = Some((0, false, step.guest_timeout_ms, step.wall_timeout_s)),
                     (Action::CaptureSdModule { loaded }, Some((0, _, guest, wall))) if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = Some((1, *loaded, guest, wall)),
-                    (Action::ExpectSdModule { loaded, .. }, Some((1, expected, guest, wall))) if *loaded == expected && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = None,
-                    (Action::ExpectSdLoader | Action::CaptureSdModule { .. } | Action::ExpectSdModule { .. }, _) => return Err("SD inspection requires adjacent loader, capture and module steps with matching state and timeouts".into()),
+                    (Action::ExpectSdAllocation { loaded }, Some((1, expected, guest, wall))) if *loaded == expected && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = Some((2, expected, guest, wall)),
+                    (Action::ExpectSdModule { loaded, .. }, Some((2, expected, guest, wall))) if *loaded == expected && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = None,
+                    (Action::ExpectSdLoader | Action::CaptureSdModule { .. } | Action::ExpectSdAllocation { .. } | Action::ExpectSdModule { .. }, _) => return Err("SD inspection requires adjacent loader, capture, allocation and module steps with matching state and timeouts".into()),
                     (_, Some(_)) => return Err("SD inspection cannot be interrupted".into()),
                     _ => {},
                 }
@@ -3238,23 +3239,30 @@ mod sd_inspection_tests {
             "[[step]]\naction='expect-sd-loader'\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
         let end = "[[step]]\naction='expect-sd-module'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
         let capture = "[[step]]\naction='capture-sd-module'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
+        let allocation = "[[step]]\naction='expect-sd-allocation'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
         let fixture = "sd_patches=['midi-sync']";
-        assert!(parse(&format!("{begin}{capture}{end}"), fixture).is_ok());
+        assert!(parse(&format!("{begin}{capture}{allocation}{end}"), fixture).is_ok());
         assert!(parse(begin, fixture).is_err());
         assert!(parse(end, fixture).is_err());
         assert!(parse(&format!("{begin}{end}"), fixture).is_err());
         assert!(
             parse(
                 &format!(
-                    "{begin}{}{end}",
+                    "{begin}{}{allocation}{end}",
                     capture.replace("loaded=true", "loaded=false")
                 ),
                 fixture
             )
             .is_err()
         );
-        assert!(parse(&format!("{begin}{capture}{capture}{end}"), fixture).is_err());
-        assert!(parse(&format!("{begin}{capture}{end}"), "").is_err());
+        assert!(
+            parse(
+                &format!("{begin}{capture}{capture}{allocation}{end}"),
+                fixture
+            )
+            .is_err()
+        );
+        assert!(parse(&format!("{begin}{capture}{allocation}{end}"), "").is_err());
         assert!(
             parse(
                 &format!("{begin}[[step]]\naction='wait'\nuntil='boot-ready'\n{end}"),
@@ -3265,7 +3273,7 @@ mod sd_inspection_tests {
         assert!(
             parse(
                 &format!(
-                    "{begin}{capture}{}",
+                    "{begin}{capture}{allocation}{}",
                     end.replace("wall_timeout_s=30", "wall_timeout_s=29")
                 ),
                 fixture
@@ -3275,7 +3283,7 @@ mod sd_inspection_tests {
         assert!(
             parse(
                 &format!(
-                    "{begin}{capture}{}",
+                    "{begin}{capture}{allocation}{}",
                     end.replace("loaded=true", "loaded=true\nchain_count=9")
                 ),
                 fixture

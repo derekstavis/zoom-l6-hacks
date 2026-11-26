@@ -22,6 +22,10 @@ action = "capture-sd-module"
 loaded = true
 
 [[step]]
+action = "expect-sd-allocation"
+loaded = true
+
+[[step]]
 action = "expect-sd-module"
 loaded = true
 
@@ -45,6 +49,10 @@ action = "expect-sd-loader"
 
 [[step]]
 action = "capture-sd-module"
+loaded = true
+
+[[step]]
+action = "expect-sd-allocation"
 loaded = true
 
 [[step]]
@@ -76,6 +84,10 @@ action = "capture-sd-module"
 loaded = false
 
 [[step]]
+action = "expect-sd-allocation"
+loaded = false
+
+[[step]]
 action = "expect-sd-module"
 loaded = false
 
@@ -94,6 +106,12 @@ wall_timeout_s = 600
 
 [[step]]
 action = "capture-sd-module"
+loaded = true
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "expect-sd-allocation"
 loaded = true
 guest_timeout_ms = 30000
 wall_timeout_s = 600

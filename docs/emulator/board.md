@@ -396,3 +396,5 @@ Pin-level decoder checks (from the repository root):
 cc -std=c11 -Wall -Wextra -Werror emulator/qemu/tests/indicators.c -o /tmp/l6-indicators
 /tmp/l6-indicators
 ```
+
+MAIN input transport publishes its QEMU virtual clock every 100 ms of MAIN guest time. The timestamp is the low 32 bits of virtual milliseconds; consumers distinguish an unreceived clock from a valid zero using the update count and handle wrapping. PANEL clock updates are independent.

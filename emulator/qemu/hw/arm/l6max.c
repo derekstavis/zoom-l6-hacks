@@ -70,6 +70,8 @@
  * this often; the virtual-clock heartbeat goes out about once per cycle. */
 #define L6_INDICATOR_PUBLISH_NS 5000000
 #define L6_INDICATOR_HEARTBEAT_NS 25000000
+/* MAIN clock sampling needs less frequent updates than panel indicators. */
+#define L6_MAIN_HEARTBEAT_NS 100000000
 #define L6_AUDIO_TRACE_WINDOW_FRAMES 64000
 /* 200 ms of output reserve, as a divisor of the sample rate. */
 #define L6_AUDIO_PRIME_DIVISOR 5
@@ -461,6 +463,8 @@ typedef struct L6ChipState {
     QEMUTimer *panel_spi_dma;
     QEMUTimer *indicator_timer;
     int64_t indicator_heartbeat_ns;
+    int64_t main_heartbeat_ns;
+    uint32_t main_heartbeat_sequence;
     L6Indicators indicators;
     unsigned indicator_log_count;
     QEMUTimer *rom_uart_timer;
@@ -649,7 +653,8 @@ static void l6_input_reply(L6ChipState *s, uint32_t kind, uint32_t seq,
     stl_le_p(message + 12, target);
     stl_le_p(message + 16, value);
     stl_le_p(message + 20, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL));
-    if (kind != L6_INPUT_INDICATOR_LEVELS && kind != 0x8000000bu) {
+    if (kind != L6_INPUT_INDICATOR_LEVELS && kind != 0x8000000bu &&
+        (kind != 0x80000008u || s->panel)) {
         qemu_log_mask(LOG_UNIMP,
                       "l6 %s input reply kind=%08x seq=%u target=%u value=%d at %" PRId64 " ms\n",
                       s->panel ? "panel" : "main", kind, seq, target, value,
@@ -961,6 +966,14 @@ static void l6_input_timer_tick(void *opaque)
 {
     L6ChipState *s = opaque;
     l6_socket_input_tick(s);
+    if (!s->panel) {
+        int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+        if (now - s->main_heartbeat_ns >= L6_MAIN_HEARTBEAT_NS) {
+            s->main_heartbeat_ns = now;
+            if (!++s->main_heartbeat_sequence) { ++s->main_heartbeat_sequence; }
+            l6_input_reply(s, 0x80000008u, s->main_heartbeat_sequence, 0, 0);
+        }
+    }
     if (!s->panel) { l6_sd_detect_tick(s); }
     if (!s->panel) { l6_main_gpio_refresh_inputs(s); }
     if (s->panel && !s->cpu_held) {

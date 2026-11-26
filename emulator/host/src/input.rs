@@ -33,6 +33,7 @@ pub struct InputStatus {
     pub adc_samples: [u16; 5],
     pub adc_updates: u64,
     pub guest_ms: u32,
+    pub clock_updates: u64,
     pub audio_input_position_ms: u32,
     pub audio_input_playing: bool,
     pub last_ack: Option<Message>,
@@ -166,10 +167,11 @@ impl EngineInput {
                             state.powered_off_guest_ms = Some(message.duration_ms);
                         }
                         Ok(message) if message.kind == protocol::CLOCK => {
-                            reader_status
+                            let mut state = reader_status
                                 .lock()
-                                .unwrap_or_else(|error| error.into_inner())
-                                .guest_ms = message.duration_ms;
+                                .unwrap_or_else(|error| error.into_inner());
+                            state.guest_ms = message.duration_ms;
+                            state.clock_updates += 1;
                         }
                         Ok(message) if message.kind == protocol::ADC_SAMPLE => {
                             let mut state = reader_status
@@ -691,6 +693,45 @@ mod tests {
         hub.down(53, 50).unwrap();
         let power = Message::read(&mut wire).unwrap();
         assert_eq!((power.kind, power.target), (protocol::DOWN, 53));
+    }
+
+    #[test]
+    fn main_clock_wrap_and_new_connection_are_independent() {
+        fn send_clock(wire: &mut UnixStream, sequence: u32, millis: u32) {
+            Message {
+                kind: protocol::CLOCK,
+                sequence,
+                target: 0,
+                value: 0,
+                duration_ms: millis,
+            }
+            .write(wire)
+            .unwrap();
+        }
+        fn await_clock(host: &EngineInput, expected: u32) {
+            let deadline = std::time::Instant::now() + Duration::from_secs(1);
+            while host.snapshot().guest_ms != expected {
+                assert!(std::time::Instant::now() < deadline);
+                thread::sleep(Duration::from_millis(1));
+            }
+        }
+        let (host, mut wire) = EngineInput::pair().unwrap();
+        send_clock(&mut wire, 1, u32::MAX - 10);
+        await_clock(&host, u32::MAX - 10);
+        send_clock(&mut wire, 2, 0);
+        await_clock(&host, 0);
+        assert_eq!(host.snapshot().clock_updates, 2);
+        send_clock(&mut wire, 3, 20);
+        await_clock(&host, 20);
+        assert_eq!(20u32.wrapping_sub(u32::MAX - 10), 31);
+        drop(wire);
+        drop(host);
+        let (next, mut wire) = EngineInput::pair().unwrap();
+        assert_eq!(next.snapshot().guest_ms, 0);
+        assert_eq!(next.snapshot().clock_updates, 0);
+        send_clock(&mut wire, 1, 100);
+        await_clock(&next, 100);
+        assert_eq!(next.snapshot().clock_updates, 1);
     }
 
     #[test]

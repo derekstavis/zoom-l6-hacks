@@ -6,3 +6,5 @@ system_items = ["Dump ROM"]
 [[menu_action]]
 item = "Dump ROM"
 steps = "patches/dump-rom/tests/emulator/fragments/dump-files.toml"
+# The file appears before the completion notification clears.
+after = "tests/emulator/fragments/patch-matrix-dump-notification-clear.toml"

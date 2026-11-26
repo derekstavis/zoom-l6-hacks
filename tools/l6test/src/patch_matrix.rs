@@ -83,6 +83,18 @@ struct PatchChecks {
 struct MenuAction {
     item: String,
     steps: String,
+    /// Additional checks before selecting the item, when a patch is present.
+    #[serde(default)]
+    before_if_installed: Vec<ConditionalMenuCheck>,
+    /// Checks after the item's main fragment.
+    after: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConditionalMenuCheck {
+    patch: String,
+    steps: String,
 }
 
 /// Every patch's checks, in the order cases run them.
@@ -108,6 +120,27 @@ impl Checks {
                 toml::from_str(&read(&path)?).map_err(|e| format!("{}: {e}", path.display()))?;
             if checks.version != 1 {
                 return Err(format!("{}: unsupported version", path.display()));
+            }
+            for action in &checks.menu_action {
+                let mut conditions = BTreeSet::new();
+                for check in &action.before_if_installed {
+                    if patch_package(&check.patch).is_none() || !conditions.insert(&check.patch) {
+                        return Err(format!(
+                            "{}: unknown or duplicate conditional patch {}",
+                            path.display(),
+                            check.patch
+                        ));
+                    }
+                }
+                for fragment in std::iter::once(&action.steps)
+                    .chain(action.after.iter())
+                    .chain(action.before_if_installed.iter().map(|check| &check.steps))
+                {
+                    let resolved = smoke_core::spec_path(std::path::Path::new(fragment))?;
+                    let text = read(&resolved)?;
+                    let _: smoke_core::Fragment = toml::from_str(&text)
+                        .map_err(|error| format!("{}: {error}", resolved.display()))?;
+                }
             }
             order.push((name.clone(), checks));
         }
@@ -507,8 +540,8 @@ struct MenuPlan<'a> {
 struct MenuActionPlan<'a> {
     index: usize,
     steps: &'a str,
-    send_midi_with_dump_rom: bool,
-    wait_for_dump_notification: bool,
+    before: Vec<&'a str>,
+    after: Option<&'a str>,
 }
 
 fn menu_plan<'a>(
@@ -534,9 +567,13 @@ fn menu_plan<'a>(
             actions.push(MenuActionPlan {
                 index,
                 steps: &action.steps,
-                send_midi_with_dump_rom: items[index] == "Send MIDI State"
-                    && combination.installs("dump-rom"),
-                wait_for_dump_notification: items[index] == "Dump ROM",
+                before: action
+                    .before_if_installed
+                    .iter()
+                    .filter(|check| combination.installs(&check.patch))
+                    .map(|check| check.steps.as_str())
+                    .collect(),
+                after: action.after.as_deref(),
             });
         }
     }
@@ -582,12 +619,10 @@ fn menu_checks(
             quoted_list(&rows)
         ),
     );
-    press(text, "recorder-function-3", 7);
-    step(
+    include(
         text,
-        "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-patch-menu/main-system.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
+        "tests/emulator/fragments/patch-matrix-system-enter.toml",
     );
-    press(text, "recorder-function-4", 1);
     step(
         text,
         &format!(
@@ -629,21 +664,14 @@ fn menu_checks(
         let index = action.index;
         press(text, "recorder-function-3", index - cursor);
         delay(text, 500);
-        if action.send_midi_with_dump_rom {
-            step(
-                text,
-                "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-patch-menu/system-send-midi-state-10.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 120",
-            );
+        for fragment in action.before {
+            include(text, fragment);
         }
         press(text, "recorder-function-4", 1);
         cursor = index;
         include(text, action.steps);
-        if action.wait_for_dump_notification {
-            // The file appears before the completion notification clears.
-            include(
-                text,
-                "tests/emulator/fragments/patch-matrix-dump-notification-clear.toml",
-            );
+        if let Some(fragment) = action.after {
+            include(text, fragment);
         }
     }
     Ok(())
@@ -1142,11 +1170,17 @@ wall_timeout_s = 120
         let dump = &plan.actions[0];
         let midi = &plan.actions[1];
         assert_eq!(plan.items[dump.index], "Dump ROM");
-        assert!(dump.wait_for_dump_notification);
-        assert!(!dump.send_midi_with_dump_rom);
+        assert_eq!(
+            dump.after,
+            Some("tests/emulator/fragments/patch-matrix-dump-notification-clear.toml")
+        );
+        assert!(dump.before.is_empty());
         assert_eq!(plan.items[midi.index], "Send MIDI State");
-        assert!(midi.send_midi_with_dump_rom);
-        assert!(!midi.wait_for_dump_notification);
+        assert_eq!(
+            midi.before,
+            ["patches/midi-sync/tests/emulator/fragments/menu-before-dump-rom.toml"]
+        );
+        assert_eq!(midi.after, None);
         assert_eq!(
             dump.steps,
             "patches/dump-rom/tests/emulator/fragments/dump-files.toml"
@@ -1352,6 +1386,133 @@ wall_timeout_s = 120
             smoke_core::Scenario::from_text(&case.scenario)
                 .unwrap_or_else(|error| panic!("{}: {error}\n{}", case.id, case.scenario));
         }
+    }
+
+    fn previous_menu_checks(
+        text: &mut String,
+        combination: &Combination,
+        all: &Checks,
+        stock_system_items: &[String],
+    ) -> Result<(), String> {
+        let plan = menu_plan(combination, all, stock_system_items)?;
+        let rows = &plan.rows;
+        let items = &plan.items;
+        // Open the menu from a reviewed, settled recorder screen.
+        include(text, "tests/emulator/fragments/patch-matrix-menu-open.toml");
+        step(text, "action = \"capture-menu\"\nmenu = \"system\"");
+        step(
+            text,
+            &format!(
+                "action = \"expect-menu-items\"\nitems = {}",
+                quoted_list(&items)
+            ),
+        );
+        step(
+            text,
+            "action = \"capture-menu\"\nmenu = \"system\"\npath = [\"Patches\"]",
+        );
+        step(
+            text,
+            &format!(
+                "action = \"expect-menu-items\"\nitems = {}",
+                quoted_list(&rows)
+            ),
+        );
+        press(text, "recorder-function-3", 7);
+        step(
+            text,
+            "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-patch-menu/main-system.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
+        );
+        press(text, "recorder-function-4", 1);
+        step(
+            text,
+            &format!(
+                "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-patch-menu/system-first-{}.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
+                items.len()
+            ),
+        );
+        // Open System > Patches and compare its rows as drawn; back in System
+        // the cursor stays on Patches. Each item a patch adds comes after
+        // Patches, so the actions below move down from there.
+        let patches = plan.patches_index;
+        press(text, "recorder-function-3", patches);
+        step(
+            text,
+            &format!(
+                "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-patch-menu/system-patches-{}.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
+                items.len()
+            ),
+        );
+        press(text, "recorder-function-4", 1);
+        step(
+            text,
+            &format!(
+                "action = \"expect-display-image\"\nimage = {:?}",
+                patches_screen_reference(&rows)
+            ),
+        );
+        press(text, "recorder-function-1", 1);
+        step(
+            text,
+            &format!(
+                "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-patch-menu/system-patches-{}.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
+                items.len()
+            ),
+        );
+        // Run each item's action in menu order, moving down from Patches.
+        let mut cursor = patches;
+        for action in plan.actions {
+            let index = action.index;
+            press(text, "recorder-function-3", index - cursor);
+            delay(text, 500);
+            if items[index] == "Send MIDI State" && combination.installs("dump-rom") {
+                step(
+                    text,
+                    "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-patch-menu/system-send-midi-state-10.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 120",
+                );
+            }
+            press(text, "recorder-function-4", 1);
+            cursor = index;
+            include(text, action.steps);
+            if items[index] == "Dump ROM" {
+                // The file appears before the completion notification clears.
+                include(
+                    text,
+                    "tests/emulator/fragments/patch-matrix-dump-notification-clear.toml",
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn generated_menu_combinations_preserve_expanded_checks() {
+        let checks = Checks::load().unwrap();
+        let stock = &checks.get("menu-loader").unwrap().stock_system_items;
+        let mut count = 0;
+        for combination in combinations(Model::L6max)
+            .unwrap()
+            .iter()
+            .filter(|c| c.installs("menu-loader"))
+        {
+            let case = combination_case(Model::L6max, combination, &checks).unwrap();
+            let mut current = String::new();
+            menu_checks(&mut current, combination, &checks, stock).unwrap();
+            let mut previous = String::new();
+            previous_menu_checks(&mut previous, combination, &checks, stock).unwrap();
+            assert_eq!(case.scenario.matches(&current).count(), 1, "{}", case.id);
+            let old_text = case.scenario.replacen(&current, &previous, 1);
+            let old = smoke_core::Scenario::from_text(&old_text).unwrap();
+            let new = smoke_core::Scenario::from_text(&case.scenario).unwrap();
+            assert_eq!(
+                serde_json::to_value(old.step).unwrap(),
+                serde_json::to_value(new.step).unwrap(),
+                "{}",
+                case.id
+            );
+            count += 1;
+        }
+        assert!(count > 0);
     }
 
     #[test]

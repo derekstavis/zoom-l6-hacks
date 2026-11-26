@@ -6,3 +6,4 @@ system_items = ["Send MIDI State"]
 [[menu_action]]
 item = "Send MIDI State"
 steps = "patches/midi-sync/tests/emulator/fragments/send-midi-state.toml"
+before_if_installed = [{ patch = "dump-rom", steps = "patches/midi-sync/tests/emulator/fragments/menu-before-dump-rom.toml" }]

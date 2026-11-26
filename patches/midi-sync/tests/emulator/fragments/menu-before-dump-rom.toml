@@ -1,0 +1,5 @@
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-patch-menu/system-send-midi-state-10.png"
+guest_timeout_ms = 30000
+wall_timeout_s = 120

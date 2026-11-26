@@ -527,7 +527,11 @@ the dynamic checks; placement selection and case composition stay unchanged.
   patch declares its check in `patches/<name>/tests/emulator/checks.toml`:
   `check`, a fragment run once the mixer is ready; `system_items`, the System
   menu items it adds; and `menu_action`, a fragment run after selecting one of
-  them. Cases run the checks in the order `tests/emulator/patches.toml` lists,
+  them. A `menu_action` may also name an `after` fragment, or use
+  `before_if_installed = [{ patch = "dump-rom", steps = "..." }]` to run a
+  fragment before selection when another patch is present. Paths are relative
+  to the repository root and conditional patch names must be in the catalog.
+  Cases run the checks in the order `tests/emulator/patches.toml` lists,
   and include the fragments by path, so a generated scenario is ordinary
   composed steps:
 

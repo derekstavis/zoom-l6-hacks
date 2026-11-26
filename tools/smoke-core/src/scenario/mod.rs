@@ -749,10 +749,13 @@ pub enum Action {
     ExpectSdAllocation {
         loaded: bool,
     },
-    ExpectSdModule {
+    ExpectSdChains {
         loaded: bool,
         #[serde(default)]
         chain_count: Option<u8>,
+    },
+    ExpectSdModule {
+        loaded: bool,
     },
     EffectPacedTurn {
         channel: usize,

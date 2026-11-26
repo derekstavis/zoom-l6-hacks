@@ -34,6 +34,10 @@ action = "expect-sd-allocation"
 loaded = true
 
 [[step]]
+action = "expect-sd-chains"
+loaded = true
+
+[[step]]
 action = "expect-sd-module"
 loaded = true
 
@@ -54,6 +58,10 @@ loaded = true
 
 [[step]]
 action = "expect-sd-allocation"
+loaded = true
+
+[[step]]
+action = "expect-sd-chains"
 loaded = true
 
 [[step]]
@@ -86,6 +94,10 @@ loaded = true
 
 [[step]]
 action = "expect-sd-allocation"
+loaded = true
+
+[[step]]
+action = "expect-sd-chains"
 loaded = true
 
 [[step]]
@@ -194,6 +206,10 @@ loaded = true
 
 [[step]]
 action = "expect-sd-allocation"
+loaded = true
+
+[[step]]
+action = "expect-sd-chains"
 loaded = true
 
 [[step]]

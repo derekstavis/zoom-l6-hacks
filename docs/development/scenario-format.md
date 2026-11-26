@@ -94,7 +94,8 @@ card-reader mode), stays unmarked.
 | `expect-sd-loader` | — | Freeze and validate the loader fixture, then check persistent loader and dispatch bytes in running MAIN |
 | `capture-sd-module` | `loaded` | Follow `expect-sd-loader` with the same deadline; capture the registry snapshot, waiting for the loader claim when a module is expected. |
 | `expect-sd-allocation` | `loaded` | Check the captured registry, module allocation, size and claim against the frozen fixture. |
-| `expect-sd-module` | `loaded`, optional `chain_count` | Follow the allocation check with the same state and deadline; assert hook chains and relocated immutable module bytes against the frozen fixture. |
+| `expect-sd-chains` | `loaded`, optional `chain_count` | Check registered hook counts, ordering and handlers against the frozen fixture, retaining the observed chain for module verification. |
+| `expect-sd-module` | `loaded` | Follow the chain check with the same state and deadline; verify continuation pointers and relocated immutable module bytes against the frozen fixture. |
 | `expect-display-after-press` | — | Wait for the L6max display to change from the preceding press's baseline, within that press's original guest and wall deadlines. Use a reviewed image assertion when verifying a specific screen |
 | `warm-reset` | | Reset MAIN in place and wait for QEMU's reset event. The panel remains running; subsequent `boot-ready` and `mixer-ready` waits require a fresh ring transition and a completed boot sweep before accepting panel state |
 | `wait-effect-mode` | `panel_mode`, `edit_mode` (at least one) | Wait for the loaded L6max effect module’s published editor state, bounded by 10 guest seconds and 180 wall seconds with 10 ms wall-time polling |

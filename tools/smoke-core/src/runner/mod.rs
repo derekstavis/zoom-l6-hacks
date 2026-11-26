@@ -1098,13 +1098,18 @@ impl Runner {
                         loaded,
                     }));
                 }
-                Action::ExpectSdModule {
+                Action::ExpectSdChains {
                     loaded,
                     chain_count,
                 } => {
-                    return Ok(Progress::Device(devices::Operation::ExpectSdModule {
+                    return Ok(Progress::Device(devices::Operation::ExpectSdChains {
                         loaded,
                         chain_count,
+                    }));
+                }
+                Action::ExpectSdModule { loaded } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectSdModule {
+                        loaded,
                     }));
                 }
                 Action::EffectPacedTurn { channel, steps } => {

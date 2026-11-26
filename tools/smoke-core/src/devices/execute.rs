@@ -891,6 +891,7 @@ impl State {
                 operation,
                 Operation::CaptureSdModule { .. }
                     | Operation::ExpectSdAllocation { .. }
+                    | Operation::ExpectSdChains { .. }
                     | Operation::ExpectSdModule { .. }
             )
         {
@@ -1622,6 +1623,7 @@ impl State {
                     fixture,
                     snapshot: None,
                     allocation_checked: false,
+                    chains: None,
                     wall_deadline,
                     guest_start: operation_start.1,
                     guest_timeout_ms,
@@ -1679,44 +1681,27 @@ impl State {
                 context.allocation_checked = true;
                 Ok(evidence)
             }
-            Operation::ExpectSdModule {
+            Operation::ExpectSdChains {
                 loaded,
                 chain_count,
             } => {
-                let context = self
-                    .sd_inspection
-                    .take()
-                    .ok_or("SD module assertion needs preceding loader assertion")?;
-                if !context.allocation_checked {
-                    return Err("SD allocation assertion missing".into());
+                let context = self.sd_inspection.as_mut().ok_or("SD inspection missing")?;
+                if !context.allocation_checked || context.chains.is_some() {
+                    return Err("SD chain assertion has unexpected state".into());
                 }
-                let (captured_loaded, typed_snapshot) =
-                    context.snapshot.ok_or("SD module snapshot missing")?;
-                if captured_loaded != loaded {
-                    return Err("SD module assertion does not match captured state".into());
+                let (captured_loaded, snapshot) = context
+                    .snapshot
+                    .as_ref()
+                    .ok_or("SD module snapshot missing")?;
+                if *captured_loaded != loaded {
+                    return Err("SD chain assertion does not match captured state".into());
                 }
-                let fixture = context.fixture;
                 let inspection_deadline = context.wall_deadline;
                 let inspection_guest_start = context.guest_start;
                 let inspection_guest_budget = context.guest_timeout_ms;
-                let sd::FrozenSdFixture {
-                    edits: fixture,
-                    loader_report: frozen_loader,
-                    patch_report: frozen_patch,
-                    chain_first: frozen_chain,
-                } = fixture;
-                let (edits, link_base, payload, _, _relocations, module_hooks, module_images) =
-                    fixture;
-                // Without a card mount since the last reset the loader has no
-                // registry, so every dispatch stub takes the stock path.
-                // A successful loader claim is published only after the SD
-                // scan and hook installation have finished. Wait for that
-                // signal when a module is expected; absence checks remain
-                // immediate and require their own observation window.
+                let (edits, _, _, _, _, module_hooks, _) = &context.fixture.edits;
                 let control = l6ctl::OwnedControl::new(&session.engine);
-                let reader = control
-                    .sd_loader_reader(inspection_deadline)
-                    .map_err(std::io::Error::other)?;
+                let reader = control.sd_loader_reader(inspection_deadline)?;
                 let read_live =
                     |address: u32, length: usize| -> Result<Vec<u8>, Box<dyn std::error::Error>> {
                         reader
@@ -1726,11 +1711,13 @@ impl State {
                             })
                             .map_err(|e| std::io::Error::other(e).into())
                     };
-                let registry = typed_snapshot.registry;
-                let Some(registry) = registry else {
-                    if loaded {
-                        return Err("the Patch loader has not allocated its registry".into());
-                    }
+                let Some(registry) = snapshot.registry else {
+                    context.chains = Some(sd::SdChainEvidence {
+                        expected_function: None,
+                        count: 0,
+                        links: Vec::new(),
+                        expected_count: chain_count,
+                    });
                     return Ok(json!({"loaded":false,"registry":null,"guarded_hooks":edits.len()}));
                 };
                 let inspect_chain = |record| -> Result<_, Box<dyn std::error::Error>> {
@@ -1746,13 +1733,9 @@ impl State {
                     .map_err(|e| std::io::Error::other(e).into())
                 };
                 let slot_for = |address| {
-                    sd_frozen_handler_slot(&frozen_loader, registry, address)
+                    sd_frozen_handler_slot(&context.fixture.loader_report, registry, address)
                         .map_err(std::io::Error::other)
                 };
-                let loaded_base = typed_snapshot.module_base.ok_or("SD module base missing")?;
-                let loaded_len = typed_snapshot
-                    .module_len
-                    .ok_or("SD module length missing")?;
                 let expected_function = if chain_count.is_some() {
                     module_hooks
                         .iter()
@@ -1769,7 +1752,7 @@ impl State {
                     module_hooks.first().map(|hook| hook.address)
                 };
                 let mut expected_chains = std::collections::BTreeMap::<u32, u32>::new();
-                for module_hook in &module_hooks {
+                for module_hook in module_hooks {
                     *expected_chains.entry(module_hook.address).or_default() += 1;
                 }
                 for (address, module_count) in expected_chains {
@@ -1825,7 +1808,7 @@ impl State {
                     .iter()
                     .map(|link| (link.entry, link.next_slot, link.order, link.module_base))
                     .collect();
-                for (address, _, _entry_offset) in &edits {
+                for (address, _, _entry_offset) in edits {
                     // Every edit is one of the module's hooks (sd_fixture_edits).
                     let slot = slot_for(*address)?;
                     let handler = u32::from_le_bytes(read_live(slot, 4)?.try_into().unwrap());
@@ -1843,6 +1826,62 @@ impl State {
                         .into());
                     }
                 }
+                let evidence = json!({"loaded":loaded,"hook_chain_count":registered_count,"hook_chain_orders":chain_links.iter().map(|link|link.2).collect::<Vec<_>>()});
+                context.chains = Some(sd::SdChainEvidence {
+                    expected_function,
+                    count: registered_count,
+                    links: chain_links,
+                    expected_count: chain_count,
+                });
+                Ok(evidence)
+            }
+            Operation::ExpectSdModule { loaded } => {
+                let context = self
+                    .sd_inspection
+                    .take()
+                    .ok_or("SD module assertion needs preceding inspection")?;
+                if !context.allocation_checked {
+                    return Err("SD allocation assertion missing".into());
+                }
+                let (captured_loaded, typed_snapshot) =
+                    context.snapshot.ok_or("SD module snapshot missing")?;
+                if captured_loaded != loaded {
+                    return Err("SD module assertion does not match captured state".into());
+                }
+                let chains = context.chains.ok_or("SD chain assertion missing")?;
+                let expected_function = chains.expected_function;
+                let registered_count = chains.count;
+                let chain_count = chains.expected_count;
+                let chain_links = chains.links;
+                let inspection_deadline = context.wall_deadline;
+                let inspection_guest_start = context.guest_start;
+                let inspection_guest_budget = context.guest_timeout_ms;
+                let sd::FrozenSdFixture {
+                    edits: fixture,
+                    loader_report: frozen_loader,
+                    patch_report: frozen_patch,
+                    chain_first: frozen_chain,
+                } = context.fixture;
+                let (edits, link_base, payload, _, _relocations, module_hooks, module_images) =
+                    fixture;
+                let Some(_registry) = typed_snapshot.registry else {
+                    return Ok(json!({"loaded":false,"registry":null,"guarded_hooks":edits.len()}));
+                };
+                let loaded_base = typed_snapshot.module_base.ok_or("SD module base missing")?;
+                let loaded_len = typed_snapshot
+                    .module_len
+                    .ok_or("SD module length missing")?;
+                let control = l6ctl::OwnedControl::new(&session.engine);
+                let reader = control.sd_loader_reader(inspection_deadline)?;
+                let read_live =
+                    |address: u32, length: usize| -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+                        reader
+                            .read_chunk_cancellable(address, length, inspection_deadline, || {
+                                guest_now(session).wrapping_sub(inspection_guest_start)
+                                    >= inspection_guest_budget
+                            })
+                            .map_err(|e| std::io::Error::other(e).into())
+                    };
                 if loaded {
                     let hook = module_hooks
                         .iter()

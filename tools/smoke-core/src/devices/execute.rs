@@ -344,7 +344,7 @@ impl State {
     pub fn restarted(&mut self) -> Result<(), String> {
         self.menu_snapshot = None;
         self.effect_ring = None;
-        self.effect_modes = None;
+        self.effect_state = None;
         self.usb_descriptor_budget = None;
         self.direct_midi = false;
         let auxiliary_cleanup = self.abort_auxiliary_scopes();
@@ -580,7 +580,10 @@ impl State {
         wall_timeout_s: u64,
     ) -> Result<Value, String> {
         if self.effect_slot_deadline.is_some()
-            && !matches!(operation, Operation::EffectReplacementState { .. })
+            && !matches!(
+                operation,
+                Operation::EffectReplacementState { .. } | Operation::CaptureEffectState
+            )
         {
             self.effect_slot_deadline = None;
             return Err("effect slot readiness must be followed by its state assertion".into());
@@ -1313,51 +1316,92 @@ impl State {
                     Ok(json!({"encoder":encoder,"position":value}))
                 }
             }
-            Operation::CaptureEffectModes => {
-                if self.effect_modes.is_some() {
-                    return Err("effect mode snapshot already active".into());
+            Operation::CaptureEffectState => {
+                if self.effect_state.is_some() {
+                    return Err("effect state snapshot already active".into());
                 }
-                let deadline = operation_start.0 + Duration::from_secs(wall_timeout_s);
+                let prior = self.effect_slot_deadline.take();
+                let (started, guest_start, guest_budget, wall_budget) = prior
+                    .as_ref()
+                    .map(|scope| {
+                        (
+                            scope.start,
+                            scope.guest_start,
+                            scope.guest_budget,
+                            scope.wall_budget,
+                        )
+                    })
+                    .unwrap_or((
+                        operation_start.0,
+                        operation_start.1,
+                        guest_timeout_ms,
+                        wall_timeout_s,
+                    ));
+                if (guest_budget, wall_budget) != (guest_timeout_ms, wall_timeout_s) {
+                    return Err("effect slot assertion changed its shared budget".into());
+                }
+                let deadline = started + Duration::from_secs(wall_budget);
                 let check = || -> Result<(), String> {
                     if Instant::now() >= deadline
-                        || guest_now(session).wrapping_sub(operation_start.1) > guest_timeout_ms
+                        || guest_now(session).wrapping_sub(guest_start) > guest_budget
                     {
-                        Err("effect mode snapshot exceeded its deadline".into())
+                        Err("effect state snapshot exceeded its deadline".into())
                     } else {
                         Ok(())
                     }
                 };
-                let reader = effect_slot_reader(options, session, deadline, &check)?;
+                let reader = match prior {
+                    Some(scope) => scope.reader,
+                    None => effect_slot_reader(options, session, deadline, &check)?,
+                };
                 let snapshot = reader.snapshot_before_checked(
                     &l6ctl::EffectSlotFields::default(),
                     deadline,
                     &check,
                 )?;
                 let evidence = json!({"effect_type":snapshot.effect_type,"processor_type":snapshot.processor_type,"active_effect":"","nonzero_output_blocks":0,"panel_mode":snapshot.panel_mode,"edit_mode":snapshot.edit_mode,"parameter_edits_applied":0,"parameter_id":null,"parameter_value":null,"knob_dialog_active":0,"exit_ring_refreshes":0,"atomic":false,"fixture_module_sha256":snapshot.fixture_module_sha256});
-                self.effect_modes = Some((
-                    snapshot,
-                    operation_start.0,
-                    operation_start.1,
-                    guest_timeout_ms,
-                    wall_timeout_s,
-                ));
+                self.effect_state =
+                    Some((snapshot, started, guest_start, guest_budget, wall_budget));
                 Ok(evidence)
             }
-            Operation::ExpectEffectPanelMode { .. } | Operation::ExpectEffectEditMode { .. } => {
+            Operation::ExpectEffectType { .. }
+            | Operation::ExpectEffectProcessor { .. }
+            | Operation::ExpectEffectPanelMode { .. }
+            | Operation::ExpectEffectEditMode { .. } => {
                 let (snapshot, started, guest_start, guest_budget, wall_budget) = self
-                    .effect_modes
+                    .effect_state
                     .as_ref()
-                    .ok_or("effect mode snapshot missing")?;
+                    .ok_or("effect state snapshot missing")?;
                 if (guest_timeout_ms, wall_timeout_s) != (*guest_budget, *wall_budget)
                     || started.elapsed() >= Duration::from_secs(*wall_budget)
                     || guest_now(session).wrapping_sub(*guest_start) > *guest_budget
                 {
                     return Err(
-                        "effect mode assertion exceeded its shared deadline or changed budget"
+                        "effect state assertion exceeded its shared deadline or changed budget"
                             .into(),
                     );
                 }
                 match operation {
+                    Operation::ExpectEffectType { value } => {
+                        if snapshot.effect_type != value {
+                            return Err(format!(
+                                "effect replacement selected effect is {}, expected {value}",
+                                snapshot.effect_type
+                            )
+                            .into());
+                        }
+                        Ok(json!({"effect_type":snapshot.effect_type}))
+                    }
+                    Operation::ExpectEffectProcessor { value } => {
+                        if snapshot.processor_type != u32::from(value) {
+                            return Err(format!(
+                                "effect replacement processor is {}, expected {value}",
+                                snapshot.processor_type
+                            )
+                            .into());
+                        }
+                        Ok(json!({"processor_type":snapshot.processor_type}))
+                    }
                     Operation::ExpectEffectPanelMode { value } => {
                         if snapshot.panel_mode != u32::from(value) {
                             return Err(format!(
@@ -1381,17 +1425,17 @@ impl State {
                     _ => unreachable!(),
                 }
             }
-            Operation::EffectModesEnd => {
+            Operation::EffectStateEnd => {
                 let (_, started, guest_start, guest_budget, wall_budget) = self
-                    .effect_modes
+                    .effect_state
                     .take()
-                    .ok_or("effect mode snapshot missing")?;
+                    .ok_or("effect state snapshot missing")?;
                 if (guest_timeout_ms, wall_timeout_s) != (guest_budget, wall_budget)
                     || started.elapsed() >= Duration::from_secs(wall_budget)
                     || guest_now(session).wrapping_sub(guest_start) > guest_budget
                 {
                     return Err(
-                        "effect mode assertion exceeded its shared deadline or changed budget"
+                        "effect state assertion exceeded its shared deadline or changed budget"
                             .into(),
                     );
                 }

@@ -328,10 +328,12 @@ pub fn of(action: &Action) -> Requirement {
         | Action::CaptureMenu { .. }
         | Action::ExpectMenuItems { .. }
         | Action::WaitEffectMode { .. }
-        | Action::CaptureEffectModes
+        | Action::CaptureEffectState
+        | Action::ExpectEffectType { .. }
+        | Action::ExpectEffectProcessor { .. }
         | Action::ExpectEffectPanelMode { .. }
         | Action::ExpectEffectEditMode { .. }
-        | Action::EffectModesEnd
+        | Action::EffectStateEnd
         | Action::CaptureEffectRing { .. }
         | Action::ExpectEffectRingChanged { .. } => on(L6MAX),
         Action::ExpectDisplayAfterPress => Requirement {

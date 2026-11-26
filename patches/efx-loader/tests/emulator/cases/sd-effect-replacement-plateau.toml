@@ -40,10 +40,22 @@ action = "wait-effect-mode"
 edit_mode = true
 
 [[step]]
-action = "effect-replacement-state"
-expected_effect_type = 1
-expected_processor_type = 1
-expected_edit_mode = true
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-type"
+value = 1
+
+[[step]]
+action = "expect-effect-processor"
+value = 1
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = true
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "capture-effect-ring"
@@ -79,10 +91,22 @@ action = "wait-effect-mode"
 edit_mode = false
 
 [[step]]
-action = "effect-replacement-state"
-expected_effect_type = 1
-expected_processor_type = 1
-expected_edit_mode = false
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-type"
+value = 1
+
+[[step]]
+action = "expect-effect-processor"
+value = 1
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = false
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "press"
@@ -94,6 +118,15 @@ expected_effect_type = 2
 expected_processor_type = 0
 
 [[step]]
-action = "effect-replacement-state"
-expected_effect_type = 2
-expected_processor_type = 0
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-type"
+value = 2
+
+[[step]]
+action = "expect-effect-processor"
+value = 0
+
+[[step]]
+action = "effect-state-end"

@@ -1119,8 +1119,18 @@ impl Runner {
                         devices::Operation::ExpectEffectRingChanged { encoder },
                     ));
                 }
-                Action::CaptureEffectModes => {
-                    return Ok(Progress::Device(devices::Operation::CaptureEffectModes));
+                Action::ExpectEffectType { value } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectEffectType {
+                        value,
+                    }));
+                }
+                Action::ExpectEffectProcessor { value } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectEffectProcessor { value },
+                    ));
+                }
+                Action::CaptureEffectState => {
+                    return Ok(Progress::Device(devices::Operation::CaptureEffectState));
                 }
                 Action::ExpectEffectPanelMode { value } => {
                     return Ok(Progress::Device(
@@ -1132,8 +1142,8 @@ impl Runner {
                         enabled,
                     }));
                 }
-                Action::EffectModesEnd => {
-                    return Ok(Progress::Device(devices::Operation::EffectModesEnd));
+                Action::EffectStateEnd => {
+                    return Ok(Progress::Device(devices::Operation::EffectStateEnd));
                 }
                 Action::WaitEffectMode {
                     panel_mode,

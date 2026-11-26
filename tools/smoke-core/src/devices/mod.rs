@@ -402,14 +402,20 @@ pub enum Operation {
     ExpectEffectRingChanged {
         encoder: u8,
     },
-    CaptureEffectModes,
+    CaptureEffectState,
+    ExpectEffectType {
+        value: u8,
+    },
+    ExpectEffectProcessor {
+        value: u8,
+    },
     ExpectEffectPanelMode {
         value: u8,
     },
     ExpectEffectEditMode {
         enabled: bool,
     },
-    EffectModesEnd,
+    EffectStateEnd,
     WaitEffectMode {
         panel_mode: Option<u8>,
         edit_mode: Option<bool>,
@@ -1213,7 +1219,7 @@ pub struct State {
     l6_dispatch: Option<l6_dispatch::Scope>,
     usb_startup: Option<usb_startup::Scope>,
     effect_slot_deadline: Option<sd::EffectSlotScope>,
-    effect_modes: Option<(l6ctl::EffectSlotSnapshot, Instant, u32, u32, u64)>,
+    effect_state: Option<(l6ctl::EffectSlotSnapshot, Instant, u32, u32, u64)>,
     effect_ring: Option<(u8, u8, u32, l6max_host::effect_editor::SlotReader)>,
     l6max_timing: Option<timing::Scope>,
     usb_storage_scope: Option<usb_storage_steps::Scope>,

@@ -4198,6 +4198,7 @@ impl State {
                     self.overlay_reader
                         .as_ref()
                         .ok_or("missing locked update reader")?,
+                    shared.ok_or("missing shared deadline")?,
                 )
             }
             Operation::KnobLockTrigger { delta } => trigger_locked_update(
@@ -4229,9 +4230,11 @@ impl State {
                     .ok_or("missing locked update reader")?,
             ),
             Operation::KnobLockRestore => restore_locked_update(
+                session,
                 self.knob_dialog_preflight
                     .as_mut()
                     .ok_or("missing knob-dialog preflight")?,
+                shared.ok_or("missing shared deadline")?,
             ),
             Operation::KnobLockAssert => assert_locked_update(
                 self.knob_dialog_preflight
@@ -4290,6 +4293,7 @@ impl State {
                     .ok_or("missing knob preflight")?,
                 tag,
                 wall_timeout_s,
+                shared.ok_or("missing shared deadline")?,
             ),
             Operation::KnobDialogWaitInvalidTag => wait_invalid_tag(
                 session,
@@ -4298,12 +4302,14 @@ impl State {
                     .ok_or("missing knob preflight")?,
                 guest_timeout_ms,
                 wall_timeout_s,
+                shared.ok_or("missing shared deadline")?,
             ),
             Operation::KnobDialogConfirmInvalidTag => confirm_invalid_tag(
                 session,
                 self.knob_dialog_preflight
                     .as_mut()
                     .ok_or("missing knob preflight")?,
+                shared.ok_or("missing shared deadline")?,
             ),
             Operation::KnobDialogSettleLevel { artifact } => settle_level(
                 session,
@@ -4320,6 +4326,7 @@ impl State {
                 self.knob_dialog_preflight
                     .as_mut()
                     .ok_or("missing knob preflight")?,
+                shared.ok_or("missing shared deadline")?,
             ),
             Operation::KnobDialogObserveInvalidSignature { guest_ms } => observe_invalid_signature(
                 session,
@@ -4337,9 +4344,11 @@ impl State {
                     .ok_or("missing knob preflight")?,
             ),
             Operation::KnobDialogRestoreInvalidSignature => restore_invalid_signature(
+                session,
                 self.knob_dialog_preflight
                     .as_mut()
                     .ok_or("missing knob preflight")?,
+                shared.ok_or("missing shared deadline")?,
             ),
             Operation::KnobDialogPrepareNotification => prepare_notification(
                 session,

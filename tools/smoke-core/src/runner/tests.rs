@@ -1263,9 +1263,32 @@ fn unsupported_operations_and_switch_semantics_fail_before_boot() {
 }
 
 #[test]
+fn l6_sweep_requires_complete_unique_targets_and_unchanged_budget() {
+    let text = include_str!("../../../../tests/emulator/cases/panel/l6-input-sweep.toml");
+    assert!(Scenario::parse(text).is_ok());
+    let duplicate = text.replacen("target = 8", "target = 7", 1);
+    assert!(Scenario::parse(&duplicate).is_err());
+    let missing = text.replacen(
+        "action = \"l6-sweep-encoder-send\"\nindex = 5",
+        "action = \"l6-sweep-encoder-send\"\nindex = 4",
+        1,
+    );
+    assert!(Scenario::parse(&missing).is_err());
+    let changed = text.replacen(
+        "action = \"l6-sweep-panel-tap\"\nguest_timeout_ms = 600000",
+        "action = \"l6-sweep-panel-tap\"\nguest_timeout_ms = 5",
+        1,
+    );
+    assert!(Scenario::parse(&changed).is_err());
+}
+
+#[test]
 fn typed_input_sweep_allows_only_its_verified_rejections() {
     let now = Instant::now();
-    let mut runner = test_runner("backends=['headless']\n[[step]]\naction='l6-input-sweep'\n");
+    let case = include_str!("../../../../tests/emulator/cases/panel/l6-input-sweep.toml");
+    let steps = &case[case.find("[[step]]\naction = \"l6-sweep-begin\"").unwrap()..];
+    let mut runner = test_runner(&format!("backends=['headless']\n{steps}"));
+    runner.step = runner.scenario.step.len() - 1;
     runner.device_finished(json!({"expected_rejections":{"main":2,"panel":2}}));
     let mut obs = sample(0);
     obs.main.rejected = 2;
@@ -1276,7 +1299,8 @@ fn typed_input_sweep_allows_only_its_verified_rejections() {
     ));
     fs::remove_dir_all(&runner.logs).unwrap();
 
-    let mut runner = test_runner("backends=['headless']\n[[step]]\naction='l6-input-sweep'\n");
+    let mut runner = test_runner(&format!("backends=['headless']\n{steps}"));
+    runner.step = runner.scenario.step.len() - 1;
     runner.device_finished(json!({"expected_rejections":{"main":2,"panel":2}}));
     let mut obs = sample(0);
     obs.main.rejected = 3;

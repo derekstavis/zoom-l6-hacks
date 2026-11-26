@@ -1463,6 +1463,69 @@ impl Scenario {
                 return Err("unterminated Editor assignment".into());
             }
         }
+        for model in &value.models {
+            let mut phase: Option<u8> = None;
+            let mut budget: Option<(u32, u64)> = None;
+            let mut targets = std::collections::BTreeSet::new();
+            let mut encoders = std::collections::BTreeSet::new();
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                let next = match &step.action {
+                    Action::L6SweepBegin if phase.is_none() && *model == Model::L6 => {
+                        phase = Some(0);
+                        budget = Some((step.guest_timeout_ms, step.wall_timeout_s));
+                        continue;
+                    }
+                    Action::L6SweepRejectMain { target: 0 } => Some((0, 1)),
+                    Action::L6SweepRejectMain { target: 5 } => Some((1, 2)),
+                    Action::L6SweepPanelBaseline { target }
+                        if ((7..31).contains(target) || matches!(*target, 1 | 2 | 3 | 6 | 47))
+                            && targets.insert(*target) =>
+                    {
+                        Some((2, 3))
+                    }
+                    Action::L6SweepPanelTap => Some((3, 4)),
+                    Action::L6SweepPanelWait => Some((4, 5)),
+                    Action::L6SweepPanelTrace => Some((5, 6)),
+                    Action::L6SweepPanelAssert => Some((6, 2)),
+                    Action::L6SweepEncoderBaseline if targets.len() == 29 => Some((2, 7)),
+                    Action::L6SweepEncoderSend { index }
+                        if *index < 6 && encoders.insert(*index) =>
+                    {
+                        Some((7, 8))
+                    }
+                    Action::L6SweepEncoderWait => Some((8, 7)),
+                    Action::L6SweepEncoderTrace if encoders.len() == 6 => Some((7, 9)),
+                    Action::L6SweepEncoderAssert => Some((9, 10)),
+                    Action::L6SweepRejectPanel => Some((10, 11)),
+                    Action::L6SweepRejectEncoder => Some((11, 12)),
+                    Action::L6SweepEnd => Some((12, 13)),
+                    Action::L6SweepBegin
+                    | Action::L6SweepRejectMain { .. }
+                    | Action::L6SweepPanelBaseline { .. }
+                    | Action::L6SweepEncoderBaseline
+                    | Action::L6SweepEncoderSend { .. }
+                    | Action::L6SweepEncoderTrace => {
+                        return Err("invalid L6 sweep target or model".into());
+                    }
+                    _ => None,
+                };
+                match (phase, next) {
+                    (Some(want), Some((actual, next)))
+                        if want == actual
+                            && budget == Some((step.guest_timeout_ms, step.wall_timeout_s)) =>
+                    {
+                        phase = if next == 13 { None } else { Some(next) };
+                    }
+                    (Some(_), _) | (None, Some(_)) => {
+                        return Err("invalid L6 input sweep sequence or shared budget".into());
+                    }
+                    _ => {}
+                }
+            }
+            if phase.is_some() {
+                return Err("unterminated L6 input sweep".into());
+            }
+        }
         for step in &value.step {
             if let Action::KnobDialogAdaptive { plan } = &step.action {
                 plan.validate()?;

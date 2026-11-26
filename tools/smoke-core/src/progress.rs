@@ -307,6 +307,23 @@ pub fn step_label(action: &crate::Action) -> String {
         Action::KnobRaceSample => "Sample callback rejection state".into(),
         Action::KnobRaceRestore => "Restore raced descriptor".into(),
         Action::KnobRaceAssert => "Check callback rejection and retry readiness".into(),
+        Action::L6SweepBegin => "Begin L6 input sweep".into(),
+        Action::L6SweepRejectMain { target } => format!("Check MAIN rejects target {target}"),
+        Action::L6SweepPanelBaseline { target } => {
+            format!("Capture panel target {target} baseline")
+        }
+        Action::L6SweepPanelTap => "Tap panel target".into(),
+        Action::L6SweepPanelWait => "Wait for panel input and release".into(),
+        Action::L6SweepPanelTrace => "Capture panel reports".into(),
+        Action::L6SweepPanelAssert => "Check panel reports".into(),
+        Action::L6SweepEncoderBaseline => "Capture encoder report baseline".into(),
+        Action::L6SweepEncoderSend { index } => format!("Turn encoder {index}"),
+        Action::L6SweepEncoderWait => "Wait for encoder input".into(),
+        Action::L6SweepEncoderTrace => "Capture encoder reports".into(),
+        Action::L6SweepEncoderAssert => "Check encoder reports".into(),
+        Action::L6SweepRejectPanel => "Check panel rejects target 31".into(),
+        Action::L6SweepRejectEncoder => "Check panel rejects encoder 6".into(),
+        Action::L6SweepEnd => "Finish L6 input sweep".into(),
         Action::EditorAssignBegin => "Begin Editor pad assignments".into(),
         Action::EditorAssignIdentity => "Check Editor identity".into(),
         Action::EditorAssignGlobal => "Check Editor global settings".into(),

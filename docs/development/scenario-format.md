@@ -336,7 +336,7 @@ message delivered just after the interval.
 | `l6max-tap-handler` | none | L6max GDB check that Tap target 48 reaches the firmware's TAP press handler. |
 | `l6-din-event-dispatch` | `group`, `cc`, `value` | L6 check of DIN CC-to-event dispatch |
 | `l6-usb-startup` | — | First step only; L6 probe replays the startup USB-enable sequence, verifies three firmware entry points and controller writes |
-| `l6-input-sweep` | — | Sweep supported L6 controls and record their input responses |
+| `l6-sweep-*` | `target`, `index` on selected steps | Exercise all L6 panel targets and encoders, compare UART reports, and check unsupported inputs are rejected. The contiguous L6-only scope shares a deadline. |
 | `l6-din-sweep` | — | Sweep supported L6 DIN values and record dispatch behavior |
 | `l6max-input-timing` | — | Measure L6max input timing and applied acknowledgements |
 

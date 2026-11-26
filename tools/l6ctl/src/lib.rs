@@ -28,6 +28,7 @@ pub use l6max_host::editor::{
     pad_assignment_matches as editor_pad_assignment_matches,
     pad_file_count as editor_pad_file_count, pad_filename_valid as editor_pad_filename_valid,
 };
+pub use l6max_host::input_trace::panel_uart_count;
 pub use l6max_host::mixer_level::MixerLevel;
 pub use l6max_host::panel_keys::Snapshot as PanelKeySnapshot;
 pub use l6max_host::update_bootloader::Outcome as InstallerOutcome;
@@ -637,6 +638,76 @@ impl<'a> OwnedControl<'a> {
     ) -> Result<l6max_host::effect_editor::Reader, ControlError> {
         l6max_host::effect_editor::Reader::new(self.main_qmp()?, self.engine.model(), binding)
             .map_err(ControlError::Rejected)
+    }
+
+    /// Enqueue an input on a specific emulated channel, including unsupported
+    /// targets used by protocol rejection diagnostics. Returns its sequence.
+    pub fn raw_tap(
+        &self,
+        source: InputSource,
+        target: u32,
+        hold_ms: u32,
+    ) -> Result<u32, ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
+        let input = match source {
+            InputSource::Main => &inputs.main,
+            InputSource::Panel => &inputs.panel,
+        };
+        input
+            .tap(target, hold_ms)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+    /// Enqueue a raw down on the explicitly selected channel.
+    pub fn raw_down(
+        &self,
+        source: InputSource,
+        target: u32,
+        duration_ms: u32,
+    ) -> Result<u32, ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
+        let input = match source {
+            InputSource::Main => &inputs.main,
+            InputSource::Panel => &inputs.panel,
+        };
+        input
+            .down(target, duration_ms)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+    /// Enqueue a raw release on the explicitly selected channel.
+    pub fn raw_up(&self, source: InputSource, target: u32) -> Result<u32, ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
+        let input = match source {
+            InputSource::Main => &inputs.main,
+            InputSource::Panel => &inputs.panel,
+        };
+        input
+            .up(target)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+    /// Enqueue a zero-based encoder index on the panel channel, including
+    /// unsupported indices for protocol rejection diagnostics.
+    pub fn raw_panel_encoder(&self, index: u32, steps: i32) -> Result<u32, ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
+        inputs
+            .panel
+            .encoder(index, steps)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
     }
 
     /// Enqueue a held button without waiting for guest acknowledgement.

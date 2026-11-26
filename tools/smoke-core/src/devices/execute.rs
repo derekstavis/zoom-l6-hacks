@@ -373,6 +373,15 @@ impl State {
         self.editor_assignment = None;
         panel.map(|_| ())
     }
+    pub fn has_l6_sweep(&self) -> bool {
+        self.l6_input_sweep.is_some()
+    }
+    pub fn abort_l6_sweep(&mut self, session: &Session) -> Result<(), String> {
+        if let Some(mut scope) = self.l6_input_sweep.take() {
+            scope.abort(session)?;
+        }
+        Ok(())
+    }
     pub fn has_editor_assignment(&self) -> bool {
         self.editor_assignment.is_some()
     }
@@ -433,6 +442,30 @@ impl State {
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
     ) -> Result<Value, String> {
+        if let Some(scope) = self.l6_input_sweep.as_ref() {
+            let expected = match operation {
+                Operation::L6SweepRejectMain { target: 0 } => Some(0),
+                Operation::L6SweepRejectMain { target: 5 } => Some(1),
+                Operation::L6SweepPanelBaseline { .. } | Operation::L6SweepEncoderBaseline => {
+                    Some(2)
+                }
+                Operation::L6SweepPanelTap => Some(3),
+                Operation::L6SweepPanelWait => Some(4),
+                Operation::L6SweepPanelTrace => Some(5),
+                Operation::L6SweepPanelAssert => Some(6),
+                Operation::L6SweepEncoderSend { .. } | Operation::L6SweepEncoderTrace => Some(7),
+                Operation::L6SweepEncoderWait => Some(8),
+                Operation::L6SweepEncoderAssert => Some(9),
+                Operation::L6SweepRejectPanel => Some(10),
+                Operation::L6SweepRejectEncoder => Some(11),
+                Operation::L6SweepEnd => Some(12),
+                _ => None,
+            };
+            if expected != Some(scope.phase) {
+                return Err("L6 input sweep interrupted or out of order".into());
+            }
+            scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+        }
         if let Some(scope) = self.editor_assignment.as_ref() {
             let expected = match operation {
                 Operation::EditorAssignIdentity => Some((0, None)),
@@ -2035,8 +2068,67 @@ impl State {
             Operation::L6DinEventDispatch { group, cc, value } => {
                 run_l6_din_event_dispatch(session, options, group, cc, value)
             }
-            Operation::L6InputSweep => {
-                Ok(run_l6_input_sweep(session, options).map_err(std::io::Error::other)?)
+            Operation::L6SweepBegin => {
+                self.l6_input_sweep = Some(l6_input_sweep::Scope::begin(
+                    session,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            operation @ (Operation::L6SweepRejectMain { .. }
+            | Operation::L6SweepPanelBaseline { .. }
+            | Operation::L6SweepPanelTap
+            | Operation::L6SweepPanelWait
+            | Operation::L6SweepPanelTrace
+            | Operation::L6SweepPanelAssert
+            | Operation::L6SweepEncoderBaseline
+            | Operation::L6SweepEncoderSend { .. }
+            | Operation::L6SweepEncoderWait
+            | Operation::L6SweepEncoderTrace
+            | Operation::L6SweepEncoderAssert
+            | Operation::L6SweepRejectPanel
+            | Operation::L6SweepRejectEncoder
+            | Operation::L6SweepEnd) => {
+                let scope = self
+                    .l6_input_sweep
+                    .as_mut()
+                    .ok_or("L6 sweep is not active")?;
+                let value = match operation {
+                    Operation::L6SweepRejectMain { target } => {
+                        scope.reject_main(session, target)?
+                    }
+                    Operation::L6SweepPanelBaseline { target } => {
+                        scope.panel_baseline(session, options, target)?
+                    }
+                    Operation::L6SweepPanelTap => scope.panel_tap(session)?,
+                    Operation::L6SweepPanelWait => scope.panel_wait(session)?,
+                    Operation::L6SweepPanelTrace => scope.panel_trace(session, options)?,
+                    Operation::L6SweepPanelAssert => scope.panel_assert(options)?,
+                    Operation::L6SweepEncoderBaseline => scope.encoder_baseline(options)?,
+                    Operation::L6SweepEncoderSend { index } => {
+                        scope.encoder_send(session, index)?
+                    }
+                    Operation::L6SweepEncoderWait => scope.encoder_wait(session)?,
+                    Operation::L6SweepEncoderTrace => scope.encoder_trace(session, options)?,
+                    Operation::L6SweepEncoderAssert => scope.encoder_assert(options)?,
+                    Operation::L6SweepRejectPanel => scope.reject_panel(session)?,
+                    Operation::L6SweepRejectEncoder => scope.reject_encoder(session)?,
+                    Operation::L6SweepEnd => scope.end(session)?,
+                    _ => unreachable!(),
+                };
+                scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+                scope.phase = match operation {
+                    Operation::L6SweepPanelAssert => 2,
+                    Operation::L6SweepEncoderBaseline => 7,
+                    Operation::L6SweepEncoderWait => 7,
+                    Operation::L6SweepEncoderTrace => 9,
+                    _ => scope.phase + 1,
+                };
+                if matches!(operation, Operation::L6SweepEnd) {
+                    self.l6_input_sweep = None;
+                }
+                Ok(value)
             }
             Operation::L6DinSweep => {
                 Ok(run_l6_din_sweep(session, options).map_err(std::io::Error::other)?)

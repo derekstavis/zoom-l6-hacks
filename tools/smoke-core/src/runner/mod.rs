@@ -2979,13 +2979,16 @@ impl Runner {
 
     /// Complete a typed engine operation; its assertion evidence joins the same report.
     pub fn device_finished(&mut self, evidence: Value) {
-        if let Some(expected) = evidence.get("expected_rejections") {
-            if let (Some(main), Some(panel)) = (
-                expected.get("main").and_then(Value::as_u64),
-                expected.get("panel").and_then(Value::as_u64),
-            ) {
-                self.allowed_rejections = [main, panel];
-            }
+        // The L6 sweep verifies these exact counts before completing each
+        // scoped action. Device evidence is data, not runner policy.
+        if self.model == Model::L6 {
+            self.allowed_rejections = match self.scenario.step[self.step].action {
+                Action::L6SweepRejectMain { target: 0 } => [1, 0],
+                Action::L6SweepRejectMain { target: 5 } => [2, 0],
+                Action::L6SweepRejectPanel => [2, 1],
+                Action::L6SweepRejectEncoder | Action::L6SweepEnd => [2, 2],
+                _ => self.allowed_rejections,
+            };
         }
         self.record(json!({"event":"device-result","step":self.step+1,"evidence":evidence}));
         self.completed

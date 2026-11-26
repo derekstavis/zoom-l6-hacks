@@ -1566,7 +1566,7 @@ fn typed_input_sweep_allows_only_its_verified_rejections() {
     let steps = &case[case.find("[[step]]\naction = \"l6-sweep-begin\"").unwrap()..];
     let mut runner = test_runner(&format!("backends=['headless']\n{steps}"));
     runner.step = runner.scenario.step.len() - 1;
-    runner.device_finished(json!({"expected_rejections":{"main":2,"panel":2}}));
+    runner.device_finished(json!({"rejections":{"main":2,"panel":2}}));
     let mut obs = sample(0);
     obs.main.rejected = 2;
     obs.panel.rejected = 2;
@@ -1578,9 +1578,38 @@ fn typed_input_sweep_allows_only_its_verified_rejections() {
 
     let mut runner = test_runner(&format!("backends=['headless']\n{steps}"));
     runner.step = runner.scenario.step.len() - 1;
-    runner.device_finished(json!({"expected_rejections":{"main":2,"panel":2}}));
+    runner.device_finished(json!({"rejections":{"main":2,"panel":2}}));
     let mut obs = sample(0);
     obs.main.rejected = 3;
+    obs.panel.rejected = 2;
+    assert!(runner.advance(obs, now).is_err());
+    fs::remove_dir_all(&runner.logs).unwrap();
+
+    let mut runner = test_runner(&format!("backends=['headless']\n{steps}"));
+    for (action, expected) in [
+        (Action::L6SweepRejectMain { target: 0 }, [1, 0]),
+        (Action::L6SweepRejectMain { target: 5 }, [2, 0]),
+        (Action::L6SweepRejectPanel, [2, 1]),
+        (Action::L6SweepRejectEncoder, [2, 2]),
+        (Action::L6SweepEnd, [2, 2]),
+    ] {
+        let expected_action = serde_json::to_value(action).unwrap();
+        runner.step = runner
+            .scenario
+            .step
+            .iter()
+            .position(|step| serde_json::to_value(&step.action).unwrap() == expected_action)
+            .unwrap();
+        runner.device_finished(json!({"rejections":{"main":99,"panel":99}}));
+        assert_eq!(runner.allowed_rejections, expected);
+    }
+    fs::remove_dir_all(&runner.logs).unwrap();
+
+    // Arbitrary device evidence must never grant a rejection allowance.
+    let mut runner = test_runner("[[step]]\naction='delay'\nguest_ms=1\n");
+    runner.device_finished(json!({"expected_rejections":{"main":2,"panel":2}}));
+    let mut obs = sample(0);
+    obs.main.rejected = 2;
     obs.panel.rejected = 2;
     assert!(runner.advance(obs, now).is_err());
     fs::remove_dir_all(&runner.logs).unwrap();

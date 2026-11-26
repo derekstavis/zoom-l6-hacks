@@ -158,7 +158,7 @@ impl Scope {
         if (main, panel) != (before + 1, 0) {
             return Err("unexpected rejection count after MAIN input".into());
         }
-        Ok(json!({"target":target,"expected_rejections":{"main":main,"panel":panel}}))
+        Ok(json!({"target":target,"rejections":{"main":main,"panel":panel}}))
     }
     pub(super) fn panel_baseline(
         &mut self,
@@ -320,7 +320,7 @@ impl Scope {
         if (main, panel) != (2, 1) {
             return Err("unexpected rejection count after panel input".into());
         }
-        Ok(json!({"target":31,"expected_rejections":{"main":main,"panel":panel}}))
+        Ok(json!({"target":31,"rejections":{"main":main,"panel":panel}}))
     }
     pub(super) fn reject_encoder(&self, session: &Session) -> Result<Value, String> {
         let c = l6ctl::OwnedControl::new(&session.engine);
@@ -349,7 +349,7 @@ impl Scope {
         if (main, panel) != (2, 2) {
             return Err("unexpected rejection count after encoder".into());
         }
-        Ok(json!({"encoder":6,"expected_rejections":{"main":main,"panel":panel}}))
+        Ok(json!({"encoder":6,"rejections":{"main":main,"panel":panel}}))
     }
     pub(super) fn end(&self, session: &Session) -> Result<Value, String> {
         let c = l6ctl::OwnedControl::new(&session.engine);
@@ -367,7 +367,7 @@ impl Scope {
             ));
         }
         Ok(
-            json!({"panel_targets":self.verified,"encoders":self.encoders,"encoder_reports":6,"unsupported_main_targets_rejected":[0,5],"unsupported_panel_target_rejected":31,"unsupported_encoder_rejected":6,"expected_rejections":{"main":main,"panel":panel}}),
+            json!({"panel_targets":self.verified,"encoders":self.encoders,"encoder_reports":6,"unsupported_main_targets_rejected":[0,5],"unsupported_panel_target_rejected":31,"unsupported_encoder_rejected":6,"rejections":{"main":main,"panel":panel}}),
         )
     }
     pub(super) fn abort(&mut self, session: &Session) -> Result<(), String> {

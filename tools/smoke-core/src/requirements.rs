@@ -120,7 +120,24 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6maxRecorderEvidence
         | Action::L6maxRecorderAssertAudio
         | Action::L6maxRecorderEnd
-        | Action::L6maxInputTiming
+        | Action::L6maxTimingBegin
+        | Action::L6maxTimingSettle { .. }
+        | Action::L6maxTimingBaseline
+        | Action::L6maxTimingEnqueue { .. }
+        | Action::L6maxTimingWaitFirst
+        | Action::L6maxTimingObservePaused { .. }
+        | Action::L6maxTimingAssertPaused
+        | Action::L6maxTimingResume
+        | Action::L6maxTimingWaitQueued
+        | Action::L6maxTimingWaitReports
+        | Action::L6maxTimingAssertReports
+        | Action::L6maxTimingObserveDisplay { .. }
+        | Action::L6maxTimingAssertDisplay
+        | Action::L6maxTimingEncoder { .. }
+        | Action::L6maxTimingWaitEncoder
+        | Action::L6maxTimingWaitEncoderReport
+        | Action::L6maxTimingAssertEncoder
+        | Action::L6maxTimingEnd
         | Action::L6maxPanelKeyBegin
         | Action::L6maxPanelKeyCheck { .. }
         | Action::L6maxPanelKeyInput { .. }

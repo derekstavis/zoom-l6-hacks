@@ -721,6 +721,7 @@ impl Scenario {
             let mut sound_pad: Option<(u8, u32, u64)> = None;
             let mut recorder: Option<(u8, u32, u64)> = None;
             let mut max_recorder: Option<(u8, u32, u64)> = None;
+            let mut input_timing: Option<(u8, u32, u64)> = None;
             let mut sd_inspection: Option<(u32, u64)> = None;
 
             let panel_steps: Vec<_> = value
@@ -840,6 +841,47 @@ impl Scenario {
             let mut probe_ring = None;
             let mut probe_tap = None;
             for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                let timing_phase = match &step.action {
+                    Action::L6maxTimingSettle { .. } => Some(0),
+                    Action::L6maxTimingBaseline => Some(1),
+                    Action::L6maxTimingEnqueue { .. } => Some(2),
+                    Action::L6maxTimingWaitFirst => Some(3),
+                    Action::L6maxTimingObservePaused { .. } => Some(4),
+                    Action::L6maxTimingAssertPaused => Some(5),
+                    Action::L6maxTimingResume => Some(6),
+                    Action::L6maxTimingWaitQueued => Some(7),
+                    Action::L6maxTimingWaitReports => Some(8),
+                    Action::L6maxTimingAssertReports => Some(9),
+                    Action::L6maxTimingObserveDisplay { .. } => Some(10),
+                    Action::L6maxTimingAssertDisplay => Some(11),
+                    Action::L6maxTimingEncoder { .. } => Some(12),
+                    Action::L6maxTimingWaitEncoder => Some(13),
+                    Action::L6maxTimingWaitEncoderReport => Some(14),
+                    Action::L6maxTimingAssertEncoder => Some(15),
+                    Action::L6maxTimingEnd => Some(16),
+                    _ => None,
+                };
+                match (&step.action, input_timing, timing_phase) {
+                    (Action::L6maxTimingBegin, None, None) => {
+                        input_timing = Some((0, step.guest_timeout_ms, step.wall_timeout_s))
+                    }
+                    (_, Some((phase, guest, wall)), Some(actual))
+                        if phase == actual
+                            && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        input_timing = if phase == 16 {
+                            None
+                        } else {
+                            Some((phase + 1, guest, wall))
+                        }
+                    }
+                    (_, Some(_), _) | (_, None, Some(_)) => {
+                        return Err(
+                            "L6max timing requires ordered steps with matching budgets".into()
+                        );
+                    }
+                    _ => {}
+                }
                 let max_recorder_phase = match &step.action {
                     Action::L6maxRecorderPress => Some(0),
                     Action::L6maxRecorderSubmit => Some(1),
@@ -1093,6 +1135,9 @@ impl Scenario {
                     }
                     _ => {}
                 }
+            }
+            if input_timing.is_some() {
+                return Err("L6max timing transaction incomplete".into());
             }
             if max_recorder.is_some() {
                 return Err("L6max recorder transaction is incomplete".into());

@@ -338,7 +338,7 @@ message delivered just after the interval.
 | `l6-usb-startup` | — | First step only; L6 probe replays the startup USB-enable sequence, verifies three firmware entry points and controller writes |
 | `l6-sweep-*` | `target`, `index` on selected steps | Exercise all L6 panel targets and encoders, compare UART reports, and check unsupported inputs are rejected. The contiguous L6-only scope shares a deadline. |
 | `l6-din-sweep` | — | Sweep supported L6 DIN values and record dispatch behavior |
-| `l6max-input-timing` | — | Measure L6max input timing and applied acknowledgements |
+| `l6max-timing-*` | `wall_ms`, `guest_ms`, `target`, `hold_ms`, `pairs`, `index` and `steps` on selected steps | L6max: an ordered, shared-deadline scope pauses MAIN and panel, verifies queued input and clock behavior, resumes, checks UART reports and display change, then checks one encoder report. Wall observations and guest-time observations are separate. |
 
 The shared indicator fragment budgets 10,000 guest ms and 90 wall seconds per
 campaign. Its fixed 6,000 guest ms of observations remain unchanged; the

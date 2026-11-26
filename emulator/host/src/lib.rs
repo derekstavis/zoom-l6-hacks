@@ -20,6 +20,7 @@ pub mod memory;
 pub mod midi_config;
 pub mod mixer_level;
 pub mod panel_keys;
+pub mod pause_scope;
 pub mod protocol;
 pub mod qmp;
 pub mod sd_loader;

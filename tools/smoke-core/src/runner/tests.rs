@@ -2155,3 +2155,42 @@ fn patched_din_update_requires_full_install_and_setup_without_din_probe() {
             .is_err()
     );
 }
+
+#[test]
+fn l6max_timing_requires_ordered_scope_and_matching_budgets() {
+    let prefix = "version=1\nname='timing'\nmodels=['l6max']\nbackends=['headless']\n";
+    let mut scenario = format!("{prefix}[[step]]\naction='l6max-timing-begin'\n");
+    for (action, args) in [
+        ("settle", "wall_ms=100\n"),
+        ("baseline", ""),
+        ("enqueue", "target=1\nhold_ms=50\npairs=2\n"),
+        ("wait-first", ""),
+        ("observe-paused", "wall_ms=700\n"),
+        ("assert-paused", ""),
+        ("resume", ""),
+        ("wait-queued", ""),
+        ("wait-reports", ""),
+        ("assert-reports", ""),
+        ("observe-display", "guest_ms=1500\n"),
+        ("assert-display", ""),
+        ("encoder", "index=2\nsteps=1\n"),
+        ("wait-encoder", ""),
+        ("wait-encoder-report", ""),
+        ("assert-encoder", ""),
+        ("end", ""),
+    ] {
+        scenario.push_str(&format!("[[step]]\naction='l6max-timing-{action}'\n{args}"));
+    }
+    assert!(Scenario::parse(&scenario).is_ok());
+    assert!(
+        Scenario::parse(&scenario.replace("l6max-timing-baseline", "l6max-timing-resume")).is_err()
+    );
+    assert!(
+        Scenario::parse(&scenario.replace(
+            "action='l6max-timing-wait-first'",
+            "action='l6max-timing-wait-first'\nwall_timeout_s=1"
+        ))
+        .is_err()
+    );
+    assert!(Scenario::parse(&scenario.replace("models=['l6max']", "models=['l6']")).is_err());
+}

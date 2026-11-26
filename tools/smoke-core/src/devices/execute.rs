@@ -401,6 +401,15 @@ impl State {
     pub fn has_ui_pad(&self) -> bool {
         self.ui_pad.is_some()
     }
+    pub fn has_l6max_timing(&self) -> bool {
+        self.l6max_timing.is_some()
+    }
+    pub fn abort_l6max_timing(&mut self, session: &Session) -> Result<(), String> {
+        match self.l6max_timing.take() {
+            Some(mut context) => context.abort(session),
+            None => Ok(()),
+        }
+    }
     pub fn has_l6max_recorder(&self) -> bool {
         self.l6max_recorder.is_some()
     }
@@ -617,6 +626,39 @@ impl State {
             ) {
                 self.l6_indicator = None;
                 return Err("L6 indicator campaign exceeded its shared deadline".into());
+            }
+        }
+        if let Some(context) = self.l6max_timing.as_ref() {
+            let expected = match operation {
+                Operation::L6maxTimingSettle { .. } => Some(0),
+                Operation::L6maxTimingBaseline => Some(1),
+                Operation::L6maxTimingEnqueue { .. } => Some(2),
+                Operation::L6maxTimingWaitFirst => Some(3),
+                Operation::L6maxTimingObservePaused { .. } => Some(4),
+                Operation::L6maxTimingAssertPaused => Some(5),
+                Operation::L6maxTimingResume => Some(6),
+                Operation::L6maxTimingWaitQueued => Some(7),
+                Operation::L6maxTimingWaitReports => Some(8),
+                Operation::L6maxTimingAssertReports => Some(9),
+                Operation::L6maxTimingObserveDisplay { .. } => Some(10),
+                Operation::L6maxTimingAssertDisplay => Some(11),
+                Operation::L6maxTimingEncoder { .. } => Some(12),
+                Operation::L6maxTimingWaitEncoder => Some(13),
+                Operation::L6maxTimingWaitEncoderReport => Some(14),
+                Operation::L6maxTimingAssertEncoder => Some(15),
+                Operation::L6maxTimingEnd => Some(16),
+                _ => None,
+            };
+            if expected != Some(context.phase)
+                || context
+                    .check(session, guest_timeout_ms, wall_timeout_s)
+                    .is_err()
+            {
+                let error = "L6max timing interrupted or exceeded shared deadline";
+                return match self.abort_l6max_timing(session) {
+                    Ok(()) => Err(error.into()),
+                    Err(cleanup) => Err(format!("{error}; cleanup failed: {cleanup}")),
+                };
             }
         }
         if let Some(context) = self.l6max_recorder.as_ref() {
@@ -2258,14 +2300,76 @@ impl State {
             Operation::L6DinSweep => {
                 Ok(run_l6_din_sweep(session, options).map_err(std::io::Error::other)?)
             }
-            Operation::L6maxInputTiming => Ok(run_l6max_input_timing(
-                session,
-                options,
-                operation_start,
-                guest_timeout_ms,
-                wall_timeout_s,
-            )
-            .map_err(std::io::Error::other)?),
+            Operation::L6maxTimingBegin => {
+                if self.l6max_timing.is_some() {
+                    return Err("L6max timing already active".into());
+                }
+                self.l6max_timing = Some(timing::Scope::begin(
+                    session,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            operation @ (Operation::L6maxTimingSettle { .. }
+            | Operation::L6maxTimingBaseline
+            | Operation::L6maxTimingEnqueue { .. }
+            | Operation::L6maxTimingWaitFirst
+            | Operation::L6maxTimingObservePaused { .. }
+            | Operation::L6maxTimingAssertPaused
+            | Operation::L6maxTimingResume
+            | Operation::L6maxTimingWaitQueued
+            | Operation::L6maxTimingWaitReports
+            | Operation::L6maxTimingAssertReports
+            | Operation::L6maxTimingObserveDisplay { .. }
+            | Operation::L6maxTimingAssertDisplay
+            | Operation::L6maxTimingEncoder { .. }
+            | Operation::L6maxTimingWaitEncoder
+            | Operation::L6maxTimingWaitEncoderReport
+            | Operation::L6maxTimingAssertEncoder
+            | Operation::L6maxTimingEnd) => {
+                let context = self
+                    .l6max_timing
+                    .as_mut()
+                    .ok_or("missing L6max timing scope")?;
+                let value = match operation {
+                    Operation::L6maxTimingSettle { wall_ms } => context.settle(session, wall_ms),
+                    Operation::L6maxTimingBaseline => context.baseline(session, options),
+                    Operation::L6maxTimingEnqueue {
+                        target,
+                        hold_ms,
+                        pairs,
+                    } => context.enqueue(session, target, hold_ms, pairs),
+                    Operation::L6maxTimingWaitFirst => context.wait_first(session),
+                    Operation::L6maxTimingObservePaused { wall_ms } => {
+                        context.observe_paused(session, wall_ms)
+                    }
+                    Operation::L6maxTimingAssertPaused => context.assert_paused(session),
+                    Operation::L6maxTimingResume => context.resume(session),
+                    Operation::L6maxTimingWaitQueued => context.wait_queued(session),
+                    Operation::L6maxTimingWaitReports => context.wait_reports(session, options),
+                    Operation::L6maxTimingAssertReports => context.assert_reports(session, options),
+                    Operation::L6maxTimingObserveDisplay { guest_ms } => {
+                        context.observe_display(session, guest_ms)
+                    }
+                    Operation::L6maxTimingAssertDisplay => context.assert_display(session),
+                    Operation::L6maxTimingEncoder { index, steps } => {
+                        context.encoder(session, options, index, steps)
+                    }
+                    Operation::L6maxTimingWaitEncoder => context.wait_encoder(session),
+                    Operation::L6maxTimingWaitEncoderReport => {
+                        context.wait_encoder_report(session, options)
+                    }
+                    Operation::L6maxTimingAssertEncoder => context.assert_encoder(options),
+                    Operation::L6maxTimingEnd => Ok(json!({"finished":true})),
+                    _ => unreachable!(),
+                }?;
+                context.phase += 1;
+                if matches!(operation, Operation::L6maxTimingEnd) {
+                    self.l6max_timing = None;
+                }
+                Ok(value)
+            }
             Operation::L6maxPanelKeyBegin => {
                 if session.engine.model() != l6fw::Model::L6max || self.panel_keys.is_some() {
                     return Err("panel key scope requires a fresh L6max".into());

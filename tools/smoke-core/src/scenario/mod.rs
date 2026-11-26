@@ -1132,7 +1132,37 @@ pub enum Action {
     L6SweepRejectEncoder,
     L6SweepEnd,
     L6DinSweep,
-    L6maxInputTiming,
+    L6maxTimingBegin,
+    L6maxTimingSettle {
+        wall_ms: u32,
+    },
+    L6maxTimingBaseline,
+    L6maxTimingEnqueue {
+        target: u32,
+        hold_ms: u32,
+        pairs: u32,
+    },
+    L6maxTimingWaitFirst,
+    L6maxTimingObservePaused {
+        wall_ms: u32,
+    },
+    L6maxTimingAssertPaused,
+    L6maxTimingResume,
+    L6maxTimingWaitQueued,
+    L6maxTimingWaitReports,
+    L6maxTimingAssertReports,
+    L6maxTimingObserveDisplay {
+        guest_ms: u32,
+    },
+    L6maxTimingAssertDisplay,
+    L6maxTimingEncoder {
+        index: u32,
+        steps: i32,
+    },
+    L6maxTimingWaitEncoder,
+    L6maxTimingWaitEncoderReport,
+    L6maxTimingAssertEncoder,
+    L6maxTimingEnd,
     L6maxPanelKeyBegin,
     L6maxPanelKeyCheck {
         code: u32,

@@ -538,6 +538,14 @@ impl<'a> OwnedControl<'a> {
             cancelled,
         )
     }
+    /// Pause both emulated processors, restoring their prior run states on close.
+    pub fn pause_all_before(
+        &self,
+        deadline: std::time::Instant,
+        cancelled: impl FnMut() -> bool,
+    ) -> Result<l6max_host::pause_scope::PauseScope, String> {
+        l6max_host::pause_scope::PauseScope::acquire(&self.engine.management, deadline, cancelled)
+    }
     pub fn l6_recorder_reader_before(
         &self,
         deadline: std::time::Instant,

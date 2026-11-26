@@ -2,12 +2,11 @@
 use super::*;
 use firmware_api::l6;
 use l6max_host::debug::{Command, Observation};
-use std::sync::Arc;
 
 pub(super) struct Scope {
     debugger: Option<l6max_host::debug::Session>,
     reader: l6max_host::l6_din::Reader,
-    inputs: Arc<l6max_host::input::InputHub>,
+    inputs: l6ctl::InputObserver,
     started: Instant,
     panel_start: u32,
     guest: u32,
@@ -54,7 +53,11 @@ impl Scope {
             .ok_or("DIN debugger missing")?
             .execute_cancellable(command, || {
                 Instant::now() >= deadline
-                    || inputs.panel.snapshot().guest_ms.wrapping_sub(start) > guest
+                    || inputs
+                        .status(l6ctl::InputSource::Panel)
+                        .guest_ms
+                        .wrapping_sub(start)
+                        > guest
             })?;
         self.check(session)?;
         Ok(result)
@@ -87,7 +90,11 @@ impl Scope {
             .ok_or("DIN debugger missing")?
             .continue_before(local, || {
                 Instant::now() >= local
-                    || inputs.panel.snapshot().guest_ms.wrapping_sub(start) > guest
+                    || inputs
+                        .status(l6ctl::InputSource::Panel)
+                        .guest_ms
+                        .wrapping_sub(start)
+                        > guest
             })?;
         self.check(session)?;
         if Instant::now() >= local {
@@ -121,12 +128,9 @@ impl Scope {
             .checked_add(Duration::from_secs(wall))
             .ok_or("DIN deadline overflow")?;
         let panel_start = guest_now(session);
-        let inputs = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("DIN inputs missing")?
-            .clone();
+        let inputs = l6ctl::OwnedControl::new(&session.engine)
+            .input_observer()
+            .map_err(|_| "DIN inputs missing")?;
         let check = || {
             if Instant::now() >= deadline || guest_now(session).wrapping_sub(panel_start) > guest {
                 Err("DIN setup timed out".into())

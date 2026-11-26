@@ -297,8 +297,10 @@ impl State {
                     }
                     Some(image)
                 };
-                let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
-                let main = inputs.main.snapshot();
+                let control = l6ctl::OwnedControl::new(&session.engine);
+                let main = control
+                    .input_status(l6ctl::InputSource::Main)
+                    .map_err(|_| "missing inputs")?;
                 if !main.connected || main.clock_updates == 0 {
                     return Err("MAIN virtual clock unavailable".into());
                 }
@@ -308,8 +310,8 @@ impl State {
                 let shared = shared.ok_or("missing knob-dialog shared deadline")?;
                 loop {
                     let data = session.poll()?;
-                    let panel = inputs.panel.snapshot();
-                    let main = inputs.main.snapshot();
+                    let panel = control.input_status(l6ctl::InputSource::Panel)?;
+                    let main = control.input_status(l6ctl::InputSource::Main)?;
                     if !main.connected {
                         return Err("MAIN virtual clock disconnected".into());
                     }

@@ -743,6 +743,9 @@ pub enum Action {
         bytes: Vec<u8>,
     },
     ExpectSdLoader,
+    CaptureSdModule {
+        loaded: bool,
+    },
     ExpectSdModule {
         loaded: bool,
         #[serde(default)]

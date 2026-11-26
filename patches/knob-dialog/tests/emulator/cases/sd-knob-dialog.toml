@@ -36,6 +36,10 @@ until = "sd-patch-empty"
 action = "expect-sd-loader"
 
 [[step]]
+action = "capture-sd-module"
+loaded = false
+
+[[step]]
 action = "expect-sd-module"
 loaded = false
 

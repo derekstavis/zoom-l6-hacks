@@ -388,6 +388,9 @@ pub enum Operation {
     WaitSdPatchLoaded,
     WaitSdPatchEmpty,
     ExpectSdLoader,
+    CaptureSdModule {
+        loaded: bool,
+    },
     ExpectSdModule {
         loaded: bool,
         chain_count: Option<u8>,

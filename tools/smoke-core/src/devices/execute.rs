@@ -886,7 +886,12 @@ impl State {
                 });
             }
         }
-        if self.sd_inspection.is_some() && !matches!(operation, Operation::ExpectSdModule { .. }) {
+        if self.sd_inspection.is_some()
+            && !matches!(
+                operation,
+                Operation::CaptureSdModule { .. } | Operation::ExpectSdModule { .. }
+            )
+        {
             self.sd_inspection = None;
             return Err("SD inspection interrupted before module assertion".into());
         }
@@ -1613,12 +1618,41 @@ impl State {
                 .map_err(std::io::Error::other)?;
                 self.sd_inspection = Some(sd::SdInspectionContext {
                     fixture,
+                    snapshot: None,
                     wall_deadline,
                     guest_start: operation_start.1,
                     guest_timeout_ms,
                     wall_timeout_s,
                 });
                 Ok(json!({"guarded_hooks":guarded}))
+            }
+            Operation::CaptureSdModule { loaded } => {
+                let context = self
+                    .sd_inspection
+                    .as_mut()
+                    .ok_or("SD inspection missing loader assertion")?;
+                if context.snapshot.is_some() {
+                    return Err("SD module snapshot already captured".into());
+                }
+                let control = l6ctl::OwnedControl::new(&session.engine);
+                let reader = control.sd_loader_reader(context.wall_deadline)?;
+                let snapshot = if loaded {
+                    wait_sd_loader_snapshot(
+                        session,
+                        &reader,
+                        context.wall_deadline,
+                        context.guest_start,
+                        context.guest_timeout_ms,
+                    )?
+                } else {
+                    reader.snapshot_cancellable(context.wall_deadline, || {
+                        guest_now(session).wrapping_sub(context.guest_start)
+                            >= context.guest_timeout_ms
+                    })?
+                };
+                let evidence = serde_json::to_value(&snapshot)?;
+                context.snapshot = Some((loaded, snapshot));
+                Ok(evidence)
             }
             Operation::ExpectSdModule {
                 loaded,
@@ -1628,6 +1662,11 @@ impl State {
                     .sd_inspection
                     .take()
                     .ok_or("SD module assertion needs preceding loader assertion")?;
+                let (captured_loaded, typed_snapshot) =
+                    context.snapshot.ok_or("SD module snapshot missing")?;
+                if captured_loaded != loaded {
+                    return Err("SD module assertion does not match captured state".into());
+                }
                 let fixture = context.fixture;
                 let inspection_deadline = context.wall_deadline;
                 let inspection_guest_start = context.guest_start;
@@ -1659,23 +1698,6 @@ impl State {
                             })
                             .map_err(|e| std::io::Error::other(e).into())
                     };
-                let typed_snapshot = if loaded {
-                    wait_sd_loader_snapshot(
-                        session,
-                        &reader,
-                        inspection_deadline,
-                        inspection_guest_start,
-                        inspection_guest_budget,
-                    )
-                    .map_err(std::io::Error::other)?
-                } else {
-                    reader
-                        .snapshot_cancellable(inspection_deadline, || {
-                            guest_now(session).wrapping_sub(inspection_guest_start)
-                                >= inspection_guest_budget
-                        })
-                        .map_err(std::io::Error::other)?
-                };
                 let registry = typed_snapshot.registry;
                 let Some(registry) = registry else {
                     if loaded {

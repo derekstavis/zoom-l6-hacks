@@ -1088,6 +1088,11 @@ impl Runner {
                 Action::ExpectSdLoader => {
                     return Ok(Progress::Device(devices::Operation::ExpectSdLoader));
                 }
+                Action::CaptureSdModule { loaded } => {
+                    return Ok(Progress::Device(devices::Operation::CaptureSdModule {
+                        loaded,
+                    }));
+                }
                 Action::ExpectSdModule {
                     loaded,
                     chain_count,

@@ -1227,7 +1227,7 @@ impl Scenario {
             let mut max_recorder: Option<(u8, u32, u64)> = None;
             let mut input_timing: Option<(u8, u32, u64)> = None;
             let mut usb_storage: Option<(u8, u32, u64)> = None;
-            let mut sd_inspection: Option<(u32, u64)> = None;
+            let mut sd_inspection: Option<(u8, bool, u32, u64)> = None;
 
             let panel_steps: Vec<_> = value
                 .step
@@ -1539,9 +1539,10 @@ impl Scenario {
                     _ => {}
                 }
                 match (&step.action, sd_inspection) {
-                    (Action::ExpectSdLoader, None) => sd_inspection = Some((step.guest_timeout_ms, step.wall_timeout_s)),
-                    (Action::ExpectSdModule { .. }, Some((guest, wall))) if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = None,
-                    (Action::ExpectSdLoader | Action::ExpectSdModule { .. }, _) => return Err("SD inspection requires adjacent loader/module steps with matching timeouts".into()),
+                    (Action::ExpectSdLoader, None) => sd_inspection = Some((0, false, step.guest_timeout_ms, step.wall_timeout_s)),
+                    (Action::CaptureSdModule { loaded }, Some((0, _, guest, wall))) if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = Some((1, *loaded, guest, wall)),
+                    (Action::ExpectSdModule { loaded, .. }, Some((1, expected, guest, wall))) if *loaded == expected && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = None,
+                    (Action::ExpectSdLoader | Action::CaptureSdModule { .. } | Action::ExpectSdModule { .. }, _) => return Err("SD inspection requires adjacent loader, capture and module steps with matching state and timeouts".into()),
                     (_, Some(_)) => return Err("SD inspection cannot be interrupted".into()),
                     _ => {},
                 }
@@ -3236,11 +3237,24 @@ mod sd_inspection_tests {
         let begin =
             "[[step]]\naction='expect-sd-loader'\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
         let end = "[[step]]\naction='expect-sd-module'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
+        let capture = "[[step]]\naction='capture-sd-module'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
         let fixture = "sd_patches=['midi-sync']";
-        assert!(parse(&format!("{begin}{end}"), fixture).is_ok());
+        assert!(parse(&format!("{begin}{capture}{end}"), fixture).is_ok());
         assert!(parse(begin, fixture).is_err());
         assert!(parse(end, fixture).is_err());
-        assert!(parse(&format!("{begin}{end}"), "").is_err());
+        assert!(parse(&format!("{begin}{end}"), fixture).is_err());
+        assert!(
+            parse(
+                &format!(
+                    "{begin}{}{end}",
+                    capture.replace("loaded=true", "loaded=false")
+                ),
+                fixture
+            )
+            .is_err()
+        );
+        assert!(parse(&format!("{begin}{capture}{capture}{end}"), fixture).is_err());
+        assert!(parse(&format!("{begin}{capture}{end}"), "").is_err());
         assert!(
             parse(
                 &format!("{begin}[[step]]\naction='wait'\nuntil='boot-ready'\n{end}"),
@@ -3251,7 +3265,7 @@ mod sd_inspection_tests {
         assert!(
             parse(
                 &format!(
-                    "{begin}{}",
+                    "{begin}{capture}{}",
                     end.replace("wall_timeout_s=30", "wall_timeout_s=29")
                 ),
                 fixture
@@ -3261,7 +3275,7 @@ mod sd_inspection_tests {
         assert!(
             parse(
                 &format!(
-                    "{begin}{}",
+                    "{begin}{capture}{}",
                     end.replace("loaded=true", "loaded=true\nchain_count=9")
                 ),
                 fixture

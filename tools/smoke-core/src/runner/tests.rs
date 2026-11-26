@@ -1882,6 +1882,26 @@ fn effect_slot_wait_requires_matching_adjacent_assertion_and_budget() {
 }
 
 #[test]
+fn tap_handler_requires_complete_ordered_scope_and_shared_budget() {
+    let source = include_str!("../../../../tests/emulator/cases/panel/l6max-tap-handler.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    assert!(
+        Scenario::from_text(&source.replace(
+            "action = \"l6max-tap-assert\"",
+            "action = \"l6max-tap-end\""
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replacen("wall_timeout_s = 60", "wall_timeout_s = 59", 1))
+            .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replace("models = [\"l6max\"]", "models = [\"l6\"]")).is_err()
+    );
+}
+
+#[test]
 fn l6_din_sweep_requires_all_128_ordered_samples_and_shared_budget() {
     let source = include_str!("../../../../tests/emulator/cases/midi/l6-din-sweep.toml");
     assert!(Scenario::from_text(source).is_ok());

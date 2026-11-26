@@ -694,6 +694,47 @@ impl Scenario {
                 .iter()
                 .filter(|step| step.applies_to(*model))
                 .collect();
+            let is_tap = |action: &Action| {
+                matches!(
+                    action,
+                    Action::L6maxTapBegin
+                        | Action::L6maxTapPress
+                        | Action::L6maxTapWait
+                        | Action::L6maxTapAssert
+                        | Action::L6maxTapRelease
+                        | Action::L6maxTapEnd
+                )
+            };
+            if let Some(begin) = steps.iter().position(|step| is_tap(&step.action)) {
+                let scope = steps
+                    .get(begin..begin + 6)
+                    .ok_or("incomplete TAP handler scope")?;
+                if *model != l6fw::Model::L6max
+                    || !matches!(scope[0].action, Action::L6maxTapBegin)
+                    || !matches!(scope[1].action, Action::L6maxTapPress)
+                    || !matches!(scope[2].action, Action::L6maxTapWait)
+                    || !matches!(scope[3].action, Action::L6maxTapAssert)
+                    || !matches!(scope[4].action, Action::L6maxTapRelease)
+                    || !matches!(scope[5].action, Action::L6maxTapEnd)
+                    || scope.iter().any(|step| {
+                        (step.guest_timeout_ms, step.wall_timeout_s)
+                            != (scope[0].guest_timeout_ms, scope[0].wall_timeout_s)
+                    })
+                    || steps[begin + 6..].iter().any(|step| is_tap(&step.action))
+                {
+                    return Err(
+                        "TAP handler requires a complete L6max scope with one shared deadline"
+                            .into(),
+                    );
+                }
+            }
+        }
+        for model in &value.models {
+            let steps: Vec<_> = value
+                .step
+                .iter()
+                .filter(|step| step.applies_to(*model))
+                .collect();
             let mut index = 0;
             while index < steps.len() {
                 if matches!(steps[index].action, Action::UsbMidiOpen) {

@@ -1991,8 +1991,23 @@ impl Runner {
                         tolerance_db,
                     }));
                 }
-                Action::L6maxTapHandler => {
-                    return Ok(Progress::Device(devices::Operation::L6maxTapHandler));
+                Action::L6maxTapBegin => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTapBegin));
+                }
+                Action::L6maxTapPress => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTapPress));
+                }
+                Action::L6maxTapWait => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTapWait));
+                }
+                Action::L6maxTapAssert => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTapAssert));
+                }
+                Action::L6maxTapRelease => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTapRelease));
+                }
+                Action::L6maxTapEnd => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTapEnd));
                 }
                 Action::L6UsbStartup => {
                     return Ok(Progress::Device(devices::Operation::L6UsbStartup));

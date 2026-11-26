@@ -1119,7 +1119,12 @@ pub enum Action {
         target: u32,
         event: u8,
     },
-    L6maxTapHandler,
+    L6maxTapBegin,
+    L6maxTapPress,
+    L6maxTapWait,
+    L6maxTapAssert,
+    L6maxTapRelease,
+    L6maxTapEnd,
     /// Wait until an entry appears on the card, written by the firmware.
     /// Optionally check its size, or that its bytes equal a file in the
     /// device state directory (for example `main-nor.bin`).

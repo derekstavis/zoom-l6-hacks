@@ -26,6 +26,7 @@ mod panel;
 mod power;
 mod sd;
 mod signal_pwm;
+mod tap_handler;
 mod timing;
 mod usb;
 mod usb_storage_steps;
@@ -664,7 +665,12 @@ pub enum Operation {
         cc: u8,
         value: u8,
     },
-    L6maxTapHandler,
+    L6maxTapBegin,
+    L6maxTapPress,
+    L6maxTapWait,
+    L6maxTapAssert,
+    L6maxTapRelease,
+    L6maxTapEnd,
     WaitRecordedFiles {
         files: Vec<String>,
     },
@@ -959,7 +965,7 @@ pub(crate) fn prepare_with_report(
     if scenario
         .step
         .iter()
-        .any(|s| matches!(s.action, crate::Action::L6maxTapHandler))
+        .any(|s| matches!(s.action, crate::Action::L6maxTapBegin))
     {
         options.gdb_socket = Some(gdb_socket_path(&options.logs, "l6max-tap-handler"));
     }
@@ -1123,6 +1129,7 @@ pub struct State {
     l6max_recorder: Option<audio::max_recorder::Scope>,
     audio_callbacks: Option<audio::callbacks::Scope>,
     l6_din_sweep: Option<l6_din_sweep::Scope>,
+    tap_handler: Option<tap_handler::Scope>,
     effect_slot_deadline: Option<sd::EffectSlotScope>,
     l6max_timing: Option<timing::Scope>,
     usb_storage_scope: Option<usb_storage_steps::Scope>,
@@ -1228,43 +1235,6 @@ fn wait_l6_input(
             return Err(format!("timed out waiting for L6 {what}"));
         }
         thread::sleep(Duration::from_millis(5));
-    }
-}
-
-/// Let the guest run under `gdb` until it stops, and return the stop reply.
-/// It may run for `guest_budget_ms` of its own time; a loaded host stretches
-/// wall time, so the guest budget decides, and `wall_cap` only ends a guest
-/// that no longer advances.
-fn continue_within_guest(
-    session: &Session,
-    gdb: &mut l6max_diagnostics::gdb::Gdb,
-    guest_budget_ms: u32,
-    wall_cap: Duration,
-) -> Result<String, String> {
-    let main = &session
-        .engine
-        .inputs
-        .as_ref()
-        .ok_or("input hub unavailable")?
-        .main;
-    let start = main.snapshot().guest_ms;
-    let deadline = Instant::now() + wall_cap;
-    gdb.resume().map_err(|error| error.to_string())?;
-    loop {
-        if let Some(reply) = gdb
-            .poll_stop(Duration::from_millis(200))
-            .map_err(|error| error.to_string())?
-        {
-            return Ok(reply);
-        }
-        session.poll()?;
-        let ran = main.snapshot().guest_ms.wrapping_sub(start);
-        if ran > guest_budget_ms || Instant::now() >= deadline {
-            let _ = gdb.interrupt();
-            return Err(format!(
-                "the guest ran {ran} ms without stopping (budget {guest_budget_ms} ms)"
-            ));
-        }
     }
 }
 

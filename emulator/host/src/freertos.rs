@@ -166,6 +166,31 @@ pub fn current_task_reader(q: &QmpClient, model: Model) -> Result<CurrentTaskRea
     })
 }
 
+/// Read the guarded raw scheduler tick counter within one shared wall deadline.
+/// Cancellation is checked around each QMP transaction; tick frequency is not inferred.
+pub fn ticks_before_checked(
+    q: &QmpClient,
+    model: Model,
+    deadline: std::time::Instant,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<u32, String> {
+    let k = kernel(model);
+    let read = |address, size| {
+        check()?;
+        let bytes = q
+            .read_memory_before(0, address, size, deadline)
+            .map_err(|e| e.to_string())?;
+        check()?;
+        Ok::<_, String>(bytes)
+    };
+    for (address, expected) in [k.create_task, k.tick] {
+        if format!("{:x}", Sha256::digest(read(address, 64)?)) != expected {
+            return Err("Scheduler layout is unsupported for this firmware".into());
+        }
+    }
+    u32_at(&read(k.task_count + 12, 4)?, 0)
+}
+
 pub fn scheduler(q: &QmpClient, model: Model) -> Result<SchedulerSnapshot, String> {
     let (_, k) = guard(q, model)?;
     if !matches(q, k.create_task)? || !matches(q, k.tick)? {

@@ -3766,6 +3766,8 @@ impl State {
                     .as_mut()
                     .ok_or("missing knob preflight")?,
                 message,
+                shared.ok_or("missing knob-dialog shared deadline")?,
+                wall_timeout_s,
             ),
             Operation::KnobDialogWaitNotificationFrame {
                 clear,
@@ -3784,6 +3786,7 @@ impl State {
                 limit_ms,
                 guest_timeout_ms,
                 wall_timeout_s,
+                shared.ok_or("missing knob-dialog shared deadline")?,
             ),
             Operation::KnobDialogExpectNotificationInvariants { clear } => {
                 expect_notification_invariants(

@@ -177,6 +177,11 @@ impl QmpClient {
         self.execute(&qmp::cont {}).map(|_| ())
     }
 
+    /// Resume with a caller-owned deadline, including QMP connection contention.
+    pub fn resume_before(&self, deadline: Instant) -> io::Result<()> {
+        self.execute_before(&qmp::cont {}, deadline).map(|_| ())
+    }
+
     /// Reset the guest in place. RAM devices retain contents unless their
     /// model explicitly clears them during reset.
     pub fn system_reset(&self) -> io::Result<()> {
@@ -345,6 +350,42 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert!(started.elapsed() < Duration::from_secs(1));
+        drop(lock);
+        drop(client);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn notification_and_scheduler_observations_respect_a_busy_qmp_deadline() {
+        let (socket, mut peer) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || {
+            let mut reader = BufReader::new(peer.try_clone().unwrap());
+            greeting(&mut peer);
+            expect_command(&mut reader, "qmp_capabilities");
+            peer.write_all(b"{\"return\":{}}\r\n").unwrap();
+            let mut line = String::new();
+            assert_eq!(reader.read_line(&mut line).unwrap(), 0);
+        });
+        let client = QmpClient::connect(socket).unwrap();
+        let lock = client.management.lock().unwrap();
+        let deadline = Instant::now() + Duration::from_millis(20);
+        let error = crate::freertos::ticks_before_checked(
+            &client,
+            l6fw::Model::L6max,
+            deadline,
+            &|| Ok(()),
+        )
+        .unwrap_err();
+        assert!(error.contains("deadline"), "{error}");
+        let deadline = Instant::now() + Duration::from_millis(20);
+        let error = crate::knob_popup::notification_state_before_checked(
+            &client,
+            l6fw::Model::L6max,
+            deadline,
+            &|| Ok(()),
+        )
+        .unwrap_err();
+        assert!(error.contains("deadline"), "{error}");
         drop(lock);
         drop(client);
         server.join().unwrap();

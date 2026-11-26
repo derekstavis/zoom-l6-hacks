@@ -642,6 +642,46 @@ pub fn parameter_reader(qmp: &QmpClient, model: Model) -> Result<ParameterReader
 }
 
 /// Verify the GUI layout before observing it during a single guest step.
+/// Guard and sample notification active/timer state within a shared deadline.
+/// The guest runs during reads, so the result is not atomic.
+pub fn notification_state_before_checked(
+    qmp: &QmpClient,
+    model: Model,
+    deadline: std::time::Instant,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<(u8, u16), String> {
+    if model != Model::L6max {
+        return Err("notification state requires L6max 1.10".into());
+    }
+    let read = |address, size| {
+        check()?;
+        let bytes = qmp
+            .read_memory_before(0, address, size, deadline)
+            .map_err(|e| e.to_string())?;
+        check()?;
+        Ok::<_, String>(bytes)
+    };
+    for (address, expected) in [
+        (
+            0x8000_64c0,
+            "c548c9e75ca74bac0b93736a67e5fef8045ba54f50f1b82b6d2da3b561f3eab5",
+        ),
+        (
+            0x8000_6660,
+            "dc6b83b74e0c81e2d6c9dd2ceda85e7d2a907c7f0c3a6bb3742e81cb746ce139",
+        ),
+    ] {
+        if format!("{:x}", Sha256::digest(read(address, 64)?)) != expected {
+            return Err("unsupported notification routines".into());
+        }
+    }
+    let bytes = read(0x8020_a2c0, 6)?;
+    if bytes.len() != 6 {
+        return Err("short notification state".into());
+    }
+    Ok((bytes[0], u16::from_le_bytes([bytes[4], bytes[5]])))
+}
+
 pub fn reader(qmp: &QmpClient, model: Model) -> Result<Reader<'_>, String> {
     verify(model, &mut |address, size| {
         qmp.read_memory(0, address, size)

@@ -195,5 +195,4 @@ cargo run --offline --locked -p l6test -- run \
 
 The case requires at least one panel cell to show five distinct nonzero mean
 duty readings. Inspect `l6-level-meter-pwm.json` for all cell means at each
-input level. This tests the firmware-to-panel path with controlled accumulator
-input; it does not qualify physical meter wiring or audio-input routing.
+input level. Each 500 panel-ms stage excludes its first 100 ms; completed stages and partial failure evidence are written incrementally. This terminal debugger probe restores journalled bytes when possible but cannot restore task or panel progression, so MAIN stays stopped and the guest must be restarted. The bounded mutation API is in-process; no equivalent control-socket sampling command is provided. This tests the firmware-to-panel path with controlled accumulator input; it does not qualify physical meter wiring or audio-input routing.

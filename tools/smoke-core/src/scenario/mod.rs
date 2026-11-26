@@ -1330,7 +1330,12 @@ pub enum Action {
         channel: u8,
     },
     SignalPwmEnd,
-    L6LevelMeterPwm,
+    L6MeterBegin,
+    L6MeterStage {
+        value: u32,
+    },
+    L6MeterAssert,
+    L6MeterEnd,
     ExpectEncoderReports,
     ExpectRing {
         channel: usize,
@@ -2150,5 +2155,34 @@ mod callback_race_fragment_tests {
         assert!(!valid_callback_race_steps(
             &fragment.step.iter().collect::<Vec<_>>()
         ));
+    }
+}
+
+#[cfg(test)]
+mod l6_meter_tests {
+    use super::*;
+    const CASE: &str =
+        include_str!("../../../../tests/emulator/cases/panel/l6-level-meter-pwm.toml");
+    #[test]
+    fn meter_requires_ordered_windows_matching_model_and_budget() {
+        assert!(Scenario::parse(CASE).is_ok());
+        assert!(Scenario::parse(&CASE.replace("value = 2000000", "value = 1000000")).is_err());
+        assert!(
+            Scenario::parse(&CASE.replace("models = [\"l6\"]", "models = [\"l6max\"]")).is_err()
+        );
+        assert!(
+            Scenario::parse(&CASE.replacen(
+                "wall_timeout_s = 1800\n\n[[step]]\naction = \"l6-meter-assert\"",
+                "wall_timeout_s = 1799\n\n[[step]]\naction = \"l6-meter-assert\"",
+                1
+            ))
+            .is_err()
+        );
+        assert!(
+            Scenario::parse(
+                &CASE.replace("action = \"l6-meter-end\"", "action = \"l6-meter-assert\"")
+            )
+            .is_err()
+        );
     }
 }

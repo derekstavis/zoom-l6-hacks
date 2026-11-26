@@ -2377,9 +2377,16 @@ impl Runner {
                 Action::SignalPwmEnd => {
                     return Ok(Progress::Device(devices::Operation::SignalPwmEnd));
                 }
-                Action::L6LevelMeterPwm => {
-                    return Ok(Progress::Device(devices::Operation::L6LevelMeterPwm));
+                Action::L6MeterBegin => {
+                    return Ok(Progress::Device(devices::Operation::L6MeterBegin));
                 }
+                Action::L6MeterStage { value } => {
+                    return Ok(Progress::Device(devices::Operation::L6MeterStage { value }));
+                }
+                Action::L6MeterAssert => {
+                    return Ok(Progress::Device(devices::Operation::L6MeterAssert));
+                }
+                Action::L6MeterEnd => return Ok(Progress::Device(devices::Operation::L6MeterEnd)),
                 Action::Wait { until } => {
                     if until == "sd-patch-loaded" {
                         return Ok(Progress::Device(devices::Operation::WaitSdPatchLoaded));

@@ -697,7 +697,8 @@ pub(crate) fn serve_debug(
             command,
             Ok(crate::debug::Command::Close
                 | crate::debug::Command::L6MidiFinish { .. }
-                | crate::debug::Command::L6DinFinish { .. })
+                | crate::debug::Command::L6DinFinish { .. }
+                | crate::debug::Command::L6MeterFinish { .. })
         );
         let fd = stream.as_raw_fd();
         let result = command.and_then(|command| {

@@ -95,7 +95,10 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6maxTapRelease
         | Action::L6maxTapEnd => stock_on(L6MAX),
         Action::WaitL6SoundPadFile { .. }
-        | Action::L6LevelMeterPwm
+        | Action::L6MeterBegin
+        | Action::L6MeterStage { .. }
+        | Action::L6MeterAssert
+        | Action::L6MeterEnd
         | Action::L6DinSweepBegin
         | Action::L6DinSweepReady
         | Action::L6DinSweepMonitor

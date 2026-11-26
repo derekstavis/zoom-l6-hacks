@@ -545,7 +545,7 @@
     "model": "l6",
     "backend": "headless",
     "suites": [],
-    "definition": "c56819df1e04ec740e94eda6e161ff69e51e30e45b124d6afb48f05f8b05bb63"
+    "definition": "35bbd270f77156e65165eb89c5d6a441b7e9e37ab448b080674b27e906575c2f"
   },
   {
     "case": "l6-main-gpio-events",

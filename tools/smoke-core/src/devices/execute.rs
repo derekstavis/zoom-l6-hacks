@@ -406,6 +406,11 @@ impl State {
             .take()
             .map(|mut scope| scope.release())
             .transpose();
+        let meter = self
+            .l6_meter_pwm
+            .take()
+            .map(|mut scope| scope.abort())
+            .transpose();
         self.din_usb = None;
         self.sd_inspection = None;
         self.effect_slot_deadline = None;
@@ -439,6 +444,9 @@ impl State {
             errors.push(error);
         }
         if let Err(error) = panel {
+            errors.push(error);
+        }
+        if let Err(error) = meter {
             errors.push(error);
         }
         if errors.is_empty() {
@@ -2741,11 +2749,33 @@ impl State {
                 };
                 Ok(value)
             }
-            Operation::L6LevelMeterPwm => {
-                Ok(
-                    run_l6_level_meter_pwm(session, options, guest_timeout_ms, wall_timeout_s)
-                        .map_err(std::io::Error::other)?,
-                )
+            Operation::L6MeterBegin => {
+                self.l6_meter_pwm = Some(l6_meter_pwm::Scope::begin(
+                    session,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            Operation::L6MeterStage { value } => {
+                let scope = self.l6_meter_pwm.as_mut().ok_or("L6 meter scope missing")?;
+                scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+                Ok(scope.stage(session, options, value)?)
+            }
+            Operation::L6MeterAssert => {
+                let scope = self.l6_meter_pwm.as_mut().ok_or("L6 meter scope missing")?;
+                scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+                Ok(scope.assert(session, options)?)
+            }
+            Operation::L6MeterEnd => {
+                let scope = self.l6_meter_pwm.as_mut().ok_or("L6 meter scope missing")?;
+                scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+                if !scope.asserted {
+                    return Err("L6 meter assertion missing".into());
+                }
+                scope.finish(session)?;
+                self.l6_meter_pwm = None;
+                Ok(json!({"requires_restart":true}))
             }
             Operation::Restart => Err("restart is supervised by the session runner".into()),
             Operation::WarmReset => {

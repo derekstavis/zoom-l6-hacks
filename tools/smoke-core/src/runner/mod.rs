@@ -2669,6 +2669,7 @@ impl Runner {
         self.last = None;
         self.baseline = None;
         self.last_command = None;
+        self.last_press_deadline = None;
     }
     pub fn current_step(&self) -> usize {
         self.step

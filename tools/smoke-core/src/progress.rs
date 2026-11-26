@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const VERSION: u32 = 8;
+pub const VERSION: u32 = 9;
 pub const PATH_ENV: &str = "L6_TEST_PROGRESS";
 pub const RUN_ENV: &str = "L6_TEST_PROGRESS_RUN";
 pub const ATTEMPT_ENV: &str = "L6_TEST_PROGRESS_ATTEMPT";
@@ -92,6 +92,14 @@ pub enum CasePhase {
     StartingEmulator,
     PreparingScenario,
 }
+/// Failed scenario step as seen by a watcher, with one-based displayed index.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StepFailure {
+    pub index: usize,
+    pub label: String,
+    pub error: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum CaseEvent {
@@ -150,6 +158,7 @@ pub enum CaseEvent {
     },
     ScenarioFinished {
         outcome: Outcome,
+        failure: Option<StepFailure>,
         finished_unix_ms: u64,
     },
 }
@@ -249,6 +258,7 @@ pub fn step_label(action: &crate::Action) -> String {
         Action::L6RingCoverage { mask } => format!("Check L6 ring segment coverage {mask:#05x}"),
         Action::L6MuteSample { cc, value, .. } => format!("Observe L6 mute CC {cc} value {value}"),
         Action::L6IndicatorEnd => "End L6 indicator campaign".into(),
+        Action::ExpectMemory { symbol, .. } => format!("Check firmware memory {symbol}"),
         Action::ExpectSdLoader => "Check SD patch loader".into(),
         Action::CaptureSdModule { loaded } => format!(
             "Capture {} SD module state",

@@ -3056,8 +3056,25 @@ impl Runner {
         self.history.push_back(event);
     }
     pub fn finish(&self, outcome: &str, error: Option<&str>) -> Result<(), String> {
+        let failure = error.map(|error| crate::progress::StepFailure {
+            index: self
+                .scenario
+                .step
+                .iter()
+                .take(self.step.saturating_add(1))
+                .filter(|step| step.applies_to(self.model))
+                .count(),
+            label: self
+                .scenario
+                .step
+                .get(self.step)
+                .map(|step| crate::progress::step_label(&step.action))
+                .unwrap_or_else(|| "Scenario cleanup".into()),
+            error: error.to_owned(),
+        });
         self.progress
             .emit(crate::progress::CaseEvent::ScenarioFinished {
+                failure: failure.clone(),
                 finished_unix_ms: crate::progress::unix_ms(),
                 outcome: if outcome == "PASS" {
                     crate::progress::Outcome::Pass
@@ -3071,7 +3088,7 @@ impl Runner {
             tracing::info!(event="scenario_finished",scenario=%self.scenario.name,model=self.model.name(),outcome,"scenario completed");
         }
         let report = json!({"schema":1,"scenario":self.scenario.name,"model":self.model.name(),"outcome":outcome,
-            "failed_step": if error.is_some(){Some(self.step+1)}else{None}, "error":error,"wall_seconds":self.started.elapsed().as_secs_f64(),
+            "failed_step": if error.is_some(){Some(self.step+1)}else{None}, "failed_step_label":failure.as_ref().map(|f| &f.label), "error":error,"wall_seconds":self.started.elapsed().as_secs_f64(),
             "trace_file":self.trace_path,"completed_steps":self.completed,"last_observation":self.last.as_ref().map(Observation::summary),"events":self.history});
         fs::write(
             self.logs.join("scenario.json"),

@@ -320,13 +320,20 @@ pub(crate) fn run(scenario: Scenario, options: Options) -> Result<(), String> {
             }
         }
     }
-    let report = json!({"schema":1,"scenario":scenario.name,"model":model.name(),"outcome":if failure.is_none(){"PASS"}else{"FAIL"},"failed_step":failure.as_ref().map(|f|f.0),"error":failure.as_ref().map(|f|&f.1),"wall_seconds":start.elapsed().as_secs_f64(),"completed_steps":completed});
+    let report = json!({"schema":1,"scenario":scenario.name,"model":model.name(),"outcome":if failure.is_none(){"PASS"}else{"FAIL"},"failed_step":failure.as_ref().map(|f|f.0),"failed_step_label":failure.as_ref().map(|f|step_label(&steps[f.0-1].action)),"error":failure.as_ref().map(|f|&f.1),"wall_seconds":start.elapsed().as_secs_f64(),"completed_steps":completed});
     fs::write(
         options.logs.join("scenario.json"),
         serde_json::to_vec_pretty(&report).map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;
     progress.emit(CaseEvent::ScenarioFinished {
+        failure: failure
+            .as_ref()
+            .map(|(index, error)| smoke_core::progress::StepFailure {
+                index: *index,
+                label: step_label(&steps[*index - 1].action),
+                error: error.clone(),
+            }),
         finished_unix_ms: unix_ms(),
         outcome: if failure.is_none() {
             Outcome::Pass

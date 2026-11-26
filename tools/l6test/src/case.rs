@@ -198,6 +198,12 @@ pub(crate) fn run_case(
                     "child failed; inspect stdout.log and stderr.log"
                 })
                 .into();
+            if let (Some(index), Some(label)) = (
+                scenario["failed_step"].as_u64(),
+                scenario["failed_step_label"].as_str(),
+            ) {
+                result.detail = format!("step {index} ({label}): {}", result.detail);
+            }
             apply_expected(&mut result, &scenario, &case.expected_failure);
         }
         Ok(CaseRun::FixturesOnly) => {

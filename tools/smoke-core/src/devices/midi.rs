@@ -577,11 +577,8 @@ impl State {
                 started + Duration::from_secs(wall_timeout_s),
                 move || panel.snapshot().guest_ms.wrapping_sub(guest_start) > guest_timeout_ms,
             );
-            let client = MidiSession::connect_direct_before(
-                session.engine.usb.clone().ok_or("USB host unavailable")?,
-                cable,
-                &budget,
-            )?;
+            let client =
+                l6ctl::OwnedControl::new(&session.engine).direct_midi_before(cable, &budget)?;
             budget.check()?;
             let now = Instant::now();
             self.native_midi = Some(client);

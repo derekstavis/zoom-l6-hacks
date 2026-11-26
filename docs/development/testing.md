@@ -532,7 +532,7 @@ the dynamic checks; placement selection and case composition stay unchanged.
 
   | Patch | Check |
   | --- | --- |
-  | Any SD module | `expect-sd-loader`, then `expect-sd-module` |
+  | Any SD module | `expect-sd-loader`, `capture-sd-module`, `expect-sd-allocation`, `expect-sd-chains`, `expect-sd-continuations`, then `expect-sd-module` |
   | knob-dialog | `knob-popup-open`, `knob-popup-expect-open`, `knob-popup-expect-value` |
   | Effect replacements | `expect-heap`, then for each slot `effect-replacement-state` with the assigned effect ID and nonzero output, or no replacement |
   | midi-sync | declarative direct MIDI round trip, then the MIDI state request fragment |

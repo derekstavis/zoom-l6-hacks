@@ -754,6 +754,9 @@ pub enum Action {
         #[serde(default)]
         chain_count: Option<u8>,
     },
+    ExpectSdContinuations {
+        loaded: bool,
+    },
     ExpectSdModule {
         loaded: bool,
     },

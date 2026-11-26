@@ -21,6 +21,7 @@ pub(super) struct SdInspectionContext {
     pub snapshot: Option<(bool, l6ctl::SdLoaderSnapshot)>,
     pub allocation_checked: bool,
     pub chains: Option<SdChainEvidence>,
+    pub continuation_modules: Option<Vec<usize>>,
     pub wall_deadline: Instant,
     pub guest_start: u32,
     pub guest_timeout_ms: u32,

@@ -37,11 +37,8 @@ action = "checkpoint"
 name = "home"
 
 [[step]]
-action = "expect-sd-loader"
-
-[[step]]
-action = "expect-sd-module"
-loaded = true
+action = "include"
+path = "tests/emulator/fragments/sd-module-loaded.toml"
 
 # Menu > System (main menu index 7).
 

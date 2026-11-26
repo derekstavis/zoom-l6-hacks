@@ -27,8 +27,12 @@ struct Observation {
     traces: BTreeMap<String, u64>,
 }
 #[derive(Clone)]
-struct SceneSaveState {
-    scene: usize,
+struct MomentaryState {
+    control: String,
+    started: Instant,
+    guest_start: u32,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
     target: u32,
     press_pattern: String,
     release_pattern: String,
@@ -45,6 +49,12 @@ fn main_display_quiet(main: &InputStatus) -> bool {
         && main.frame_ready > 0
         && main.clock_updates > main.frame_clock_updates
         && (1000..=i32::MAX as u32).contains(&elapsed)
+}
+
+struct WarmResetReadiness {
+    old_indicators: [u32; 8],
+    barrier_updates: u64,
+    fresh_transition_seen: bool,
 }
 
 fn panel_led_state(model: Model, data: PanelData, index: usize) -> bool {
@@ -89,10 +99,13 @@ pub struct Runner {
     /// The previous press's start and budgets, shared with its display check.
     last_press_deadline: Option<(Instant, u32, u64, u32)>,
     startup: BootReadiness,
+    warm_reset_readiness: Option<WarmResetReadiness>,
     trace: TraceCursor,
     trace_path: PathBuf,
     history: VecDeque<Value>,
     completed: Vec<Value>,
+    deferred_failures: Vec<(usize, crate::progress::StepFailure)>,
+    deferred_terminal: bool,
     last: Option<Observation>,
     started: Instant,
     last_progress: Instant,
@@ -100,7 +113,7 @@ pub struct Runner {
     ring_quiet: Option<([u32; 8], u32)>,
     last_report_guest: u32,
     checkpoints: BTreeMap<String, Observation>,
-    scene_save: Option<SceneSaveState>,
+    momentary: Option<MomentaryState>,
     allowed_rejections: [u64; 2],
     progress: crate::progress::CaseProgress,
 }
@@ -151,11 +164,8 @@ impl Runner {
                         trace.watch(&pattern)?;
                     }
                 }
-                Action::SaveScene { scene } => {
-                    for pattern in trace::button_packets(
-                        model,
-                        &format!("scene-{}", ['a', 'b', 'c'][scene - 1]),
-                    )? {
+                Action::MomentaryDown { control, .. } => {
+                    for pattern in trace::button_packets(model, control)? {
                         trace.watch(&pattern)?;
                     }
                 }
@@ -180,9 +190,12 @@ impl Runner {
             last_command: None,
             last_press_deadline: None,
             startup: BootReadiness::new(no_setup_screens),
+            warm_reset_readiness: None,
             trace,
             history: Default::default(),
             completed: vec![],
+            deferred_failures: vec![],
+            deferred_terminal: false,
             last: None,
             started: Instant::now(),
             last_progress: Instant::now(),
@@ -190,7 +203,7 @@ impl Runner {
             ring_quiet: None,
             last_report_guest: 0,
             checkpoints: Default::default(),
-            scene_save: None,
+            momentary: None,
             allowed_rejections: [0, 0],
             progress,
         })
@@ -253,9 +266,25 @@ impl Runner {
         if self.panel_quiet.is_none_or(|(rows, _)| rows != quiet_rows) {
             self.panel_quiet = Some((quiet_rows, obs.panel.guest_ms));
         }
-        let ready = self
-            .startup
-            .observe(self.model, obs.panel.guest_ms, obs.data.indicators);
+        let can_observe_boot = match &mut self.warm_reset_readiness {
+            Some(reset) => {
+                if obs.panel.indicator_updates > reset.barrier_updates
+                    && rings(obs.data.indicators)[..self.model.channels()]
+                        != rings(reset.old_indicators)[..self.model.channels()]
+                {
+                    reset.fresh_transition_seen = true;
+                }
+                reset.fresh_transition_seen
+            }
+            None => true,
+        };
+        let ready = can_observe_boot
+            && self
+                .startup
+                .observe(self.model, obs.panel.guest_ms, obs.data.indicators);
+        if ready {
+            self.warm_reset_readiness = None;
+        }
         if self.last.as_ref().is_none_or(|last| {
             obs.panel.guest_ms.wrapping_sub(last.panel.guest_ms) >= 1000
                 || obs.data.indicators != last.data.indicators
@@ -319,6 +348,31 @@ impl Runner {
                 (now, obs.panel.guest_ms)
             });
             let elapsed = obs.panel.guest_ms.wrapping_sub(guest_start);
+            if let Some(scope) = &self.momentary {
+                if now.duration_since(scope.started) > Duration::from_secs(scope.wall_timeout_s)
+                    || obs.panel.guest_ms.wrapping_sub(scope.guest_start) > scope.guest_timeout_ms
+                {
+                    return Err("momentary input shared deadline exceeded".into());
+                }
+                let presses = obs
+                    .traces
+                    .get(&scope.press_pattern)
+                    .copied()
+                    .unwrap_or(0)
+                    .saturating_sub(scope.press_count);
+                let releases = obs
+                    .traces
+                    .get(&scope.release_pattern)
+                    .copied()
+                    .unwrap_or(0)
+                    .saturating_sub(scope.release_count);
+                if presses > 1 {
+                    return Err(format!("duplicate {} press report", scope.control));
+                }
+                if releases > 1 {
+                    return Err(format!("duplicate {} release report", scope.control));
+                }
+            }
             if !matches!(step.action, Action::ExpectDisplayAfterPress)
                 && (now.duration_since(entered) > Duration::from_secs(step.wall_timeout_s)
                     || elapsed > step.guest_timeout_ms)
@@ -495,8 +549,11 @@ impl Runner {
                 Action::SdCard { inserted } => {
                     return Ok(Progress::Device(devices::Operation::SdCard { inserted }));
                 }
-                Action::UsbDescriptors => {
-                    return Ok(Progress::Device(devices::Operation::UsbDescriptors));
+                Action::UsbControllerReady => {
+                    return Ok(Progress::Device(devices::Operation::UsbControllerReady));
+                }
+                Action::UsbEnumerate => {
+                    return Ok(Progress::Device(devices::Operation::UsbEnumerate));
                 }
                 Action::UsbMidiOpen => {
                     return Ok(Progress::Device(devices::Operation::UsbMidiOpen));
@@ -521,6 +578,14 @@ impl Runner {
                 Action::UsbMidiEnd => return Ok(Progress::Device(devices::Operation::UsbMidiEnd)),
                 Action::HostMidiConnect => {
                     return Ok(Progress::Device(devices::Operation::HostMidiConnect));
+                }
+                Action::DirectMidiConnect { cable } => {
+                    return Ok(Progress::Device(devices::Operation::DirectMidiConnect {
+                        cable,
+                    }));
+                }
+                Action::MidiEncoderAlternate => {
+                    return Ok(Progress::Device(devices::Operation::MidiEncoderAlternate));
                 }
                 Action::HostMidiDrain { quiet_wall_ms } => {
                     return Ok(Progress::Device(devices::Operation::HostMidiDrain {
@@ -574,9 +639,29 @@ impl Runner {
                         value,
                     }));
                 }
+                Action::ExpectRingUnchanged {
+                    channel,
+                    checkpoint,
+                    observe_wall_ms,
+                } => {
+                    let before = self
+                        .checkpoints
+                        .get(&checkpoint)
+                        .ok_or("checkpoint not executed for this model")?
+                        .data
+                        .indicators;
+                    return Ok(Progress::Device(devices::Operation::ExpectRingChanged {
+                        channel,
+                        before,
+                        expected_change: false,
+                        observe_wall_ms: Some(observe_wall_ms),
+                        midi_transaction: true,
+                    }));
+                }
                 Action::ExpectRingChanged {
                     channel,
                     checkpoint,
+                    observe_wall_ms,
                     midi_transaction,
                 } => {
                     let before = self
@@ -588,11 +673,10 @@ impl Runner {
                     return Ok(Progress::Device(devices::Operation::ExpectRingChanged {
                         channel,
                         before,
+                        expected_change: true,
+                        observe_wall_ms,
                         midi_transaction,
                     }));
-                }
-                Action::HostMidiRoundTrip => {
-                    return Ok(Progress::Device(devices::Operation::HostMidiRoundTrip));
                 }
                 Action::MidiProbeBegin => {
                     return Ok(Progress::Device(devices::Operation::MidiProbeBegin));
@@ -657,17 +741,6 @@ impl Runner {
                 Action::MidiProbeEnd => {
                     return Ok(Progress::Device(devices::Operation::MidiProbeEnd));
                 }
-                Action::DirectUsbMidiRoundTrip {
-                    cable,
-                    expect_ring_change,
-                } => {
-                    return Ok(Progress::Device(
-                        devices::Operation::DirectUsbMidiRoundTrip {
-                            cable,
-                            expect_ring_change,
-                        },
-                    ));
-                }
                 Action::DinUsbBegin => {
                     return Ok(Progress::Device(devices::Operation::DinUsbBegin));
                 }
@@ -703,6 +776,9 @@ impl Runner {
                     return Ok(Progress::Device(
                         devices::Operation::L6MidiProbeExpectReplies,
                     ));
+                }
+                Action::L6MidiProbeFinish => {
+                    return Ok(Progress::Device(devices::Operation::L6MidiProbeFinish));
                 }
                 Action::L6IndicatorBegin => {
                     return Ok(Progress::Device(devices::Operation::L6IndicatorBegin));
@@ -791,8 +867,18 @@ impl Runner {
                         pad,
                     }));
                 }
+                Action::EditorAssignDialog { pad } => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignDialog {
+                        pad,
+                    }));
+                }
                 Action::EditorAssignState { pad } => {
                     return Ok(Progress::Device(devices::Operation::EditorAssignState {
+                        pad,
+                    }));
+                }
+                Action::EditorAssignAssert { pad } => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignAssert {
                         pad,
                     }));
                 }
@@ -1013,13 +1099,38 @@ impl Runner {
                 Action::ExpectSdLoader => {
                     return Ok(Progress::Device(devices::Operation::ExpectSdLoader));
                 }
-                Action::ExpectSdModule {
+                Action::CaptureSdModule { loaded } => {
+                    return Ok(Progress::Device(devices::Operation::CaptureSdModule {
+                        loaded,
+                    }));
+                }
+                Action::ExpectSdAllocation { loaded } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectSdAllocation {
+                        loaded,
+                    }));
+                }
+                Action::ExpectSdChains {
                     loaded,
                     chain_count,
                 } => {
-                    return Ok(Progress::Device(devices::Operation::ExpectSdModule {
+                    return Ok(Progress::Device(devices::Operation::ExpectSdChains {
                         loaded,
                         chain_count,
+                    }));
+                }
+                Action::ExpectSdContinuations { loaded } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectSdContinuations { loaded },
+                    ));
+                }
+                Action::ExpectSdModuleImages { loaded } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectSdModuleImages {
+                        loaded,
+                    }));
+                }
+                Action::ExpectSdLatestModule { loaded } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectSdLatestModule {
+                        loaded,
                     }));
                 }
                 Action::EffectPacedTurn { channel, steps } => {
@@ -1034,11 +1145,62 @@ impl Runner {
                         steps,
                     }));
                 }
-                Action::EffectParameterEdit { encoder, steps } => {
-                    return Ok(Progress::Device(devices::Operation::EffectParameterEdit {
+                Action::CaptureEffectRing { encoder } => {
+                    return Ok(Progress::Device(devices::Operation::CaptureEffectRing {
                         encoder,
-                        steps,
                     }));
+                }
+                Action::ExpectEffectRingChanged { encoder } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectEffectRingChanged { encoder },
+                    ));
+                }
+                Action::ExpectEffectType { value } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectEffectType {
+                        value,
+                    }));
+                }
+                Action::ExpectEffectProcessor { value } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectEffectProcessor { value },
+                    ));
+                }
+                Action::CaptureEffectState { edits, dialog } => {
+                    return Ok(Progress::Device(devices::Operation::CaptureEffectState {
+                        edits,
+                        dialog,
+                    }));
+                }
+                Action::ExpectEffectName { name } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectEffectName {
+                        name,
+                    }));
+                }
+                Action::ExpectEffectOutput => {
+                    return Ok(Progress::Device(devices::Operation::ExpectEffectOutput));
+                }
+                Action::ExpectEffectEdits { minimum } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectEffectEdits {
+                        minimum,
+                    }));
+                }
+                Action::ExpectEffectDialog { active } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectEffectDialog {
+                        active,
+                    }));
+                }
+                Action::ExpectEffectPanelMode { value } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectEffectPanelMode { value },
+                    ));
+                }
+                Action::ExpectEffectEditMode { enabled } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectEffectEditMode {
+                        enabled,
+                    }));
+                }
+                Action::EffectStateEnd => {
+                    return Ok(Progress::Device(devices::Operation::EffectStateEnd));
                 }
                 Action::WaitEffectMode {
                     panel_mode,
@@ -1049,36 +1211,18 @@ impl Runner {
                         edit_mode,
                     }));
                 }
-                Action::EffectReplacementState {
+                Action::WaitEffectSlot {
                     expected_effect_type,
                     expected_processor_type,
-                    expected_panel_mode,
-                    expected_edit_mode,
-                    minimum_parameter_edits,
-                    expected_parameter_id,
-                    expected_parameter_value,
-                    expected_dialog_active,
-                    minimum_exit_ring_refreshes,
                     expected_effect,
                     require_output,
-                    wait_for_slot,
                 } => {
-                    return Ok(Progress::Device(
-                        devices::Operation::EffectReplacementState {
-                            expected_effect_type,
-                            expected_processor_type,
-                            expected_panel_mode,
-                            expected_edit_mode,
-                            minimum_parameter_edits,
-                            expected_parameter_id,
-                            expected_parameter_value,
-                            expected_dialog_active,
-                            minimum_exit_ring_refreshes,
-                            expected_effect,
-                            require_output,
-                            wait_for_slot,
-                        },
-                    ));
+                    return Ok(Progress::Device(devices::Operation::WaitEffectSlot {
+                        expected_effect_type,
+                        expected_processor_type,
+                        expected_effect,
+                        require_output,
+                    }));
                 }
                 Action::ExpectHeap { minimum_free } => {
                     return Ok(Progress::Device(devices::Operation::ExpectHeap {
@@ -1123,6 +1267,9 @@ impl Runner {
                 }
                 Action::UsbStorageLastWrite => {
                     return Ok(Progress::Device(devices::Operation::UsbStorageLastWrite));
+                }
+                Action::UsbStorageLastReadback => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageLastReadback));
                 }
                 Action::UsbStorageLastAssert => {
                     return Ok(Progress::Device(devices::Operation::UsbStorageLastAssert));
@@ -1199,13 +1346,49 @@ impl Runner {
                 }
                 Action::PowerEnd => return Ok(Progress::Device(devices::Operation::PowerEnd)),
                 Action::ExpectPowered { powered } => obs.data.powered == powered,
-                Action::ExpectSettings { restored } => {
-                    return Ok(Progress::Device(devices::Operation::ExpectSettings {
+                Action::SettingsCapture { restored } => {
+                    return Ok(Progress::Device(devices::Operation::SettingsCapture {
                         restored,
                     }));
                 }
-                Action::AudioCallbacks => {
-                    return Ok(Progress::Device(devices::Operation::AudioCallbacks));
+                Action::SettingsVersions => {
+                    return Ok(Progress::Device(devices::Operation::SettingsVersions));
+                }
+                Action::SettingsRtc => {
+                    return Ok(Progress::Device(devices::Operation::SettingsRtc));
+                }
+                Action::SettingsBank => {
+                    return Ok(Progress::Device(devices::Operation::SettingsBank));
+                }
+                Action::SettingsTrace => {
+                    return Ok(Progress::Device(devices::Operation::SettingsTrace));
+                }
+                Action::SettingsPanel => {
+                    return Ok(Progress::Device(devices::Operation::SettingsPanel));
+                }
+                Action::SettingsReload => {
+                    return Ok(Progress::Device(devices::Operation::SettingsReload));
+                }
+                Action::SettingsRtcTiming => {
+                    return Ok(Progress::Device(devices::Operation::SettingsRtcTiming));
+                }
+                Action::SettingsEnd => {
+                    return Ok(Progress::Device(devices::Operation::SettingsEnd));
+                }
+                Action::AudioCallbacksBegin => {
+                    return Ok(Progress::Device(devices::Operation::AudioCallbacksBegin));
+                }
+                Action::AudioCallbacksNext => {
+                    return Ok(Progress::Device(devices::Operation::AudioCallbacksNext));
+                }
+                Action::AudioCallbacksCapture => {
+                    return Ok(Progress::Device(devices::Operation::AudioCallbacksCapture));
+                }
+                Action::AudioCallbacksAssert => {
+                    return Ok(Progress::Device(devices::Operation::AudioCallbacksAssert));
+                }
+                Action::AudioCallbacksEnd => {
+                    return Ok(Progress::Device(devices::Operation::AudioCallbacksEnd));
                 }
                 Action::KnobDialogReady => {
                     return Ok(Progress::Device(devices::Operation::KnobDialogReady));
@@ -1218,7 +1401,9 @@ impl Runner {
                 }
                 Action::KnobDialogPreflightBegin => {
                     return Ok(Progress::Device(
-                        devices::Operation::KnobDialogPreflightBegin,
+                        devices::Operation::KnobDialogPreflightBegin {
+                            sd_knob: self.scenario.expects_sd_knob(),
+                        },
                     ));
                 }
                 Action::KnobProbePrepare { probe } => {
@@ -1272,10 +1457,20 @@ impl Runner {
                         artifact: artifact.clone(),
                     }));
                 }
-                Action::KnobDialogFirstActivation => {
-                    return Ok(Progress::Device(
-                        devices::Operation::KnobDialogFirstActivation,
-                    ));
+                Action::KnobActivationTrigger => {
+                    return Ok(Progress::Device(devices::Operation::KnobActivationTrigger));
+                }
+                Action::KnobActivationWait => {
+                    return Ok(Progress::Device(devices::Operation::KnobActivationWait));
+                }
+                Action::KnobActivationSample => {
+                    return Ok(Progress::Device(devices::Operation::KnobActivationSample));
+                }
+                Action::KnobActivationRestore => {
+                    return Ok(Progress::Device(devices::Operation::KnobActivationRestore));
+                }
+                Action::KnobActivationAssert => {
+                    return Ok(Progress::Device(devices::Operation::KnobActivationAssert));
                 }
                 Action::KnobActiveBegin => {
                     return Ok(Progress::Device(devices::Operation::KnobActiveBegin));
@@ -1698,13 +1893,20 @@ impl Runner {
                 Action::KnobPopupExpectOpen => {
                     return Ok(Progress::Device(devices::Operation::KnobPopupExpectOpen));
                 }
+                Action::KnobPopupExpectDisplay => {
+                    return Ok(Progress::Device(devices::Operation::KnobPopupExpectDisplay));
+                }
                 Action::KnobPopupExpectValue => {
                     return Ok(Progress::Device(devices::Operation::KnobPopupExpectValue));
                 }
-                Action::ExpectMenu { menu, path, items } => {
-                    return Ok(Progress::Device(devices::Operation::ExpectMenu {
+                Action::CaptureMenu { menu, path } => {
+                    return Ok(Progress::Device(devices::Operation::CaptureMenu {
                         menu,
                         path,
+                    }));
+                }
+                Action::ExpectMenuItems { items } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectMenuItems {
                         items,
                     }));
                 }
@@ -1823,25 +2025,65 @@ impl Runner {
                 | Action::PatchParityFinish => {
                     return Ok(Progress::Device(devices::Operation::PatchParityHostOnly));
                 }
-                Action::PanelEvent {
+                Action::PanelEventBegin {
                     target,
                     column,
                     row,
                     event,
                 } => {
-                    return Ok(Progress::Device(devices::Operation::PanelEvent {
+                    return Ok(Progress::Device(devices::Operation::PanelEventBegin {
                         target,
                         column,
                         row,
                         event,
                     }));
                 }
-                Action::L6MainGpioEvent { target, event } => {
-                    return Ok(Progress::Device(devices::Operation::L6MainGpioEvent {
+                Action::PanelEventPress => {
+                    return Ok(Progress::Device(devices::Operation::PanelEventPress));
+                }
+                Action::PanelEventCapture => {
+                    return Ok(Progress::Device(devices::Operation::PanelEventCapture));
+                }
+                Action::PanelEventReport => {
+                    return Ok(Progress::Device(devices::Operation::PanelEventReport));
+                }
+                Action::PanelEventMapping => {
+                    return Ok(Progress::Device(devices::Operation::PanelEventMapping));
+                }
+                Action::PanelEventRelease => {
+                    return Ok(Progress::Device(devices::Operation::PanelEventRelease));
+                }
+                Action::PanelEventSettle => {
+                    return Ok(Progress::Device(devices::Operation::PanelEventSettle));
+                }
+                Action::PanelEventEnd => {
+                    return Ok(Progress::Device(devices::Operation::PanelEventEnd));
+                }
+                Action::L6GpioBegin { target, event } => {
+                    return Ok(Progress::Device(devices::Operation::L6GpioBegin {
                         target,
                         event,
                     }));
                 }
+                Action::L6GpioPress => {
+                    return Ok(Progress::Device(devices::Operation::L6GpioPress));
+                }
+                Action::L6GpioSubmit => {
+                    return Ok(Progress::Device(devices::Operation::L6GpioSubmit));
+                }
+                Action::L6GpioAssert => {
+                    return Ok(Progress::Device(devices::Operation::L6GpioAssert));
+                }
+                Action::L6GpioDispatch => {
+                    return Ok(Progress::Device(devices::Operation::L6GpioDispatch));
+                }
+                Action::L6GpioRelease => {
+                    return Ok(Progress::Device(devices::Operation::L6GpioRelease));
+                }
+                Action::L6GpioSettle => {
+                    return Ok(Progress::Device(devices::Operation::L6GpioSettle));
+                }
+                Action::L6GpioEnd => return Ok(Progress::Device(devices::Operation::L6GpioEnd)),
                 Action::ExpectCardEntry {
                     path,
                     size,
@@ -1922,18 +2164,91 @@ impl Runner {
                         tolerance_db,
                     }));
                 }
-                Action::L6maxTapHandler => {
-                    return Ok(Progress::Device(devices::Operation::L6maxTapHandler));
+                Action::L6maxTapBegin => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTapBegin));
                 }
-                Action::L6UsbStartup => {
-                    return Ok(Progress::Device(devices::Operation::L6UsbStartup));
+                Action::L6maxTapPress => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTapPress));
                 }
-                Action::L6DinEventDispatch { group, cc, value } => {
-                    return Ok(Progress::Device(devices::Operation::L6DinEventDispatch {
+                Action::L6maxTapWait => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTapWait));
+                }
+                Action::L6maxTapAssert => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTapAssert));
+                }
+                Action::L6maxTapRelease => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTapRelease));
+                }
+                Action::L6maxTapEnd => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTapEnd));
+                }
+                Action::L6UsbStartupBegin => {
+                    return Ok(Progress::Device(devices::Operation::L6UsbStartupBegin));
+                }
+                Action::L6UsbStartupCapture => {
+                    return Ok(Progress::Device(devices::Operation::L6UsbStartupCapture));
+                }
+                Action::L6UsbStartupAssertHits => {
+                    return Ok(Progress::Device(devices::Operation::L6UsbStartupAssertHits));
+                }
+                Action::L6UsbStartupAssertWrites => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6UsbStartupAssertWrites,
+                    ));
+                }
+                Action::L6UsbStartupAssertReplay => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6UsbStartupAssertReplay,
+                    ));
+                }
+                Action::L6UsbStartupEnd => {
+                    return Ok(Progress::Device(devices::Operation::L6UsbStartupEnd));
+                }
+                Action::L6DispatchBegin { group, cc, value } => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchBegin {
                         group,
                         cc,
                         value,
                     }));
+                }
+                Action::L6DispatchTask => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchTask));
+                }
+                Action::L6DispatchSemaphore => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchSemaphore));
+                }
+                Action::L6DispatchIdle => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchIdle));
+                }
+                Action::L6DispatchInject => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchInject));
+                }
+                Action::L6DispatchWake => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchWake));
+                }
+                Action::L6DispatchState => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchState));
+                }
+                Action::L6DispatchReader => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchReader));
+                }
+                Action::L6DispatchEvent => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchEvent));
+                }
+                Action::L6DispatchEq => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchEq));
+                }
+                Action::L6DispatchObserve => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchObserve));
+                }
+                Action::L6DispatchSetter { index, value } => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchSetter {
+                        index,
+                        value,
+                    }));
+                }
+                Action::L6DispatchFinish => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchFinish));
                 }
                 Action::L6SweepBegin => {
                     return Ok(Progress::Device(devices::Operation::L6SweepBegin));
@@ -1984,8 +2299,42 @@ impl Runner {
                         index,
                     }));
                 }
-                Action::L6DinSweep => {
-                    return Ok(Progress::Device(devices::Operation::L6DinSweep));
+                Action::L6DinSweepBegin => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepBegin));
+                }
+                Action::L6DinSweepReady => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepReady));
+                }
+                Action::L6DinSweepMonitor => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepMonitor));
+                }
+                Action::L6DinSweepBaseline => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepBaseline));
+                }
+                Action::L6DinSweepSample { cc } => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepSample {
+                        cc,
+                    }));
+                }
+                Action::L6DinSweepTrace => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepTrace));
+                }
+                Action::L6DinSweepDrain => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepDrain));
+                }
+                Action::L6DinSweepStop => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepStop));
+                }
+                Action::L6DinSweepCapture => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepCapture));
+                }
+                Action::L6DinSweepAssert { check } => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepAssert {
+                        check,
+                    }));
+                }
+                Action::L6DinSweepEnd => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepEnd));
                 }
                 Action::L6maxTimingBegin => {
                     return Ok(Progress::Device(devices::Operation::L6maxTimingBegin));
@@ -2017,9 +2366,19 @@ impl Runner {
                         devices::Operation::L6maxTimingObservePaused { wall_ms },
                     ));
                 }
-                Action::L6maxTimingAssertPaused => {
+                Action::L6maxTimingCapturePaused => {
                     return Ok(Progress::Device(
-                        devices::Operation::L6maxTimingAssertPaused,
+                        devices::Operation::L6maxTimingCapturePaused,
+                    ));
+                }
+                Action::L6maxTimingAssertPausedClock => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6maxTimingAssertPausedClock,
+                    ));
+                }
+                Action::L6maxTimingAssertPausedInput => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6maxTimingAssertPausedInput,
                     ));
                 }
                 Action::L6maxTimingResume => {
@@ -2132,9 +2491,16 @@ impl Runner {
                 Action::SignalPwmEnd => {
                     return Ok(Progress::Device(devices::Operation::SignalPwmEnd));
                 }
-                Action::L6LevelMeterPwm => {
-                    return Ok(Progress::Device(devices::Operation::L6LevelMeterPwm));
+                Action::L6MeterBegin => {
+                    return Ok(Progress::Device(devices::Operation::L6MeterBegin));
                 }
+                Action::L6MeterStage { value } => {
+                    return Ok(Progress::Device(devices::Operation::L6MeterStage { value }));
+                }
+                Action::L6MeterAssert => {
+                    return Ok(Progress::Device(devices::Operation::L6MeterAssert));
+                }
+                Action::L6MeterEnd => return Ok(Progress::Device(devices::Operation::L6MeterEnd)),
                 Action::Wait { until } => {
                     if until == "sd-patch-loaded" {
                         return Ok(Progress::Device(devices::Operation::WaitSdPatchLoaded));
@@ -2153,9 +2519,10 @@ impl Runner {
                     } else if until == "mixer-ready" {
                         // MAIN restores every ring at once after the sweep;
                         // L6 then lights its editing-mode lamp.
-                        rings(obs.data.indicators)[..self.model.channels()]
-                            .iter()
-                            .all(|mask| *mask != 0)
+                        self.warm_reset_readiness.is_none()
+                            && rings(obs.data.indicators)[..self.model.channels()]
+                                .iter()
+                                .all(|mask| *mask != 0)
                             && (self.model != Model::L6
                                 || l6_mode_leds(obs.data.indicators).contains(&true))
                     } else {
@@ -2288,77 +2655,66 @@ impl Runner {
                         }
                     }
                 }
-                Action::SaveScene { scene } => {
-                    if self.model != Model::L6 {
-                        return Err("save-scene currently supports L6 only".into());
-                    }
-                    let control = format!("scene-{}", ['a', 'b', 'c'][scene - 1]);
-                    let target = control_target(self.model, &control)?;
+                Action::MomentaryDown {
+                    control,
+                    duration_ms,
+                } => {
                     if !self.dispatched {
+                        if self.momentary.is_some() {
+                            return Err("momentary input already held".into());
+                        }
+                        let target = control_target(self.model, &control)?;
                         let [press_pattern, release_pattern] =
                             trace::button_packets(self.model, &control)?;
-                        let state = SceneSaveState {
-                            scene,
+                        self.momentary = Some(MomentaryState {
+                            control,
                             target,
+                            started: entered,
+                            guest_start,
+                            guest_timeout_ms: step.guest_timeout_ms,
+                            wall_timeout_s: step.wall_timeout_s,
                             press_count: obs.traces.get(&press_pattern).copied().unwrap_or(0),
                             release_count: obs.traces.get(&release_pattern).copied().unwrap_or(0),
                             press_pattern,
                             release_pattern,
-                        };
-                        self.scene_save = Some(state);
+                        });
                         return self.dispatch(
                             Command::HoldDown {
                                 target,
-                                // Keep the panel key down until the scene lamp responds.
-                                // This is the same 50 ms minimum used by a normal click.
-                                duration_ms: 50,
+                                duration_ms,
                             },
                             obs,
                         );
                     }
-                    let state = self
-                        .scene_save
-                        .as_ref()
-                        .ok_or("save-scene lost its press baseline")?
-                        .clone();
-                    if state.scene != scene || state.target != target {
-                        return Err("save-scene state does not match the current step".into());
+                    let state = self.momentary.as_ref().ok_or("momentary input missing")?;
+                    let presses = obs
+                        .traces
+                        .get(&state.press_pattern)
+                        .copied()
+                        .unwrap_or(0)
+                        .saturating_sub(state.press_count);
+                    self.acknowledged(&obs)? && presses == 1
+                }
+                Action::MomentaryUp { control } => {
+                    let state = self.momentary.as_ref().ok_or("momentary input missing")?;
+                    if state.control != control {
+                        return Err("momentary release does not match held input".into());
                     }
-                    match self.last_command.as_ref() {
-                        Some(Command::HoldDown { target: held, .. }) if *held == target => {
-                            let press_delta = obs
-                                .traces
-                                .get(&state.press_pattern)
-                                .copied()
-                                .unwrap_or(0)
-                                .saturating_sub(state.press_count);
-                            if press_delta > 1 {
-                                return Err(format!("duplicate L6 scene {scene} press report"));
-                            }
-                            // Only this scene's lamp: another just saved can still be
-                            // flashing, so the others are not a stable baseline.
-                            if self.acknowledged(&obs)?
-                                && press_delta == 1
-                                && l6max_host::indicators::l6_scene_leds(obs.data.indicators)
-                                    [scene - 1]
-                            {
-                                return self.dispatch(Command::Release { target }, obs);
-                            }
-                            false
-                        }
-                        Some(Command::Release { target: released }) if *released == target => {
-                            let release_delta = obs
-                                .traces
-                                .get(&state.release_pattern)
-                                .copied()
-                                .unwrap_or(0)
-                                .saturating_sub(state.release_count);
-                            if release_delta > 1 {
-                                return Err(format!("duplicate L6 scene {scene} release report"));
-                            }
-                            self.acknowledged(&obs)? && release_delta == 1
-                        }
-                        _ => return Err("save-scene lost its input state".into()),
+                    let target = state.target;
+                    if !self.dispatched {
+                        return self.dispatch(Command::Release { target }, obs);
+                    }
+                    let releases = obs
+                        .traces
+                        .get(&state.release_pattern)
+                        .copied()
+                        .unwrap_or(0)
+                        .saturating_sub(state.release_count);
+                    if self.acknowledged(&obs)? && releases == 1 {
+                        self.momentary = None;
+                        true
+                    } else {
+                        false
                     }
                 }
                 Action::ExpectScene {
@@ -2576,7 +2932,6 @@ impl Runner {
             self.entered = None;
             self.settling = None;
             self.dispatched = false;
-            self.scene_save = None;
         }
         Ok(Progress::Complete)
     }
@@ -2606,6 +2961,7 @@ impl Runner {
         self.trace.restart();
         self.trace_path = logs.join("engine.trace");
         self.startup = BootReadiness::new(self.scenario.spec_state);
+        self.warm_reset_readiness = None;
         self.entered = None;
         self.settling = None;
         self.last_press_deadline = None;
@@ -2627,19 +2983,66 @@ impl Runner {
             .filter(|step| step.applies_to(self.model))
             .count()
     }
+
+    /// Discard readiness from before an in-place MAIN reset. Panel firmware
+    /// and its input connection continue running, so require a new indicator
+    /// transition after the QMP reset barrier before recognizing a boot sweep.
+    pub fn warm_reset(&mut self, old_indicators: [u32; 8], barrier_updates: u64) {
+        self.startup = BootReadiness::new(true);
+        self.warm_reset_readiness = Some(WarmResetReadiness {
+            old_indicators,
+            barrier_updates,
+            fresh_transition_seen: false,
+        });
+        self.panel_quiet = None;
+        self.ring_quiet = None;
+        self.last = None;
+        self.baseline = None;
+        self.last_command = None;
+        self.last_press_deadline = None;
+    }
     pub fn current_step(&self) -> usize {
         self.step
     }
 
     /// Complete a typed engine operation; its assertion evidence joins the same report.
+    /// Retain an assertion failure while later steps collect evidence.
+    pub fn defer_assertion_failure(&mut self, error: String) {
+        let failure = crate::progress::StepFailure {
+            index: self.current_display_index(),
+            label: crate::progress::step_label(&self.scenario.step[self.step].action),
+            error,
+        };
+        self.progress
+            .emit(crate::progress::CaseEvent::DeferredAssertionFailed {
+                failure: failure.clone(),
+            });
+        self.deferred_failures.push((self.step + 1, failure));
+    }
+    pub fn mark_deferred_terminal(&mut self) {
+        self.deferred_terminal = true;
+    }
+    pub fn deferred_assertion_error(&self) -> Option<String> {
+        (!self.deferred_failures.is_empty()).then(|| {
+            self.deferred_failures
+                .iter()
+                .map(|(_, f)| f.error.as_str())
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
+    }
+
     pub fn device_finished(&mut self, evidence: Value) {
-        if let Some(expected) = evidence.get("expected_rejections") {
-            if let (Some(main), Some(panel)) = (
-                expected.get("main").and_then(Value::as_u64),
-                expected.get("panel").and_then(Value::as_u64),
-            ) {
-                self.allowed_rejections = [main, panel];
-            }
+        // The L6 sweep verifies these exact counts before completing each
+        // scoped action. Device evidence is data, not runner policy.
+        if self.model == Model::L6 {
+            self.allowed_rejections = match self.scenario.step[self.step].action {
+                Action::L6SweepRejectMain { target: 0 } => [1, 0],
+                Action::L6SweepRejectMain { target: 5 } => [2, 0],
+                Action::L6SweepRejectPanel => [2, 1],
+                Action::L6SweepRejectEncoder | Action::L6SweepEnd => [2, 2],
+                _ => self.allowed_rejections,
+            };
         }
         self.record(json!({"event":"device-result","step":self.step+1,"evidence":evidence}));
         self.completed
@@ -2667,6 +3070,13 @@ impl Runner {
         self.dispatched = true;
         Ok(Progress::Dispatch(command))
     }
+    /// Take a held momentary input for adapter cleanup after any failure.
+    pub fn take_held_release(&mut self) -> Option<Command> {
+        self.momentary.take().map(|scope| Command::Release {
+            target: scope.target,
+        })
+    }
+
     fn acknowledged(&self, obs: &Observation) -> Result<bool, String> {
         let base = self.baseline.as_ref().unwrap();
         let (current, old, count) = match self.last_command.as_ref().unwrap() {
@@ -2700,8 +3110,32 @@ impl Runner {
         self.history.push_back(event);
     }
     pub fn finish(&self, outcome: &str, error: Option<&str>) -> Result<(), String> {
+        let deferred = if error.is_some() && self.deferred_terminal {
+            self.deferred_failures.first()
+        } else {
+            None
+        };
+        let failure = deferred.map(|(_, failure)| failure.clone()).or_else(|| {
+            error.map(|error| crate::progress::StepFailure {
+                index: self
+                    .scenario
+                    .step
+                    .iter()
+                    .take(self.step.saturating_add(1))
+                    .filter(|step| step.applies_to(self.model))
+                    .count(),
+                label: self
+                    .scenario
+                    .step
+                    .get(self.step)
+                    .map(|step| crate::progress::step_label(&step.action))
+                    .unwrap_or_else(|| "Scenario cleanup".into()),
+                error: error.to_owned(),
+            })
+        });
         self.progress
             .emit(crate::progress::CaseEvent::ScenarioFinished {
+                failure: failure.clone(),
                 finished_unix_ms: crate::progress::unix_ms(),
                 outcome: if outcome == "PASS" {
                     crate::progress::Outcome::Pass
@@ -2715,7 +3149,7 @@ impl Runner {
             tracing::info!(event="scenario_finished",scenario=%self.scenario.name,model=self.model.name(),outcome,"scenario completed");
         }
         let report = json!({"schema":1,"scenario":self.scenario.name,"model":self.model.name(),"outcome":outcome,
-            "failed_step": if error.is_some(){Some(self.step+1)}else{None}, "error":error,"wall_seconds":self.started.elapsed().as_secs_f64(),
+            "failed_step": if error.is_some(){Some(deferred.map_or(self.step + 1, |(step, _)| *step))}else{None}, "failed_step_label":failure.as_ref().map(|f| &f.label), "error":error,"deferred_failures":self.deferred_failures.iter().map(|(_, failure)| failure).collect::<Vec<_>>(),"wall_seconds":self.started.elapsed().as_secs_f64(),
             "trace_file":self.trace_path,"completed_steps":self.completed,"last_observation":self.last.as_ref().map(Observation::summary),"events":self.history});
         fs::write(
             self.logs.join("scenario.json"),

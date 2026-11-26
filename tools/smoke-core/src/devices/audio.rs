@@ -1,5 +1,6 @@
 //! Audio callbacks, sound pads and recorder playback.
 use super::*;
+pub(super) mod callbacks;
 pub(super) mod max_recorder;
 pub(super) mod recorder;
 pub(super) mod sound_pad;
@@ -124,19 +125,15 @@ pub(super) fn wait_l6_sound_pad_file(
     if session.engine.model() != l6fw::Model::L6 {
         return Err("saved pad-file readiness requires L6".into());
     }
-    let expected: Vec<u8> = format!("A:\\{}", path.replace('/', "\\"))
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .flat_map(u16::to_le_bytes)
-        .collect();
-    let qmp = &session.engine.management[0];
     let start = guest_now(session);
     let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let reader = control.sound_pad_reader_before(deadline)?;
     loop {
         session.poll()?;
-        let assigned = qmp.read_memory(0, l6::sound_pad1_path, expected.len())?;
-        let pending = qmp.read_memory(0, l6::sound_pad_assignments, 1)?[0];
-        if assigned == expected && pending == 0 {
+        let sample = reader.sample_before(0, Some(path), deadline)?;
+        let pending = sample.pending;
+        if sample.path_matches == Some(true) && pending == 0 {
             return Ok(json!({"path": path, "pending": pending}));
         }
         if guest_now(session).wrapping_sub(start) >= guest_timeout_ms.min(GUEST_TIMEOUT_MS)
@@ -158,8 +155,9 @@ pub(super) fn compare_pad_waveform(
 ) -> Result<Value, Box<dyn std::error::Error>> {
     let wav = sd_image::read_file(card, source, u64::MAX)?;
     let source = waveform::decode_wav(&wav).map_err(std::io::Error::other)?;
-    waveform::compare(&source, &waveform::decode_capture(capture))
-        .map_err(|error| std::io::Error::other(error).into())
+    let comparison = waveform::compare(&source, &waveform::decode_capture(capture))
+        .map_err(std::io::Error::other)?;
+    Ok(serde_json::to_value(comparison)?)
 }
 
 pub(super) fn master_meter_levels(model: l6fw::Model, levels: [[u8; 24]; 8]) -> [u8; 2] {

@@ -10,6 +10,63 @@ no_sd = true
 environment = { L6_AUDIO_TRACE = "1" }
 
 [[step]]
-action = "audio-callbacks"
+action = "audio-callbacks-begin"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+models = ["l6"]
+action = "audio-callbacks-next"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+models = ["l6"]
+action = "audio-callbacks-next"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+models = ["l6"]
+action = "audio-callbacks-next"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+models = ["l6"]
+action = "audio-callbacks-next"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+models = ["l6"]
+action = "audio-callbacks-next"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+models = ["l6max"]
+action = "audio-callbacks-next"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+models = ["l6max"]
+action = "audio-callbacks-next"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "audio-callbacks-capture"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "audio-callbacks-assert"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "audio-callbacks-end"
 guest_timeout_ms = 60000
 wall_timeout_s = 300

@@ -74,6 +74,7 @@ pub struct UsbHost {
     shutdown_socket: UnixStream,
     pumps: Mutex<Vec<(u8, InPump)>>,
     ownership: Arc<Mutex<UsbOwner>>,
+    reserved_enumerated: AtomicBool,
 }
 /// A bridge and direct controller client must not concurrently own USB.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -84,6 +85,7 @@ pub(crate) enum UsbOwner {
     Bridge,
     Direct,
     RawDirect,
+    Unusable,
 }
 
 /// Shared access to the guest USB controller, separate from MIDI bridge ownership.
@@ -112,11 +114,60 @@ impl Controller {
                 return Err("USB is owned by a direct MIDI session".into());
             }
             UsbOwner::Raw => return Ok(()),
+            UsbOwner::Unusable => return Err("USB transport unusable; restart guest".into()),
             UsbOwner::None => {}
         }
         self.host.connect(true).map_err(|error| error.to_string())?;
         *owner = UsbOwner::Raw;
         Ok(())
+    }
+    /// Reserve and attach within the caller's guest and wall budget.
+    pub fn attach_before(&self, budget: &Budget) -> Result<(), String> {
+        let mut owner = loop {
+            budget.check().map_err(|e| e.to_string())?;
+            match self.owner.try_lock() {
+                Ok(owner) => break owner,
+                Err(std::sync::TryLockError::WouldBlock) => thread::sleep(Duration::from_millis(1)),
+                Err(_) => return Err("USB ownership lock poisoned".into()),
+            }
+        };
+        match *owner {
+            UsbOwner::Raw => return Ok(()),
+            UsbOwner::None => {}
+            UsbOwner::Unusable => return Err("USB transport unusable; restart guest".into()),
+            _ => return Err("USB already has an owner".into()),
+        }
+        if let Err(error) = self.host.attach_before(budget) {
+            *owner = UsbOwner::Unusable;
+            self.host.shutdown();
+            return Err(format!("USB attach failed: {error}; restart guest"));
+        }
+        *owner = UsbOwner::Raw;
+        Ok(())
+    }
+    /// Probe an attached raw controller within the same budget.
+    pub fn running_before(&self, budget: &Budget) -> Result<bool, String> {
+        let mut owner = loop {
+            budget.check().map_err(|e| e.to_string())?;
+            match self.owner.try_lock() {
+                Ok(owner) => break owner,
+                Err(std::sync::TryLockError::WouldBlock) => thread::sleep(Duration::from_millis(1)),
+                Err(_) => return Err("USB ownership lock poisoned".into()),
+            }
+        };
+        if *owner != UsbOwner::Raw {
+            return Err("USB controller probe requires a raw attachment".into());
+        }
+        match self.host.controller_running_before(budget) {
+            Ok(running) => Ok(running),
+            Err(error) => {
+                *owner = UsbOwner::Unusable;
+                self.host.shutdown();
+                Err(format!(
+                    "USB controller probe failed: {error}; restart guest"
+                ))
+            }
+        }
     }
     /// Release a raw USB attachment and detach the cable.
     pub fn release(&self) -> Result<(), String> {
@@ -131,10 +182,14 @@ impl Controller {
             }
             UsbOwner::None => return Err("raw USB is not attached".into()),
             UsbOwner::Raw => {}
+            UsbOwner::Unusable => return Err("USB transport unusable; restart guest".into()),
         }
         self.host
             .connect(false)
             .map_err(|error| error.to_string())?;
+        self.host
+            .reserved_enumerated
+            .store(false, Ordering::Release);
         *owner = UsbOwner::None;
         Ok(())
     }
@@ -147,12 +202,48 @@ impl Controller {
         if *owner == UsbOwner::Bridge {
             return Err("USB is owned by the native MIDI bridge".into());
         }
+        if *owner == UsbOwner::Unusable {
+            return Err("USB transport unusable; restart guest".into());
+        }
         if matches!(*owner, UsbOwner::Direct | UsbOwner::RawDirect) {
             return Err("USB is owned by a direct MIDI session".into());
         }
         self.host
             .controller_running()
             .map_err(|error| error.to_string())
+    }
+    /// Enumerate under an existing raw reservation; the configured MIDI pump
+    /// remains owned by the engine until explicit release or shutdown.
+    pub fn enumerate_before(&self, budget: &Budget) -> Result<Enumeration, String> {
+        let mut owner = loop {
+            budget.check().map_err(|e| e.to_string())?;
+            match self.owner.try_lock() {
+                Ok(owner) => break owner,
+                Err(std::sync::TryLockError::WouldBlock) => thread::sleep(Duration::from_millis(1)),
+                Err(_) => return Err("USB ownership lock poisoned".into()),
+            }
+        };
+        if *owner != UsbOwner::Raw {
+            return Err("USB enumeration requires an exclusive raw attachment".into());
+        }
+        if self.host.reserved_enumerated.load(Ordering::Acquire) {
+            return Err("USB already enumerated; release before enumerating again".into());
+        }
+        match self.host.enumerate_with_descriptors_before(budget) {
+            Ok((device, configuration, parsed)) => {
+                self.host.reserved_enumerated.store(true, Ordering::Release);
+                Ok(Enumeration {
+                    device,
+                    configuration,
+                    parsed,
+                })
+            }
+            Err(error) => {
+                *owner = UsbOwner::Unusable;
+                self.host.shutdown();
+                Err(format!("USB enumeration failed: {error}; restart guest"))
+            }
+        }
     }
 }
 
@@ -216,6 +307,7 @@ impl UsbHost {
             control_lock: Mutex::new(()),
             pumps: Mutex::new(Vec::new()),
             ownership: Arc::new(Mutex::new(UsbOwner::None)),
+            reserved_enumerated: AtomicBool::new(false),
         })
     }
     pub(crate) fn ownership(&self) -> Arc<Mutex<UsbOwner>> {
@@ -413,6 +505,10 @@ impl UsbHost {
         }
         self.request(1, connected as u32, 0, &[]).map(|_| ())
     }
+    /// Attach within a caller-owned wall deadline and cancellation budget.
+    pub fn attach_before(&self, budget: &Budget) -> io::Result<()> {
+        self.wire.request_before(1, 1, 0, &[], budget).map(|_| ())
+    }
     fn token(&self, kind: u32, endpoint: u8, length: usize, data: &[u8]) -> io::Result<Vec<u8>> {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -482,6 +578,14 @@ impl UsbHost {
     }
     /// Enumerate under a caller-owned deadline, retaining the production retry rules.
     pub fn enumerate_before(&self, budget: &Budget) -> io::Result<Configuration> {
+        self.enumerate_with_descriptors_before(budget)
+            .map(|(_, _, config)| config)
+    }
+    /// Enumerate with the production transfer sequence and retain its raw evidence.
+    pub fn enumerate_with_descriptors_before(
+        &self,
+        budget: &Budget,
+    ) -> io::Result<(Vec<u8>, Vec<u8>, Configuration)> {
         budget.check()?;
         self.wire.request_before(1, 1, 0, &[], budget)?;
         let _guard = loop {
@@ -540,7 +644,7 @@ impl UsbHost {
             self.start_in_pump(midi.input)?;
         }
         budget.check()?;
-        Ok(config)
+        Ok((device, bytes, config))
     }
     fn disconnect_before(&self, budget: &Budget) -> io::Result<()> {
         let mut guard = loop {
@@ -574,6 +678,17 @@ impl UsbHost {
             Err(error) => Err(error),
             Ok(_) => Ok(true),
         }
+    }
+    pub fn controller_running_before(&self, budget: &Budget) -> io::Result<bool> {
+        budget.check()?;
+        let result = match self.wire.request_before(3, 0x8f, 0, &[], budget) {
+            Err(error) if error.raw_os_error() == Some(libc::ENODEV) => Ok(false),
+            Err(error) if error.raw_os_error() == Some(libc::EAGAIN) => Ok(true),
+            Err(error) => Err(error),
+            Ok(_) => Ok(true),
+        };
+        budget.check()?;
+        result
     }
     pub fn receive(&self, endpoint: u8, length: usize) -> io::Result<Vec<u8>> {
         self.token(3, endpoint | 0x80, length, &[])
@@ -877,17 +992,23 @@ fn retry_transfer(error: &io::Error) -> bool {
     )
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Endpoints {
     pub interface: u8,
     pub input: u8,
     pub output: u8,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Configuration {
     pub value: u8,
     pub midi: Option<Endpoints>,
     pub storage: Option<Endpoints>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Enumeration {
+    pub device: Vec<u8>,
+    pub configuration: Vec<u8>,
+    pub parsed: Configuration,
 }
 impl Configuration {
     pub fn parse(bytes: &[u8]) -> io::Result<Self> {
@@ -963,6 +1084,168 @@ impl Configuration {
 mod tests {
     use super::*;
     #[test]
+    fn bounded_enumeration_retains_exact_descriptor_bytes_and_configuration() {
+        let (socket, mut peer) = UnixStream::pair().unwrap();
+        let device = vec![
+            18, 1, 0, 2, 0, 0, 0, 8, 0x34, 0x12, 0x78, 0x56, 0, 1, 0, 0, 0, 1,
+        ];
+        let config = vec![
+            9, 2, 32, 0, 1, 1, 0, 0x80, 50, 9, 4, 2, 0, 2, 1, 3, 0, 0, 7, 5, 0x81, 2, 64, 0, 0, 7,
+            5, 2, 2, 64, 0, 0,
+        ];
+        let expected_device = device.clone();
+        let expected_config = config.clone();
+        let server = thread::spawn(move || {
+            for (kind, endpoint, payload) in [
+                (1, 1, vec![]),
+                (2, 0, vec![]),
+                (3, 0x80, device),
+                (4, 0, vec![]),
+                (2, 0, vec![]),
+                (3, 0x80, config),
+                (4, 0, vec![]),
+                (2, 0, vec![]),
+                (3, 0x80, vec![]),
+            ] {
+                let mut request = vec![0; if kind == 2 { 28 } else { 20 }];
+                peer.read_exact(&mut request).unwrap();
+                assert_eq!(u32::from_le_bytes(request[4..8].try_into().unwrap()), kind);
+                assert_eq!(
+                    u32::from_le_bytes(request[12..16].try_into().unwrap()),
+                    endpoint
+                );
+                let sequence = u32::from_le_bytes(request[8..12].try_into().unwrap());
+                let mut reply = Vec::new();
+                for word in [MAGIC, 0x80000000, sequence, 0, payload.len() as u32] {
+                    reply.extend(word.to_le_bytes());
+                }
+                reply.extend(payload);
+                peer.write_all(&reply).unwrap();
+            }
+            let mut first = true;
+            loop {
+                let mut request = [0u8; 20];
+                if peer.read_exact(&mut request).is_err() {
+                    break;
+                }
+                assert_eq!(u32::from_le_bytes(request[4..8].try_into().unwrap()), 3);
+                assert_eq!(
+                    u32::from_le_bytes(request[12..16].try_into().unwrap()),
+                    0x81
+                );
+                let sequence = u32::from_le_bytes(request[8..12].try_into().unwrap());
+                let (status, data): (i32, &[u8]) = if first {
+                    first = false;
+                    (0, &[0x1b, 0xb0, 0x51, 32])
+                } else {
+                    (-libc::EAGAIN, &[])
+                };
+                let mut reply = Vec::new();
+                for word in [
+                    MAGIC,
+                    0x80000000,
+                    sequence,
+                    status as u32,
+                    data.len() as u32,
+                ] {
+                    reply.extend(word.to_le_bytes());
+                }
+                reply.extend(data);
+                if peer.write_all(&reply).is_err() {
+                    break;
+                }
+            }
+        });
+        let host = Arc::new(UsbHost::new(socket).unwrap());
+        let controller = Controller::new(host.clone());
+        *host.ownership.lock().unwrap() = UsbOwner::Raw;
+        let budget = Budget::new(Instant::now() + Duration::from_secs(5), || false);
+        let result = controller.enumerate_before(&budget).unwrap();
+        assert_eq!(result.device, expected_device);
+        assert_eq!(result.configuration, expected_config);
+        assert_eq!(result.parsed.value, 1);
+        assert_eq!(
+            result.parsed.midi,
+            Some(Endpoints {
+                interface: 2,
+                input: 1,
+                output: 2
+            })
+        );
+        assert_eq!(*host.ownership.lock().unwrap(), UsbOwner::Raw);
+        assert!(
+            controller
+                .enumerate_before(&budget)
+                .unwrap_err()
+                .contains("already enumerated")
+        );
+        let until = Instant::now() + Duration::from_secs(2);
+        loop {
+            match host.try_receive(1, 64) {
+                Ok(bytes) => {
+                    assert_eq!(bytes, [0x1b, 0xb0, 0x51, 32]);
+                    break;
+                }
+                Err(error)
+                    if error.raw_os_error() == Some(libc::EAGAIN) && Instant::now() < until =>
+                {
+                    thread::sleep(Duration::from_millis(5))
+                }
+                Err(error) => panic!("{error}"),
+            }
+        }
+        host.shutdown();
+        server.join().unwrap();
+    }
+    #[test]
+    fn reserved_enumeration_rejects_conflicts_and_poisons_failed_wire() {
+        let (socket, peer) = UnixStream::pair().unwrap();
+        let host = Arc::new(UsbHost::new(socket).unwrap());
+        let controller = Controller::new(host.clone());
+        let budget = Budget::new(Instant::now() + Duration::from_secs(2), || false);
+        assert!(controller.enumerate_before(&budget).is_err());
+        *host.ownership.lock().unwrap() = UsbOwner::Bridge;
+        assert!(controller.enumerate_before(&budget).is_err());
+        *host.ownership.lock().unwrap() = UsbOwner::Raw;
+        drop(peer);
+        assert!(
+            controller
+                .enumerate_before(&budget)
+                .unwrap_err()
+                .contains("restart guest")
+        );
+        assert_eq!(*host.ownership.lock().unwrap(), UsbOwner::Unusable);
+        assert!(controller.attach().is_err());
+        assert!(host.acquire_direct().is_err());
+    }
+    #[test]
+    fn cancelling_stalled_reserved_enumeration_poison_closes_transport() {
+        let (socket, mut peer) = UnixStream::pair().unwrap();
+        let host = Arc::new(UsbHost::new(socket).unwrap());
+        let controller = Controller::new(host.clone());
+        *host.ownership.lock().unwrap() = UsbOwner::Raw;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let signal = cancelled.clone();
+        let peer_task = thread::spawn(move || {
+            let mut request = [0u8; 20];
+            peer.read_exact(&mut request).unwrap();
+            signal.store(true, Ordering::Release);
+            let mut byte = [0u8; 1];
+            assert_eq!(peer.read(&mut byte).unwrap(), 0);
+        });
+        let budget = Budget::new(Instant::now() + Duration::from_secs(2), move || {
+            cancelled.load(Ordering::Acquire)
+        });
+        assert!(
+            controller
+                .enumerate_before(&budget)
+                .unwrap_err()
+                .contains("restart guest")
+        );
+        assert_eq!(*host.ownership.lock().unwrap(), UsbOwner::Unusable);
+        peer_task.join().unwrap();
+    }
+    #[test]
     fn bounded_wire_stops_on_stalled_partial_reply_and_closes_connection() {
         let (socket, mut peer) = UnixStream::pair().unwrap();
         let host = UsbHost::new(socket).unwrap();
@@ -1036,11 +1319,12 @@ mod tests {
             host: Arc::new(UsbHost::new(socket).unwrap()),
             owner: owned.clone(),
         };
-        assert!(controller.attach().unwrap_err().contains("bridge"));
+        let budget = Budget::new(Instant::now() + Duration::from_secs(2), || false);
+        assert!(controller.attach_before(&budget).is_err());
         *owned.lock().unwrap() = UsbOwner::None;
-        controller.attach().unwrap();
-        assert!(!controller.running().unwrap());
-        assert!(controller.running().unwrap());
+        controller.attach_before(&budget).unwrap();
+        assert!(!controller.running_before(&budget).unwrap());
+        assert!(controller.running_before(&budget).unwrap());
         server.join().unwrap();
     }
 

@@ -13,6 +13,11 @@ suite driver: `cargo l6test list`, `cargo l6test run`. Paths in scenarios,
 includes and specs are written from the repository root. Use Tombi's language
 server (or `uvx tombi lint`) for fast feedback while editing case and fragment
 files; `cargo l6test list` is the authoritative check and needs no firmware.
+Write scenario behavior as named, independently reported steps and reuse existing
+fragments. Use typed `l6ctl`/host APIs for emulator interactions; keep test
+orchestration and assertions in `smoke-core`. Preserve shared deadlines, cleanup,
+model scopes, and deliberate observation windows when splitting operations.
+See `docs/development/tools/l6test.md#writing-declarative-scenarios`.
 For focused runtime observations outside qualification, use
 `docs/development/diagnostics.md`: `cargo l6ctl` inspects an already running
 emulator started with `--control-socket`, while `l6dbg` starts a disposable

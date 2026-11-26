@@ -25,11 +25,13 @@ cargo l6test cache clean --persistent-cache target/l6test-fixtures
   backend; see [case matrix](../testing.md#case-matrix).
 - `check` validates `config.toml` without starting a guest.
 - `watch RUN` shows live progress for a run in another terminal. It replays and tails
-  the run and active attempt `progress.jsonl` streams and shows startup phases
-  and current steps.
+  the run and attempt `progress.jsonl` streams and shows startup phases,
+  current steps, and failed step names and errors, including after late attachment.
+  Deferred assertions are shown while evidence collection continues and are
+  attributed to their original steps when the case finishes.
   Ctrl+C closes the view without stopping the suite. Non-terminal output is a
   single plain-text snapshot. Only runs started by a version that writes
-  `progress.jsonl` can be watched.
+  `progress.jsonl` can be watched; a different progress format version is rejected.
 - `run` selects a `--suite NAME`, or `--case` with comma-separated ids or
   globs (`--case 'patches-l6max_*'`), optionally filtered by
   `--model l6|l6max|all` and `--backend headless|gui|both`.
@@ -68,6 +70,8 @@ local. See the
 
 The exploratory `probe gui` command captures the panel while pressing GPIO
 targets. It is for visual/behavioral investigation and does not qualify a test.
+The window observation resolves `current_window` for the selected model; the
+symbol lookup does not verify the running firmware revision.
 
 ```sh
 cargo run --offline --locked -p l6test -- probe gui \
@@ -137,7 +141,38 @@ There are three related TOML inputs:
 
 Local configuration, catalog entries, scenario headers, and action-specific
 fields are strict. Paths in local configuration are resolved relative to the
-TOML file. Scenario includes are confined to their scenario directory.
+TOML file. Scenario and fragment paths are relative to the repository root;
+absolute paths and `..` are rejected.
+
+### Writing declarative scenarios
+
+A scenario should show its behavioral sequence: setup, stimulus, observation,
+and assertions are separately named steps when each represents meaningful
+work. Reuse existing fragments before introducing a new one. A generated patch
+matrix may choose combinations in Rust, but its behavior should compose the
+same steps and fragments as ordinary scenarios. Use typed `l6ctl` operations
+for guest control and host-owned domain interpretation; the runner owns test
+sequencing, expected values, artifacts and pass/fail decisions.
+
+When decomposing an existing operation, compare the expanded steps, model and
+backend scope, fixtures, assertions, and cleanup behavior with the original.
+Preserve each shared guest and wall deadline: includes propagate model scope
+and `setup_input`, while explicit `include_guest_timeout_ms` and
+`include_wall_timeout_s` overrides require uniform child deadlines. A sampling
+window, recording duration, and negative observation are intentional durations;
+do not replace them with readiness polling or turn concurrent capture into
+sequential observations. Keep a bounded transaction together if splitting it
+would lose an event or release a resource prematurely.
+
+Use `cargo l6test list` to validate catalog composition, then run focused cases
+for the affected models and backends with the normal worker count. Watch the
+run from another terminal with `cargo l6test watch RUN_DIRECTORY`. Review
+`report.json` and the individual `scenario.json` and progress streams: a
+BLOCKED case did not run, and a retry that passes after failure is FLAKY. An
+`expected_failure.step` identifies the one-based index in the runtime scenario
+after include expansion and any `setup_input` removal, not the displayed count
+after model filtering; revisit it when inserting steps.
+For user-visible behavior, check rendered pixels against reviewed references.
 
 ### L6max stereo level-meter sweep
 
@@ -195,5 +230,4 @@ cargo run --offline --locked -p l6test -- run \
 
 The case requires at least one panel cell to show five distinct nonzero mean
 duty readings. Inspect `l6-level-meter-pwm.json` for all cell means at each
-input level. This tests the firmware-to-panel path with controlled accumulator
-input; it does not qualify physical meter wiring or audio-input routing.
+input level. Each 500 panel-ms stage excludes its first 100 ms; completed stages and partial failure evidence are written incrementally. This terminal debugger probe restores journalled bytes when possible but cannot restore task or panel progression, so MAIN stays stopped and the guest must be restarted. The bounded mutation API is in-process; no equivalent control-socket sampling command is provided. This tests the firmware-to-panel path with controlled accumulator input; it does not qualify physical meter wiring or audio-input routing.

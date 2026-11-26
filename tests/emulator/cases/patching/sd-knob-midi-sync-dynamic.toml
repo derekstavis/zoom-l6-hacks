@@ -15,8 +15,5 @@ guest_timeout_ms = 60000
 wall_timeout_s = 300
 
 [[step]]
-action = "expect-sd-loader"
-
-[[step]]
-action = "expect-sd-module"
-loaded = true
+action = "include"
+path = "tests/emulator/fragments/sd-module-loaded.toml"

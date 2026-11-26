@@ -83,6 +83,18 @@ struct PatchChecks {
 struct MenuAction {
     item: String,
     steps: String,
+    /// Additional checks before selecting the item, when a patch is present.
+    #[serde(default)]
+    before_if_installed: Vec<ConditionalMenuCheck>,
+    /// Checks after the item's main fragment.
+    after: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConditionalMenuCheck {
+    patch: String,
+    steps: String,
 }
 
 /// Every patch's checks, in the order cases run them.
@@ -108,6 +120,27 @@ impl Checks {
                 toml::from_str(&read(&path)?).map_err(|e| format!("{}: {e}", path.display()))?;
             if checks.version != 1 {
                 return Err(format!("{}: unsupported version", path.display()));
+            }
+            for action in &checks.menu_action {
+                let mut conditions = BTreeSet::new();
+                for check in &action.before_if_installed {
+                    if patch_package(&check.patch).is_none() || !conditions.insert(&check.patch) {
+                        return Err(format!(
+                            "{}: unknown or duplicate conditional patch {}",
+                            path.display(),
+                            check.patch
+                        ));
+                    }
+                }
+                for fragment in std::iter::once(&action.steps)
+                    .chain(action.after.iter())
+                    .chain(action.before_if_installed.iter().map(|check| &check.steps))
+                {
+                    let resolved = smoke_core::spec_path(std::path::Path::new(fragment))?;
+                    let text = read(&resolved)?;
+                    let _: smoke_core::Fragment = toml::from_str(&text)
+                        .map_err(|error| format!("{}: {error}", resolved.display()))?;
+                }
             }
             order.push((name.clone(), checks));
         }
@@ -342,17 +375,12 @@ fn delay(text: &mut String, guest_ms: u32) {
 /// L6max must finish rendering the recorder before patch inputs can work.
 /// L6 has no display, so its other delivery paths retain their startup wait.
 fn startup_readiness(text: &mut String, model: Model) {
-    if model == Model::L6max {
-        step(
-            text,
-            "action = \"expect-display-image\"\nimage = \"tests/emulator/references/l6max-recorder-home.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
-        );
+    let path = if model == Model::L6max {
+        "tests/emulator/fragments/patch-matrix-l6max-home.toml"
     } else {
-        step(
-            text,
-            "action = \"delay\"\nguest_ms = 8000\nguest_timeout_ms = 20000\nwall_timeout_s = 300",
-        );
-    }
+        "tests/emulator/fragments/patch-matrix-l6-startup.toml"
+    };
+    include(text, path);
 }
 
 /// Patches rows and System items menu-loader shows for a combination.
@@ -416,8 +444,7 @@ fn include(text: &mut String, path: &str) {
 /// The steps that check every patch a combination installs, in check order.
 fn checks(text: &mut String, combination: &Combination, all: &Checks) -> Result<(), String> {
     if !combination.sd.is_empty() {
-        step(text, "action = \"expect-sd-loader\"");
-        step(text, "action = \"expect-sd-module\"\nloaded = true");
+        include(text, "tests/emulator/fragments/sd-module-loaded.toml");
     }
     for (name, patch) in &all.order {
         let active = if patch.checks_effect_slots {
@@ -441,33 +468,123 @@ fn checks(text: &mut String, combination: &Combination, all: &Checks) -> Result<
     Ok(())
 }
 
+/// Expected state for one physical stock slot after selecting EFX mode.
+#[derive(Debug, PartialEq, Eq)]
+struct EffectSlotPlan<'a> {
+    slot_index: usize,
+    expected_effect_type: usize,
+    expected_processor_type: usize,
+    effect: Option<&'a str>,
+    require_output: bool,
+}
+
+fn effect_slot_plan(combination: &Combination) -> Vec<EffectSlotPlan<'_>> {
+    STOCK_EFFECT_SLOTS
+        .iter()
+        .enumerate()
+        .map(|(index, slot)| {
+            let effect = combination
+                .effects
+                .iter()
+                .find(|(assigned, _)| assigned == slot)
+                .map(|(_, effect)| effect.as_str());
+            EffectSlotPlan {
+                slot_index: index,
+                expected_effect_type: index + 1,
+                expected_processor_type: if effect.is_some() { index + 1 } else { 0 },
+                effect,
+                require_output: effect.is_some(),
+            }
+        })
+        .collect()
+}
+
 /// Each stock effect slot, in EFX mode, runs its assigned effect with output,
 /// or its stock effect.
 fn effect_slot_checks(text: &mut String, combination: &Combination) {
     step(text, "action = \"select-mode\"\nmode = \"efx\"");
-    for (index, slot) in STOCK_EFFECT_SLOTS.iter().enumerate() {
-        if index > 0 {
+    for slot in effect_slot_plan(combination) {
+        if slot.slot_index > 0 {
             press(text, "efx-select", 1);
         }
-        let effect = combination
-            .effects
-            .iter()
-            .find(|(assigned, _)| assigned == slot)
-            .map(|(_, effect)| effect);
-        let mut body = format!(
-            "action = \"effect-replacement-state\"\nwait_for_slot = true\nexpected_effect_type = {}\nexpected_processor_type = {}",
-            index + 1,
-            if effect.is_some() { index + 1 } else { 0 }
+        let fragment = if slot.effect.is_some() {
+            "tests/emulator/fragments/patch-matrix-effect-replacement.toml"
+        } else {
+            "tests/emulator/fragments/patch-matrix-effect-stock.toml"
+        };
+        let effect = slot
+            .effect
+            .map(|name| format!(", effect = {name:?}"))
+            .unwrap_or_default();
+        step(
+            text,
+            &format!(
+                "action = \"include\"\npath = {fragment:?}\neffect_slot = {{ effect_type = {}, processor_type = {}{effect} }}",
+                slot.expected_effect_type, slot.expected_processor_type
+            ),
         );
-        if let Some(effect) = effect {
-            let _ = write!(
-                body,
-                "\nexpected_effect = {effect:?}\nrequire_output = true"
-            );
-        }
-        step(text, &body);
     }
     step(text, "action = \"select-mode\"\nmode = \"level\"");
+}
+
+/// The menu items and ordered patch-specific actions for a combination.
+#[derive(Debug, PartialEq, Eq)]
+struct MenuPlan<'a> {
+    rows: Vec<String>,
+    items: Vec<String>,
+    patches_index: usize,
+    actions: Vec<MenuActionPlan<'a>>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct MenuActionPlan<'a> {
+    index: usize,
+    steps: &'a str,
+    before: Vec<&'a str>,
+    after: Option<&'a str>,
+}
+
+fn menu_plan<'a>(
+    combination: &Combination,
+    all: &'a Checks,
+    stock_system_items: &[String],
+) -> Result<MenuPlan<'a>, String> {
+    let (rows, items) = menu_rows(combination, all, stock_system_items)?;
+    let patches_index = items
+        .iter()
+        .position(|item| item == "Patches")
+        .ok_or("System menu has no Patches")?;
+    let mut actions = Vec::new();
+    for (name, patch) in &all.order {
+        if !combination.installs(name) {
+            continue;
+        }
+        for action in &patch.menu_action {
+            let index = items
+                .iter()
+                .position(|item| *item == action.item)
+                .ok_or(format!("System menu has no {}", action.item))?;
+            actions.push(MenuActionPlan {
+                index,
+                steps: &action.steps,
+                before: action
+                    .before_if_installed
+                    .iter()
+                    .filter(|check| combination.installs(&check.patch))
+                    .map(|check| check.steps.as_str())
+                    .collect(),
+                after: action.after.as_deref(),
+            });
+        }
+    }
+    // Match the previous tuple sort, including its fragment-path tiebreaker.
+    actions.sort_by(|a, b| (a.index, a.steps).cmp(&(b.index, b.steps)));
+    Ok(MenuPlan {
+        rows,
+        items,
+        patches_index,
+        actions,
+    })
 }
 
 /// Open the System menu, expect its items and Patches rows, and run every
@@ -478,39 +595,34 @@ fn menu_checks(
     all: &Checks,
     stock_system_items: &[String],
 ) -> Result<(), String> {
-    let (rows, items) = menu_rows(combination, all, stock_system_items)?;
-    // Earlier input may have opened a Knob Dialog or notification. Wait for
-    // the reviewed home screen to remain visible before opening the menu.
-    step(
-        text,
-        "action = \"expect-display-image\"\nimage = \"tests/emulator/references/l6max-recorder-home.png\"\nsettle_ms = 500\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
-    );
-    // Menu, then System at main-menu index 7.
-    press(text, "recorder-function-1", 1);
-    step(
-        text,
-        "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-sound-assign/menu-project.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
-    );
+    let plan = menu_plan(combination, all, stock_system_items)?;
+    let rows = &plan.rows;
+    let items = &plan.items;
+    // Open the menu from a reviewed, settled recorder screen.
+    include(text, "tests/emulator/fragments/patch-matrix-menu-open.toml");
+    step(text, "action = \"capture-menu\"\nmenu = \"system\"");
     step(
         text,
         &format!(
-            "action = \"expect-menu\"\nmenu = \"system\"\nitems = {}",
+            "action = \"expect-menu-items\"\nitems = {}",
             quoted_list(&items)
         ),
     );
     step(
         text,
+        "action = \"capture-menu\"\nmenu = \"system\"\npath = [\"Patches\"]",
+    );
+    step(
+        text,
         &format!(
-            "action = \"expect-menu\"\nmenu = \"system\"\npath = [\"Patches\"]\nitems = {}",
+            "action = \"expect-menu-items\"\nitems = {}",
             quoted_list(&rows)
         ),
     );
-    press(text, "recorder-function-3", 7);
-    step(
+    include(
         text,
-        "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-patch-menu/main-system.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
+        "tests/emulator/fragments/patch-matrix-system-enter.toml",
     );
-    press(text, "recorder-function-4", 1);
     step(
         text,
         &format!(
@@ -521,10 +633,7 @@ fn menu_checks(
     // Open System > Patches and compare its rows as drawn; back in System
     // the cursor stays on Patches. Each item a patch adds comes after
     // Patches, so the actions below move down from there.
-    let patches = items
-        .iter()
-        .position(|item| item == "Patches")
-        .ok_or("System menu has no Patches")?;
+    let patches = plan.patches_index;
     press(text, "recorder-function-3", patches);
     step(
         text,
@@ -550,44 +659,19 @@ fn menu_checks(
         ),
     );
     // Run each item's action in menu order, moving down from Patches.
-    let mut actions: Vec<(usize, &str)> = Vec::new();
-    for (name, patch) in &all.order {
-        if !combination.installs(name) {
-            continue;
-        }
-        for action in &patch.menu_action {
-            let index = items
-                .iter()
-                .position(|item| *item == action.item)
-                .ok_or(format!("System menu has no {}", action.item))?;
-            actions.push((index, &action.steps));
-        }
-    }
-    actions.sort();
     let mut cursor = patches;
-    for (index, steps) in actions {
+    for action in plan.actions {
+        let index = action.index;
         press(text, "recorder-function-3", index - cursor);
         delay(text, 500);
-        if items[index] == "Send MIDI State" && combination.installs("dump-rom") {
-            step(
-                text,
-                "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-patch-menu/system-send-midi-state-10.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 120",
-            );
+        for fragment in action.before {
+            include(text, fragment);
         }
         press(text, "recorder-function-4", 1);
         cursor = index;
-        include(text, steps);
-        if items[index] == "Dump ROM" {
-            // The dump's final file appears before its completion popup
-            // clears. Do not let the next Down press dismiss that popup.
-            step(
-                text,
-                "action = \"wait-memory\"\nsymbol = \"notification_busy\"\nbytes = [0]\nguest_timeout_ms = 30000\nwall_timeout_s = 120",
-            );
-            step(
-                text,
-                "action = \"wait-memory\"\nsymbol = \"notification_active\"\nbytes = [0]\nguest_timeout_ms = 30000\nwall_timeout_s = 120",
-            );
+        include(text, action.steps);
+        if let Some(fragment) = action.after {
+            include(text, fragment);
         }
     }
     Ok(())
@@ -651,9 +735,9 @@ fn combination_case(
             "action = \"audio-input-transport\"\ncommand = \"play\"",
         );
     }
-    step(
+    include(
         &mut text,
-        "action = \"wait\"\nuntil = \"mixer-ready\"\nguest_timeout_ms = 60000\nwall_timeout_s = 300",
+        "tests/emulator/fragments/patch-matrix-mixer-ready.toml",
     );
     // The L6 SD loader has its own completion signal in `checks`. L6max
     // also needs its rendered recorder screen before patch input checks.
@@ -702,9 +786,9 @@ fn delivery_cases(model: Model, all: &Checks) -> Result<Vec<GeneratedCase>, Stri
                 true,
             );
             let _ = writeln!(text, "installed_patches = {}", quoted_list(&closure));
-            step(
+            include(
                 &mut text,
-                "action = \"wait\"\nuntil = \"mixer-ready\"\nguest_timeout_ms = 60000\nwall_timeout_s = 300",
+                "tests/emulator/fragments/patch-matrix-mixer-ready.toml",
             );
             startup_readiness(&mut text, model);
             checks(&mut text, &combination, all)?;
@@ -813,9 +897,9 @@ fn delivery_cases(model: Model, all: &Checks) -> Result<Vec<GeneratedCase>, Stri
                 true,
             );
             let _ = writeln!(text, "installed_sd_patches = [{patch:?}]");
-            step(
+            include(
                 &mut text,
-                "action = \"wait\"\nuntil = \"mixer-ready\"\nguest_timeout_ms = 60000\nwall_timeout_s = 300",
+                "tests/emulator/fragments/patch-matrix-mixer-ready.toml",
             );
             startup_readiness(&mut text, model);
             let hosted = Combination {
@@ -977,6 +1061,137 @@ mod tests {
     use super::*;
 
     #[test]
+    fn matrix_menu_fragments_preserve_original_expanded_steps() {
+        let header =
+            "version = 1\nname = \"test\"\nmodels = [\"l6max\"]\nbackends = [\"headless\"]\n";
+        let cases = [
+            (
+                "tests/emulator/fragments/patch-matrix-menu-open.toml",
+                r#"
+[[step]]
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
+settle_ms = 500
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+[[step]]
+action = "press"
+control = "recorder-function-1"
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/menu-project.png"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+"#,
+            ),
+            (
+                "tests/emulator/fragments/patch-matrix-dump-notification-clear.toml",
+                r#"
+[[step]]
+action = "wait-memory"
+symbol = "notification_busy"
+bytes = [0]
+guest_timeout_ms = 30000
+wall_timeout_s = 120
+[[step]]
+action = "wait-memory"
+symbol = "notification_active"
+bytes = [0]
+guest_timeout_ms = 30000
+wall_timeout_s = 120
+"#,
+            ),
+        ];
+        for (path, original) in cases {
+            let previous = smoke_core::Scenario::from_text(&format!("{header}{original}")).unwrap();
+            let included = smoke_core::Scenario::from_text(&format!(
+                "{header}\n[[step]]\naction = \"include\"\npath = {path:?}\n"
+            ))
+            .unwrap();
+            assert_eq!(
+                serde_json::to_value(previous.step).unwrap(),
+                serde_json::to_value(included.step).unwrap(),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn effect_slot_plan_represents_stock_and_assigned_slots() {
+        let combination = Combination {
+            firmware: vec![],
+            sd: vec![],
+            effects: vec![("spring", "plateau".into())],
+        };
+        assert_eq!(
+            effect_slot_plan(&combination),
+            vec![
+                EffectSlotPlan {
+                    slot_index: 0,
+                    expected_effect_type: 1,
+                    expected_processor_type: 0,
+                    effect: None,
+                    require_output: false
+                },
+                EffectSlotPlan {
+                    slot_index: 1,
+                    expected_effect_type: 2,
+                    expected_processor_type: 2,
+                    effect: Some("plateau"),
+                    require_output: true
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn menu_plan_orders_mixed_placements_and_special_actions() {
+        let checks = Checks::load().unwrap();
+        let menu_checks = checks.get("menu-loader").unwrap();
+        let combination = Combination {
+            firmware: vec!["menu-loader".into(), "dump-rom".into()],
+            sd: vec!["knob-dialog".into(), "midi-sync".into()],
+            effects: vec![("spring", "plateau".into())],
+        };
+        let plan = menu_plan(&combination, &checks, &menu_checks.stock_system_items).unwrap();
+        assert!(plan.rows[0].starts_with("patch-loader "));
+        assert_eq!(plan.items[plan.patches_index], "Patches");
+        assert!(
+            plan.rows
+                .iter()
+                .any(|row| row.starts_with("dump-rom ") && !row.ends_with(" (SD)"))
+        );
+        assert!(
+            plan.rows
+                .iter()
+                .any(|row| row.starts_with("midi-sync ") && row.ends_with(" (SD)"))
+        );
+        assert_eq!(plan.actions.len(), 2);
+        let dump = &plan.actions[0];
+        let midi = &plan.actions[1];
+        assert_eq!(plan.items[dump.index], "Dump ROM");
+        assert_eq!(
+            dump.after,
+            Some("tests/emulator/fragments/patch-matrix-dump-notification-clear.toml")
+        );
+        assert!(dump.before.is_empty());
+        assert_eq!(plan.items[midi.index], "Send MIDI State");
+        assert_eq!(
+            midi.before,
+            ["patches/midi-sync/tests/emulator/fragments/menu-before-dump-rom.toml"]
+        );
+        assert_eq!(midi.after, None);
+        assert_eq!(
+            dump.steps,
+            "patches/dump-rom/tests/emulator/fragments/dump-files.toml"
+        );
+        assert_eq!(
+            midi.steps,
+            "patches/midi-sync/tests/emulator/fragments/send-midi-state.toml"
+        );
+    }
+
+    #[test]
     fn pairwise_covers_every_pair_and_single_every_value() {
         for model in [Model::L6, Model::L6max] {
             let values: Vec<Vec<String>> = combinations(model)
@@ -1099,6 +1314,73 @@ mod tests {
     }
 
     #[test]
+    fn expanded_matrix_preserves_model_specific_startup() {
+        use smoke_core::Action;
+        for case in generate().unwrap() {
+            if case.id.contains("_update_") {
+                continue;
+            }
+            let scenario = smoke_core::Scenario::from_text(&case.scenario).unwrap();
+            let mixer = scenario
+                .step
+                .iter()
+                .position(
+                    |step| matches!(&step.action, Action::Wait { until } if until == "mixer-ready"),
+                )
+                .unwrap_or_else(|| panic!("{}: missing mixer readiness", case.id));
+            assert_eq!(
+                (
+                    scenario.step[mixer].guest_timeout_ms,
+                    scenario.step[mixer].wall_timeout_s
+                ),
+                (60_000, 300),
+                "{}",
+                case.id
+            );
+            let next = &scenario.step[mixer + 1];
+            if case.model == "l6max" {
+                assert!(
+                    matches!(&next.action, Action::ExpectDisplayImage { image, settle_ms: 0 } if image == std::path::Path::new("tests/emulator/references/l6max-recorder-home.png")),
+                    "{}",
+                    case.id
+                );
+                assert_eq!(
+                    (next.guest_timeout_ms, next.wall_timeout_s),
+                    (30_000, 300),
+                    "{}",
+                    case.id
+                );
+            } else if scenario
+                .sd_patches
+                .as_ref()
+                .is_some_and(|patches| !patches.is_empty())
+            {
+                assert!(matches!(next.action, Action::ExpectSdLoader), "{}", case.id);
+                assert!(
+                    matches!(
+                        scenario.step[mixer + 2].action,
+                        Action::CaptureSdModule { loaded: true, .. }
+                    ),
+                    "{}",
+                    case.id
+                );
+            } else {
+                assert!(
+                    matches!(next.action, Action::Delay { guest_ms: 8_000 }),
+                    "{}",
+                    case.id
+                );
+                assert_eq!(
+                    (next.guest_timeout_ms, next.wall_timeout_s),
+                    (20_000, 300),
+                    "{}",
+                    case.id
+                );
+            }
+        }
+    }
+
+    #[test]
     fn every_generated_scenario_loads() {
         for case in generate().unwrap() {
             smoke_core::Scenario::from_text(&case.scenario)
@@ -1106,35 +1388,301 @@ mod tests {
         }
     }
 
+    fn previous_menu_checks(
+        text: &mut String,
+        combination: &Combination,
+        all: &Checks,
+        stock_system_items: &[String],
+    ) -> Result<(), String> {
+        let plan = menu_plan(combination, all, stock_system_items)?;
+        let rows = &plan.rows;
+        let items = &plan.items;
+        // Open the menu from a reviewed, settled recorder screen.
+        include(text, "tests/emulator/fragments/patch-matrix-menu-open.toml");
+        step(text, "action = \"capture-menu\"\nmenu = \"system\"");
+        step(
+            text,
+            &format!(
+                "action = \"expect-menu-items\"\nitems = {}",
+                quoted_list(&items)
+            ),
+        );
+        step(
+            text,
+            "action = \"capture-menu\"\nmenu = \"system\"\npath = [\"Patches\"]",
+        );
+        step(
+            text,
+            &format!(
+                "action = \"expect-menu-items\"\nitems = {}",
+                quoted_list(&rows)
+            ),
+        );
+        press(text, "recorder-function-3", 7);
+        step(
+            text,
+            "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-patch-menu/main-system.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
+        );
+        press(text, "recorder-function-4", 1);
+        step(
+            text,
+            &format!(
+                "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-patch-menu/system-first-{}.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
+                items.len()
+            ),
+        );
+        // Open System > Patches and compare its rows as drawn; back in System
+        // the cursor stays on Patches. Each item a patch adds comes after
+        // Patches, so the actions below move down from there.
+        let patches = plan.patches_index;
+        press(text, "recorder-function-3", patches);
+        step(
+            text,
+            &format!(
+                "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-patch-menu/system-patches-{}.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
+                items.len()
+            ),
+        );
+        press(text, "recorder-function-4", 1);
+        step(
+            text,
+            &format!(
+                "action = \"expect-display-image\"\nimage = {:?}",
+                patches_screen_reference(&rows)
+            ),
+        );
+        press(text, "recorder-function-1", 1);
+        step(
+            text,
+            &format!(
+                "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-patch-menu/system-patches-{}.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
+                items.len()
+            ),
+        );
+        // Run each item's action in menu order, moving down from Patches.
+        let mut cursor = patches;
+        for action in plan.actions {
+            let index = action.index;
+            press(text, "recorder-function-3", index - cursor);
+            delay(text, 500);
+            if items[index] == "Send MIDI State" && combination.installs("dump-rom") {
+                step(
+                    text,
+                    "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-patch-menu/system-send-midi-state-10.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 120",
+                );
+            }
+            press(text, "recorder-function-4", 1);
+            cursor = index;
+            include(text, action.steps);
+            if items[index] == "Dump ROM" {
+                // The file appears before the completion notification clears.
+                include(
+                    text,
+                    "tests/emulator/fragments/patch-matrix-dump-notification-clear.toml",
+                );
+            }
+        }
+        Ok(())
+    }
+
     #[test]
-    fn generated_sd_combinations_check_loader_before_module() {
+    fn generated_menu_combinations_preserve_expanded_checks() {
+        let checks = Checks::load().unwrap();
+        let stock = &checks.get("menu-loader").unwrap().stock_system_items;
+        let mut count = 0;
+        for combination in combinations(Model::L6max)
+            .unwrap()
+            .iter()
+            .filter(|c| c.installs("menu-loader"))
+        {
+            let case = combination_case(Model::L6max, combination, &checks).unwrap();
+            let mut current = String::new();
+            menu_checks(&mut current, combination, &checks, stock).unwrap();
+            let mut previous = String::new();
+            previous_menu_checks(&mut previous, combination, &checks, stock).unwrap();
+            assert_eq!(case.scenario.matches(&current).count(), 1, "{}", case.id);
+            let old_text = case.scenario.replacen(&current, &previous, 1);
+            let old = smoke_core::Scenario::from_text(&old_text).unwrap();
+            let new = smoke_core::Scenario::from_text(&case.scenario).unwrap();
+            assert_eq!(
+                serde_json::to_value(old.step).unwrap(),
+                serde_json::to_value(new.step).unwrap(),
+                "{}",
+                case.id
+            );
+            count += 1;
+        }
+        assert!(count > 0);
+    }
+
+    #[test]
+    fn generated_effect_combinations_preserve_expanded_checks() {
+        fn previous_checks(combination: &Combination) -> String {
+            let mut text = String::new();
+            step(&mut text, "action = \"select-mode\"\nmode = \"efx\"");
+            for slot in effect_slot_plan(combination) {
+                if slot.slot_index > 0 {
+                    press(&mut text, "efx-select", 1);
+                }
+                let mut body = format!(
+                    "expected_effect_type = {}\nexpected_processor_type = {}",
+                    slot.expected_effect_type, slot.expected_processor_type
+                );
+                if let Some(effect) = slot.effect {
+                    let _ = write!(
+                        body,
+                        "\nexpected_effect = {effect:?}\nrequire_output = {}",
+                        slot.require_output
+                    );
+                }
+                step(&mut text, &format!("action = \"wait-effect-slot\"\n{body}"));
+                step(&mut text, "action = \"capture-effect-state\"");
+                step(
+                    &mut text,
+                    &format!(
+                        "action = \"expect-effect-type\"\nvalue = {}",
+                        slot.expected_effect_type
+                    ),
+                );
+                step(
+                    &mut text,
+                    &format!(
+                        "action = \"expect-effect-processor\"\nvalue = {}",
+                        slot.expected_processor_type
+                    ),
+                );
+                if let Some(effect) = slot.effect {
+                    step(
+                        &mut text,
+                        &format!("action = \"expect-effect-name\"\nname = {effect:?}"),
+                    );
+                    if slot.require_output {
+                        step(&mut text, "action = \"expect-effect-output\"");
+                    }
+                }
+                step(&mut text, "action = \"effect-state-end\"");
+            }
+            step(&mut text, "action = \"select-mode\"\nmode = \"level\"");
+            text
+        }
+        let checks = Checks::load().unwrap();
+        let mut count = 0;
+        for model in [Model::L6, Model::L6max] {
+            for combination in combinations(model)
+                .unwrap()
+                .iter()
+                .filter(|c| !c.effects.is_empty())
+            {
+                let case = combination_case(model, combination, &checks).unwrap();
+                let mut current = String::new();
+                effect_slot_checks(&mut current, combination);
+                assert_eq!(case.scenario.matches(&current).count(), 1, "{}", case.id);
+                let previous_text =
+                    case.scenario
+                        .replacen(&current, &previous_checks(combination), 1);
+                let previous = smoke_core::Scenario::from_text(&previous_text).unwrap();
+                let expanded = smoke_core::Scenario::from_text(&case.scenario).unwrap();
+                assert_eq!(
+                    serde_json::to_value(previous.step).unwrap(),
+                    serde_json::to_value(expanded.step).unwrap(),
+                    "{}",
+                    case.id
+                );
+                count += 1;
+            }
+        }
+        assert!(count > 0);
+    }
+
+    #[test]
+    fn effect_slot_binding_rejects_unrelated_fragments() {
+        let scenario = r#"version = 1
+name = "bad-binding"
+models = ["l6max"]
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/sd-module-loaded.toml"
+effect_slot = { effect_type = 1, processor_type = 0 }
+"#;
+        assert!(
+            smoke_core::Scenario::from_text(scenario)
+                .unwrap_err()
+                .contains("effect slot binding requires")
+        );
+    }
+
+    #[test]
+    fn generated_sd_combinations_preserve_expanded_checks() {
+        use smoke_core::Action;
+        let fragment = "tests/emulator/fragments/sd-module-loaded.toml";
+        let original = r#"[[step]]
+action = "expect-sd-loader"
+[[step]]
+action = "capture-sd-module"
+loaded = true
+[[step]]
+action = "expect-sd-allocation"
+loaded = true
+[[step]]
+action = "expect-sd-chains"
+loaded = true
+[[step]]
+action = "expect-sd-continuations"
+loaded = true
+[[step]]
+action = "expect-sd-module-images"
+loaded = true
+[[step]]
+action = "expect-sd-latest-module"
+loaded = true
+"#;
+        let include = format!("[[step]]\naction = \"include\"\npath = {fragment:?}\n");
         let mut checked = 0;
         for case in generate().unwrap() {
-            let doc: toml::Value = toml::from_str(&case.scenario).unwrap();
-            let has_sd = doc
-                .get("sd_patches")
-                .and_then(toml::Value::as_array)
+            let scenario = smoke_core::Scenario::from_text(&case.scenario).unwrap();
+            let has_sd = scenario
+                .sd_patches
+                .as_ref()
                 .is_some_and(|patches| !patches.is_empty());
-            let steps = doc.get("step").and_then(toml::Value::as_array).unwrap();
-            let loaders: Vec<_> = steps
-                .iter()
-                .enumerate()
-                .filter(|(_, step)| {
-                    step.get("action").and_then(toml::Value::as_str) == Some("expect-sd-loader")
-                })
-                .collect();
-            assert_eq!(loaders.len(), usize::from(has_sd), "{}", case.id);
-            if let Some((index, _)) = loaders.first() {
-                let module = &steps[index + 1];
+            let occurrences = case.scenario.matches(&include).count();
+            assert_eq!(occurrences, usize::from(has_sd), "{}", case.id);
+            if has_sd {
+                let previous =
+                    smoke_core::Scenario::from_text(&case.scenario.replace(&include, original))
+                        .unwrap();
                 assert_eq!(
-                    module.get("action").and_then(toml::Value::as_str),
-                    Some("expect-sd-module"),
+                    serde_json::to_value(&scenario.step).unwrap(),
+                    serde_json::to_value(&previous.step).unwrap(),
                     "{}",
                     case.id
                 );
                 assert_eq!(
-                    module.get("loaded").and_then(toml::Value::as_bool),
-                    Some(true),
+                    scenario
+                        .step
+                        .iter()
+                        .filter(|step| matches!(step.action, Action::ExpectSdLoader))
+                        .count(),
+                    1,
+                    "{}",
+                    case.id
+                );
+                assert_eq!(
+                    scenario
+                        .step
+                        .iter()
+                        .filter(|step| matches!(step.action, Action::ExpectSdModuleImages { .. }))
+                        .count(),
+                    1,
+                    "{}",
+                    case.id
+                );
+                assert_eq!(
+                    scenario
+                        .step
+                        .iter()
+                        .filter(|step| matches!(step.action, Action::ExpectSdLatestModule { .. }))
+                        .count(),
+                    1,
                     "{}",
                     case.id
                 );

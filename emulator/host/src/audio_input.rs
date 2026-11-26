@@ -30,25 +30,18 @@ fn stamp_path(directory: &Path, channel: u32) -> PathBuf {
 /// Stereo frames from a PCM or float WAV; mono is copied to both sides and
 /// further channels are ignored.
 fn decode_wav(bytes: &[u8]) -> io::Result<(u32, Vec<[f32; 2]>)> {
-    if bytes.len() < 12 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
-        return Err(invalid("not a WAV file"));
-    }
+    let chunks = crate::wav::Chunks::new(bytes).ok_or_else(|| invalid("not a WAV file"))?;
     let mut format = None;
-    let mut offset = 12;
-    while offset + 8 <= bytes.len() {
-        let size = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
-        let body = offset + 8;
-        let end = body.saturating_add(size).min(bytes.len());
-        match &bytes[offset..offset + 4] {
-            b"fmt " if end - body >= 16 => {
-                let short =
-                    |at: usize| u16::from_le_bytes([bytes[body + at], bytes[body + at + 1]]);
+    for (id, body) in chunks {
+        match id {
+            b"fmt " if body.len() >= 16 => {
+                let short = |at: usize| u16::from_le_bytes([body[at], body[at + 1]]);
                 let mut tag = short(0);
                 // WAVE_FORMAT_EXTENSIBLE keeps the real tag at the start of its GUID.
-                if tag == 0xfffe && end - body >= 26 {
+                if tag == 0xfffe && body.len() >= 26 {
                     tag = short(24);
                 }
-                let rate = u32::from_le_bytes(bytes[body + 4..body + 8].try_into().unwrap());
+                let rate = u32::from_le_bytes(body[4..8].try_into().unwrap());
                 format = Some((tag, short(2) as usize, rate, short(14)));
             }
             b"data" => {
@@ -78,7 +71,7 @@ fn decode_wav(bytes: &[u8]) -> io::Result<(u32, Vec<[f32; 2]>)> {
                         "unsupported WAV format {tag} with {bits} bits"
                     )));
                 }
-                let frames = bytes[body..end]
+                let frames = body
                     .chunks_exact(width * channels)
                     .map(|frame| {
                         let right = if channels > 1 { width } else { 0 };
@@ -92,7 +85,6 @@ fn decode_wav(bytes: &[u8]) -> io::Result<(u32, Vec<[f32; 2]>)> {
             }
             _ => {}
         }
-        offset = body.saturating_add(size).saturating_add(size & 1);
     }
     Err(invalid("WAV has no data"))
 }
@@ -353,6 +345,10 @@ mod tests {
         let (_, frames) = decode_wav(&wav(3, 2, 48000, 32, &float)).unwrap();
         assert_eq!(frames, [[0.25, -0.75]]);
         assert!(decode_wav(&wav(1, 1, 48000, 8, &[0])).is_err());
+        assert!(decode_wav(&wav(1, 1, 0, 16, &[0, 0])).is_err());
+        let (_, multichannel) =
+            decode_wav(&wav(1, 3, 48000, 16, &[0, 0x40, 0, 0xc0, 0, 0])).unwrap();
+        assert_eq!(multichannel, [[0.5, -0.5]]);
         assert!(decode_wav(b"not audio").is_err());
     }
 

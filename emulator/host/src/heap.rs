@@ -206,6 +206,26 @@ pub fn read(qmp: &QmpClient, model: Model) -> Result<Heap, String> {
     Heap::decode(layout.size, &counters)
 }
 
+/// Verify and sample the allocator within a shared deadline and cancellation check.
+pub fn read_before_checked(
+    qmp: &QmpClient,
+    model: Model,
+    deadline: std::time::Instant,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<Heap, String> {
+    let layout = layout(model);
+    let read = |address, length| {
+        check()?;
+        let bytes = qmp
+            .read_memory_before(0, address, length, deadline)
+            .map_err(|error| error.to_string())?;
+        check()?;
+        Ok(bytes)
+    };
+    verify_allocator(model, read)?;
+    Heap::decode(layout.size, &read(layout.counters, 16)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CounterReader, Counters, Heap, layout, verify_allocator};

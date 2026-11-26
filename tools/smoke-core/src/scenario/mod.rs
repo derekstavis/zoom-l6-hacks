@@ -32,6 +32,21 @@ pub enum Backend {
     Gui,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum DinSweepCheck {
+    Uart,
+    RingBytes,
+    WriteIndex,
+    ReadIndex,
+    Indicator,
+    Handler,
+    Submitter,
+    Reader,
+    Setter,
+    Mixer,
+}
+
 /// Named fields in the ordered, non-atomic dialog restoration snapshot.
 #[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -317,9 +332,6 @@ impl Step {
 fn default_backends() -> Vec<Backend> {
     vec![Backend::Headless, Backend::Gui]
 }
-fn default_midi_cable() -> u8 {
-    1
-}
 fn default_true() -> bool {
     true
 }
@@ -431,6 +443,8 @@ pub enum Action {
         include_guest_timeout_ms: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         include_wall_timeout_s: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effect_slot: Option<EffectSlotBinding>,
     },
     Checkpoint {
         name: String,
@@ -466,7 +480,8 @@ pub enum Action {
     SdCard {
         inserted: bool,
     },
-    UsbDescriptors,
+    UsbControllerReady,
+    UsbEnumerate,
     UsbStorageBegin,
     UsbStorageInquiry,
     UsbStorageReady,
@@ -475,6 +490,7 @@ pub enum Action {
     UsbStorageAssertBoot,
     UsbStorageLastRead,
     UsbStorageLastWrite,
+    UsbStorageLastReadback,
     UsbStorageLastAssert,
     UsbStorageFatOpen,
     UsbStorageCreate {
@@ -497,7 +513,6 @@ pub enum Action {
     UsbMidiSetAlternate,
     UsbMidiSetTarget,
     UsbMidiEnd,
-    HostMidiRoundTrip,
     MidiProbeBegin,
     MidiProbeSendCc {
         port: MidiProbePort,
@@ -528,6 +543,10 @@ pub enum Action {
     },
     MidiProbeEnd,
     HostMidiConnect,
+    DirectMidiConnect {
+        cable: u8,
+    },
+    MidiEncoderAlternate,
     HostMidiBegin,
     HostMidiSyncBegin,
     HostMidiExpectSync,
@@ -556,23 +575,25 @@ pub enum Action {
         controller: u8,
         value: u8,
     },
+    ExpectRingUnchanged {
+        channel: usize,
+        checkpoint: String,
+        observe_wall_ms: u32,
+    },
     ExpectRingChanged {
         channel: usize,
         checkpoint: String,
         #[serde(default)]
+        observe_wall_ms: Option<u32>,
+        #[serde(default)]
         midi_transaction: bool,
     },
 
-    DirectUsbMidiRoundTrip {
-        #[serde(default = "default_midi_cable")]
-        cable: u8,
-        #[serde(default = "default_true")]
-        expect_ring_change: bool,
-    },
     L6MidiProbeBegin,
     L6MidiProbeInject,
     L6MidiProbeExpectHook,
     L6MidiProbeExpectReplies,
+    L6MidiProbeFinish,
     DinUsbBegin,
     DinUsbAttach,
     DinUsbSend {
@@ -625,7 +646,13 @@ pub enum Action {
     EditorAssignSend {
         pad: u8,
     },
+    EditorAssignDialog {
+        pad: u8,
+    },
     EditorAssignState {
+        pad: u8,
+    },
+    EditorAssignAssert {
         pad: u8,
     },
     EditorAssignEnd,
@@ -723,19 +750,65 @@ pub enum Action {
         bytes: Vec<u8>,
     },
     ExpectSdLoader,
-    ExpectSdModule {
+    CaptureSdModule {
+        loaded: bool,
+    },
+    ExpectSdAllocation {
+        loaded: bool,
+    },
+    ExpectSdChains {
         loaded: bool,
         #[serde(default)]
         chain_count: Option<u8>,
+    },
+    ExpectSdContinuations {
+        loaded: bool,
+    },
+    ExpectSdModuleImages {
+        loaded: bool,
+    },
+    ExpectSdLatestModule {
+        loaded: bool,
     },
     EffectPacedTurn {
         channel: usize,
         steps: i32,
     },
-    EffectParameterEdit {
-        encoder: usize,
-        steps: i32,
+    CaptureEffectRing {
+        encoder: u8,
     },
+    ExpectEffectRingChanged {
+        encoder: u8,
+    },
+    CaptureEffectState {
+        #[serde(default)]
+        edits: bool,
+        #[serde(default)]
+        dialog: bool,
+    },
+    ExpectEffectName {
+        name: String,
+    },
+    ExpectEffectOutput,
+    ExpectEffectEdits {
+        minimum: u32,
+    },
+    ExpectEffectDialog {
+        active: bool,
+    },
+    ExpectEffectType {
+        value: u8,
+    },
+    ExpectEffectProcessor {
+        value: u8,
+    },
+    ExpectEffectPanelMode {
+        value: u8,
+    },
+    ExpectEffectEditMode {
+        enabled: bool,
+    },
+    EffectStateEnd,
     /// Wait for effect editor and panel-mode state in the loaded module.
     WaitEffectMode {
         #[serde(default)]
@@ -743,33 +816,13 @@ pub enum Action {
         #[serde(default)]
         edit_mode: Option<bool>,
     },
-    EffectReplacementState {
-        #[serde(default)]
-        expected_effect_type: Option<u8>,
-        #[serde(default)]
-        expected_processor_type: Option<u8>,
-        #[serde(default)]
-        expected_panel_mode: Option<u8>,
-        #[serde(default)]
-        expected_edit_mode: Option<bool>,
-        #[serde(default)]
-        minimum_parameter_edits: Option<u32>,
-        #[serde(default)]
-        expected_parameter_id: Option<u8>,
-        #[serde(default)]
-        expected_parameter_value: Option<f32>,
-        #[serde(default)]
-        expected_dialog_active: Option<bool>,
-        #[serde(default)]
-        minimum_exit_ring_refreshes: Option<u32>,
-        /// The effect ID the effect loader runs for the selected slot.
+    WaitEffectSlot {
+        expected_effect_type: u8,
+        expected_processor_type: u8,
         #[serde(default)]
         expected_effect: Option<String>,
-        /// The selected slot's replacement has produced nonzero output.
         #[serde(default)]
         require_output: bool,
-        #[serde(default)]
-        wait_for_slot: bool,
     },
     ExpectHeap {
         minimum_free: u32,
@@ -781,7 +834,11 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         until: Option<ChordCondition>,
     },
-    AudioCallbacks,
+    AudioCallbacksBegin,
+    AudioCallbacksNext,
+    AudioCallbacksCapture,
+    AudioCallbacksAssert,
+    AudioCallbacksEnd,
     KnobDialogReady,
     KnobDialogGuard,
     KnobDialogBaseline,
@@ -807,7 +864,11 @@ pub enum Action {
     KnobRaceSample,
     KnobRaceRestore,
     KnobRaceAssert,
-    KnobDialogFirstActivation,
+    KnobActivationTrigger,
+    KnobActivationWait,
+    KnobActivationSample,
+    KnobActivationRestore,
+    KnobActivationAssert,
     KnobActiveBegin,
     KnobActiveSampleCallbacks,
     KnobActiveCheckCallbacks,
@@ -971,14 +1032,17 @@ pub enum Action {
         attempt_guest_ms: u32,
     },
     KnobPopupExpectOpen,
+    KnobPopupExpectDisplay,
     KnobPopupExpectValue,
     /// Compare a menu's child titles with `items`. `menu` names a stock menu
     /// (`main`, `project`, `sound-pad`, `mixer` or `system`); `path` then
     /// descends through child titles.
-    ExpectMenu {
+    CaptureMenu {
         menu: String,
         #[serde(default)]
         path: Vec<String>,
+    },
+    ExpectMenuItems {
         items: Vec<String>,
     },
     PatchParityPrepare,
@@ -1015,9 +1079,18 @@ pub enum Action {
     ExpectPowered {
         powered: bool,
     },
-    ExpectSettings {
+    SettingsCapture {
         restored: bool,
     },
+    SettingsVersions,
+    SettingsRtc,
+    SettingsBank,
+    SettingsTrace,
+    SettingsPanel,
+    SettingsReload,
+    SettingsRtcTiming,
+    SettingsEnd,
+
     Wait {
         until: String,
     },
@@ -1038,8 +1111,12 @@ pub enum Action {
         control: String,
         duration_ms: u32,
     },
-    SaveScene {
-        scene: usize,
+    MomentaryDown {
+        control: String,
+        duration_ms: u32,
+    },
+    MomentaryUp {
+        control: String,
     },
     ExpectScene {
         scene: usize,
@@ -1080,17 +1157,37 @@ pub enum Action {
         channel: usize,
         value: u16,
     },
-    PanelEvent {
+    PanelEventBegin {
         target: u32,
         column: u8,
         row: u8,
         event: u8,
     },
-    L6MainGpioEvent {
+    PanelEventPress,
+    PanelEventCapture,
+    PanelEventReport,
+    PanelEventMapping,
+    PanelEventRelease,
+    PanelEventSettle,
+    PanelEventEnd,
+    L6GpioBegin {
         target: u32,
         event: u8,
     },
-    L6maxTapHandler,
+    L6GpioPress,
+    L6GpioSubmit,
+    L6GpioAssert,
+    L6GpioDispatch,
+    L6GpioRelease,
+    L6GpioSettle,
+    L6GpioEnd,
+
+    L6maxTapBegin,
+    L6maxTapPress,
+    L6maxTapWait,
+    L6maxTapAssert,
+    L6maxTapRelease,
+    L6maxTapEnd,
     /// Wait until an entry appears on the card, written by the firmware.
     /// Optionally check its size, or that its bytes equal a file in the
     /// device state directory (for example `main-nor.bin`).
@@ -1147,12 +1244,34 @@ pub enum Action {
         #[serde(default = "default_tone_tolerance_db")]
         tolerance_db: f64,
     },
-    L6UsbStartup,
-    L6DinEventDispatch {
+    L6UsbStartupBegin,
+    L6UsbStartupCapture,
+    L6UsbStartupAssertHits,
+    L6UsbStartupAssertWrites,
+    L6UsbStartupAssertReplay,
+    L6UsbStartupEnd,
+
+    L6DispatchBegin {
         group: u8,
         cc: u8,
         value: u8,
     },
+    L6DispatchTask,
+    L6DispatchSemaphore,
+    L6DispatchIdle,
+    L6DispatchInject,
+    L6DispatchWake,
+    L6DispatchState,
+    L6DispatchReader,
+    L6DispatchEvent,
+    L6DispatchEq,
+    L6DispatchObserve,
+    L6DispatchSetter {
+        index: u8,
+        value: u8,
+    },
+    L6DispatchFinish,
+
     L6SweepBegin,
     L6SweepRejectMain {
         target: u32,
@@ -1174,7 +1293,21 @@ pub enum Action {
     L6SweepRejectPanel,
     L6SweepRejectEncoder,
     L6SweepEnd,
-    L6DinSweep,
+    L6DinSweepBegin,
+    L6DinSweepReady,
+    L6DinSweepMonitor,
+    L6DinSweepBaseline,
+    L6DinSweepSample {
+        cc: u8,
+    },
+    L6DinSweepTrace,
+    L6DinSweepDrain,
+    L6DinSweepStop,
+    L6DinSweepCapture,
+    L6DinSweepAssert {
+        check: DinSweepCheck,
+    },
+    L6DinSweepEnd,
     L6maxTimingBegin,
     L6maxTimingSettle {
         wall_ms: u32,
@@ -1189,7 +1322,9 @@ pub enum Action {
     L6maxTimingObservePaused {
         wall_ms: u32,
     },
-    L6maxTimingAssertPaused,
+    L6maxTimingCapturePaused,
+    L6maxTimingAssertPausedClock,
+    L6maxTimingAssertPausedInput,
     L6maxTimingResume,
     L6maxTimingWaitQueued,
     L6maxTimingWaitReports,
@@ -1239,7 +1374,12 @@ pub enum Action {
         channel: u8,
     },
     SignalPwmEnd,
-    L6LevelMeterPwm,
+    L6MeterBegin,
+    L6MeterStage {
+        value: u32,
+    },
+    L6MeterAssert,
+    L6MeterEnd,
     ExpectEncoderReports,
     ExpectRing {
         channel: usize,
@@ -1273,6 +1413,12 @@ pub enum Action {
 }
 
 impl Scenario {
+    pub(crate) fn expects_sd_knob(&self) -> bool {
+        self.sd_patches
+            .as_ref()
+            .is_some_and(|patches| patches.iter().any(|p| p == "knob-dialog"))
+            || self.installed_sd_patches.iter().any(|p| p == "knob-dialog")
+    }
     pub fn parse(text: &str) -> Result<Self, String> {
         let mut value: Self = toml::from_str(text).map_err(|e| e.to_string())?;
         value.apply_defaults();
@@ -1376,6 +1522,15 @@ const NONE: &str = "none";
 /// Environment variable the driver sets to `1` for cases whose persistent
 /// state was built from a state spec.
 pub const STATE_SPEC_ENV: &str = "SMOKE_STATE_SPEC";
+/// Expected observations for the reusable patch-matrix effect-slot fragment.
+#[derive(Clone, Debug, Deserialize, schemars::JsonSchema, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EffectSlotBinding {
+    pub effect_type: u8,
+    pub processor_type: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<String>,
+}
 /// A file of steps that scenarios include.
 #[derive(Deserialize, schemars::JsonSchema, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -1523,6 +1678,63 @@ pub(crate) fn valid_knob_navigation_steps(steps: &[&Step]) -> bool {
         && steps[7..].iter().zip(FIELDS).all(|(step, expected)| matches!(step.action, Action::KnobDialogCheckNavigation { field } if field == expected))
 }
 
+/// Bind only the reviewed effect-slot fragment shape. Refuse a changed or
+/// incomplete fragment rather than silently omitting an assertion.
+fn bind_effect_slot(steps: &mut [Step], binding: &EffectSlotBinding) -> Result<(), String> {
+    if binding.effect_type == 0 || binding.effect.as_ref().is_some_and(String::is_empty) {
+        return Err("effect slot binding needs a nonzero type and nonempty effect ID".into());
+    }
+    let replacement = binding.effect.is_some();
+    let expected_len = if replacement { 7 } else { 5 };
+    let valid = steps.len() == expected_len
+        && matches!(
+            &steps[0].action,
+            Action::WaitEffectSlot {
+                expected_effect_type: 0,
+                expected_processor_type: 0,
+                expected_effect: None,
+                require_output: false
+            }
+        )
+        && matches!(
+            &steps[1].action,
+            Action::CaptureEffectState {
+                edits: false,
+                dialog: false
+            }
+        )
+        && matches!(&steps[2].action, Action::ExpectEffectType { value: 0 })
+        && matches!(&steps[3].action, Action::ExpectEffectProcessor { value: 0 })
+        && matches!(
+            steps.last().map(|s| &s.action),
+            Some(Action::EffectStateEnd)
+        )
+        && (!replacement
+            || (matches!(&steps[4].action, Action::ExpectEffectName { name } if name == "__effect_slot__")
+                && matches!(&steps[5].action, Action::ExpectEffectOutput)));
+    if !valid {
+        return Err(
+            "effect slot binding requires the complete stock or replacement fragment".into(),
+        );
+    }
+    steps[0].action = Action::WaitEffectSlot {
+        expected_effect_type: binding.effect_type,
+        expected_processor_type: binding.processor_type,
+        expected_effect: binding.effect.clone(),
+        require_output: replacement,
+    };
+    steps[2].action = Action::ExpectEffectType {
+        value: binding.effect_type,
+    };
+    steps[3].action = Action::ExpectEffectProcessor {
+        value: binding.processor_type,
+    };
+    if let Some(name) = &binding.effect {
+        steps[4].action = Action::ExpectEffectName { name: name.clone() };
+    }
+    Ok(())
+}
+
 /// Expand includes. A fragment is shared, so its steps scoped only to models
 /// the scenario does not run (`scope`) are left out.
 fn expand_steps(
@@ -1537,6 +1749,7 @@ fn expand_steps(
             path,
             include_guest_timeout_ms,
             include_wall_timeout_s,
+            effect_slot,
         } = &step.action
         {
             if stack.len() >= 8 {
@@ -1557,6 +1770,9 @@ fn expand_steps(
             }
             let mut nested = expand_steps(fragment.step, scope, stack, sources)?;
             stack.pop();
+            if let Some(binding) = effect_slot {
+                bind_effect_slot(&mut nested, binding)?;
+            }
             for child in &mut nested {
                 child.setup_input |= step.setup_input;
                 if !step.models.is_empty() {
@@ -2059,5 +2275,147 @@ mod callback_race_fragment_tests {
         assert!(!valid_callback_race_steps(
             &fragment.step.iter().collect::<Vec<_>>()
         ));
+    }
+}
+
+#[cfg(test)]
+mod l6_meter_tests {
+    use super::*;
+    const CASE: &str =
+        include_str!("../../../../tests/emulator/cases/panel/l6-level-meter-pwm.toml");
+    #[test]
+    fn meter_requires_ordered_windows_matching_model_and_budget() {
+        assert!(Scenario::parse(CASE).is_ok());
+        assert!(Scenario::parse(&CASE.replace("value = 2000000", "value = 1000000")).is_err());
+        assert!(
+            Scenario::parse(&CASE.replace("models = [\"l6\"]", "models = [\"l6max\"]")).is_err()
+        );
+        assert!(
+            Scenario::parse(&CASE.replacen(
+                "wall_timeout_s = 1800\n\n[[step]]\naction = \"l6-meter-assert\"",
+                "wall_timeout_s = 1799\n\n[[step]]\naction = \"l6-meter-assert\"",
+                1
+            ))
+            .is_err()
+        );
+        assert!(
+            Scenario::parse(
+                &CASE.replace("action = \"l6-meter-end\"", "action = \"l6-meter-assert\"")
+            )
+            .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod panel_event_fragment_tests {
+    use super::*;
+    #[test]
+    fn all_panel_rows_expand_into_complete_scopes() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/emulator/cases/panel/l6-panel-event-map.toml");
+        let scenario = Scenario::load(&path).unwrap();
+        let starts = scenario
+            .step
+            .iter()
+            .filter(|s| matches!(s.action, Action::PanelEventBegin { .. }))
+            .count();
+        let captures = scenario
+            .step
+            .iter()
+            .filter(|s| matches!(s.action, Action::PanelEventCapture))
+            .count();
+        let ends = scenario
+            .step
+            .iter()
+            .filter(|s| matches!(s.action, Action::PanelEventEnd))
+            .count();
+        assert_eq!((starts, captures, ends), (26, 26, 26));
+        let actual: Vec<_> = scenario
+            .step
+            .iter()
+            .filter_map(|step| match step.action {
+                Action::PanelEventBegin {
+                    target,
+                    column,
+                    row,
+                    event,
+                } => Some((target, column, row, event)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            actual,
+            vec![
+                (7, 1, 0, 7),
+                (8, 2, 0, 12),
+                (9, 3, 0, 26),
+                (10, 1, 1, 0),
+                (11, 2, 1, 13),
+                (12, 3, 1, 6),
+                (13, 1, 2, 1),
+                (14, 2, 2, 14),
+                (15, 3, 2, 27),
+                (16, 1, 3, 2),
+                (17, 2, 3, 15),
+                (18, 3, 3, 28),
+                (19, 1, 4, 3),
+                (20, 2, 4, 16),
+                (21, 3, 4, 29),
+                (22, 1, 5, 4),
+                (23, 2, 5, 17),
+                (24, 3, 5, 31),
+                (25, 1, 6, 5),
+                (26, 2, 6, 18),
+                (28, 1, 7, 20),
+                (29, 2, 7, 19),
+                (2, 0, 1, 8),
+                (3, 0, 2, 9),
+                (6, 0, 3, 10),
+                (47, 0, 4, 11)
+            ]
+        );
+        let mut broken = scenario.clone();
+        let i = broken
+            .step
+            .iter()
+            .position(|s| matches!(s.action, Action::PanelEventCapture))
+            .unwrap();
+        broken.step.remove(i);
+        assert!(broken.validate().is_err());
+    }
+}
+
+#[cfg(test)]
+mod knob_delivery_tests {
+    use super::*;
+    #[test]
+    fn preflight_delivery_comes_from_the_scenario_plan() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for (path, expected) in [
+            (
+                "patches/knob-dialog/tests/emulator/cases/knob-dialog.toml",
+                false,
+            ),
+            (
+                "patches/knob-dialog/tests/emulator/cases/sd-knob-dialog.toml",
+                false,
+            ),
+            (
+                "patches/knob-dialog/tests/emulator/cases/sd-knob-dialog-dynamic.toml",
+                true,
+            ),
+            ("tests/emulator/cases/patching/sd-all-patches.toml", true),
+            (
+                "tests/emulator/cases/boot/l6max-update-patched-knob.toml",
+                false,
+            ),
+        ] {
+            assert_eq!(
+                Scenario::load(&root.join(path)).unwrap().expects_sd_knob(),
+                expected,
+                "{path}"
+            );
+        }
     }
 }

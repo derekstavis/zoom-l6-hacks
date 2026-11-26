@@ -12,21 +12,29 @@ use std::{
 };
 
 mod audio;
+mod chord;
 mod display;
 mod editor;
 mod execute;
+mod gpio_event;
 mod knob_dialog;
+mod l6_din_sweep;
+mod l6_dispatch;
 mod l6_input_sweep;
+mod l6_meter_pwm;
 mod lifecycle;
 mod midi;
 mod midi_probe;
 mod mode_primitives;
 mod panel;
+mod panel_event;
 mod power;
 mod sd;
+mod settings;
 mod signal_pwm;
+mod tap_handler;
 mod timing;
-mod usb;
+mod usb_startup;
 mod usb_storage_steps;
 
 use audio::*;
@@ -36,9 +44,7 @@ use lifecycle::*;
 use midi::*;
 use midi_probe::*;
 use mode_primitives::wait_parameter_mode_checked;
-use panel::*;
 use sd::*;
-use usb::*;
 
 /// Return a short, per-case GDB socket path. Darwin's QEMU GDB stub rejects
 /// UNIX socket paths longer than 104 bytes, while artifact directories can be
@@ -130,7 +136,8 @@ pub enum Operation {
     SdCard {
         inserted: bool,
     },
-    UsbDescriptors,
+    UsbControllerReady,
+    UsbEnumerate,
     UsbStorageBegin,
     UsbStorageInquiry,
     UsbStorageReady,
@@ -139,6 +146,7 @@ pub enum Operation {
     UsbStorageAssertBoot,
     UsbStorageLastRead,
     UsbStorageLastWrite,
+    UsbStorageLastReadback,
     UsbStorageLastAssert,
     UsbStorageFatOpen,
     UsbStorageCreate {
@@ -161,7 +169,6 @@ pub enum Operation {
     UsbMidiSetAlternate,
     UsbMidiSetTarget,
     UsbMidiEnd,
-    HostMidiRoundTrip,
     MidiProbeBegin,
     MidiProbeSendCc {
         port: crate::scenario::MidiProbePort,
@@ -192,6 +199,10 @@ pub enum Operation {
     },
     MidiProbeEnd,
     HostMidiConnect,
+    DirectMidiConnect {
+        cable: u8,
+    },
+    MidiEncoderAlternate,
     HostMidiBegin,
     HostMidiSyncBegin,
     HostMidiExpectSync,
@@ -222,17 +233,16 @@ pub enum Operation {
     ExpectRingChanged {
         channel: usize,
         before: [u32; 8],
+        expected_change: bool,
+        observe_wall_ms: Option<u32>,
         midi_transaction: bool,
     },
 
-    DirectUsbMidiRoundTrip {
-        cable: u8,
-        expect_ring_change: bool,
-    },
     L6MidiProbeBegin,
     L6MidiProbeInject,
     L6MidiProbeExpectHook,
     L6MidiProbeExpectReplies,
+    L6MidiProbeFinish,
     DinUsbBegin,
     DinUsbAttach,
     DinUsbSend {
@@ -282,7 +292,13 @@ pub enum Operation {
     EditorAssignSend {
         pad: u8,
     },
+    EditorAssignDialog {
+        pad: u8,
+    },
     EditorAssignState {
+        pad: u8,
+    },
+    EditorAssignAssert {
         pad: u8,
     },
     EditorAssignEnd,
@@ -373,35 +389,71 @@ pub enum Operation {
     WaitSdPatchLoaded,
     WaitSdPatchEmpty,
     ExpectSdLoader,
-    ExpectSdModule {
+    CaptureSdModule {
+        loaded: bool,
+    },
+    ExpectSdAllocation {
+        loaded: bool,
+    },
+    ExpectSdChains {
         loaded: bool,
         chain_count: Option<u8>,
+    },
+    ExpectSdContinuations {
+        loaded: bool,
+    },
+    ExpectSdModuleImages {
+        loaded: bool,
+    },
+    ExpectSdLatestModule {
+        loaded: bool,
     },
     EffectPacedTurn {
         channel: usize,
         steps: i32,
     },
-    EffectParameterEdit {
-        encoder: usize,
-        steps: i32,
+    CaptureEffectRing {
+        encoder: u8,
     },
+    ExpectEffectRingChanged {
+        encoder: u8,
+    },
+    CaptureEffectState {
+        edits: bool,
+        dialog: bool,
+    },
+    ExpectEffectName {
+        name: String,
+    },
+    ExpectEffectOutput,
+    ExpectEffectEdits {
+        minimum: u32,
+    },
+    ExpectEffectDialog {
+        active: bool,
+    },
+    ExpectEffectType {
+        value: u8,
+    },
+    ExpectEffectProcessor {
+        value: u8,
+    },
+    ExpectEffectPanelMode {
+        value: u8,
+    },
+    ExpectEffectEditMode {
+        enabled: bool,
+    },
+    EffectStateEnd,
     WaitEffectMode {
         panel_mode: Option<u8>,
         edit_mode: Option<bool>,
     },
-    EffectReplacementState {
-        expected_effect_type: Option<u8>,
-        expected_processor_type: Option<u8>,
-        expected_panel_mode: Option<u8>,
-        expected_edit_mode: Option<bool>,
-        minimum_parameter_edits: Option<u32>,
-        expected_parameter_id: Option<u8>,
-        expected_parameter_value: Option<f32>,
-        expected_dialog_active: Option<bool>,
-        minimum_exit_ring_refreshes: Option<u32>,
+    WaitEffectSlot {
+        expected_effect_type: u8,
+        expected_processor_type: u8,
         expected_effect: Option<String>,
         require_output: bool,
-        wait_for_slot: bool,
     },
     ExpectHeap {
         minimum_free: u32,
@@ -411,11 +463,17 @@ pub enum Operation {
         duration_ms: Option<u32>,
         until: Option<crate::scenario::ChordCondition>,
     },
-    AudioCallbacks,
+    AudioCallbacksBegin,
+    AudioCallbacksNext,
+    AudioCallbacksCapture,
+    AudioCallbacksAssert,
+    AudioCallbacksEnd,
     KnobDialogReady,
     KnobDialogGuard,
     KnobDialogBaseline,
-    KnobDialogPreflightBegin,
+    KnobDialogPreflightBegin {
+        sd_knob: bool,
+    },
     KnobProbePrepare {
         probe: crate::scenario::PreflightProbe,
     },
@@ -437,7 +495,11 @@ pub enum Operation {
     KnobRaceSample,
     KnobRaceRestore,
     KnobRaceAssert,
-    KnobDialogFirstActivation,
+    KnobActivationTrigger,
+    KnobActivationWait,
+    KnobActivationSample,
+    KnobActivationRestore,
+    KnobActivationAssert,
     KnobActiveBegin,
     KnobActiveSampleCallbacks,
     KnobActiveCheckCallbacks,
@@ -599,10 +661,13 @@ pub enum Operation {
         attempt_guest_ms: u32,
     },
     KnobPopupExpectOpen,
+    KnobPopupExpectDisplay,
     KnobPopupExpectValue,
-    ExpectMenu {
+    CaptureMenu {
         menu: String,
         path: Vec<String>,
+    },
+    ExpectMenuItems {
         items: Vec<String>,
     },
     PatchParityHostOnly,
@@ -626,26 +691,77 @@ pub enum Operation {
         observe_wall_ms: u64,
     },
     PowerEnd,
-    ExpectSettings {
+    SettingsCapture {
         restored: bool,
     },
-    PanelEvent {
+    SettingsVersions,
+    SettingsRtc,
+    SettingsBank,
+    SettingsTrace,
+    SettingsPanel,
+    SettingsReload,
+    SettingsRtcTiming,
+    SettingsEnd,
+
+    PanelEventBegin {
         target: u32,
         column: u8,
         row: u8,
         event: u8,
     },
-    L6MainGpioEvent {
+    PanelEventPress,
+    PanelEventCapture,
+    PanelEventReport,
+    PanelEventMapping,
+    PanelEventRelease,
+    PanelEventSettle,
+    PanelEventEnd,
+    L6GpioBegin {
         target: u32,
         event: u8,
     },
-    L6UsbStartup,
-    L6DinEventDispatch {
+    L6GpioPress,
+    L6GpioSubmit,
+    L6GpioAssert,
+    L6GpioDispatch,
+    L6GpioRelease,
+    L6GpioSettle,
+    L6GpioEnd,
+
+    L6UsbStartupBegin,
+    L6UsbStartupCapture,
+    L6UsbStartupAssertHits,
+    L6UsbStartupAssertWrites,
+    L6UsbStartupAssertReplay,
+    L6UsbStartupEnd,
+
+    L6DispatchBegin {
         group: u8,
         cc: u8,
         value: u8,
     },
-    L6maxTapHandler,
+    L6DispatchTask,
+    L6DispatchSemaphore,
+    L6DispatchIdle,
+    L6DispatchInject,
+    L6DispatchWake,
+    L6DispatchState,
+    L6DispatchReader,
+    L6DispatchEvent,
+    L6DispatchEq,
+    L6DispatchObserve,
+    L6DispatchSetter {
+        index: u8,
+        value: u8,
+    },
+    L6DispatchFinish,
+
+    L6maxTapBegin,
+    L6maxTapPress,
+    L6maxTapWait,
+    L6maxTapAssert,
+    L6maxTapRelease,
+    L6maxTapEnd,
     WaitRecordedFiles {
         files: Vec<String>,
     },
@@ -699,7 +815,21 @@ pub enum Operation {
     L6SweepRejectPanel,
     L6SweepRejectEncoder,
     L6SweepEnd,
-    L6DinSweep,
+    L6DinSweepBegin,
+    L6DinSweepReady,
+    L6DinSweepMonitor,
+    L6DinSweepBaseline,
+    L6DinSweepSample {
+        cc: u8,
+    },
+    L6DinSweepTrace,
+    L6DinSweepDrain,
+    L6DinSweepStop,
+    L6DinSweepCapture,
+    L6DinSweepAssert {
+        check: crate::scenario::DinSweepCheck,
+    },
+    L6DinSweepEnd,
     L6maxTimingBegin,
     L6maxTimingSettle {
         wall_ms: u32,
@@ -714,7 +844,9 @@ pub enum Operation {
     L6maxTimingObservePaused {
         wall_ms: u32,
     },
-    L6maxTimingAssertPaused,
+    L6maxTimingCapturePaused,
+    L6maxTimingAssertPausedClock,
+    L6maxTimingAssertPausedInput,
     L6maxTimingResume,
     L6maxTimingWaitQueued,
     L6maxTimingWaitReports,
@@ -764,24 +896,25 @@ pub enum Operation {
         channel: u8,
     },
     SignalPwmEnd,
-    L6LevelMeterPwm,
+    L6MeterBegin,
+    L6MeterStage {
+        value: u32,
+    },
+    L6MeterAssert,
+    L6MeterEnd,
 }
 
 fn uses_native_host_midi(scenario: &Scenario, model: l6fw::Model) -> bool {
-    scenario.step.iter().any(|step| {
-        step.applies_to(model)
-            && matches!(
-                step.action,
-                crate::Action::HostMidiRoundTrip | crate::Action::HostMidiConnect
-            )
-    })
+    scenario
+        .step
+        .iter()
+        .any(|step| step.applies_to(model) && matches!(step.action, crate::Action::HostMidiConnect))
 }
 
 fn midi_bridge_options(scenario: &Scenario, model: l6fw::Model) -> Option<(bool, bool)> {
     let native = uses_native_host_midi(scenario, model);
     let direct = scenario.step.iter().any(|step| {
-        step.applies_to(model)
-            && matches!(step.action, crate::Action::DirectUsbMidiRoundTrip { .. })
+        step.applies_to(model) && matches!(step.action, crate::Action::DirectMidiConnect { .. })
     });
     let din = scenario
         .step
@@ -801,10 +934,9 @@ fn validate_native_midi_capabilities(
         step.applies_to(model)
             && matches!(
                 step.action,
-                crate::Action::DirectUsbMidiRoundTrip { .. }
+                crate::Action::DirectMidiConnect { .. }
                     | crate::Action::DinUsbBegin
-                    | crate::Action::HostMidiRoundTrip
-                    | crate::Action::UsbDescriptors
+                    | crate::Action::UsbEnumerate
                     | crate::Action::UsbStorageBegin
                     | crate::Action::UsbMidiOpen
                     | crate::Action::UsbSysexBegin
@@ -813,12 +945,12 @@ fn validate_native_midi_capabilities(
                     | crate::Action::EditorAssignBegin
                     | crate::Action::EditorPlaybackBegin { .. }
                     | crate::Action::UiPadBegin { .. }
-                    | crate::Action::L6DinSweep
+                    | crate::Action::L6DinSweepBegin
                     | crate::Action::L6MidiProbeBegin
-                    | crate::Action::L6UsbStartup
-                    | crate::Action::L6DinEventDispatch { .. }
+                    | crate::Action::L6UsbStartupBegin
+                    | crate::Action::L6DispatchBegin { .. }
                     | crate::Action::SignalPwmBegin
-                    | crate::Action::L6LevelMeterPwm
+                    | crate::Action::L6MeterBegin
             )
     });
     if native && direct {
@@ -865,7 +997,7 @@ pub(crate) fn prepare_with_report(
     if scenario.step.iter().any(|step| {
         matches!(
             step.action,
-            crate::Action::SignalPwmBegin | crate::Action::L6LevelMeterPwm
+            crate::Action::SignalPwmBegin | crate::Action::L6MeterBegin
         )
     }) {
         options.usb_enabled = false;
@@ -886,8 +1018,8 @@ pub(crate) fn prepare_with_report(
     if scenario.step.iter().any(|s| {
         matches!(
             s.action,
-            crate::Action::AudioCallbacks
-                | crate::Action::ExpectSettings { .. }
+            crate::Action::AudioCallbacksBegin
+                | crate::Action::SettingsCapture { .. }
                 | crate::Action::ExpectRecorder
         )
     }) {
@@ -909,7 +1041,7 @@ pub(crate) fn prepare_with_report(
     if scenario
         .step
         .iter()
-        .any(|s| matches!(s.action, crate::Action::AudioCallbacks))
+        .any(|s| matches!(s.action, crate::Action::AudioCallbacksBegin))
     {
         options.start_paused = true;
         options.gdb_socket = Some(gdb_socket_path(&options.logs, "audio"));
@@ -917,37 +1049,39 @@ pub(crate) fn prepare_with_report(
     if scenario
         .step
         .iter()
-        .any(|s| matches!(s.action, crate::Action::PanelEvent { .. }))
+        .any(|s| matches!(s.action, crate::Action::PanelEventBegin { .. }))
     {
         options.gdb_socket = Some(gdb_socket_path(&options.logs, "panel-event-map"));
     }
     if scenario
         .step
         .iter()
-        .any(|s| matches!(s.action, crate::Action::L6MainGpioEvent { .. }))
+        .any(|s| matches!(s.action, crate::Action::L6GpioBegin { .. }))
     {
         options.gdb_socket = Some(gdb_socket_path(&options.logs, "l6-main-gpio-event"));
     }
     if scenario
         .step
         .iter()
-        .any(|s| matches!(s.action, crate::Action::L6maxTapHandler))
+        .any(|s| matches!(s.action, crate::Action::L6maxTapBegin))
     {
         options.gdb_socket = Some(gdb_socket_path(&options.logs, "l6max-tap-handler"));
     }
     if scenario
         .step
         .iter()
-        .any(|s| s.applies_to(model) && matches!(s.action, crate::Action::L6UsbStartup))
+        .any(|s| s.applies_to(model) && matches!(s.action, crate::Action::L6UsbStartupBegin))
     {
         options.start_paused = true;
         options.usb_enabled = false;
         options.midi_enabled = false;
         options.gdb_socket = Some(gdb_socket_path(&options.logs, "l6-usb-startup"));
     }
-    if scenario.step.iter().any(|s| {
-        s.applies_to(model) && matches!(s.action, crate::Action::L6DinEventDispatch { .. })
-    }) {
+    if scenario
+        .step
+        .iter()
+        .any(|s| s.applies_to(model) && matches!(s.action, crate::Action::L6DispatchBegin { .. }))
+    {
         options.start_paused = true;
         options.usb_enabled = false;
         options.midi_enabled = false;
@@ -956,7 +1090,7 @@ pub(crate) fn prepare_with_report(
     if scenario
         .step
         .iter()
-        .any(|s| s.applies_to(model) && matches!(s.action, crate::Action::L6DinSweep))
+        .any(|s| s.applies_to(model) && matches!(s.action, crate::Action::L6DinSweepBegin))
     {
         options.usb_enabled = false;
         options.midi_enabled = true;
@@ -989,7 +1123,7 @@ pub(crate) fn prepare_with_report(
         s.applies_to(model)
             && matches!(
                 s.action,
-                crate::Action::UsbDescriptors
+                crate::Action::UsbEnumerate
                     | crate::Action::UsbStorageBegin
                     | crate::Action::UsbMidiOpen
                     | crate::Action::UsbSysexBegin
@@ -1064,6 +1198,9 @@ pub struct State {
     usb_midi: Option<midi::UsbMidiScope>,
     panel_keys: Option<PanelKeyScope>,
     saved: Option<(Vec<u8>, usize)>,
+    settings: Option<settings::Scope>,
+    usb_descriptor_budget: Option<l6max_host::usb::Budget>,
+    menu_snapshot: Option<l6ctl::MenuSnapshot>,
     midi: Option<l6max_host::usb::Endpoints>,
     sysex_deadline: Option<(Instant, u32, u32, u64)>,
     ui_pad: Option<editor::UiPadScope>,
@@ -1071,8 +1208,10 @@ pub struct State {
     editor_assignment: Option<editor::EditorAssignmentScope>,
     l6_input_sweep: Option<l6_input_sweep::Scope>,
     signal_pwm: Option<signal_pwm::Scope>,
+    deferred_terminal_failure: bool,
+    l6_meter_pwm: Option<l6_meter_pwm::Scope>,
     l6_indicator: Option<L6IndicatorScope>,
-    gdb: Option<l6max_diagnostics::gdb::Gdb>,
+    panel_event: Option<panel_event::Scope>,
     host_midi: Option<Box<dyn crate::host_midi::Client>>,
     encoder_turned_up: bool,
     knob_popup: Option<knob_dialog::PopupContext>,
@@ -1093,22 +1232,38 @@ pub struct State {
     sound_pad: Option<audio::sound_pad::SoundPadContext>,
     l6_recorder: Option<audio::recorder::Scope>,
     l6max_recorder: Option<audio::max_recorder::Scope>,
+    audio_callbacks: Option<audio::callbacks::Scope>,
+    l6_din_sweep: Option<l6_din_sweep::Scope>,
+    tap_handler: Option<tap_handler::Scope>,
+    gpio_event: Option<gpio_event::Scope>,
+    l6_dispatch: Option<l6_dispatch::Scope>,
+    usb_startup: Option<usb_startup::Scope>,
+    effect_slot_deadline: Option<sd::EffectSlotScope>,
+    effect_state: Option<(
+        l6ctl::EffectSlotSnapshot,
+        l6max_host::effect_editor::SlotReader,
+        Instant,
+        u32,
+        u32,
+        u64,
+    )>,
+    effect_ring: Option<(u8, u8, u32, l6max_host::effect_editor::SlotReader)>,
     l6max_timing: Option<timing::Scope>,
     usb_storage_scope: Option<usb_storage_steps::Scope>,
     native_midi: Option<l6ctl::midi::MidiSession>,
+    direct_midi: bool,
     midi_probe: Option<MidiProbeContext>,
 }
 
 struct PanelKeyScope {
     deadline: Instant,
-    held: Option<u32>,
-    inputs: std::sync::Arc<l6max_host::input::InputHub>,
+    held: Option<(u32, l6ctl::RawHeldButton)>,
 }
 impl PanelKeyScope {
     fn release(&mut self) -> Result<(), String> {
-        if let Some(target) = self.held.take() {
-            self.inputs
-                .up(target)
+        if let Some((target, mut button)) = self.held.take() {
+            button
+                .release()
                 .map_err(|error| format!("release panel key {target}: {error}"))?;
         }
         Ok(())
@@ -1163,6 +1318,7 @@ impl State {
         self.adaptive_index = index;
     }
     pub fn take_host_midi(&mut self) -> Option<Box<dyn crate::host_midi::Client>> {
+        self.direct_midi = false;
         self.native_midi
             .take()
             .map(|client| Box::new(client) as Box<dyn crate::host_midi::Client>)
@@ -1180,67 +1336,10 @@ impl State {
     }
 }
 
-fn wait_l6_input(
-    session: &Session,
-    mut ready: impl FnMut() -> bool,
-    what: &str,
-) -> Result<(), String> {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        session.poll()?;
-        if ready() {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            return Err(format!("timed out waiting for L6 {what}"));
-        }
-        thread::sleep(Duration::from_millis(5));
-    }
-}
-
-/// Let the guest run under `gdb` until it stops, and return the stop reply.
-/// It may run for `guest_budget_ms` of its own time; a loaded host stretches
-/// wall time, so the guest budget decides, and `wall_cap` only ends a guest
-/// that no longer advances.
-fn continue_within_guest(
-    session: &Session,
-    gdb: &mut l6max_diagnostics::gdb::Gdb,
-    guest_budget_ms: u32,
-    wall_cap: Duration,
-) -> Result<String, String> {
-    let main = &session
-        .engine
-        .inputs
-        .as_ref()
-        .ok_or("input hub unavailable")?
-        .main;
-    let start = main.snapshot().guest_ms;
-    let deadline = Instant::now() + wall_cap;
-    gdb.resume().map_err(|error| error.to_string())?;
-    loop {
-        if let Some(reply) = gdb
-            .poll_stop(Duration::from_millis(200))
-            .map_err(|error| error.to_string())?
-        {
-            return Ok(reply);
-        }
-        session.poll()?;
-        let ran = main.snapshot().guest_ms.wrapping_sub(start);
-        if ran > guest_budget_ms || Instant::now() >= deadline {
-            let _ = gdb.interrupt();
-            return Err(format!(
-                "the guest ran {ran} ms without stopping (budget {guest_budget_ms} ms)"
-            ));
-        }
-    }
-}
-
 fn guest_now(session: &Session) -> u32 {
-    session
-        .engine
-        .inputs
-        .as_ref()
-        .map_or(0, |inputs| inputs.panel.snapshot().guest_ms)
+    l6ctl::OwnedControl::new(&session.engine)
+        .input_status(l6ctl::InputSource::Panel)
+        .map_or(0, |status| status.guest_ms)
 }
 
 fn wait_guest_duration(
@@ -1248,13 +1347,15 @@ fn wait_guest_duration(
     duration_ms: u32,
     deadline: Instant,
 ) -> Result<(), String> {
-    let inputs = session
-        .engine
-        .inputs
-        .as_ref()
-        .ok_or("guest wait needs inputs")?;
-    let start = inputs.panel.snapshot().guest_ms;
-    while inputs.panel.snapshot().guest_ms.wrapping_sub(start) < duration_ms {
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let clock = || {
+        control
+            .input_status(l6ctl::InputSource::Panel)
+            .map(|status| status.guest_ms)
+            .map_err(|_| "guest wait needs inputs".to_string())
+    };
+    let start = clock()?;
+    while clock()?.wrapping_sub(start) < duration_ms {
         session.poll()?;
         if Instant::now() >= deadline {
             return Err(format!(
@@ -1276,13 +1377,8 @@ fn wait_guest(
     let wall = Instant::now();
     loop {
         session.poll()?;
-        let elapsed = session
-            .engine
-            .inputs
-            .as_ref()
-            .unwrap()
-            .panel
-            .snapshot()
+        let elapsed = l6ctl::OwnedControl::new(&session.engine)
+            .input_status(l6ctl::InputSource::Panel)?
             .guest_ms
             .wrapping_sub(start);
         if elapsed >= duration {
@@ -1308,11 +1404,21 @@ mod tests {
             l6max_host::input::EngineInput::new(panel_host).unwrap(),
             l6fw::Model::L6max,
         ));
+        let mut options = l6max_host::engine::Options::parse_args(std::iter::empty()).unwrap();
+        options.qemu = None;
+        options.auto_setup = false;
+        let mut engine = l6max_host::engine::Engine::start(&options).unwrap();
+        engine.inputs = Some(inputs);
+        let mut button = l6ctl::OwnedControl::new(&engine)
+            .raw_button(l6ctl::InputSource::Panel, 1)
+            .unwrap();
+        button.press(0).unwrap();
+        let press = l6max_host::protocol::Message::read(&mut panel_peer).unwrap();
+        assert_eq!(press.kind, l6max_host::protocol::DOWN);
         let mut state = State::default();
         state.panel_keys = Some(PanelKeyScope {
             deadline: Instant::now(),
-            held: Some(1),
-            inputs,
+            held: Some((1, button)),
         });
         state.restarted().unwrap();
         let message = l6max_host::protocol::Message::read(&mut panel_peer).unwrap();
@@ -1333,6 +1439,15 @@ mod tests {
             l6max_host::input::EngineInput::new(panel_host).unwrap(),
             l6fw::Model::L6max,
         ));
+        let mut options = l6max_host::engine::Options::parse_args(std::iter::empty()).unwrap();
+        options.qemu = None;
+        options.auto_setup = false;
+        let mut engine = l6max_host::engine::Engine::start(&options).unwrap();
+        engine.inputs = Some(inputs.clone());
+        let mut button = l6ctl::OwnedControl::new(&engine)
+            .raw_button(l6ctl::InputSource::Panel, 1)
+            .unwrap();
+        button.press(0).unwrap();
         panel_peer.shutdown(Shutdown::Both).unwrap();
         let until = Instant::now() + std::time::Duration::from_secs(2);
         while inputs.panel.snapshot().connected && Instant::now() < until {
@@ -1345,8 +1460,7 @@ mod tests {
         let mut state = State::default();
         state.panel_keys = Some(PanelKeyScope {
             deadline: Instant::now(),
-            held: Some(1),
-            inputs,
+            held: Some((1, button)),
         });
         assert!(
             state
@@ -1508,7 +1622,7 @@ mod native_midi_capability_tests {
                 Some((true, false)),
             ),
             (
-                "[[step]]\naction='direct-usb-midi-round-trip'\n",
+                "[[step]]\naction='direct-midi-connect'\ncable=1\n",
                 Some((false, false)),
             ),
             (
@@ -1537,29 +1651,25 @@ mod native_midi_capability_tests {
     fn native_midi_rejects_direct_usb_endpoint_conflicts() {
         let mut scenario = Scenario::from_text("version=1\nname='midi'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='host-midi-connect'\n").unwrap();
         for action in [
-            crate::Action::HostMidiRoundTrip,
-            crate::Action::UsbDescriptors,
+            crate::Action::UsbEnumerate,
             crate::Action::UsbStorageBegin,
             crate::Action::UsbMidiOpen,
             crate::Action::UsbSysexBegin,
-            crate::Action::DirectUsbMidiRoundTrip {
-                cable: 1,
-                expect_ring_change: true,
-            },
+            crate::Action::DirectMidiConnect { cable: 1 },
             crate::Action::EditorAssignBegin,
             crate::Action::EditorPlaybackBegin { pad: 1 },
             crate::Action::UiPadBegin { pad: 1 },
-            crate::Action::L6DinSweep,
+            crate::Action::L6DinSweepBegin,
             crate::Action::L6MidiProbeBegin,
             crate::Action::DinUsbBegin,
-            crate::Action::L6UsbStartup,
-            crate::Action::L6DinEventDispatch {
+            crate::Action::L6UsbStartupBegin,
+            crate::Action::L6DispatchBegin {
                 group: 0,
                 cc: 1,
                 value: 1,
             },
             crate::Action::SignalPwmBegin,
-            crate::Action::L6LevelMeterPwm,
+            crate::Action::L6MeterBegin,
         ] {
             let mut step = scenario.step[0].clone();
             step.action = action;
@@ -1568,7 +1678,7 @@ mod native_midi_capability_tests {
             scenario.step.pop();
         }
         assert!(validate_native_midi_capabilities(&scenario, l6fw::Model::L6max).is_ok());
-        let scoped = Scenario::from_text("version=1\nname='scoped'\nmodels=['l6','l6max']\nbackends=['headless']\n[[step]]\nmodels=['l6']\naction='host-midi-connect'\n[[step]]\nmodels=['l6max']\naction='usb-descriptors'\n").unwrap();
+        let scoped = Scenario::from_text("version=1\nname='scoped'\nmodels=['l6','l6max']\nbackends=['headless']\n[[step]]\nmodels=['l6']\naction='host-midi-connect'\n[[step]]\nmodels=['l6max']\naction='usb-controller-ready'\n[[step]]\nmodels=['l6max']\naction='usb-enumerate'\n").unwrap();
         assert!(validate_native_midi_capabilities(&scoped, l6fw::Model::L6).is_ok());
         assert!(validate_native_midi_capabilities(&scoped, l6fw::Model::L6max).is_ok());
         assert_eq!(
@@ -1579,20 +1689,14 @@ mod native_midi_capability_tests {
     }
 
     #[test]
-    fn native_round_trip_and_connection_enable_native_midi() {
-        for (action, expected) in [
-            ("host-midi-round-trip", true),
-            ("host-midi-connect", true),
-            ("direct-usb-midi-round-trip", false),
-        ] {
-            let scenario = Scenario::from_text(&format!(
-                "version=1\nname='midi'\nmodels=['l6','l6max']\nbackends=['headless']\n[[step]]\naction='{action}'\n"
-            )).unwrap();
-            assert_eq!(
-                uses_native_host_midi(&scenario, l6fw::Model::L6max),
-                expected,
-                "{action}"
-            );
-        }
+    fn native_and_direct_connections_select_the_right_transport() {
+        let native = Scenario::from_text("version=1\nname='native'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='host-midi-connect'\n").unwrap();
+        let direct = Scenario::from_text("version=1\nname='direct'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='direct-midi-connect'\ncable=1\n").unwrap();
+        assert!(uses_native_host_midi(&native, l6fw::Model::L6max));
+        assert!(!uses_native_host_midi(&direct, l6fw::Model::L6max));
+        assert_eq!(
+            midi_bridge_options(&direct, l6fw::Model::L6max),
+            Some((false, false))
+        );
     }
 }

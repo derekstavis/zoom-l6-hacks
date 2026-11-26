@@ -53,6 +53,8 @@ pub struct Options {
     /// turn this off.
     pub auto_setup: bool,
     pub logs: PathBuf,
+    /// Original fixture report retained when a scenario moves logs on restart.
+    pub fixture_firmware_report: Option<PathBuf>,
     pub sd_image: Option<PathBuf>,
     pub no_sd: bool,
     pub state_dir: Option<PathBuf>,
@@ -257,6 +259,7 @@ impl Options {
             update_package: None,
             auto_setup: true,
             logs: workspace.join("emulator/logs"),
+            fixture_firmware_report: None,
             sd_image: None,
             no_sd: false,
             state_dir: Some(workspace.join("emulator/state")),
@@ -853,6 +856,7 @@ impl Engine {
             crate::usb::UsbOwner::Raw
                 | crate::usb::UsbOwner::Direct
                 | crate::usb::UsbOwner::RawDirect
+                | crate::usb::UsbOwner::Unusable
         ) {
             return;
         }

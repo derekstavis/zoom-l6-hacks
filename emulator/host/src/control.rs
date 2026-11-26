@@ -284,6 +284,28 @@ fn execute(
         .and_then(Value::as_str)
         .ok_or("request needs a command")?;
     match command {
+        "warm-reset" => {
+            let timeout = number(request, "timeout_s")?;
+            if timeout == 0 || timeout > 3600 {
+                return Err("reset timeout must be 1..3600 seconds".into());
+            }
+            qmp.system_reset_and_wait(std::time::Duration::from_secs(timeout))
+                .map_err(|e| e.to_string())?;
+            Ok(json!({"reset":"qmp-system-reset"}))
+        }
+        "sd-card" => {
+            let path = match request.get("path") {
+                Some(Value::String(path)) => Some(std::path::Path::new(path)),
+                Some(Value::Null) => None,
+                _ => return Err("sd-card needs a path or null".into()),
+            };
+            match path {
+                Some(path) => qmp.insert_sd(path),
+                None => qmp.eject_sd(),
+            }
+            .map_err(|e| e.to_string())?;
+            Ok(json!({"inserted":path.is_some()}))
+        }
         "sd-loader-status" => {
             serde_json::to_value(crate::sd_loader::snapshot(qmp, model)?).map_err(|e| e.to_string())
         }
@@ -295,6 +317,39 @@ fn execute(
         }
         "qmp-status" => serde_json::to_value(qmp.query_status().map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string()),
+        "audio-input-status" => {
+            serde_json::to_value(inputs.audio_input_status()).map_err(|error| error.to_string())
+        }
+        "audio-input-load" => {
+            let channel =
+                u32::try_from(number(request, "channel")?).map_err(|_| "invalid audio channel")?;
+            let loaded = request
+                .get("loaded")
+                .and_then(Value::as_bool)
+                .ok_or("loaded must be a boolean")?;
+            serde_json::to_value(
+                inputs
+                    .audio_input_load(channel, loaded)
+                    .map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())
+        }
+        "audio-input-transport" => {
+            let operation = serde_json::from_value(
+                request
+                    .get("operation")
+                    .cloned()
+                    .ok_or("missing audio transport operation")?,
+            )
+            .map_err(|_| "invalid audio transport operation")?;
+            let position_ms = signed(request, "position_ms")?;
+            serde_json::to_value(
+                inputs
+                    .audio_input_transport(operation, position_ms)
+                    .map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())
+        }
         "input-status" => {
             let source = match request.get("source").and_then(Value::as_str) {
                 Some("main") => InputSource::Main,
@@ -318,6 +373,28 @@ fn execute(
             let counters = crate::heap::counters(qmp, model)?;
             serde_json::to_value(counters).map_err(|error| error.to_string())
         }
+        "menu" => {
+            let menu = request
+                .get("menu")
+                .and_then(Value::as_str)
+                .ok_or("menu needs a name")?;
+            let path = request
+                .get("path")
+                .and_then(Value::as_array)
+                .ok_or("menu needs a path")?
+                .iter()
+                .map(|v| v.as_str().map(str::to_owned).ok_or("invalid menu path"))
+                .collect::<Result<Vec<_>, _>>()?;
+            let snapshot = crate::menu::snapshot_before(
+                qmp,
+                model,
+                menu,
+                &path,
+                std::time::Instant::now() + std::time::Duration::from_secs(30),
+                || false,
+            )?;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
         "memory-read" => {
             let address = request
                 .get("address")
@@ -332,12 +409,57 @@ fn execute(
             serde_json::to_value(crate::memory::read_main(qmp, address, length)?)
                 .map_err(|e| e.to_string())
         }
+        "symbol-read" => {
+            let symbol = request
+                .get("symbol")
+                .and_then(Value::as_str)
+                .ok_or("symbol-read needs a symbol")?;
+            let length = request
+                .get("length")
+                .and_then(Value::as_u64)
+                .and_then(|v| usize::try_from(v).ok())
+                .ok_or("symbol-read needs a length")?;
+            serde_json::to_value(crate::memory::read_symbol(qmp, model, symbol, length)?)
+                .map_err(|e| e.to_string())
+        }
         "update-gui-state" => {
             serde_json::to_value(crate::update_state::update_gui_state(qmp, model)?)
                 .map_err(|error| error.to_string())
         }
         "update-state" => serde_json::to_value(crate::update_state::update_state(qmp, model)?)
             .map_err(|error| error.to_string()),
+        "l6-din-state" => {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            let reader =
+                crate::l6_din::Reader::new_before_checked(qmp, model, deadline, &|| Ok(()))?;
+            serde_json::to_value(reader.snapshot(deadline, &|| Ok(()))?).map_err(|e| e.to_string())
+        }
+        "effect-slot" => {
+            let binding: crate::effect_editor::SlotBinding = serde_json::from_value(
+                request
+                    .get("binding")
+                    .cloned()
+                    .ok_or("effect-slot needs binding")?,
+            )
+            .map_err(|e| e.to_string())?;
+            let fields: crate::effect_editor::SlotFields = serde_json::from_value(
+                request
+                    .get("fields")
+                    .cloned()
+                    .ok_or("effect-slot needs fields")?,
+            )
+            .map_err(|e| e.to_string())?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            let reader = crate::effect_editor::SlotReader::new_before_checked(
+                qmp,
+                model,
+                binding,
+                deadline,
+                &|| Ok(()),
+            )?;
+            serde_json::to_value(reader.snapshot_before_checked(&fields, deadline, &|| Ok(()))?)
+                .map_err(|e| e.to_string())
+        }
         "effect-editor" => {
             let binding: crate::effect_editor::Binding = serde_json::from_value(
                 request
@@ -347,6 +469,18 @@ fn execute(
             )
             .map_err(|e| e.to_string())?;
             serde_json::to_value(crate::effect_editor::Reader::new(qmp, model, binding)?.read()?)
+                .map_err(|e| e.to_string())
+        }
+        "sound-pad-assignment" => {
+            let pad = request
+                .get("pad")
+                .and_then(Value::as_u64)
+                .and_then(|v| u8::try_from(v).ok())
+                .ok_or("sound-pad-assignment needs pad")?;
+            let path = request.get("path").and_then(Value::as_str);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            let reader = crate::sound_pad::Reader::new_before(qmp, model, deadline)?;
+            serde_json::to_value(reader.sample_before(pad, path, deadline)?)
                 .map_err(|e| e.to_string())
         }
         "panel-key" => {
@@ -468,6 +602,37 @@ fn installer_observation(
     serde_json::to_value(outcome).map_err(|error| error.to_string())
 }
 
+fn client_disconnected(stream: &UnixStream) -> bool {
+    let fd = stream.as_raw_fd();
+    let mut descriptor = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let ready = unsafe { libc::poll(&mut descriptor, 1, 0) };
+    if ready < 0 {
+        return std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted;
+    }
+    if descriptor.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+        return true;
+    }
+    let mut byte = 0u8;
+    let received = unsafe {
+        libc::recv(
+            fd,
+            &mut byte as *mut u8 as *mut libc::c_void,
+            1,
+            libc::MSG_PEEK | libc::MSG_DONTWAIT,
+        )
+    };
+    received == 0
+        || (received < 0
+            && !matches!(
+                std::io::Error::last_os_error().kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+            ))
+}
+
 fn handle(
     mut stream: UnixStream,
     inputs: &InputHub,
@@ -476,7 +641,7 @@ fn handle(
     installer_outcome: Option<&crate::update_bootloader::Outcome>,
     usb_controller: Option<&crate::usb::Controller>,
     debugger: Option<&crate::debug::Controller>,
-    stopping: &AtomicBool,
+    stopping: &Arc<AtomicBool>,
 ) {
     if let Err(error) = configure_client(&stream) {
         tracing::warn!(%error, "cannot configure control client socket");
@@ -527,6 +692,18 @@ fn handle(
                 .ok_or("USB controller unavailable")?
                 .running()?;
             return Ok(json!({"running":running}));
+        }
+        if request.get("command").and_then(Value::as_str) == Some("usb-enumerate") {
+            let peer = stream.try_clone().map_err(|e| e.to_string())?;
+            let stopping = stopping.clone();
+            let budget = crate::usb::Budget::new(
+                std::time::Instant::now() + std::time::Duration::from_secs(100),
+                move || stopping.load(Ordering::Relaxed) || client_disconnected(&peer),
+            );
+            let result = usb_controller
+                .ok_or("USB controller unavailable")?
+                .enumerate_before(&budget)?;
+            return serde_json::to_value(result).map_err(|e| e.to_string());
         }
         if request.get("command").and_then(Value::as_str) == Some("installer-outcome") {
             return installer_observation(installer_outcome);
@@ -663,7 +840,10 @@ pub(crate) fn serve_debug(
             serde_json::from_str::<crate::debug::Command>(&line).map_err(|e| e.to_string());
         let close = matches!(
             command,
-            Ok(crate::debug::Command::Close | crate::debug::Command::L6MidiFinish { .. })
+            Ok(crate::debug::Command::Close
+                | crate::debug::Command::L6MidiFinish { .. }
+                | crate::debug::Command::L6DinFinish { .. }
+                | crate::debug::Command::L6MeterFinish { .. })
         );
         let fd = stream.as_raw_fd();
         let result = command.and_then(|command| {
@@ -742,6 +922,15 @@ fn send_response(stream: &mut UnixStream, reply: &Value) -> std::io::Result<()> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn enumeration_peer_disconnect_is_detected_with_queued_bytes() {
+        use std::io::Write;
+        let (observer, mut peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        assert!(!super::client_disconnected(&observer));
+        peer.write_all(b"queued").unwrap();
+        drop(peer);
+        assert!(super::client_disconnected(&observer));
+    }
     use super::*;
 
     #[test]
@@ -789,6 +978,86 @@ mod tests {
                 serde_json::from_value::<Outcome>(expected).unwrap(),
                 outcome
             );
+        }
+    }
+
+    #[test]
+    fn audio_input_dispatch_uses_main_channel_and_validates_requests() {
+        use crate::input::EngineInput;
+        use crate::protocol::{self, Message};
+        let (main, mut main_peer) = EngineInput::pair().unwrap();
+        let (panel, _panel_peer) = EngineInput::pair().unwrap();
+        let inputs = InputHub::new(main, panel, Model::L6max);
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || {
+            peer.write_all(b"{\"QMP\":{\"version\":{\"qemu\":{\"major\":10,\"minor\":0,\"micro\":0},\"package\":\"\"},\"capabilities\":[]}}\r\n").unwrap();
+            let mut line = String::new();
+            BufReader::new(&mut peer).read_line(&mut line).unwrap();
+            peer.write_all(b"{\"return\":{}}\r\n").unwrap();
+        });
+        let qmp = QmpClient::connect(stream).unwrap();
+        server.join().unwrap();
+        let status = execute(
+            &json!({"command":"audio-input-status"}),
+            &inputs,
+            Model::L6max,
+            &qmp,
+        )
+        .unwrap();
+        assert_eq!(
+            (status["playing"].as_bool(), status["position_ms"].as_u64()),
+            (Some(false), Some(0))
+        );
+        let load = execute(
+            &json!({"command":"audio-input-load","channel":2,"loaded":true}),
+            &inputs,
+            Model::L6max,
+            &qmp,
+        )
+        .unwrap();
+        let message = Message::read(&mut main_peer).unwrap();
+        assert_eq!(
+            (
+                message.kind,
+                message.target,
+                message.value,
+                u64::from(message.sequence)
+            ),
+            (
+                protocol::AUDIO_INPUT_LOAD,
+                1,
+                1,
+                load["sequence"].as_u64().unwrap()
+            )
+        );
+        let seek = execute(
+            &json!({"command":"audio-input-transport","operation":"seek","position_ms":500}),
+            &inputs,
+            Model::L6max,
+            &qmp,
+        )
+        .unwrap();
+        let message = Message::read(&mut main_peer).unwrap();
+        assert_eq!(
+            (
+                message.kind,
+                message.target,
+                message.value,
+                u64::from(message.sequence)
+            ),
+            (
+                protocol::AUDIO_INPUT_TRANSPORT,
+                protocol::AUDIO_INPUT_SEEK,
+                500,
+                seek["sequence"].as_u64().unwrap()
+            )
+        );
+        for request in [
+            json!({"command":"audio-input-load","channel":0,"loaded":true}),
+            json!({"command":"audio-input-transport","operation":"seek","position_ms":-1}),
+            json!({"command":"audio-input-transport","operation":"other","position_ms":0}),
+        ] {
+            assert!(execute(&request, &inputs, Model::L6max, &qmp).is_err());
         }
     }
 

@@ -43,12 +43,32 @@ path = "RECORDER"
 action = "expect-sd-loader"
 
 [[step]]
-action = "expect-sd-module"
+action = "capture-sd-module"
+loaded = false
+
+[[step]]
+action = "expect-sd-allocation"
+loaded = false
+
+[[step]]
+action = "expect-sd-chains"
+loaded = false
+
+[[step]]
+action = "expect-sd-continuations"
+loaded = false
+
+[[step]]
+action = "expect-sd-module-images"
+loaded = false
+
+[[step]]
+action = "expect-sd-latest-module"
 loaded = false
 
 [[step]]
 action = "include"
-path = "tests/emulator/fragments/l6max-din-mixer-setup.toml"
+path = "tests/emulator/fragments/l6max-din-mixer-usb.toml"
 
 [[step]]
 action = "include"

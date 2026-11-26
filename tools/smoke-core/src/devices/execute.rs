@@ -17,14 +17,14 @@ fn knob_dialog_phase(
     bitmap_capture: Option<u8>,
 ) -> Option<u16> {
     match operation {
-        Operation::KnobBitmapReactivate { .. } => return Some(82),
-        Operation::KnobBitmapWaitActive => return Some(83),
+        Operation::KnobBitmapReactivate { .. } => return Some(86),
+        Operation::KnobBitmapWaitActive => return Some(87),
         _ => {}
     }
     let fixed = match operation {
         Operation::KnobDialogGuard => Some(0),
         Operation::KnobDialogBaseline => Some(1),
-        Operation::KnobDialogPreflightBegin => Some(2),
+        Operation::KnobDialogPreflightBegin { .. } => Some(2),
         Operation::KnobProbePrepare { probe } => u16::try_from(3 + probe.index() * 6).ok(),
         Operation::KnobProbeInject => probe_index.and_then(|i| u16::try_from(4 + i * 6).ok()),
         Operation::KnobProbeTrigger { .. } => {
@@ -41,7 +41,11 @@ fn knob_dialog_phase(
         Operation::KnobRaceSample => Some(38),
         Operation::KnobRaceRestore => Some(39),
         Operation::KnobRaceAssert => Some(40),
-        Operation::KnobDialogFirstActivation => Some(41),
+        Operation::KnobActivationTrigger => return Some(41),
+        Operation::KnobActivationWait => return Some(42),
+        Operation::KnobActivationSample => return Some(43),
+        Operation::KnobActivationRestore => return Some(44),
+        Operation::KnobActivationAssert => return Some(45),
         Operation::KnobActiveBegin => Some(42),
         Operation::EnqueueEncoderNoAck { .. } if active_display => Some(43),
         Operation::CaptureDisplay { .. } if active_display => Some(44),
@@ -155,7 +159,7 @@ fn knob_dialog_phase(
         _ => None,
     };
     if let Some(phase) = fixed {
-        return Some(phase + u16::from(phase >= 82) * 2);
+        return Some(phase + u16::from(phase >= 42) * 4 + u16::from(phase >= 82) * 2);
     }
     let scope = scope?;
     let offset = match operation {
@@ -176,7 +180,7 @@ fn knob_dialog_phase(
         Operation::KnobDialogModeEnd => 10,
         _ => return None,
     };
-    Some(111 + scope.index as u16 * 11 + offset)
+    Some(115 + scope.index as u16 * 11 + offset)
 }
 
 type KnobDeadline = (Instant, u32, u32, u64, u16);
@@ -223,34 +227,7 @@ fn sysex_reply_complete(
 
 /// Require a complete RIFF container and enough audio for the tone checks.
 fn recorded_wav_ready(bytes: &[u8]) -> Result<(), String> {
-    if bytes.len() < 12 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
-        return Err("missing WAV header".into());
-    }
-    let declared = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
-    if declared.saturating_add(8) != bytes.len() {
-        return Err(format!(
-            "length is {}, RIFF declares {}",
-            bytes.len(),
-            declared.saturating_add(8)
-        ));
-    }
-    let mut offset = 12usize;
-    while offset + 8 <= bytes.len() {
-        let size = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
-        let end = offset
-            .checked_add(8)
-            .and_then(|start| start.checked_add(size))
-            .ok_or("WAV chunk length overflow")?;
-        if end > bytes.len() {
-            return Err("truncated WAV chunk".into());
-        }
-        offset = end
-            .checked_add(size & 1)
-            .ok_or("WAV chunk length overflow")?;
-    }
-    if offset != bytes.len() {
-        return Err("incomplete WAV chunk padding".into());
-    }
+    l6ctl::validate_complete_wav(bytes)?;
     let frames = waveform::decode_wav(bytes)?;
     if frames.len() < 96_000 {
         return Err(format!("only {} frames", frames.len()));
@@ -338,6 +315,11 @@ impl State {
     }
 
     pub fn restarted(&mut self) -> Result<(), String> {
+        self.menu_snapshot = None;
+        self.effect_ring = None;
+        self.effect_state = None;
+        self.usb_descriptor_budget = None;
+        self.direct_midi = false;
         let auxiliary_cleanup = self.abort_auxiliary_scopes();
         self.ui_pad = None;
         self.abort_midi_probe();
@@ -365,29 +347,110 @@ impl State {
     }
     /// Release held inputs and owned transport scopes before the guest exits.
     pub fn abort_auxiliary_scopes(&mut self) -> Result<(), String> {
+        let startup = self
+            .usb_startup
+            .take()
+            .map(|mut scope| scope.abort())
+            .transpose();
+        let dispatch = self
+            .l6_dispatch
+            .take()
+            .map(|mut scope| scope.abort())
+            .transpose();
+        let gpio = self
+            .gpio_event
+            .take()
+            .map(|mut scope| scope.abort())
+            .transpose();
+        let tap = self
+            .tap_handler
+            .take()
+            .map(|mut scope| scope.abort())
+            .transpose();
+        let din_sweep = self
+            .l6_din_sweep
+            .take()
+            .map(|mut scope| scope.abort())
+            .transpose();
+        let audio = self
+            .audio_callbacks
+            .take()
+            .map(|mut scope| scope.abort())
+            .transpose();
         let power = self
             .power
             .take()
             .map(|mut scope| scope.release())
+            .transpose();
+        let panel_event = self
+            .panel_event
+            .take()
+            .map(|mut scope| scope.abort())
             .transpose();
         let panel = self
             .panel_keys
             .take()
             .map(|mut scope| scope.release())
             .transpose();
+        let meter = self
+            .l6_meter_pwm
+            .take()
+            .map(|mut scope| scope.abort())
+            .transpose();
         self.din_usb = None;
         self.sd_inspection = None;
+        self.effect_slot_deadline = None;
+        self.settings = None;
         self.usb_midi = None;
         self.l6_indicator = None;
         self.ui_pad = None;
         self.editor_playback = None;
         self.editor_assignment = None;
         self.signal_pwm = None;
-        match (power, panel) {
-            (Ok(_), Ok(_)) => Ok(()),
-            (Err(error), Ok(_)) | (Ok(_), Err(error)) => Err(error),
-            (Err(a), Err(b)) => Err(format!("{a}; {b}")),
+        let mut errors = Vec::new();
+        if let Err(error) = startup {
+            errors.push(error);
         }
+        if let Err(error) = dispatch {
+            errors.push(error);
+        }
+        if let Err(error) = gpio {
+            errors.push(error);
+        }
+        if let Err(error) = tap {
+            errors.push(error);
+        }
+        if let Err(error) = din_sweep {
+            errors.push(error);
+        }
+        if let Err(error) = audio {
+            errors.push(error);
+        }
+        if let Err(error) = power {
+            errors.push(error);
+        }
+        if let Err(error) = panel_event {
+            errors.push(error);
+        }
+        if let Err(error) = panel {
+            errors.push(error);
+        }
+        if let Err(error) = meter {
+            errors.push(error);
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
+    }
+    pub fn take_deferred_assertion(&mut self) -> Option<String> {
+        self.signal_pwm
+            .as_mut()
+            .and_then(|scope| scope.take_pending_failure())
+    }
+    pub fn take_deferred_terminal_failure(&mut self) -> bool {
+        std::mem::take(&mut self.deferred_terminal_failure)
     }
     pub fn has_signal_pwm(&self) -> bool {
         self.signal_pwm.is_some()
@@ -497,6 +560,12 @@ impl State {
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
     ) -> Result<Value, String> {
+        if self.effect_slot_deadline.is_some()
+            && !matches!(operation, Operation::CaptureEffectState { .. })
+        {
+            self.effect_slot_deadline = None;
+            return Err("effect slot readiness must be followed by its state assertion".into());
+        }
         if let Some(scope) = self.signal_pwm.as_ref() {
             let valid = match operation {
                 Operation::SignalPwmWarmup {
@@ -569,8 +638,10 @@ impl State {
                 Operation::EditorAssignCount { pad } => Some((5, Some(pad))),
                 Operation::EditorAssignFilename { pad } => Some((6, Some(pad))),
                 Operation::EditorAssignSend { pad } => Some((7, Some(pad))),
-                Operation::EditorAssignState { pad } => Some((8, Some(pad))),
-                Operation::EditorAssignEnd => Some((9, None)),
+                Operation::EditorAssignDialog { pad } => Some((8, Some(pad))),
+                Operation::EditorAssignState { pad } => Some((9, Some(pad))),
+                Operation::EditorAssignAssert { pad } => Some((10, Some(pad))),
+                Operation::EditorAssignEnd => Some((11, None)),
                 _ => None,
             };
             if !expected.is_some_and(|(phase, pad)| {
@@ -655,15 +726,16 @@ impl State {
                 Operation::UsbStorageAssertBoot => Some(4),
                 Operation::UsbStorageLastRead => Some(5),
                 Operation::UsbStorageLastWrite => Some(6),
-                Operation::UsbStorageLastAssert => Some(7),
-                Operation::UsbStorageFatOpen => Some(8),
-                Operation::UsbStorageCreate { .. } => Some(9),
-                Operation::UsbStorageFlushCreated => Some(10),
-                Operation::UsbStorageReadFile => Some(11),
-                Operation::UsbStorageRemoveFile => Some(12),
-                Operation::UsbStorageAssertFile => Some(13),
-                Operation::UsbStorageFlushRemoved => Some(14),
-                Operation::UsbStorageEnd => Some(15),
+                Operation::UsbStorageLastReadback => Some(7),
+                Operation::UsbStorageLastAssert => Some(8),
+                Operation::UsbStorageFatOpen => Some(9),
+                Operation::UsbStorageCreate { .. } => Some(10),
+                Operation::UsbStorageFlushCreated => Some(11),
+                Operation::UsbStorageReadFile => Some(12),
+                Operation::UsbStorageRemoveFile => Some(13),
+                Operation::UsbStorageAssertFile => Some(14),
+                Operation::UsbStorageFlushRemoved => Some(15),
+                Operation::UsbStorageEnd => Some(16),
                 _ => None,
             };
             if expected != Some(context.phase)
@@ -685,18 +757,20 @@ impl State {
                 Operation::L6maxTimingEnqueue { .. } => Some(2),
                 Operation::L6maxTimingWaitFirst => Some(3),
                 Operation::L6maxTimingObservePaused { .. } => Some(4),
-                Operation::L6maxTimingAssertPaused => Some(5),
-                Operation::L6maxTimingResume => Some(6),
-                Operation::L6maxTimingWaitQueued => Some(7),
-                Operation::L6maxTimingWaitReports => Some(8),
-                Operation::L6maxTimingAssertReports => Some(9),
-                Operation::L6maxTimingObserveDisplay { .. } => Some(10),
-                Operation::L6maxTimingAssertDisplay => Some(11),
-                Operation::L6maxTimingEncoder { .. } => Some(12),
-                Operation::L6maxTimingWaitEncoder => Some(13),
-                Operation::L6maxTimingWaitEncoderReport => Some(14),
-                Operation::L6maxTimingAssertEncoder => Some(15),
-                Operation::L6maxTimingEnd => Some(16),
+                Operation::L6maxTimingCapturePaused => Some(5),
+                Operation::L6maxTimingAssertPausedClock => Some(6),
+                Operation::L6maxTimingAssertPausedInput => Some(7),
+                Operation::L6maxTimingResume => Some(8),
+                Operation::L6maxTimingWaitQueued => Some(9),
+                Operation::L6maxTimingWaitReports => Some(10),
+                Operation::L6maxTimingAssertReports => Some(11),
+                Operation::L6maxTimingObserveDisplay { .. } => Some(12),
+                Operation::L6maxTimingAssertDisplay => Some(13),
+                Operation::L6maxTimingEncoder { .. } => Some(14),
+                Operation::L6maxTimingWaitEncoder => Some(15),
+                Operation::L6maxTimingWaitEncoderReport => Some(16),
+                Operation::L6maxTimingAssertEncoder => Some(17),
+                Operation::L6maxTimingEnd => Some(18),
                 _ => None,
             };
             if expected != Some(context.phase)
@@ -798,7 +872,17 @@ impl State {
                 });
             }
         }
-        if self.sd_inspection.is_some() && !matches!(operation, Operation::ExpectSdModule { .. }) {
+        if self.sd_inspection.is_some()
+            && !matches!(
+                operation,
+                Operation::CaptureSdModule { .. }
+                    | Operation::ExpectSdAllocation { .. }
+                    | Operation::ExpectSdChains { .. }
+                    | Operation::ExpectSdContinuations { .. }
+                    | Operation::ExpectSdModuleImages { .. }
+                    | Operation::ExpectSdLatestModule { .. }
+            )
+        {
             self.sd_inspection = None;
             return Err("SD inspection interrupted before module assertion".into());
         }
@@ -834,6 +918,7 @@ impl State {
                 Operation::L6MidiProbeInject
                     | Operation::L6MidiProbeExpectHook
                     | Operation::L6MidiProbeExpectReplies
+                    | Operation::L6MidiProbeFinish
             )
         {
             self.l6_midi_probe.take();
@@ -1108,7 +1193,9 @@ impl State {
                 Err("managed lifecycle operation must run at the session boundary".into())
             }
             Operation::ExpectRecorder => {
-                let mode = session.engine.management[0].read_memory(0, l6max::system_mode, 4)?;
+                let mode = l6ctl::OwnedControl::new(&session.engine)
+                    .read_main_memory(l6max::system_mode, 4)?
+                    .bytes;
                 if mode != 0u32.to_le_bytes() {
                     return Err(
                         format!("restart did not restore recorder mode: {mode:02x?}").into(),
@@ -1121,7 +1208,9 @@ impl State {
                 address,
                 bytes,
             } => {
-                let actual = session.engine.management[0].read_memory(0, address, bytes.len())?;
+                let actual = l6ctl::OwnedControl::new(&session.engine)
+                    .read_symbol(&symbol, bytes.len())?
+                    .bytes;
                 if actual != bytes {
                     return Err(format!(
                         "{symbol} ({address:#010x}) is {actual:02x?}, expected {bytes:02x?}"
@@ -1143,8 +1232,9 @@ impl State {
                     Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
                 loop {
                     session.poll()?;
-                    let actual =
-                        session.engine.management[0].read_memory(0, address, bytes.len())?;
+                    let actual = l6ctl::OwnedControl::new(&session.engine)
+                        .read_symbol_before(&symbol, bytes.len(), deadline)?
+                        .bytes;
                     if actual == bytes {
                         break Ok(
                             json!({"symbol":symbol,"address":format!("{address:#010x}"),"bytes":actual}),
@@ -1170,9 +1260,278 @@ impl State {
                 self.paced_index,
             )
             .map_err(std::io::Error::other)?),
-            Operation::EffectParameterEdit { encoder, steps } => {
-                Ok(effect_parameter_edit(options, session, encoder, steps)
-                    .map_err(std::io::Error::other)?)
+            Operation::CaptureEffectRing { encoder }
+            | Operation::ExpectEffectRingChanged { encoder } => {
+                let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
+                let capturing = matches!(operation, Operation::CaptureEffectRing { .. });
+                let (reader, baseline) = if capturing {
+                    (
+                        effect_slot_reader(options, session, deadline, &|| Ok(()))?,
+                        None,
+                    )
+                } else {
+                    let (prior_encoder, prior_effect, before, reader) = self
+                        .effect_ring
+                        .take()
+                        .ok_or("effect ring baseline missing")?;
+                    if prior_encoder != encoder {
+                        return Err("effect ring baseline does not match the encoder".into());
+                    }
+                    (reader, Some((prior_effect, before)))
+                };
+                let fields = l6ctl::EffectSlotFields {
+                    ring_index: Some(encoder - 1),
+                    ..Default::default()
+                };
+                let snapshot = reader.snapshot_before_checked(&fields, deadline, &|| Ok(()))?;
+                if !(1..=2).contains(&snapshot.effect_type) || snapshot.edit_mode == 0 {
+                    return Err(
+                        "effect ring observation requires an active Room or Spring editor".into(),
+                    );
+                }
+                if encoder > if snapshot.effect_type == 1 { 8 } else { 7 } {
+                    return Err("encoder is unavailable for the selected effect".into());
+                }
+                let value = snapshot
+                    .ring_position
+                    .ok_or("effect ring position unavailable")?;
+                if let Some((effect_type, before)) = baseline {
+                    if effect_type != snapshot.effect_type {
+                        return Err(
+                            "effect ring baseline belongs to a different effect slot".into()
+                        );
+                    }
+                    if value == before {
+                        return Err(format!("encoder {encoder} edit left its ring unchanged at Q16.16 position {value}").into());
+                    }
+                    Ok(json!({"encoder":encoder,"before":before,"after":value}))
+                } else {
+                    self.effect_ring = Some((encoder, snapshot.effect_type, value, reader));
+                    Ok(json!({"encoder":encoder,"position":value}))
+                }
+            }
+            Operation::CaptureEffectState { edits, dialog } => {
+                if self.effect_state.is_some() {
+                    return Err("effect state snapshot already active".into());
+                }
+                let prior = self.effect_slot_deadline.take();
+                let (started, guest_start, guest_budget, wall_budget) = prior
+                    .as_ref()
+                    .map(|scope| {
+                        (
+                            scope.start,
+                            scope.guest_start,
+                            scope.guest_budget,
+                            scope.wall_budget,
+                        )
+                    })
+                    .unwrap_or((
+                        operation_start.0,
+                        operation_start.1,
+                        guest_timeout_ms,
+                        wall_timeout_s,
+                    ));
+                if (guest_budget, wall_budget) != (guest_timeout_ms, wall_timeout_s) {
+                    return Err("effect slot assertion changed its shared budget".into());
+                }
+                let deadline = started + Duration::from_secs(wall_budget);
+                let check = || -> Result<(), String> {
+                    if Instant::now() >= deadline
+                        || guest_now(session).wrapping_sub(guest_start) > guest_budget
+                    {
+                        Err("effect state snapshot exceeded its deadline".into())
+                    } else {
+                        Ok(())
+                    }
+                };
+                let reader = match prior {
+                    Some(scope) => scope.reader,
+                    None => effect_slot_reader(options, session, deadline, &check)?,
+                };
+                let snapshot = reader.snapshot_before_checked(
+                    &l6ctl::EffectSlotFields {
+                        applied: edits,
+                        dialog_active: dialog,
+                        ..Default::default()
+                    },
+                    deadline,
+                    &check,
+                )?;
+                let evidence = json!({"effect_type":snapshot.effect_type,"processor_type":snapshot.processor_type,"active_effect":"","nonzero_output_blocks":0,"panel_mode":snapshot.panel_mode,"edit_mode":snapshot.edit_mode,"parameter_edits_applied":snapshot.applied.unwrap_or(0),"parameter_id":null,"parameter_value":null,"knob_dialog_active":snapshot.dialog_active.unwrap_or(0),"exit_ring_refreshes":0,"atomic":false,"fixture_module_sha256":snapshot.fixture_module_sha256});
+                self.effect_state = Some((
+                    snapshot,
+                    reader,
+                    started,
+                    guest_start,
+                    guest_budget,
+                    wall_budget,
+                ));
+                Ok(evidence)
+            }
+            Operation::ExpectEffectName { .. }
+            | Operation::ExpectEffectOutput
+            | Operation::ExpectEffectEdits { .. }
+            | Operation::ExpectEffectDialog { .. }
+            | Operation::ExpectEffectType { .. }
+            | Operation::ExpectEffectProcessor { .. }
+            | Operation::ExpectEffectPanelMode { .. }
+            | Operation::ExpectEffectEditMode { .. } => {
+                let (snapshot, reader, started, guest_start, guest_budget, wall_budget) = self
+                    .effect_state
+                    .as_ref()
+                    .ok_or("effect state snapshot missing")?;
+                if (guest_timeout_ms, wall_timeout_s) != (*guest_budget, *wall_budget)
+                    || started.elapsed() >= Duration::from_secs(*wall_budget)
+                    || guest_now(session).wrapping_sub(*guest_start) > *guest_budget
+                {
+                    return Err(
+                        "effect state assertion exceeded its shared deadline or changed budget"
+                            .into(),
+                    );
+                }
+                match operation {
+                    Operation::ExpectEffectName { ref name } => {
+                        let deadline = *started + Duration::from_secs(*wall_budget);
+                        let check = || -> Result<(), String> {
+                            if Instant::now() >= deadline
+                                || guest_now(session).wrapping_sub(*guest_start) > *guest_budget
+                            {
+                                Err("effect state assertion exceeded its shared deadline".into())
+                            } else {
+                                Ok(())
+                            }
+                        };
+                        let later = reader.snapshot_before_checked(
+                            &l6ctl::EffectSlotFields {
+                                active_effect: true,
+                                ..Default::default()
+                            },
+                            deadline,
+                            &check,
+                        )?;
+                        let actual = later.active_effect.unwrap_or_default();
+                        if &actual != name {
+                            return Err(format!(
+                                "effect replacement runs {actual:?}, expected {name:?}"
+                            )
+                            .into());
+                        }
+                        Ok(json!({"active_effect":actual}))
+                    }
+                    Operation::ExpectEffectOutput => {
+                        let processor = snapshot.processor_type;
+                        if !matches!(processor, 1 | 2) {
+                            return Err(
+                                "effect replacement output check needs a replaced slot selected"
+                                    .into(),
+                            );
+                        }
+                        let deadline = *started + Duration::from_secs(*wall_budget);
+                        let check = || -> Result<(), String> {
+                            if Instant::now() >= deadline
+                                || guest_now(session).wrapping_sub(*guest_start) > *guest_budget
+                            {
+                                Err("effect state assertion exceeded its shared deadline".into())
+                            } else {
+                                Ok(())
+                            }
+                        };
+                        let later = reader.snapshot_before_checked(
+                            &l6ctl::EffectSlotFields {
+                                output: true,
+                                output_processor: Some(processor as u8),
+                                ..Default::default()
+                            },
+                            deadline,
+                            &check,
+                        )?;
+                        let value = later.output_blocks.unwrap_or(0);
+                        if value == 0 {
+                            return Err(format!("effect replacement has produced no nonzero output in slot {processor}").into());
+                        }
+                        Ok(json!({"nonzero_output_blocks":value}))
+                    }
+                    Operation::ExpectEffectEdits { minimum } => {
+                        let applied = snapshot
+                            .applied
+                            .ok_or("effect edit count was not captured")?;
+                        if applied < minimum {
+                            return Err(format!("effect replacement applied {applied} parameter edits, expected at least {minimum}").into());
+                        }
+                        Ok(json!({"parameter_edits_applied":applied}))
+                    }
+                    Operation::ExpectEffectDialog { active } => {
+                        let value = match (snapshot.dialog_active, active) {
+                            (Some(value), _) => value,
+                            (None, false) => 0,
+                            (None, true) => return Err("Knob Dialog active-state symbol is missing from the composed module report".into()),
+                        };
+                        if value != u8::from(active) {
+                            return Err(format!(
+                                "Knob Dialog active state is {value}, expected {active}"
+                            )
+                            .into());
+                        }
+                        Ok(json!({"dialog_active":value}))
+                    }
+                    Operation::ExpectEffectType { value } => {
+                        if snapshot.effect_type != value {
+                            return Err(format!(
+                                "effect replacement selected effect is {}, expected {value}",
+                                snapshot.effect_type
+                            )
+                            .into());
+                        }
+                        Ok(json!({"effect_type":snapshot.effect_type}))
+                    }
+                    Operation::ExpectEffectProcessor { value } => {
+                        if snapshot.processor_type != u32::from(value) {
+                            return Err(format!(
+                                "effect replacement processor is {}, expected {value}",
+                                snapshot.processor_type
+                            )
+                            .into());
+                        }
+                        Ok(json!({"processor_type":snapshot.processor_type}))
+                    }
+                    Operation::ExpectEffectPanelMode { value } => {
+                        if snapshot.panel_mode != u32::from(value) {
+                            return Err(format!(
+                                "effect replacement selected panel mode is {}, expected {value}",
+                                snapshot.panel_mode
+                            )
+                            .into());
+                        }
+                        Ok(json!({"panel_mode":snapshot.panel_mode}))
+                    }
+                    Operation::ExpectEffectEditMode { enabled } => {
+                        if snapshot.edit_mode != u32::from(enabled) {
+                            return Err(format!(
+                                "effect replacement parameter edit mode is {}, expected {enabled}",
+                                snapshot.edit_mode
+                            )
+                            .into());
+                        }
+                        Ok(json!({"edit_mode":snapshot.edit_mode}))
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            Operation::EffectStateEnd => {
+                let (_, _, started, guest_start, guest_budget, wall_budget) = self
+                    .effect_state
+                    .take()
+                    .ok_or("effect state snapshot missing")?;
+                if (guest_timeout_ms, wall_timeout_s) != (guest_budget, wall_budget)
+                    || started.elapsed() >= Duration::from_secs(wall_budget)
+                    || guest_now(session).wrapping_sub(guest_start) > guest_budget
+                {
+                    return Err(
+                        "effect state assertion exceeded its shared deadline or changed budget"
+                            .into(),
+                    );
+                }
+                Ok(json!({"checked":true}))
             }
             Operation::WaitEffectMode {
                 panel_mode,
@@ -1189,49 +1548,37 @@ impl State {
                 .map_err(std::io::Error::other)?;
                 Ok(json!({"panel_mode": panel_mode, "edit_mode": edit_mode}))
             }
-            Operation::EffectReplacementState {
+            Operation::WaitEffectSlot {
                 expected_effect_type,
                 expected_processor_type,
-                expected_panel_mode,
-                expected_edit_mode,
-                minimum_parameter_edits,
-                expected_parameter_id,
-                expected_parameter_value,
-                expected_dialog_active,
-                minimum_exit_ring_refreshes,
                 expected_effect,
                 require_output,
-                wait_for_slot,
             } => {
-                if wait_for_slot {
-                    wait_effect_slot(
-                        options,
-                        session,
-                        expected_effect_type,
-                        expected_processor_type,
-                        expected_effect.as_deref(),
-                        require_output,
-                        guest_timeout_ms,
-                        wall_timeout_s,
-                    )
-                    .map_err(std::io::Error::other)?;
+                if self.effect_slot_deadline.is_some() {
+                    return Err("effect slot wait already active".into());
                 }
-                Ok(effect_replacement_state(
+                let reader = wait_effect_slot(
                     options,
                     session,
-                    expected_effect_type,
-                    expected_processor_type,
-                    expected_panel_mode,
-                    expected_edit_mode,
-                    minimum_parameter_edits,
-                    expected_parameter_id,
-                    expected_parameter_value,
-                    expected_dialog_active,
-                    minimum_exit_ring_refreshes,
+                    Some(expected_effect_type),
+                    Some(expected_processor_type),
                     expected_effect.as_deref(),
                     require_output,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                    operation_start,
                 )
-                .map_err(std::io::Error::other)?)
+                .map_err(std::io::Error::other)?;
+                self.effect_slot_deadline = Some(sd::EffectSlotScope {
+                    reader,
+                    start: operation_start.0,
+                    guest_start: operation_start.1,
+                    guest_budget: guest_timeout_ms,
+                    wall_budget: wall_timeout_s,
+                });
+                Ok(
+                    json!({"effect_type":expected_effect_type,"processor_type":expected_processor_type,"effect":expected_effect,"fresh_output":require_output}),
+                )
             }
             Operation::WaitSdPatchLoaded => {
                 let registry = wait_sd_patch_loaded(session, guest_timeout_ms, wall_timeout_s)?;
@@ -1263,6 +1610,11 @@ impl State {
                 .map_err(std::io::Error::other)?;
                 self.sd_inspection = Some(sd::SdInspectionContext {
                     fixture,
+                    snapshot: None,
+                    allocation_checked: false,
+                    chains: None,
+                    continuation_modules: None,
+                    module_images_checked: false,
                     wall_deadline,
                     guest_start: operation_start.1,
                     guest_timeout_ms,
@@ -1270,36 +1622,77 @@ impl State {
                 });
                 Ok(json!({"guarded_hooks":guarded}))
             }
-            Operation::ExpectSdModule {
+            Operation::CaptureSdModule { loaded } => {
+                let context = self
+                    .sd_inspection
+                    .as_mut()
+                    .ok_or("SD inspection missing loader assertion")?;
+                if context.snapshot.is_some() {
+                    return Err("SD module snapshot already captured".into());
+                }
+                let control = l6ctl::OwnedControl::new(&session.engine);
+                let reader = control.sd_loader_reader(context.wall_deadline)?;
+                let snapshot = if loaded {
+                    wait_sd_loader_snapshot(
+                        session,
+                        &reader,
+                        context.wall_deadline,
+                        context.guest_start,
+                        context.guest_timeout_ms,
+                    )?
+                } else {
+                    reader.snapshot_cancellable(context.wall_deadline, || {
+                        guest_now(session).wrapping_sub(context.guest_start)
+                            >= context.guest_timeout_ms
+                    })?
+                };
+                let evidence = serde_json::to_value(&snapshot)?;
+                context.snapshot = Some((loaded, snapshot));
+                Ok(evidence)
+            }
+            Operation::ExpectSdAllocation { loaded } => {
+                let context = self.sd_inspection.as_mut().ok_or("SD inspection missing")?;
+                let (captured_loaded, snapshot) = context
+                    .snapshot
+                    .as_ref()
+                    .ok_or("SD module snapshot missing")?;
+                if *captured_loaded != loaded || context.allocation_checked {
+                    return Err("SD allocation assertion has unexpected state".into());
+                }
+                let evidence = check_sd_allocation(
+                    snapshot,
+                    loaded,
+                    context
+                        .fixture
+                        .edits
+                        .6
+                        .iter()
+                        .map(|(bytes, _, _)| bytes.len()),
+                )?;
+                context.allocation_checked = true;
+                Ok(evidence)
+            }
+            Operation::ExpectSdChains {
                 loaded,
                 chain_count,
             } => {
-                let context = self
-                    .sd_inspection
-                    .take()
-                    .ok_or("SD module assertion needs preceding loader assertion")?;
-                let fixture = context.fixture;
+                let context = self.sd_inspection.as_mut().ok_or("SD inspection missing")?;
+                if !context.allocation_checked || context.chains.is_some() {
+                    return Err("SD chain assertion has unexpected state".into());
+                }
+                let (captured_loaded, snapshot) = context
+                    .snapshot
+                    .as_ref()
+                    .ok_or("SD module snapshot missing")?;
+                if *captured_loaded != loaded {
+                    return Err("SD chain assertion does not match captured state".into());
+                }
                 let inspection_deadline = context.wall_deadline;
                 let inspection_guest_start = context.guest_start;
                 let inspection_guest_budget = context.guest_timeout_ms;
-                let sd::FrozenSdFixture {
-                    edits: fixture,
-                    loader_report: frozen_loader,
-                    patch_report: frozen_patch,
-                    chain_first: frozen_chain,
-                } = fixture;
-                let (edits, link_base, payload, _, _relocations, module_hooks, module_images) =
-                    fixture;
-                // Without a card mount since the last reset the loader has no
-                // registry, so every dispatch stub takes the stock path.
-                // A successful loader claim is published only after the SD
-                // scan and hook installation have finished. Wait for that
-                // signal when a module is expected; absence checks remain
-                // immediate and require their own observation window.
+                let (edits, _, _, _, _, module_hooks, _) = &context.fixture.edits;
                 let control = l6ctl::OwnedControl::new(&session.engine);
-                let reader = control
-                    .sd_loader_reader(inspection_deadline)
-                    .map_err(std::io::Error::other)?;
+                let reader = control.sd_loader_reader(inspection_deadline)?;
                 let read_live =
                     |address: u32, length: usize| -> Result<Vec<u8>, Box<dyn std::error::Error>> {
                         reader
@@ -1309,28 +1702,13 @@ impl State {
                             })
                             .map_err(|e| std::io::Error::other(e).into())
                     };
-                let typed_snapshot = if loaded {
-                    wait_sd_loader_snapshot(
-                        session,
-                        &reader,
-                        inspection_deadline,
-                        inspection_guest_start,
-                        inspection_guest_budget,
-                    )
-                    .map_err(std::io::Error::other)?
-                } else {
-                    reader
-                        .snapshot_cancellable(inspection_deadline, || {
-                            guest_now(session).wrapping_sub(inspection_guest_start)
-                                >= inspection_guest_budget
-                        })
-                        .map_err(std::io::Error::other)?
-                };
-                let registry = typed_snapshot.registry;
-                let Some(registry) = registry else {
-                    if loaded {
-                        return Err("the Patch loader has not allocated its registry".into());
-                    }
+                let Some(registry) = snapshot.registry else {
+                    context.chains = Some(sd::SdChainEvidence {
+                        expected_function: None,
+                        count: 0,
+                        links: Vec::new(),
+                        expected_count: chain_count,
+                    });
                     return Ok(json!({"loaded":false,"registry":null,"guarded_hooks":edits.len()}));
                 };
                 let inspect_chain = |record| -> Result<_, Box<dyn std::error::Error>> {
@@ -1346,28 +1724,9 @@ impl State {
                     .map_err(|e| std::io::Error::other(e).into())
                 };
                 let slot_for = |address| {
-                    sd_frozen_handler_slot(&frozen_loader, registry, address)
+                    sd_frozen_handler_slot(&context.fixture.loader_report, registry, address)
                         .map_err(std::io::Error::other)
                 };
-                let loaded_base = typed_snapshot.module_base.ok_or("SD module base missing")?;
-                let loaded_len = typed_snapshot
-                    .module_len
-                    .ok_or("SD module length missing")?;
-                let known_module_size = module_images
-                    .iter()
-                    .any(|(module_payload, _, _)| module_payload.len() == loaded_len as usize);
-                if loaded != (loaded_base != 0) || (loaded && !known_module_size) {
-                    let stage = typed_snapshot.stage.unwrap_or_default();
-                    return Err(format!("SD allocation state loaded={loaded}, base={loaded_base:#010x}, len={loaded_len}, loader stage={stage:#x}").into());
-                }
-                let claim = typed_snapshot.claim.ok_or("SD claim missing")?;
-                if (claim == 1) != loaded {
-                    let stage = typed_snapshot.stage.unwrap_or_default();
-                    return Err(format!(
-                        "SD module loaded={loaded}, claim={claim:#x}, loader stage={stage:#x}"
-                    )
-                    .into());
-                }
                 let expected_function = if chain_count.is_some() {
                     module_hooks
                         .iter()
@@ -1384,7 +1743,7 @@ impl State {
                     module_hooks.first().map(|hook| hook.address)
                 };
                 let mut expected_chains = std::collections::BTreeMap::<u32, u32>::new();
-                for module_hook in &module_hooks {
+                for module_hook in module_hooks {
                     *expected_chains.entry(module_hook.address).or_default() += 1;
                 }
                 for (address, module_count) in expected_chains {
@@ -1440,7 +1799,7 @@ impl State {
                     .iter()
                     .map(|link| (link.entry, link.next_slot, link.order, link.module_base))
                     .collect();
-                for (address, _, _entry_offset) in &edits {
+                for (address, _, _entry_offset) in edits {
                     // Every edit is one of the module's hooks (sd_fixture_edits).
                     let slot = slot_for(*address)?;
                     let handler = u32::from_le_bytes(read_live(slot, 4)?.try_into().unwrap());
@@ -1458,47 +1817,70 @@ impl State {
                         .into());
                     }
                 }
+                let evidence = json!({"loaded":loaded,"hook_chain_count":registered_count,"hook_chain_orders":chain_links.iter().map(|link|link.2).collect::<Vec<_>>()});
+                context.chains = Some(sd::SdChainEvidence {
+                    expected_function,
+                    count: registered_count,
+                    links: chain_links,
+                    expected_count: chain_count,
+                });
+                Ok(evidence)
+            }
+            Operation::ExpectSdContinuations { loaded } => {
+                let context = self.sd_inspection.as_mut().ok_or("SD inspection missing")?;
+                let (captured_loaded, snapshot) = context
+                    .snapshot
+                    .as_ref()
+                    .ok_or("SD module snapshot missing")?;
+                if *captured_loaded != loaded || context.continuation_modules.is_some() {
+                    return Err("SD continuation assertion has unexpected state".into());
+                }
+                let chains = context
+                    .chains
+                    .as_ref()
+                    .ok_or("SD chain assertion missing")?;
+                let mut matched_modules = Vec::new();
                 if loaded {
+                    if snapshot.registry.is_none() {
+                        return Err("SD module registry missing".into());
+                    }
+                    let expected_function = chains.expected_function;
+                    let chain_count = chains.expected_count;
+                    let chain_links = &chains.links;
+                    let (_, _, _, _, _, module_hooks, module_images) = &context.fixture.edits;
+                    let frozen_chain = &context.fixture.chain_first;
+                    let frozen_loader = &context.fixture.loader_report;
+                    let patch_report = context
+                        .fixture
+                        .patch_report
+                        .as_ref()
+                        .ok_or("dynamic report missing")?;
+                    let ordered_chain = frozen_chain.is_some();
+                    let inspection_deadline = context.wall_deadline;
+                    let inspection_guest_start = context.guest_start;
+                    let inspection_guest_budget = context.guest_timeout_ms;
+                    let control = l6ctl::OwnedControl::new(&session.engine);
+                    let reader = control.sd_loader_reader(inspection_deadline)?;
+                    let read_live =
+                        |address: u32,
+                         length: usize|
+                         -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+                            reader
+                                .read_chunk_cancellable(
+                                    address,
+                                    length,
+                                    inspection_deadline,
+                                    || {
+                                        guest_now(session).wrapping_sub(inspection_guest_start)
+                                            >= inspection_guest_budget
+                                    },
+                                )
+                                .map_err(|e| std::io::Error::other(e).into())
+                        };
                     let hook = module_hooks
                         .iter()
                         .find(|hook| Some(hook.address) == expected_function)
                         .ok_or("dynamic patch bundle has no hook record")?;
-                    let ordered_chain = frozen_chain.is_some();
-                    let patch_report = frozen_patch.as_ref().ok_or("dynamic report missing")?;
-                    let patch_for_size = |size: usize| {
-                        patch_report["patches"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .find(|patch| patch["memory_length"].as_u64() == Some(size as u64))
-                    };
-                    let mutable_ranges_for_size = |size: usize| {
-                        let patch = patch_for_size(size);
-                        let mut ranges = patch
-                            .and_then(|patch| patch["writable_data"].as_object())
-                            .and_then(|data| {
-                                Some((
-                                    usize::try_from(data["offset"].as_u64()?).ok()?,
-                                    usize::try_from(data["length"].as_u64()?).ok()?,
-                                ))
-                            })
-                            .filter(|(_, length)| *length > 0)
-                            .into_iter()
-                            .collect::<Vec<_>>();
-                        if let Some(code_len) = patch
-                            .and_then(|patch| patch["payload_length"].as_u64())
-                            .and_then(|length| usize::try_from(length).ok())
-                            && code_len < size
-                        {
-                            // The loader zeroes this NOBITS tail before module
-                            // initialization. Once running, it is module-owned
-                            // writable state, so runtime byte comparison must
-                            // not mistake legitimate initialization for code
-                            // corruption.
-                            ranges.push((code_len, size - code_len));
-                        }
-                        ranges
-                    };
                     let pass_through_entry_offset = if ordered_chain {
                         Some(
                             patch_report["patches"][0]["pass_through_entry_offsets"][0]
@@ -1545,34 +1927,29 @@ impl State {
                     for (index, (entry, next_slot, _order, module)) in
                         chain_links.iter().enumerate()
                     {
-                        let (module_payload, module_relocations, module_payload_hooks) =
-                            module_images
-                                .iter()
-                                .find_map(|(payload, relocations, hooks)| {
-                                    hooks
-                                        .iter()
-                                        .find(|candidate| {
-                                            candidate.address == hook.address
-                                                && (*entry
-                                                    == ((*module + candidate.entry_offset) | 1)
-                                                    || ordered_chain
-                                                        && index == 0
-                                                        && *entry
-                                                            == ((*module
-                                                                + pass_through_entry_offset
-                                                                    .unwrap_or(u32::MAX))
-                                                                | 1))
-                                                && *next_slot
-                                                    == *module + candidate.next_slot_offset
-                                        })
-                                        .map(|_| (payload, relocations, hooks))
-                                })
-                                .ok_or_else(|| {
-                                    format!(
-                                        "hook {index} does not match any module's hook metadata"
-                                    )
-                                })?;
-                        let mutable_symbol_ranges = mutable_ranges_for_size(module_payload.len());
+                        let module_index = module_images
+                            .iter()
+                            .enumerate()
+                            .find_map(|(module_index, (_, _, hooks))| {
+                                hooks
+                                    .iter()
+                                    .find(|candidate| {
+                                        candidate.address == hook.address
+                                            && (*entry == ((*module + candidate.entry_offset) | 1)
+                                                || ordered_chain
+                                                    && index == 0
+                                                    && *entry
+                                                        == ((*module
+                                                            + pass_through_entry_offset
+                                                                .unwrap_or(u32::MAX))
+                                                            | 1))
+                                            && *next_slot == *module + candidate.next_slot_offset
+                                    })
+                                    .map(|_| module_index)
+                            })
+                            .ok_or_else(|| {
+                                format!("hook {index} does not match any module's hook metadata")
+                            })?;
                         let expected_next =
                             chain_links.get(index + 1).map_or(fallback, |next| next.0);
                         let actual_next =
@@ -1583,113 +1960,36 @@ impl State {
                             )
                             .into());
                         }
-                        let mut expected = module_payload.clone();
-                        if ordered_chain && index == 0 {
-                            // The first copy names its own package, so its
-                            // code is the fixture file's, not the bundle's.
-                            let file = frozen_chain
-                                .as_ref()
-                                .ok_or("ordered-chain fixture missing")?;
-                            let start = patch_abi::dynamic::HEADER_LEN_V1;
-                            expected = file
-                                .get(start..start + expected.len())
-                                .ok_or("ordered-chain fixture is shorter than its module")?
-                                .to_vec();
-                        }
-                        patch_abi::relocation::relocate(
-                            &mut expected,
-                            module_relocations.clone().into_iter(),
-                            link_base,
-                            *module,
-                        )
-                        .map_err(|error| format!("invalid fixture relocations: {error:?}"))?;
-                        for payload_hook in module_payload_hooks {
-                            if payload_hook.next_slot_offset == u32::MAX {
-                                continue;
-                            }
-                            let slot = *module + payload_hook.next_slot_offset;
-                            let target = read_live(slot, 4)?;
-                            let slot_offset = payload_hook.next_slot_offset as usize;
-                            expected[slot_offset..slot_offset + 4].copy_from_slice(&target);
-                        }
-                        for (chunk_index, chunk) in expected.chunks(4096).enumerate() {
-                            let address = *module + (chunk_index * 4096) as u32;
-                            let actual = read_live(address, chunk.len())?;
-                            let mismatch = actual.iter().zip(chunk).enumerate().find(
-                                |(index, (actual, expected))| {
-                                    let module_offset = chunk_index * 4096 + index;
-                                    actual != expected
-                                        && !mutable_symbol_ranges.iter().any(|(start, length)| {
-                                            module_offset >= *start
-                                                && module_offset < *start + *length
-                                        })
-                                },
-                            );
-                            if let Some((offset, (actual_byte, expected_byte))) = mismatch {
-                                return Err(format!(
-                                    "allocated SD module {index} differs from its relocated bundle at {:#010x} (expected {:#04x}, got {:#04x})",
-                                    address + offset as u32,
-                                    expected_byte,
-                                    actual_byte,
-                                )
-                                .into());
-                            }
-                        }
-                        if (*entry & !1) < *module {
-                            return Err(format!("hook {index} entry precedes its module").into());
-                        }
-                    }
-                    if let Some((latest_payload, latest_relocations, latest_hooks)) = module_images
-                        .iter()
-                        .find(|(module_payload, _, _)| module_payload.len() == loaded_len as usize)
-                    {
-                        let mutable_symbol_ranges = mutable_ranges_for_size(latest_payload.len());
-                        let mut expected = latest_payload.clone();
-                        patch_abi::relocation::relocate(
-                            &mut expected,
-                            latest_relocations.clone().into_iter(),
-                            link_base,
-                            loaded_base,
-                        )
-                        .map_err(|error| format!("invalid latest module relocations: {error:?}"))?;
-                        for latest_hook in latest_hooks {
-                            if latest_hook.next_slot_offset == u32::MAX {
-                                continue;
-                            }
-                            let slot = loaded_base + latest_hook.next_slot_offset;
-                            let target = read_live(slot, 4)?;
-                            let offset = latest_hook.next_slot_offset as usize;
-                            expected[offset..offset + 4].copy_from_slice(&target);
-                        }
-                        for (chunk_index, chunk) in expected.chunks(4096).enumerate() {
-                            let address = loaded_base + (chunk_index * 4096) as u32;
-                            let actual = read_live(address, chunk.len())?;
-                            let mismatch = actual.iter().zip(chunk).enumerate().any(
-                                |(index, (actual, expected))| {
-                                    let module_offset = chunk_index * 4096 + index;
-                                    actual != expected
-                                        && !mutable_symbol_ranges.iter().any(|(start, length)| {
-                                            module_offset >= *start
-                                                && module_offset < *start + *length
-                                        })
-                                },
-                            );
-                            if mismatch {
-                                return Err(
-                                    "latest allocated SD module does not match its relocated bundle"
-                                        .into(),
-                                );
-                            }
-                        }
+                        matched_modules.push(module_index);
                     }
                 }
-                Ok(
-                    json!({"loaded":loaded,"guarded_hooks":edits.len(),"module_bytes":if loaded { payload.len() } else { 0 },"hook_chain_count":registered_count,"hook_chain_orders":chain_links.iter().map(|link|link.2).collect::<Vec<_>>()}),
-                )
+                let count = matched_modules.len();
+                context.continuation_modules = Some(matched_modules);
+                Ok(json!({"loaded":loaded,"continuations":count}))
+            }
+            Operation::ExpectSdModuleImages { loaded } => {
+                let context = self
+                    .sd_inspection
+                    .as_mut()
+                    .ok_or("SD module-image assertion needs preceding inspection")?;
+                let value = sd::verify_module_images(session, context, loaded)?;
+                context.module_images_checked = true;
+                Ok(value)
+            }
+            Operation::ExpectSdLatestModule { loaded } => {
+                let context = self
+                    .sd_inspection
+                    .as_ref()
+                    .ok_or("SD latest-allocation assertion needs preceding inspection")?;
+                if !context.module_images_checked {
+                    return Err("SD module-image assertion missing".into());
+                }
+                let value = sd::verify_latest_module(session, context, loaded)?;
+                self.sd_inspection = None;
+                Ok(value)
             }
             Operation::ExpectHeap { minimum_free } => {
-                let heap =
-                    l6max_host::heap::read(&session.engine.management[0], session.engine.model())?;
+                let heap = l6ctl::OwnedControl::new(&session.engine).checked_heap()?;
                 if heap.minimum_ever_free < minimum_free {
                     return Err(format!(
                         "heap fell to {} free bytes, below the required {minimum_free}: {heap:?}",
@@ -1703,196 +2003,69 @@ impl State {
                 targets,
                 duration_ms,
                 until,
-            } => {
-                let inputs = session.engine.inputs.as_ref().unwrap();
-                let start = inputs.panel.snapshot().guest_ms;
-                let factory_mode =
-                    matches!(until, Some(crate::scenario::ChordCondition::FactoryMode));
-                if factory_mode {
-                    let initial =
-                        session.engine.management[0].read_memory(0, l6max::system_mode, 4)?;
-                    if initial == 7u32.to_le_bytes() {
-                        return Err("factory mode was already active before the chord".into());
-                    }
-                }
-                // DOWN duration is a minimum hold in the emulator; a
-                // condition-based chord requests the normal button minimum.
-                let hold =
-                    duration_ms.map_or(0, |duration| duration.saturating_add(1000).min(60_000));
-                for target in &targets {
-                    inputs.down(*target, hold)?;
-                }
-                let deadline = Instant::now()
-                    + Duration::from_secs(if factory_mode {
-                        wall_timeout_s.min(180)
-                    } else {
-                        wall_timeout_s
-                    });
-                let guest_limit = if factory_mode {
-                    guest_timeout_ms.min(10_000)
-                } else {
-                    guest_timeout_ms
-                };
-                let mut next_mode_poll = Instant::now();
-                let mut factory_reached = false;
-                loop {
-                    session.poll()?;
-                    let main = inputs.main.snapshot();
-                    let panel = inputs.panel.snapshot();
-                    if main.powered_off || panel.powered_off {
-                        return Err("guest powered off during held chord".into());
-                    }
-                    let elapsed = panel.guest_ms.wrapping_sub(start);
-                    if factory_mode && !factory_reached && Instant::now() >= next_mode_poll {
-                        factory_reached =
-                            session.engine.management[0].read_memory(0, l6max::system_mode, 4)?
-                                == 7u32.to_le_bytes();
-                        next_mode_poll = Instant::now() + Duration::from_millis(10);
-                    }
-                    if main.applied >= main.sent
-                        && panel.applied >= panel.sent
-                        && (factory_reached
-                            || duration_ms.is_some_and(|duration| elapsed >= duration))
-                    {
-                        break;
-                    }
-                    if Instant::now() > deadline || elapsed > guest_limit {
-                        return Err("held chord was not applied within its deadline".into());
-                    }
-                    thread::sleep(Duration::from_millis(5));
-                }
-                for target in targets.iter().rev() {
-                    inputs.up(*target)?;
-                }
-                loop {
-                    session.poll()?;
-                    let main = inputs.main.snapshot();
-                    let panel = inputs.panel.snapshot();
-                    if main.applied >= main.sent && panel.applied >= panel.sent {
-                        break;
-                    }
-                    if Instant::now() > deadline {
-                        return Err("held chord release was not acknowledged".into());
-                    }
-                    thread::sleep(Duration::from_millis(5));
-                }
-                Ok(
-                    json!({"targets":targets,"held_guest_ms":inputs.panel.snapshot().guest_ms.wrapping_sub(start)}),
-                )
-            }
-            Operation::PanelEvent {
+            } => chord::hold(
+                session,
+                targets,
+                duration_ms,
+                until,
+                guest_timeout_ms,
+                wall_timeout_s,
+            ),
+            Operation::PanelEventBegin {
                 target,
                 column,
                 row,
                 event,
             } => {
-                use firmware_api::l6::main_event_submit;
-                use firmware_api::l6::panel_event_dispatcher;
-                use firmware_api::l6::panel_report;
-                let inputs = &session.engine.inputs.as_ref().unwrap().panel;
-                let qmp = &session.engine.management[0];
-                let socket = options
-                    .gdb_socket
+                self.panel_event = Some(panel_event::Scope::begin(
+                    session,
+                    target,
+                    column,
+                    row,
+                    event,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            Operation::PanelEventPress => Ok(self
+                .panel_event
+                .as_mut()
+                .ok_or("panel event scope missing")?
+                .press(session)?),
+            Operation::PanelEventCapture => Ok(self
+                .panel_event
+                .as_mut()
+                .ok_or("panel event scope missing")?
+                .capture(session)?),
+            Operation::PanelEventReport => Ok(self
+                .panel_event
+                .as_mut()
+                .ok_or("panel event scope missing")?
+                .assert_report(session)?),
+            Operation::PanelEventMapping => Ok(self
+                .panel_event
+                .as_mut()
+                .ok_or("panel event scope missing")?
+                .assert_mapping(session, wall_timeout_s)?),
+            Operation::PanelEventRelease => Ok(self
+                .panel_event
+                .as_mut()
+                .ok_or("panel event scope missing")?
+                .release(session, wall_timeout_s)?),
+            Operation::PanelEventSettle => Ok(self
+                .panel_event
+                .as_ref()
+                .ok_or("panel event scope missing")?
+                .settle(session)?),
+            Operation::PanelEventEnd => {
+                let v = self
+                    .panel_event
                     .as_ref()
-                    .ok_or("panel-event requires a configured GDB socket")?;
-                if self.gdb.is_none() {
-                    self.gdb = Some(l6max_diagnostics::gdb::Gdb::connect(socket)?);
-                }
-                let gdb = self.gdb.as_mut().unwrap();
-                qmp.stop()?;
-                gdb.breakpoint(panel_event_dispatcher, true)?;
-                let mut dispatcher_armed = true;
-                gdb.breakpoint(main_event_submit, true)?;
-                inputs.down(target, 0)?;
-                let deadline = Instant::now() + Duration::from_secs(15);
-                let mut skipped_reports = 0u32;
-                let bytes = loop {
-                    let remaining = deadline.saturating_duration_since(Instant::now());
-                    if remaining.is_zero() {
-                        return Err(format!(
-                            "panel target {target} did not submit a button report after {skipped_reports} unrelated submissions"
-                        )
-                        .into());
-                    }
-                    gdb.continue_until_stop(remaining)?;
-                    let pc = gdb.read_register(15)? & !1;
-                    if pc == panel_event_dispatcher {
-                        gdb.breakpoint(panel_event_dispatcher, false)?;
-                        dispatcher_armed = false;
-                        continue;
-                    }
-                    if pc != main_event_submit {
-                        return Err(format!(
-                            "panel target {target} stopped at {pc:#x}, not dispatcher or event submit"
-                        )
-                        .into());
-                    }
-                    let response = gdb.request(&format!("m{panel_report:x},3"))?;
-                    if response.len() != 6 {
-                        return Err(format!("unexpected panel report bytes: {response}").into());
-                    }
-                    let bytes = (0..3)
-                        .map(|index| u8::from_str_radix(&response[index * 2..index * 2 + 2], 16))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    // Other panel activity can submit events between input
-                    // injection and the button report, especially at boot.
-                    if !matches!(bytes[0], 0x90 | 0x91) {
-                        skipped_reports += 1;
-                        // Continuing from a software breakpoint can stop on
-                        // the same instruction again. Step over the unrelated
-                        // submission before waiting for the next one.
-                        gdb.breakpoint(main_event_submit, false)?;
-                        gdb.request("s")?;
-                        gdb.breakpoint(main_event_submit, true)?;
-                        continue;
-                    }
-                    break bytes;
-                };
-                if (bytes[1], bytes[2]) != (column, row) {
-                    return Err(format!(
-                        "panel target {target} report {bytes:02x?}, expected ({column},{row})"
-                    )
-                    .into());
-                }
-                let state = gdb.read_register(1)?;
-                let observed_event = gdb.read_register(2)?;
-                if state != 0 || observed_event != u32::from(event) {
-                    return Err(format!("panel target {target} submitted state {state} event {observed_event}, expected press-state 0 event {event}").into());
-                }
-                let entry = if column == 0 {
-                    l6::PANEL_COLUMN0_EVENT_TABLE + u32::from(row) * 0x14
-                } else {
-                    l6::PANEL_EVENT_TABLE + u32::from(column) * 0xa0 + u32::from(row) * 0x14
-                };
-                let mapping = qmp.read_memory(0, entry + 8, 4)?;
-                let mapped_event = u32::from_le_bytes(mapping.try_into().unwrap());
-                if mapped_event != u32::from(event) {
-                    return Err(format!(
-                        "MAIN map ({column},{row}) is {mapped_event}, expected {event}"
-                    )
-                    .into());
-                }
-                if dispatcher_armed {
-                    gdb.breakpoint(panel_event_dispatcher, false)?;
-                }
-                gdb.breakpoint(main_event_submit, false)?;
-                qmp.resume()?;
-                inputs.up(target)?;
-                let started = inputs.snapshot().guest_ms;
-                let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
-                loop {
-                    session.poll()?;
-                    if inputs.snapshot().guest_ms.wrapping_sub(started) >= 250 {
-                        break;
-                    }
-                    if Instant::now() > deadline {
-                        return Err("panel event release timed out".into());
-                    }
-                    thread::sleep(Duration::from_millis(5));
-                }
-                Ok(
-                    json!({"target":target,"column":column,"row":row,"event":event,"report":bytes,"skipped_reports":skipped_reports}),
-                )
+                    .ok_or("panel event scope missing")?
+                    .finish(session)?;
+                self.panel_event = None;
+                Ok(v)
             }
             Operation::WaitRecordedFiles { files } => {
                 const GUEST_TIMEOUT_MS: u32 = 20_000;
@@ -1943,35 +2116,32 @@ impl State {
                 command,
                 position_ms,
             } => {
-                use l6max_host::protocol;
-                let target = match command.as_str() {
-                    "stop" => protocol::AUDIO_INPUT_STOP,
-                    "play" => protocol::AUDIO_INPUT_PLAY,
-                    "pause" => protocol::AUDIO_INPUT_PAUSE,
-                    "seek" => protocol::AUDIO_INPUT_SEEK,
+                let operation = match command.as_str() {
+                    "stop" => l6ctl::AudioTransport::Stop,
+                    "play" => l6ctl::AudioTransport::Play,
+                    "pause" => l6ctl::AudioTransport::Pause,
+                    "seek" => l6ctl::AudioTransport::Seek,
                     other => return Err(format!("unknown audio input command {other}").into()),
                 };
-                let main = &session.engine.inputs.as_ref().unwrap().main;
-                let sequence = main.audio_input_transport(target, position_ms)?;
-                Ok(json!({"command": command, "position_ms": position_ms, "sequence": sequence}))
+                let control = l6ctl::OwnedControl::new(&session.engine);
+                let receipt = control.audio_input_transport(operation, position_ms)?;
+                Ok(
+                    json!({"command": command, "position_ms": position_ms, "sequence": receipt.sequence}),
+                )
             }
             Operation::AudioInputLoad { channel, loaded } => {
-                let main = &session.engine.inputs.as_ref().unwrap().main;
-                let before = main.snapshot().rejected;
-                let sequence = main.audio_input_load(channel - 1, loaded)?;
+                let control = l6ctl::OwnedControl::new(&session.engine);
+                let before = control.audio_input_status()?.rejected;
+                let sequence = control.audio_input_load(channel, loaded)?.sequence;
                 let deadline =
                     std::time::Instant::now() + std::time::Duration::from_secs(wall_timeout_s);
-                while main
-                    .snapshot()
-                    .last_ack
-                    .is_none_or(|ack| ack.sequence != sequence)
-                {
+                while control.audio_input_status()?.last_ack_sequence != Some(sequence) {
                     if std::time::Instant::now() >= deadline {
                         return Err("audio input load was not acknowledged".into());
                     }
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
-                if main.snapshot().rejected != before {
+                if control.audio_input_status()?.rejected != before {
                     return Err(format!("channel {channel} has no prepared audio").into());
                 }
                 Ok(json!({"channel": channel, "loaded": loaded}))
@@ -1989,19 +2159,16 @@ impl State {
                     Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
                 loop {
                     session.poll()?;
-                    let status = session.engine.inputs.as_ref().unwrap().main.snapshot();
-                    if status.audio_input_playing == playing
-                        && (min_ms..=max_ms).contains(&status.audio_input_position_ms)
+                    let status = l6ctl::OwnedControl::new(&session.engine).audio_input_status()?;
+                    if status.playing == playing && (min_ms..=max_ms).contains(&status.position_ms)
                     {
-                        break Ok(
-                            json!({"playing": playing, "position_ms": status.audio_input_position_ms}),
-                        );
+                        break Ok(json!({"playing": playing, "position_ms": status.position_ms}));
                     }
                     if Instant::now() >= deadline
                         || guest_now(session).wrapping_sub(start)
                             >= guest_timeout_ms.min(GUEST_TIMEOUT_MS)
                     {
-                        break Err(format!("audio input did not reach playing={playing}, {min_ms}..={max_ms} ms: playing={}, position={} ms",status.audio_input_playing,status.audio_input_position_ms).into());
+                        break Err(format!("audio input did not reach playing={playing}, {min_ms}..={max_ms} ms: playing={}, position={} ms",status.playing,status.position_ms).into());
                     }
                     thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
                 }
@@ -2011,14 +2178,12 @@ impl State {
                 min_ms,
                 max_ms,
             } => {
-                let status = session.engine.inputs.as_ref().unwrap().main.snapshot();
+                let status = l6ctl::OwnedControl::new(&session.engine).audio_input_status()?;
                 let evidence = json!({
-                    "playing": status.audio_input_playing,
-                    "position_ms": status.audio_input_position_ms,
+                    "playing": status.playing,
+                    "position_ms": status.position_ms,
                 });
-                if status.audio_input_playing != playing
-                    || !(min_ms..=max_ms).contains(&status.audio_input_position_ms)
-                {
+                if status.playing != playing || !(min_ms..=max_ms).contains(&status.position_ms) {
                     return Err(format!(
                         "audio input state {evidence} is not playing={playing}, {min_ms}..={max_ms} ms"
                     )
@@ -2140,150 +2305,157 @@ impl State {
                 }
                 Ok(evidence)
             }
-            Operation::L6maxTapHandler => {
-                const TAP_TARGET: u32 = 48;
-                use firmware_api::l6max::l6max_tap_press_handler;
-                let inputs = &session.engine.inputs.as_ref().unwrap().main;
-                let qmp = &session.engine.management[0];
-                let socket = options
-                    .gdb_socket
-                    .as_ref()
-                    .ok_or("l6max-tap-handler requires a configured GDB socket")?;
-                if self.gdb.is_none() {
-                    self.gdb = Some(l6max_diagnostics::gdb::Gdb::connect(socket)?);
+            Operation::L6maxTapBegin => {
+                if self.tap_handler.is_some() {
+                    return Err("tap scope already active".into());
                 }
-                let gdb = self.gdb.as_mut().unwrap();
-                qmp.stop()?;
-                gdb.breakpoint(l6max_tap_press_handler, true)?;
-                let applied = inputs.snapshot().applied;
-                inputs.down(TAP_TARGET, 0)?;
-                wait_l6_input(
+                self.tap_handler = Some(tap_handler::Scope::begin(
                     session,
-                    || inputs.snapshot().applied > applied,
-                    "TAP press acknowledgement",
-                )?;
-                let stopped =
-                    continue_within_guest(session, gdb, 5_000, Duration::from_secs(wall_timeout_s));
-                if let Err(error) = stopped {
-                    let _ = gdb.breakpoint(l6max_tap_press_handler, false);
-                    let _ = qmp.resume();
-                    return Err(format!("TAP press did not reach its handler: {error}").into());
-                }
-                let pc = gdb.read_register(15)? & !1;
-                gdb.breakpoint(l6max_tap_press_handler, false)?;
-                qmp.resume()?;
-                if pc != l6max_tap_press_handler {
-                    return Err(format!(
-                        "TAP press stopped at {pc:#010x}, expected {l6max_tap_press_handler:#010x}"
-                    )
-                    .into());
-                }
-                let applied = inputs.snapshot().applied;
-                inputs.up(TAP_TARGET)?;
-                wait_l6_input(
-                    session,
-                    || inputs.snapshot().applied > applied,
-                    "TAP release acknowledgement",
-                )?;
-                Ok(json!({"target":TAP_TARGET,"handler":l6max_tap_press_handler}))
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
             }
-            Operation::L6MainGpioEvent { target, event } => {
-                use firmware_api::l6::main_event_submit;
-                use firmware_api::l6::sound_pad_event_handler;
-                let inputs = &session.engine.inputs.as_ref().unwrap().main;
-                let qmp = &session.engine.management[0];
-                let socket = options
-                    .gdb_socket
-                    .as_ref()
-                    .ok_or("l6-main-gpio-event requires a configured GDB socket")?;
-                if self.gdb.is_none() {
-                    self.gdb = Some(l6max_diagnostics::gdb::Gdb::connect(socket)?);
+            operation @ (Operation::L6maxTapPress
+            | Operation::L6maxTapWait
+            | Operation::L6maxTapAssert
+            | Operation::L6maxTapRelease
+            | Operation::L6maxTapEnd) => {
+                let scope = self.tap_handler.as_mut().ok_or("tap scope missing")?;
+                let result = match operation {
+                    Operation::L6maxTapPress => scope.press(session),
+                    Operation::L6maxTapWait => scope.wait(session),
+                    Operation::L6maxTapAssert => scope.assert(session),
+                    Operation::L6maxTapRelease => scope.release(session),
+                    Operation::L6maxTapEnd => scope.finish(session),
+                    _ => unreachable!(),
+                }?;
+                if matches!(operation, Operation::L6maxTapEnd) {
+                    self.tap_handler = None;
                 }
-                let gdb = self.gdb.as_mut().unwrap();
-                qmp.stop()?;
-                gdb.breakpoint(main_event_submit, true)?;
-                let applied = inputs.snapshot().applied;
-                inputs.down(target, 0)?;
-                wait_l6_input(
+                Ok(result)
+            }
+            Operation::L6GpioBegin { target, event } => {
+                if self.gpio_event.is_some() {
+                    return Err("GPIO event scope already active".into());
+                }
+                self.gpio_event = Some(gpio_event::Scope::begin(
                     session,
-                    || inputs.snapshot().applied > applied,
-                    "MAIN GPIO press acknowledgement",
-                )?;
-                gdb.continue_until_stop(Duration::from_secs(15))?;
-                let pc = gdb.read_register(15)? & !1;
-                if pc != main_event_submit {
-                    return Err(format!(
-                        "L6 MAIN target {target} stopped at {pc:#010x}, expected event submit {main_event_submit:#010x}"
-                    )
-                    .into());
+                    target,
+                    event,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"target":target,"event":event}))
+            }
+            operation @ (Operation::L6GpioPress
+            | Operation::L6GpioSubmit
+            | Operation::L6GpioAssert
+            | Operation::L6GpioDispatch
+            | Operation::L6GpioRelease
+            | Operation::L6GpioSettle
+            | Operation::L6GpioEnd) => {
+                let scope = self.gpio_event.as_mut().ok_or("GPIO event scope missing")?;
+                let result = match operation {
+                    Operation::L6GpioPress => scope.press(session),
+                    Operation::L6GpioSubmit => scope.submit(session),
+                    Operation::L6GpioAssert => scope.assert(session),
+                    Operation::L6GpioDispatch => scope.dispatch(session),
+                    Operation::L6GpioRelease => scope.release(session),
+                    Operation::L6GpioSettle => scope.settle(session),
+                    Operation::L6GpioEnd => scope.finish(session),
+                    _ => unreachable!(),
+                }?;
+                if matches!(operation, Operation::L6GpioEnd) {
+                    self.gpio_event = None;
                 }
-                let args = (0..4)
-                    .map(|register| gdb.read_register(register))
-                    .collect::<Result<Vec<_>, _>>()?;
-                if args[2] != u32::from(event) {
-                    return Err(format!(
-                        "L6 MAIN target {target} submitted event {:#04x}, expected {event:#04x}",
-                        args[2]
-                    )
-                    .into());
+                Ok(result)
+            }
+            Operation::L6UsbStartupBegin => {
+                if self.usb_startup.is_some() {
+                    return Err("USB startup scope already active".into());
                 }
-                let dispatch_arguments = if (0x15..=0x18).contains(&event) {
-                    gdb.breakpoint(main_event_submit, false)?;
-                    gdb.breakpoint(sound_pad_event_handler, true)?;
-                    match gdb.continue_until_stop(Duration::from_secs(15)) {
-                        Ok(_) => {
-                            let dispatch_pc = gdb.read_register(15)? & !1;
-                            if dispatch_pc != sound_pad_event_handler {
-                                return Err(format!(
-                                    "L6 MAIN target {target} stopped at {dispatch_pc:#010x}, expected sound-pad event handler {sound_pad_event_handler:#010x}"
-                                )
-                                .into());
-                            }
-                            let dispatch_args = (0..3)
-                                .map(|register| gdb.read_register(register))
-                                .collect::<Result<Vec<_>, _>>()?;
-                            gdb.breakpoint(sound_pad_event_handler, false)?;
-                            Some(dispatch_args)
-                        }
-                        Err(error) => {
-                            let _ = gdb.interrupt();
-                            let _ = gdb.breakpoint(sound_pad_event_handler, false);
-                            let _ = qmp.resume();
-                            return Err(format!(
-                                "L6 MAIN target {target} submitted event {event:#04x} but did not reach the sound-pad event handler: {error}"
-                            )
-                            .into());
-                        }
+                self.usb_startup = Some(usb_startup::Scope::begin(
+                    session,
+                    options,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            operation @ (Operation::L6UsbStartupCapture
+            | Operation::L6UsbStartupAssertHits
+            | Operation::L6UsbStartupAssertWrites
+            | Operation::L6UsbStartupAssertReplay
+            | Operation::L6UsbStartupEnd) => {
+                let scope = self
+                    .usb_startup
+                    .as_mut()
+                    .ok_or("USB startup scope missing")?;
+                let value = match operation {
+                    Operation::L6UsbStartupCapture => scope.capture(session, options),
+                    Operation::L6UsbStartupAssertHits => scope.assert_hits(session),
+                    Operation::L6UsbStartupAssertWrites => scope.assert_writes(session),
+                    Operation::L6UsbStartupAssertReplay => scope.assert_replay(session),
+                    Operation::L6UsbStartupEnd => scope.finish(session),
+                    _ => unreachable!(),
+                }?;
+                if matches!(operation, Operation::L6UsbStartupEnd) {
+                    self.usb_startup = None;
+                }
+                Ok(value)
+            }
+            Operation::L6DispatchBegin { group, cc, value } => {
+                if self.l6_dispatch.is_some() {
+                    return Err("DIN dispatch already active".into());
+                }
+                self.l6_dispatch = Some(l6_dispatch::Scope::begin(
+                    session,
+                    group,
+                    cc,
+                    value,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"group":group,"cc":cc,"value":value}))
+            }
+            operation @ (Operation::L6DispatchTask
+            | Operation::L6DispatchSemaphore
+            | Operation::L6DispatchIdle
+            | Operation::L6DispatchInject
+            | Operation::L6DispatchWake
+            | Operation::L6DispatchState
+            | Operation::L6DispatchReader
+            | Operation::L6DispatchEvent
+            | Operation::L6DispatchEq
+            | Operation::L6DispatchObserve
+            | Operation::L6DispatchSetter { .. }
+            | Operation::L6DispatchFinish) => {
+                let scope = self
+                    .l6_dispatch
+                    .as_mut()
+                    .ok_or("DIN dispatch scope missing")?;
+                let result = match operation {
+                    Operation::L6DispatchTask => scope.task(session),
+                    Operation::L6DispatchSemaphore => scope.semaphore(session),
+                    Operation::L6DispatchIdle => scope.idle(session),
+                    Operation::L6DispatchInject => scope.inject(session),
+                    Operation::L6DispatchWake => scope.wake(session),
+                    Operation::L6DispatchState => scope.state(session),
+                    Operation::L6DispatchReader => scope.reader(session),
+                    Operation::L6DispatchEvent => scope.event(session),
+                    Operation::L6DispatchEq => scope.eq(session),
+                    Operation::L6DispatchObserve => scope.observe(session),
+                    Operation::L6DispatchSetter { index, value } => {
+                        scope.setter(session, index, value)
                     }
-                } else {
-                    gdb.breakpoint(main_event_submit, false)?;
-                    None
-                };
-                qmp.resume()?;
-                let applied = inputs.snapshot().applied;
-                inputs.up(target)?;
-                wait_l6_input(
-                    session,
-                    || inputs.snapshot().applied > applied,
-                    "MAIN GPIO release acknowledgement",
-                )?;
-                wait_guest_duration(
-                    session,
-                    100,
-                    Instant::now() + Duration::from_secs(wall_timeout_s),
-                )?;
-                Ok(
-                    json!({"target":target,"event":event,"arguments":args,"dispatch_arguments":dispatch_arguments}),
-                )
-            }
-            Operation::L6UsbStartup => {
-                Ok(
-                    run_l6_usb_startup(session, options, guest_timeout_ms, wall_timeout_s)
-                        .map_err(std::io::Error::other)?,
-                )
-            }
-            Operation::L6DinEventDispatch { group, cc, value } => {
-                run_l6_din_event_dispatch(session, options, group, cc, value)
+                    Operation::L6DispatchFinish => scope.finish(session),
+                    _ => unreachable!(),
+                }?;
+                if matches!(operation, Operation::L6DispatchFinish) {
+                    self.l6_dispatch = None;
+                }
+                Ok(result)
             }
             Operation::L6SweepBegin => {
                 self.l6_input_sweep = Some(l6_input_sweep::Scope::begin(
@@ -2347,8 +2519,50 @@ impl State {
                 }
                 Ok(value)
             }
-            Operation::L6DinSweep => {
-                Ok(run_l6_din_sweep(session, options).map_err(std::io::Error::other)?)
+            Operation::L6DinSweepBegin => {
+                if self.l6_din_sweep.is_some() {
+                    return Err("L6 DIN sweep already active".into());
+                }
+                self.l6_din_sweep = Some(l6_din_sweep::Scope::begin(
+                    session,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            operation @ (Operation::L6DinSweepReady
+            | Operation::L6DinSweepMonitor
+            | Operation::L6DinSweepBaseline
+            | Operation::L6DinSweepSample { .. }
+            | Operation::L6DinSweepTrace
+            | Operation::L6DinSweepDrain
+            | Operation::L6DinSweepStop
+            | Operation::L6DinSweepCapture
+            | Operation::L6DinSweepAssert { .. }
+            | Operation::L6DinSweepEnd) => {
+                let scope = self
+                    .l6_din_sweep
+                    .as_mut()
+                    .ok_or("L6 DIN sweep scope missing")?;
+                let value = match operation {
+                    Operation::L6DinSweepReady => scope.ready(session, options),
+                    Operation::L6DinSweepMonitor => scope.monitor(session),
+                    Operation::L6DinSweepBaseline => scope.baseline(session),
+                    Operation::L6DinSweepSample { cc } => scope.sample(session, cc),
+                    Operation::L6DinSweepTrace => scope.trace(session, options),
+                    Operation::L6DinSweepDrain => {
+                        scope.drain(session, guest_timeout_ms, wall_timeout_s)
+                    }
+                    Operation::L6DinSweepStop => scope.stop(session),
+                    Operation::L6DinSweepCapture => scope.capture(session, options),
+                    Operation::L6DinSweepAssert { check } => scope.assert(session, check),
+                    Operation::L6DinSweepEnd => scope.finish(),
+                    _ => unreachable!(),
+                }?;
+                if matches!(operation, Operation::L6DinSweepEnd) {
+                    self.l6_din_sweep = None;
+                }
+                Ok(value)
             }
             Operation::L6maxTimingBegin => {
                 if self.l6max_timing.is_some() {
@@ -2366,7 +2580,9 @@ impl State {
             | Operation::L6maxTimingEnqueue { .. }
             | Operation::L6maxTimingWaitFirst
             | Operation::L6maxTimingObservePaused { .. }
-            | Operation::L6maxTimingAssertPaused
+            | Operation::L6maxTimingCapturePaused
+            | Operation::L6maxTimingAssertPausedClock
+            | Operation::L6maxTimingAssertPausedInput
             | Operation::L6maxTimingResume
             | Operation::L6maxTimingWaitQueued
             | Operation::L6maxTimingWaitReports
@@ -2394,7 +2610,9 @@ impl State {
                     Operation::L6maxTimingObservePaused { wall_ms } => {
                         context.observe_paused(session, wall_ms)
                     }
-                    Operation::L6maxTimingAssertPaused => context.assert_paused(session),
+                    Operation::L6maxTimingCapturePaused => context.capture_paused(session),
+                    Operation::L6maxTimingAssertPausedClock => context.assert_paused_clock(),
+                    Operation::L6maxTimingAssertPausedInput => context.assert_paused_input(),
                     Operation::L6maxTimingResume => context.resume(session),
                     Operation::L6maxTimingWaitQueued => context.wait_queued(session),
                     Operation::L6maxTimingWaitReports => context.wait_reports(session, options),
@@ -2424,16 +2642,12 @@ impl State {
                 if session.engine.model() != l6fw::Model::L6max || self.panel_keys.is_some() {
                     return Err("panel key scope requires a fresh L6max".into());
                 }
-                let inputs = session
-                    .engine
-                    .inputs
-                    .as_ref()
-                    .ok_or("panel inputs unavailable")?
-                    .clone();
+                l6ctl::OwnedControl::new(&session.engine)
+                    .input_observer()
+                    .map_err(|_| "panel inputs unavailable")?;
                 self.panel_keys = Some(PanelKeyScope {
                     deadline: Instant::now() + Duration::from_secs(wall_timeout_s),
                     held: None,
-                    inputs,
                 });
                 Ok(json!({"started":true}))
             }
@@ -2442,14 +2656,18 @@ impl State {
                 if Instant::now() >= scope.deadline {
                     return Err("panel key scope deadline exceeded".into());
                 }
-                if (pressed && scope.held.is_some()) || (!pressed && scope.held != Some(target)) {
+                if (pressed && scope.held.is_some())
+                    || (!pressed && scope.held.as_ref().map(|(target, _)| *target) != Some(target))
+                {
                     return Err("panel key held state mismatch".into());
                 }
-                let before = scope.inputs.panel.snapshot().applied;
                 let control = l6ctl::OwnedControl::new(&session.engine);
+                let before = control.input_status(l6ctl::InputSource::Panel)?.applied;
                 if pressed {
-                    scope.held = Some(target);
-                    control.down(target, 0)?;
+                    let source = l6ctl::button_source(target).ok_or("invalid held button")?;
+                    let button = control.raw_button(source, target)?;
+                    scope.held = Some((target, button));
+                    scope.held.as_mut().unwrap().1.press(0)?;
                 } else {
                     control.up(target)?;
                 }
@@ -2459,7 +2677,7 @@ impl State {
                     if Instant::now() >= deadline {
                         return Err("panel key input acknowledgement timed out".into());
                     }
-                    if scope.inputs.panel.snapshot().applied > before {
+                    if control.input_status(l6ctl::InputSource::Panel)?.applied > before {
                         break;
                     }
                     thread::sleep(Duration::from_millis(5));
@@ -2545,7 +2763,14 @@ impl State {
                     Operation::SignalPwmAssert { band, channel } => {
                         scope.assert_channel(band, channel)?
                     }
-                    Operation::SignalPwmEnd => scope.finish(options)?,
+                    Operation::SignalPwmEnd => {
+                        let (evidence, failure) = scope.finish(options)?;
+                        if let Some(failure) = failure {
+                            self.deferred_terminal_failure = true;
+                            return Err(failure.into());
+                        }
+                        evidence
+                    }
                     _ => unreachable!(),
                 };
                 scope.check(session, guest_timeout_ms, wall_timeout_s)?;
@@ -2578,16 +2803,39 @@ impl State {
                 };
                 Ok(value)
             }
-            Operation::L6LevelMeterPwm => {
-                Ok(
-                    run_l6_level_meter_pwm(session, options, guest_timeout_ms, wall_timeout_s)
-                        .map_err(std::io::Error::other)?,
-                )
+            Operation::L6MeterBegin => {
+                self.l6_meter_pwm = Some(l6_meter_pwm::Scope::begin(
+                    session,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            Operation::L6MeterStage { value } => {
+                let scope = self.l6_meter_pwm.as_mut().ok_or("L6 meter scope missing")?;
+                scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+                Ok(scope.stage(session, options, value)?)
+            }
+            Operation::L6MeterAssert => {
+                let scope = self.l6_meter_pwm.as_mut().ok_or("L6 meter scope missing")?;
+                scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+                Ok(scope.assert(session, options)?)
+            }
+            Operation::L6MeterEnd => {
+                let scope = self.l6_meter_pwm.as_mut().ok_or("L6 meter scope missing")?;
+                scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+                if !scope.asserted {
+                    return Err("L6 meter assertion missing".into());
+                }
+                scope.finish(session)?;
+                self.l6_meter_pwm = None;
+                Ok(json!({"requires_restart":true}))
             }
             Operation::Restart => Err("restart is supervised by the session runner".into()),
             Operation::WarmReset => {
-                session.engine.management[0].system_reset()?;
-                Ok(json!({"reset":"qmp-system-reset"}))
+                let receipt = l6ctl::OwnedControl::new(&session.engine)
+                    .warm_reset(Duration::from_secs(wall_timeout_s))?;
+                Ok(serde_json::to_value(receipt)?)
             }
             operation @ (Operation::PowerBegin { .. }
             | Operation::PowerWaitAck
@@ -2597,103 +2845,115 @@ impl State {
             | Operation::PowerEnd) => {
                 self.run_power(session, operation, guest_timeout_ms, wall_timeout_s)
             }
-            Operation::ExpectSettings { restored } => {
-                let state = options
-                    .state_dir
-                    .as_ref()
-                    .ok_or("settings assertion requires persistent state")?;
-                let saved = fs::read(state.join("panel-rtc.bin"))?;
-                let panel = fs::read(state.join("panel-flash.bin"))?;
-                let nor = fs::read(state.join("main-nor.bin"))?;
-                if session.engine.model() != l6fw::Model::L6max {
-                    return Err("settings layout currently supports L6max 1.10 only".into());
+            Operation::SettingsCapture { restored } => {
+                if self.settings.is_some() {
+                    return Err("settings observation already active".into());
                 }
-                if panel.get(0x3ffc..0x4000) != Some(&l6fw::STOCK_PANEL_VERSION)
-                    || nor.get(0x1f7ffc..0x1f8000) != Some(&l6fw::STOCK_VERSION)
-                    || nor.get(0x1f6ffc..0x1f7000) != Some(&l6fw::STOCK_PANEL_VERSION)
-                {
-                    return Err("persisted firmware version records do not match".into());
+                self.settings = Some(settings::Scope::capture(
+                    session,
+                    options,
+                    restored,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"restored":restored}))
+            }
+            operation @ (Operation::SettingsVersions
+            | Operation::SettingsRtc
+            | Operation::SettingsBank
+            | Operation::SettingsTrace
+            | Operation::SettingsPanel
+            | Operation::SettingsReload
+            | Operation::SettingsRtcTiming
+            | Operation::SettingsEnd) => {
+                let scope = self
+                    .settings
+                    .as_mut()
+                    .ok_or("settings observation missing")?;
+                let evidence = match operation {
+                    Operation::SettingsVersions => scope.versions(session),
+                    Operation::SettingsRtc => scope.rtc(session, self.saved.as_ref()),
+                    Operation::SettingsBank => scope.bank(session),
+                    Operation::SettingsTrace => scope.trace(session, options),
+                    Operation::SettingsPanel => scope.panel(session),
+                    Operation::SettingsReload => scope.reload(session, self.saved.as_ref()),
+                    Operation::SettingsRtcTiming => scope.rtc_timing(session),
+                    Operation::SettingsEnd => scope.finish(session),
+                    _ => unreachable!(),
+                }?;
+                if matches!(operation, Operation::SettingsEnd) {
+                    let scope = self.settings.take().unwrap();
+                    if let Some(saved) = scope.saved_checkpoint()? {
+                        self.saved = Some(saved);
+                    }
                 }
-                let time = u32::from_le_bytes(saved.get(..4).ok_or("short RTC file")?.try_into()?);
-                let calendar =
-                    u32::from_le_bytes(saved.get(4..8).ok_or("short RTC file")?.try_into()?);
-                if restored {
-                    let (before, bank) = self
-                        .saved
-                        .as_ref()
-                        .ok_or("restore assertion needs saved-settings checkpoint")?;
-                    if before[4..8] != saved[4..8]
-                        || u32::from_le_bytes(before[..4].try_into()?) & 0x003f7f00
-                            != time & 0x003f7f00
-                    {
-                        return Err("RTC fields changed across restart".into());
-                    }
-                    let mut trace = fs::read_to_string(options.logs.join("engine.trace"))?;
-                    if let Ok(panel) = fs::read_to_string(options.logs.join("engine-panel.trace")) {
-                        trace.push_str(&panel);
-                    }
-                    if trace.contains("l6 panel ROM write") {
-                        return Err("panel reprogrammed on restart".into());
-                    }
-                    if !trace.contains(&format!("addr={:08x} ipcr1=000017e0", bank + 4)) {
-                        return Err("settings bank was not reloaded".into());
-                    }
-                    let timestamp = |prefix: &str| -> Option<u32> {
-                        trace.lines().find_map(|line| {
-                            line.strip_prefix(prefix)?
-                                .split_whitespace()
-                                .next()?
-                                .parse()
-                                .ok()
-                        })
-                    };
-                    let request =
-                        timestamp("l6 main RTC request at ").ok_or("missing RTC request")?;
-                    let response = timestamp("l6 panel RTC response start at ")
-                        .ok_or("missing RTC response")?;
-                    if response < request || response - request >= 2000 {
-                        return Err("RTC response missed startup deadline".into());
-                    }
-                } else {
-                    if calendar & 0x00ff1f3f != 0x00260202 || time & 0x003f7f00 != 0x00010100 {
-                        return Err("date editor did not save all five fields".into());
-                    }
-                    let bank = [0x1f9000usize, 0x1fc000]
-                        .into_iter()
-                        .find(|&base| {
-                            nor.get(base..base + 4).is_some_and(|b| {
-                                (1..=3).contains(&u32::from_le_bytes(b.try_into().unwrap()))
-                            })
-                        })
-                        .ok_or("settings bank not committed")?;
-                    self.saved = Some((saved.clone(), bank));
-                }
-                Ok(json!({"restored":restored,"rtc":saved}))
+                Ok(evidence)
             }
             Operation::SdCard { inserted } => {
-                if inserted {
-                    session.engine.management[0].insert_sd(
+                let path = if inserted {
+                    Some(
                         options
                             .sd_image
-                            .as_ref()
+                            .as_deref()
                             .ok_or("SD insertion requires a fixture card")?,
-                    )?;
+                    )
                 } else {
-                    session.engine.management[0].eject_sd()?;
-                }
-                Ok(json!({"inserted":inserted}))
+                    None
+                };
+                let receipt = l6ctl::OwnedControl::new(&session.engine).sd_card(path)?;
+                Ok(serde_json::to_value(receipt)?)
             }
-            Operation::UsbDescriptors => {
-                let usb = session
-                    .engine
-                    .usb
-                    .as_ref()
-                    .ok_or("USB backend unavailable")?;
-                wait_usb_controller(session, usb, guest_timeout_ms, wall_timeout_s)?;
-                let (descriptor, config, configuration) = usb.enumerate_with_descriptors()?;
+            Operation::UsbControllerReady => {
+                if self.usb_descriptor_budget.is_some() {
+                    return Err("USB descriptor transaction already active".into());
+                }
+                let control = l6ctl::OwnedControl::new(&session.engine);
+                let budget = control.usb_panel_budget(
+                    operation_start.0 + Duration::from_secs(wall_timeout_s),
+                    operation_start.1,
+                    guest_timeout_ms,
+                )?;
+                control.usb_attach_before(&budget)?;
+                // Legacy readiness starts after attach, independently of the
+                // enclosing operation's original guest and wall anchors.
+                let ready_start = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
+                let ready_deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
+                loop {
+                    budget.check()?;
+                    if control.usb_controller_before(&budget)? {
+                        break;
+                    }
+                    if Instant::now() >= ready_deadline
+                        || control
+                            .input_status(l6ctl::InputSource::Panel)?
+                            .guest_ms
+                            .wrapping_sub(ready_start)
+                            > guest_timeout_ms
+                    {
+                        return Err("USB device controller did not start".into());
+                    }
+                    session.poll()?;
+                    budget.check()?;
+                    thread::sleep(Duration::from_millis(25));
+                }
+                self.usb_descriptor_budget = Some(budget);
+                Ok(json!({"usb_controller_running":true}))
+            }
+            Operation::UsbEnumerate => {
+                let budget = self
+                    .usb_descriptor_budget
+                    .take()
+                    .ok_or("missing USB controller readiness")?;
+                budget.check()?;
+                let (descriptor, config, configuration) =
+                    l6ctl::OwnedControl::new(&session.engine).usb_enumerate_before(&budget)?;
+                budget.check()?;
                 self.midi = configuration.midi;
+                budget.check()?;
                 fs::write(options.logs.join("usb-device.bin"), &descriptor)?;
+                budget.check()?;
                 fs::write(options.logs.join("usb-config.bin"), &config)?;
+                budget.check()?;
                 Ok(
                     json!({"vid":u16::from_le_bytes([descriptor[8],descriptor[9]]),"pid":u16::from_le_bytes([descriptor[10],descriptor[11]]),"configuration_bytes":config.len(),"interfaces":config[4]}),
                 )
@@ -2731,7 +2991,9 @@ impl State {
                 wall_timeout_s,
                 shared,
             ),
-            operation @ (Operation::HostMidiBegin
+            operation @ (Operation::DirectMidiConnect { .. }
+            | Operation::MidiEncoderAlternate
+            | Operation::HostMidiBegin
             | Operation::HostMidiSyncBegin
             | Operation::HostMidiExpectSync
             | Operation::HostMidiDrain { .. }
@@ -2743,9 +3005,6 @@ impl State {
             | Operation::HostMidiSendCc { .. }
             | Operation::ExpectRingChanged { .. }) => {
                 self.run_declarative_midi(session, operation, guest_timeout_ms, wall_timeout_s)
-            }
-            Operation::HostMidiRoundTrip => {
-                self.run_host_midi_round_trip(session, guest_timeout_ms, wall_timeout_s, None, true)
             }
             operation @ (Operation::MidiProbeBegin
             | Operation::MidiProbeSendCc { .. }
@@ -2760,20 +3019,11 @@ impl State {
                 wall_timeout_s,
                 operation_start,
             ),
-            Operation::DirectUsbMidiRoundTrip {
-                cable,
-                expect_ring_change,
-            } => self.run_host_midi_round_trip(
-                session,
-                guest_timeout_ms,
-                wall_timeout_s,
-                Some(cable),
-                expect_ring_change,
-            ),
             operation @ (Operation::L6MidiProbeBegin
             | Operation::L6MidiProbeInject
             | Operation::L6MidiProbeExpectHook
-            | Operation::L6MidiProbeExpectReplies) => Ok(self.run_l6_midi_probe(
+            | Operation::L6MidiProbeExpectReplies
+            | Operation::L6MidiProbeFinish) => Ok(self.run_l6_midi_probe(
                 session,
                 options,
                 operation,
@@ -2849,13 +3099,8 @@ impl State {
                 if self.midi.is_none() {
                     return Err("usb-sysex needs a preceding USB MIDI enumeration".into());
                 }
-                let guest = session
-                    .engine
-                    .inputs
-                    .as_ref()
-                    .ok_or("panel input unavailable")?
-                    .panel
-                    .snapshot()
+                let guest = l6ctl::OwnedControl::new(&session.engine)
+                    .input_status(l6ctl::InputSource::Panel)?
                     .guest_ms;
                 self.sysex_deadline =
                     Some((Instant::now(), guest, guest_timeout_ms, wall_timeout_s));
@@ -2869,13 +3114,8 @@ impl State {
                 if sysex_deadline_expired(
                     start.elapsed(),
                     guest,
-                    session
-                        .engine
-                        .inputs
-                        .as_ref()
-                        .ok_or("panel input unavailable")?
-                        .panel
-                        .snapshot()
+                    l6ctl::OwnedControl::new(&session.engine)
+                        .input_status(l6ctl::InputSource::Panel)?
                         .guest_ms,
                     budget,
                     wall,
@@ -2896,13 +3136,8 @@ impl State {
                     .sysex_deadline
                     .ok_or("USB SysEx campaign is not active")?;
                 let check = || -> Result<(), Box<dyn std::error::Error>> {
-                    let now = session
-                        .engine
-                        .inputs
-                        .as_ref()
-                        .ok_or("panel input unavailable")?
-                        .panel
-                        .snapshot()
+                    let now = l6ctl::OwnedControl::new(&session.engine)
+                        .input_status(l6ctl::InputSource::Panel)?
                         .guest_ms;
                     if sysex_deadline_expired(
                         started.elapsed(),
@@ -2925,13 +3160,8 @@ impl State {
                     .usb_sysex_send(endpoints, 2, &request.bytes)
                     .map_err(|error| error.to_string())?;
                 check()?;
-                let request_start = session
-                    .engine
-                    .inputs
-                    .as_ref()
-                    .unwrap()
-                    .panel
-                    .snapshot()
+                let request_start = l6ctl::OwnedControl::new(&session.engine)
+                    .input_status(l6ctl::InputSource::Panel)?
                     .guest_ms;
                 let mut decoder = l6ctl::UsbSysexDecoder::default();
                 loop {
@@ -2942,13 +3172,8 @@ impl State {
                         .usb_sysex_poll(endpoints, 2, &mut decoder)
                         .map_err(|error| error.to_string())?;
                     check()?;
-                    let elapsed = session
-                        .engine
-                        .inputs
-                        .as_ref()
-                        .unwrap()
-                        .panel
-                        .snapshot()
+                    let elapsed = l6ctl::OwnedControl::new(&session.engine)
+                        .input_status(l6ctl::InputSource::Panel)?
                         .guest_ms
                         .wrapping_sub(request_start);
                     if complete_on_match
@@ -3023,7 +3248,9 @@ impl State {
             | Operation::EditorAssignCount { .. }
             | Operation::EditorAssignFilename { .. }
             | Operation::EditorAssignSend { .. }
+            | Operation::EditorAssignDialog { .. }
             | Operation::EditorAssignState { .. }
+            | Operation::EditorAssignAssert { .. }
             | Operation::EditorAssignEnd) => {
                 let scope = self
                     .editor_assignment
@@ -3033,21 +3260,19 @@ impl State {
                     Operation::EditorAssignIdentity => scope.identity(session)?,
                     Operation::EditorAssignGlobal => scope.expected(
                         session,
-                        &[0xf0, 0x52, 0, 0, 0x2b, 0xf7],
+                        &l6ctl::EditorRequest::GlobalSettings.encode(),
                         &[0xf0, 0x52, 0, 0, 0x2a],
                         "global settings",
                     )?,
                     Operation::EditorAssignVersion => scope.expected(
                         session,
-                        &[
-                            0xf0, 0x52, 0, 0, 0x45, 0x05, 0x02, 0, 0, 0, 0, 0, 0x27, 0, 0xf7,
-                        ],
+                        &l6ctl::EditorRequest::ApplicationVersion.encode(),
                         &[0xf0, 0x52, 0, 0, 0, 0x11],
                         "application version",
                     )?,
                     Operation::EditorAssignSdInfo => scope.expected(
                         session,
-                        &[0xf0, 0x52, 0, 0, 0x67, 0x01, 0xf7],
+                        &l6ctl::EditorRequest::SdInfo.encode(),
                         &[0xf0, 0x52, 0, 0, 0x67, 0x00],
                         "SD card information",
                     )?,
@@ -3055,14 +3280,16 @@ impl State {
                     Operation::EditorAssignCount { pad } => scope.count(session, pad)?,
                     Operation::EditorAssignFilename { pad } => scope.filename(session, pad)?,
                     Operation::EditorAssignSend { pad } => scope.assign(session, pad)?,
+                    Operation::EditorAssignDialog { pad } => scope.dialog(session, pad)?,
                     Operation::EditorAssignState { pad } => scope.state(session, pad)?,
+                    Operation::EditorAssignAssert { pad } => scope.assert_state(pad)?,
                     Operation::EditorAssignEnd => scope.finish(options)?,
                     _ => unreachable!(),
                 };
                 scope.check(session, guest_timeout_ms, wall_timeout_s)?;
-                if matches!(operation, Operation::EditorAssignState { .. }) {
+                if matches!(operation, Operation::EditorAssignAssert { .. }) {
                     scope.pad += 1;
-                    scope.phase = if scope.pad == 4 { 9 } else { 5 };
+                    scope.phase = if scope.pad == 4 { 11 } else { 5 };
                 } else {
                     scope.phase += 1;
                 }
@@ -3137,13 +3364,13 @@ impl State {
                     Operation::UiPadIdentity => scope.identity(session)?,
                     Operation::UiPadGlobal => scope.expected(
                         session,
-                        &[0xf0, 0x52, 0, 0, 0x2b, 0xf7],
+                        &l6ctl::EditorRequest::GlobalSettings.encode(),
                         &[0xf0, 0x52, 0, 0, 0x2a],
                         "global settings",
                     )?,
                     Operation::UiPadKeepAlive => scope.expected(
                         session,
-                        &[0xf0, 0x52, 0, 0, 0x31, 0x0b, 0xf7],
+                        &l6ctl::EditorRequest::KeepAlive.encode(),
                         &[0xf0, 0x52, 0, 0, 0, 0x0b],
                         "keep-alive",
                     )?,
@@ -3353,6 +3580,7 @@ impl State {
             | Operation::UsbStorageAssertBoot
             | Operation::UsbStorageLastRead
             | Operation::UsbStorageLastWrite
+            | Operation::UsbStorageLastReadback
             | Operation::UsbStorageLastAssert
             | Operation::UsbStorageFatOpen
             | Operation::UsbStorageCreate { .. }
@@ -3374,6 +3602,7 @@ impl State {
                     Operation::UsbStorageAssertBoot => context.assert_boot(options),
                     Operation::UsbStorageLastRead => context.last_read(),
                     Operation::UsbStorageLastWrite => context.last_write(),
+                    Operation::UsbStorageLastReadback => context.last_readback(),
                     Operation::UsbStorageLastAssert => context.last_assert(),
                     Operation::UsbStorageFatOpen => context.fat_open(),
                     Operation::UsbStorageCreate {
@@ -3395,76 +3624,39 @@ impl State {
                 }
                 Ok(value)
             }
-            Operation::AudioCallbacks => {
-                let points = callbacks(session.engine.model());
-                let model = session.engine.model();
-                let qmp = &session.engine.management[0];
-                let mut debugger = l6max_diagnostics::gdb::Gdb::connect(
-                    options
-                        .gdb_socket
-                        .as_ref()
-                        .ok_or("missing audio debugger socket")?,
-                )?;
-                qmp.stop()?;
-                for (address, _) in points {
-                    debugger.breakpoint(*address, true)?;
+            Operation::AudioCallbacksBegin => {
+                if self.audio_callbacks.is_some() {
+                    return Err("audio callbacks already active".into());
                 }
-                let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
-                let start = session
-                    .engine
-                    .inputs
-                    .as_ref()
-                    .unwrap()
-                    .panel
-                    .snapshot()
-                    .guest_ms;
-                qmp.resume()?;
-                let mut hits: Vec<Value> = Vec::new();
-                while hits.len() < points.len() {
-                    session.poll()?;
-                    if Instant::now() > deadline
-                        || session
-                            .engine
-                            .inputs
-                            .as_ref()
-                            .unwrap()
-                            .panel
-                            .snapshot()
-                            .guest_ms
-                            .wrapping_sub(start)
-                            > guest_timeout_ms
-                    {
-                        let missing: Vec<_> = points
-                            .iter()
-                            .map(|(_, name)| *name)
-                            .filter(|name| !hits.iter().any(|hit| hit["callback"] == *name))
-                            .collect();
-                        return Err(format!(
-                            "audio callback deadline exceeded; not reached: {missing:?}"
-                        )
-                        .into());
-                    }
-                    if !qmp.query_status()?.running {
-                        let pc = debugger.read_register(15)? & !1;
-                        let (_, name) = points
-                            .iter()
-                            .find(|(a, _)| *a == pc)
-                            .ok_or_else(|| format!("unexpected audio stop at {pc:#x}"))?;
-                        hits.push(json!({"callback":name,"address":format!("{pc:#010x}"),"r0_r3":(0..4).map(|i| debugger.read_register(i)).collect::<Result<Vec<_>,_>>()?,"lr":debugger.read_register(14)?,"guest_ms":session.engine.inputs.as_ref().unwrap().panel.snapshot().guest_ms}));
-                        debugger.breakpoint(pc, false)?;
-                        qmp.resume()?;
-                    } else {
-                        thread::sleep(Duration::from_millis(5));
-                    }
+                self.audio_callbacks = Some(audio::callbacks::Scope::begin(
+                    session,
+                    options,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            operation @ (Operation::AudioCallbacksNext
+            | Operation::AudioCallbacksCapture
+            | Operation::AudioCallbacksAssert
+            | Operation::AudioCallbacksEnd) => {
+                let scope = self
+                    .audio_callbacks
+                    .as_mut()
+                    .ok_or("audio callbacks scope missing")?;
+                scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+                let value = match operation {
+                    Operation::AudioCallbacksNext => scope.next(session),
+                    Operation::AudioCallbacksCapture => scope.capture(session, options),
+                    Operation::AudioCallbacksAssert => scope.assert_trace(options),
+                    Operation::AudioCallbacksEnd => scope.finish(),
+                    _ => unreachable!(),
+                }?;
+                scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+                if matches!(operation, Operation::AudioCallbacksEnd) {
+                    self.audio_callbacks = None;
                 }
-                let trace = fs::read_to_string(options.logs.join("engine.trace"))?;
-                let dma = verify_sai_edma_trace(model, &trace)?;
-                let evidence = json!({"breakpoint_hits":hits,"sai_edma":dma});
-                fs::write(
-                    options.logs.join("audio-path-smoke.json"),
-                    serde_json::to_vec_pretty(&evidence)?,
-                )?;
-                Ok(evidence)
+                Ok(value)
             }
             Operation::KnobDialogReady => {
                 run_knob_dialog_ready(session, options, guest_timeout_ms, wall_timeout_s)
@@ -3478,8 +3670,13 @@ impl State {
                 self.knob_dialog_baseline = Some(frame);
                 Ok(json!({"baseline_captured": true}))
             }
-            Operation::KnobDialogPreflightBegin => {
-                self.knob_dialog_preflight = Some(begin_preflight(session, options)?);
+            Operation::KnobDialogPreflightBegin { sd_knob } => {
+                self.knob_dialog_preflight = Some(begin_preflight(
+                    session,
+                    options,
+                    sd_knob,
+                    shared.ok_or("missing shared deadline")?,
+                )?);
                 let control = l6ctl::OwnedControl::new(&session.engine);
                 self.overlay_reader = Some(control.knob_overlay_reader()?);
                 self.knob_heap_reader = Some(control.heap_counter_reader()?);
@@ -3497,6 +3694,7 @@ impl State {
                 self.knob_dialog_preflight
                     .as_mut()
                     .ok_or("missing knob-dialog preflight")?,
+                shared.ok_or("missing shared deadline")?,
             ),
             Operation::KnobProbeTrigger { delta } => trigger_preflight_probe(
                 session,
@@ -3600,19 +3798,41 @@ impl State {
                     .as_mut()
                     .ok_or("missing knob-dialog preflight")?,
             ),
-            Operation::KnobDialogFirstActivation => {
-                let context = self
-                    .knob_dialog_preflight
+            Operation::KnobActivationTrigger => activation_trigger(
+                session,
+                self.knob_dialog_preflight
                     .as_mut()
-                    .ok_or("missing knob-dialog preflight")?;
-                run_first_activation(
-                    session,
-                    context,
-                    guest_timeout_ms,
-                    wall_timeout_s,
-                    shared.ok_or("missing shared deadline")?,
-                )
-            }
+                    .ok_or("missing knob-dialog preflight")?,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobActivationWait => activation_wait(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                guest_timeout_ms,
+                wall_timeout_s,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobActivationSample => activation_sample(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobActivationRestore => activation_restore(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobActivationAssert => activation_assert(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
             Operation::KnobActiveBegin => begin_active_display(
                 options,
                 self.knob_dialog_preflight
@@ -4098,6 +4318,7 @@ impl State {
                     self.overlay_reader
                         .as_ref()
                         .ok_or("missing locked update reader")?,
+                    shared.ok_or("missing shared deadline")?,
                 )
             }
             Operation::KnobLockTrigger { delta } => trigger_locked_update(
@@ -4129,9 +4350,11 @@ impl State {
                     .ok_or("missing locked update reader")?,
             ),
             Operation::KnobLockRestore => restore_locked_update(
+                session,
                 self.knob_dialog_preflight
                     .as_mut()
                     .ok_or("missing knob-dialog preflight")?,
+                shared.ok_or("missing shared deadline")?,
             ),
             Operation::KnobLockAssert => assert_locked_update(
                 self.knob_dialog_preflight
@@ -4190,6 +4413,7 @@ impl State {
                     .ok_or("missing knob preflight")?,
                 tag,
                 wall_timeout_s,
+                shared.ok_or("missing shared deadline")?,
             ),
             Operation::KnobDialogWaitInvalidTag => wait_invalid_tag(
                 session,
@@ -4198,12 +4422,14 @@ impl State {
                     .ok_or("missing knob preflight")?,
                 guest_timeout_ms,
                 wall_timeout_s,
+                shared.ok_or("missing shared deadline")?,
             ),
             Operation::KnobDialogConfirmInvalidTag => confirm_invalid_tag(
                 session,
                 self.knob_dialog_preflight
                     .as_mut()
                     .ok_or("missing knob preflight")?,
+                shared.ok_or("missing shared deadline")?,
             ),
             Operation::KnobDialogSettleLevel { artifact } => settle_level(
                 session,
@@ -4220,6 +4446,7 @@ impl State {
                 self.knob_dialog_preflight
                     .as_mut()
                     .ok_or("missing knob preflight")?,
+                shared.ok_or("missing shared deadline")?,
             ),
             Operation::KnobDialogObserveInvalidSignature { guest_ms } => observe_invalid_signature(
                 session,
@@ -4237,9 +4464,11 @@ impl State {
                     .ok_or("missing knob preflight")?,
             ),
             Operation::KnobDialogRestoreInvalidSignature => restore_invalid_signature(
+                session,
                 self.knob_dialog_preflight
                     .as_mut()
                     .ok_or("missing knob preflight")?,
+                shared.ok_or("missing shared deadline")?,
             ),
             Operation::KnobDialogPrepareNotification => prepare_notification(
                 session,
@@ -4394,11 +4623,27 @@ impl State {
             }
             operation @ (Operation::KnobPopupOpen { .. }
             | Operation::KnobPopupExpectOpen
+            | Operation::KnobPopupExpectDisplay
             | Operation::KnobPopupExpectValue) => {
                 self.run_knob_popup(session, operation, guest_timeout_ms, wall_timeout_s)
             }
-            Operation::ExpectMenu { menu, path, items } => {
-                Ok(expect_menu(session, &menu, &path, &items).map_err(std::io::Error::other)?)
+            Operation::CaptureMenu { menu, path } => {
+                let snapshot =
+                    capture_menu(session, &menu, &path, guest_timeout_ms, wall_timeout_s)
+                        .map_err(std::io::Error::other)?;
+                self.menu_snapshot = Some(snapshot.clone());
+                Ok(serde_json::to_value(snapshot)?)
+            }
+            Operation::ExpectMenuItems { items } => {
+                let snapshot = self.menu_snapshot.take().ok_or("missing menu snapshot")?;
+                if snapshot.items != items {
+                    return Err(format!(
+                        "menu {} {:?} lists {:?}, expected {items:?}",
+                        snapshot.menu, snapshot.path, snapshot.items
+                    )
+                    .into());
+                }
+                Ok(json!({"menu":snapshot.menu,"path":snapshot.path,"items":snapshot.items}))
             }
             Operation::PatchParityHostOnly => {
                 Err("patch parity must run in the host-only test runner".into())
@@ -4474,7 +4719,7 @@ mod knob_phase_tests {
         let phases = vec![
             Operation::KnobDialogGuard,
             Operation::KnobDialogBaseline,
-            Operation::KnobDialogPreflightBegin,
+            Operation::KnobDialogPreflightBegin { sd_knob: false },
             Operation::KnobProbePrepare {
                 probe: crate::scenario::PreflightProbe::Descriptor,
             },
@@ -4526,7 +4771,11 @@ mod knob_phase_tests {
             Operation::KnobRaceSample,
             Operation::KnobRaceRestore,
             Operation::KnobRaceAssert,
-            Operation::KnobDialogFirstActivation,
+            Operation::KnobActivationTrigger,
+            Operation::KnobActivationWait,
+            Operation::KnobActivationSample,
+            Operation::KnobActivationRestore,
+            Operation::KnobActivationAssert,
             Operation::KnobActiveBegin,
             Operation::EnqueueEncoderNoAck {
                 channel: 1,
@@ -4688,31 +4937,31 @@ mod knob_phase_tests {
                     pending,
                     next_mode,
                     Some(0),
-                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 100,
-                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 109,
-                    (matches!(operation, Operation::EnqueueEncoderNoAck { .. }) && before.4 == 43)
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 104,
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 113,
+                    (matches!(operation, Operation::EnqueueEncoderNoAck { .. }) && before.4 == 47)
                         || (matches!(operation, Operation::CaptureDisplay { .. })
-                            && before.4 == 44),
+                            && before.4 == 48),
                     if (3..33).contains(&before.4) {
                         Some(usize::from((before.4 - 3) / 6))
                     } else {
                         None
                     },
-                    matches!(operation, Operation::EnqueueEncoderNoAck { .. }) && before.4 == 59,
-                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 65,
-                    if matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 52 {
+                    matches!(operation, Operation::EnqueueEncoderNoAck { .. }) && before.4 == 63,
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 69,
+                    if matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 56 {
                         Some(2)
                     } else if matches!(operation, Operation::CaptureDisplay { .. })
-                        && before.4 == 55
+                        && before.4 == 59
                     {
                         Some(5)
                     } else {
                         None
                     },
-                    if matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 86 {
+                    if matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 90 {
                         Some(1)
                     } else if matches!(operation, Operation::CaptureDisplay { .. })
-                        && before.4 == 91
+                        && before.4 == 95
                     {
                         Some(6)
                     } else {

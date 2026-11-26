@@ -67,8 +67,9 @@ the action’s fields are strict; unknown fields fail parsing.
 | `usb-midi` | `name`, optional `cable` (default `0`), `send` bytes, `listen_ms` (default `1000`) | Send MIDI bytes as USB MIDI packets on the configured MIDI OUT endpoint, then collect device-to-host messages for up to `listen_ms` guest milliseconds. A device detach, such as a firmware USB mode change, ends the window and reports `detached`. Needs an earlier `usb-descriptors` step. |
 
 The transport controls prepared channel files in `L6_AUDIO_INPUT_DIR`, or in
-the engine's default audio-input directory. Prepare them using the emulator's
-audio-input workflow; the transport does not create or assign files. See
+the engine's default audio-input directory. `cargo l6ctl audio prepare SOURCE.wav
+DIRECTORY CHANNEL` prepares a channel file; the transport does not create or
+assign files. See
 [audio input](../../emulator/audio.md#input) for the file and routing model.
 
 Observation names (`snapshot`, `trace`, `memory`, `memory-write`, `heap` and

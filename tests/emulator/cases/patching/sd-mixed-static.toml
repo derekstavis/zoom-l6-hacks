@@ -30,15 +30,12 @@ action = "expect-card-entry"
 path = "RECORDER"
 
 [[step]]
-action = "expect-sd-loader"
-
-[[step]]
-action = "expect-sd-module"
-loaded = true
+action = "include"
+path = "tests/emulator/fragments/sd-module-loaded.toml"
 
 [[step]]
 action = "include"
-path = "tests/emulator/fragments/l6max-din-mixer-setup.toml"
+path = "tests/emulator/fragments/l6max-din-mixer-usb.toml"
 
 [[step]]
 action = "include"

@@ -36,7 +36,27 @@ until = "sd-patch-empty"
 action = "expect-sd-loader"
 
 [[step]]
-action = "expect-sd-module"
+action = "capture-sd-module"
+loaded = false
+
+[[step]]
+action = "expect-sd-allocation"
+loaded = false
+
+[[step]]
+action = "expect-sd-chains"
+loaded = false
+
+[[step]]
+action = "expect-sd-continuations"
+loaded = false
+
+[[step]]
+action = "expect-sd-module-images"
+loaded = false
+
+[[step]]
+action = "expect-sd-latest-module"
 loaded = false
 
 [[step]]
@@ -79,9 +99,8 @@ path = "patches/knob-dialog/tests/emulator/fragments/preflight-probes.toml"
 action = "include"
 path = "patches/knob-dialog/tests/emulator/fragments/callback-race.toml"
 [[step]]
-action = "knob-dialog-first-activation"
-guest_timeout_ms = 180000
-wall_timeout_s = 600
+action = "include"
+path = "patches/knob-dialog/tests/emulator/fragments/first-activation.toml"
 [[step]]
 action = "include"
 path = "patches/knob-dialog/tests/emulator/fragments/active-display.toml"

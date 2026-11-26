@@ -2,24 +2,22 @@
 use super::*;
 
 pub(super) struct Scope {
-    inputs: std::sync::Arc<l6max_host::input::InputHub>,
     sequence: u32,
     deadline: Instant,
     hold_ms: u32,
     powered: bool,
-    held: bool,
+    held: Option<l6ctl::HeldButton>,
     applied_main_ms: Option<u32>,
     panel_at_ack_ms: Option<u32>,
     complete: bool,
 }
 impl Scope {
     pub(super) fn release(&mut self) -> Result<(), String> {
-        if self.held && !self.inputs.main.snapshot().powered_off {
-            self.inputs
-                .up(53)
+        if let Some(held) = &mut self.held {
+            held.release_unless_main_powered_off()
                 .map_err(|e| format!("power button release failed: {e}"))?;
         }
-        self.held = false;
+        self.held = None;
         Ok(())
     }
     fn check(&self) -> Result<(), String> {
@@ -79,27 +77,21 @@ impl State {
                 if self.power.is_some() {
                     return Err("power transaction already active".into());
                 }
-                let inputs = session
-                    .engine
-                    .inputs
-                    .as_ref()
-                    .ok_or("power input unavailable")?
-                    .clone();
                 let deadline = Instant::now()
                     .checked_add(Duration::from_secs(wall_timeout_s))
                     .ok_or("power deadline overflow")?;
-                let receipt = if powered {
-                    control.tap(53, hold_ms)?
+                let (receipt, held) = if powered {
+                    (control.tap(53, hold_ms)?, None)
                 } else {
-                    control.down(53, hold_ms)?
+                    let (receipt, held) = control.hold_button(53, hold_ms)?;
+                    (receipt, Some(held))
                 };
                 self.power = Some(Scope {
-                    inputs,
                     sequence: receipt.sequence,
                     deadline,
                     hold_ms,
                     powered,
-                    held: !powered,
+                    held,
                     applied_main_ms: None,
                     panel_at_ack_ms: None,
                     complete: false,
@@ -188,7 +180,7 @@ impl State {
                     scope.check()?;
                     let main = control.input_status(l6ctl::InputSource::Main)?;
                     if main.powered_off {
-                        scope.held = false;
+                        scope.held = None;
                         let off = main
                             .powered_off_guest_ms
                             .ok_or("power-off timestamp unavailable")?;
@@ -214,7 +206,7 @@ impl State {
                 observe_wall_ms,
             } => {
                 let scope = self.power.as_mut().ok_or("missing power transaction")?;
-                if scope.powered || scope.held {
+                if scope.powered || scope.held.is_some() {
                     return Err("clock observation requires power-off".into());
                 }
                 scope.check()?;
@@ -253,33 +245,6 @@ mod tests {
         assert!(super::observe_on(false, true, true, u32::MAX - 99, 1000, 1100, 5000).unwrap());
         assert!(super::observe_on(true, true, true, 0, 1100, 1100, 5000).is_err());
         assert!(super::observe_on(false, false, true, 0, 1, 1100, 5000).is_err());
-    }
-
-    #[test]
-    fn failed_release_preserves_held_state() {
-        use l6max_host::input::{EngineInput, InputHub};
-        use std::{
-            sync::Arc,
-            time::{Duration, Instant},
-        };
-        let (main, peer) = EngineInput::pair().unwrap();
-        let (panel, _panel_peer) = EngineInput::pair().unwrap();
-        let inputs = Arc::new(InputHub::new(main, panel, l6fw::Model::L6));
-        drop(peer);
-        std::thread::sleep(Duration::from_millis(10));
-        let mut scope = super::Scope {
-            inputs,
-            sequence: 1,
-            deadline: Instant::now() + Duration::from_secs(1),
-            hold_ms: 1000,
-            powered: false,
-            held: true,
-            applied_main_ms: Some(1),
-            panel_at_ack_ms: Some(1),
-            complete: false,
-        };
-        assert!(scope.release().is_err());
-        assert!(scope.held);
     }
 
     #[test]

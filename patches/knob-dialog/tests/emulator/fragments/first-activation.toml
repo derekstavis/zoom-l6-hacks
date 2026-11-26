@@ -1,0 +1,24 @@
+[[step]]
+action = "knob-activation-trigger"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-activation-wait"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-activation-sample"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-activation-restore"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-activation-assert"
+guest_timeout_ms = 180000
+wall_timeout_s = 600

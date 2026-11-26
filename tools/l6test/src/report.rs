@@ -934,6 +934,7 @@ mod tests {
         }
         writer
             .emit(&CaseEvent::ScenarioFinished {
+                failure: None,
                 outcome: Outcome::Fail,
                 finished_unix_ms: 200,
             })
@@ -1019,6 +1020,7 @@ mod tests {
         );
         writer
             .emit(&CaseEvent::ScenarioFinished {
+                failure: None,
                 outcome: smoke_core::progress::Outcome::Fail,
                 finished_unix_ms: 5500,
             })

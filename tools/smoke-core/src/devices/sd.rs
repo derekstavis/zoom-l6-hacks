@@ -18,10 +18,291 @@ pub(super) type SdEdits = (
 
 pub(super) struct SdInspectionContext {
     pub fixture: FrozenSdFixture,
+    pub snapshot: Option<(bool, l6ctl::SdLoaderSnapshot)>,
+    pub allocation_checked: bool,
+    pub chains: Option<SdChainEvidence>,
+    pub continuation_modules: Option<Vec<usize>>,
+    pub module_images_checked: bool,
     pub wall_deadline: Instant,
     pub guest_start: u32,
     pub guest_timeout_ms: u32,
     pub wall_timeout_s: u64,
+}
+
+pub(super) struct SdChainEvidence {
+    pub expected_function: Option<u32>,
+    pub count: u32,
+    pub links: Vec<(u32, u32, u32, u32)>,
+    pub expected_count: Option<u8>,
+}
+
+fn mutable_module_ranges(report: &Value, size: usize) -> Vec<(usize, usize)> {
+    let patch = report["patches"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|patch| patch["memory_length"].as_u64() == Some(size as u64));
+    let mut ranges = patch
+        .and_then(|patch| patch["writable_data"].as_object())
+        .and_then(|data| {
+            Some((
+                usize::try_from(data["offset"].as_u64()?).ok()?,
+                usize::try_from(data["length"].as_u64()?).ok()?,
+            ))
+        })
+        .filter(|(_, length)| *length > 0)
+        .into_iter()
+        .collect::<Vec<_>>();
+    if let Some(code_len) = patch
+        .and_then(|patch| patch["payload_length"].as_u64())
+        .and_then(|length| usize::try_from(length).ok())
+        && code_len < size
+    {
+        // The loader zeroes this NOBITS tail before module initialization.
+        // It is writable module state after startup, not immutable code.
+        ranges.push((code_len, size - code_len));
+    }
+    ranges
+}
+
+/// Check the active hook-chain module images against the frozen fixture.
+pub(super) fn verify_module_images(
+    session: &Session,
+    context: &SdInspectionContext,
+    loaded: bool,
+) -> Result<Value, String> {
+    if !context.allocation_checked {
+        return Err("SD allocation assertion missing".into());
+    }
+    let (captured_loaded, snapshot) = context
+        .snapshot
+        .as_ref()
+        .ok_or("SD module snapshot missing")?;
+    if *captured_loaded != loaded {
+        return Err("SD module-image assertion does not match captured state".into());
+    }
+    let chains = context
+        .chains
+        .as_ref()
+        .ok_or("SD chain assertion missing")?;
+    let chain_links = &chains.links;
+    let continuation_modules = context
+        .continuation_modules
+        .as_ref()
+        .ok_or("SD continuation assertion missing")?;
+    let (edits, link_base, payload, _, _, _, module_images) = &context.fixture.edits;
+    if snapshot.registry.is_none() {
+        return Ok(json!({"loaded":false,"registry":null,"guarded_hooks":edits.len()}));
+    }
+    if !loaded {
+        return Ok(
+            json!({"loaded":false,"guarded_hooks":edits.len(),"module_bytes":0,"hook_chain_count":chains.count,"hook_chain_orders":chains.links.iter().map(|link|link.2).collect::<Vec<_>>()}),
+        );
+    }
+    let patch_report = context
+        .fixture
+        .patch_report
+        .as_ref()
+        .ok_or("dynamic report missing")?;
+    let ordered_chain = context.fixture.chain_first.is_some();
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let reader = control
+        .sd_loader_reader(context.wall_deadline)
+        .map_err(|error| error.to_string())?;
+    let read_live = |address: u32, length: usize| -> Result<Vec<u8>, String> {
+        reader
+            .read_chunk_cancellable(address, length, context.wall_deadline, || {
+                guest_now(session).wrapping_sub(context.guest_start) >= context.guest_timeout_ms
+            })
+            .map_err(|error| error.to_string())
+    };
+    for (index, (entry, _, _, module)) in chain_links.iter().enumerate() {
+        let module_index = *continuation_modules
+            .get(index)
+            .ok_or("SD continuation evidence missing")?;
+        let (module_payload, relocations, hooks) = module_images
+            .get(module_index)
+            .ok_or("SD continuation module missing")?;
+        let mutable_ranges = mutable_module_ranges(patch_report, module_payload.len());
+        let mut expected = module_payload.clone();
+        if ordered_chain && index == 0 {
+            let file = context
+                .fixture
+                .chain_first
+                .as_ref()
+                .ok_or("ordered-chain fixture missing")?;
+            let start = patch_abi::dynamic::HEADER_LEN_V1;
+            expected = file
+                .get(start..start + expected.len())
+                .ok_or("ordered-chain fixture is shorter than its module")?
+                .to_vec();
+        }
+        patch_abi::relocation::relocate(
+            &mut expected,
+            relocations.clone().into_iter(),
+            *link_base,
+            *module,
+        )
+        .map_err(|error| format!("invalid fixture relocations: {error:?}"))?;
+        for hook in hooks {
+            if hook.next_slot_offset == u32::MAX {
+                continue;
+            }
+            let slot = *module + hook.next_slot_offset;
+            let target = read_live(slot, 4)?;
+            let offset = hook.next_slot_offset as usize;
+            expected[offset..offset + 4].copy_from_slice(&target);
+        }
+        for (chunk_index, chunk) in expected.chunks(4096).enumerate() {
+            let address = *module + (chunk_index * 4096) as u32;
+            let actual = read_live(address, chunk.len())?;
+            if let Some((offset, (actual_byte, expected_byte))) = actual
+                .iter()
+                .zip(chunk)
+                .enumerate()
+                .find(|(index, (actual, expected))| {
+                    let module_offset = chunk_index * 4096 + index;
+                    actual != expected
+                        && !mutable_ranges.iter().any(|(start, length)| {
+                            module_offset >= *start && module_offset < *start + *length
+                        })
+                })
+            {
+                return Err(format!(
+                    "allocated SD module {index} differs from its relocated bundle at {:#010x} (expected {:#04x}, got {:#04x})",
+                    address + offset as u32,
+                    expected_byte,
+                    actual_byte,
+                ));
+            }
+        }
+        if (*entry & !1) < *module {
+            return Err(format!("hook {index} entry precedes its module"));
+        }
+    }
+    Ok(
+        json!({"loaded":loaded,"guarded_hooks":edits.len(),"module_bytes":payload.len(),"hook_chain_count":chains.count,"hook_chain_orders":chain_links.iter().map(|link|link.2).collect::<Vec<_>>()}),
+    )
+}
+
+/// Check the separately allocated latest module image against the same frozen
+/// fixture and deadline used by the hook-chain image check.
+pub(super) fn verify_latest_module(
+    session: &Session,
+    context: &SdInspectionContext,
+    loaded: bool,
+) -> Result<Value, String> {
+    let (captured_loaded, snapshot) = context
+        .snapshot
+        .as_ref()
+        .ok_or("SD module snapshot missing")?;
+    if *captured_loaded != loaded {
+        return Err("latest SD allocation assertion does not match captured state".into());
+    }
+    if !context.module_images_checked {
+        return Err("SD module-image assertion missing".into());
+    }
+    if !loaded || snapshot.registry.is_none() {
+        return Ok(json!({"loaded":false,"latest_allocation":null}));
+    }
+    let loaded_base = snapshot.module_base.ok_or("SD module base missing")?;
+    let loaded_len = snapshot.module_len.ok_or("SD module length missing")?;
+    let (_, link_base, _, _, _, _, module_images) = &context.fixture.edits;
+    let patch_report = context
+        .fixture
+        .patch_report
+        .as_ref()
+        .ok_or("dynamic report missing")?;
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let reader = control
+        .sd_loader_reader(context.wall_deadline)
+        .map_err(|error| error.to_string())?;
+    let read_live = |address: u32, length: usize| -> Result<Vec<u8>, String> {
+        reader
+            .read_chunk_cancellable(address, length, context.wall_deadline, || {
+                guest_now(session).wrapping_sub(context.guest_start) >= context.guest_timeout_ms
+            })
+            .map_err(|error| error.to_string())
+    };
+    let Some((payload, relocations, hooks)) = module_images
+        .iter()
+        .find(|(payload, _, _)| payload.len() == loaded_len as usize)
+    else {
+        return Ok(json!({"loaded":true,"latest_allocation":null}));
+    };
+    let mutable_ranges = mutable_module_ranges(patch_report, payload.len());
+    let mut expected = payload.clone();
+    patch_abi::relocation::relocate(
+        &mut expected,
+        relocations.clone().into_iter(),
+        *link_base,
+        loaded_base,
+    )
+    .map_err(|error| format!("invalid latest module relocations: {error:?}"))?;
+    for hook in hooks {
+        if hook.next_slot_offset == u32::MAX {
+            continue;
+        }
+        let slot = loaded_base + hook.next_slot_offset;
+        let target = read_live(slot, 4)?;
+        let offset = hook.next_slot_offset as usize;
+        expected[offset..offset + 4].copy_from_slice(&target);
+    }
+    for (chunk_index, chunk) in expected.chunks(4096).enumerate() {
+        let address = loaded_base + (chunk_index * 4096) as u32;
+        let actual = read_live(address, chunk.len())?;
+        if let Some((offset, (actual_byte, expected_byte))) = actual
+            .iter()
+            .zip(chunk)
+            .enumerate()
+            .find(|(index, (actual, expected))| {
+                let module_offset = chunk_index * 4096 + index;
+                actual != expected
+                    && !mutable_ranges.iter().any(|(start, length)| {
+                        module_offset >= *start && module_offset < *start + *length
+                    })
+            })
+        {
+            return Err(format!(
+                "latest allocated SD module at {loaded_base:#010x} differs from its relocated bundle at {:#010x} (expected {:#04x}, got {:#04x})",
+                address + offset as u32,
+                expected_byte,
+                actual_byte,
+            ));
+        }
+    }
+    Ok(json!({"loaded":true,"latest_allocation":loaded_base,"module_bytes":loaded_len}))
+}
+
+/// Validate the captured allocation and claim against the frozen module sizes.
+pub(super) fn check_sd_allocation(
+    snapshot: &l6ctl::SdLoaderSnapshot,
+    loaded: bool,
+    module_sizes: impl Iterator<Item = usize>,
+) -> Result<Value, String> {
+    if snapshot.registry.is_none() {
+        if loaded {
+            return Err("the Patch loader has not allocated its registry".into());
+        }
+        return Ok(json!({"loaded":false,"registry":null}));
+    }
+    let base = snapshot.module_base.ok_or("SD module base missing")?;
+    let len = snapshot.module_len.ok_or("SD module length missing")?;
+    let known_size = module_sizes.into_iter().any(|size| size == len as usize);
+    if loaded != (base != 0) || (loaded && !known_size) {
+        let stage = snapshot.stage.unwrap_or_default();
+        return Err(format!(
+            "SD allocation state loaded={loaded}, base={base:#010x}, len={len}, loader stage={stage:#x}"
+        ));
+    }
+    let claim = snapshot.claim.ok_or("SD claim missing")?;
+    if (claim == 1) != loaded {
+        let stage = snapshot.stage.unwrap_or_default();
+        return Err(format!(
+            "SD module loaded={loaded}, claim={claim:#x}, loader stage={stage:#x}"
+        ));
+    }
+    Ok(json!({"loaded":loaded,"module_base":base,"module_len":len,"claim":claim}))
 }
 
 /// Compare the pinned loader image's persistent stubs with running MAIN.
@@ -107,225 +388,31 @@ pub(super) fn sd_fixture_root(options: &Options) -> Result<&std::path::Path, Str
         .ok_or_else(|| "missing generated SD fixture".into())
 }
 
-pub(super) fn composed_module_report(report: &Value) -> Option<&Value> {
-    report["patches"].as_array()?.first()
+pub(super) struct EffectSlotScope {
+    pub reader: l6max_host::effect_editor::SlotReader,
+    pub start: Instant,
+    pub guest_start: u32,
+    pub guest_budget: u32,
+    pub wall_budget: u64,
 }
 
-pub(super) fn composed_export_offset(report: &Value, name: &str) -> Option<u32> {
-    u32::try_from(composed_module_report(report)?["exports"][name].as_u64()?).ok()
-}
-
-pub(super) fn effect_parameter_edit(
-    options: &Options,
-    session: &Session,
-    encoder: usize,
-    steps: i32,
-) -> Result<Value, String> {
-    if session.engine.model() != l6fw::Model::L6max {
-        return Err("L6max effect parameter editing requires L6max".into());
-    }
-    let socket = options
-        .gdb_socket
-        .as_ref()
-        .ok_or("L6max effect parameter editing requires GDB")?;
-    let root = sd_fixture_root(options)?;
-    let report: Value = serde_json::from_slice(
-        &fs::read(
-            root.join(crate::fixture_layout::SD_BUNDLE_BUILD)
-                .join(crate::fixture_layout::PATCH_REPORT),
-        )
-        .map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-    let symbol_offset = composed_export_offset(&report, "DUAL_EFFECT_EDIT_APPLIED")
-        .ok_or("Effect editor counter is missing from its module report")?;
-    let event_offset = composed_export_offset(&report, "DUAL_EFFECT_EDIT_EVENT")
-        .ok_or("Effect editor event is missing from its module report")?;
-    let callback_hits_offset = composed_export_offset(&report, "DUAL_EFFECT_CALLBACK_HITS")
-        .ok_or("Effect callback counter is missing from its module report")?;
-    let qmp = &session.engine.management[0];
-    use firmware_api::l6max::current_window;
-    use firmware_api::l6max::mixer_apply_channel_parameter;
-    use firmware_api::l6max::mixer_efx_type;
-    let effect_type = qmp
-        .read_memory(0, mixer_efx_type, 1)
-        .map_err(|error| error.to_string())?
-        .first()
-        .copied()
-        .ok_or("missing selected effect type")?;
-    if effect_type != 1 && effect_type != 2 {
-        return Err(format!(
-            "Effect parameter edit requires Room or Spring, selected type is {effect_type}"
-        ));
-    }
-    let registry = u32::from_le_bytes(
-        qmp.read_memory(0, patch_abi::registry::L6MAX_POINTER as u32, 4)
-            .map_err(|error| error.to_string())?
-            .try_into()
-            .unwrap(),
-    );
-    let module_base = u32::from_le_bytes(
-        qmp.read_memory(0, registry + patch_abi::registry::MODULE_PTR_OFFSET, 4)
-            .map_err(|error| error.to_string())?
-            .try_into()
-            .unwrap(),
-    );
-    if module_base == 0 {
-        return Err("Effect replacement module is not loaded".into());
-    }
-    let edit_mode_offset = composed_export_offset(&report, "DUAL_EFFECT_PARAMETER_EDIT_MODE")
-        .ok_or("Effect editor mode is missing from its module report")?;
-    let ring_positions_offset = composed_export_offset(&report, "PARAMETER_RING_POSITIONS")
-        .ok_or("Effect ring state is missing from its module report")?;
-    let edit_mode = u32::from_le_bytes(
-        qmp.read_memory(0, module_base + edit_mode_offset, 4)
-            .map_err(|error| error.to_string())?
-            .try_into()
-            .unwrap(),
-    );
-    if edit_mode == 0 {
-        return Err(
-            "Enable the selected effect's editor with TAP before turning an encoder".into(),
-        );
-    }
-    let parameter_count = if effect_type == 1 { 8 } else { 7 };
-    if encoder == 0 || encoder > parameter_count {
-        return Err(format!(
-            "selected effect has {parameter_count} editable encoders"
-        ));
-    }
-    let ring_address = module_base + ring_positions_offset + ((encoder - 1) as u32) * 4;
-    let ring_before = u32::from_le_bytes(
-        qmp.read_memory(0, ring_address, 4)
-            .map_err(|error| error.to_string())?
-            .try_into()
-            .unwrap(),
-    );
-    let edit_counter = module_base
-        .checked_add(symbol_offset)
-        .ok_or("effect replacement edit counter address overflow")?;
-    let before = u32::from_le_bytes(
-        qmp.read_memory(0, edit_counter, 4)
-            .map_err(|error| error.to_string())?
-            .try_into()
-            .unwrap(),
-    );
-    let previous_window = qmp
-        .read_memory(0, current_window, 4)
-        .map_err(|error| error.to_string())?;
-
-    let mut debugger = l6max_diagnostics::gdb::Gdb::connect(socket)
-        .map_err(|error| format!("connecting to emulator GDB: {error}"))?;
-    qmp.stop()
-        .map_err(|error| format!("stopping QEMU for effect parameter edit: {error}"))?;
-    let inject = (|| {
-        debugger
-            .write(current_window, &l6max::GUI_RECORDER_WINDOW.to_le_bytes())
-            .map_err(|error| format!("selecting parameter-edit context: {error}"))?;
-        let stop = debugger
-            .call_thumb(
-                mixer_apply_channel_parameter,
-                &[(encoder - 1) as u32, 6, 0, steps as u32, 0],
-                Duration::from_secs(3),
-            )
-            .map_err(|error| format!("calling patched mixer parameter function: {error}"))?;
-        let event = u32::from_le_bytes(
-            debugger
-                .read(module_base + event_offset, 4)
-                .map_err(|error| format!("reading queued parameter event: {error}"))?
-                .try_into()
-                .unwrap(),
-        );
-        Ok::<_, String>((stop, event))
-    })();
-    let restore_window = debugger
-        .write(current_window, &previous_window)
-        .map_err(|error| format!("restoring current window: {error}"));
-    let resume = qmp
-        .resume()
-        .map_err(|error| format!("resuming QEMU after effect parameter edit: {error}"));
-    restore_window?;
-    resume?;
-    let (stop_reply, event_after_hook) = inject?;
-
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let applied = u32::from_le_bytes(
-            qmp.read_memory(0, edit_counter, 4)
-                .map_err(|error| error.to_string())?
-                .try_into()
-                .unwrap(),
-        );
-        if applied > before {
-            let ring_after = u32::from_le_bytes(
-                qmp.read_memory(0, ring_address, 4)
-                    .map_err(|error| error.to_string())?
-                    .try_into()
-                    .unwrap(),
-            );
-            if ring_after == ring_before {
-                return Err(format!(
-                    "encoder {encoder} edit left its ring unchanged at Q16.16 position {ring_after}"
-                ));
-            }
-            qmp.stop()
-                .map_err(|error| format!("stopping QEMU after effect parameter edit: {error}"))?;
-            debugger
-                .write(current_window, &previous_window)
-                .map_err(|error| format!("restoring current window: {error}"))?;
-            qmp.resume().map_err(|error| {
-                format!("resuming QEMU after restoring current window: {error}")
-            })?;
-            return Ok(json!({
-                "encoder": encoder,
-                "steps": steps,
-                "effect_type": effect_type,
-                "edit_counter_before": before,
-                "edit_counter_after": applied,
-                "ring_position_before": ring_before,
-                "ring_position_after": ring_after,
-                "input": "patched mixer_apply_channel_parameter call",
-            }));
-        }
-        if Instant::now() >= deadline {
-            let event = u32::from_le_bytes(
-                qmp.read_memory(0, module_base + event_offset, 4)
-                    .map_err(|error| error.to_string())?
-                    .try_into()
-                    .unwrap(),
-            );
-            let callback_hits = u32::from_le_bytes(
-                qmp.read_memory(0, module_base + callback_hits_offset, 4)
-                    .map_err(|error| error.to_string())?
-                    .try_into()
-                    .unwrap(),
-            );
-            let active_callback = u32::from_le_bytes(
-                qmp.read_memory(0, 0x202a_6f20, 4)
-                    .map_err(|error| error.to_string())?
-                    .try_into()
-                    .unwrap(),
-            );
-            let window = u32::from_le_bytes(
-                qmp.read_memory(0, current_window, 4)
-                    .map_err(|error| error.to_string())?
-                    .try_into()
-                    .unwrap(),
-            );
-            qmp.stop().map_err(|error| {
-                format!("stopping QEMU after effect replacement edit timeout: {error}")
-            })?;
-            debugger
-                .write(current_window, &previous_window)
-                .map_err(|error| format!("restoring current window after edit timeout: {error}"))?;
-            qmp.resume()
-                .map_err(|error| format!("resuming QEMU after edit timeout: {error}"))?;
-            return Err(format!(
-                "effect audio callback did not apply the parameter edit (counter {before}->{applied}, event={event:#010x}, event_after_hook={event_after_hook:#010x}, callbacks={callback_hits}, effect_type={effect_type}, active_callback={active_callback:#010x}, current_window={window:#010x}, module_base={module_base:#010x}, gdb_stop={stop_reply})"
-            ));
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
+fn effect_slot_ready(
+    snapshot: &l6ctl::EffectSlotSnapshot,
+    selected: u8,
+    processor: u8,
+    expected_effect: Option<&str>,
+    baseline: Option<u32>,
+    require_output: bool,
+) -> bool {
+    snapshot.effect_type == selected
+        && snapshot.processor_type == u32::from(processor)
+        && expected_effect.is_none_or(|expected| {
+            snapshot.active_effect_bytes.as_deref() == Some(expected.as_bytes())
+        })
+        && (!require_output
+            || snapshot
+                .output_blocks
+                .is_some_and(|value| value != 0 && Some(value) != baseline))
 }
 
 pub(super) fn wait_effect_slot(
@@ -337,7 +424,8 @@ pub(super) fn wait_effect_slot(
     require_output: bool,
     guest_timeout_ms: u32,
     wall_timeout_s: u64,
-) -> Result<(), String> {
+    outer_start: (Instant, u32),
+) -> Result<l6max_host::effect_editor::SlotReader, String> {
     const GUEST_TIMEOUT_MS: u32 = 10_000;
     const WALL_TIMEOUT_S: u64 = 180;
     const POLL_INTERVAL_MS: u64 = 10;
@@ -348,103 +436,71 @@ pub(super) fn wait_effect_slot(
         expected_effect_type.ok_or("effect slot readiness needs expected_effect_type")?;
     let processor =
         expected_processor_type.ok_or("effect slot readiness needs expected_processor_type")?;
-    let root = sd_fixture_root(options)?;
-    let report: Value = serde_json::from_slice(
-        &fs::read(
-            root.join(crate::fixture_layout::SD_BUNDLE_BUILD)
-                .join(crate::fixture_layout::PATCH_REPORT),
-        )
-        .map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
-    let symbols = composed_module_report(&report)
-        .and_then(|patch| patch["exports"].as_object())
-        .ok_or("effect replacement debug symbols are missing")?;
-    let offset = |name: &str| -> Result<u32, String> {
-        symbols
-            .get(name)
-            .and_then(Value::as_u64)
-            .and_then(|v| u32::try_from(v).ok())
-            .ok_or_else(|| format!("effect replacement symbol {name} is missing"))
-    };
-    let qmp = &session.engine.management[0];
-    let read_u32 = |address: u32| -> Result<u32, String> {
-        Ok(u32::from_le_bytes(
-            qmp.read_memory(0, address, 4)
-                .map_err(|e| e.to_string())?
-                .try_into()
-                .unwrap(),
-        ))
-    };
-    let registry = sd_registry(qmp, session.engine.model()).map_err(|e| e.to_string())?;
-    let base = read_u32(registry + patch_abi::registry::MODULE_PTR_OFFSET)?;
-    if base == 0 {
-        return Err("effect replacement module is not loaded".into());
+    if require_output && !matches!(processor, 1 | 2) {
+        return Err("output requires a replacement processor".into());
     }
-    let processor_address = base + offset("DUAL_EFFECT_PROCESSOR_TYPE")?;
-    let active = if expected_effect.is_some() {
-        Some((
-            base + offset("DUAL_EFFECT_ACTIVE_EFFECT")?,
-            base + offset("DUAL_EFFECT_ACTIVE_EFFECT_LEN")?,
-        ))
+    let outer_deadline = outer_start.0 + Duration::from_secs(wall_timeout_s);
+    let outer_check = || {
+        if Instant::now() >= outer_deadline
+            || guest_now(session).wrapping_sub(outer_start.1) > guest_timeout_ms
+        {
+            Err("effect slot exceeded its shared deadline".to_owned())
+        } else {
+            Ok(())
+        }
+    };
+    let reader = effect_slot_reader(options, session, outer_deadline, &outer_check)?;
+    let output_fields = l6ctl::EffectSlotFields {
+        output: require_output,
+        output_processor: Some(processor),
+        ..Default::default()
+    };
+    let baseline = if require_output {
+        reader
+            .snapshot_before_checked(&output_fields, outer_deadline, &outer_check)?
+            .output_blocks
     } else {
         None
     };
-    let counter = if require_output {
-        Some(
-            base + offset(match processor {
-                1 => "DUAL_EFFECT_ROOM_OUTPUT_NONZERO",
-                2 => "DUAL_EFFECT_SPRING_OUTPUT_NONZERO",
-                _ => return Err("output requires a replacement processor".into()),
-            })?,
-        )
-    } else {
-        None
-    };
-    let baseline = counter.map(read_u32).transpose()?;
     let start = guest_now(session);
-    let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
+    let deadline = (Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S)))
+        .min(outer_deadline);
+    let check = || {
+        outer_check()?;
+        if Instant::now() >= deadline
+            || guest_now(session).wrapping_sub(start) >= guest_timeout_ms.min(GUEST_TIMEOUT_MS)
+        {
+            Err("effect slot readiness deadline exceeded".to_owned())
+        } else {
+            Ok(())
+        }
+    };
+    let fields = l6ctl::EffectSlotFields {
+        active_effect: expected_effect.is_some(),
+        ..output_fields
+    };
     loop {
+        check()?;
         session.poll()?;
-        let current = qmp
-            .read_memory(0, l6max::mixer_efx_type, 1)
-            .map_err(|e| e.to_string())?[0];
-        let current_processor = read_u32(processor_address)?;
-        let active_matches = if let Some((pointer_address, length_address)) = active {
-            let pointer = read_u32(pointer_address)?;
-            let length = read_u32(length_address)?;
-            if length > 64 {
-                return Err(format!("effect replacement ID claims {length} bytes"));
-            }
-            pointer != 0
-                && length != 0
-                && qmp
-                    .read_memory(0, pointer, length as usize)
-                    .map_err(|e| e.to_string())?
-                    == expected_effect.unwrap().as_bytes()
-        } else {
-            true
-        };
-        let output_ready = if let Some(address) = counter {
-            let value = read_u32(address)?;
-            value != 0 && Some(value) != baseline
-        } else {
-            true
-        };
-        if current == selected
-            && current_processor == u32::from(processor)
-            && active_matches
-            && output_ready
-        {
-            return Ok(());
+        let snapshot = reader.snapshot_before_checked(&fields, deadline, &check)?;
+        let active_matches = expected_effect.is_none_or(|expected| {
+            snapshot.active_effect_bytes.as_deref() == Some(expected.as_bytes())
+        });
+        let output_ready = !require_output
+            || snapshot
+                .output_blocks
+                .is_some_and(|value| value != 0 && Some(value) != baseline);
+        if effect_slot_ready(
+            &snapshot,
+            selected,
+            processor,
+            expected_effect,
+            baseline,
+            require_output,
+        ) {
+            return Ok(reader);
         }
-        if guest_now(session).wrapping_sub(start) >= guest_timeout_ms.min(GUEST_TIMEOUT_MS)
-            || Instant::now() >= deadline
-        {
-            return Err(format!(
-                "effect slot did not become ready: selected={current}, processor={current_processor}, active_matches={active_matches}, output_ready={output_ready}"
-            ));
-        }
+        check().map_err(|error| format!("{error}: selected={}, processor={}, active_matches={active_matches}, output_ready={output_ready}", snapshot.effect_type, snapshot.processor_type))?;
         thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
     }
 }
@@ -461,47 +517,22 @@ pub(super) fn wait_effect_mode(
     const GUEST_TIMEOUT_MS: u32 = 10_000;
     const WALL_TIMEOUT_S: u64 = 180;
     const POLL_INTERVAL_MS: u64 = 10;
-    let report: Value = serde_json::from_slice(
-        &fs::read(
-            sd_fixture_root(options)?
-                .join(crate::fixture_layout::SD_BUNDLE_BUILD)
-                .join(crate::fixture_layout::PATCH_REPORT),
-        )
-        .map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
-    let symbols = composed_module_report(&report)
-        .and_then(|p| p["exports"].as_object())
-        .ok_or("effect replacement debug symbols are missing")?;
-    let offset = |name: &str| -> Result<u32, String> {
-        symbols
-            .get(name)
-            .and_then(Value::as_u64)
-            .and_then(|v| u32::try_from(v).ok())
-            .ok_or_else(|| format!("effect replacement symbol {name} is missing"))
-    };
-    let panel_offset = offset("DUAL_EFFECT_PANEL_MODE")?;
-    let edit_offset = offset("DUAL_EFFECT_PARAMETER_EDIT_MODE")?;
-    let qmp = &session.engine.management[0];
-    let registry = sd_registry(qmp, session.engine.model()).map_err(|e| e.to_string())?;
-    let read = |addr| -> Result<u32, String> {
-        Ok(u32::from_le_bytes(
-            qmp.read_memory(0, addr, 4)
-                .map_err(|e| e.to_string())?
-                .try_into()
-                .unwrap(),
-        ))
-    };
-    let base = read(registry + patch_abi::registry::MODULE_PTR_OFFSET)?;
-    if base == 0 {
-        return Err("effect replacement module is not loaded".into());
-    }
+    // Bind the live module to the frozen fixture before polling, as other
+    // effect-slot observations do. Keep the wait's own clocks anchored after
+    // setup, matching the original readiness condition.
+    let setup_deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
+    let reader = effect_slot_reader(options, session, setup_deadline, &|| Ok(()))?;
     let start = guest_now(session);
     let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
     loop {
         session.poll()?;
-        let panel = read(base + panel_offset)?;
-        let edit = read(base + edit_offset)?;
+        let state = reader.snapshot_before_checked(
+            &l6ctl::EffectSlotFields::default(),
+            deadline,
+            &|| Ok(()),
+        )?;
+        let panel = state.panel_mode;
+        let edit = state.edit_mode;
         if panel_mode.is_none_or(|v| panel == u32::from(v))
             && edit_mode.is_none_or(|v| edit == u32::from(v))
         {
@@ -516,257 +547,6 @@ pub(super) fn wait_effect_mode(
         }
         thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
     }
-}
-
-pub(super) fn effect_replacement_state(
-    options: &Options,
-    session: &Session,
-    expected_effect_type: Option<u8>,
-    expected_processor_type: Option<u8>,
-    expected_panel_mode: Option<u8>,
-    expected_edit_mode: Option<bool>,
-    minimum_parameter_edits: Option<u32>,
-    expected_parameter_id: Option<u8>,
-    expected_parameter_value: Option<f32>,
-    expected_dialog_active: Option<bool>,
-    minimum_exit_ring_refreshes: Option<u32>,
-    expected_effect: Option<&str>,
-    require_output: bool,
-) -> Result<Value, String> {
-    if session.engine.model() != l6fw::Model::L6max {
-        return Err("effect replacement state checks require L6max".into());
-    }
-    let root = sd_fixture_root(options)?;
-    let report: Value = serde_json::from_slice(
-        &fs::read(
-            root.join(crate::fixture_layout::SD_BUNDLE_BUILD)
-                .join(crate::fixture_layout::PATCH_REPORT),
-        )
-        .map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-    let symbols = composed_module_report(&report)
-        .and_then(|patch| patch["exports"].as_object())
-        .ok_or("effect replacement debug symbols are missing from its module report")?;
-    let offset = |name: &str| -> Result<u32, String> {
-        symbols
-            .get(name)
-            .ok_or_else(|| format!("effect replacement symbol {name} is missing"))?
-            .as_u64()
-            .and_then(|value| u32::try_from(value).ok())
-            .ok_or_else(|| format!("effect replacement symbol {name} is missing"))
-    };
-    let qmp = &session.engine.management[0];
-    let registry = u32::from_le_bytes(
-        qmp.read_memory(0, patch_abi::registry::L6MAX_POINTER as u32, 4)
-            .map_err(|error| error.to_string())?
-            .try_into()
-            .unwrap(),
-    );
-    let module_base = u32::from_le_bytes(
-        qmp.read_memory(0, registry + patch_abi::registry::MODULE_PTR_OFFSET, 4)
-            .map_err(|error| error.to_string())?
-            .try_into()
-            .unwrap(),
-    );
-    if module_base == 0 {
-        return Err("effect replacement module is not loaded".into());
-    }
-    let effect_type = qmp
-        .read_memory(0, l6max::mixer_efx_type, 1)
-        .map_err(|error| error.to_string())?
-        .first()
-        .copied();
-    let edit_mode = u32::from_le_bytes(
-        qmp.read_memory(
-            0,
-            module_base + offset("DUAL_EFFECT_PARAMETER_EDIT_MODE")?,
-            4,
-        )
-        .map_err(|error| error.to_string())?
-        .try_into()
-        .unwrap(),
-    );
-    let processor_type = u32::from_le_bytes(
-        qmp.read_memory(0, module_base + offset("DUAL_EFFECT_PROCESSOR_TYPE")?, 4)
-            .map_err(|error| error.to_string())?
-            .try_into()
-            .unwrap(),
-    );
-    let panel_mode = u32::from_le_bytes(
-        qmp.read_memory(0, module_base + offset("DUAL_EFFECT_PANEL_MODE")?, 4)
-            .map_err(|error| error.to_string())?
-            .try_into()
-            .unwrap(),
-    );
-    let exit_ring_refreshes = if minimum_exit_ring_refreshes.is_some() {
-        u32::from_le_bytes(
-            qmp.read_memory(
-                0,
-                module_base + offset("DUAL_EFFECT_EXIT_RING_REFRESH_HITS")?,
-                4,
-            )
-            .map_err(|error| error.to_string())?
-            .try_into()
-            .unwrap(),
-        )
-    } else {
-        0
-    };
-    let applied = if minimum_parameter_edits.is_some() {
-        u32::from_le_bytes(
-            qmp.read_memory(0, module_base + offset("DUAL_EFFECT_EDIT_APPLIED")?, 4)
-                .map_err(|error| error.to_string())?
-                .try_into()
-                .unwrap(),
-        )
-    } else {
-        0
-    };
-    let check_dialog = expected_dialog_active.is_some()
-        || (expected_edit_mode == Some(true) && minimum_parameter_edits.is_some());
-    let dialog_active = if check_dialog {
-        if let Some(dialog_active_offset) =
-            composed_export_offset(&report, "KNOB_DIALOG_EXTERNAL_TEXT_ACTIVE")
-        {
-            qmp.read_memory(0, module_base + dialog_active_offset, 1)
-                .map_err(|error| error.to_string())?
-                .first()
-                .copied()
-                .ok_or("Knob Dialog active-state byte is missing")?
-        } else if expected_dialog_active == Some(false) {
-            0
-        } else {
-            return Err(
-                "Knob Dialog active-state symbol is missing from the composed module report".into(),
-            );
-        }
-    } else {
-        0
-    };
-    let parameter = if let Some(parameter_id) = expected_parameter_id {
-        if parameter_id >= 16 {
-            return Err(format!(
-                "effect replacement parameter id {parameter_id} is out of range"
-            ));
-        }
-        let handoff_offset = offset("PARAMETER_HANDOFF")? + u32::from(parameter_id) * 4;
-        Some(f32::from_bits(u32::from_le_bytes(
-            qmp.read_memory(0, module_base + handoff_offset, 4)
-                .map_err(|error| error.to_string())?
-                .try_into()
-                .unwrap(),
-        )))
-    } else {
-        None
-    };
-    if expected_effect_type.is_some_and(|expected| effect_type != Some(expected)) {
-        return Err(format!(
-            "effect replacement selected effect is {effect_type:?}, expected {expected_effect_type:?}"
-        ));
-    }
-    if expected_processor_type.is_some_and(|expected| processor_type != u32::from(expected)) {
-        return Err(format!(
-            "effect replacement replacement processor has type {processor_type}, expected {expected_processor_type:?}"
-        ));
-    }
-    if expected_panel_mode.is_some_and(|expected| panel_mode != u32::from(expected)) {
-        return Err(format!(
-            "effect replacement selected panel mode is {panel_mode}, expected {expected_panel_mode:?}"
-        ));
-    }
-    if expected_edit_mode.is_some_and(|expected| edit_mode != u32::from(expected)) {
-        return Err(format!(
-            "effect replacement parameter edit mode is {edit_mode}, expected {expected_edit_mode:?}"
-        ));
-    }
-    if minimum_exit_ring_refreshes.is_some_and(|minimum| exit_ring_refreshes < minimum) {
-        return Err(format!(
-            "effect replacement stock exit refresh called the panel ring routine {exit_ring_refreshes} times, expected at least {minimum_exit_ring_refreshes:?}"
-        ));
-    }
-    if expected_dialog_active.is_some_and(|expected| dialog_active != u8::from(expected)) {
-        return Err(format!(
-            "Knob Dialog active state is {dialog_active}, expected {expected_dialog_active:?}"
-        ));
-    }
-    if minimum_parameter_edits.is_some_and(|minimum| applied < minimum) {
-        return Err(format!(
-            "effect replacement applied {applied} parameter edits, expected at least {minimum_parameter_edits:?}"
-        ));
-    }
-    if expected_edit_mode == Some(true) && minimum_parameter_edits.is_some() && dialog_active != 1 {
-        return Err(format!(
-            "effect replacement has applied {applied} parameter edits but Knob Dialog is not active ({dialog_active})"
-        ));
-    }
-    let read_u32 = |address: u32| -> Result<u32, String> {
-        Ok(u32::from_le_bytes(
-            qmp.read_memory(0, address, 4)
-                .map_err(|error| error.to_string())?
-                .try_into()
-                .unwrap(),
-        ))
-    };
-    let active_effect = if expected_effect.is_some() {
-        let pointer = read_u32(module_base + offset("DUAL_EFFECT_ACTIVE_EFFECT")?)?;
-        let length = read_u32(module_base + offset("DUAL_EFFECT_ACTIVE_EFFECT_LEN")?)?;
-        if pointer == 0 || length == 0 {
-            String::new()
-        } else if length > 64 {
-            return Err(format!(
-                "effect replacement active effect ID claims {length} bytes"
-            ));
-        } else {
-            String::from_utf8_lossy(
-                &qmp.read_memory(0, pointer, length as usize)
-                    .map_err(|error| error.to_string())?,
-            )
-            .into_owned()
-        }
-    } else {
-        String::new()
-    };
-    if let Some(expected) = expected_effect
-        && active_effect != expected
-    {
-        return Err(format!(
-            "effect replacement runs {active_effect:?} in the selected slot, expected {expected:?}"
-        ));
-    }
-    let output_counter = match processor_type {
-        1 => Some("DUAL_EFFECT_ROOM_OUTPUT_NONZERO"),
-        2 => Some("DUAL_EFFECT_SPRING_OUTPUT_NONZERO"),
-        _ => None,
-    };
-    let output_blocks = match output_counter {
-        Some(name) if require_output => read_u32(module_base + offset(name)?)?,
-        _ => 0,
-    };
-    if require_output {
-        if output_counter.is_none() {
-            return Err("effect replacement output check needs a replaced slot selected".into());
-        }
-        if output_blocks == 0 {
-            return Err(format!(
-                "effect replacement {active_effect:?} has produced no nonzero output in slot {processor_type}"
-            ));
-        }
-    }
-    if expected_parameter_value.is_some() && parameter.is_none() {
-        return Err("effect replacement parameter value requires expected_parameter_id".into());
-    }
-    if let (Some(expected), Some(actual)) = (expected_parameter_value, parameter) {
-        let tolerance = 0.01_f32.max(expected.abs() * 0.0001);
-        if !actual.is_finite() || (actual - expected).abs() > tolerance {
-            return Err(format!(
-                "effect replacement parameter {expected_parameter_id:?} is {actual}, expected {expected}"
-            ));
-        }
-    }
-    Ok(
-        json!({"effect_type":effect_type,"processor_type":processor_type,"active_effect":active_effect,"nonzero_output_blocks":output_blocks,"panel_mode":panel_mode,"edit_mode":edit_mode,"parameter_edits_applied":applied,"parameter_id":expected_parameter_id,"parameter_value":parameter,"knob_dialog_active":dialog_active,"exit_ring_refreshes":exit_ring_refreshes}),
-    )
 }
 
 pub(super) struct FrozenSdFixture {
@@ -980,23 +760,15 @@ fn wait_sd_patch_result(
     const GUEST_TIMEOUT_MS: u32 = 10_000;
     const WALL_TIMEOUT_S: u64 = 180;
     const POLL_INTERVAL_MS: u64 = 10;
-    let qmp = &session.engine.management[0];
     let start = guest_now(session);
     let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let reader = control.sd_loader_reader(deadline)?;
     let mut last_state = String::from("registry not allocated");
     loop {
         session.poll()?;
-        if let Some(base) = sd_registry_if_allocated(qmp, session.engine.model())? {
-            let claim = u32::from_le_bytes(
-                qmp.read_memory(0, base + patch_abi::registry::CLAIM_OFFSET, 4)?
-                    .try_into()
-                    .unwrap(),
-            );
-            let stage = u32::from_le_bytes(
-                qmp.read_memory(0, base + patch_abi::registry::DEBUG_OFFSET, 4)?
-                    .try_into()
-                    .unwrap(),
-            );
+        let state = reader.readiness_cancellable(deadline, || false)?;
+        if let (Some(base), Some(claim), Some(stage)) = (state.registry, state.claim, state.stage) {
             if (loaded && claim == 1) || (!loaded && claim == 0 && stage == 0x400) {
                 return Ok(base);
             }
@@ -1012,37 +784,6 @@ fn wait_sd_patch_result(
         }
         thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
     }
-}
-
-pub(super) fn sd_registry(
-    qmp: &l6max_host::qmp::QmpClient,
-    model: l6fw::Model,
-) -> Result<u32, Box<dyn std::error::Error>> {
-    sd_registry_if_allocated(qmp, model)?
-        .ok_or_else(|| "the Patch loader has not allocated its registry".into())
-}
-
-/// The registry, or `None` while the root word still holds its stock value.
-pub(super) fn sd_registry_if_allocated(
-    qmp: &l6max_host::qmp::QmpClient,
-    model: l6fw::Model,
-) -> Result<Option<u32>, Box<dyn std::error::Error>> {
-    use patch_abi::registry;
-    let (pointer, stock) = match model {
-        l6fw::Model::L6 => (registry::L6_POINTER, registry::L6_POINTER_STOCK),
-        l6fw::Model::L6max => (registry::L6MAX_POINTER, registry::L6MAX_POINTER_STOCK),
-    };
-    let base = u32::from_le_bytes(qmp.read_memory(0, pointer, 4)?.try_into().unwrap());
-    if base == stock {
-        return Ok(None);
-    }
-    let magic = u32::from_le_bytes(qmp.read_memory(0, base, 4)?.try_into().unwrap());
-    if magic != registry::MAGIC {
-        return Err(
-            format!("Patch loader registry at {base:#010x} has magic {magic:#010x}").into(),
-        );
-    }
-    Ok(Some(base))
 }
 
 pub(super) fn sd_frozen_handler_slot(
@@ -1121,6 +862,36 @@ pub(super) fn sd_typed_site_chain(
         })
         .collect();
     Ok((chain, links))
+}
+
+/// Bind effect-slot observations to the frozen composed module and loader fixture.
+pub(super) fn effect_slot_reader(
+    options: &Options,
+    session: &Session,
+    deadline: Instant,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<l6max_host::effect_editor::SlotReader, String> {
+    check()?;
+    let main = selected_main_image(options)?;
+    sd_fixture_edits(options, &main, session.engine.model())?;
+    check()?;
+    let output = sd_fixture_root(options)?.join(crate::fixture_layout::SD_BUNDLE_BUILD);
+    let report_bytes =
+        fs::read(output.join(crate::fixture_layout::PATCH_REPORT)).map_err(|e| e.to_string())?;
+    let report: Value = serde_json::from_slice(&report_bytes).map_err(|e| e.to_string())?;
+    let filename = report["patches"]
+        .as_array()
+        .and_then(|patches| (patches.len() == 1).then_some(&patches[0]))
+        .and_then(|patch| patch["file"].as_str())
+        .and_then(|name| Path::new(name).file_name())
+        .ok_or("effect module file missing")?;
+    let bytes = fs::read(output.join("PATCHES").join(filename)).map_err(|e| e.to_string())?;
+    check()?;
+    let binding = l6ctl::EffectSlotBinding::from_fixture(&report_bytes, &bytes)?;
+    check()?;
+    l6ctl::OwnedControl::new(&session.engine)
+        .effect_slot_reader_before_checked(binding, deadline, check)
+        .map_err(|e| e.to_string())
 }
 
 /// Fixture-scoped control of the effect editor's single-slot mailbox.
@@ -1301,5 +1072,111 @@ mod paced_effect_tests {
         assert!(paced_effect_state(&before, &sample(0, 9, 0)).unwrap());
         assert!(paced_effect_state(&before, &sample(1, 9, 0)).is_err());
         assert!(paced_effect_state(&before, &sample(0, 10, 0)).is_err());
+    }
+}
+
+#[cfg(test)]
+mod effect_slot_readiness_tests {
+    use super::*;
+    #[test]
+    fn output_must_be_nonzero_and_different_from_baseline() {
+        let mut sample = l6ctl::EffectSlotSnapshot {
+            revision_guard: String::new(),
+            fixture_module_sha256: String::new(),
+            atomic: false,
+            effect_type: 1,
+            processor_type: 1,
+            panel_mode: 0,
+            edit_mode: 0,
+            applied: None,
+            exit_refreshes: None,
+            active_effect: Some("velvet".into()),
+            active_effect_bytes: Some(b"velvet".to_vec()),
+            output_blocks: Some(0),
+            parameter_bits: None,
+            dialog_active: None,
+            ring_position: None,
+        };
+        assert!(!effect_slot_ready(
+            &sample,
+            1,
+            1,
+            Some("velvet"),
+            Some(0),
+            true
+        ));
+        sample.output_blocks = Some(42);
+        assert!(!effect_slot_ready(
+            &sample,
+            1,
+            1,
+            Some("velvet"),
+            Some(42),
+            true
+        ));
+        assert!(effect_slot_ready(
+            &sample,
+            1,
+            1,
+            Some("velvet"),
+            Some(u32::MAX),
+            true
+        ));
+        assert!(!effect_slot_ready(
+            &sample,
+            2,
+            1,
+            Some("velvet"),
+            Some(0),
+            true
+        ));
+        assert!(!effect_slot_ready(
+            &sample,
+            1,
+            1,
+            Some("plateau"),
+            Some(0),
+            true
+        ));
+        assert!(effect_slot_ready(
+            &sample,
+            1,
+            1,
+            Some("velvet"),
+            None,
+            false
+        ));
+    }
+}
+
+#[cfg(test)]
+mod allocation_tests {
+    use super::*;
+    fn sample() -> l6ctl::SdLoaderSnapshot {
+        l6ctl::SdLoaderSnapshot {
+            revision_guard: "test".into(),
+            atomic: false,
+            registry: Some(0x80200000),
+            stage: Some(0x400),
+            claim: Some(1),
+            module_base: Some(0x80201000),
+            module_len: Some(64),
+            site_count: Some(1),
+        }
+    }
+    #[test]
+    fn distinguishes_absence_invalid_size_and_unclaimed_module() {
+        let mut value = sample();
+        assert!(check_sd_allocation(&value, true, [64].into_iter()).is_ok());
+        assert!(check_sd_allocation(&value, true, [32].into_iter()).is_err());
+        value.claim = Some(0);
+        assert!(check_sd_allocation(&value, true, [64].into_iter()).is_err());
+        value.registry = None;
+        assert!(check_sd_allocation(&value, true, [64].into_iter()).is_err());
+        assert!(check_sd_allocation(&value, false, [].into_iter()).is_ok());
+        value.registry = Some(0x80200000);
+        value.module_base = Some(0);
+        value.module_len = Some(0);
+        assert!(check_sd_allocation(&value, false, [].into_iter()).is_ok());
     }
 }

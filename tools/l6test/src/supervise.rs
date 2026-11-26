@@ -42,11 +42,22 @@ impl Drop for ChildGroup {
         let _ = self.0.wait();
     }
 }
-pub(crate) fn supervise(mut command: Command, dir: &Path, timeout: u64) -> Result<bool, String> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LaunchMode {
+    FreshGroup,
+    NestedGroup,
+}
+
+pub(crate) fn supervise(
+    mut command: Command,
+    dir: &Path,
+    timeout: u64,
+    mode: LaunchMode,
+) -> Result<bool, String> {
     let stdout = fs::File::create(dir.join("stdout.log")).map_err(|e| e.to_string())?;
     let stderr = fs::File::create(dir.join("stderr.log")).map_err(|e| e.to_string())?;
     command.stdin(Stdio::null()).stdout(stdout).stderr(stderr);
-    let own_group = std::env::var_os("L6TEST_CAMPAIGN_MEMBER").is_none();
+    let own_group = mode == LaunchMode::FreshGroup;
     if own_group {
         command.process_group(0);
     }
@@ -106,7 +117,7 @@ mod tests {
             guest
                 .args(["-c", "(sleep 3; printf leaked > \"$1\") & wait", "sh"])
                 .arg(marker);
-            let _ = supervise(guest, &dir, 30);
+            let _ = supervise(guest, &dir, 30, LaunchMode::NestedGroup);
             return;
         }
         let dir = temp();
@@ -121,12 +132,79 @@ mod tests {
             .env("L6TEST_CAMPAIGN_MEMBER", "1")
             .env("L6TEST_FAULT_MARKER", &marker);
         assert!(
-            supervise(command, &dir, 1)
+            supervise(command, &dir, 1, LaunchMode::FreshGroup)
                 .unwrap_err()
                 .contains("wall-clock")
         );
         thread::sleep(Duration::from_millis(3200));
         assert!(!marker.exists(), "nested guest survived campaign timeout");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn stuck_monitor_keeps_lease_until_case_and_guest_are_terminated() {
+        use std::os::fd::AsRawFd;
+        if let Some(dir) = env::var_os("L6TEST_MONITOR_FAULT") {
+            let dir = PathBuf::from(dir);
+            let lock = fs::File::create(dir.join("lease")).unwrap();
+            assert_eq!(
+                unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+                0
+            );
+            let mut guest = Command::new("sh")
+                .args(["-c", "sleep 3; printf leaked > \"$1\"", "sh"])
+                .arg(dir.join("leaked"))
+                .spawn()
+                .unwrap();
+            fs::write(dir.join("ready"), b"ready").unwrap();
+            let worker = thread::spawn(|| {
+                loop {
+                    thread::park();
+                }
+            });
+            let _ = worker.join();
+            let _ = guest.wait();
+            drop(lock);
+            return;
+        }
+        let dir = temp();
+        let mut command = Command::new(env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "supervise::tests::stuck_monitor_keeps_lease_until_case_and_guest_are_terminated",
+                "--nocapture",
+            ])
+            .env("L6TEST_MONITOR_FAULT", &dir);
+        let check_dir = dir.clone();
+        let observer = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while !check_dir.join("ready").exists() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(5));
+            }
+            let file = fs::File::open(check_dir.join("lease")).unwrap();
+            assert_ne!(
+                unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+                0,
+                "second owner acquired live lease"
+            );
+        });
+        assert!(
+            supervise(command, &dir, 2, LaunchMode::FreshGroup)
+                .unwrap_err()
+                .contains("wall-clock")
+        );
+        observer.join().unwrap();
+        let file = fs::File::open(dir.join("lease")).unwrap();
+        assert_eq!(
+            unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+            0
+        );
+        thread::sleep(Duration::from_millis(1200));
+        assert!(
+            !dir.join("leaked").exists(),
+            "guest descendant survived case timeout"
+        );
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -139,7 +217,7 @@ mod tests {
             .args(["-c", "(sleep 2; printf leaked > \"$1\") & wait", "sh"])
             .arg(&marker);
         assert!(
-            supervise(command, &dir, 1)
+            supervise(command, &dir, 1, LaunchMode::FreshGroup)
                 .unwrap_err()
                 .contains("wall-clock")
         );

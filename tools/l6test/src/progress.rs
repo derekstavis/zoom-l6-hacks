@@ -152,6 +152,7 @@ struct Active {
     phase: Option<progress::Phase>,
     case_phase: Option<(progress::CasePhase, u64)>,
     error: Option<String>,
+    deferred: Vec<progress::StepFailure>,
 }
 #[derive(Clone, Default)]
 struct View {
@@ -159,6 +160,8 @@ struct View {
     total: Option<usize>,
     cases: BTreeMap<CaseId, Outcome>,
     active: BTreeMap<CaseId, Active>,
+    failures: BTreeMap<CaseId, progress::StepFailure>,
+    deferred: BTreeMap<CaseId, Vec<progress::StepFailure>>,
     outcome: Option<Outcome>,
     incomplete: bool,
     run_phase: Option<(progress::RunPhase, u64)>,
@@ -201,6 +204,7 @@ impl View {
                         phase: None,
                         case_phase: None,
                         error: None,
+                        deferred: Vec::new(),
                     },
                 );
             }
@@ -224,6 +228,7 @@ impl View {
                     active.adaptive = None;
                     active.case_phase = None;
                     active.error = None;
+                    active.deferred.clear();
                 }
             }
             SuiteEvent::AttemptPhaseChanged { id, phase } => {
@@ -240,6 +245,10 @@ impl View {
             }
             SuiteEvent::CaseFinished { id, outcome } => {
                 self.active.remove(&id);
+                if !matches!(outcome, Outcome::Fail | Outcome::Flaky | Outcome::Xpass) {
+                    self.failures.remove(&id);
+                    self.deferred.remove(&id);
+                }
                 self.cases.insert(id, outcome);
             }
             SuiteEvent::RunFinished { outcome } => self.outcome = Some(outcome),
@@ -299,6 +308,18 @@ impl View {
                         active.subprogress = None;
                         active.adaptive = None;
                     }
+                    CaseEvent::DeferredAssertionFailed { failure } => {
+                        if !active
+                            .step
+                            .as_ref()
+                            .is_some_and(|step| step.0 == failure.index && step.1 == failure.label)
+                        {
+                            active.error =
+                                Some("deferred assertion does not match current step".into());
+                            break;
+                        }
+                        active.deferred.push(failure);
+                    }
                     CaseEvent::StepProgress {
                         index,
                         completed,
@@ -339,7 +360,15 @@ impl View {
                             active.adaptive = None;
                         }
                     }
-                    CaseEvent::ScenarioFinished { .. } => {}
+                    CaseEvent::ScenarioFinished { failure, .. } => {
+                        if let Some(failure) = failure {
+                            self.failures.insert(active.id.case.clone(), failure);
+                            if !active.deferred.is_empty() {
+                                self.deferred
+                                    .insert(active.id.case.clone(), active.deferred.clone());
+                            }
+                        }
+                    }
                     CaseEvent::Header { .. } => {
                         active.error = Some("duplicate case progress header".into());
                         break;
@@ -410,6 +439,20 @@ fn render(view: &View, color: bool) -> String {
         let seconds = progress::unix_ms().saturating_sub(*started) / 1000;
         s.push_str(&format!("\n  {label} · {seconds}s\n"));
     }
+    for (id, failure) in &view.failures {
+        s.push_str(&format!(
+            "\n  Failed: {} ({}, {})\n    Step {} · {}\n    {}\n",
+            id.case, id.model, id.backend, failure.index, failure.label, failure.error
+        ));
+        if let Some(deferred) = view.deferred.get(id) {
+            for other in deferred.iter().filter(|other| *other != failure) {
+                s.push_str(&format!(
+                    "    Also failed: step {} · {} · {}\n",
+                    other.index, other.label, other.error
+                ));
+            }
+        }
+    }
     for a in view.active.values() {
         s.push_str(&format!(
             "\n  Running: {} ({}, {})",
@@ -450,6 +493,12 @@ fn render(view: &View, color: bool) -> String {
                 .unwrap_or_default();
             s.push_str(&format!(
                 "\n    Step {index}/{total} · {label}{count} · {seconds}s"
+            ));
+        }
+        for failure in &a.deferred {
+            s.push_str(&format!(
+                "\n    {red}Assertion failed (continuing){reset}: step {} · {} · {}",
+                failure.index, failure.label, failure.error
             ));
         }
         if let Some((_, block, attempt, max_attempts, child, started)) = &a.adaptive {
@@ -500,6 +549,16 @@ fn follow(root: PathBuf, terminal: bool, snapshots: mpsc::SyncSender<Result<View
     loop {
         let read = (|| -> Result<(), String> {
             for event in tail.read::<SuiteEvent>(&root.join("progress.jsonl"))? {
+                // Drain the old case stream before a terminal or member event
+                // removes or replaces it, including when attaching late.
+                if matches!(
+                    event,
+                    SuiteEvent::AttemptFinished { .. }
+                        | SuiteEvent::CaseFinished { .. }
+                        | SuiteEvent::CampaignMemberStarted { .. }
+                ) {
+                    view.read_cases(&root)?;
+                }
                 view.suite(event)?;
             }
             // Start watching each case directory before reading its stream, so
@@ -850,6 +909,213 @@ mod tests {
         assert!(rendered.contains("Staging executables"));
         assert!(!rendered.contains("Building executables"));
     }
+    #[test]
+    fn deferred_failure_is_visible_during_collection_and_late_attach() {
+        let dir = std::env::temp_dir().join(format!("l6-progress-deferred-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let attempt = AttemptId {
+            case: id(),
+            attempt: 1,
+        };
+        let failure = progress::StepFailure {
+            index: 2,
+            label: "Check channel 2".into(),
+            error: "PWM did not increase".into(),
+        };
+        let mut case = Writer::create(&dir.join("attempt.jsonl")).unwrap();
+        case.emit(&CaseEvent::Header {
+            version: progress::VERSION,
+            run_id: "run".into(),
+            id: attempt.clone(),
+        })
+        .unwrap();
+        case.emit(&CaseEvent::ScenarioStarted { total_steps: 4 })
+            .unwrap();
+        case.emit(&CaseEvent::StepStarted {
+            index: 2,
+            label: failure.label.clone(),
+            started_unix_ms: 1,
+        })
+        .unwrap();
+        case.emit(&CaseEvent::DeferredAssertionFailed {
+            failure: failure.clone(),
+        })
+        .unwrap();
+        case.emit(&CaseEvent::StepStarted {
+            index: 3,
+            label: "Check channel 3".into(),
+            started_unix_ms: 2,
+        })
+        .unwrap();
+        let mut view = View::default();
+        view.suite(SuiteEvent::Header {
+            version: progress::VERSION,
+            run_id: "run".into(),
+        })
+        .unwrap();
+        view.suite(SuiteEvent::RunStarted { total_cases: 1 })
+            .unwrap();
+        view.suite(SuiteEvent::AttemptStarted {
+            id: attempt.clone(),
+            progress_path: "attempt.jsonl".into(),
+        })
+        .unwrap();
+        view.read_cases(&dir).unwrap();
+        let display = render(&view, false);
+        assert!(
+            display.contains(
+                "Assertion failed (continuing): step 2 · Check channel 2 · PWM did not increase"
+            ),
+            "{display}"
+        );
+        assert!(display.contains("Step 3/4 · Check channel 3"), "{display}");
+        let second = progress::StepFailure {
+            index: 3,
+            label: "Check channel 3".into(),
+            error: "PWM was zero".into(),
+        };
+        case.emit(&CaseEvent::DeferredAssertionFailed { failure: second })
+            .unwrap();
+        case.emit(&CaseEvent::ScenarioFinished {
+            outcome: Outcome::Fail,
+            failure: Some(failure),
+            finished_unix_ms: 3,
+        })
+        .unwrap();
+        view.read_cases(&dir).unwrap();
+        view.suite(SuiteEvent::AttemptFinished {
+            id: attempt,
+            outcome: Outcome::Fail,
+        })
+        .unwrap();
+        view.suite(SuiteEvent::CaseFinished {
+            id: id(),
+            outcome: Outcome::Fail,
+        })
+        .unwrap();
+        let display = render(&view, false);
+        assert!(display.contains("Step 2 · Check channel 2"), "{display}");
+        assert!(display.contains("PWM did not increase"), "{display}");
+        assert!(
+            display.contains("Also failed: step 3 · Check channel 3 · PWM was zero"),
+            "{display}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn late_attach_keeps_failed_step_after_attempt_finishes() {
+        let dir = std::env::temp_dir().join(format!("l6-progress-failure-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let attempt = AttemptId {
+            case: id(),
+            attempt: 1,
+        };
+        let mut case = Writer::create(&dir.join("attempt.jsonl")).unwrap();
+        case.emit(&CaseEvent::Header {
+            version: progress::VERSION,
+            run_id: "run".into(),
+            id: attempt.clone(),
+        })
+        .unwrap();
+        case.emit(&CaseEvent::ScenarioStarted { total_steps: 3 })
+            .unwrap();
+        case.emit(&CaseEvent::StepStarted {
+            index: 2,
+            label: "Check pad 1 assignment".into(),
+            started_unix_ms: 1,
+        })
+        .unwrap();
+        case.emit(&CaseEvent::ScenarioFinished {
+            outcome: Outcome::Fail,
+            failure: Some(progress::StepFailure {
+                index: 2,
+                label: "Check pad 1 assignment".into(),
+                error: "assignment mismatch: received 01".into(),
+            }),
+            finished_unix_ms: 2,
+        })
+        .unwrap();
+        let mut suite = Writer::create(&dir.join("progress.jsonl")).unwrap();
+        suite
+            .emit(&SuiteEvent::Header {
+                version: progress::VERSION,
+                run_id: "run".into(),
+            })
+            .unwrap();
+        suite
+            .emit(&SuiteEvent::RunStarted { total_cases: 1 })
+            .unwrap();
+        suite
+            .emit(&SuiteEvent::AttemptStarted {
+                id: attempt.clone(),
+                progress_path: "attempt.jsonl".into(),
+            })
+            .unwrap();
+        suite
+            .emit(&SuiteEvent::AttemptFinished {
+                id: attempt,
+                outcome: Outcome::Fail,
+            })
+            .unwrap();
+        suite
+            .emit(&SuiteEvent::CaseFinished {
+                id: id(),
+                outcome: Outcome::Fail,
+            })
+            .unwrap();
+        suite
+            .emit(&SuiteEvent::RunFinished {
+                outcome: Outcome::Fail,
+            })
+            .unwrap();
+        let (tx, rx) = mpsc::sync_channel(1);
+        let worker = std::thread::spawn({
+            let dir = dir.clone();
+            move || follow(dir, true, tx)
+        });
+        let view = rx.recv_timeout(Duration::from_secs(3)).unwrap().unwrap();
+        let display = render(&view, false);
+        assert!(
+            display.contains("Step 2 · Check pad 1 assignment"),
+            "{display}"
+        );
+        assert!(
+            display.contains("assignment mismatch: received 01"),
+            "{display}"
+        );
+        assert!(view.active.is_empty());
+        let mut retry = view.clone();
+        retry
+            .suite(SuiteEvent::AttemptStarted {
+                id: AttemptId {
+                    case: id(),
+                    attempt: 2,
+                },
+                progress_path: "retry.jsonl".into(),
+            })
+            .unwrap();
+        retry
+            .suite(SuiteEvent::CaseFinished {
+                id: id(),
+                outcome: Outcome::Flaky,
+            })
+            .unwrap();
+        assert!(render(&retry, false).contains("assignment mismatch: received 01"));
+        retry
+            .suite(SuiteEvent::CaseFinished {
+                id: id(),
+                outcome: Outcome::Pass,
+            })
+            .unwrap();
+        assert!(!render(&retry, false).contains("assignment mismatch: received 01"));
+        drop(rx);
+        worker.join().unwrap();
+        drop(case);
+        drop(suite);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn late_attach_replays_step() {
         let dir = std::env::temp_dir().join(format!("l6-progress-case-{}", std::process::id()));

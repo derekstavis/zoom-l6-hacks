@@ -34,6 +34,14 @@ pub fn decode(bytes: &[u8]) -> io::Result<Vec<(u8, Vec<u8>)>> {
     }
     Ok(messages)
 }
+/// Read and decode one queued transfer without blocking.
+pub fn poll_endpoint(host: &UsbHost, input: u8) -> io::Result<Option<Vec<(u8, Vec<u8>)>>> {
+    match host.try_receive(input, 16_384) {
+        Ok(bytes) => Ok(Some(decode(&bytes)?)),
+        Err(error) if error.raw_os_error() == Some(libc::EAGAIN) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
 #[derive(Default)]
 pub struct Encoder {
     running: u8,

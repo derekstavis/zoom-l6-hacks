@@ -10,35 +10,55 @@ pub use l6max_host::audio_trace::{
 pub use l6max_host::control::Info;
 pub use l6max_host::debug::{Command as DebugCommand, Observation as DebugObservation};
 pub use l6max_host::effect_editor::{
-    Binding as EffectEditorBinding, Snapshot as EffectEditorSnapshot,
+    Binding as EffectEditorBinding, SlotBinding as EffectSlotBinding,
+    SlotFields as EffectSlotFields, SlotSnapshot as EffectSlotSnapshot,
+    Snapshot as EffectEditorSnapshot,
 };
 pub use l6max_host::heap::Counters as HeapCounters;
 pub use l6max_host::indicators::rings as decode_indicator_rings;
 pub use l6max_host::input::button_source;
-pub use l6max_host::input::{InputAck, InputAckState, InputCounters, InputSource};
+pub use l6max_host::input::{
+    AudioInputReceipt, AudioInputStatus, AudioTransport, InputAck, InputAckState, InputCounters,
+    InputSource,
+};
+pub use l6max_host::knob_binding::{
+    FirmwareBinding as KnobFirmwareBinding, PreflightTargets as KnobPreflightTargets,
+    SdBinding as KnobSdBinding, verify_bitmap_probe_state, verify_notification_semaphore,
+    verify_preflight_widget60,
+};
 pub use l6max_host::knob_popup::{
     NavigationSnapshot, OverlayDescriptors, ParameterState, RecorderState, RestorationPointers,
     RestorationSnapshot, Snapshot as KnobPopupSnapshot,
 };
 pub use l6max_host::memory::MemoryRead;
+pub use l6max_host::menu::Snapshot as MenuSnapshot;
 pub use l6max_host::midi_config::Config as MidiConfig;
 pub use l6max_host::qmp::Status as QmpStatus;
 pub use l6max_host::sd_loader::{Site as SdLoaderSite, Snapshot as SdLoaderSnapshot};
+pub use l6max_host::usb::Enumeration as UsbEnumeration;
 
 pub use l6max_host::editor::pad_assignment_present as editor_pad_assignment_present;
+pub use l6max_host::editor::{
+    Request as EditorRequest, pad_dialog_pending as editor_pad_dialog_pending,
+    pad_playing as editor_pad_playing,
+};
 pub use l6max_host::editor::{
     pad_assignment_matches as editor_pad_assignment_matches,
     pad_file_count as editor_pad_file_count, pad_filename_valid as editor_pad_filename_valid,
 };
 pub use l6max_host::input_trace::panel_uart_count;
+pub use l6max_host::l6_din::Snapshot as L6DinSnapshot;
 pub use l6max_host::l6_recorder::{
     Dma as L6RecorderDma, Event as L6RecorderEvent, Selection as L6RecorderSelection,
 };
 pub use l6max_host::mixer_level::MixerLevel;
 pub use l6max_host::panel_keys::Snapshot as PanelKeySnapshot;
+pub use l6max_host::sound_pad::Assignment as SoundPadAssignment;
 pub use l6max_host::update_bootloader::Outcome as InstallerOutcome;
 pub use l6max_host::update_state::{UpdateGuiState, UpdateState};
 pub use l6max_host::usb_midi::SysexDecoder as UsbSysexDecoder;
+pub use l6max_host::wav::{Chunks as WavChunks, validate_complete as validate_complete_wav};
+pub use l6max_host::{audio_analysis, audio_input};
 use l6max_host::{control, engine::Engine, freertos, qmp};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -67,33 +87,110 @@ pub enum RtosKind {
 pub enum Request {
     Info,
     QmpStatus,
-    InputStatus { source: InputSource },
-    InputAck { source: InputSource, sequence: u32 },
+    AudioInputStatus,
+    AudioInputLoad {
+        channel: u32,
+        loaded: bool,
+    },
+    AudioInputTransport {
+        operation: AudioTransport,
+        position_ms: i32,
+    },
+    WarmReset {
+        timeout_s: u64,
+    },
+    SdCard {
+        path: Option<String>,
+    },
+    InputStatus {
+        source: InputSource,
+    },
+    InputAck {
+        source: InputSource,
+        sequence: u32,
+    },
     SdLoaderStatus,
-    SdLoaderSite { index: u32 },
+    SdLoaderSite {
+        index: u32,
+    },
     HeapCounters,
-    MemoryRead { address: u32, length: usize },
+    Menu {
+        menu: String,
+        path: Vec<String>,
+    },
+    MemoryRead {
+        address: u32,
+        length: usize,
+    },
+    SymbolRead {
+        symbol: String,
+        length: usize,
+    },
     MidiConfig,
-    EffectEditor { binding: EffectEditorBinding },
+    L6DinState,
+    EffectEditor {
+        binding: EffectEditorBinding,
+    },
+    EffectSlot {
+        binding: EffectSlotBinding,
+        fields: EffectSlotFields,
+    },
 
     MixerLevel,
-    PanelKey { code: u32 },
+    PanelKey {
+        code: u32,
+    },
+    SoundPadAssignment {
+        pad: u8,
+        path: Option<String>,
+    },
     UpdateState,
     UpdateGuiState,
     InstallerOutcome,
     UsbAttach,
     UsbRelease,
     UsbController,
-    KnobPopup { with_text: bool },
+    UsbEnumerate,
+    KnobPopup {
+        with_text: bool,
+    },
     RecorderState,
     KnobParameterState,
-    Rtos { kind: RtosKind },
-    Tap { target: u32, hold_ms: u32 },
-    Down { target: u32, duration_ms: u32 },
-    Up { target: u32 },
-    Encoder { channel: u32, steps: i32 },
-    Analog { channel: u32, steps: i32 },
-    SetAnalog { channel: u32, value: u16 },
+    Rtos {
+        kind: RtosKind,
+    },
+    Tap {
+        target: u32,
+        hold_ms: u32,
+    },
+    Down {
+        target: u32,
+        duration_ms: u32,
+    },
+    Up {
+        target: u32,
+    },
+    Encoder {
+        channel: u32,
+        steps: i32,
+    },
+    Analog {
+        channel: u32,
+        steps: i32,
+    },
+    SetAnalog {
+        channel: u32,
+        value: u16,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ResetReceipt {
+    pub reset: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SdCardReceipt {
+    pub inserted: bool,
 }
 
 /// The attach request only signals cable attachment, not enumeration.
@@ -201,7 +298,10 @@ impl SocketDebugSession {
         }
         let close = matches!(
             command,
-            DebugCommand::Close | DebugCommand::L6MidiFinish { .. }
+            DebugCommand::Close
+                | DebugCommand::L6MidiFinish { .. }
+                | DebugCommand::L6DinFinish { .. }
+                | DebugCommand::L6MeterFinish { .. }
         );
         let result = (|| {
             serde_json::to_writer(&mut self.writer, &command).map_err(ControlError::Protocol)?;
@@ -269,6 +369,26 @@ impl ControlClient {
     pub fn qmp_status(&self) -> Result<QmpStatus, ControlError> {
         self.request_as(&Request::QmpStatus)
     }
+    pub fn audio_input_status(&self) -> Result<AudioInputStatus, ControlError> {
+        self.request_as(&Request::AudioInputStatus)
+    }
+    pub fn audio_input_load(
+        &self,
+        channel: u32,
+        loaded: bool,
+    ) -> Result<AudioInputReceipt, ControlError> {
+        self.request_as(&Request::AudioInputLoad { channel, loaded })
+    }
+    pub fn audio_input_transport(
+        &self,
+        operation: AudioTransport,
+        position_ms: i32,
+    ) -> Result<AudioInputReceipt, ControlError> {
+        self.request_as(&Request::AudioInputTransport {
+            operation,
+            position_ms,
+        })
+    }
     pub fn input_status(&self, source: InputSource) -> Result<InputCounters, ControlError> {
         self.request_as(&Request::InputStatus { source })
     }
@@ -293,9 +413,13 @@ impl ControlClient {
             })?;
         // SD inspection itself owns a 30-second deadline; leave room to
         // serialize and return its bounded error to this client.
-        let timeout = if matches!(
+        let timeout = if let Request::WarmReset { timeout_s } = request {
+            timeout_s.saturating_add(5)
+        } else if matches!(request, Request::UsbEnumerate) {
+            105
+        } else if matches!(
             request,
-            Request::SdLoaderStatus | Request::SdLoaderSite { .. }
+            Request::SdLoaderStatus | Request::SdLoaderSite { .. } | Request::Menu { .. }
         ) {
             35
         } else if matches!(
@@ -303,8 +427,11 @@ impl ControlClient {
             Request::Rtos { .. }
                 | Request::HeapCounters
                 | Request::MemoryRead { .. }
+                | Request::SymbolRead { .. }
                 | Request::MidiConfig
+                | Request::L6DinState
                 | Request::EffectEditor { .. }
+                | Request::EffectSlot { .. }
                 | Request::MixerLevel
                 | Request::PanelKey { .. }
                 | Request::UpdateState
@@ -339,6 +466,13 @@ impl ControlClient {
         Ok(reply.get("result").cloned().unwrap_or(Value::Null))
     }
 
+    pub fn warm_reset(&self, timeout_s: u64) -> Result<ResetReceipt, ControlError> {
+        self.request_as(&Request::WarmReset { timeout_s })
+    }
+    pub fn sd_card(&self, path: Option<String>) -> Result<SdCardReceipt, ControlError> {
+        self.request_as(&Request::SdCard { path })
+    }
+
     pub fn info(&self) -> Result<Info, ControlError> {
         self.request_as(&Request::Info)
     }
@@ -346,6 +480,12 @@ impl ControlClient {
     /// One guarded, non-atomic live counter read (no heap traversal).
     pub fn heap_counters(&self) -> Result<HeapCounters, ControlError> {
         self.request_as(&Request::HeapCounters)
+    }
+    pub fn menu(&self, menu: &str, path: &[String]) -> Result<MenuSnapshot, ControlError> {
+        self.request_as(&Request::Menu {
+            menu: menu.into(),
+            path: path.into(),
+        })
     }
 
     pub fn read_main_memory(
@@ -356,11 +496,38 @@ impl ControlClient {
         self.request_as(&Request::MemoryRead { address, length })
     }
 
+    pub fn read_symbol(&self, symbol: &str, length: usize) -> Result<MemoryRead, ControlError> {
+        self.request_as(&Request::SymbolRead {
+            symbol: symbol.into(),
+            length,
+        })
+    }
+
     pub fn effect_editor(
         &self,
         binding: EffectEditorBinding,
     ) -> Result<EffectEditorSnapshot, ControlError> {
         self.request_as(&Request::EffectEditor { binding })
+    }
+
+    pub fn effect_slot(
+        &self,
+        binding: EffectSlotBinding,
+        fields: EffectSlotFields,
+    ) -> Result<EffectSlotSnapshot, ControlError> {
+        self.request_as(&Request::EffectSlot { binding, fields })
+    }
+
+    pub fn l6_din_state(&self) -> Result<L6DinSnapshot, ControlError> {
+        self.request_as(&Request::L6DinState)
+    }
+
+    pub fn sound_pad_assignment(
+        &self,
+        pad: u8,
+        path: Option<String>,
+    ) -> Result<SoundPadAssignment, ControlError> {
+        self.request_as(&Request::SoundPadAssignment { pad, path })
     }
 
     pub fn panel_key(&self, code: u32) -> Result<PanelKeySnapshot, ControlError> {
@@ -387,6 +554,9 @@ impl ControlClient {
     }
     pub fn usb_controller(&self) -> Result<UsbControllerStatus, ControlError> {
         self.request_as(&Request::UsbController)
+    }
+    pub fn usb_enumerate(&self) -> Result<UsbEnumeration, ControlError> {
+        self.request_as(&Request::UsbEnumerate)
     }
 
     pub fn update_state(&self) -> Result<UpdateState, ControlError> {
@@ -452,6 +622,110 @@ impl ControlClient {
     }
 }
 
+/// Narrow emergency handle retained while a bounded diagnostic worker runs.
+/// Stopping MAIN does not resume it; the caller must restart after an emergency.
+pub struct MainStopHandle {
+    qmp: qmp::QmpClient,
+}
+impl MainStopHandle {
+    pub fn stop_before(&self, deadline: std::time::Instant) -> Result<(), ControlError> {
+        self.qmp
+            .stop_before(deadline)
+            .map_err(|e| ControlError::Rejected(e.to_string()))
+    }
+}
+
+fn usb_panel_guest_expired(now: u32, start: u32, timeout_ms: u32) -> bool {
+    now.wrapping_sub(start) > timeout_ms
+}
+
+/// Ownership of one accepted held input. Release is explicit so callers can
+/// report cleanup failures while retaining the handle for another attempt.
+pub struct HeldButton {
+    inputs: std::sync::Arc<l6max_host::input::InputHub>,
+    target: u32,
+    held: bool,
+}
+
+impl HeldButton {
+    /// Enqueue a release, retaining ownership if enqueueing fails.
+    pub fn release(&mut self) -> Result<(), ControlError> {
+        if self.held {
+            self.inputs
+                .up(self.target)
+                .map_err(|error| ControlError::Rejected(error.to_string()))?;
+            self.held = false;
+        }
+        Ok(())
+    }
+    /// Release if MAIN is still powered. Once MAIN has shut down, its input
+    /// channel cannot acknowledge a release and no command is necessary.
+    pub fn release_unless_main_powered_off(&mut self) -> Result<(), ControlError> {
+        if self.inputs.main.snapshot().powered_off {
+            self.held = false;
+            Ok(())
+        } else {
+            self.release()
+        }
+    }
+    pub fn is_held(&self) -> bool {
+        self.held
+    }
+}
+
+/// Explicit-channel button transaction for protocol probes. A failed press
+/// remains held because a partial write may have reached the guest.
+pub struct RawHeldButton {
+    inputs: std::sync::Arc<l6max_host::input::InputHub>,
+    source: InputSource,
+    target: u32,
+    held: bool,
+}
+impl RawHeldButton {
+    pub fn press(&mut self, duration_ms: u32) -> Result<u32, ControlError> {
+        if self.held {
+            return Err(ControlError::Rejected("raw button already held".into()));
+        }
+        self.held = true;
+        let input = match self.source {
+            InputSource::Main => &self.inputs.main,
+            InputSource::Panel => &self.inputs.panel,
+        };
+        input
+            .down(self.target, duration_ms)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+    pub fn release(&mut self) -> Result<Option<u32>, ControlError> {
+        if !self.held {
+            return Ok(None);
+        }
+        let input = match self.source {
+            InputSource::Main => &self.inputs.main,
+            InputSource::Panel => &self.inputs.panel,
+        };
+        let sequence = input
+            .up(self.target)
+            .map_err(|error| ControlError::Rejected(error.to_string()))?;
+        self.held = false;
+        Ok(Some(sequence))
+    }
+    pub fn is_held(&self) -> bool {
+        self.held
+    }
+}
+
+/// A clonable in-process view of input counters for background observers.
+/// It exposes the same snapshots as `input status` and does not own the guest.
+#[derive(Clone)]
+pub struct InputObserver {
+    inputs: std::sync::Arc<l6max_host::input::InputHub>,
+}
+impl InputObserver {
+    pub fn status(&self, source: InputSource) -> InputCounters {
+        self.inputs.counters(source)
+    }
+}
+
 /// Access the same host-owned guest directly without opening a control socket.
 /// The engine and its QMP/input resources remain owned by the caller.
 pub struct OwnedControl<'a> {
@@ -471,6 +745,21 @@ impl<'a> OwnedControl<'a> {
         self.engine.connect_midi();
         Ok(())
     }
+    /// Connect a direct MIDI consumer without exposing the engine's USB transport.
+    pub fn direct_midi_before(
+        &self,
+        cable: u8,
+        budget: &l6max_host::usb::Budget,
+    ) -> Result<midi::MidiSession, ControlError> {
+        let usb = self
+            .engine
+            .usb
+            .as_ref()
+            .ok_or(ControlError::Unavailable("USB host unavailable"))?
+            .clone();
+        midi::MidiSession::connect_direct_before(usb, cable, budget).map_err(ControlError::Rejected)
+    }
+
     /// Reserve the owned guest's USB controller for raw USB-MIDI observation.
     pub fn raw_usb_midi(&self) -> Result<l6max_host::usb_midi::RawReceiver, ControlError> {
         let usb = self
@@ -497,6 +786,73 @@ impl<'a> OwnedControl<'a> {
             .map_err(|error| ControlError::Rejected(error.to_string()))
     }
 
+    pub fn menu_before(
+        &self,
+        menu: &str,
+        path: &[String],
+        deadline: std::time::Instant,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<MenuSnapshot, ControlError> {
+        l6max_host::menu::snapshot_before(
+            self.main_qmp()?,
+            self.engine.model(),
+            menu,
+            path,
+            deadline,
+            cancelled,
+        )
+        .map_err(ControlError::Rejected)
+    }
+    /// Retain a panel-guest-time cancellation condition across USB steps.
+    /// The wall deadline and guest-time anchor remain those supplied by the caller.
+    pub fn usb_panel_budget(
+        &self,
+        deadline: std::time::Instant,
+        guest_start: u32,
+        guest_timeout_ms: u32,
+    ) -> Result<l6max_host::usb::Budget, ControlError> {
+        let panel = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .panel
+            .clone();
+        Ok(l6max_host::usb::Budget::new(deadline, move || {
+            usb_panel_guest_expired(panel.snapshot().guest_ms, guest_start, guest_timeout_ms)
+        }))
+    }
+
+    /// Enumerate the engine's reserved raw controller without replacing its pump.
+    pub fn usb_enumerate_before(
+        &self,
+        budget: &l6max_host::usb::Budget,
+    ) -> Result<(Vec<u8>, Vec<u8>, l6max_host::usb::Configuration), ControlError> {
+        let result = self
+            .engine
+            .usb_controller()
+            .ok_or(ControlError::Unavailable("USB controller unavailable"))?
+            .enumerate_before(budget)
+            .map_err(ControlError::Rejected)?;
+        Ok((result.device, result.configuration, result.parsed))
+    }
+    pub fn usb_attach_before(&self, budget: &l6max_host::usb::Budget) -> Result<(), ControlError> {
+        self.engine
+            .usb_controller()
+            .ok_or(ControlError::Unavailable("USB controller unavailable"))?
+            .attach_before(budget)
+            .map_err(ControlError::Rejected)
+    }
+    pub fn usb_controller_before(
+        &self,
+        budget: &l6max_host::usb::Budget,
+    ) -> Result<bool, ControlError> {
+        self.engine
+            .usb_controller()
+            .ok_or(ControlError::Unavailable("USB controller unavailable"))?
+            .running_before(budget)
+            .map_err(ControlError::Rejected)
+    }
     pub fn debug_session(&self) -> Result<l6max_host::debug::Session, ControlError> {
         self.engine
             .debugger()
@@ -519,6 +875,50 @@ impl<'a> OwnedControl<'a> {
             ))?
             .begin_before(deadline)
             .map_err(ControlError::Rejected)
+    }
+
+    /// Coordinate breakpoints while both initially paused guests and input
+    /// replay are observed by the caller. This is an in-process API only.
+    pub fn debug_observer_before(
+        &self,
+        deadline: std::time::Instant,
+    ) -> Result<l6max_host::debug::Observer, ControlError> {
+        let controller = self.engine.debugger().ok_or(ControlError::Unavailable(
+            "debugger unavailable; launch with --gdb-socket",
+        ))?;
+        let main = self
+            .engine
+            .management
+            .first()
+            .ok_or(ControlError::Unavailable("MAIN management unavailable"))?;
+        let panel = self
+            .engine
+            .management
+            .get(1)
+            .ok_or(ControlError::Unavailable("panel management unavailable"))?;
+        l6max_host::debug::Observer::acquire(controller, main, panel, deadline)
+            .map_err(ControlError::Rejected)
+    }
+
+    /// Wait for QEMU's reset event; guest readiness is a separate observation.
+    pub fn warm_reset(&self, timeout: std::time::Duration) -> Result<ResetReceipt, ControlError> {
+        self.main_qmp()?
+            .system_reset_and_wait(timeout)
+            .map_err(|e| ControlError::Rejected(e.to_string()))?;
+        Ok(ResetReceipt {
+            reset: "qmp-system-reset".into(),
+        })
+    }
+    pub fn sd_card(&self, path: Option<&std::path::Path>) -> Result<SdCardReceipt, ControlError> {
+        let qmp = self.main_qmp()?;
+        match path {
+            Some(path) => qmp.insert_sd(path),
+            None => qmp.eject_sd(),
+        }
+        .map_err(|e| ControlError::Rejected(e.to_string()))?;
+        Ok(SdCardReceipt {
+            inserted: path.is_some(),
+        })
     }
 
     pub fn info(&self) -> Result<Info, ControlError> {
@@ -591,6 +991,38 @@ impl<'a> OwnedControl<'a> {
         .map_err(ControlError::Rejected)
     }
 
+    pub fn audio_input_status(&self) -> Result<AudioInputStatus, ControlError> {
+        Ok(self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .audio_input_status())
+    }
+    pub fn audio_input_load(
+        &self,
+        channel: u32,
+        loaded: bool,
+    ) -> Result<AudioInputReceipt, ControlError> {
+        self.engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .audio_input_load(channel, loaded)
+            .map_err(ControlError::Io)
+    }
+    pub fn audio_input_transport(
+        &self,
+        operation: AudioTransport,
+        position_ms: i32,
+    ) -> Result<AudioInputReceipt, ControlError> {
+        self.engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .audio_input_transport(operation, position_ms)
+            .map_err(ControlError::Io)
+    }
     /// Sample the host's channel counters without opening a control socket.
     pub fn qmp_status_before(
         &self,
@@ -604,6 +1036,16 @@ impl<'a> OwnedControl<'a> {
         self.main_qmp()?
             .query_status()
             .map_err(|e| ControlError::Rejected(e.to_string()))
+    }
+    /// Retain a read-only input view for a worker that outlives this borrow.
+    pub fn input_observer(&self) -> Result<InputObserver, ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .clone();
+        Ok(InputObserver { inputs })
     }
     pub fn input_status(&self, source: InputSource) -> Result<InputCounters, ControlError> {
         let inputs = self
@@ -634,6 +1076,19 @@ impl<'a> OwnedControl<'a> {
         l6max_host::sd_loader::Reader::new(self.main_qmp()?, self.engine.model(), deadline)
             .map_err(ControlError::Rejected)
     }
+    pub fn sd_loader_reader_cancellable(
+        &self,
+        deadline: std::time::Instant,
+        cancelled: impl FnMut() -> bool,
+    ) -> Result<l6max_host::sd_loader::Reader<'_>, ControlError> {
+        l6max_host::sd_loader::Reader::new_cancellable(
+            self.main_qmp()?,
+            self.engine.model(),
+            deadline,
+            cancelled,
+        )
+        .map_err(ControlError::Rejected)
+    }
     pub fn sd_loader_status(&self) -> Result<SdLoaderSnapshot, ControlError> {
         l6max_host::sd_loader::snapshot(self.main_qmp()?, self.engine.model())
             .map_err(ControlError::Rejected)
@@ -643,11 +1098,37 @@ impl<'a> OwnedControl<'a> {
             .map_err(ControlError::Rejected)
     }
 
+    /// Read allocator counters with the host's plausibility checks.
+    pub fn checked_heap(&self) -> Result<l6max_host::heap::Heap, ControlError> {
+        l6max_host::heap::read(self.main_qmp()?, self.engine.model())
+            .map_err(ControlError::Rejected)
+    }
+
     /// Validate the allocator once for a bounded set of live counter reads.
     /// Recreate this reader after a guest restart or firmware change.
     pub fn heap_counter_reader(&self) -> Result<l6max_host::heap::CounterReader, ControlError> {
         l6max_host::heap::counter_reader(self.main_qmp()?, self.engine.model())
             .map_err(ControlError::Rejected)
+    }
+
+    pub fn read_symbol(&self, symbol: &str, length: usize) -> Result<MemoryRead, ControlError> {
+        l6max_host::memory::read_symbol(self.main_qmp()?, self.engine.model(), symbol, length)
+            .map_err(ControlError::Rejected)
+    }
+    pub fn read_symbol_before(
+        &self,
+        symbol: &str,
+        length: usize,
+        deadline: std::time::Instant,
+    ) -> Result<MemoryRead, ControlError> {
+        l6max_host::memory::read_symbol_before(
+            self.main_qmp()?,
+            self.engine.model(),
+            symbol,
+            length,
+            deadline,
+        )
+        .map_err(ControlError::Rejected)
     }
 
     pub fn read_main_memory(
@@ -700,6 +1181,55 @@ impl<'a> OwnedControl<'a> {
             .map_err(|error| ControlError::Rejected(error.to_string()))
     }
 
+    pub fn main_stop_handle(&self) -> Result<MainStopHandle, ControlError> {
+        Ok(MainStopHandle {
+            qmp: self.main_qmp()?.clone(),
+        })
+    }
+    pub fn verify_l6_din_dispatch_before_checked(
+        &self,
+        deadline: std::time::Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<(), ControlError> {
+        l6max_host::l6_din_dispatch::verify_before_checked(
+            self.main_qmp()?,
+            self.engine.model(),
+            deadline,
+            check,
+        )
+        .map_err(ControlError::Rejected)
+    }
+
+    pub fn l6_din_reader_before_checked(
+        &self,
+        deadline: std::time::Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<l6max_host::l6_din::Reader, ControlError> {
+        l6max_host::l6_din::Reader::new_before_checked(
+            self.main_qmp()?,
+            self.engine.model(),
+            deadline,
+            check,
+        )
+        .map_err(ControlError::Rejected)
+    }
+
+    pub fn effect_slot_reader_before_checked(
+        &self,
+        binding: EffectSlotBinding,
+        deadline: std::time::Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<l6max_host::effect_editor::SlotReader, ControlError> {
+        l6max_host::effect_editor::SlotReader::new_before_checked(
+            self.main_qmp()?,
+            self.engine.model(),
+            binding,
+            deadline,
+            check,
+        )
+        .map_err(ControlError::Rejected)
+    }
+
     pub fn effect_editor_reader_before(
         &self,
         binding: EffectEditorBinding,
@@ -736,6 +1266,26 @@ impl<'a> OwnedControl<'a> {
     ) -> Result<l6max_host::effect_editor::Reader, ControlError> {
         l6max_host::effect_editor::Reader::new(self.main_qmp()?, self.engine.model(), binding)
             .map_err(ControlError::Rejected)
+    }
+
+    /// Prepare an explicit-channel button without sending input yet.
+    pub fn raw_button(
+        &self,
+        source: InputSource,
+        target: u32,
+    ) -> Result<RawHeldButton, ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .clone();
+        Ok(RawHeldButton {
+            inputs,
+            source,
+            target,
+            held: false,
+        })
     }
 
     /// Enqueue an input on a specific emulated channel, including unsupported
@@ -826,6 +1376,28 @@ impl<'a> OwnedControl<'a> {
             sequence,
         })
     }
+    /// Enqueue a held input and retain explicit ownership for cleanup.
+    pub fn hold_button(
+        &self,
+        target: u32,
+        duration_ms: u32,
+    ) -> Result<(ButtonReceipt, HeldButton), ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .clone();
+        let receipt = self.down(target, duration_ms)?;
+        Ok((
+            receipt,
+            HeldButton {
+                inputs,
+                target,
+                held: true,
+            },
+        ))
+    }
     pub fn up(&self, target: u32) -> Result<ButtonReceipt, ControlError> {
         if target >= l6max_host::controls::INPUT_COUNT as u32 {
             return Err(ControlError::Rejected("invalid held button".into()));
@@ -842,6 +1414,14 @@ impl<'a> OwnedControl<'a> {
             command: "up".into(),
             sequence,
         })
+    }
+
+    pub fn sound_pad_reader_before(
+        &self,
+        deadline: std::time::Instant,
+    ) -> Result<l6max_host::sound_pad::Reader, ControlError> {
+        l6max_host::sound_pad::Reader::new_before(self.main_qmp()?, self.engine.model(), deadline)
+            .map_err(ControlError::Rejected)
     }
 
     pub fn panel_key(&self, code: u32) -> Result<PanelKeySnapshot, ControlError> {
@@ -1049,3 +1629,120 @@ impl<'a> OwnedControl<'a> {
 
 /// Host and direct USB MIDI consumer sessions.
 pub mod midi;
+
+#[cfg(test)]
+mod usb_panel_budget_tests {
+    #[test]
+    fn guest_budget_retains_boundary_and_clock_wrap_behavior() {
+        assert!(!super::usb_panel_guest_expired(50, u32::MAX - 49, 100));
+        assert!(super::usb_panel_guest_expired(51, u32::MAX - 49, 100));
+    }
+}
+
+#[cfg(test)]
+mod raw_button_tests {
+    use super::*;
+    use l6max_host::input::{EngineInput, InputHub};
+    use std::sync::Arc;
+
+    #[test]
+    fn explicit_channel_is_preserved_even_for_main_routed_targets() {
+        let (main, _main_peer) = EngineInput::pair().unwrap();
+        let (panel, mut panel_peer) = EngineInput::pair().unwrap();
+        let inputs = Arc::new(InputHub::new(main, panel, l6fw::Model::L6));
+        let mut button = RawHeldButton {
+            inputs: inputs.clone(),
+            source: InputSource::Panel,
+            target: 0,
+            held: false,
+        };
+        button.press(0).unwrap();
+        button.release().unwrap();
+        for kind in [l6max_host::protocol::DOWN, l6max_host::protocol::UP] {
+            let message = l6max_host::protocol::Message::read(&mut panel_peer).unwrap();
+            assert_eq!((message.kind, message.target), (kind, 0));
+        }
+        assert_eq!(inputs.main.snapshot().sent, 0);
+        assert!(!button.is_held());
+        assert_eq!(button.release().unwrap(), None);
+    }
+    #[test]
+    fn failed_press_keeps_release_pending() {
+        let (main, _main_peer) = EngineInput::pair().unwrap();
+        let (panel, panel_peer) = EngineInput::pair().unwrap();
+        let inputs = Arc::new(InputHub::new(main, panel, l6fw::Model::L6));
+        drop(panel_peer);
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while inputs.panel.snapshot().connected && std::time::Instant::now() < until {
+            std::thread::yield_now();
+        }
+        assert!(!inputs.panel.snapshot().connected);
+        let mut button = RawHeldButton {
+            inputs,
+            source: InputSource::Panel,
+            target: 0,
+            held: false,
+        };
+        assert!(button.press(0).is_err());
+        assert!(button.is_held());
+        assert!(button.release().is_err());
+        assert!(button.is_held());
+    }
+}
+
+#[cfg(test)]
+mod input_observer_tests {
+    #[test]
+    fn cloned_observer_reads_the_same_channel_counters() {
+        use l6max_host::input::{EngineInput, InputHub, InputSource};
+        use std::sync::Arc;
+        let (main, _main_peer) = EngineInput::pair().unwrap();
+        let (panel, _panel_peer) = EngineInput::pair().unwrap();
+        let inputs = Arc::new(InputHub::new(main, panel, l6fw::Model::L6));
+        let observer = super::InputObserver {
+            inputs: inputs.clone(),
+        };
+        let worker = std::thread::spawn(move || observer.status(InputSource::Panel));
+        assert_eq!(worker.join().unwrap(), inputs.counters(InputSource::Panel));
+    }
+}
+
+#[cfg(test)]
+mod held_button_tests {
+    #[test]
+    fn release_enqueues_once_and_is_idempotent() {
+        use l6max_host::input::{EngineInput, InputHub};
+        use std::sync::Arc;
+        let (main, _main_peer) = EngineInput::pair().unwrap();
+        let (panel, _panel_peer) = EngineInput::pair().unwrap();
+        let inputs = Arc::new(InputHub::new(main, panel, l6fw::Model::L6));
+        let mut held = super::HeldButton {
+            inputs: inputs.clone(),
+            target: 53,
+            held: true,
+        };
+        held.release_unless_main_powered_off().unwrap();
+        assert!(!held.is_held());
+        assert_eq!(inputs.main.snapshot().sent, 1);
+        held.release_unless_main_powered_off().unwrap();
+        assert_eq!(inputs.main.snapshot().sent, 1);
+    }
+
+    #[test]
+    fn failed_release_retains_ownership() {
+        use l6max_host::input::{EngineInput, InputHub};
+        use std::sync::Arc;
+        let (main, peer) = EngineInput::pair().unwrap();
+        let (panel, _panel_peer) = EngineInput::pair().unwrap();
+        let inputs = Arc::new(InputHub::new(main, panel, l6fw::Model::L6));
+        drop(peer);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let mut held = super::HeldButton {
+            inputs,
+            target: 53,
+            held: true,
+        };
+        assert!(held.release_unless_main_powered_off().is_err());
+        assert!(held.is_held());
+    }
+}

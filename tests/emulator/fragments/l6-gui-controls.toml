@@ -136,21 +136,69 @@ control = "sound-pad-4"
 
 [[step]]
 models = ["l6"]
-action = "save-scene"
+action = "momentary-down"
+control = "scene-a"
+duration_ms = 50
+guest_timeout_ms = 10000
+wall_timeout_s = 120
+
+[[step]]
+models = ["l6"]
+action = "expect-scene"
 scene = 1
+lit = true
 guest_timeout_ms = 10000
 wall_timeout_s = 120
 
 [[step]]
 models = ["l6"]
-action = "save-scene"
+action = "momentary-up"
+control = "scene-a"
+guest_timeout_ms = 10000
+wall_timeout_s = 120
+
+[[step]]
+models = ["l6"]
+action = "momentary-down"
+control = "scene-b"
+duration_ms = 50
+guest_timeout_ms = 10000
+wall_timeout_s = 120
+
+[[step]]
+models = ["l6"]
+action = "expect-scene"
 scene = 2
+lit = true
 guest_timeout_ms = 10000
 wall_timeout_s = 120
 
 [[step]]
 models = ["l6"]
-action = "save-scene"
+action = "momentary-up"
+control = "scene-b"
+guest_timeout_ms = 10000
+wall_timeout_s = 120
+
+[[step]]
+models = ["l6"]
+action = "momentary-down"
+control = "scene-c"
+duration_ms = 50
+guest_timeout_ms = 10000
+wall_timeout_s = 120
+
+[[step]]
+models = ["l6"]
+action = "expect-scene"
 scene = 3
+lit = true
+guest_timeout_ms = 10000
+wall_timeout_s = 120
+
+[[step]]
+models = ["l6"]
+action = "momentary-up"
+control = "scene-c"
 guest_timeout_ms = 10000
 wall_timeout_s = 120

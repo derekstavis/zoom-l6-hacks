@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const VERSION: u32 = 8;
+pub const VERSION: u32 = 10;
 pub const PATH_ENV: &str = "L6_TEST_PROGRESS";
 pub const RUN_ENV: &str = "L6_TEST_PROGRESS_RUN";
 pub const ATTEMPT_ENV: &str = "L6_TEST_PROGRESS_ATTEMPT";
@@ -92,6 +92,14 @@ pub enum CasePhase {
     StartingEmulator,
     PreparingScenario,
 }
+/// Failed scenario step as seen by a watcher, with one-based displayed index.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StepFailure {
+    pub index: usize,
+    pub label: String,
+    pub error: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum CaseEvent {
@@ -111,6 +119,10 @@ pub enum CaseEvent {
         index: usize,
         label: String,
         started_unix_ms: u64,
+    },
+    /// An assertion failed, but the scenario continues to collect evidence.
+    DeferredAssertionFailed {
+        failure: StepFailure,
     },
     StepProgress {
         index: usize,
@@ -150,6 +162,7 @@ pub enum CaseEvent {
     },
     ScenarioFinished {
         outcome: Outcome,
+        failure: Option<StepFailure>,
         finished_unix_ms: u64,
     },
 }
@@ -249,6 +262,45 @@ pub fn step_label(action: &crate::Action) -> String {
         Action::L6RingCoverage { mask } => format!("Check L6 ring segment coverage {mask:#05x}"),
         Action::L6MuteSample { cc, value, .. } => format!("Observe L6 mute CC {cc} value {value}"),
         Action::L6IndicatorEnd => "End L6 indicator campaign".into(),
+        Action::ExpectMemory { symbol, .. } => format!("Check firmware memory {symbol}"),
+        Action::ExpectSdLoader => "Check SD patch loader".into(),
+        Action::CaptureSdModule { loaded } => format!(
+            "Capture {} SD module state",
+            if *loaded { "loaded" } else { "unloaded" }
+        ),
+        Action::ExpectSdAllocation { loaded } => format!(
+            "Check {} SD module allocation",
+            if *loaded { "loaded" } else { "unloaded" }
+        ),
+        Action::ExpectSdChains {
+            loaded,
+            chain_count,
+        } => match chain_count {
+            Some(count) => format!(
+                "Check SD hook chains ({}; {count} links)",
+                if *loaded { "loaded" } else { "unloaded" }
+            ),
+            None => format!(
+                "Check {} SD hook chains",
+                if *loaded { "loaded" } else { "unloaded" }
+            ),
+        },
+        Action::ExpectSdContinuations { loaded } => format!(
+            "Check {} SD hook continuations",
+            if *loaded { "loaded" } else { "unloaded" }
+        ),
+        Action::ExpectSdModuleImages { loaded } => if *loaded {
+            "Check loaded SD module images"
+        } else {
+            "Check SD module absence"
+        }
+        .into(),
+        Action::ExpectSdLatestModule { loaded } => if *loaded {
+            "Check latest SD allocation image"
+        } else {
+            "Check latest SD allocation is absent"
+        }
+        .into(),
         Action::EffectPacedTurn { channel, steps } => {
             format!("Apply {steps} paced effect edits on channel {channel}")
         }
@@ -362,7 +414,9 @@ pub fn step_label(action: &crate::Action) -> String {
         Action::EditorAssignCount { pad } => format!("Check pad {} file count", pad + 1),
         Action::EditorAssignFilename { pad } => format!("Select pad {} filename", pad + 1),
         Action::EditorAssignSend { pad } => format!("Assign pad {} file", pad + 1),
-        Action::EditorAssignState { pad } => format!("Check pad {} assignment", pad + 1),
+        Action::EditorAssignDialog { pad } => format!("Handle pad {} assignment dialog", pad + 1),
+        Action::EditorAssignState { pad } => format!("Poll pad {} assignment readback", pad + 1),
+        Action::EditorAssignAssert { pad } => format!("Check pad {} assignment", pad + 1),
         Action::EditorAssignEnd => "Finish Editor pad assignments".into(),
         Action::EditorPlaybackBegin { pad } => {
             format!("Prepare Editor playback for pad {}", pad + 1)
@@ -540,6 +594,11 @@ pub fn step_label(action: &crate::Action) -> String {
         }
         Action::HostMidiExpectCount { count } => format!("Wait for {count} MIDI messages"),
         Action::HostMidiSettle { guest_ms } => format!("Settle MIDI for {guest_ms} ms guest time"),
+        Action::ExpectRingUnchanged {
+            channel,
+            observe_wall_ms,
+            ..
+        } => format!("Observe ring {channel} unchanged ({observe_wall_ms} ms wall time)"),
         Action::ExpectRingChanged { channel, .. } => {
             format!("Wait for channel {channel} ring change")
         }
@@ -572,6 +631,29 @@ mod tests {
 
     #[test]
     fn labels_include_meaningful_action_parameters() {
+        assert_eq!(
+            step_label(&crate::Action::EditorAssignDialog { pad: 1 }),
+            "Handle pad 2 assignment dialog"
+        );
+        assert_eq!(
+            step_label(&crate::Action::EditorAssignState { pad: 1 }),
+            "Poll pad 2 assignment readback"
+        );
+        assert_eq!(
+            step_label(&crate::Action::EditorAssignAssert { pad: 1 }),
+            "Check pad 2 assignment"
+        );
+        assert_eq!(
+            step_label(&crate::Action::ExpectSdChains {
+                loaded: true,
+                chain_count: Some(2)
+            }),
+            "Check SD hook chains (loaded; 2 links)"
+        );
+        assert_eq!(
+            step_label(&crate::Action::ExpectSdModuleImages { loaded: false }),
+            "Check SD module absence"
+        );
         assert_eq!(
             step_label(&crate::Action::Wait {
                 until: "mixer-ready".into()

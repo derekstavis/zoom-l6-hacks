@@ -15,6 +15,31 @@ guest_timeout_ms = 600000
 wall_timeout_s = 1800
 
 [[step]]
-action = "l6max-tap-handler"
+action = "l6max-tap-begin"
+guest_timeout_ms = 30000
+wall_timeout_s = 60
+
+[[step]]
+action = "l6max-tap-press"
+guest_timeout_ms = 30000
+wall_timeout_s = 60
+
+[[step]]
+action = "l6max-tap-wait"
+guest_timeout_ms = 30000
+wall_timeout_s = 60
+
+[[step]]
+action = "l6max-tap-assert"
+guest_timeout_ms = 30000
+wall_timeout_s = 60
+
+[[step]]
+action = "l6max-tap-release"
+guest_timeout_ms = 30000
+wall_timeout_s = 60
+
+[[step]]
+action = "l6max-tap-end"
 guest_timeout_ms = 30000
 wall_timeout_s = 60

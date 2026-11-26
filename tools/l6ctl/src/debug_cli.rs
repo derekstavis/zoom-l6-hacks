@@ -23,7 +23,13 @@ pub fn run(client: &ControlClient) -> Result<(), String> {
             }
             serde_json::from_str::<DebugCommand>(&line).map_err(|error| error.to_string())?
         };
-        let close = matches!(command, DebugCommand::Close);
+        let close = matches!(
+            command,
+            DebugCommand::Close
+                | DebugCommand::L6MidiFinish { .. }
+                | DebugCommand::L6DinFinish { .. }
+                | DebugCommand::L6MeterFinish { .. }
+        );
         match session.execute(command) {
             Ok(result) => writeln!(output, "{}", json!({"ok":true,"result":result}))
                 .map_err(|error| error.to_string())?,

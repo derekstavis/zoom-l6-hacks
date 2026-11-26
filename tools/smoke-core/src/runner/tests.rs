@@ -99,35 +99,50 @@ fn display_reference_settling_requires_a_continuous_matching_guest_interval() {
 }
 
 #[test]
-fn direct_usb_midi_cable_is_configurable_and_range_checked() {
-    let default = Scenario::parse(
-        "version=1\nname='midi'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='direct-usb-midi-round-trip'\n",
-    )
-    .unwrap();
+fn direct_midi_cable_is_range_checked() {
+    let source = "version=1\nname='midi'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='direct-midi-connect'\ncable=5\n";
     assert!(matches!(
-        default.step[0].action,
-        Action::DirectUsbMidiRoundTrip {
-            cable: 1,
-            expect_ring_change: true
-        }
+        Scenario::parse(source).unwrap().step[0].action,
+        Action::DirectMidiConnect { cable: 5 }
     ));
-
-    let ignored_cable = Scenario::parse(
-        "version=1\nname='midi'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='direct-usb-midi-round-trip'\ncable=5\nexpect_ring_change=false\n",
-    )
-    .unwrap();
-    assert!(matches!(
-        ignored_cable.step[0].action,
-        Action::DirectUsbMidiRoundTrip {
-            cable: 5,
-            expect_ring_change: false
-        }
-    ));
-    assert!(Scenario::parse(
-        "version=1\nname='midi'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='direct-usb-midi-round-trip'\ncable=16\n",
-    )
-    .is_err());
+    assert!(Scenario::parse(&source.replace("cable=5", "cable=16")).is_err());
 }
+#[test]
+fn negative_midi_ring_observation_requires_adjacent_send_and_matching_budget() {
+    let prefix = "version=1\nname='negative-midi'\nmodels=['l6','l6max']\nbackends=['headless']\n[[step]]\naction='checkpoint'\nname='before'\n";
+    let send = "[[step]]\naction='host-midi-send-cc'\nchannel=0\ncontroller=81\nvalue=100\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
+    let observe = "[[step]]\naction='expect-ring-unchanged'\nchannel=1\ncheckpoint='before'\nobserve_wall_ms=3000\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
+    assert!(Scenario::parse(&format!("{prefix}{send}{observe}")).is_ok());
+    assert!(Scenario::parse(&format!("{prefix}{observe}")).is_err());
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}{send}[[step]]\naction='delay'\nguest_ms=1\n{observe}"
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}{send}{}",
+            observe.replace("wall_timeout_s=30", "wall_timeout_s=29")
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}{send}{}",
+            observe.replace("channel=1", "channel=7")
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}{send}{}",
+            observe.replace("observe_wall_ms=3000", "observe_wall_ms=0")
+        ))
+        .is_err()
+    );
+}
+
 #[test]
 fn display_after_press_requires_ack_and_new_display() {
     let scenario = Scenario::parse("version=1\nname='press-screen'\nmodels=['l6max']\n[[step]]\naction='press'\ncontrol='recorder.down'\n[[step]]\naction='expect-display-after-press'\n").unwrap();
@@ -664,7 +679,9 @@ fn explicit_up_is_acked_with_applied_not_the_automatic_tap_release_counter() {
 }
 #[test]
 fn scene_save_holds_until_the_lamp_changes_then_checks_both_panel_edges() {
-    let mut runner = test_runner("[[step]]\naction='save-scene'\nscene=1\n");
+    let mut runner = test_runner(
+        "[[step]]\naction='momentary-down'\ncontrol='scene-a'\nduration_ms=50\n[[step]]\naction='expect-scene'\nscene=1\nlit=true\n[[step]]\naction='momentary-up'\ncontrol='scene-a'\n",
+    );
     let now = Instant::now();
     assert!(matches!(
         runner.advance(sample(0), now).unwrap(),
@@ -691,6 +708,147 @@ fn scene_save_holds_until_the_lamp_changes_then_checks_both_panel_edges() {
     assert!(matches!(
         runner.advance(held, now).unwrap(),
         Progress::Complete
+    ));
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+#[test]
+fn scene_save_rejects_duplicate_press_before_releasing() {
+    let mut runner = test_runner(
+        "[[step]]\naction='momentary-down'\ncontrol='scene-a'\nduration_ms=50\n[[step]]\naction='expect-scene'\nscene=1\nlit=true\n[[step]]\naction='momentary-up'\ncontrol='scene-a'\n",
+    );
+    let now = Instant::now();
+    runner.advance(sample(0), now).unwrap();
+    let [press, _] = trace::button_packets(Model::L6, "scene-a").unwrap();
+    let mut held = sample(100);
+    held.panel.sent = 1;
+    held.panel.applied = 1;
+    held.traces.insert(press, 2);
+    held.data.indicators[2] |= 1 << 11;
+    assert!(
+        runner
+            .advance(held, now)
+            .unwrap_err()
+            .contains("duplicate scene-a press")
+    );
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+
+#[test]
+fn momentary_scope_detects_duplicate_during_lamp_wait_and_exposes_cleanup() {
+    let mut runner = test_runner(
+        "[[step]]\naction='momentary-down'\ncontrol='scene-a'\nduration_ms=50\n[[step]]\naction='expect-scene'\nscene=1\nlit=true\n[[step]]\naction='momentary-up'\ncontrol='scene-a'\n",
+    );
+    let now = Instant::now();
+    runner.advance(sample(0), now).unwrap();
+    let [press, _] = trace::button_packets(Model::L6, "scene-a").unwrap();
+    let mut held = sample(100);
+    held.panel.sent = 1;
+    held.panel.applied = 1;
+    held.traces.insert(press.clone(), 1);
+    assert!(matches!(
+        runner.advance(held.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    held.traces.insert(press, 2);
+    assert!(
+        runner
+            .advance(held, now)
+            .unwrap_err()
+            .contains("duplicate scene-a press")
+    );
+    assert!(matches!(
+        runner.take_held_release(),
+        Some(Command::Release { target: 15 })
+    ));
+    assert!(runner.take_held_release().is_none());
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+
+#[test]
+fn momentary_scope_keeps_initial_guest_deadline_across_lamp_wait() {
+    let mut runner = test_runner(
+        "[[step]]\naction='momentary-down'\ncontrol='scene-a'\nduration_ms=50\nguest_timeout_ms=100\n[[step]]\naction='expect-scene'\nscene=1\nlit=true\nguest_timeout_ms=100\n[[step]]\naction='momentary-up'\ncontrol='scene-a'\nguest_timeout_ms=100\n",
+    );
+    let now = Instant::now();
+    runner.advance(sample(0), now).unwrap();
+    let [press, _] = trace::button_packets(Model::L6, "scene-a").unwrap();
+    let mut held = sample(80);
+    held.panel.sent = 1;
+    held.panel.applied = 1;
+    held.traces.insert(press, 1);
+    assert!(matches!(
+        runner.advance(held.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    held.panel.guest_ms = 101;
+    assert!(
+        runner
+            .advance(held, now)
+            .unwrap_err()
+            .contains("shared deadline")
+    );
+    assert!(matches!(
+        runner.take_held_release(),
+        Some(Command::Release { target: 15 })
+    ));
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+
+#[test]
+fn scene_save_rejects_duplicate_release_after_the_lamp() {
+    let mut runner = test_runner(
+        "[[step]]\naction='momentary-down'\ncontrol='scene-a'\nduration_ms=50\n[[step]]\naction='expect-scene'\nscene=1\nlit=true\n[[step]]\naction='momentary-up'\ncontrol='scene-a'\n",
+    );
+    let now = Instant::now();
+    runner.advance(sample(0), now).unwrap();
+    let [press, release] = trace::button_packets(Model::L6, "scene-a").unwrap();
+    let mut held = sample(100);
+    held.panel.sent = 1;
+    held.panel.applied = 1;
+    held.traces.insert(press, 1);
+    held.data.indicators[2] |= 1 << 11;
+    assert!(matches!(
+        runner.advance(held.clone(), now).unwrap(),
+        Progress::Dispatch(Command::Release { target: 15 })
+    ));
+    held.panel.sent = 2;
+    held.panel.applied = 2;
+    held.traces.insert(release, 2);
+    assert!(
+        runner
+            .advance(held, now)
+            .unwrap_err()
+            .contains("duplicate scene-a release")
+    );
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+
+#[test]
+fn scene_save_waits_for_its_own_lamp_and_press_acknowledgement() {
+    let mut runner = test_runner(
+        "[[step]]\naction='momentary-down'\ncontrol='scene-a'\nduration_ms=50\n[[step]]\naction='expect-scene'\nscene=1\nlit=true\n[[step]]\naction='momentary-up'\ncontrol='scene-a'\n",
+    );
+    let now = Instant::now();
+    runner.advance(sample(0), now).unwrap();
+    let [press, _] = trace::button_packets(Model::L6, "scene-a").unwrap();
+    let mut held = sample(100);
+    held.panel.sent = 1;
+    held.traces.insert(press, 1);
+    held.data.indicators[2] |= 1 << 11;
+    assert!(matches!(
+        runner.advance(held.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    held.panel.applied = 1;
+    held.data.indicators[2] &= !(1 << 11);
+    assert!(matches!(
+        runner.advance(held.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    held.data.indicators[2] |= 1 << 11;
+    assert!(matches!(
+        runner.advance(held, now).unwrap(),
+        Progress::Dispatch(Command::Release { target: 15 })
     ));
     fs::remove_dir_all(&runner.logs).unwrap();
 }
@@ -772,15 +930,23 @@ fn parser_rejects_typos_and_unavailable_model_controls() {
         ))
         .is_err()
     );
-    assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='save-scene'\nscene=1\n")).is_ok());
-    assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='save-scene'\nscene=4\n")).is_err());
+    assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='momentary-down'\ncontrol='scene-a'\nduration_ms=50\n[[step]]\naction='expect-scene'\nscene=1\nlit=true\n[[step]]\naction='momentary-up'\ncontrol='scene-a'\n")).is_ok());
+    let sequence = "[[step]]\naction='momentary-down'\ncontrol='scene-a'\nduration_ms=50\n[[step]]\naction='expect-scene'\nscene=1\nlit=true\n[[step]]\naction='momentary-up'\ncontrol='scene-a'\n";
+    assert!(Scenario::parse(&format!("{prefix}{sequence}")).is_ok());
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}{}",
+            sequence.replace("scene=1", "scene=4")
+        ))
+        .is_err()
+    );
     let l6max = prefix.replace("['l6']", "['l6max']");
-    assert!(Scenario::parse(&format!("{l6max}[[step]]\naction='save-scene'\nscene=1\n")).is_err());
+    assert!(Scenario::parse(&format!("{l6max}{sequence}")).is_err());
 }
 
 #[test]
 fn usb_sysex_scenario_requires_scoped_complete_messages() {
-    let prefix = "version=1\nname='sysex'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='usb-descriptors'\n[[step]]\naction='usb-sysex-begin'\nguest_timeout_ms=1000\n";
+    let prefix = "version=1\nname='sysex'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='usb-controller-ready'\n[[step]]\naction='usb-enumerate'\n[[step]]\naction='usb-sysex-begin'\nguest_timeout_ms=1000\n";
     let suffix = "[[step]]\naction='usb-sysex-end'\n";
     let good = format!(
         "{prefix}[[step]]\naction='usb-sysex-exchange'\nbytes=[240,1,247]\nexpect_prefix=[240,1]\n{suffix}"
@@ -819,7 +985,7 @@ fn editor_pad_assignment_requires_prior_usb_midi_enumeration() {
     assert!(
         without_usb
             .unwrap_err()
-            .contains("requires a preceding usb-descriptors step")
+            .contains("requires a preceding usb-enumerate step")
     );
     let reordered = assignment_steps.replacen(
         "action = \"editor-assign-count\"\npad = 0",
@@ -828,26 +994,47 @@ fn editor_pad_assignment_requires_prior_usb_midi_enumeration() {
     );
     assert!(
         Scenario::parse(&format!(
-            "{prefix}[[step]]\naction='usb-descriptors'\n{reordered}"
+            "{prefix}[[step]]\naction='usb-controller-ready'\n[[step]]\naction='usb-enumerate'\n{reordered}"
         ))
         .is_err()
     );
+    let dialog = "[[step]]\naction = \"editor-assign-dialog\"\npad = 0\nguest_timeout_ms = 60000\nwall_timeout_s = 900\n\n";
+    for altered in [
+        assignment_steps.replacen(dialog, "", 1),
+        assignment_steps.replacen(dialog, &dialog.replace("pad = 0", "pad = 1"), 1),
+        assignment_steps.replacen(
+            dialog,
+            &dialog.replace("wall_timeout_s = 900", "wall_timeout_s = 899"),
+            1,
+        ),
+    ] {
+        assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='usb-controller-ready'\n[[step]]\naction='usb-enumerate'\n{altered}")).is_err());
+    }
+    let assertion = "[[step]]\naction = \"editor-assign-assert\"\npad = 0\nguest_timeout_ms = 60000\nwall_timeout_s = 900\n\n";
+    for altered in [
+        assignment_steps.replacen(assertion, "", 1),
+        assignment_steps.replacen(assertion, &assertion.replace("pad = 0", "pad = 1"), 1),
+    ] {
+        assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='usb-controller-ready'\n[[step]]\naction='usb-enumerate'\n{altered}")).is_err());
+    }
     let shortened = assignment_steps.replace(
         "action = \"editor-assign-end\"",
         "action = \"editor-assign-identity\"",
     );
     assert!(
         Scenario::parse(&format!(
-            "{prefix}[[step]]\naction='usb-descriptors'\n{shortened}"
+            "{prefix}[[step]]\naction='usb-controller-ready'\n[[step]]\naction='usb-enumerate'\n{shortened}"
         ))
         .is_err()
     );
     let with_usb = Scenario::parse(&format!(
-        "{prefix}[[step]]\naction='usb-descriptors'\n{assignment_steps}"
+        "{prefix}[[step]]\naction='usb-controller-ready'\n[[step]]\naction='usb-enumerate'\n{assignment_steps}"
     ));
     assert!(with_usb.is_ok());
     let playback_steps = "[[step]]\naction='editor-playback-begin'\npad=3\n[[step]]\naction='editor-playback-play'\n[[step]]\naction='editor-playback-wait'\n[[step]]\naction='editor-playback-observe'\n[[step]]\naction='editor-playback-sample'\n[[step]]\naction='editor-playback-assert'\n[[step]]\naction='editor-playback-end'\n";
-    let prefix_steps = format!("[[step]]\naction='usb-descriptors'\n{assignment_steps}");
+    let prefix_steps = format!(
+        "[[step]]\naction='usb-controller-ready'\n[[step]]\naction='usb-enumerate'\n{assignment_steps}"
+    );
     assert!(Scenario::parse(&format!("{prefix}{prefix_steps}{playback_steps}")).is_err());
     let l6_prefix = prefix.replace("l6max", "l6");
     assert!(Scenario::parse(&format!("{l6_prefix}{prefix_steps}{playback_steps}")).is_ok());
@@ -877,33 +1064,33 @@ fn editor_pad_assignment_requires_prior_usb_midi_enumeration() {
     );
     let ui_steps = "[[step]]\naction='ui-pad-begin'\npad=2\n[[step]]\naction='ui-pad-identity'\n[[step]]\naction='ui-pad-global'\n[[step]]\naction='ui-pad-keep-alive'\n[[step]]\naction='ui-pad-query'\n[[step]]\naction='ui-pad-assert'\n[[step]]\naction='ui-pad-end'\n";
     let ui_playback = Scenario::parse(&format!(
-        "{prefix}[[step]]\naction='usb-descriptors'\n{ui_steps}"
+        "{prefix}[[step]]\naction='usb-controller-ready'\n[[step]]\naction='usb-enumerate'\n{ui_steps}"
     ));
     assert!(ui_playback.is_ok(), "{ui_playback:?}");
     let wrong_model = prefix.replace("l6max", "l6");
     assert!(
         Scenario::parse(&format!(
-            "{wrong_model}[[step]]\naction='usb-descriptors'\n{ui_steps}"
+            "{wrong_model}[[step]]\naction='usb-controller-ready'\n[[step]]\naction='usb-enumerate'\n{ui_steps}"
         ))
         .is_err()
     );
     assert!(
         Scenario::parse(&format!(
-            "{prefix}[[step]]\naction='usb-descriptors'\n{}",
+            "{prefix}[[step]]\naction='usb-controller-ready'\n[[step]]\naction='usb-enumerate'\n{}",
             ui_steps.replace("action='ui-pad-query'", "action='ui-pad-identity'")
         ))
         .is_err()
     );
     assert!(
         Scenario::parse(&format!(
-            "{prefix}[[step]]\naction='usb-descriptors'\n{}",
+            "{prefix}[[step]]\naction='usb-controller-ready'\n[[step]]\naction='usb-enumerate'\n{}",
             ui_steps.replace("pad=2", "pad=4")
         ))
         .is_err()
     );
     assert!(
         Scenario::parse(&format!(
-            "{prefix}[[step]]\naction='usb-descriptors'\n{}",
+            "{prefix}[[step]]\naction='usb-controller-ready'\n[[step]]\naction='usb-enumerate'\n{}",
             ui_steps.replace(
                 "action='ui-pad-end'",
                 "action='ui-pad-end'\nguest_timeout_ms=10"
@@ -933,7 +1120,7 @@ fn sound_pad_playback_supports_editor_or_saved_assignment() {
     .map(|part| format!("[[step]]\naction='sound-pad-{part}'\n"))
     .collect::<String>();
     let action = format!(
-        "[[step]]\naction='usb-descriptors'\n{assignment_steps}[[step]]\naction='sound-pad-begin'\npad=0\ntarget=49\n"
+        "[[step]]\naction='usb-controller-ready'\n[[step]]\naction='usb-enumerate'\n{assignment_steps}[[step]]\naction='sound-pad-begin'\npad=0\ntarget=49\n"
     );
     assert!(Scenario::parse(&format!("{prefix}{action}{suffix}")).is_ok());
     let l6max = prefix.replace("models=['l6']", "models=['l6max']");
@@ -960,7 +1147,7 @@ fn sound_pad_playback_supports_editor_or_saved_assignment() {
     assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='sound-pad-begin'\npad=0\ntarget=49\nassignment='saved-state'\n{wrong_budget}")).is_err());
 
     let invalid_target = Scenario::parse(&format!(
-        "{prefix}[[step]]\naction='usb-descriptors'\n{assignment_steps}[[step]]\naction='sound-pad-begin'\npad=0\ntarget=53\n{suffix}"
+        "{prefix}[[step]]\naction='usb-controller-ready'\n[[step]]\naction='usb-enumerate'\n{assignment_steps}[[step]]\naction='sound-pad-begin'\npad=0\ntarget=53\n{suffix}"
     ));
     assert!(
         invalid_target
@@ -968,7 +1155,7 @@ fn sound_pad_playback_supports_editor_or_saved_assignment() {
             .contains("target must match pad")
     );
     let mismatched_target = Scenario::parse(&format!(
-        "{prefix}[[step]]\naction='usb-descriptors'\n{assignment_steps}[[step]]\naction='sound-pad-begin'\npad=1\ntarget=49\n{suffix}"
+        "{prefix}[[step]]\naction='usb-controller-ready'\n[[step]]\naction='usb-enumerate'\n{assignment_steps}[[step]]\naction='sound-pad-begin'\npad=1\ntarget=49\n{suffix}"
     ));
     assert!(
         mismatched_target
@@ -1082,45 +1269,54 @@ fn unsupported_schema_and_zero_timeouts_fail_before_boot() {
 }
 #[test]
 fn l6_main_gpio_event_scenario_rejects_wrong_model_and_mapping() {
-    let base = "version=1\nname='gpio'\nmodels=['l6']\nbackends=['headless']\n[[step]]\naction='l6-main-gpio-event'\ntarget=48\nevent=25\n";
+    let base = include_str!("../../../../tests/emulator/cases/panel/l6-main-gpio-events.toml");
     assert!(Scenario::parse(base).is_ok());
-    assert!(Scenario::parse(&base.replace("models=['l6']", "models=['l6max']")).is_err());
-    assert!(Scenario::parse(&base.replace("event=25", "event=26")).is_err());
-    assert!(Scenario::parse(&base.replace("target=48", "target=53")).is_err());
+    assert!(Scenario::parse(&base.replace("models = [\"l6\"]", "models = [\"l6max\"]")).is_err());
+    assert!(Scenario::parse(&base.replace("event = 25", "event = 26")).is_err());
+    assert!(Scenario::parse(&base.replace("target = 48", "target = 53")).is_err());
+    assert!(
+        Scenario::parse(&base.replacen(
+            "action = \"l6-gpio-dispatch\"",
+            "action = \"l6-gpio-end\"",
+            1
+        ))
+        .is_err()
+    );
 }
 #[test]
 fn l6_usb_startup_requires_first_step_and_l6_scope() {
-    let base = "version=1
-name='usb'
-models=['l6']
-backends=['headless']
-[[step]]
-action='l6-usb-startup'
-";
+    let base = include_str!("../../../../tests/emulator/cases/usb/l6-usb-startup.toml");
     assert!(Scenario::parse(base).is_ok());
-    assert!(Scenario::parse(&base.replace("models=['l6']", "models=['l6max']")).is_err());
-    let late = base.replace(
-        "[[step]]
-action='l6-usb-startup'",
-        "[[step]]
-action='delay'
-guest_ms=1
-[[step]]
-action='l6-usb-startup'",
+    assert!(Scenario::parse(&base.replace("models = [\"l6\"]", "models = [\"l6max\"]")).is_err());
+    assert!(
+        Scenario::parse(&base.replacen(
+            "[[step]]",
+            "[[step]]\naction='delay'\nguest_ms=1\n[[step]]",
+            1
+        ))
+        .is_err()
     );
-    assert!(Scenario::parse(&late).is_err());
+    assert!(
+        Scenario::parse(&base.replacen(
+            "action = \"l6-usb-startup-assert-replay\"",
+            "action = \"l6-usb-startup-end\"",
+            1
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&base.replacen("guest_timeout_ms = 65000", "guest_timeout_ms = 64999", 1))
+            .is_err()
+    );
 }
+
 #[test]
 fn l6_din_sweep_is_scoped_to_l6() {
-    let base = "version=1
-name='din-sweep'
-models=['l6']
-backends=['headless']
-[[step]]
-action='l6-din-sweep'
-";
-    assert!(Scenario::parse(base).is_ok());
-    assert!(Scenario::parse(&base.replace("models=['l6']", "models=['l6max']")).is_err());
+    let path =
+        l6max_host::paths::repository_root().join("tests/emulator/cases/midi/l6-din-sweep.toml");
+    let base = fs::read_to_string(path).unwrap();
+    assert!(Scenario::parse(&base).is_ok());
+    assert!(Scenario::parse(&base.replace("models = [\"l6\"]", "models = [\"l6max\"]")).is_err());
 }
 #[test]
 fn every_checked_in_scenario_loads_after_composition() {
@@ -1309,7 +1505,7 @@ fn setup_input_propagates_through_includes_and_is_dropped_for_spec_state() {
 fn unsupported_operations_and_switch_semantics_fail_before_boot() {
     let prefix = "version=1\nname='invalid'\nmodels=['l6max']\n";
     for step in [
-        "action='usb-descriptors'",
+        "action='usb-controller-ready'\n[[step]]\naction='usb-enumerate'",
         "action='press'\ncontrol='ch5-pad-switch'",
         "action='switch'\ncontrol='channel.1.mute'\nenabled=true",
         "action='expect-ring'\nchannel=1\nmask=1024",
@@ -1370,7 +1566,7 @@ fn typed_input_sweep_allows_only_its_verified_rejections() {
     let steps = &case[case.find("[[step]]\naction = \"l6-sweep-begin\"").unwrap()..];
     let mut runner = test_runner(&format!("backends=['headless']\n{steps}"));
     runner.step = runner.scenario.step.len() - 1;
-    runner.device_finished(json!({"expected_rejections":{"main":2,"panel":2}}));
+    runner.device_finished(json!({"rejections":{"main":2,"panel":2}}));
     let mut obs = sample(0);
     obs.main.rejected = 2;
     obs.panel.rejected = 2;
@@ -1382,9 +1578,38 @@ fn typed_input_sweep_allows_only_its_verified_rejections() {
 
     let mut runner = test_runner(&format!("backends=['headless']\n{steps}"));
     runner.step = runner.scenario.step.len() - 1;
-    runner.device_finished(json!({"expected_rejections":{"main":2,"panel":2}}));
+    runner.device_finished(json!({"rejections":{"main":2,"panel":2}}));
     let mut obs = sample(0);
     obs.main.rejected = 3;
+    obs.panel.rejected = 2;
+    assert!(runner.advance(obs, now).is_err());
+    fs::remove_dir_all(&runner.logs).unwrap();
+
+    let mut runner = test_runner(&format!("backends=['headless']\n{steps}"));
+    for (action, expected) in [
+        (Action::L6SweepRejectMain { target: 0 }, [1, 0]),
+        (Action::L6SweepRejectMain { target: 5 }, [2, 0]),
+        (Action::L6SweepRejectPanel, [2, 1]),
+        (Action::L6SweepRejectEncoder, [2, 2]),
+        (Action::L6SweepEnd, [2, 2]),
+    ] {
+        let expected_action = serde_json::to_value(action).unwrap();
+        runner.step = runner
+            .scenario
+            .step
+            .iter()
+            .position(|step| serde_json::to_value(&step.action).unwrap() == expected_action)
+            .unwrap();
+        runner.device_finished(json!({"rejections":{"main":99,"panel":99}}));
+        assert_eq!(runner.allowed_rejections, expected);
+    }
+    fs::remove_dir_all(&runner.logs).unwrap();
+
+    // Arbitrary device evidence must never grant a rejection allowance.
+    let mut runner = test_runner("[[step]]\naction='delay'\nguest_ms=1\n");
+    runner.device_finished(json!({"expected_rejections":{"main":2,"panel":2}}));
+    let mut obs = sample(0);
+    obs.main.rejected = 2;
     obs.panel.rejected = 2;
     assert!(runner.advance(obs, now).is_err());
     fs::remove_dir_all(&runner.logs).unwrap();
@@ -1502,7 +1727,9 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
     );
     let activation = concat!(
         include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/callback-race.toml"),
-        "\n[[step]]\naction='knob-dialog-first-activation'\nguest_timeout_ms=180000\nwall_timeout_s=600\n"
+        include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/first-activation.toml"
+        )
     );
     let active_demo = concat!(
         include_str!(
@@ -1648,6 +1875,41 @@ fn captured_display_primitives_reject_screenless_l6() {
         .is_err()
     );
     assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='expect-captured-display-image'\nimage='tests/emulator/references/l6max-recorder-home.png'\n")).is_err());
+}
+
+#[test]
+fn deferred_assertions_keep_original_step_and_do_not_hide_later_errors() {
+    let mut runner =
+        test_runner("[[step]]\naction='delay'\nguest_ms=1\n[[step]]\naction='delay'\nguest_ms=2\n");
+    runner.defer_assertion_failure("first channel mismatch".into());
+    runner.device_finished(json!({"passed":false}));
+    runner.defer_assertion_failure("second channel mismatch".into());
+    runner.device_finished(json!({"passed":false}));
+    let errors = runner.deferred_assertion_error().unwrap();
+    assert!(errors.contains("first channel mismatch"));
+    assert!(errors.contains("second channel mismatch"));
+    runner.mark_deferred_terminal();
+    runner.finish("FAIL", Some(&errors)).unwrap();
+    let report: Value =
+        serde_json::from_slice(&fs::read(runner.logs.join("scenario.json")).unwrap()).unwrap();
+    assert_eq!(report["failed_step"], 1);
+    assert_eq!(report["deferred_failures"].as_array().unwrap().len(), 2);
+    assert_eq!(report["deferred_failures"][1]["index"], 2);
+    fs::remove_dir_all(&runner.logs).unwrap();
+
+    let mut runner =
+        test_runner("[[step]]\naction='delay'\nguest_ms=1\n[[step]]\naction='delay'\nguest_ms=2\n");
+    runner.defer_assertion_failure("prior deferred mismatch".into());
+    runner.device_finished(json!({}));
+    runner
+        .finish("FAIL", Some("later transport failure"))
+        .unwrap();
+    let report: Value =
+        serde_json::from_slice(&fs::read(runner.logs.join("scenario.json")).unwrap()).unwrap();
+    assert_eq!(report["failed_step"], 2);
+    assert_eq!(report["error"], "later transport failure");
+    assert_eq!(report["deferred_failures"].as_array().unwrap().len(), 1);
+    fs::remove_dir_all(&runner.logs).unwrap();
 }
 
 #[test]
@@ -1879,6 +2141,124 @@ fn synthetic_install_requires_all_boot_and_storage_checks() {
 }
 
 #[test]
+fn persistence_requires_complete_saved_and_restored_settings_scopes() {
+    let source = include_str!("../../../../tests/emulator/cases/boot/persistence.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    assert!(
+        Scenario::from_text(&source.replacen(
+            "action = \"settings-bank\"",
+            "action = \"settings-end\"",
+            1
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replacen(
+            "action = \"settings-reload\"",
+            "action = \"settings-end\"",
+            1
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replacen(
+            "action = \"restart\"",
+            "action = \"settings-end\"",
+            1
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replace("models = [\"l6max\"]", "models = [\"l6\"]")).is_err()
+    );
+}
+
+#[test]
+fn terminal_l6_dispatch_requires_all_ordered_setters_and_shared_budget() {
+    let source = include_str!("../../../../tests/emulator/cases/panel/l6-event-dispatch.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    assert!(Scenario::from_text(&source.replacen("index = 4", "index = 5", 1)).is_err());
+    assert!(
+        Scenario::from_text(&source.replacen(
+            "guest_timeout_ms = 600000\nwall_timeout_s = 1800",
+            "guest_timeout_ms = 600000\nwall_timeout_s = 1799",
+            1
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replace(
+            "action = \"l6-dispatch-finish\"",
+            "action = \"l6-dispatch-setter\""
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replace("models = [\"l6\"]", "models = [\"l6max\"]")).is_err()
+    );
+}
+
+#[test]
+fn tap_handler_requires_complete_ordered_scope_and_shared_budget() {
+    let source = include_str!("../../../../tests/emulator/cases/panel/l6max-tap-handler.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    assert!(
+        Scenario::from_text(&source.replace(
+            "action = \"l6max-tap-assert\"",
+            "action = \"l6max-tap-end\""
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replacen("wall_timeout_s = 60", "wall_timeout_s = 59", 1))
+            .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replace("models = [\"l6max\"]", "models = [\"l6\"]")).is_err()
+    );
+}
+
+#[test]
+fn l6_din_sweep_requires_all_128_ordered_samples_and_shared_budget() {
+    let source = include_str!("../../../../tests/emulator/cases/midi/l6-din-sweep.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    let sample = "[[step]]\naction = \"l6-din-sweep-sample\"\ncc = 64\nguest_timeout_ms = 120000\nwall_timeout_s = 600\n\n";
+    assert!(source.contains(sample));
+    assert!(Scenario::from_text(&source.replace(sample, "")).is_err());
+    assert!(Scenario::from_text(&source.replacen("cc = 64\n", "cc = 65\n", 1)).is_err());
+    assert!(
+        Scenario::from_text(&source.replacen("wall_timeout_s = 600", "wall_timeout_s = 599", 1))
+            .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replace(
+            "action = \"l6-din-sweep-assert\"",
+            "action = \"l6-din-sweep-end\""
+        ))
+        .is_err()
+    );
+}
+
+#[test]
+fn audio_callbacks_require_complete_model_scoped_sequence_and_shared_budget() {
+    let source = include_str!("../../../../tests/emulator/cases/audio/audio-path.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    let next = "[[step]]\nmodels = \"l6\"";
+    assert!(!source.contains(next));
+    let l6 = "[[step]]\nmodels = [\"l6\"]\naction = \"audio-callbacks-next\"\nguest_timeout_ms = 60000\nwall_timeout_s = 300\n\n";
+    assert!(source.contains(l6));
+    assert!(Scenario::from_text(&source.replacen(l6, "", 1)).is_err());
+    assert!(
+        Scenario::from_text(&source.replacen("wall_timeout_s = 300", "wall_timeout_s = 299", 1))
+            .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replace("audio-callbacks-assert", "audio-callbacks-end"))
+            .is_err()
+    );
+}
+
+#[test]
 fn patched_update_requires_complete_four_boot_verification() {
     let source =
         include_str!("../../../../tests/emulator/cases/boot/l6max-update-patched-midi.toml");
@@ -1886,7 +2266,7 @@ fn patched_update_requires_complete_four_boot_verification() {
     for missing in [
         "[[step]]\naction = \"end-wall-deadline\"\n\n",
         "[[step]]\naction = \"wait-usb-controller\"\nguest_timeout_ms = 180000\nwall_timeout_s = 300\n\n",
-        "[[step]]\naction = \"direct-usb-midi-round-trip\"\nguest_timeout_ms = 180000\nwall_timeout_s = 300\n\n",
+        "[[step]]\naction = \"include\"\npath = \"tests/emulator/fragments/host-midi-direct-cable-1.toml\"\ninclude_guest_timeout_ms = 180000\ninclude_wall_timeout_s = 300\n\n",
         "[[step]]\naction = \"include\"\npath = \"patches/midi-sync/tests/emulator/fragments/request-state.toml\"\ninclude_guest_timeout_ms = 180000\ninclude_wall_timeout_s = 300\n\n",
         "[[step]]\naction = \"expect-update-comparison\"\nfield = \"protected-region\"\n\n",
         "[[step]]\naction = \"expect-panel-unchanged\"\n",
@@ -2166,7 +2546,9 @@ fn l6max_timing_requires_ordered_scope_and_matching_budgets() {
         ("enqueue", "target=1\nhold_ms=50\npairs=2\n"),
         ("wait-first", ""),
         ("observe-paused", "wall_ms=700\n"),
-        ("assert-paused", ""),
+        ("capture-paused", ""),
+        ("assert-paused-clock", ""),
+        ("assert-paused-input", ""),
         ("resume", ""),
         ("wait-queued", ""),
         ("wait-reports", ""),
@@ -2192,6 +2574,19 @@ fn l6max_timing_requires_ordered_scope_and_matching_budgets() {
         ))
         .is_err()
     );
+    for action in [
+        "capture-paused",
+        "assert-paused-clock",
+        "assert-paused-input",
+    ] {
+        assert!(
+            Scenario::parse(
+                &scenario.replace(&format!("[[step]]\naction='l6max-timing-{action}'\n"), "")
+            )
+            .is_err(),
+            "missing {action}"
+        );
+    }
     assert!(Scenario::parse(&scenario.replace("models=['l6max']", "models=['l6']")).is_err());
 }
 
@@ -2225,6 +2620,7 @@ fn usb_storage_requires_ordered_scope_and_matching_budgets() {
         "assert-boot",
         "last-read",
         "last-write",
+        "last-readback",
         "last-assert",
         "fat-open",
         "create",
@@ -2250,6 +2646,10 @@ fn usb_storage_requires_ordered_scope_and_matching_budgets() {
             "action='usb-storage-ready'\nwall_timeout_s=1"
         ))
         .is_err()
+    );
+    assert!(
+        Scenario::parse(&scenario.replace("[[step]]\naction='usb-storage-last-readback'\n", ""))
+            .is_err()
     );
     assert!(
         Scenario::parse(&scenario.replace("[[step]]\naction='usb-storage-end'\n", "")).is_err()
@@ -2285,4 +2685,76 @@ fn power_transaction_requires_each_ordered_observation_and_shared_budget() {
             .is_err()
     );
     assert!(Scenario::from_text(&source.replacen("guest_ms = 1100", "guest_ms = 100", 1)).is_err());
+}
+
+#[test]
+fn warm_reset_requires_fresh_boot_sweep_before_mixer_ready() {
+    for model in [Model::L6, Model::L6max] {
+        let name = if model == Model::L6 { "l6" } else { "l6max" };
+        let scenario = Scenario::parse(&format!("version=1\nname='reset'\nmodels=['{name}']\n[[step]]\naction='wait'\nuntil='mixer-ready'\n")).unwrap();
+        let logs = std::env::temp_dir().join(format!(
+            "smoke-reset-{}-{}",
+            std::process::id(),
+            NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let mut runner = Runner::new(scenario, model, logs.clone()).unwrap();
+        let mut old = sample(1000);
+        for pins in l6max_host::indicators::RING_PINS
+            .iter()
+            .take(model.channels())
+        {
+            let (row, column) = pins[0];
+            old.data.indicators[row] |= 1 << (column ^ 7);
+        }
+        if model == Model::L6 {
+            old.data.indicators[4] |= 1 << 8;
+        }
+        old.panel.indicator_updates = 10;
+        runner.last_press_deadline = Some((Instant::now(), 1, 10, 2));
+        runner.warm_reset(old.data.indicators, 10);
+        assert!(runner.last_press_deadline.is_none());
+        let now = Instant::now();
+        assert!(matches!(
+            runner.advance(old.clone(), now).unwrap(),
+            Progress::Waiting
+        ));
+        old.panel.guest_ms = 2500;
+        old.panel.indicator_updates = 11;
+        assert!(matches!(
+            runner.advance(old.clone(), now).unwrap(),
+            Progress::Waiting
+        ));
+        let mut sweep = old.clone();
+        sweep.panel.guest_ms = 2600;
+        sweep.panel.indicator_updates = 12;
+        for pins in l6max_host::indicators::RING_PINS
+            .iter()
+            .take(model.channels())
+        {
+            for &(row, column) in pins {
+                sweep.data.indicators[row] |= 1 << (column ^ 7);
+            }
+        }
+        assert!(matches!(
+            runner.advance(sweep, now).unwrap(),
+            Progress::Waiting
+        ));
+        old.panel.indicator_updates = 13;
+        old.panel.guest_ms = 2700;
+        assert!(matches!(
+            runner.advance(old.clone(), now).unwrap(),
+            Progress::Waiting
+        ));
+        old.panel.guest_ms = 3699;
+        assert!(matches!(
+            runner.advance(old.clone(), now).unwrap(),
+            Progress::Waiting
+        ));
+        old.panel.guest_ms = 3700;
+        assert!(matches!(
+            runner.advance(old, now).unwrap(),
+            Progress::Complete
+        ));
+        fs::remove_dir_all(logs).unwrap();
+    }
 }

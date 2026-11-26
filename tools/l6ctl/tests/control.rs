@@ -895,6 +895,59 @@ fn effect_editor_client_uses_bounded_typed_wire_contract() {
 }
 
 #[test]
+fn effect_slot_client_uses_typed_non_atomic_wire_contract() {
+    let path = socket_path();
+    let identity = l6max_host::effect_editor::SlotIdentity {
+        module_len: 512,
+        code_len: 256,
+        state_offset: 128,
+        guard_offset: 0,
+        guard: [3; 32],
+        immutable_sha256: "b".repeat(64),
+        masked_words: vec![],
+        fixture_module_sha256: "a".repeat(64),
+    };
+    let binding = l6ctl::EffectSlotBinding {
+        identity,
+        processor: 268,
+        panel_mode: 272,
+        edit_mode: 276,
+        applied: Some(256),
+        exit_refreshes: None,
+        active_pointer: None,
+        active_length: None,
+        room_output: None,
+        spring_output: None,
+        parameters: Some(280),
+        dialog_active: None,
+        ring_positions: Some(344),
+    };
+    let fields = l6ctl::EffectSlotFields {
+        parameter_id: Some(2),
+        ring_index: Some(1),
+        ..Default::default()
+    };
+    let response = json!({"revision_guard":"l6max_1_10_fixture_hook","fixture_module_sha256":"a".repeat(64),"atomic":false,
+        "effect_type":1,"processor_type":1,"panel_mode":2,"edit_mode":1,"applied":null,"exit_refreshes":null,
+        "active_effect":null,"active_effect_bytes":null,"output_blocks":null,"parameter_bits":2143289344u32,"dialog_active":null,"ring_position":65536});
+    let server = server(
+        &path,
+        vec![(
+            json!({"command":"effect-slot","binding":binding,"fields":fields}),
+            json!({"ok":true,"result":response}),
+        )],
+    );
+    let sample = ControlClient::new(&path)
+        .effect_slot(binding, fields)
+        .unwrap();
+    assert!(!sample.atomic);
+    assert_eq!(sample.ring_position, Some(65536));
+    assert!(f32::from_bits(sample.parameter_bits.unwrap()).is_nan());
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn panel_key_client_and_cli_use_typed_wire_contract() {
     let path = socket_path();
     let result = json!({"revision_guard":"l6max_1_10_panel_handler_and_gui","atomic":false,"key_code":25,"bit":1,"word_index":4,"words":[0,0,0,0,2,0]});
@@ -974,6 +1027,332 @@ fn power_receipt_and_qmp_status_are_available_to_socket_and_cli() {
     assert_eq!(
         serde_json::from_slice::<Value>(&output.stdout).unwrap(),
         status
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn meter_finish_closes_typed_client_and_cli_session() {
+    use l6ctl::{DebugCommand, DebugObservation};
+    use std::process::Stdio;
+    let path = socket_path();
+    let listener = UnixListener::bind(&path).unwrap();
+    let server = thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut input = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            input.read_line(&mut line).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&line).unwrap(),
+                json!({"command":"debug-begin"})
+            );
+            writeln!(stream, "{}", json!({"ok":true,"result":{"started":true}})).unwrap();
+            line.clear();
+            input.read_line(&mut line).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&line).unwrap(),
+                json!({"command":"l6-meter-finish","timeout_ms":1000})
+            );
+            writeln!(
+                stream,
+                "{}",
+                json!({"ok":true,"result":{"kind":"l6-meter-finished","requires_restart":true}})
+            )
+            .unwrap();
+        }
+    });
+    let mut session = ControlClient::new(&path).debug_session().unwrap();
+    assert!(matches!(
+        session
+            .execute(DebugCommand::L6MeterFinish { timeout_ms: 1000 })
+            .unwrap(),
+        DebugObservation::L6MeterFinished {
+            requires_restart: true
+        }
+    ));
+    assert!(
+        session
+            .execute(DebugCommand::Register { index: 15 })
+            .is_err()
+    );
+    let mut child = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .arg("debug-session")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(
+        child.stdin.take().unwrap(),
+        "{{\"command\":\"l6-meter-finish\",\"timeout_ms\":1000}}"
+    )
+    .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("\"requires_restart\":true")
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn menu_client_and_cli_preserve_path_and_snapshot() {
+    let path = socket_path();
+    let snapshot = json!({"menu":"system","path":["Patches"],"items":["Knob","MIDI"],"window":123,"atomic":false,"revision_guard":"L6max 1.10 GUI and menu submenu routine fingerprints"});
+    let request = json!({"command":"menu","menu":"system","path":["Patches"]});
+    let server = server(
+        &path,
+        vec![
+            (request.clone(), json!({"ok":true,"result":snapshot})),
+            (request, json!({"ok":true,"result":snapshot})),
+        ],
+    );
+    let actual = ControlClient::new(&path)
+        .menu("system", &["Patches".into()])
+        .unwrap();
+    assert_eq!(actual.items, ["Knob", "MIDI"]);
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["menu", "system", "Patches"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        snapshot
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn usb_enumerate_cli_uses_reserved_controller_and_returns_endpoints() {
+    let path = socket_path();
+    let result = json!({"device":[18,1],"configuration":[9,2],"parsed":{"value":1,"midi":{"interface":2,"input":129,"output":1},"storage":null}});
+    let server = server(
+        &path,
+        vec![(
+            json!({"command":"usb-enumerate"}),
+            json!({"ok":true,"result":result}),
+        )],
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["usb", "enumerate"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        result
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn sound_pad_assignment_client_and_cli_use_typed_wire_contract() {
+    let path = socket_path();
+    let value = json!({"revision_guard":"l6_1_10_sound_pad_assignment_worker","atomic":false,"pad":0,"pending":0,"path_matches":true});
+    let request = json!({"command":"sound-pad-assignment","pad":0,"path":"SOUND/x.wav"});
+    let server = server(
+        &path,
+        vec![
+            (request.clone(), json!({"ok":true,"result":value})),
+            (request, json!({"ok":true,"result":value})),
+        ],
+    );
+    let sample = ControlClient::new(&path)
+        .sound_pad_assignment(0, Some("SOUND/x.wav".into()))
+        .unwrap();
+    assert_eq!(sample.path_matches, Some(true));
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["sound-pad-assignment", "0", "SOUND/x.wav"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        value
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn symbol_read_client_and_cli_use_model_scoped_wire_request() {
+    let path = socket_path();
+    let request = json!({"command":"symbol-read","symbol":"dsp_eq_coefficients","length":4});
+    let sample = json!({"address":0x20016510u32,"bytes":[1,2,3,4],"atomic":false});
+    let server = server(
+        &path,
+        vec![
+            (request.clone(), json!({"ok":true,"result":sample})),
+            (request, json!({"ok":true,"result":sample})),
+        ],
+    );
+    assert_eq!(
+        ControlClient::new(&path)
+            .read_symbol("dsp_eq_coefficients", 4)
+            .unwrap()
+            .address,
+        0x20016510
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["symbol-read", "dsp_eq_coefficients", "4"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        sample
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn reset_and_sd_card_client_and_cli_use_typed_requests() {
+    let path = socket_path();
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"warm-reset","timeout_s":45}),
+                json!({"ok":true,"result":{"reset":"qmp-system-reset"}}),
+            ),
+            (
+                json!({"command":"warm-reset","timeout_s":30}),
+                json!({"ok":true,"result":{"reset":"qmp-system-reset"}}),
+            ),
+            (
+                json!({"command":"sd-card","path":"/tmp/card.img"}),
+                json!({"ok":true,"result":{"inserted":true}}),
+            ),
+            (
+                json!({"command":"sd-card","path":null}),
+                json!({"ok":true,"result":{"inserted":false}}),
+            ),
+        ],
+    );
+    let client = ControlClient::new(&path);
+    assert_eq!(client.warm_reset(45).unwrap().reset, "qmp-system-reset");
+    let reset = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .arg("warm-reset")
+        .output()
+        .unwrap();
+    assert!(
+        reset.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reset.stderr)
+    );
+    assert!(
+        client
+            .sd_card(Some("/tmp/card.img".into()))
+            .unwrap()
+            .inserted
+    );
+    let eject = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["sd-card", "eject"])
+        .output()
+        .unwrap();
+    assert!(
+        eject.status.success(),
+        "{}",
+        String::from_utf8_lossy(&eject.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&eject.stdout).unwrap(),
+        json!({"inserted":false})
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn audio_input_client_and_cli_share_typed_socket_contract() {
+    let path = socket_path();
+    let status = json!({"playing":true,"position_ms":123,"rejected":2,"last_ack_sequence":8});
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"audio-input-status"}),
+                json!({"ok":true,"result":status}),
+            ),
+            (
+                json!({"command":"audio-input-load","channel":2,"loaded":true}),
+                json!({"ok":true,"result":{"sequence":9}}),
+            ),
+            (
+                json!({"command":"audio-input-transport","operation":"seek","position_ms":500}),
+                json!({"ok":true,"result":{"sequence":10}}),
+            ),
+        ],
+    );
+    let client = ControlClient::new(&path);
+    let actual = client.audio_input_status().unwrap();
+    assert_eq!(
+        (
+            actual.playing,
+            actual.position_ms,
+            actual.rejected,
+            actual.last_ack_sequence
+        ),
+        (true, 123, 2, Some(8))
+    );
+    assert_eq!(client.audio_input_load(2, true).unwrap().sequence, 9);
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["audio-input", "seek", "500"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        json!({"sequence":10})
     );
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();

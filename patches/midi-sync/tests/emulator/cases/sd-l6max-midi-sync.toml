@@ -41,20 +41,16 @@ path = "RECORDER"
 wall_timeout_s = 60
 
 [[step]]
-action = "expect-sd-loader"
-
-[[step]]
-action = "expect-sd-module"
-loaded = true
+action = "include"
+path = "tests/emulator/fragments/sd-module-loaded.toml"
 
 [[step]]
 action = "expect-heap"
 minimum_free = 131072
 
 [[step]]
-action = "host-midi-round-trip"
-guest_timeout_ms = 15000
-wall_timeout_s = 120
+action = "include"
+path = "tests/emulator/fragments/host-midi-native-round-trip.toml"
 
 [[step]]
 action = "include"

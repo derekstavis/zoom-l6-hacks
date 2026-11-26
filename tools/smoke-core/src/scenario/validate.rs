@@ -10,6 +10,7 @@ impl Scenario {
         validate_models(&value.models)?;
         crate::requirements::check_scope(value)?;
         validate_power_steps(value)?;
+        validate_popup_steps(value)?;
         if value.step.iter().any(|step| {
             matches!(
                 step.action,
@@ -78,7 +79,7 @@ impl Scenario {
                         return Err("L6 update requires the full install goal".into());
                     }
                     let prefix = if fixture == UpdateFixture::L6PatchedMidi {
-                        &actions[..actions.len().saturating_sub(7)]
+                        &actions[..actions.len().saturating_sub(8)]
                     } else {
                         actions.as_slice()
                     };
@@ -143,6 +144,7 @@ impl Scenario {
                                 Action::L6MidiProbeInject,
                                 Action::L6MidiProbeExpectHook,
                                 Action::L6MidiProbeExpectReplies,
+                                Action::L6MidiProbeFinish,
                                 Action::LifecycleStop
                             ]
                         )
@@ -152,9 +154,9 @@ impl Scenario {
                         );
                     }
                     if fixture == UpdateFixture::L6PatchedMidi {
-                        let tail = &value.step[value.step.len() - 7..];
+                        let tail = &value.step[value.step.len() - 8..];
                         if tail[1].wall_timeout_s != 180
-                            || tail[2..6].iter().any(|step| {
+                            || tail[2..7].iter().any(|step| {
                                 step.guest_timeout_ms != 120_000 || step.wall_timeout_s != 300
                             })
                         {
@@ -243,10 +245,14 @@ impl Scenario {
                             tail,
                             [
                                 Action::WaitUsbController,
-                                Action::DirectUsbMidiRoundTrip {
-                                    cable: 1,
-                                    expect_ring_change: true
-                                },
+                                Action::DirectMidiConnect { cable: 1 },
+                                Action::MidiEncoderAlternate,
+                                Action::HostMidiExpectCc { channel: 0, controller: 81 },
+                                Action::HostMidiSettle { guest_ms: 1000 },
+                                Action::Checkpoint { name: checkpoint },
+                                Action::HostMidiSendCc { channel: 0, controller: 81, value: 100 },
+                                Action::ExpectRingChanged { channel: 1, checkpoint: ring_checkpoint, observe_wall_ms: Some(3000), midi_transaction: true },
+                                Action::HostMidiEnd,
                                 Action::HostMidiSyncBegin,
                                 Action::HostMidiDrain { quiet_wall_ms: 500 },
                                 Action::HostMidiSendCc {
@@ -257,7 +263,7 @@ impl Scenario {
                                 Action::HostMidiExpectSync,
                                 Action::HostMidiEnd,
                                 Action::LifecycleStop
-                            ]
+                            ] if checkpoint == "before-midi-cc-1" && ring_checkpoint == checkpoint
                         )
                     } else if fixture == UpdateFixture::PatchedKnobMidi {
                         matches!(
@@ -270,10 +276,14 @@ impl Scenario {
                                 ..,
                                 Action::KnobDialog,
                                 Action::WaitUsbController,
-                                Action::DirectUsbMidiRoundTrip {
-                                    cable: 1,
-                                    expect_ring_change: true
-                                },
+                                Action::DirectMidiConnect { cable: 1 },
+                                Action::MidiEncoderAlternate,
+                                Action::HostMidiExpectCc { channel: 0, controller: 81 },
+                                Action::HostMidiSettle { guest_ms: 1000 },
+                                Action::Checkpoint { name: checkpoint },
+                                Action::HostMidiSendCc { channel: 0, controller: 81, value: 100 },
+                                Action::ExpectRingChanged { channel: 1, checkpoint: ring_checkpoint, observe_wall_ms: Some(3000), midi_transaction: true },
+                                Action::HostMidiEnd,
                                 Action::HostMidiSyncBegin,
                                 Action::HostMidiDrain { quiet_wall_ms: 500 },
                                 Action::HostMidiSendCc {
@@ -284,7 +294,7 @@ impl Scenario {
                                 Action::HostMidiExpectSync,
                                 Action::HostMidiEnd,
                                 Action::LifecycleStop
-                            ]
+                            ] if checkpoint == "before-midi-cc-1" && ring_checkpoint == checkpoint
                         )
                     } else {
                         matches!(
@@ -321,7 +331,11 @@ impl Scenario {
                         matches!(
                             step.action,
                             Action::WaitUsbController
-                                | Action::DirectUsbMidiRoundTrip { .. }
+                                | Action::DirectMidiConnect { .. }
+                                | Action::MidiEncoderAlternate
+                                | Action::HostMidiExpectCc { .. }
+                                | Action::HostMidiSettle { .. }
+                                | Action::ExpectRingChanged { .. }
                                 | Action::HostMidiSyncBegin
                                 | Action::HostMidiDrain { .. }
                                 | Action::HostMidiSendCc { .. }
@@ -673,8 +687,487 @@ impl Scenario {
                 }
             }
         }
+        for model in &value.models {
+            let steps: Vec<_> = value
+                .step
+                .iter()
+                .filter(|step| step.applies_to(*model))
+                .collect();
+            for (i, step) in steps.iter().enumerate() {
+                match step.action {
+                    Action::UsbControllerReady => {
+                        let next = steps
+                            .get(i + 1)
+                            .ok_or("USB controller readiness needs enumeration")?;
+                        if !matches!(next.action, Action::UsbEnumerate)
+                            || step.guest_timeout_ms != next.guest_timeout_ms
+                            || step.wall_timeout_s != next.wall_timeout_s
+                        {
+                            return Err("USB controller readiness needs adjacent enumeration with the same budget".into());
+                        }
+                    }
+                    Action::UsbEnumerate
+                        if i == 0 || !matches!(steps[i - 1].action, Action::UsbControllerReady) =>
+                    {
+                        return Err("USB enumeration needs preceding controller readiness".into());
+                    }
+                    _ => (),
+                }
+            }
+        }
+        for model in &value.models {
+            let mut pending_menu = false;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                match &step.action {
+                    Action::CaptureMenu { .. } if !pending_menu && *model == Model::L6max => {
+                        pending_menu = true
+                    }
+                    Action::ExpectMenuItems { .. } if pending_menu => pending_menu = false,
+                    Action::CaptureMenu { .. } | Action::ExpectMenuItems { .. } => {
+                        return Err(
+                            "menu capture requires L6max and one following ordered-items assertion"
+                                .into(),
+                        );
+                    }
+                    _ if pending_menu => {
+                        return Err(
+                            "menu capture must be followed by ordered-items assertion".into()
+                        );
+                    }
+                    _ => (),
+                }
+            }
+            if pending_menu {
+                return Err("menu capture missing ordered-items assertion".into());
+            }
+        }
+        // Assertions consume one immutable sample and share its deadline.
+        for model in &value.models {
+            let mut scope: Option<(u32, u64, u16)> = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                let flag = match step.action {
+                    Action::ExpectEffectType { .. } => Some((1, 0)),
+                    Action::ExpectEffectProcessor { .. } => Some((2, 0)),
+                    Action::ExpectEffectPanelMode { .. } => Some((4, 0)),
+                    Action::ExpectEffectEditMode { .. } => Some((8, 0)),
+                    Action::ExpectEffectEdits { .. } => Some((16, 256)),
+                    Action::ExpectEffectDialog { .. } => Some((32, 512)),
+                    Action::ExpectEffectName { .. } => Some((64, 0)),
+                    Action::ExpectEffectOutput => Some((128, 0)),
+                    _ => None,
+                };
+                match (&step.action, &mut scope, flag) {
+                    (Action::CaptureEffectState { edits, dialog }, None, _) => scope = Some((step.guest_timeout_ms, step.wall_timeout_s, (if *edits { 256 } else { 0 }) | (if *dialog { 512 } else { 0 }))),
+                    (_, Some((guest, wall, flags)), Some((bit, required))) if *flags & bit == 0 && *flags & required == required && (*guest,*wall)==(step.guest_timeout_ms,step.wall_timeout_s) => *flags |= bit,
+                    (Action::EffectStateEnd, Some((guest, wall, flags)), _) if *flags & 0xff != 0 && (*guest,*wall)==(step.guest_timeout_ms,step.wall_timeout_s) => scope = None,
+                    (Action::CaptureEffectState { .. } | Action::EffectStateEnd, _, _) | (_, _, Some(_)) => return Err("effect state needs one snapshot, captured fields, unique assertions and matching deadlines".into()),
+                    (_, Some(_), _) => return Err("effect state snapshot must be followed by its assertions".into()),
+                    _ => (),
+                }
+            }
+            if scope.is_some() {
+                return Err("effect state snapshot is unfinished".into());
+            }
+        }
+        // A baseline belongs to one guest generation and one encoder. Avoid
+        // silently comparing a later edit against a stale or replaced capture.
+        for model in &value.models {
+            let mut ring: Option<u8> = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                match step.action {
+                    Action::CaptureEffectRing { encoder } if ring.is_none() => ring = Some(encoder),
+                    Action::ExpectEffectRingChanged { encoder } if ring == Some(encoder) => {
+                        ring = None
+                    }
+                    Action::CaptureEffectRing { .. } | Action::ExpectEffectRingChanged { .. } => {
+                        return Err(
+                            "effect ring capture and assertion must match one encoder".into()
+                        );
+                    }
+                    Action::Restart | Action::WarmReset | Action::SdCard { .. }
+                        if ring.is_some() =>
+                    {
+                        return Err(
+                            "effect ring baseline cannot cross a restart or SD card change".into(),
+                        );
+                    }
+                    _ => (),
+                }
+            }
+            if ring.is_some() {
+                return Err("effect ring capture needs a matching assertion".into());
+            }
+        }
+        for model in &value.models {
+            let mut panel_event: Option<(u8, u32, u64)> = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                let phase = match step.action {
+                    Action::PanelEventBegin { .. } if *model == Model::L6 => Some(0),
+                    Action::PanelEventPress => Some(1),
+                    Action::PanelEventCapture => Some(2),
+                    Action::PanelEventReport => Some(3),
+                    Action::PanelEventMapping => Some(4),
+                    Action::PanelEventRelease => Some(5),
+                    Action::PanelEventSettle => Some(6),
+                    Action::PanelEventEnd => Some(7),
+                    Action::PanelEventBegin { .. } => return Err("panel event requires L6".into()),
+                    _ => None,
+                };
+                match (panel_event, phase) {
+                    (None, Some(0)) => {
+                        panel_event = Some((1, step.guest_timeout_ms, step.wall_timeout_s))
+                    }
+                    (Some((want, guest, wall)), Some(actual))
+                        if want == actual
+                            && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        panel_event = if want == 7 {
+                            None
+                        } else {
+                            Some((want + 1, guest, wall))
+                        };
+                    }
+                    (Some(_), _) | (None, Some(_)) => {
+                        return Err("invalid panel event sequence or budget".into());
+                    }
+                    _ => {}
+                }
+            }
+            if panel_event.is_some() {
+                return Err("unterminated panel event scope".into());
+            }
+        }
+        for model in &value.models {
+            let mut meter: Option<(usize, u32, u32, u64)> = None;
+            let mut meter_terminal = false;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                if meter_terminal {
+                    if matches!(step.action, Action::Restart) {
+                        meter_terminal = false;
+                    } else {
+                        return Err(
+                            "L6 meter diagnostic requires restart before further steps".into()
+                        );
+                    }
+                }
+                match (&step.action, meter) {
+                    (Action::L6MeterBegin, None) if *model == Model::L6 => {
+                        meter = Some((0, 0, step.guest_timeout_ms, step.wall_timeout_s));
+                    }
+                    (Action::L6MeterStage { value }, Some((i, last, guest, wall)))
+                        if i < 6
+                            && ((i == 0 && *value == 0) || (i > 0 && *value > last))
+                            && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        meter = Some((i + 1, *value, guest, wall));
+                    }
+                    (Action::L6MeterAssert, Some((6, last, guest, wall)))
+                        if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        meter = Some((7, last, guest, wall));
+                    }
+                    (Action::L6MeterEnd, Some((7, _, guest, wall)))
+                        if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        meter = None;
+                        meter_terminal = true;
+                    }
+                    (
+                        Action::L6MeterBegin
+                        | Action::L6MeterStage { .. }
+                        | Action::L6MeterAssert
+                        | Action::L6MeterEnd,
+                        _,
+                    )
+                    | (_, Some(_)) => {
+                        return Err("invalid L6 meter sequence, model or shared budget".into());
+                    }
+                    _ => {}
+                }
+            }
+            if meter.is_some() {
+                return Err("unterminated L6 meter diagnostic".into());
+            }
+        }
+        for model in &value.models {
+            let steps: Vec<_> = value
+                .step
+                .iter()
+                .filter(|step| step.applies_to(*model))
+                .collect();
+            let mut i = 0;
+            while i < steps.len() {
+                match &steps[i].action {
+                    Action::MomentaryDown { control, .. } => {
+                        if *model != Model::L6 {
+                            return Err("momentary trace scope currently supports L6 only".into());
+                        }
+                        crate::trace::button_packets(*model, control)?;
+                        let scope = steps.get(i..i + 3).ok_or("incomplete momentary scope")?;
+                        let observation = matches!(&scope[1].action,
+                            Action::ExpectScene { scene, .. } if control == &format!("scene-{}", ['a','b','c'].get(scene.saturating_sub(1)).unwrap_or(&'?')))
+                            || matches!(
+                                scope[1].action,
+                                Action::ExpectButtonLed { .. }
+                                    | Action::ExpectRing { .. }
+                                    | Action::ExpectMode { .. }
+                            );
+                        if !observation
+                            || !matches!(&scope[2].action, Action::MomentaryUp { control: actual } if actual == control)
+                            || scope.iter().any(|s| {
+                                (s.guest_timeout_ms, s.wall_timeout_s)
+                                    != (scope[0].guest_timeout_ms, scope[0].wall_timeout_s)
+                            })
+                        {
+                            return Err("momentary scope needs a condition, matching release and shared budget".into());
+                        }
+                        i += 3;
+                    }
+                    Action::MomentaryUp { .. } => {
+                        return Err("momentary release without hold".into());
+                    }
+                    _ => i += 1,
+                }
+            }
+        }
+        for model in &value.models {
+            let steps: Vec<_> = value.step.iter().filter(|s| s.applies_to(*model)).collect();
+            let is_settings = |a: &Action| {
+                matches!(
+                    a,
+                    Action::SettingsCapture { .. }
+                        | Action::SettingsVersions
+                        | Action::SettingsRtc
+                        | Action::SettingsBank
+                        | Action::SettingsTrace
+                        | Action::SettingsPanel
+                        | Action::SettingsReload
+                        | Action::SettingsRtcTiming
+                        | Action::SettingsEnd
+                )
+            };
+            let Some(start) = steps.iter().position(|s| is_settings(&s.action)) else {
+                continue;
+            };
+            let first = steps
+                .get(start..start + 5)
+                .ok_or("incomplete saved settings observation")?;
+            if *model != Model::L6max
+                || !matches!(first[0].action, Action::SettingsCapture { restored: false })
+                || !matches!(first[1].action, Action::SettingsVersions)
+                || !matches!(first[2].action, Action::SettingsRtc)
+                || !matches!(first[3].action, Action::SettingsBank)
+                || !matches!(first[4].action, Action::SettingsEnd)
+                || first.iter().any(|s| {
+                    (s.guest_timeout_ms, s.wall_timeout_s)
+                        != (first[0].guest_timeout_ms, first[0].wall_timeout_s)
+                })
+            {
+                return Err(
+                    "saved settings require ordered L6max observations and shared deadline".into(),
+                );
+            }
+            let rest_start = steps[start + 5..]
+                .iter()
+                .position(|s| is_settings(&s.action))
+                .map(|i| start + 5 + i)
+                .ok_or("restored settings observation missing")?;
+            if !steps[start + 5..rest_start]
+                .iter()
+                .any(|s| matches!(s.action, Action::Restart))
+            {
+                return Err("settings restoration requires a restart".into());
+            }
+            let rest = steps
+                .get(rest_start..rest_start + 8)
+                .ok_or("incomplete restored settings observation")?;
+            if !matches!(rest[0].action, Action::SettingsCapture { restored: true })
+                || !matches!(rest[1].action, Action::SettingsVersions)
+                || !matches!(rest[2].action, Action::SettingsRtc)
+                || !matches!(rest[3].action, Action::SettingsTrace)
+                || !matches!(rest[4].action, Action::SettingsPanel)
+                || !matches!(rest[5].action, Action::SettingsReload)
+                || !matches!(rest[6].action, Action::SettingsRtcTiming)
+                || !matches!(rest[7].action, Action::SettingsEnd)
+                || rest.iter().any(|s| {
+                    (s.guest_timeout_ms, s.wall_timeout_s)
+                        != (rest[0].guest_timeout_ms, rest[0].wall_timeout_s)
+                })
+                || steps[rest_start + 8..]
+                    .iter()
+                    .any(|s| is_settings(&s.action))
+            {
+                return Err(
+                    "restored settings require ordered observations and shared deadline".into(),
+                );
+            }
+        }
+        for model in &value.models {
+            let steps: Vec<_> = value.step.iter().filter(|s| s.applies_to(*model)).collect();
+            let is_usb_startup = |a: &Action| {
+                matches!(
+                    a,
+                    Action::L6UsbStartupBegin
+                        | Action::L6UsbStartupCapture
+                        | Action::L6UsbStartupAssertHits
+                        | Action::L6UsbStartupAssertWrites
+                        | Action::L6UsbStartupAssertReplay
+                        | Action::L6UsbStartupEnd
+                )
+            };
+            if let Some(start) = steps.iter().position(|s| is_usb_startup(&s.action)) {
+                let scope = steps
+                    .get(start..start + 6)
+                    .ok_or("incomplete L6 USB startup scope")?;
+                if *model != Model::L6
+                    || start != 0
+                    || !matches!(scope[0].action, Action::L6UsbStartupBegin)
+                    || !matches!(scope[1].action, Action::L6UsbStartupCapture)
+                    || !matches!(scope[2].action, Action::L6UsbStartupAssertHits)
+                    || !matches!(scope[3].action, Action::L6UsbStartupAssertWrites)
+                    || !matches!(scope[4].action, Action::L6UsbStartupAssertReplay)
+                    || !matches!(scope[5].action, Action::L6UsbStartupEnd)
+                    || scope.iter().any(|s| {
+                        (s.guest_timeout_ms, s.wall_timeout_s)
+                            != (scope[0].guest_timeout_ms, scope[0].wall_timeout_s)
+                    })
+                    || steps[start + 6..].iter().any(|s| is_usb_startup(&s.action))
+                {
+                    return Err(
+                        "L6 USB startup requires a first-step L6 scope and shared deadline".into(),
+                    );
+                }
+            }
+        }
         if value.backends.is_empty() {
             return Err("backends must contain headless and/or gui".into());
+        }
+        for model in &value.models {
+            let steps: Vec<_> = value.step.iter().filter(|s| s.applies_to(*model)).collect();
+            let is_dispatch = |a: &Action| {
+                matches!(
+                    a,
+                    Action::L6DispatchBegin { .. }
+                        | Action::L6DispatchTask
+                        | Action::L6DispatchSemaphore
+                        | Action::L6DispatchIdle
+                        | Action::L6DispatchInject
+                        | Action::L6DispatchWake
+                        | Action::L6DispatchState
+                        | Action::L6DispatchReader
+                        | Action::L6DispatchEvent
+                        | Action::L6DispatchEq
+                        | Action::L6DispatchObserve
+                        | Action::L6DispatchSetter { .. }
+                        | Action::L6DispatchFinish
+                )
+            };
+            if let Some(begin) = steps.iter().position(|s| is_dispatch(&s.action)) {
+                let scope = steps
+                    .get(begin..begin + 21)
+                    .ok_or("incomplete terminal DIN dispatch")?;
+                if *model != l6fw::Model::L6 || begin != 0 || begin+21 != steps.len()
+                    || !matches!(scope[0].action, Action::L6DispatchBegin { .. }) || !matches!(scope[1].action, Action::L6DispatchTask)
+                    || !matches!(scope[2].action, Action::L6DispatchSemaphore) || !matches!(scope[3].action, Action::L6DispatchIdle)
+                    || !matches!(scope[4].action, Action::L6DispatchInject) || !matches!(scope[5].action, Action::L6DispatchWake)
+                    || !matches!(scope[6].action, Action::L6DispatchState) || !matches!(scope[7].action, Action::L6DispatchReader)
+                    || !matches!(scope[8].action, Action::L6DispatchEvent) || !matches!(scope[9].action, Action::L6DispatchEq)
+                    || !matches!(scope[10].action, Action::L6DispatchObserve)
+                    || !(0..9).all(|index| matches!(scope[11+index].action, Action::L6DispatchSetter { index: actual, value } if usize::from(actual)==index && value<=127))
+                    || !matches!(scope[20].action, Action::L6DispatchFinish)
+                    || scope.iter().any(|s| (s.guest_timeout_ms,s.wall_timeout_s)!=(scope[0].guest_timeout_ms,scope[0].wall_timeout_s)) {
+                    return Err("terminal L6 DIN dispatch requires all ordered phases and a shared budget".into());
+                }
+            }
+        }
+        for model in &value.models {
+            let steps: Vec<_> = value.step.iter().filter(|s| s.applies_to(*model)).collect();
+            let is_gpio = |a: &Action| {
+                matches!(
+                    a,
+                    Action::L6GpioBegin { .. }
+                        | Action::L6GpioPress
+                        | Action::L6GpioSubmit
+                        | Action::L6GpioAssert
+                        | Action::L6GpioDispatch
+                        | Action::L6GpioRelease
+                        | Action::L6GpioSettle
+                        | Action::L6GpioEnd
+                )
+            };
+            let mut index = 0;
+            while index < steps.len() {
+                if !is_gpio(&steps[index].action) {
+                    index += 1;
+                    continue;
+                }
+                let Action::L6GpioBegin { event, .. } = steps[index].action else {
+                    return Err("GPIO scope must start with begin".into());
+                };
+                let pad = event != 25;
+                let count = if pad { 8 } else { 7 };
+                let scope = steps
+                    .get(index..index + count)
+                    .ok_or("incomplete GPIO scope")?;
+                let tail = if pad { 5 } else { 4 };
+                if *model != l6fw::Model::L6
+                    || !matches!(scope[1].action, Action::L6GpioPress)
+                    || !matches!(scope[2].action, Action::L6GpioSubmit)
+                    || !matches!(scope[3].action, Action::L6GpioAssert)
+                    || (pad && !matches!(scope[4].action, Action::L6GpioDispatch))
+                    || !matches!(scope[tail].action, Action::L6GpioRelease)
+                    || !matches!(scope[tail + 1].action, Action::L6GpioSettle)
+                    || !matches!(scope[tail + 2].action, Action::L6GpioEnd)
+                    || scope.iter().any(|step| {
+                        (step.guest_timeout_ms, step.wall_timeout_s)
+                            != (scope[0].guest_timeout_ms, scope[0].wall_timeout_s)
+                    })
+                {
+                    return Err("GPIO requires a complete L6 scope with shared deadlines".into());
+                }
+                index += count;
+            }
+        }
+        for model in &value.models {
+            let steps: Vec<_> = value
+                .step
+                .iter()
+                .filter(|step| step.applies_to(*model))
+                .collect();
+            let is_tap = |action: &Action| {
+                matches!(
+                    action,
+                    Action::L6maxTapBegin
+                        | Action::L6maxTapPress
+                        | Action::L6maxTapWait
+                        | Action::L6maxTapAssert
+                        | Action::L6maxTapRelease
+                        | Action::L6maxTapEnd
+                )
+            };
+            if let Some(begin) = steps.iter().position(|step| is_tap(&step.action)) {
+                let scope = steps
+                    .get(begin..begin + 6)
+                    .ok_or("incomplete TAP handler scope")?;
+                if *model != l6fw::Model::L6max
+                    || !matches!(scope[0].action, Action::L6maxTapBegin)
+                    || !matches!(scope[1].action, Action::L6maxTapPress)
+                    || !matches!(scope[2].action, Action::L6maxTapWait)
+                    || !matches!(scope[3].action, Action::L6maxTapAssert)
+                    || !matches!(scope[4].action, Action::L6maxTapRelease)
+                    || !matches!(scope[5].action, Action::L6maxTapEnd)
+                    || scope.iter().any(|step| {
+                        (step.guest_timeout_ms, step.wall_timeout_s)
+                            != (scope[0].guest_timeout_ms, scope[0].wall_timeout_s)
+                    })
+                    || steps[begin + 6..].iter().any(|step| is_tap(&step.action))
+                {
+                    return Err(
+                        "TAP handler requires a complete L6max scope with one shared deadline"
+                            .into(),
+                    );
+                }
+            }
         }
         for model in &value.models {
             let steps: Vec<_> = value
@@ -686,7 +1179,7 @@ impl Scenario {
             while index < steps.len() {
                 if matches!(steps[index].action, Action::UsbMidiOpen) {
                     if index == 0
-                        || !matches!(steps[index - 1].action, Action::UsbDescriptors)
+                        || !matches!(steps[index - 1].action, Action::UsbEnumerate)
                         || index + 8 >= steps.len()
                     {
                         return Err(
@@ -736,7 +1229,7 @@ impl Scenario {
             let mut max_recorder: Option<(u8, u32, u64)> = None;
             let mut input_timing: Option<(u8, u32, u64)> = None;
             let mut usb_storage: Option<(u8, u32, u64)> = None;
-            let mut sd_inspection: Option<(u32, u64)> = None;
+            let mut sd_inspection: Option<(u8, bool, u32, u64)> = None;
 
             let panel_steps: Vec<_> = value
                 .step
@@ -863,15 +1356,16 @@ impl Scenario {
                     Action::UsbStorageAssertBoot => Some(4),
                     Action::UsbStorageLastRead => Some(5),
                     Action::UsbStorageLastWrite => Some(6),
-                    Action::UsbStorageLastAssert => Some(7),
-                    Action::UsbStorageFatOpen => Some(8),
-                    Action::UsbStorageCreate { .. } => Some(9),
-                    Action::UsbStorageFlushCreated => Some(10),
-                    Action::UsbStorageReadFile => Some(11),
-                    Action::UsbStorageRemoveFile => Some(12),
-                    Action::UsbStorageAssertFile => Some(13),
-                    Action::UsbStorageFlushRemoved => Some(14),
-                    Action::UsbStorageEnd => Some(15),
+                    Action::UsbStorageLastReadback => Some(7),
+                    Action::UsbStorageLastAssert => Some(8),
+                    Action::UsbStorageFatOpen => Some(9),
+                    Action::UsbStorageCreate { .. } => Some(10),
+                    Action::UsbStorageFlushCreated => Some(11),
+                    Action::UsbStorageReadFile => Some(12),
+                    Action::UsbStorageRemoveFile => Some(13),
+                    Action::UsbStorageAssertFile => Some(14),
+                    Action::UsbStorageFlushRemoved => Some(15),
+                    Action::UsbStorageEnd => Some(16),
                     _ => None,
                 };
                 match (&step.action, usb_storage, storage_phase) {
@@ -882,7 +1376,7 @@ impl Scenario {
                         if phase == actual
                             && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
                     {
-                        usb_storage = if phase == 15 {
+                        usb_storage = if phase == 16 {
                             None
                         } else {
                             Some((phase + 1, guest, wall))
@@ -901,18 +1395,20 @@ impl Scenario {
                     Action::L6maxTimingEnqueue { .. } => Some(2),
                     Action::L6maxTimingWaitFirst => Some(3),
                     Action::L6maxTimingObservePaused { .. } => Some(4),
-                    Action::L6maxTimingAssertPaused => Some(5),
-                    Action::L6maxTimingResume => Some(6),
-                    Action::L6maxTimingWaitQueued => Some(7),
-                    Action::L6maxTimingWaitReports => Some(8),
-                    Action::L6maxTimingAssertReports => Some(9),
-                    Action::L6maxTimingObserveDisplay { .. } => Some(10),
-                    Action::L6maxTimingAssertDisplay => Some(11),
-                    Action::L6maxTimingEncoder { .. } => Some(12),
-                    Action::L6maxTimingWaitEncoder => Some(13),
-                    Action::L6maxTimingWaitEncoderReport => Some(14),
-                    Action::L6maxTimingAssertEncoder => Some(15),
-                    Action::L6maxTimingEnd => Some(16),
+                    Action::L6maxTimingCapturePaused => Some(5),
+                    Action::L6maxTimingAssertPausedClock => Some(6),
+                    Action::L6maxTimingAssertPausedInput => Some(7),
+                    Action::L6maxTimingResume => Some(8),
+                    Action::L6maxTimingWaitQueued => Some(9),
+                    Action::L6maxTimingWaitReports => Some(10),
+                    Action::L6maxTimingAssertReports => Some(11),
+                    Action::L6maxTimingObserveDisplay { .. } => Some(12),
+                    Action::L6maxTimingAssertDisplay => Some(13),
+                    Action::L6maxTimingEncoder { .. } => Some(14),
+                    Action::L6maxTimingWaitEncoder => Some(15),
+                    Action::L6maxTimingWaitEncoderReport => Some(16),
+                    Action::L6maxTimingAssertEncoder => Some(17),
+                    Action::L6maxTimingEnd => Some(18),
                     _ => None,
                 };
                 match (&step.action, input_timing, timing_phase) {
@@ -923,7 +1419,7 @@ impl Scenario {
                         if phase == actual
                             && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
                     {
-                        input_timing = if phase == 16 {
+                        input_timing = if phase == 18 {
                             None
                         } else {
                             Some((phase + 1, guest, wall))
@@ -1048,9 +1544,14 @@ impl Scenario {
                     _ => {}
                 }
                 match (&step.action, sd_inspection) {
-                    (Action::ExpectSdLoader, None) => sd_inspection = Some((step.guest_timeout_ms, step.wall_timeout_s)),
-                    (Action::ExpectSdModule { .. }, Some((guest, wall))) if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = None,
-                    (Action::ExpectSdLoader | Action::ExpectSdModule { .. }, _) => return Err("SD inspection requires adjacent loader/module steps with matching timeouts".into()),
+                    (Action::ExpectSdLoader, None) => sd_inspection = Some((0, false, step.guest_timeout_ms, step.wall_timeout_s)),
+                    (Action::CaptureSdModule { loaded }, Some((0, _, guest, wall))) if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = Some((1, *loaded, guest, wall)),
+                    (Action::ExpectSdAllocation { loaded }, Some((1, expected, guest, wall))) if *loaded == expected && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = Some((2, expected, guest, wall)),
+                    (Action::ExpectSdChains { loaded, .. }, Some((2, expected, guest, wall))) if *loaded == expected && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = Some((3, expected, guest, wall)),
+                    (Action::ExpectSdContinuations { loaded }, Some((3, expected, guest, wall))) if *loaded == expected && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = Some((4, expected, guest, wall)),
+                    (Action::ExpectSdModuleImages { loaded }, Some((4, expected, guest, wall))) if *loaded == expected && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = Some((5, expected, guest, wall)),
+                    (Action::ExpectSdLatestModule { loaded }, Some((5, expected, guest, wall))) if *loaded == expected && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = None,
+                    (Action::ExpectSdLoader | Action::CaptureSdModule { .. } | Action::ExpectSdAllocation { .. } | Action::ExpectSdChains { .. } | Action::ExpectSdContinuations { .. } | Action::ExpectSdModuleImages { .. } | Action::ExpectSdLatestModule { .. }, _) => return Err("SD inspection requires adjacent loader, capture, allocation, chains, continuations, module-image and latest-allocation steps with matching state and timeouts".into()),
                     (_, Some(_)) => return Err("SD inspection cannot be interrupted".into()),
                     _ => {},
                 }
@@ -1081,6 +1582,11 @@ impl Scenario {
                     (Action::L6MidiProbeExpectReplies, Some((3, guest, wall)))
                         if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
                     {
+                        l6_probe = Some((4, guest, wall));
+                    }
+                    (Action::L6MidiProbeFinish, Some((4, guest, wall)))
+                        if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
                         l6_probe = None;
                         l6_probe_finished = true;
                     }
@@ -1088,7 +1594,8 @@ impl Scenario {
                         Action::L6MidiProbeBegin
                         | Action::L6MidiProbeInject
                         | Action::L6MidiProbeExpectHook
-                        | Action::L6MidiProbeExpectReplies,
+                        | Action::L6MidiProbeExpectReplies
+                        | Action::L6MidiProbeFinish,
                         _,
                     ) => return Err("invalid L6 MIDI probe sequence, model, or timeouts".into()),
                     (_, Some(_)) => return Err("L6 MIDI probe sequence was interrupted".into()),
@@ -1246,8 +1753,8 @@ impl Scenario {
                 Action::KnobDialogBaseline => "knob-dialog-guard",
                 Action::KnobDialogPreflightBegin => "knob-dialog-baseline",
                 Action::KnobRaceBegin => "knob-probe-assert",
-                Action::KnobDialogFirstActivation => "knob-race-assert",
-                Action::KnobActiveBegin => "knob-dialog-first-activation",
+                Action::KnobActivationTrigger => "knob-race-assert",
+                Action::KnobActiveBegin => "knob-activation-assert",
                 Action::KnobLevelBegin => "knob-active-finish",
                 Action::KnobTaskBegin => "knob-level-finish",
                 Action::KnobOverlayBegin => "knob-task-finish",
@@ -1282,8 +1789,8 @@ impl Scenario {
                         "knob-race-assert" => {
                             matches!(previous.action, Action::KnobRaceAssert)
                         }
-                        "knob-dialog-first-activation" => {
-                            matches!(previous.action, Action::KnobDialogFirstActivation)
+                        "knob-activation-assert" => {
+                            matches!(previous.action, Action::KnobActivationAssert)
                         }
                         "knob-active-finish" => {
                             matches!(previous.action, Action::KnobActiveFinish)
@@ -1367,18 +1874,33 @@ impl Scenario {
                     return Err("knob-dialog preflight must end with the diagnostic".into());
                 };
                 let subsequent = &applicable[..=end];
-                if subsequent.len() < 182
+                if subsequent.len() < 186
                     || !super::valid_preflight_probe_steps(&subsequent[0..30])
                     || !super::valid_callback_race_steps(&subsequent[30..38])
-                    || !matches!(subsequent[38].action, Action::KnobDialogFirstActivation)
-                    || !super::valid_active_display_steps(&subsequent[39..46])
-                    || !super::valid_level_demo_steps(&subsequent[46..54])
-                    || !super::valid_task_context_steps(&subsequent[54..64])
-                    || !super::valid_overlay_invariant_steps(&subsequent[64..79])
-                    || !super::valid_bitmap_probe_steps(&subsequent[79..93])
-                    || !super::valid_refreshed_overlay_steps(&subsequent[93..100])
-                    || !super::valid_locked_update_steps(&subsequent[100..108])
-                    || !valid_knob_mode_steps(&subsequent[108..subsequent.len().saturating_sub(63)])
+                    || !matches!(
+                        (
+                            &subsequent[38].action,
+                            &subsequent[39].action,
+                            &subsequent[40].action,
+                            &subsequent[41].action,
+                            &subsequent[42].action
+                        ),
+                        (
+                            Action::KnobActivationTrigger,
+                            Action::KnobActivationWait,
+                            Action::KnobActivationSample,
+                            Action::KnobActivationRestore,
+                            Action::KnobActivationAssert
+                        )
+                    )
+                    || !super::valid_active_display_steps(&subsequent[43..50])
+                    || !super::valid_level_demo_steps(&subsequent[50..58])
+                    || !super::valid_task_context_steps(&subsequent[58..68])
+                    || !super::valid_overlay_invariant_steps(&subsequent[68..83])
+                    || !super::valid_bitmap_probe_steps(&subsequent[83..97])
+                    || !super::valid_refreshed_overlay_steps(&subsequent[97..104])
+                    || !super::valid_locked_update_steps(&subsequent[104..112])
+                    || !valid_knob_mode_steps(&subsequent[112..subsequent.len().saturating_sub(63)])
                     || !valid_invalid_tag_steps(
                         &subsequent[subsequent.len().saturating_sub(63)
                             ..subsequent.len().saturating_sub(56)],
@@ -1632,8 +2154,10 @@ impl Scenario {
                     Action::EditorAssignCount { pad } => Some((5, Some(*pad))),
                     Action::EditorAssignFilename { pad } => Some((6, Some(*pad))),
                     Action::EditorAssignSend { pad } => Some((7, Some(*pad))),
-                    Action::EditorAssignState { pad } => Some((8, Some(*pad))),
-                    Action::EditorAssignEnd => Some((9, None)),
+                    Action::EditorAssignDialog { pad } => Some((8, Some(*pad))),
+                    Action::EditorAssignState { pad } => Some((9, Some(*pad))),
+                    Action::EditorAssignAssert { pad } => Some((10, Some(*pad))),
+                    Action::EditorAssignEnd => Some((11, None)),
                     _ => None,
                 };
                 match (scope, phase) {
@@ -1642,10 +2166,10 @@ impl Scenario {
                             && actual_pad.is_none_or(|v| v == pad)
                             && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
                     {
-                        scope = if actual == 9 {
+                        scope = if actual == 11 {
                             None
-                        } else if actual == 8 {
-                            Some((if pad == 3 { 9 } else { 5 }, pad + 1, guest, wall))
+                        } else if actual == 10 {
+                            Some((if pad == 3 { 11 } else { 5 }, pad + 1, guest, wall))
                         } else {
                             Some((want + 1, pad, guest, wall))
                         };
@@ -1817,10 +2341,10 @@ impl Scenario {
             }
             if matches!(step.action, Action::EditorAssignBegin) && !usb_descriptors_seen {
                 return Err(
-                    "editor-pad-assignments requires a preceding usb-descriptors step".into(),
+                    "editor-pad-assignments requires a preceding usb-enumerate step".into(),
                 );
             }
-            if matches!(step.action, Action::UsbDescriptors) {
+            if matches!(step.action, Action::UsbEnumerate) {
                 usb_descriptors_seen = true;
             }
             match &step.action {
@@ -1828,7 +2352,7 @@ impl Scenario {
                 Action::UiPadBegin { pad } => {
                     if !usb_descriptors_seen {
                         return Err(
-                            "l6max-ui-pad-verify requires a preceding usb-descriptors step".into(),
+                            "l6max-ui-pad-verify requires a preceding usb-enumerate step".into(),
                         );
                     }
                     if *pad > 3 {
@@ -1980,7 +2504,7 @@ impl Scenario {
                     return Err("analog assertion requires channel 1..5 and value 0..1023".into());
                 }
             }
-            if let Action::PanelEvent {
+            if let Action::PanelEventBegin {
                 target,
                 column,
                 row,
@@ -1991,7 +2515,7 @@ impl Scenario {
                     return Err("panel-event requires valid target/map values".into());
                 }
             }
-            if let Action::L6DinEventDispatch { group, .. } = &step.action {
+            if let Action::L6DispatchBegin { group, .. } = &step.action {
                 if *group > 15 {
                     return Err("l6-din-event-dispatch requires a group from 0 to 15".into());
                 }
@@ -2002,19 +2526,13 @@ impl Scenario {
                 }
             }
 
-            if let Action::L6MainGpioEvent { target, event } = step.action
-                && (!matches!(
-                    (target, event),
-                    (48, 0x19) | (49, 0x15) | (50, 0x16) | (51, 0x17) | (52, 0x18)
-                ))
+            if let Action::L6GpioBegin { target, event } = step.action
+                && (!(48..=52).contains(&target) || !(21..=25).contains(&event))
             {
-                return Err(
-                    "l6-main-gpio-event requires L6 target/event pairs 48/0x19 or 49–52/0x15–0x18"
-                        .into(),
-                );
+                return Err("l6-gpio-begin requires target 48–52 and event 21–25".into());
             }
 
-            if let Action::ExpectMenu { menu, .. } = &step.action
+            if let Action::CaptureMenu { menu, .. } = &step.action
                 && !["main", "project", "sound-pad", "mixer", "system"].contains(&menu.as_str())
             {
                 return Err(format!("expect-menu names an unknown menu {menu:?}"));
@@ -2103,7 +2621,7 @@ impl Scenario {
                     }
                 }
             }
-            if let Action::ExpectSdModule {
+            if let Action::ExpectSdChains {
                 loaded,
                 chain_count,
             } = &step.action
@@ -2220,6 +2738,7 @@ impl Scenario {
                     }
                 }
                 Action::ExpectRingChanged { checkpoint, .. }
+                | Action::ExpectRingUnchanged { checkpoint, .. }
                 | Action::ExpectDisplay { checkpoint, .. }
                 | Action::ExpectScene {
                     checkpoint: Some(checkpoint),
@@ -2261,15 +2780,10 @@ impl Scenario {
                 Action::Hold { duration_ms, .. } if *duration_ms == 0 || *duration_ms > 59_000 => {
                     return Err("hold duration must be between 1 and 59000 ms".into());
                 }
-                Action::SaveScene { scene } if !(1..=3).contains(scene) => {
-                    return Err("scene index must be between 1 and 3".into());
-                }
-                Action::SaveScene { .. }
-                    if (value.models.iter().any(|m| *m == Model::L6max)
-                        && (step.models.is_empty()
-                            || step.models.iter().any(|m| *m == Model::L6max))) =>
+                Action::MomentaryDown { duration_ms, .. }
+                    if *duration_ms == 0 || *duration_ms > 59_000 =>
                 {
-                    return Err("save-scene currently supports L6 only".into());
+                    return Err("momentary duration must be between 1 and 59000 ms".into());
                 }
                 Action::ExpectScene { scene, .. } if !(1..=3).contains(scene) => {
                     return Err("scene index must be between 1 and 3".into());
@@ -2432,18 +2946,12 @@ impl Scenario {
                         "MIDI settle duration must be positive and within the guest timeout".into(),
                     );
                 }
-                Action::EffectParameterEdit { encoder, steps }
-                    if *encoder == 0
-                        || *encoder > 8
-                        || *steps == 0
-                        || steps.unsigned_abs() > 120 =>
+                Action::CaptureEffectRing { encoder }
+                | Action::ExpectEffectRingChanged { encoder }
+                    if !(1..=8).contains(encoder) =>
                 {
-                    return Err(
-                        "effect-parameter-edit needs encoder 1..8 and nonzero steps up to 120"
-                            .into(),
-                    );
+                    return Err("effect ring encoder must be 1..8".into());
                 }
-                Action::EffectReplacementState { .. } => {}
                 Action::ExpectRingLevel {
                     channel,
                     segment,
@@ -2512,13 +3020,250 @@ impl Scenario {
             }
         }
         for step in &value.step {
-            if let Action::DirectUsbMidiRoundTrip { cable, .. } = &step.action
+            if let Action::DirectMidiConnect { cable } = &step.action
                 && *cable > 15
             {
-                return Err("direct-usb-midi-round-trip cable must be 0..15".into());
+                return Err("direct-midi-connect cable must be 0..15".into());
+            }
+        }
+        for model in &value.models {
+            let mut previous: Option<&super::Step> = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                if let Action::ExpectRingUnchanged {
+                    channel,
+                    observe_wall_ms,
+                    ..
+                } = &step.action
+                {
+                    if *channel == 0
+                        || *channel > model.channels()
+                        || *observe_wall_ms == 0
+                        || u64::from(*observe_wall_ms) > step.wall_timeout_s.saturating_mul(1000)
+                        || !previous.is_some_and(|p| {
+                            matches!(p.action, Action::HostMidiSendCc { .. })
+                                && (p.guest_timeout_ms, p.wall_timeout_s)
+                                    == (step.guest_timeout_ms, step.wall_timeout_s)
+                        })
+                    {
+                        return Err("negative MIDI ring observation requires an adjacent CC send, valid ring and shared bounded window".into());
+                    }
+                }
+                previous = Some(step);
+            }
+        }
+        for step in &value.step {
+            if let Action::ExpectRingChanged {
+                observe_wall_ms, ..
+            } = &step.action
+            {
+                if observe_wall_ms.is_some_and(|ms| {
+                    ms == 0 || u64::from(ms) > step.wall_timeout_s.saturating_mul(1000)
+                }) {
+                    return Err(
+                        "ring observation needs a positive wall window within its step timeout"
+                            .into(),
+                    );
+                }
+            }
+        }
+        for model in &value.models {
+            let steps: Vec<_> = value
+                .step
+                .iter()
+                .filter(|step| step.applies_to(*model))
+                .collect();
+            for (index, step) in steps.iter().enumerate() {
+                if let Action::WaitEffectSlot {
+                    expected_effect_type,
+                    expected_processor_type,
+                    expected_effect,
+                    require_output,
+                } = &step.action
+                {
+                    if expected_effect
+                        .as_ref()
+                        .is_some_and(|effect| effect.is_empty())
+                    {
+                        return Err("effect slot wait needs a nonempty effect ID".into());
+                    }
+                    let next = steps
+                        .get(index + 1)
+                        .ok_or("effect slot wait needs a following assertion")?;
+                    let split = matches!(&next.action, Action::CaptureEffectState { .. })
+                        && {
+                            let checks = steps[index + 2..]
+                                .iter()
+                                .take_while(|candidate| {
+                                    !matches!(candidate.action, Action::EffectStateEnd)
+                                })
+                                .collect::<Vec<_>>();
+                            checks.iter().any(|candidate| matches!(candidate.action, Action::ExpectEffectType { value } if value == *expected_effect_type))
+                            && checks.iter().any(|candidate| matches!(candidate.action, Action::ExpectEffectProcessor { value } if value == *expected_processor_type))
+                            && expected_effect.as_ref().is_none_or(|expected| checks.iter().any(|candidate| matches!(&candidate.action, Action::ExpectEffectName { name } if name == expected)))
+                            && (!*require_output || checks.iter().any(|candidate| matches!(candidate.action, Action::ExpectEffectOutput)))
+                        };
+                    if (step.guest_timeout_ms, step.wall_timeout_s)
+                        != (next.guest_timeout_ms, next.wall_timeout_s)
+                        || !split
+                    {
+                        return Err("effect slot wait needs a matching adjacent assertion with the same budget".into());
+                    }
+                }
+            }
+        }
+        for model in &value.models {
+            let steps: Vec<_> = value
+                .step
+                .iter()
+                .filter(|step| step.applies_to(*model))
+                .collect();
+            let is_sweep = |action: &Action| {
+                matches!(
+                    action,
+                    Action::L6DinSweepBegin
+                        | Action::L6DinSweepReady
+                        | Action::L6DinSweepMonitor
+                        | Action::L6DinSweepBaseline
+                        | Action::L6DinSweepSample { .. }
+                        | Action::L6DinSweepTrace
+                        | Action::L6DinSweepDrain
+                        | Action::L6DinSweepStop
+                        | Action::L6DinSweepCapture
+                        | Action::L6DinSweepAssert { .. }
+                        | Action::L6DinSweepEnd
+                )
+            };
+            let Some(begin) = steps.iter().position(|step| is_sweep(&step.action)) else {
+                continue;
+            };
+            let Some(scope) = steps.get(begin..begin + 147) else {
+                return Err("incomplete L6 DIN sweep".into());
+            };
+            if *model != l6fw::Model::L6 || !matches!(scope[0].action, Action::L6DinSweepBegin)
+                || !matches!(scope[1].action, Action::L6DinSweepReady) || !matches!(scope[2].action, Action::L6DinSweepMonitor)
+                || !matches!(scope[3].action, Action::L6DinSweepBaseline)
+                || !(0..128).all(|cc| matches!(scope[4+cc].action, Action::L6DinSweepSample { cc: actual } if usize::from(actual) == cc))
+                || !matches!(scope[132].action, Action::L6DinSweepTrace) || !matches!(scope[133].action, Action::L6DinSweepDrain)
+                || !matches!(scope[134].action, Action::L6DinSweepStop) || !matches!(scope[135].action, Action::L6DinSweepCapture)
+                || ![DinSweepCheck::Uart, DinSweepCheck::RingBytes, DinSweepCheck::WriteIndex, DinSweepCheck::ReadIndex, DinSweepCheck::Indicator, DinSweepCheck::Handler, DinSweepCheck::Submitter, DinSweepCheck::Reader, DinSweepCheck::Setter, DinSweepCheck::Mixer].iter().enumerate().all(|(i, expected)| matches!(scope[136+i].action, Action::L6DinSweepAssert { check } if check == *expected))
+                || !matches!(scope[146].action, Action::L6DinSweepEnd)
+                || scope.iter().any(|step| (step.guest_timeout_ms, step.wall_timeout_s) != (scope[0].guest_timeout_ms, scope[0].wall_timeout_s))
+                || steps[begin+147..].iter().any(|step| is_sweep(&step.action))
+            { return Err("L6 DIN sweep requires all 128 ordered CCs, full evidence phases and one shared budget".into()); }
+        }
+        for model in &value.models {
+            let steps: Vec<_> = value
+                .step
+                .iter()
+                .filter(|step| step.applies_to(*model))
+                .collect();
+            let has_audio = steps.iter().any(|step| {
+                matches!(
+                    step.action,
+                    Action::AudioCallbacksBegin
+                        | Action::AudioCallbacksNext
+                        | Action::AudioCallbacksCapture
+                        | Action::AudioCallbacksAssert
+                        | Action::AudioCallbacksEnd
+                )
+            });
+            if !has_audio {
+                continue;
+            }
+            let count = if *model == l6fw::Model::L6 { 5 } else { 2 };
+            if steps.len() < count + 4
+                || !matches!(steps[0].action, Action::AudioCallbacksBegin)
+                || !steps[1..1 + count]
+                    .iter()
+                    .all(|step| matches!(step.action, Action::AudioCallbacksNext))
+                || !matches!(steps[1 + count].action, Action::AudioCallbacksCapture)
+                || !matches!(steps[2 + count].action, Action::AudioCallbacksAssert)
+                || !matches!(steps[3 + count].action, Action::AudioCallbacksEnd)
+                || steps[1..count + 4].iter().any(|step| {
+                    (step.guest_timeout_ms, step.wall_timeout_s)
+                        != (steps[0].guest_timeout_ms, steps[0].wall_timeout_s)
+                })
+                || steps[count + 4..].iter().any(|step| {
+                    matches!(
+                        step.action,
+                        Action::AudioCallbacksBegin
+                            | Action::AudioCallbacksNext
+                            | Action::AudioCallbacksCapture
+                            | Action::AudioCallbacksAssert
+                            | Action::AudioCallbacksEnd
+                    )
+                })
+            {
+                return Err(format!(
+                    "{model}: audio callbacks require the full ordered scope and one shared budget"
+                ));
             }
         }
         Ok(())
+    }
+}
+
+/// The popup's baseline and overall deadline belong to one uninterrupted
+/// transaction; each independent observation remains visible in the report.
+fn validate_popup_steps(value: &Scenario) -> Result<(), String> {
+    for model in &value.models {
+        let mut scope: Option<(u8, u32, u64)> = None;
+        for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+            let phase = match step.action {
+                Action::KnobPopupOpen { .. } => Some(0),
+                Action::KnobPopupExpectOpen => Some(1),
+                Action::KnobPopupExpectDisplay => Some(2),
+                Action::KnobPopupExpectValue => Some(3),
+                _ => None,
+            };
+            match (scope, phase) {
+                (None, Some(0)) if *model == l6fw::Model::L6max =>
+                    scope = Some((1, step.guest_timeout_ms, step.wall_timeout_s)),
+                (Some((expected, guest, wall)), Some(actual))
+                    if expected == actual && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => {
+                    scope = if actual == 3 { None } else { Some((actual + 1, guest, wall)) };
+                }
+                (None, None) => (),
+                _ => return Err("knob popup requires ordered open, state, display and value steps with one shared budget".into()),
+            }
+        }
+        if scope.is_some() {
+            return Err("knob popup transaction is incomplete".into());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod popup_transaction_tests {
+    use super::super::Scenario;
+    #[test]
+    fn requires_each_observation_in_order_with_one_budget() {
+        let header = "version=1\nname='popup'\nmodels=['l6max']\nbackends=['headless']\n";
+        let fragment =
+            include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/check.toml");
+        Scenario::from_text(&format!("{header}{fragment}")).unwrap();
+        for action in [
+            "knob-popup-expect-open",
+            "knob-popup-expect-display",
+            "knob-popup-expect-value",
+        ] {
+            let marker = format!("action = \"{action}\"");
+            let at = fragment.find(&marker).unwrap();
+            let start = fragment[..at].rfind("[[step]]").unwrap();
+            let end = fragment[at..]
+                .find("[[step]]")
+                .map_or(fragment.len(), |offset| at + offset);
+            let shortened = format!("{header}{}{}", &fragment[..start], &fragment[end..]);
+            assert!(Scenario::from_text(&shortened).is_err(), "missing {action}");
+        }
+        assert!(
+            Scenario::from_text(&format!(
+                "{header}{}",
+                fragment.replacen("wall_timeout_s = 120", "wall_timeout_s = 119", 1)
+            ))
+            .is_err()
+        );
     }
 }
 
@@ -2539,12 +3284,14 @@ mod l6_midi_probe_tests {
             "l6-midi-probe-inject",
             "l6-midi-probe-expect-hook",
             "l6-midi-probe-expect-replies",
+            "l6-midi-probe-finish",
         ]
         .map(step)
         .concat();
         assert!(parse(&steps, "l6").is_ok());
         assert!(parse(&steps, "l6max").is_err());
         assert!(parse(&steps.replace(&step("l6-midi-probe-expect-hook"), ""), "l6").is_err());
+        assert!(parse(&steps.replace(&step("l6-midi-probe-finish"), ""), "l6").is_err());
         assert!(parse(&format!("{steps}{}", step("l6-midi-probe-begin")), "l6").is_err());
         assert!(
             parse(
@@ -2569,12 +3316,64 @@ mod sd_inspection_tests {
     fn phases_are_adjacent_and_share_budget_and_fixture() {
         let begin =
             "[[step]]\naction='expect-sd-loader'\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
-        let end = "[[step]]\naction='expect-sd-module'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
+        let end = "[[step]]\naction='expect-sd-module-images'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n[[step]]\naction='expect-sd-latest-module'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
+        let capture = "[[step]]\naction='capture-sd-module'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
+        let allocation = "[[step]]\naction='expect-sd-allocation'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
+        let chains = "[[step]]\naction='expect-sd-chains'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
+        let continuations = "[[step]]\naction='expect-sd-continuations'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
         let fixture = "sd_patches=['midi-sync']";
-        assert!(parse(&format!("{begin}{end}"), fixture).is_ok());
+        assert!(
+            parse(
+                &format!("{begin}{capture}{allocation}{chains}{continuations}{end}"),
+                fixture
+            )
+            .is_ok()
+        );
+        assert!(parse(&format!("{begin}{capture}{allocation}{chains}{continuations}[[step]]\naction='expect-sd-module-images'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n"), fixture).is_err());
+        assert!(
+            parse(
+                &format!("{begin}{capture}{allocation}{chains}{end}"),
+                fixture
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                &format!(
+                    "{begin}{capture}{allocation}{chains}{}{end}",
+                    continuations.replace("loaded=true", "loaded=false")
+                ),
+                fixture
+            )
+            .is_err()
+        );
         assert!(parse(begin, fixture).is_err());
         assert!(parse(end, fixture).is_err());
-        assert!(parse(&format!("{begin}{end}"), "").is_err());
+        assert!(parse(&format!("{begin}{end}"), fixture).is_err());
+        assert!(
+            parse(
+                &format!(
+                    "{begin}{}{allocation}{chains}{continuations}{end}",
+                    capture.replace("loaded=true", "loaded=false")
+                ),
+                fixture
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                &format!("{begin}{capture}{capture}{allocation}{chains}{continuations}{end}"),
+                fixture
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                &format!("{begin}{capture}{allocation}{chains}{continuations}{end}"),
+                ""
+            )
+            .is_err()
+        );
         assert!(
             parse(
                 &format!("{begin}[[step]]\naction='wait'\nuntil='boot-ready'\n{end}"),
@@ -2585,7 +3384,7 @@ mod sd_inspection_tests {
         assert!(
             parse(
                 &format!(
-                    "{begin}{}",
+                    "{begin}{capture}{allocation}{chains}{continuations}{}",
                     end.replace("wall_timeout_s=30", "wall_timeout_s=29")
                 ),
                 fixture
@@ -2595,8 +3394,8 @@ mod sd_inspection_tests {
         assert!(
             parse(
                 &format!(
-                    "{begin}{}",
-                    end.replace("loaded=true", "loaded=true\nchain_count=9")
+                    "{begin}{capture}{allocation}{}{continuations}{end}",
+                    chains.replace("loaded=true", "loaded=true\nchain_count=9")
                 ),
                 fixture
             )
@@ -2795,4 +3594,192 @@ fn validate_power_steps(scenario: &Scenario) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod menu_scope_tests {
+    fn parse(steps: &str, model: &str) -> Result<super::super::Scenario, String> {
+        super::super::Scenario::from_text(&format!(
+            "version=1\nname='menu'\nmodels=['{model}']\nbackends=['headless']\n{steps}"
+        ))
+    }
+    #[test]
+    fn capture_and_ordered_assertion_are_adjacent_and_l6max_only() {
+        let capture = "[[step]]\naction='capture-menu'\nmenu='system'\n";
+        let assertion = "[[step]]\naction='expect-menu-items'\nitems=['Patches']\n";
+        assert!(parse(&format!("{capture}{assertion}"), "l6max").is_ok());
+        assert!(parse(capture, "l6max").is_err());
+        assert!(parse(assertion, "l6max").is_err());
+        assert!(parse(&format!("{capture}{assertion}"), "l6").is_err());
+        assert!(
+            parse(
+                &format!("{capture}[[step]]\naction='wait'\nguest_ms=1\n{assertion}"),
+                "l6max"
+            )
+            .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod effect_state_scope_tests {
+    fn parse(steps: &str) -> Result<super::super::Scenario, String> {
+        super::super::Scenario::from_text(&format!(
+            "version=1\nname='modes'\nmodels=['l6max']\nbackends=['headless']\n{steps}"
+        ))
+    }
+    #[test]
+    fn wait_requires_matching_type_and_processor_assertions() {
+        let wait = "[[step]]\naction='wait-effect-slot'\nexpected_effect_type=1\nexpected_processor_type=1\n";
+        let capture = "[[step]]\naction='capture-effect-state'\n";
+        let effect = "[[step]]\naction='expect-effect-type'\nvalue=1\n";
+        let processor = "[[step]]\naction='expect-effect-processor'\nvalue=1\n";
+        let end = "[[step]]\naction='effect-state-end'\n";
+        assert!(parse(&format!("{wait}{capture}{effect}{processor}{end}")).is_ok());
+        assert!(parse(&format!("{wait}{capture}{effect}{end}")).is_err());
+        assert!(
+            parse(&format!(
+                "{wait}{capture}{effect}{}{end}",
+                processor.replace("value=1", "value=2")
+            ))
+            .is_err()
+        );
+        assert!(
+            parse(&format!(
+                "{}{capture}{effect}{processor}{end}",
+                wait.replace(
+                    "expected_processor_type=1",
+                    "expected_processor_type=1\nrequire_output=true"
+                )
+            ))
+            .is_err()
+        );
+    }
+    #[test]
+    fn wait_requires_matching_name_and_output_checks() {
+        let wait = "[[step]]\naction='wait-effect-slot'\nexpected_effect_type=1\nexpected_processor_type=1\nexpected_effect='velvet'\nrequire_output=true\n";
+        let capture = "[[step]]\naction='capture-effect-state'\n";
+        let basic = "[[step]]\naction='expect-effect-type'\nvalue=1\n[[step]]\naction='expect-effect-processor'\nvalue=1\n";
+        let name = "[[step]]\naction='expect-effect-name'\nname='velvet'\n";
+        let output = "[[step]]\naction='expect-effect-output'\n";
+        let end = "[[step]]\naction='effect-state-end'\n";
+        assert!(parse(&format!("{wait}{capture}{basic}{name}{output}{end}")).is_ok());
+        assert!(parse(&format!("{wait}{capture}{basic}{name}{end}")).is_err());
+        assert!(parse(&format!("{wait}{capture}{basic}{output}{end}")).is_err());
+        assert!(
+            parse(&format!(
+                "{wait}{capture}{basic}{}{output}{end}",
+                name.replace("velvet", "plateau")
+            ))
+            .is_err()
+        );
+    }
+    #[test]
+    fn optional_checks_require_their_fields_in_the_capture() {
+        let capture = "[[step]]\naction='capture-effect-state'\nedits=true\ndialog=true\n";
+        let edits = "[[step]]\naction='expect-effect-edits'\nminimum=1\n";
+        let dialog = "[[step]]\naction='expect-effect-dialog'\nactive=true\n";
+        let end = "[[step]]\naction='effect-state-end'\n";
+        assert!(parse(&format!("{capture}{edits}{dialog}{end}")).is_ok());
+        assert!(
+            parse(&format!(
+                "{}{edits}{dialog}{end}",
+                capture.replace("edits=true", "edits=false")
+            ))
+            .is_err()
+        );
+        assert!(
+            parse(&format!(
+                "{}{edits}{dialog}{end}",
+                capture.replace("dialog=true", "dialog=false")
+            ))
+            .is_err()
+        );
+        assert!(parse(&format!("{capture}{edits}{edits}{end}")).is_err());
+    }
+    #[test]
+    fn snapshot_requires_unique_adjacent_assertions_and_shared_deadlines() {
+        let capture = "[[step]]\naction='capture-effect-state'\n";
+        let panel = "[[step]]\naction='expect-effect-panel-mode'\nvalue=6\n";
+        let edit = "[[step]]\naction='expect-effect-edit-mode'\nenabled=true\n";
+        let end = "[[step]]\naction='effect-state-end'\n";
+        assert!(parse(&format!("{capture}{panel}{edit}{end}")).is_ok());
+        assert!(parse(&format!("{capture}{edit}{end}")).is_ok());
+        assert!(parse(&format!("{capture}{panel}{panel}{end}")).is_err());
+        assert!(parse(&format!("{capture}{end}")).is_err());
+        assert!(parse(&format!("{capture}{panel}")).is_err());
+        assert!(
+            parse(&format!(
+                "{capture}{}{}",
+                panel.replace("value=6", "value=6\nwall_timeout_s=1"),
+                end
+            ))
+            .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod effect_ring_scope_tests {
+    fn parse(steps: &str, model: &str) -> Result<super::super::Scenario, String> {
+        super::super::Scenario::from_text(&format!(
+            "version=1\nname='ring'\nmodels=['{model}']\nbackends=['headless']\n{steps}"
+        ))
+    }
+    #[test]
+    fn baseline_requires_matching_encoder_and_guest_generation() {
+        let capture = "[[step]]\naction='capture-effect-ring'\nencoder=1\n";
+        let assertion = "[[step]]\naction='expect-effect-ring-changed'\nencoder=1\n";
+        assert!(parse(&format!("{capture}{assertion}"), "l6max").is_ok());
+        assert!(parse(capture, "l6max").is_err());
+        assert!(parse(assertion, "l6max").is_err());
+        assert!(
+            parse(
+                &format!("{capture}{}", assertion.replace("encoder=1", "encoder=2")),
+                "l6max"
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                &format!("{capture}[[step]]\naction='restart'\n{assertion}"),
+                "l6max"
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                &format!("{capture}[[step]]\naction='sd-card'\ninserted=false\n{assertion}"),
+                "l6max"
+            )
+            .is_err()
+        );
+        assert!(parse(&format!("{capture}{assertion}"), "l6").is_err());
+    }
+}
+
+#[cfg(test)]
+mod usb_enumeration_scope_tests {
+    fn parse(steps: &str) -> Result<super::super::Scenario, String> {
+        super::super::Scenario::from_text(&format!(
+            "version=1\nname='usb'\nmodels=['l6max']\nbackends=['headless']\n{steps}"
+        ))
+    }
+    #[test]
+    fn readiness_and_enumeration_require_adjacency_and_identical_budgets() {
+        let ready =
+            "[[step]]\naction='usb-controller-ready'\nguest_timeout_ms=60000\nwall_timeout_s=300\n";
+        let enumerate =
+            "[[step]]\naction='usb-enumerate'\nguest_timeout_ms=60000\nwall_timeout_s=300\n";
+        assert!(parse(&format!("{ready}{enumerate}")).is_ok());
+        assert!(parse(ready).is_err());
+        assert!(parse(enumerate).is_err());
+        assert!(parse(&format!("{ready}{}", enumerate.replace("60000", "60001"))).is_err());
+        assert!(
+            parse(&format!(
+                "{ready}[[step]]\naction='wait'\nguest_ms=1\n{enumerate}"
+            ))
+            .is_err()
+        );
+    }
 }

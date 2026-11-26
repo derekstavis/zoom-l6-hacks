@@ -60,29 +60,91 @@ const fn stock_on(models: &'static [Model]) -> Requirement {
 /// The requirement of `action`.
 pub fn of(action: &Action) -> Requirement {
     match action {
-        Action::AudioCallbacks => Requirement {
+        Action::AudioCallbacksBegin => Requirement {
             first: true,
             ..stock_on(&[])
         },
+        Action::AudioCallbacksNext
+        | Action::AudioCallbacksCapture
+        | Action::AudioCallbacksAssert
+        | Action::AudioCallbacksEnd => stock_on(&[]),
         Action::HoldChord {
             until: Some(crate::scenario::ChordCondition::FactoryMode),
             ..
         } => stock_on(L6MAX),
-        Action::ExpectSettings { .. } | Action::ExpectRecorder => stock_on(L6MAX),
+        Action::SettingsCapture { .. }
+        | Action::SettingsVersions
+        | Action::SettingsRtc
+        | Action::SettingsBank
+        | Action::SettingsTrace
+        | Action::SettingsPanel
+        | Action::SettingsReload
+        | Action::SettingsRtcTiming
+        | Action::SettingsEnd
+        | Action::ExpectRecorder => stock_on(L6MAX),
         Action::SignalPwmBegin
         | Action::SignalPwmWarmup { .. }
         | Action::SignalPwmDrain { .. }
         | Action::SignalPwmStage { .. }
         | Action::SignalPwmAssert { .. }
         | Action::SignalPwmEnd
-        | Action::L6maxTapHandler => stock_on(L6MAX),
+        | Action::L6maxTapBegin
+        | Action::L6maxTapPress
+        | Action::L6maxTapWait
+        | Action::L6maxTapAssert
+        | Action::L6maxTapRelease
+        | Action::L6maxTapEnd => stock_on(L6MAX),
         Action::WaitL6SoundPadFile { .. }
-        | Action::L6LevelMeterPwm
-        | Action::L6DinSweep
-        | Action::PanelEvent { .. }
-        | Action::L6MainGpioEvent { .. }
-        | Action::L6DinEventDispatch { .. } => stock_on(L6),
-        Action::L6UsbStartup => Requirement {
+        | Action::L6MeterBegin
+        | Action::L6MeterStage { .. }
+        | Action::L6MeterAssert
+        | Action::L6MeterEnd
+        | Action::L6DinSweepBegin
+        | Action::L6DinSweepReady
+        | Action::L6DinSweepMonitor
+        | Action::L6DinSweepBaseline
+        | Action::L6DinSweepSample { .. }
+        | Action::L6DinSweepTrace
+        | Action::L6DinSweepDrain
+        | Action::L6DinSweepStop
+        | Action::L6DinSweepCapture
+        | Action::L6DinSweepAssert { .. }
+        | Action::L6DinSweepEnd
+        | Action::PanelEventBegin { .. }
+        | Action::PanelEventPress
+        | Action::PanelEventCapture
+        | Action::PanelEventReport
+        | Action::PanelEventMapping
+        | Action::PanelEventRelease
+        | Action::PanelEventSettle
+        | Action::PanelEventEnd
+        | Action::L6GpioBegin { .. }
+        | Action::L6GpioPress
+        | Action::L6GpioSubmit
+        | Action::L6GpioAssert
+        | Action::L6GpioDispatch
+        | Action::L6GpioRelease
+        | Action::L6GpioSettle
+        | Action::L6GpioEnd
+        | Action::L6DispatchBegin { .. }
+        | Action::L6DispatchTask
+        | Action::L6DispatchSemaphore
+        | Action::L6DispatchIdle
+        | Action::L6DispatchInject
+        | Action::L6DispatchWake
+        | Action::L6DispatchState
+        | Action::L6DispatchReader
+        | Action::L6DispatchEvent
+        | Action::L6DispatchEq
+        | Action::L6DispatchObserve
+        | Action::L6DispatchSetter { .. }
+        | Action::L6DispatchFinish => stock_on(L6),
+        Action::L6UsbStartupCapture
+        | Action::L6UsbStartupAssertHits
+        | Action::L6UsbStartupAssertWrites
+        | Action::L6UsbStartupAssertReplay
+        | Action::L6UsbStartupEnd => stock_on(L6),
+        Action::L6UsbStartupBegin => Requirement {
             first: true,
             ..stock_on(L6)
         },
@@ -126,7 +188,9 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6maxTimingEnqueue { .. }
         | Action::L6maxTimingWaitFirst
         | Action::L6maxTimingObservePaused { .. }
-        | Action::L6maxTimingAssertPaused
+        | Action::L6maxTimingCapturePaused
+        | Action::L6maxTimingAssertPausedClock
+        | Action::L6maxTimingAssertPausedInput
         | Action::L6maxTimingResume
         | Action::L6maxTimingWaitQueued
         | Action::L6maxTimingWaitReports
@@ -167,7 +231,11 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobRaceRestore
         | Action::KnobRaceAssert
         | Action::KnobRaceCapture { .. }
-        | Action::KnobDialogFirstActivation
+        | Action::KnobActivationTrigger
+        | Action::KnobActivationWait
+        | Action::KnobActivationSample
+        | Action::KnobActivationRestore
+        | Action::KnobActivationAssert
         | Action::KnobActiveBegin
         | Action::KnobActiveSampleCallbacks
         | Action::KnobActiveCheckCallbacks
@@ -258,9 +326,23 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobDialog
         | Action::KnobPopupOpen { .. }
         | Action::KnobPopupExpectOpen
+        | Action::KnobPopupExpectDisplay
         | Action::KnobPopupExpectValue
-        | Action::ExpectMenu { .. }
-        | Action::WaitEffectMode { .. } => on(L6MAX),
+        | Action::CaptureMenu { .. }
+        | Action::ExpectMenuItems { .. }
+        | Action::WaitEffectMode { .. }
+        | Action::CaptureEffectState { .. }
+        | Action::ExpectEffectEdits { .. }
+        | Action::ExpectEffectName { .. }
+        | Action::ExpectEffectOutput
+        | Action::ExpectEffectDialog { .. }
+        | Action::ExpectEffectType { .. }
+        | Action::ExpectEffectProcessor { .. }
+        | Action::ExpectEffectPanelMode { .. }
+        | Action::ExpectEffectEditMode { .. }
+        | Action::EffectStateEnd
+        | Action::CaptureEffectRing { .. }
+        | Action::ExpectEffectRingChanged { .. } => on(L6MAX),
         Action::ExpectDisplayAfterPress => Requirement {
             models: L6MAX,
             ..ANY
@@ -287,6 +369,7 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6MidiProbeInject
         | Action::L6MidiProbeExpectHook
         | Action::L6MidiProbeExpectReplies
+        | Action::L6MidiProbeFinish
         | Action::MarkL6UpdatePending
         | Action::ExpectL6UpdateResetVector
         | Action::ExpectL6UpdateComparison { .. }
@@ -296,7 +379,8 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6MuteSample { .. }
         | Action::L6IndicatorEnd => on(L6),
         Action::SdCard { .. }
-        | Action::UsbDescriptors
+        | Action::UsbControllerReady
+        | Action::UsbEnumerate
         | Action::UsbStorageBegin
         | Action::UsbStorageInquiry
         | Action::UsbStorageReady
@@ -305,6 +389,7 @@ pub fn of(action: &Action) -> Requirement {
         | Action::UsbStorageAssertBoot
         | Action::UsbStorageLastRead
         | Action::UsbStorageLastWrite
+        | Action::UsbStorageLastReadback
         | Action::UsbStorageLastAssert
         | Action::UsbStorageFatOpen
         | Action::UsbStorageCreate { .. }
@@ -321,8 +406,9 @@ pub fn of(action: &Action) -> Requirement {
         | Action::UsbMidiSetAlternate
         | Action::UsbMidiSetTarget
         | Action::UsbMidiEnd
-        | Action::HostMidiRoundTrip
         | Action::HostMidiConnect
+        | Action::DirectMidiConnect { .. }
+        | Action::MidiEncoderAlternate
         | Action::HostMidiBegin
         | Action::HostMidiSyncBegin
         | Action::HostMidiExpectSync
@@ -335,8 +421,8 @@ pub fn of(action: &Action) -> Requirement {
         | Action::HostMidiExpectCc { .. }
         | Action::HostMidiSettle { .. }
         | Action::HostMidiSendCc { .. }
+        | Action::ExpectRingUnchanged { .. }
         | Action::ExpectRingChanged { .. }
-        | Action::DirectUsbMidiRoundTrip { .. }
         | Action::UsbSysexBegin
         | Action::UsbSysexExchange { .. }
         | Action::UsbSysexEnd
@@ -349,7 +435,9 @@ pub fn of(action: &Action) -> Requirement {
         | Action::EditorAssignCount { .. }
         | Action::EditorAssignFilename { .. }
         | Action::EditorAssignSend { .. }
+        | Action::EditorAssignDialog { .. }
         | Action::EditorAssignState { .. }
+        | Action::EditorAssignAssert { .. }
         | Action::EditorAssignEnd
         | Action::EditorPlaybackBegin { .. }
         | Action::EditorPlaybackPlay
@@ -379,10 +467,14 @@ pub fn of(action: &Action) -> Requirement {
         | Action::ExpectMemory { .. }
         | Action::WaitMemory { .. }
         | Action::ExpectSdLoader
-        | Action::ExpectSdModule { .. }
+        | Action::CaptureSdModule { .. }
+        | Action::ExpectSdAllocation { .. }
+        | Action::ExpectSdChains { .. }
+        | Action::ExpectSdContinuations { .. }
+        | Action::ExpectSdModuleImages { .. }
+        | Action::ExpectSdLatestModule { .. }
         | Action::EffectPacedTurn { .. }
-        | Action::EffectParameterEdit { .. }
-        | Action::EffectReplacementState { .. }
+        | Action::WaitEffectSlot { .. }
         | Action::ExpectHeap { .. }
         | Action::HoldChord { .. }
         | Action::WarmReset
@@ -436,7 +528,8 @@ pub fn of(action: &Action) -> Requirement {
         | Action::ObserveDuration { .. }
         | Action::Press { .. }
         | Action::Hold { .. }
-        | Action::SaveScene { .. }
+        | Action::MomentaryDown { .. }
+        | Action::MomentaryUp { .. }
         | Action::ExpectScene { .. }
         | Action::ExpectButtonLed { .. }
         | Action::ExpectEffect { .. }
@@ -543,7 +636,10 @@ mod tests {
         let unknown = FirmwareIdentity::Unknown {
             sha256: "c".repeat(64),
         };
-        let reads_stock = scenario("['l6']", &["l6-din-sweep"]);
+        let reads_stock = Scenario::from_text(include_str!(
+            "../../../tests/emulator/cases/midi/l6-din-sweep.toml"
+        ))
+        .unwrap();
         let ordinary = scenario("['l6']", &["restart"]);
         assert!(check_firmware(&reads_stock, Model::L6, &stock).is_ok());
         assert!(
@@ -559,21 +655,33 @@ mod tests {
 
     #[test]
     fn scope_and_position_come_from_the_table() {
-        let error = Scenario::from_text(
-            "version=1\nname='t'\nmodels=['l6max']\n[[step]]\naction='l6-din-sweep'\n",
-        )
+        let source = include_str!("../../../tests/emulator/cases/midi/l6-din-sweep.toml");
+        let error =
+            Scenario::from_text(&source.replace("models = [\"l6\"]", "models = [\"l6max\"]"))
+                .unwrap_err();
+        assert!(
+            error.contains("l6-din-sweep-begin supports only l6"),
+            "{error}"
+        );
+        let usb = include_str!("../../../tests/emulator/cases/usb/l6-usb-startup.toml");
+        let late = Scenario::from_text(&usb.replacen(
+            "[[step]]",
+            "[[step]]\naction='delay'\nguest_ms=1\n[[step]]",
+            1,
+        ))
         .unwrap_err();
-        assert!(error.contains("l6-din-sweep supports only l6"), "{error}");
-        let late = Scenario::from_text(
-            "version=1\nname='t'\nmodels=['l6']\nbackends=['headless']\n[[step]]\naction='delay'\nguest_ms=1\n[[step]]\naction='l6-usb-startup'\n",
-        )
-        .unwrap_err();
-        assert!(late.contains("first step"), "{late}");
+        assert!(
+            late.contains("first") || late.contains("first-step"),
+            "{late}"
+        );
         let gui = Scenario::from_text(
-            "version=1\nname='t'\nmodels=['l6max']\nbackends=['headless','gui']\n[[step]]\naction='usb-descriptors'\n",
+            "version=1\nname='t'\nmodels=['l6max']\nbackends=['headless','gui']\n[[step]]\naction='usb-controller-ready'\n[[step]]\naction='usb-enumerate'\n",
         )
         .unwrap_err();
-        assert!(gui.contains("usb-descriptors requires backends"), "{gui}");
+        assert!(
+            gui.contains("usb-controller-ready requires backends"),
+            "{gui}"
+        );
         let undeclared = Scenario::from_text(
             "version=1\nname='t'\nmodels=['l6','l6max']\nbackends=['headless']\n[[step]]\naction='expect-memory'\nsymbol='system_mode'\nbytes=[0]\n",
         )

@@ -98,6 +98,32 @@ normal model or target routing checks. They support protocol rejection tests;
 they are not exposed by the control socket or CLI. `panel_uart_count` counts
 exact L6 panel trace markers in supplied text.
 
+`cargo l6ctl knob-sd-inspect REPORT MODULE` reads a local composed SD report
+and module and prints the derived immutable identity and knob callback/hook
+offsets. It requires no emulator connection. This is fixture inspection; it
+does not verify a running guest or authorize debugger mutations.
+`cargo l6ctl knob-firmware-inspect REPORT MAIN` similarly verifies that a
+firmware report identifies the supplied MAIN image and contains an exact
+in-bounds knob callback export. The command reports fixture-derived guards;
+it does not inspect a running guest.
+
+`l6ctl menu NAME [PATH ...]` reads a bounded L6max menu snapshot, following
+child titles in order. It checks the GUI and menu submenu routine fingerprints;
+the running guest's tree is non-atomic, and the result does not verify pixels.
+The control socket limits this observation to 30 seconds.
+
+In-process callers can create a retained panel-guest-time budget with `OwnedControl::usb_panel_budget`, then attach, poll and enumerate USB with that shared `usb::Budget`;
+these operations use the engine's raw-controller reservation, return raw
+descriptors and retain its MIDI IN pump. Control-socket `usb attach`,
+`usb controller`, `usb enumerate` and `usb release` use the same controller
+ownership. A second enumeration is rejected until release, preserving queued
+input. A failed or cancelled bounded attach, probe or enumeration makes the
+transport unusable until guest restart. A raw reservation coordinates against
+native and direct MIDI owners; callers sharing that reservation must still
+coordinate their own operations.
+The in-process `usb_midi_send` and `usb_midi_poll` operations use that
+configured session, retaining encoder state and cable-tagged packet ordering.
+
 `ControlClient::heap_counters()` returns one guarded, non-atomic sample of the
 four allocator counters. In-process callers can create
 `OwnedControl::heap_counter_reader()` once for a bounded observation, then
@@ -371,6 +397,28 @@ verify MAIN is stopped, it reports that uncertainty, retains the lease and
 requires a guest restart. A failed cleanup may spend up to three additional
 seconds attempting an emergency stop.
 
+For L6 panel-event investigations, the existing `debug-session` breakpoint,
+continue, step and register commands can observe the dispatcher and submit
+routine while a second control connection sends `down` and `up`. The 26
+targets in `l6-panel-event-map` use the normal PANEL route. The test's
+explicit raw PANEL routing for arbitrary targets remains an in-process API;
+the CLI does not provide a source override or perform the concurrent capture
+and mapping assertion as a single command.
+
+For a disposable L6 1.10 guest, the same persistent session exposes
+`l6-meter-guard`, `l6-meter-skip-startup`, `l6-meter-activate`,
+`l6-meter-seed` and `l6-meter-finish`. Each takes `timeout_ms` (1–60000);
+`l6-meter-seed` also takes a `value` as an unsigned 32-bit integer. The
+caller owns breakpoints and must reach the task entry before skipping the
+startup call, then reach the threshold builder before seeding. The host
+checks the model, code bytes and stopped PC before mutation. Remove owned
+breakpoints before finish. Finish restores the journalled bytes where
+possible, leaves MAIN stopped and returns `requires_restart: true`; task and
+panel progression cannot be rolled back. An interrupted or failed session
+also requires a fresh guest. The control socket has a 300-second maximum
+session lifetime. These are debugger operations; they do not run the l6test
+panel sampling windows or evaluate their PWM assertions.
+
 For in-process L6 recorder diagnostics, `l6_recorder_reader_before` checks
 three immutable L6 1.10 code spans and provides typed event, selection and
 SAI DMA observations. The caller must keep MAIN stopped, supply an absolute
@@ -391,6 +439,12 @@ QEMU processors under one wall deadline and cancellation check. Explicitly
 close it to restore their previous run states and inspect errors. A failed
 restore is reported as an uncertain state requiring a guest restart; dropping
 the scope makes a bounded best-effort restore. It is not exposed on the CLI.
+
+`OwnedControl::debug_observer_before` coordinates an owned debugger with two
+initially paused guests for in-process breakpoint observations that interleave
+input replay. It owns the MAIN debugger lease and bounded guest status,
+resume and stop operations; the caller interprets observations and controls
+replay. This coordination API is not exposed on the socket or CLI.
 
 `OwnedControl::usb_storage_before` acquires exclusive in-process USB ownership
 and creates a mass-storage session with an absolute wall deadline and panel
@@ -426,6 +480,21 @@ Injection checks the binding again before writing guest state.
 `l6-midi-breakpoint` (`address`, `enabled`, `timeout_ms`) provide bounded
 stepping and owned breakpoint changes during the injected transaction.
 
+The separate stock L6 DIN dispatch probe is available through the same JSONL
+debug session as `l6-din-idle-evidence`, `l6-din-capture-semaphore`,
+`l6-din-inject`, `l6-din-wake`, `l6-din-event`, `l6-din-setter-value`,
+`l6-din-setter`, and `l6-din-finish`. Each takes `timeout_ms`; injection also
+takes `group`, `cc`, `value` and `leave_stopped: true`, while setter takes
+`index` and `value`. The caller owns the relevant breakpoints and sequences
+the observations. The probe guards stock code, the current `Idle` task, Thumb
+thread mode and its allocated stack. Its 2048-byte SP-based headroom threshold
+is conservative relative to observed call-graph estimates, not a proven
+worst-case stack bound. The captured semaphore pointer comes from the guarded
+wait routine and is checked for aligned mapped RAM; that alone does not prove
+object identity. Synthetic calls alter CPU and scheduler context; finish
+restores the journaled stack word, stops MAIN and requires a guest restart.
+Use only a disposable emulator and retain the debugger lease until teardown.
+
 Injection changes CPU execution state that this API cannot fully restore.
 Finish restores scratch and removes breakpoints but deliberately leaves MAIN
 stopped, closes the debug session, and reserves the debugger until the engine
@@ -454,8 +523,36 @@ Rust callers use `OwnedControl::debug_session()` for an owned engine or
 
 `l6ctl effect-editor REPORT MODULE` inspects a running L6max effect editor using a composed SD build report and its matching module file. The response reports a non-atomic mailbox/counter snapshot and the supplied fixture module hash; it checks the loaded module's bounds and a hash of immutable module code with relocation and continuation words masked; writable state is not hashed. This read-only operation is also available to owned guests through `EffectEditorBinding` and `effect_editor_reader_before`.
 
-The in-process `OwnedControl` API offers USB SysEx send and poll against an already enumerated endpoint. The caller owns its connection, receive queue and deadlines. These operations are not exposed through the control socket or CLI.
+`l6ctl effect-slot REPORT MODULE` reads the selected effect, processor and editor modes from the same fixture-bound loaded module. Add `--active`, `--output`, `--applied`, `--refresh`, `--dialog`, `--parameter ID`, or `--ring INDEX` for optional fields. Ring indices are zero-based and return the raw Q16.16 position. The snapshot is non-atomic; parameter values are returned as raw IEEE-754 bits to preserve non-finite values. Module code and registry identity are checked before reading, and absent optional exports are reported when requested (an absent dialog export returns null).
+
+The in-process `OwnedControl` API offers USB SysEx send and poll against an already enumerated endpoint. The caller owns its connection, receive queue and deadlines. These operations are not exposed through the control socket or CLI. `EditorRequest` encodes the Editor pad and setup requests, and the `editor_pad_*` helpers interpret pad replies. Callers still select the sequence, validate model-specific arguments, and manage collection windows; these protocol helpers do not start an Editor session.
 
 `l6ctl panel-key CODE` reads the L6max 1.10 sound-pad key lookup and six state words for codes 25–28. The revision guard is checked before reading. The table and state reads are non-atomic; the returned input state is not evidence of an OLED rendering.
 
 `l6ctl midi send-bytes ENDPOINT HEX_BYTE...` sends raw MIDI to a native endpoint; bytes are two hexadecimal digits. In-process callers can also reserve USB with `l6ctl::midi::RawUsbReceiver`, enumerate it with their own timeout policy, and poll complete USB transfers with cable and packet boundaries preserved. The raw USB receiver is unavailable through the control socket.
+
+`l6ctl sound-pad-assignment PAD [PATH]` reads the L6 1.10 saved-assignment pending byte for a zero-based pad index (0–3). For pad 0, an optional card-relative path also compares the firmware's raw UTF-16 path. The assignment-worker fingerprint guards the observation; the path and pending reads are non-atomic.
+
+`l6ctl symbol-read SYMBOL LENGTH` resolves a symbol from the selected model's
+firmware API catalog and reads 1–4096 bytes from MAIN. This includes symbols
+outside SDRAM, such as DSP coefficients in DTCM. The read is non-atomic; a
+catalog match does not verify the running firmware revision.
+
+`l6ctl warm-reset [TIMEOUT_S]` requests a MAIN reset and waits for QEMU's reset
+completion event (default 30 seconds, maximum 3600). This does not establish
+firmware or panel readiness. `l6ctl sd-card insert PATH` and `l6ctl sd-card eject`
+change the running guest's SD medium; the CLI resolves an inserted path before
+sending it to the local control socket. Rust control clients sending a path
+directly should use an absolute path.
+
+### Offline audio preparation and analysis
+
+`l6ctl audio prepare SOURCE.wav DIRECTORY CHANNEL` converts a WAV into the prepared 48 kHz stereo float file for a one-based channel in the explicitly supplied audio-input directory. The command does not tell a running emulator to reload the file; follow it with `audio-input load CHANNEL true` on that emulator's control socket. The directory is the emulator's `L6_AUDIO_INPUT_DIR`, or `audio-input` within its state directory (logs directory if no state directory was supplied).
+
+`l6ctl audio inspect SOURCE.wav` checks RIFF length, chunk bounds and padding, then reports the decoded frame count using the analysis reader.
+
+`l6ctl audio compare SOURCE.wav CAPTURE.s32le` reports the best alignment, per-channel gains and residual for a WAV source against a raw stereo S32LE capture. `l6ctl audio tone CAPTURE.s32le HZ RATE` reports per-channel tone levels in dBFS. Both commands output JSON and require no emulator socket. They measure audio; callers choose their own pass/fail thresholds. The WAV analysis reader accepts 16-bit PCM or 32-bit float with one or two channels, matching the test runner's existing analysis policy.
+
+### Audio input transport
+
+For a running emulator, `l6ctl --socket PATH audio-input status` returns the latest MAIN audio position, playing flag, rejection count and last acknowledged input sequence. `audio-input load CHANNEL true|false`, `audio-input play`, `pause`, `stop`, and `seek MS` enqueue input commands and return their sequence; use `input ack main SEQUENCE` to inspect acknowledgement. Channels are one-based. Loading expects audio already prepared for that channel. The status is a live observation, not a synchronized audio capture.

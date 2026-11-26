@@ -397,6 +397,53 @@ pub fn tasks(q: &QmpClient, model: Model) -> Result<TasksSnapshot, String> {
     }
     decode_tasks(&memory, k, count, current_after)
 }
+
+/// Decode task allocations under one deadline. Callers requiring stack
+/// ownership must first stop MAIN and keep it stopped throughout this read.
+pub fn tasks_before_checked(
+    q: &QmpClient,
+    model: Model,
+    deadline: std::time::Instant,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<TasksSnapshot, String> {
+    let k = kernel(model);
+    let read = |address, len| {
+        check()?;
+        let bytes = q
+            .read_memory_before(0, address, len, deadline)
+            .map_err(|e| e.to_string())?;
+        check()?;
+        Ok::<_, String>(bytes)
+    };
+    let before = heap::read_before_checked(q, model, deadline, check)?;
+    for (address, expected) in [k.create_task, k.delay_task] {
+        if format!("{:x}", Sha256::digest(read(address, 64)?)) != expected {
+            return Err("Task layout is unsupported for this firmware".into());
+        }
+    }
+    let change = u32_at(&read(k.task_change, 4)?, 0)?;
+    let count = u32_at(&read(k.task_count, 4)?, 0)?;
+    if count > 256 {
+        return Err("scheduler is not ready".into());
+    }
+    let mut memory = Vec::with_capacity((k.heap.1 - k.heap.0) as usize);
+    let mut at = k.heap.0;
+    while at < k.heap.1 {
+        let len = ((k.heap.1 - at) as usize).min(4096);
+        memory.extend(read(at, len)?);
+        at += len as u32;
+    }
+    let after = heap::read_before_checked(q, model, deadline, check)?;
+    let count_after = u32_at(&read(k.task_count, 4)?, 0)?;
+    let current_after = u32_at(&read(k.current_tcb, 4)?, 0)?;
+    if before != after || count != count_after || change != u32_at(&read(k.task_change, 4)?, 0)? {
+        return Err("tasks changed while sampling; retrying".into());
+    }
+    check()?;
+    let tasks = decode_tasks(&memory, k, count, current_after)?;
+    check()?;
+    Ok(tasks)
+}
 fn decode_tasks(
     memory: &[u8],
     k: &Kernel,

@@ -6,7 +6,6 @@ state = "effects-room"
 sd_patches = []
 sd_bundle_mode = "composed-module"
 effect_replacements = { room = "velvet" }
-gdb = true
 
 [case]
 suites = ["sd-matrix", "effect-replacement-matrix"]
@@ -21,11 +20,27 @@ action = "include"
 path = "patches/efx-loader/tests/emulator/fragments/effect-replacement-load.toml"
 
 [[step]]
-action = "effect-replacement-state"
+action = "wait-effect-slot"
 expected_effect_type = 1
 expected_processor_type = 1
-wait_for_slot = true
 require_output = true
+
+[[step]]
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-type"
+value = 1
+
+[[step]]
+action = "expect-effect-processor"
+value = 1
+
+[[step]]
+action = "expect-effect-output"
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "checkpoint"
@@ -40,44 +55,112 @@ action = "wait-effect-mode"
 edit_mode = true
 
 [[step]]
-action = "effect-replacement-state"
-expected_effect_type = 1
-expected_processor_type = 1
-expected_edit_mode = true
+action = "capture-effect-state"
 
 [[step]]
-action = "effect-parameter-edit"
+action = "expect-effect-type"
+value = 1
+
+[[step]]
+action = "expect-effect-processor"
+value = 1
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = true
+
+[[step]]
+action = "effect-state-end"
+
+[[step]]
+action = "capture-effect-ring"
 encoder = 2
+
+[[step]]
+action = "effect-paced-turn"
+channel = 2
 steps = 1
+
+[[step]]
+action = "expect-effect-ring-changed"
+encoder = 2
 
 [[step]]
 action = "expect-display-image"
 image = "patches/efx-loader/tests/emulator/references/effect-velvet-parameter.png"
 
 [[step]]
-action = "effect-replacement-state"
-expected_effect_type = 1
-expected_processor_type = 1
-expected_edit_mode = true
-minimum_parameter_edits = 1
-expected_dialog_active = true
+action = "capture-effect-state"
+edits = true
+dialog = true
 
 [[step]]
-action = "effect-replacement-state"
-expected_effect_type = 1
-expected_processor_type = 1
-expected_edit_mode = true
+action = "expect-effect-type"
+value = 1
+
+[[step]]
+action = "expect-effect-processor"
+value = 1
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = true
+
+[[step]]
+action = "expect-effect-edits"
+minimum = 1
+
+[[step]]
+action = "expect-effect-dialog"
+active = true
+
+[[step]]
+action = "effect-state-end"
+
+[[step]]
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-type"
+value = 1
+
+[[step]]
+action = "expect-effect-processor"
+value = 1
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = true
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "press"
 control = "efx-select"
 
 [[step]]
-action = "effect-replacement-state"
+action = "wait-effect-slot"
 expected_effect_type = 2
 expected_processor_type = 0
-wait_for_slot = true
-expected_edit_mode = false
+
+[[step]]
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-type"
+value = 2
+
+[[step]]
+action = "expect-effect-processor"
+value = 0
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = false
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"

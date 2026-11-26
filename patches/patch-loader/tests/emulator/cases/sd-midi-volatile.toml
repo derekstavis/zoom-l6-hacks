@@ -15,11 +15,8 @@ guest_timeout_ms = 60000
 wall_timeout_s = 300
 
 [[step]]
-action = "expect-sd-loader"
-
-[[step]]
-action = "expect-sd-module"
-loaded = true
+action = "include"
+path = "tests/emulator/fragments/sd-module-loaded.toml"
 
 [[step]]
 action = "sd-card"
@@ -37,11 +34,8 @@ action = "expect-display-image"
 image = "tests/emulator/references/l6max-storage-removed.png"
 
 [[step]]
-action = "expect-sd-loader"
-
-[[step]]
-action = "expect-sd-module"
-loaded = true
+action = "include"
+path = "tests/emulator/fragments/sd-module-loaded.toml"
 
 [[step]]
 action = "restart"
@@ -64,7 +58,27 @@ wall_timeout_s = 300
 action = "expect-sd-loader"
 
 [[step]]
-action = "expect-sd-module"
+action = "capture-sd-module"
+loaded = false
+
+[[step]]
+action = "expect-sd-allocation"
+loaded = false
+
+[[step]]
+action = "expect-sd-chains"
+loaded = false
+
+[[step]]
+action = "expect-sd-continuations"
+loaded = false
+
+[[step]]
+action = "expect-sd-module-images"
+loaded = false
+
+[[step]]
+action = "expect-sd-latest-module"
 loaded = false
 
 [[step]]
@@ -81,7 +95,36 @@ guest_timeout_ms = 30000
 wall_timeout_s = 600
 
 [[step]]
-action = "expect-sd-module"
+action = "capture-sd-module"
+loaded = true
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "expect-sd-allocation"
+loaded = true
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "expect-sd-chains"
+loaded = true
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "expect-sd-continuations"
+loaded = true
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "expect-sd-module-images"
+loaded = true
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+[[step]]
+action = "expect-sd-latest-module"
 loaded = true
 guest_timeout_ms = 30000
 wall_timeout_s = 600

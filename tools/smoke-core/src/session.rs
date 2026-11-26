@@ -2,7 +2,6 @@
 use crate::{Gesture, Progress, Runner, Scenario, devices};
 use l6max_host::{
     engine::{Engine, Options},
-    input::InputHub,
     panel::{PanelData, PanelFeed},
 };
 use serde_json::json;
@@ -38,7 +37,8 @@ pub enum Command {
     },
 }
 impl Command {
-    pub fn headless(&self, inputs: &InputHub) -> Result<(), String> {
+    pub fn headless(&self, engine: &Engine) -> Result<(), String> {
+        let inputs = engine.inputs.as_ref().ok_or("input hub unavailable")?;
         match *self {
             Self::Switch { target, enabled } => {
                 if enabled {
@@ -56,12 +56,14 @@ impl Command {
                 target,
                 duration_ms,
             } => {
-                inputs
+                l6ctl::OwnedControl::new(engine)
                     .down(target, duration_ms)
                     .map_err(|e| e.to_string())?;
             }
             Self::Release { target } => {
-                inputs.up(target).map_err(|e| e.to_string())?;
+                l6ctl::OwnedControl::new(engine)
+                    .up(target)
+                    .map_err(|e| e.to_string())?;
             }
             Self::Encoder { channel, steps, .. } => {
                 inputs.knob(channel - 1, steps).map_err(|e| e.to_string())?;
@@ -81,6 +83,7 @@ pub struct Session {
     pub engine: Engine,
     feed: PanelFeed,
     switches: Cell<[bool; 54]>,
+    pub(crate) supervised_din: bool,
 }
 impl Session {
     pub fn start(options: &Options) -> Result<Self, String> {
@@ -90,10 +93,11 @@ impl Session {
             engine,
             feed,
             switches: Cell::new([false; 54]),
+            supervised_din: false,
         })
     }
     pub fn dispatch(&self, command: &Command) -> Result<(), String> {
-        command.headless(self.engine.inputs.as_ref().unwrap())?;
+        command.headless(&self.engine)?;
         if let Command::Switch { target, enabled } = command {
             let mut switches = self.switches.get();
             switches[*target as usize] = *enabled;
@@ -334,7 +338,23 @@ fn device_options<'a>(
 }
 
 /// Execute a scenario without GPUI, with the production panel feed and shared assertions.
-pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
+pub fn run(scenario: Scenario, options: Options) -> Result<(), String> {
+    run_with_context(scenario, options, false)
+}
+
+/// Run a direct headless DIN case whose caller owns this fresh process group.
+pub fn run_supervised_din(scenario: Scenario, options: Options) -> Result<(), String> {
+    if unsafe { libc::getpgrp() } != unsafe { libc::getpid() } {
+        return Err("DIN case is not a fresh process-group leader".into());
+    }
+    run_with_context(scenario, options, true)
+}
+
+fn run_with_context(
+    scenario: Scenario,
+    mut options: Options,
+    supervised_din: bool,
+) -> Result<(), String> {
     if !scenario.backends.contains(&crate::Backend::Headless) {
         return Err("scenario does not support headless execution".into());
     }
@@ -385,6 +405,9 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
     } else {
         Some(Session::start(&options)?)
     };
+    if let Some(session) = session.as_mut() {
+        session.supervised_din = supervised_din;
+    }
     progress.emit(crate::progress::CaseEvent::PhaseChanged {
         phase: crate::progress::CasePhase::PreparingScenario,
         started_unix_ms: crate::progress::unix_ms(),
@@ -443,6 +466,10 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                 Progress::Complete => {
                     if shared_wall_budget.is_some() {
                         return Err("shared wall deadline was not ended".into());
+                    }
+                    if let Some(error) = runner.deferred_assertion_error() {
+                        runner.mark_deferred_terminal();
+                        return Err(error);
                     }
                     return Ok(());
                 }
@@ -1114,6 +1141,10 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     }
                     device_state.restarted()?;
                     drop(session.take());
+                    if options.fixture_firmware_report.is_none() {
+                        options.fixture_firmware_report =
+                            Some(options.logs.join(crate::fixture_layout::FIRMWARE_REPORT));
+                    }
                     options.logs = options.logs.join("restart");
                     let mut restart_options = options.clone();
                     if !card_inserted {
@@ -1130,6 +1161,18 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     runner.device_finished(json!({"restarted":true,"logs":options.logs}));
                 }
                 Progress::Device(operation) => {
+                    let warm_reset_panel =
+                        matches!(operation, devices::Operation::WarmReset).then(|| {
+                            session
+                                .as_ref()
+                                .unwrap()
+                                .engine
+                                .inputs
+                                .as_ref()
+                                .unwrap()
+                                .panel
+                                .snapshot()
+                        });
                     let card_change = match &operation {
                         devices::Operation::SdCard { inserted } => Some(*inserted),
                         _ => None,
@@ -1141,15 +1184,38 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         case_progress.clone(),
                         runner.current_progress_index(),
                     );
-                    let evidence = device_state.execute(
+                    let evidence = match device_state.execute(
                         session.as_ref().unwrap(),
                         device_options(managed, &options, lifecycle_boot_options.as_ref())?,
                         operation,
                         step.guest_timeout_ms,
                         step.wall_timeout_s,
-                    )?;
+                    ) {
+                        Ok(evidence) => evidence,
+                        Err(error) => {
+                            if device_state.take_deferred_terminal_failure() {
+                                runner.mark_deferred_terminal();
+                            }
+                            return Err(error);
+                        }
+                    };
+                    if let Some(error) = device_state.take_deferred_assertion() {
+                        runner.defer_assertion_failure(error);
+                    }
                     if let Some(inserted) = card_change {
                         card_inserted = inserted;
+                    }
+                    if let Some(panel) = warm_reset_panel {
+                        let barrier = session
+                            .as_ref()
+                            .unwrap()
+                            .engine
+                            .inputs
+                            .as_ref()
+                            .unwrap()
+                            .panel
+                            .snapshot();
+                        runner.warm_reset(panel.indicators, barrier.indicator_updates);
                     }
                     runner.device_finished(evidence);
                 }
@@ -1262,6 +1328,18 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
             result = Err(match result {
                 Ok(()) => format!("sound-pad cleanup failed: {cleanup}"),
                 Err(error) => format!("{error}; sound-pad cleanup failed: {cleanup}"),
+            });
+        }
+    }
+    if let Some(command) = runner.take_held_release() {
+        let cleanup = session
+            .as_ref()
+            .ok_or("no active guest for momentary release".to_owned())
+            .and_then(|guest| guest.dispatch(&command));
+        if let Err(cleanup) = cleanup {
+            result = Err(match result {
+                Ok(()) => format!("momentary cleanup failed: {cleanup}"),
+                Err(error) => format!("{error}; momentary cleanup failed: {cleanup}"),
             });
         }
     }

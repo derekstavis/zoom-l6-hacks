@@ -1,5 +1,8 @@
 pub mod debug;
+pub mod debug_journal;
+pub mod menu;
 pub use sd_image as demo_sd;
+pub mod audio_analysis;
 pub mod audio_input;
 pub mod audio_trace;
 pub mod config;
@@ -13,7 +16,10 @@ pub mod freertos;
 pub mod heap;
 pub mod input;
 pub mod input_trace;
+pub mod knob_binding;
 pub mod knob_popup;
+pub mod l6_din;
+pub mod l6_din_dispatch;
 pub mod l6_recorder;
 pub mod l6max_recorder;
 pub mod memory;
@@ -26,6 +32,8 @@ pub mod qmp;
 pub mod sd_loader;
 pub mod sd_patches;
 pub mod shared_memory;
+pub mod sound_pad;
+pub mod wav;
 
 pub mod controls;
 pub mod indicators;

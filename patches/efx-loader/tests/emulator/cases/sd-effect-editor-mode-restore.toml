@@ -17,18 +17,36 @@ action = "include"
 path = "patches/efx-loader/tests/emulator/fragments/effect-replacement-load.toml"
 
 [[step]]
-action = "effect-replacement-state"
-expected_effect_type = 1
-expected_processor_type = 1
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-type"
+value = 1
+
+[[step]]
+action = "expect-effect-processor"
+value = 1
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "select-mode"
 mode = "level"
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 9
-expected_edit_mode = false
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 9
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = false
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "checkpoint"
@@ -44,9 +62,18 @@ panel_mode = 6
 edit_mode = true
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 6
-expected_edit_mode = true
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 6
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = true
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"
@@ -69,11 +96,28 @@ action = "delay"
 guest_ms = 300
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 6
-expected_edit_mode = true
-minimum_parameter_edits = 1
-expected_dialog_active = true
+action = "capture-effect-state"
+edits = true
+dialog = true
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 6
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = true
+
+[[step]]
+action = "expect-effect-edits"
+minimum = 1
+
+[[step]]
+action = "expect-effect-dialog"
+active = true
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-ring"
@@ -181,9 +225,18 @@ panel_mode = 9
 edit_mode = false
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 9
-expected_edit_mode = false
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 9
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = false
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"
@@ -240,9 +293,18 @@ panel_mode = 6
 edit_mode = true
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 6
-expected_edit_mode = true
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 6
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = true
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"
@@ -263,9 +325,18 @@ panel_mode = 0
 edit_mode = false
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 0
-expected_edit_mode = false
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 0
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = false
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"
@@ -322,9 +393,18 @@ panel_mode = 6
 edit_mode = true
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 6
-expected_edit_mode = true
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 6
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = true
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"
@@ -341,9 +421,18 @@ panel_mode = 1
 edit_mode = false
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 1
-expected_edit_mode = false
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 1
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = false
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"
@@ -400,9 +489,18 @@ panel_mode = 6
 edit_mode = true
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 6
-expected_edit_mode = true
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 6
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = true
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"
@@ -419,9 +517,18 @@ panel_mode = 2
 edit_mode = false
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 2
-expected_edit_mode = false
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 2
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = false
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"
@@ -478,9 +585,18 @@ panel_mode = 6
 edit_mode = true
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 6
-expected_edit_mode = true
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 6
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = true
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"
@@ -497,9 +613,18 @@ panel_mode = 3
 edit_mode = false
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 3
-expected_edit_mode = false
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 3
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = false
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"
@@ -556,9 +681,18 @@ panel_mode = 6
 edit_mode = true
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 6
-expected_edit_mode = true
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 6
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = true
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"
@@ -575,9 +709,18 @@ panel_mode = 4
 edit_mode = false
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 4
-expected_edit_mode = false
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 4
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = false
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"
@@ -634,9 +777,18 @@ panel_mode = 6
 edit_mode = true
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 6
-expected_edit_mode = true
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 6
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = true
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"
@@ -653,9 +805,18 @@ panel_mode = 5
 edit_mode = false
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 5
-expected_edit_mode = false
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 5
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = false
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"
@@ -712,9 +873,18 @@ panel_mode = 6
 edit_mode = true
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 6
-expected_edit_mode = true
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 6
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = true
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"
@@ -731,9 +901,18 @@ panel_mode = 7
 edit_mode = false
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 7
-expected_edit_mode = false
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 7
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = false
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"
@@ -790,9 +969,18 @@ panel_mode = 6
 edit_mode = true
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 6
-expected_edit_mode = true
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 6
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = true
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"
@@ -809,9 +997,18 @@ panel_mode = 8
 edit_mode = false
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 8
-expected_edit_mode = false
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 8
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = false
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"
@@ -850,9 +1047,18 @@ panel_mode = 6
 edit_mode = true
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 6
-expected_edit_mode = true
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 6
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = true
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"
@@ -891,9 +1097,18 @@ panel_mode = 9
 edit_mode = false
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 9
-expected_edit_mode = false
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 9
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = false
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "expect-button-led"

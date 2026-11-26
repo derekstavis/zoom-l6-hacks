@@ -166,87 +166,26 @@ pub(crate) fn display_difference_count(
         .sum()
 }
 
-/// Read a menu's children from guest memory and compare their titles.
-pub(super) fn expect_menu(
+/// Capture one bounded host menu observation for later assertions.
+pub(super) fn capture_menu(
     session: &Session,
     menu: &str,
     path: &[String],
-    items: &[String],
-) -> Result<Value, String> {
-    // Menu node layout and stock nodes, from patches/api/l6max/menu.rs.
-    const NODE_TITLE: u32 = 0x0c;
-    const NODE_CHILDREN: u32 = 0x10;
-    const NODE_CHILD_COUNT: u32 = 0x14;
-    use firmware_api::l6max::gui_text_pointers_by_language;
-    const MAX_CHILDREN: u16 = 64;
-
-    let root = match menu {
-        "main" => l6max::MENU_NODE_MAIN,
-        "project" => l6max::MENU_NODE_PROJECT,
-        "sound-pad" => l6max::MENU_NODE_SOUND_PAD,
-        "mixer" => l6max::MENU_NODE_MIXER,
-        "system" => l6max::MENU_NODE_SYSTEM,
-        _ => return Err(format!("unknown menu {menu:?}")),
-    };
-    let qmp = &session.engine.management[0];
-    let read = |address: u32, length: usize| {
-        qmp.read_memory(0, address, length)
-            .map_err(|error| error.to_string())
-    };
-    let read_u32 = |address: u32| -> Result<u32, String> {
-        Ok(u32::from_le_bytes(read(address, 4)?.try_into().unwrap()))
-    };
-    let read_u16 = |address: u32| -> Result<u16, String> {
-        Ok(u16::from_le_bytes(read(address, 2)?.try_into().unwrap()))
-    };
-    let text = |id: u16| -> Result<String, String> {
-        let pointer = read_u32(read_u32(gui_text_pointers_by_language)? + u32::from(id) * 4)?;
-        if pointer == 0 {
-            return Ok(String::new());
-        }
-        let units = read(pointer, 96)?
-            .chunks_exact(2)
-            .map(|b| u16::from_le_bytes([b[0], b[1]]))
-            .take_while(|c| *c != 0)
-            .collect::<Vec<_>>();
-        String::from_utf16(&units).map_err(|error| error.to_string())
-    };
-    let children = |node: u32| -> Result<Vec<(u32, String)>, String> {
-        let count = read_u16(node + NODE_CHILD_COUNT)?;
-        if count > MAX_CHILDREN {
-            return Err(format!("menu node {node:#010x} claims {count} children"));
-        }
-        let array = read_u32(node + NODE_CHILDREN)?;
-        (0..u32::from(count))
-            .map(|index| {
-                let child = read_u32(array + index * 4)?;
-                Ok((child, text(read_u16(child + NODE_TITLE)?)?))
-            })
-            .collect()
-    };
-    // Menu Loader adds its rows when the menu opens, so a press that did not
-    // open it would otherwise look like missing rows.
-    use firmware_api::l6max::GUI_RECORDER_WINDOW;
-    use firmware_api::l6max::current_window;
-    if read_u32(current_window)? == GUI_RECORDER_WINDOW {
-        return Err("expect-menu: the menu is not open; the recorder screen is showing".into());
-    }
-    let mut node = root;
-    for title in path {
-        node = children(node)?
-            .into_iter()
-            .find(|(_, child)| child == title)
-            .map(|(child, _)| child)
-            .ok_or_else(|| format!("menu {menu} has no child {title:?} on path {path:?}"))?;
-    }
-    let actual = children(node)?
-        .into_iter()
-        .map(|(_, title)| title)
-        .collect::<Vec<_>>();
-    if actual != items {
-        return Err(format!(
-            "menu {menu} {path:?} lists {actual:?}, expected {items:?}"
-        ));
-    }
-    Ok(json!({"menu":menu,"path":path,"items":actual}))
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<l6ctl::MenuSnapshot, String> {
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let start = control
+        .input_status(l6ctl::InputSource::Panel)
+        .map_err(|e| e.to_string())?
+        .guest_ms;
+    let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
+    control
+        .menu_before(menu, path, deadline, || {
+            control
+                .input_status(l6ctl::InputSource::Panel)
+                .map(|s| s.guest_ms.wrapping_sub(start) >= guest_timeout_ms)
+                .unwrap_or(true)
+        })
+        .map_err(|e| e.to_string())
 }

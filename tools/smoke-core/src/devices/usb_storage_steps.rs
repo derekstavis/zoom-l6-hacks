@@ -112,10 +112,13 @@ impl Scope {
             .map_err(|e| e.to_string())?;
         Ok(json!({"lba":lba}))
     }
-    pub(super) fn last_assert(&mut self) -> Result<Value, String> {
+    pub(super) fn last_readback(&mut self) -> Result<Value, String> {
         let lba = u32::try_from(self.blocks - 1).map_err(|_| "last LBA exceeds READ(10)")?;
         self.reread = Some(self.session.read_sector(lba).map_err(|e| e.to_string())?);
-        if self.reread != self.original {
+        Ok(json!({"lba": lba}))
+    }
+    pub(super) fn last_assert(&self) -> Result<Value, String> {
+        if self.reread.is_none() || self.reread != self.original {
             return Err("USB sector write/read mismatch".into());
         }
         Ok(json!({"sector_round_trip":true}))

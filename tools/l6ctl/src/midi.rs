@@ -39,6 +39,20 @@ impl MidiSession {
         })
     }
 
+    /// Connect an in-process USB MIDI session under a wall and cancellation budget.
+    pub fn connect_direct_before(
+        usb: Arc<UsbHost>,
+        cable: u8,
+        budget: &l6max_host::usb::Budget,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            client: Box::new(consumer::DirectUsbClient::connect_before(
+                usb, cable, budget,
+            )?),
+            receive_mode: None,
+        })
+    }
+
     fn select_receive_mode(&mut self, mode: ReceiveMode) -> Result<(), String> {
         if self.receive_mode.is_some_and(|previous| previous != mode) {
             return Err("cannot mix raw MIDI bytes and control observations in one session".into());
@@ -228,6 +242,40 @@ mod tests {
                 .contains("cannot mix")
         );
         assert_eq!(state.borrow().incoming.front(), Some(&[0xf0, 1, 0xf7]));
+    }
+
+    #[test]
+    fn direct_session_attach_stall_is_bounded_and_cleans_up() {
+        use std::io::{Read, Write};
+        use std::time::{Duration, Instant};
+        let (socket, mut peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let host = std::sync::Arc::new(l6max_host::usb::UsbHost::new(socket).unwrap());
+        let peer_thread = std::thread::spawn(move || {
+            let mut request = [0; 20];
+            peer.read_exact(&mut request).unwrap();
+            peer.write_all(&[0, 1, 2]).unwrap();
+            let mut byte = [0; 1];
+            assert_eq!(peer.read(&mut byte).unwrap(), 0);
+        });
+        let start = Instant::now();
+        let budget = l6max_host::usb::Budget::new(start + Duration::from_millis(40), || false);
+        let error = match MidiSession::connect_direct_before(host.clone(), 1, &budget) {
+            Ok(_) => panic!("stalled attach unexpectedly succeeded"),
+            Err(error) => error,
+        };
+        assert!(start.elapsed() < Duration::from_secs(2));
+        assert!(
+            error.contains("timed out") || error.contains("deadline"),
+            "{error}"
+        );
+        assert!(
+            error.contains("transport closed, restart required"),
+            "{error}"
+        );
+        let next_budget =
+            l6max_host::usb::Budget::new(Instant::now() + Duration::from_millis(100), || false);
+        assert!(MidiSession::connect_direct_before(host, 1, &next_budget).is_err());
+        peer_thread.join().unwrap();
     }
 
     #[test]

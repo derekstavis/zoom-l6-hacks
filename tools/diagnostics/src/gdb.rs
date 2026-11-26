@@ -210,6 +210,11 @@ impl Gdb {
         client.set_request_timeout(Duration::from_secs(5))?;
         Ok(client)
     }
+    /// Clone a handle that can interrupt a blocked RSP operation by shutting down the socket.
+    pub fn cancellation_handle(&self) -> io::Result<UnixStream> {
+        self.stream.try_clone()
+    }
+
     /// Disconnect the stub while retaining its lease until this value drops.
     pub fn disconnect(&mut self) -> io::Result<()> {
         self.stream.shutdown(Shutdown::Both)
@@ -462,12 +467,16 @@ impl Gdb {
         self.write_bytes_before(b"$s#73", deadline)
     }
     /// Poll for a stop without extending an absolute deadline.
-    pub fn poll_stop_before(&mut self, deadline: Instant) -> io::Result<Option<String>> {
+    pub fn poll_stop_before(
+        &mut self,
+        poll_deadline: Instant,
+        packet_deadline: Instant,
+    ) -> io::Result<Option<String>> {
         loop {
-            match self.read_byte(deadline) {
+            match self.read_byte(poll_deadline) {
                 Ok(b'+') => continue,
                 Ok(b'-') => return Err(io::Error::other("GDB rejected the resume request")),
-                Ok(first) => return self.receive_packet_from(first, deadline).map(Some),
+                Ok(first) => return self.receive_packet_from(first, packet_deadline).map(Some),
                 Err(error)
                     if matches!(
                         error.kind(),
@@ -781,6 +790,33 @@ mod tests {
     }
 
     #[test]
+    fn cancellation_handle_interrupts_a_stalled_register_request() {
+        use std::thread;
+        let (client, mut stub) = UnixStream::pair().unwrap();
+        let mut gdb = Gdb {
+            stream: client,
+            _lease: None,
+            request_timeout: Duration::from_secs(5),
+        };
+        let cancel = gdb.cancellation_handle().unwrap();
+        let server = thread::spawn(move || {
+            let mut bytes = [0; 6];
+            let _ = stub.read_exact(&mut bytes);
+            let mut byte = [0; 1];
+            let _ = stub.read(&mut byte);
+        });
+        let start = Instant::now();
+        let worker = thread::spawn(move || {
+            gdb.read_register_before(15, Instant::now() + Duration::from_secs(1))
+        });
+        thread::sleep(Duration::from_millis(30));
+        cancel.shutdown(Shutdown::Both).unwrap();
+        assert!(worker.join().unwrap().is_err());
+        assert!(start.elapsed() < Duration::from_secs(1));
+        server.join().unwrap();
+    }
+
+    #[test]
     fn packet_deadline_cannot_be_extended_by_slow_bytes() {
         use std::thread;
         let (client, mut stub) = UnixStream::pair().unwrap();
@@ -824,6 +860,82 @@ mod tests {
                 .to_string()
                 .contains("truncated")
         );
+    }
+
+    #[test]
+    fn split_stop_packet_may_finish_after_first_byte_poll() {
+        let (client, mut stub) = UnixStream::pair().unwrap();
+        let mut gdb = Gdb {
+            stream: client,
+            _lease: None,
+            request_timeout: Duration::from_secs(5),
+        };
+        let server = std::thread::spawn(move || {
+            stub.write_all(b"$").unwrap();
+            std::thread::sleep(Duration::from_millis(80));
+            stub.write_all(b"S05#b8").unwrap();
+            let mut ack = [0];
+            stub.read_exact(&mut ack).unwrap();
+            assert_eq!(&ack, b"+");
+        });
+        let now = Instant::now();
+        assert_eq!(
+            gdb.poll_stop_before(
+                now + Duration::from_millis(30),
+                now + Duration::from_secs(1)
+            )
+            .unwrap()
+            .as_deref(),
+            Some("S05")
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn incomplete_stop_packet_is_bounded_and_never_treated_as_no_stop() {
+        let (client, mut stub) = UnixStream::pair().unwrap();
+        let mut gdb = Gdb {
+            stream: client,
+            _lease: None,
+            request_timeout: Duration::from_secs(5),
+        };
+        stub.write_all(b"$S0").unwrap();
+        let now = Instant::now();
+        let error = gdb
+            .poll_stop_before(
+                now + Duration::from_millis(20),
+                now + Duration::from_millis(80),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+        ));
+        assert!(now.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn shutdown_interrupts_incomplete_stop_packet() {
+        let (client, mut stub) = UnixStream::pair().unwrap();
+        let mut gdb = Gdb {
+            stream: client,
+            _lease: None,
+            request_timeout: Duration::from_secs(5),
+        };
+        let cancel = gdb.cancellation_handle().unwrap();
+        stub.write_all(b"$S0").unwrap();
+        let worker = std::thread::spawn(move || {
+            let now = Instant::now();
+            gdb.poll_stop_before(
+                now + Duration::from_millis(100),
+                now + Duration::from_secs(5),
+            )
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        let now = Instant::now();
+        cancel.shutdown(Shutdown::Both).unwrap();
+        assert!(worker.join().unwrap().is_err());
+        assert!(now.elapsed() < Duration::from_secs(1));
     }
 
     #[test]

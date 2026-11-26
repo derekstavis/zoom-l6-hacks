@@ -23,9 +23,8 @@ action = "include"
 path = "tests/emulator/fragments/l6max-first-boot-no-sd.toml"
 
 [[step]]
-action = "direct-usb-midi-round-trip"
-guest_timeout_ms = 15000
-wall_timeout_s = 120
+action = "include"
+path = "tests/emulator/fragments/host-midi-direct-cable-1.toml"
 
 [[step]]
 action = "include"
@@ -34,22 +33,13 @@ path = "patches/midi-sync/tests/emulator/fragments/request-state.toml"
 # Mixer Control messages use USB MIDI cable 1. Verify the neighboring cables
 # and an unused cable remain isolated from the firmware's channel-1 ring.
 [[step]]
-action = "direct-usb-midi-round-trip"
-cable = 0
-expect_ring_change = false
-guest_timeout_ms = 15000
-wall_timeout_s = 120
+action = "include"
+path = "tests/emulator/fragments/host-midi-direct-cable-0.toml"
 
 [[step]]
-action = "direct-usb-midi-round-trip"
-cable = 2
-expect_ring_change = false
-guest_timeout_ms = 15000
-wall_timeout_s = 120
+action = "include"
+path = "tests/emulator/fragments/host-midi-direct-cable-2.toml"
 
 [[step]]
-action = "direct-usb-midi-round-trip"
-cable = 5
-expect_ring_change = false
-guest_timeout_ms = 15000
-wall_timeout_s = 120
+action = "include"
+path = "tests/emulator/fragments/host-midi-direct-cable-5.toml"

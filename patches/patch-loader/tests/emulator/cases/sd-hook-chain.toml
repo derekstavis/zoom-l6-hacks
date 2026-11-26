@@ -25,14 +25,33 @@ wall_timeout_s = 300
 action = "expect-sd-loader"
 
 [[step]]
-action = "expect-sd-module"
+action = "capture-sd-module"
+loaded = true
+
+[[step]]
+action = "expect-sd-allocation"
+loaded = true
+
+[[step]]
+action = "expect-sd-chains"
 loaded = true
 chain_count = 2
 
 [[step]]
-action = "host-midi-round-trip"
-guest_timeout_ms = 15000
-wall_timeout_s = 120
+action = "expect-sd-continuations"
+loaded = true
+
+[[step]]
+action = "expect-sd-module-images"
+loaded = true
+
+[[step]]
+action = "expect-sd-latest-module"
+loaded = true
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/host-midi-native-round-trip.toml"
 
 [[step]]
 action = "include"

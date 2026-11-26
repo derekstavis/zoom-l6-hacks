@@ -51,7 +51,17 @@ guest_timeout_ms = 60000
 wall_timeout_s = 120
 
 [[step]]
-action = "l6max-timing-assert-paused"
+action = "l6max-timing-capture-paused"
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "l6max-timing-assert-paused-clock"
+guest_timeout_ms = 60000
+wall_timeout_s = 120
+
+[[step]]
+action = "l6max-timing-assert-paused-input"
 guest_timeout_ms = 60000
 wall_timeout_s = 120
 

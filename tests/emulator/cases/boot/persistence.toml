@@ -84,8 +84,20 @@ action = "delay"
 guest_ms = 3000
 
 [[step]]
-action = "expect-settings"
+action = "settings-capture"
 restored = false
+
+[[step]]
+action = "settings-versions"
+
+[[step]]
+action = "settings-rtc"
+
+[[step]]
+action = "settings-bank"
+
+[[step]]
+action = "settings-end"
 
 [[step]]
 action = "restart"
@@ -97,8 +109,29 @@ guest_timeout_ms = 120000
 wall_timeout_s = 600
 
 [[step]]
-action = "expect-settings"
+action = "settings-capture"
 restored = true
+
+[[step]]
+action = "settings-versions"
+
+[[step]]
+action = "settings-rtc"
+
+[[step]]
+action = "settings-trace"
+
+[[step]]
+action = "settings-panel"
+
+[[step]]
+action = "settings-reload"
+
+[[step]]
+action = "settings-rtc-timing"
+
+[[step]]
+action = "settings-end"
 
 [[step]]
 action = "press"

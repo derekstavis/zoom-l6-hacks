@@ -1,3 +1,4 @@
+mod audio_cli;
 mod debug_cli;
 mod midi_cli;
 
@@ -41,12 +42,46 @@ fn run() -> Result<(), String> {
     let command = args.first().map(String::as_str).unwrap_or("help");
     if matches!(command, "help" | "--help" | "-h") {
         println!(
-            "Usage: l6ctl [--socket PATH] info\n       l6ctl [--socket PATH] debug-session\n       l6ctl [--socket PATH] sd-loader status|site INDEX\n       l6ctl [--socket PATH] qmp-status\n       l6ctl [--socket PATH] input status main|panel\n       l6ctl [--socket PATH] input ack main|panel SEQUENCE\n       l6ctl [--socket PATH] heap-counters\n       l6ctl [--socket PATH] memory-read ADDRESS LENGTH\n       l6ctl [--socket PATH] midi-config\n       l6ctl [--socket PATH] mixer-level\n       l6ctl [--socket PATH] panel-key CODE\n       l6ctl [--socket PATH] effect-editor REPORT MODULE\n       l6ctl [--socket PATH] update-state\n       l6ctl [--socket PATH] installer-outcome\n       l6ctl [--socket PATH] usb attach|release|controller\n       l6ctl [--socket PATH] update-gui-state\n       l6ctl [--socket PATH] knob-popup [--text]\n       l6ctl [--socket PATH] recorder-state\n       l6ctl [--socket PATH] knob-parameter-state\n       l6ctl [--socket PATH] rtos heap|tasks|scheduler|objects|all [--pretty]\n       l6ctl [--socket PATH] button NAME|TARGET [--hold-ms MS]\n       l6ctl [--socket PATH] down NAME|TARGET DURATION_MS\n       l6ctl [--socket PATH] up NAME|TARGET\n       l6ctl [--socket PATH] encoder CHANNEL STEPS\n       l6ctl [--socket PATH] analog CHANNEL STEPS\n       l6ctl [--socket PATH] set-analog CHANNEL VALUE\n       l6ctl midi listen ENDPOINT [--timeout-ms MS]\n       l6ctl midi observe ENDPOINT --wall-ms MS\n       l6ctl midi send ENDPOINT CHANNEL CONTROLLER VALUE\n       l6ctl midi send-bytes ENDPOINT HEX_BYTE...\n       l6ctl midi sync ENDPOINT --count N [--quiet-ms MS] [--timeout-ms MS]\n\nConnects to a running emulator started with --control-socket PATH. Button names use the semantic names documented by l6test; numeric targets 0..53 are also accepted. Encoder channels are one-based. Analog channels are 1..5."
+            "Usage: l6ctl [--socket PATH] info\n       l6ctl [--socket PATH] debug-session\n       l6ctl [--socket PATH] sd-loader status|site INDEX\n       l6ctl [--socket PATH] qmp-status\n       l6ctl [--socket PATH] warm-reset [TIMEOUT_S]\n       l6ctl [--socket PATH] sd-card insert PATH|eject\n       l6ctl [--socket PATH] audio-input status|load CHANNEL true|false|play|pause|stop|seek MS\n       l6ctl [--socket PATH] input status main|panel\n       l6ctl [--socket PATH] input ack main|panel SEQUENCE\n       l6ctl [--socket PATH] heap-counters\n       l6ctl [--socket PATH] menu NAME [PATH ...]\n       l6ctl [--socket PATH] memory-read ADDRESS LENGTH\n       l6ctl [--socket PATH] symbol-read SYMBOL LENGTH\n       l6ctl [--socket PATH] midi-config\n       l6ctl [--socket PATH] l6-din-state\n       l6ctl [--socket PATH] mixer-level\n       l6ctl [--socket PATH] panel-key CODE\n       l6ctl [--socket PATH] sound-pad-assignment PAD [PATH]\n       l6ctl [--socket PATH] effect-editor REPORT MODULE\n       l6ctl [--socket PATH] effect-slot REPORT MODULE [OPTIONS]\n       l6ctl [--socket PATH] update-state\n       l6ctl [--socket PATH] installer-outcome\n       l6ctl [--socket PATH] usb attach|release|controller|enumerate\n       l6ctl [--socket PATH] update-gui-state\n       l6ctl [--socket PATH] knob-popup [--text]\n       l6ctl knob-sd-inspect REPORT MODULE\n       l6ctl knob-firmware-inspect REPORT MAIN\n       l6ctl [--socket PATH] recorder-state\n       l6ctl [--socket PATH] knob-parameter-state\n       l6ctl [--socket PATH] rtos heap|tasks|scheduler|objects|all [--pretty]\n       l6ctl [--socket PATH] button NAME|TARGET [--hold-ms MS]\n       l6ctl [--socket PATH] down NAME|TARGET DURATION_MS\n       l6ctl [--socket PATH] up NAME|TARGET\n       l6ctl [--socket PATH] encoder CHANNEL STEPS\n       l6ctl [--socket PATH] analog CHANNEL STEPS\n       l6ctl [--socket PATH] set-analog CHANNEL VALUE\n       l6ctl audio prepare SOURCE.wav DIRECTORY CHANNEL\n       l6ctl audio inspect SOURCE.wav\n       l6ctl audio compare SOURCE.wav CAPTURE.s32le\n       l6ctl audio tone CAPTURE.s32le HZ RATE\n       l6ctl midi listen ENDPOINT [--timeout-ms MS]\n       l6ctl midi observe ENDPOINT --wall-ms MS\n       l6ctl midi send ENDPOINT CHANNEL CONTROLLER VALUE\n       l6ctl midi send-bytes ENDPOINT HEX_BYTE...\n       l6ctl midi sync ENDPOINT --count N [--quiet-ms MS] [--timeout-ms MS]\n\nConnects to a running emulator started with --control-socket PATH. Button names use the semantic names documented by l6test; numeric targets 0..53 are also accepted. Encoder channels are one-based. Analog channels are 1..5."
+        );
+        return Ok(());
+    }
+    if command == "audio" {
+        let result = audio_cli::run(&args[1..])?;
+        println!(
+            "{}",
+            serde_json::to_string(&result).map_err(|error| error.to_string())?
         );
         return Ok(());
     }
     if command == "midi" {
         return midi_cli::run(&args[1..]).map_err(|error| error.json());
+    }
+    if command == "knob-sd-inspect" {
+        if args.len() != 3 {
+            return Err("Usage: l6ctl knob-sd-inspect REPORT MODULE".into());
+        }
+        let report = std::fs::read(&args[1]).map_err(|e| e.to_string())?;
+        let module = std::fs::read(&args[2]).map_err(|e| e.to_string())?;
+        let binding = l6ctl::KnobSdBinding::from_fixture(&report, &module)?;
+        println!(
+            "{}",
+            serde_json::to_string(&binding).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    if command == "knob-firmware-inspect" {
+        if args.len() != 3 {
+            return Err("Usage: l6ctl knob-firmware-inspect REPORT MAIN".into());
+        }
+        let report = std::fs::read(&args[1]).map_err(|e| e.to_string())?;
+        let image = std::fs::read(&args[2]).map_err(|e| e.to_string())?;
+        let binding = l6ctl::KnobFirmwareBinding::from_fixture(&report, &image)?;
+        println!(
+            "{}",
+            serde_json::to_string(&binding).map_err(|e| e.to_string())?
+        );
+        return Ok(());
     }
     let socket = socket.ok_or("provide --socket PATH or set L6_CONTROL_SOCKET")?;
     let client = ControlClient::new(&socket);
@@ -69,6 +104,27 @@ fn run() -> Result<(), String> {
             }
             _ => return Err("Usage: l6ctl sd-loader status | site INDEX".into()),
         };
+        println!("{value}");
+        return Ok(());
+    }
+    if command == "audio-input" {
+        let value = match args.as_slice() {
+            [_, action] if action == "status" => serde_json::to_value(client.audio_input_status().map_err(|e| e.to_string())?),
+            [_, action, channel, loaded] if action == "load" => {
+                let channel = channel.parse().map_err(|_| "invalid audio channel")?;
+                let loaded = loaded.parse().map_err(|_| "loaded must be true or false")?;
+                serde_json::to_value(client.audio_input_load(channel, loaded).map_err(|e| e.to_string())?)
+            }
+            [_, action] if action == "play" || action == "pause" || action == "stop" => {
+                let operation = match action.as_str() { "play" => l6ctl::AudioTransport::Play, "pause" => l6ctl::AudioTransport::Pause, _ => l6ctl::AudioTransport::Stop };
+                serde_json::to_value(client.audio_input_transport(operation, 0).map_err(|e| e.to_string())?)
+            }
+            [_, action, position] if action == "seek" => {
+                let position = position.parse().map_err(|_| "invalid position in milliseconds")?;
+                serde_json::to_value(client.audio_input_transport(l6ctl::AudioTransport::Seek, position).map_err(|e| e.to_string())?)
+            }
+            _ => return Err("Usage: l6ctl audio-input status | load CHANNEL true|false | play | pause | stop | seek MS".into()),
+        }.map_err(|e| e.to_string())?;
         println!("{value}");
         return Ok(());
     }
@@ -122,6 +178,19 @@ fn run() -> Result<(), String> {
         );
         return Ok(());
     }
+    if command == "menu" {
+        if args.len() < 2 {
+            return Err("Usage: l6ctl menu NAME [PATH ...]".into());
+        }
+        let snapshot = client
+            .menu(&args[1], &args[2..])
+            .map_err(|error| error.to_string())?;
+        println!(
+            "{}",
+            serde_json::to_string(&snapshot).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
     if command == "heap-counters" {
         if args.len() != 1 {
             return Err("Usage: l6ctl heap-counters".into());
@@ -130,6 +199,41 @@ fn run() -> Result<(), String> {
         println!(
             "{}",
             serde_json::to_string(&counters).map_err(|error| error.to_string())?
+        );
+        return Ok(());
+    }
+    if command == "warm-reset" {
+        if !(1..=2).contains(&args.len()) {
+            return Err("Usage: l6ctl warm-reset [TIMEOUT_S]".into());
+        }
+        let timeout = args
+            .get(1)
+            .map(|v| v.parse::<u64>().map_err(|_| "invalid timeout"))
+            .transpose()?
+            .unwrap_or(30);
+        let result = client.warm_reset(timeout).map_err(|e| e.to_string())?;
+        println!(
+            "{}",
+            serde_json::to_string(&result).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    if command == "sd-card" {
+        let path = match args.get(1).map(String::as_str) {
+            Some("insert") if args.len() == 3 => Some(
+                std::fs::canonicalize(&args[2])
+                    .map_err(|e| e.to_string())?
+                    .to_str()
+                    .ok_or("SD image path is not UTF-8")?
+                    .to_owned(),
+            ),
+            Some("eject") if args.len() == 2 => None,
+            _ => return Err("Usage: l6ctl sd-card insert PATH|eject".into()),
+        };
+        let result = client.sd_card(path).map_err(|e| e.to_string())?;
+        println!(
+            "{}",
+            serde_json::to_string(&result).map_err(|e| e.to_string())?
         );
         return Ok(());
     }
@@ -153,6 +257,78 @@ fn run() -> Result<(), String> {
         );
         return Ok(());
     }
+    if command == "symbol-read" {
+        if args.len() != 3 {
+            return Err("Usage: l6ctl symbol-read SYMBOL LENGTH".into());
+        }
+        let length = args[2].parse().map_err(|_| "invalid length")?;
+        let sample = client
+            .read_symbol(&args[1], length)
+            .map_err(|e| e.to_string())?;
+        println!(
+            "{}",
+            serde_json::to_string(&sample).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    if command == "l6-din-state" {
+        if args.len() != 1 {
+            return Err("Usage: l6ctl l6-din-state".into());
+        }
+        println!(
+            "{}",
+            serde_json::to_string(&client.l6_din_state().map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    if command == "effect-slot" {
+        if args.len() < 3 {
+            return Err("Usage: l6ctl effect-slot REPORT MODULE [--active] [--output] [--applied] [--refresh] [--dialog] [--parameter ID] [--ring INDEX]".into());
+        }
+        let report = std::fs::read(&args[1]).map_err(|e| e.to_string())?;
+        let module = std::fs::read(&args[2]).map_err(|e| e.to_string())?;
+        let binding = l6ctl::EffectSlotBinding::from_fixture(&report, &module)?;
+        let mut fields = l6ctl::EffectSlotFields::default();
+        let mut index = 3;
+        while index < args.len() {
+            match args[index].as_str() {
+                "--active" => fields.active_effect = true,
+                "--output" => fields.output = true,
+                "--applied" => fields.applied = true,
+                "--refresh" => fields.exit_refreshes = true,
+                "--dialog" => fields.dialog_active = true,
+                "--ring" => {
+                    index += 1;
+                    fields.ring_index = Some(
+                        args.get(index)
+                            .ok_or("--ring needs index")?
+                            .parse()
+                            .map_err(|_| "invalid ring index")?,
+                    );
+                }
+                "--parameter" => {
+                    index += 1;
+                    fields.parameter_id = Some(
+                        args.get(index)
+                            .ok_or("--parameter needs ID")?
+                            .parse()
+                            .map_err(|_| "invalid parameter ID")?,
+                    );
+                }
+                _ => return Err(format!("unknown effect-slot option {}", args[index])),
+            }
+            index += 1;
+        }
+        let sample = client
+            .effect_slot(binding, fields)
+            .map_err(|e| e.to_string())?;
+        println!(
+            "{}",
+            serde_json::to_string(&sample).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
     if command == "effect-editor" {
         if args.len() != 3 {
             return Err("Usage: l6ctl effect-editor REPORT MODULE".into());
@@ -164,6 +340,20 @@ fn run() -> Result<(), String> {
         println!(
             "{}",
             serde_json::to_string(&snapshot).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    if command == "sound-pad-assignment" {
+        if !(2..=3).contains(&args.len()) {
+            return Err("Usage: l6ctl sound-pad-assignment PAD [PATH]".into());
+        }
+        let pad = args[1].parse().map_err(|_| "invalid pad index")?;
+        let value = client
+            .sound_pad_assignment(pad, args.get(2).cloned())
+            .map_err(|e| e.to_string())?;
+        println!(
+            "{}",
+            serde_json::to_string(&value).map_err(|e| e.to_string())?
         );
         return Ok(());
     }
@@ -249,7 +439,10 @@ fn run() -> Result<(), String> {
             [_, sub] if sub == "controller" => {
                 serde_json::to_value(client.usb_controller().map_err(|e| e.to_string())?)
             }
-            _ => return Err("Usage: l6ctl usb attach|release|controller".into()),
+            [_, sub] if sub == "enumerate" => {
+                serde_json::to_value(client.usb_enumerate().map_err(|e| e.to_string())?)
+            }
+            _ => return Err("Usage: l6ctl usb attach|release|controller|enumerate".into()),
         }
         .map_err(|e| e.to_string())?;
         println!(
@@ -431,22 +624,33 @@ fn run() -> Result<(), String> {
         ),
         Request::Info
         | Request::QmpStatus
+        | Request::AudioInputStatus
+        | Request::AudioInputLoad { .. }
+        | Request::AudioInputTransport { .. }
+        | Request::WarmReset { .. }
+        | Request::SdCard { .. }
         | Request::InputStatus { .. }
         | Request::InputAck { .. }
         | Request::SdLoaderStatus
         | Request::SdLoaderSite { .. }
         | Request::HeapCounters
+        | Request::Menu { .. }
         | Request::MemoryRead { .. }
+        | Request::SymbolRead { .. }
         | Request::MidiConfig
+        | Request::L6DinState
         | Request::EffectEditor { .. }
+        | Request::EffectSlot { .. }
         | Request::MixerLevel
         | Request::PanelKey { .. }
+        | Request::SoundPadAssignment { .. }
         | Request::UpdateState
         | Request::UpdateGuiState
         | Request::InstallerOutcome
         | Request::UsbAttach
         | Request::UsbRelease
         | Request::UsbController
+        | Request::UsbEnumerate
         | Request::RecorderState
         | Request::KnobParameterState
         | Request::KnobPopup { .. }

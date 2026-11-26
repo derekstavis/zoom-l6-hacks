@@ -82,6 +82,13 @@ mixed deadlines are rejected so a shorter intentional budget is not silently
 extended. Nested includes expand inside out. These overrides do not change
 observation durations or other timing parameters inside an action.
 
+The generated patch matrix binds the stock and replacement effect-slot fragments
+with `effect_slot = { effect_type = 1, processor_type = 1, effect = "plateau" }`
+on an `include`. Omit `effect` for a stock slot. This typed binding supplies the
+expected observations, and expansion rejects a fragment that does not contain
+the complete corresponding assertion sequence. It is specific to those fragments,
+not general string interpolation. The fragment remains a recorded scenario source.
+
 Mark only input whose result a state spec reproduces with `setup_input`. Input
 that is the behavior under test, or that sets runtime-only state (for example
 card-reader mode), stays unmarked.
@@ -92,8 +99,14 @@ card-reader mode), stays unmarked.
 | --- | --- | --- |
 | `wait` | `until = "boot-ready"`, `"mixer-ready"`, `"panel-settled"`, `"sd-patch-loaded"` or `"sd-patch-empty"` | Boot waits for the full LED sweep, then an L6 mode lamp or L6max pixels; with a prepared state L6max also requires a fresh MAIN clock and one MAIN guest second without a new display frame. Prepared mixer readiness requires nonzero values on every visible ring and, on L6, a lit mode lamp; settling waits for one guest second of unchanged output; SD readiness waits for either the loader’s successful claim after installation or its completed scan without a module. Both use 10 guest seconds, 180 wall seconds and 10 ms wall-time polling. A separate assertion must check the expected module state or behavior |
 | `expect-sd-loader` | — | Freeze and validate the loader fixture, then check persistent loader and dispatch bytes in running MAIN |
-| `expect-sd-module` | `loaded`, optional `chain_count` | Immediately follow `expect-sd-loader` with matching deadlines; assert the registry, hook chains and relocated immutable module bytes using that fixture. Loaded modules wait for the loader claim; absent modules are inspected immediately. |
+| `capture-sd-module` | `loaded` | Follow `expect-sd-loader` with the same deadline; capture the registry snapshot, waiting for the loader claim when a module is expected. |
+| `expect-sd-allocation` | `loaded` | Check the captured registry, module allocation, size and claim against the frozen fixture. |
+| `expect-sd-chains` | `loaded`, optional `chain_count` | Check registered hook counts, ordering and handlers against the frozen fixture, retaining the observed chain for module verification. |
+| `expect-sd-continuations` | `loaded` | Check the captured chain’s continuation pointers and bind its links to frozen module metadata. |
+| `expect-sd-module-images` | `loaded` | Follow the continuation check with the same state and deadline; verify each active hook-chain module's relocated immutable bytes against the frozen fixture. |
+| `expect-sd-latest-module` | `loaded` | Immediately follow `expect-sd-module-images` with the same captured state and deadline; independently verify the latest module allocation's relocated immutable bytes against the frozen fixture. |
 | `expect-display-after-press` | — | Wait for the L6max display to change from the preceding press's baseline, within that press's original guest and wall deadlines. Use a reviewed image assertion when verifying a specific screen |
+| `warm-reset` | | Reset MAIN in place and wait for QEMU's reset event. The panel remains running; subsequent `boot-ready` and `mixer-ready` waits require a fresh ring transition and a completed boot sweep before accepting panel state |
 | `wait-effect-mode` | `panel_mode`, `edit_mode` (at least one) | Wait for the loaded L6max effect module’s published editor state, bounded by 10 guest seconds and 180 wall seconds with 10 ms wall-time polling |
 | `wait-recorded-files` | `files` | Wait for each named WAV in the newest recorder project to have a complete RIFF container and at least two seconds of audio (20 guest seconds maximum, 180 wall seconds maximum, 100 ms wall-time polling). Check the audio contents separately |
 | `wait-audio-input` | `playing`, `min_ms`, `max_ms` | Wait for the input transport’s reported state and position, bounded by 10 guest seconds and 180 wall seconds with 10 ms wall-time polling |
@@ -118,8 +131,8 @@ card-reader mode), stays unmarked.
 | `expect-mode` | `mode` | Verify the model-specific mode lamp before taking ring baselines |
 | `expect-mute` | `channel` | Verify the model-specific mute lamp toggled relative to the preceding action |
 | `hold` | `control`, `duration_ms` | Keep a semantic control held for a bounded duration |
-| `hold-chord` | `controls` and either `duration_ms` or `until = "factory-mode"` | Hold multiple semantic controls together for the specified guest time or until L6max factory mode is entered. Factory-mode readiness is polled every 10 ms of wall time, bounded by 10 guest seconds and 180 wall seconds |
-| `save-scene` | `scene` | Save the current assignment to a scene |
+| `hold-chord` | `controls` and either `duration_ms` or `until = "factory-mode"` | Hold multiple semantic controls together for the specified guest time or until L6max factory mode is entered. Factory-mode readiness is polled every 10 ms of wall time, bounded by 10 guest seconds and 180 wall seconds. Successfully pressed controls are released in reverse order on completion or failure; release errors are reported |
+| `momentary-down`, `momentary-up` | `control`; `duration_ms` on down | Hold and release an L6 panel button around an observation, checking its press/release reports and acknowledgements under one shared deadline. |
 | `expect-scene` | `scene`, `lit`, optional `checkpoint`, `changed` | Check a scene indicator, optionally against a checkpoint |
 | `expect-button-led` | `control`, optional `lit`, `checkpoint`, `changed` | Check a mapped button lamp's level or change |
 | `expect-effect` | `effect` | Check the current effect indication |
@@ -128,7 +141,7 @@ card-reader mode), stays unmarked.
 | `expect-powered` | `powered` | Check the current power state |
 | `expect-memory` | `symbol`, `bytes` | Compare MAIN memory at `symbol`, a name declared in `patches/api` for each model the step runs on; an undeclared name fails when the scenario loads |
 | `expect-heap` | `minimum_free` | Require the FreeRTOS heap's lowest free byte count since boot to be at least `minimum_free`, which must fit the heap. Runs on patched images; see [heap headroom](../../patches/README.md#heap-headroom) |
-| `panel-event` | `target`, `column`, `row`, `event` | Inject a panel-controller event for focused event-path scenarios |
+| `panel-event-begin`, `panel-event-press`, `panel-event-capture`, `panel-event-report`, `panel-event-mapping`, `panel-event-release`, `panel-event-settle`, `panel-event-end` | `target`, `column`, `row`, `event` on begin | L6 guarded panel input transaction. Capture observes dispatcher and submit breakpoints together, skipping unrelated reports within 15 wall seconds; release observes 250 panel guest ms. |
 
 Boot steps explicitly allow a longer ceiling for slow L6 TCG. Assertion
 baselines are captured immediately before an action, never after its output
@@ -164,8 +177,10 @@ devices require `backends = ["headless"]`; a scenario that names another backend
 is rejected when it loads.
 `trace_sd = true` enables SD trace instrumentation (also enabled by `sd-card`).
 
-Native MIDI steps retain one session and its receive queue across steps. `host-midi-connect`
-starts the first bounded transaction. A ring assertion with `midi_transaction = true`
+MIDI steps retain one native or direct USB session and its receive queue across steps.
+`host-midi-connect` and `direct-midi-connect` start the first bounded transaction.
+Starting another direct transaction releases the previous direct session before reacquiring
+USB, while sync between transactions consumes the retained queue. A ring assertion with `midi_transaction = true`
 uses the last CC send as its deadline anchor; a plain ring assertion is
 independent. `host-midi-end` completes the transaction without closing the
 session, and `host-midi-begin` starts another transaction on that session.
@@ -175,9 +190,12 @@ the normal encoder acknowledgment, and `expect-ring-changed` compares a named
 checkpoint without requiring encoder reports. A native MIDI session cannot share
 USB endpoints with direct USB operations in the same scenario. The existing
 L6max DIN mixer setup uses direct USB descriptors and SysEx, so it cannot be
-combined with the native bridge in one scenario under this policy. The migrated
-`host-midi` case enqueues one explicit -4 turn; repeated legacy round trips still
-alternate direction. Typed MIDI receive filters non-CC ALSA events. Connection
+combined with the native bridge in one scenario under this policy.
+`midi-encoder-alternate` alternates -4 and +4 turns so repeated checks avoid saturation.
+The negative cable check declares the CC send and ring observation as adjacent
+steps with matching budgets. It requires the entire declared wall window from
+the first observation sample. Like the original polling check, it observes sampled states;
+a transient between samples is not guaranteed to be detected. Typed MIDI receive filters non-CC ALSA events. Connection
 retries honor the shared guest and wall limits while retaining the independent
 10-second discovery cap. Ring observations at or after the declared wall deadline
 fail even if the ring changed by that observation.
@@ -217,34 +235,36 @@ message delivered just after the interval.
 | Action | Fields | Contract |
 | --- | --- | --- |
 | `sd-card` | `inserted` | QMP removal or insertion of the case's copied card |
-| `usb-descriptors` | — | Validate device/configuration descriptors and SET_CONFIGURATION |
+| `usb-controller-ready`, `usb-enumerate` | — | Attach and wait for the controller, then atomically enumerate and configure it. Adjacent steps share the original operation budget; enumeration saves the raw device/configuration descriptors and retains the MIDI endpoints and IN pump. |
 | `usb-midi-open`, `usb-midi-begin`, `usb-midi-expect-encoder`, `usb-midi-prepare-level`, `usb-midi-set-alternate`, `usb-midi-set-target`, `usb-midi-end` | `value` on prepare | Retain the previously enumerated endpoints before the encoder; observe its model-mapped CC on any USB cable, then set and verify channel 1 on cable 1. The transaction keeps a single guest/wall budget; an alternate value is sent first when the target is already present. |
-| `host-midi-round-trip` | — | Verify host MIDI input/output delivery through the configured host MIDI backend |
 | `host-midi-connect` | — | Connect the model's native mixer endpoint and start the first MIDI transaction |
+| `direct-midi-connect` | `cable` | Start a bounded direct USB MIDI transaction on cable 0–15 |
+| `midi-encoder-alternate` | — | Enqueue the next alternating channel-1 encoder turn |
+| `expect-ring-unchanged` | `channel`, `checkpoint`, `observe_wall_ms` | After an adjacent CC send, observe the ring for the full bounded wall interval from its first sample |
 | `host-midi-drain` | `quiet_wall_ms` | Drain the retained native session until no legacy control observation arrives for the declared wall interval, within the transaction budget |
 | `host-midi-expect-count` | `count` | Collect that many legacy control observations on the retained native session; preserve their order and remaining queue |
 | `host-midi-begin` | — | Start a new bounded transaction on the retained session |
 | `host-midi-end` | — | End the active transaction while retaining the session and its queue |
 | `enqueue-encoder` | `channel`, `steps`, optional `midi_transaction` | Enqueue an encoder input without waiting for guest acknowledgment; optionally enforce the active MIDI budget |
-| `host-midi-expect-cc` | `channel`, `controller` | Wait for a matching CC on the retained native session |
+| `host-midi-expect-cc` | `channel`, `controller` | Wait for a matching CC on the retained session |
 | `host-midi-settle` | `guest_ms` | Allow guest time to pass within the shared MIDI deadline |
-| `host-midi-send-cc` | `channel`, `controller`, `value` | Send a CC through the retained native session |
+| `host-midi-send-cc` | `channel`, `controller`, `value` | Send a CC through the retained session |
 | `expect-ring-changed` | `channel`, `checkpoint`, optional `midi_transaction` | Wait for a ring to differ from a named checkpoint; when `midi_transaction` is true, anchor its deadline at the MIDI send |
-| `direct-usb-midi-round-trip` | optional `cable` (0–15), `expect_ring_change` (defaults to true) | Check the encoder report and channel-1 mixer CC on a selected USB MIDI cable; set `expect_ring_change = false` to verify other cables are ignored |
 | `l6-din-usb-forwarding` | — | Verify L6 DIN-to-USB forwarding behavior |
 | `host-midi-sync-begin` | — | Capture the L6 MIDI map and configured channel, or the L6max reply count, using a retained MIDI session. Begin the shared guest deadline. |
 | `host-midi-expect-sync` | — | Assert the captured L6 channel and CC multiset, including duplicate mappings, or 94 L6max Control Change replies. Follow with `host-midi-end`. |
 | `l6-midi-probe-begin` | — | Verify fixture identity, acquire a scoped debugger, and wait for L6 idle |
 | `l6-midi-probe-inject` | — | Inject the guarded sync request; the guest must be restarted afterwards |
 | `l6-midi-probe-expect-hook` | — | Verify the request reaches the selected firmware or SD hook unchanged |
-| `l6-midi-probe-expect-replies` | — | Check the ordered configured CC replies, wait for the last sender return, and leave MAIN stopped |
+| `l6-midi-probe-expect-replies` | — | Check the ordered configured CC replies while retaining the stopped sender |
+| `l6-midi-probe-finish` | — | Wait for the last sender return and leave MAIN stopped |
 | `l6-indicator-begin`, `l6-indicator-end` | Begin carries shared guest/wall deadline | Bound an L6 MIDI indicator campaign using the retained direct MIDI session. |
 | `l6-ring-sample`, `l6-ring-coverage` | `cc`, `value`, `guest_ms`, optional `ring`; coverage `mask` | Send a CC, observe for the declared guest duration, reject unrelated ring changes, and check the accumulated segment mask. |
 | `l6-mute-sample` | `cc`, `value`, `guest_ms`, `expected`, optional `reuse_previous` | Compare all eight panel indicator rows; `reuse_previous` uses the preceding sample as the baseline for a release edge. |
 | `usb-sysex-begin`, `usb-sysex-exchange`, `usb-sysex-end` | Begin carries the shared guest/wall timeout; exchanges carry `bytes` and optional `expect_prefix`, `expect_reply`, `min_reply_bytes`, `reject_prefixes`, `reply_timeout_ms`, and `complete_on_match` | Send cable-2 requests over the previously enumerated USB connection. Each exchange is reported separately; no-reply requests, rejected-prefix checks and explicit reply windows observe the full interval. |
-| `editor-assign-*` | `pad` for per-pad steps | Initialize Editor, select and assign a WAV to pads 1–4 and verify exact readback. Steps must be contiguous, use one shared deadline and follow `usb-descriptors`. |
+| `editor-assign-*` | `pad` for per-pad steps | Initialize Editor, select and assign a WAV to pads 1–4, handle any confirmation dialog, and verify exact readback. Steps must be contiguous, use one shared deadline and follow `usb-enumerate`. |
 | `editor-playback-begin`, `editor-playback-play`, `editor-playback-wait`, `editor-playback-observe`, `editor-playback-sample`, `editor-playback-assert`, `editor-playback-end` | `pad` on begin | L6 Editor playback check. Steps must be contiguous, share deadlines and follow a completed `editor-assign-*` sequence; observe 1200 ms guest audio and write evidence before checking it. |
-| `ui-pad-begin`, `ui-pad-identity`, `ui-pad-global`, `ui-pad-keep-alive`, `ui-pad-query`, `ui-pad-assert`, `ui-pad-end` | `pad` on begin | Verify an L6max UI pad assignment through the Editor protocol. Steps must be contiguous, share deadlines, and follow `usb-descriptors`. The query checks up to eight replies and the assertion writes the per-pad evidence. |
+| `ui-pad-begin`, `ui-pad-identity`, `ui-pad-global`, `ui-pad-keep-alive`, `ui-pad-query`, `ui-pad-assert`, `ui-pad-end` | `pad` on begin | Verify an L6max UI pad assignment through the Editor protocol. Steps must be contiguous, share deadlines, and follow `usb-enumerate`. The query checks up to eight replies and the assertion writes the per-pad evidence. |
 | `wait-l6-sound-pad-file` | `path` (relative SD card path) | On supported stock L6 firmware, wait until pad 1's active UTF-16 path matches the file and its assignment is no longer pending; bounded by 10 guest seconds and 180 wall seconds, polled every 10 ms of wall time |
 | `sound-pad-begin` followed by `sound-pad-press`, `sound-pad-hold`, `sound-pad-release`, `sound-pad-observe`, `sound-pad-sample`, `sound-pad-assert-waveform`, `sound-pad-assert-audio`, `sound-pad-assert-led`, `sound-pad-assert-meter` and `sound-pad-finish` | `pad`, `target`, optional `assignment` (`editor` by default or `saved-state`), optional `require_pad_led_change` (default `true`), optional `require_stereo_meter` (default `false`), optional `playback_window_ms` (default `6000`, range `1000..120000`), optional `expect_source` (WAV path on the card; requires `L6_AUDIO_RAW_CAPTURE`) and `max_residual_db` (default `-60`) | Press one L6 or L6max MAIN pad input and require nonzero SAI1 TX samples; require its model-specific pad LED response unless `require_pad_led_change = false`; `editor` requires a preceding Editor assignment step, while `saved-state` uses the assignment already present in the state; capture indicator PWM levels throughout playback; when `require_stereo_meter = true`, require two distinct levels of at least two bars on each side independently using a stereo isolation WAV; enable `L6_AUDIO_SAMPLE_TRACE=1` in the case environment |
 | `patch-parity-prepare`, `patch-parity-firmware`, `patch-parity-loader`, `patch-parity-unsupported`, `patch-parity-finish` | Profile steps carry explicit patch lists or a rejected patch name. | Compare native and browser-template patch builders for the complete, model-scoped profile matrix. This host-only scenario uses the browser builder's Rust library; it does not execute WebAssembly or boot a guest. |
@@ -256,15 +276,15 @@ message delivered just after the interval.
 | `midi-probe-wait-ring-stable` | `channel`, `guest_ms`, `wall_ms` | Require a ring to remain unchanged for guest time, bounded by wall time since the send |
 | `midi-probe-drain-and-tap` | `port`, `target`, `hold_ms` | Drain queued legacy control observations and immediately enqueue a tap to anchor the following wall-time observation |
 | `midi-probe-expect-no-events` | `port`, `wall_ms` | Observe the selected session for the complete wall-time interval after the tap |
-| `usb-storage-*` | `length`, `multiplier`, `increment` on create | Ordered, shared-deadline USB storage scope: enumerate and check readiness and geometry, compare sector zero with the copied card, round-trip the last sector, then create/read/compare/delete a 1,537-byte FAT file. Cleanup attempts to remove any owned file on failure. |
-| `audio-callbacks` | — | First step only; arm revision-guarded breakpoints before boot and require every model callback |
+| `usb-storage-*` | `length`, `multiplier`, `increment` on create | Ordered, shared-deadline USB storage scope: enumerate and check readiness and geometry, compare sector zero with the copied card, write and reread the last sector before a separate comparison, then create/read/compare/delete a 1,537-byte FAT file. Cleanup attempts to remove any owned file on failure. |
+| `audio-callbacks-begin`, `audio-callbacks-next`, `audio-callbacks-capture`, `audio-callbacks-assert`, `audio-callbacks-end` | — | Start paused with stock MAIN, guard and arm every model callback, then record five L6 or two L6max hits in arrival order under one guest/wall budget. Freeze the full trace after the final hit and assert post-enable SAI/eDMA traffic. |
 | `knob-dialog-ready` | — | Wait for the L6max recorder window, idle notification state and reviewed transport-control pixels before `knob-dialog-guard`; all steps use matching deadlines shared across the sequence |
 | `knob-dialog-guard` | — | Verify first-use rejection outside the recorder screen and return to the recorder; retain a screenshot and read state while QEMU is stopped |
 | `knob-dialog-baseline` | — | Select level mode and capture the baseline frame for the later race check |
 | `knob-probe-*` | probe for prepare, delta for trigger | Inject a guarded descriptor conflict, sample rejection, restore it and assert the saved state and heap |
 | `knob-dialog-preflight-begin` | — | Capture the original descriptors, resources and heap, and open the debugger for the following five probes |
 | `knob-race-*` | capture duration and artifact | Observe registration and callback breakpoints, capture and sample rejected descriptor drift, then restore the descriptor before asserting while retaining the notification semaphore for first activation |
-| `knob-dialog-first-activation` | — | Wait for the display callback to return, then verify first activation and restore the notification semaphore |
+| `knob-activation-trigger`, `knob-activation-wait`, `knob-activation-sample`, `knob-activation-restore`, `knob-activation-assert` | — | Check the stopped baseline, trigger with the notification semaphore held, wait atomically for callback return, freeze the stopped evidence, restore the semaphore and assert the snapshot. |
 | `knob-active-*` | — | Turn the knob, capture the active display and preserve its frame and callback pointer |
 | `knob-level-*` | — | Capture the bounded level sweep to at least 69% and back to 0% |
 | `knob-task-*` | — | Verify the input hook and display callback run in different FreeRTOS tasks, retaining their task IDs as evidence |
@@ -295,10 +315,12 @@ message delivered just after the interval.
 | `knob-dialog-snapshot-navigation` / `knob-dialog-check-navigation` | `field` on check | Capture the ordered, non-atomic navigation state, stopping at the first failed check, then assert each recorded field against the saved baseline. The window must have changed. |
 | `knob-dialog` | — | Finish the L6max diagnostic: check heap lifetime, notification expiry, display cleanup, widget restoration and exact encoder reports. The preceding mode walk checks reviewed display images. |
 | `knob-popup-open` | `first_steps`, `fallback_steps`, `attempt_guest_ms` | On the L6max recorder screen, try the channel 1 level knob by `first_steps`, then by `fallback_steps` if the popup does not open within `attempt_guest_ms`; retain the initial display and level as evidence |
-| `knob-popup-expect-open` | — | Require the dialog signature, callback and a changed display under the shared popup deadline |
+| `knob-popup-expect-open` | — | Require the dialog signature and callback under the shared popup deadline |
+| `knob-popup-expect-display` | — | Require the display to change under the shared popup deadline |
 | `knob-popup-expect-value` | — | Require the rendered channel 1 level text and changed mixer value under the shared popup deadline; unlike the original monolithic action, fail promptly when its overall step deadline expires |
-| `expect-menu` | `menu`, optional `path`, `items` | L6max; read a menu's children from guest memory and require exactly the titles in `items`. `menu` is `main`, `project`, `sound-pad`, `mixer` or `system`; `path` descends through child titles. Menu Loader adds its rows when the menu is first entered |
-| `effect-replacement-state` | optional `expected_effect_type`, `expected_processor_type`, `expected_effect`, `require_output`, `wait_for_slot` and other module fields | L6max effect replacement bundle; compare the selected stock slot and the loader's state with the expectations. `expected_effect` is the effect ID running in the selected slot; `require_output` requires that slot's replacement to have produced nonzero output; `wait_for_slot` waits for the selected slot and processor and, when output is required, a fresh nonzero output count |
+| `capture-menu`, `expect-menu-items` | `menu`, optional `path` on capture; `items` on assertion | L6max; capture the named menu and path, then compare its ordered child titles in the immediately following assertion. Menu Loader adds its rows when the menu is first entered. The running-guest snapshot is non-atomic; rendered pixels require separate image checks. |
+| `wait-effect-slot` | `expected_effect_type`, `expected_processor_type`, optional `expected_effect`, `require_output` | Wait for matching L6max effect and processor; `expected_effect`, when supplied, must be nonempty. When output is required, the selected counter must become nonzero and differ from its baseline. The following state assertion shares its outer deadline. |
+| `capture-effect-state`, `expect-effect-type`, `expect-effect-processor`, `expect-effect-panel-mode`, `expect-effect-edit-mode`, `expect-effect-edits`, `expect-effect-dialog`, `expect-effect-name`, `expect-effect-output`, `effect-state-end` | `value` for type, processor or panel mode; `enabled` for edit mode; `minimum` for edits; `active` for dialog | Capture one fixture-bound, non-atomic L6max effect snapshot and check its fields in separate adjacent steps. Set `edits = true` and/or `dialog = true` on the capture when those fields will be checked. At least one assertion is required; all steps share the capture deadline. After `wait-effect-slot`, the snapshot retains its reader and deadline and must check the matching type, processor, effect name and output requirements. Name and output assertions take later non-atomic samples; output need only be nonzero. |
 | `lifecycle-start` | `profile` | Start `initial`, `installer`, cardless `restart`, or cardless `verify` on the same case-local state with fresh clocks and logs. The verify profile uses the frozen patched MAIN and report, and attaches USB at power-on. |
 | `wait-panel-uptime` | `guest_ms` | Wait for absolute panel guest uptime, with a wall deadline and a 60-second stall deadline reset by progress on either guest clock. |
 | `expect-update-state` | `mode`, `flags_mask`, `flags_value` | Require the guarded L6max update mode and masked package flags. |
@@ -322,23 +344,42 @@ message delivered just after the interval.
 | `power-begin`, `power-wait-ack`, `power-observe-on`, `power-wait-off`, `power-observe-stopped`, `power-end` | A contiguous transaction with matching step budgets. | Observe an exact button receipt, power result and stopped panel clock. MAIN acknowledgement and power-off timestamps use the MAIN clock; the powered-on window uses the panel clock. |
 | `restart` | — | Retire the session before reopening its isolated persistent state; reset readiness, trace counters and action baselines |
 | `expect-recorder` | — | L6max startup mode restored after restart |
-| `expect-settings` | `restored` | L6max edited RTC/NOR/version records, or reload and RTC startup timing after restart |
+| `settings-capture`, `settings-versions`, `settings-rtc`, `settings-bank`, `settings-trace`, `settings-panel`, `settings-reload`, `settings-rtc-timing`, `settings-end` | `restored` on capture | Ordered L6max persistence checks over frozen file and trace observations. The saved checkpoint retains the first valid settings bank in slot order for the reload check. |
 | `l6max-panel-key-map` | — | Verify that L6max sound-pad targets 15, 20, 25 and 30 set their MAIN key-state bits and clear them after release |
-| `signal-pwm-*` | `band`, `start`, `end`, `value`, `channel` on selected steps | Seed L6max 1.10 channel accumulators and verify five increasing PWM levels on eight SIGNAL lamps. A contiguous scope shares deadlines and requires GDB. This tests firmware-to-panel brightness, not audio-input routing. |
-| `l6-level-meter-pwm` | — | Seed ten L6 1.10 level accumulators at the measured brightness thresholds and sample the raw panel matrix; require at least one output cell with five distinct nonzero duty means. Uses GDB and no SD, USB, MIDI, or host audio. |
-| `l6-main-gpio-event` | `target`, `event` | L6 GDB check that Tap target 48 submits event `0x19` and Sound Pad targets 49–52 submit `0x15`–`0x18` |
+| `signal-pwm-*` | `band`, `start`, `end`, `value`, `channel` on selected steps | Seed L6max 1.10 channel accumulators and verify five increasing PWM levels on eight SIGNAL lamps. Each channel step records `passed` and its failures; the scope completes all channels before failing the case; the watcher attributes deferred failures to their assertion steps. A contiguous scope shares deadlines and requires GDB. This tests firmware-to-panel brightness, not audio-input routing. |
+| `l6-meter-begin`, `l6-meter-stage`, `l6-meter-assert`, `l6-meter-end` | `value` on each stage | Scoped L6 1.10 meter diagnostic. Six ordered stages share a guest and wall budget, sample each raw panel cell for 500 panel ms after a 100 ms settling interval, and require five increasing nonzero mean levels. The terminal probe leaves MAIN stopped and requires a fresh guest. |
+| `l6-gpio-begin`, `l6-gpio-press`, `l6-gpio-submit`, `l6-gpio-assert`, `l6-gpio-dispatch`, `l6-gpio-release`, `l6-gpio-settle`, `l6-gpio-end` | `target`, `event` on begin | Scoped L6 GPIO event probe. Sound Pad events include dispatch observation; the scenario provides target and expected event. |
 | `audio-input-transport` | `command` (`play`, `pause`, `stop` or `seek`), `position_ms` for `seek` | Control input playback |
 | `audio-input-load` | `channel`, `loaded` | Map a channel's prepared audio again, or drop it |
 | `expect-audio-input` | `playing`, `min_ms`, `max_ms` | Check the reported input playback state |
 | `expect-output-tone` | `hz`, optional `left_db`, `right_db`, `tolerance_db` (default 1) | Measure a tone in the last second of `L6_AUDIO_RAW_CAPTURE`. A side with no level must be below -70 dB |
 | `expect-recorded-tone` | `file`, `hz`, optional `left_db`, `right_db`, `tolerance_db` (default 1) | Measure a tone in a file of the newest recorder project, after its first second. A side with no level must be below -70 dB |
 | `expect-card-entry` | `path`; optional `size`, `matches_state` | Wait until the firmware has created `path` on the SD card, within `wall_timeout_s`. With `size`, the file must have exactly that many bytes. With `matches_state`, its bytes must equal that file in the device state directory, for example `main-nor.bin` |
-| `l6max-tap-handler` | none | L6max GDB check that Tap target 48 reaches the firmware's TAP press handler. |
-| `l6-din-event-dispatch` | `group`, `cc`, `value` | L6 check of DIN CC-to-event dispatch |
-| `l6-usb-startup` | — | First step only; L6 probe replays the startup USB-enable sequence, verifies three firmware entry points and controller writes |
-| `l6-sweep-*` | `target`, `index` on selected steps | Exercise all L6 panel targets and encoders, compare UART reports, and check unsupported inputs are rejected. The contiguous L6-only scope shares a deadline. |
+| `l6max-tap-begin`, `l6max-tap-press`, `l6max-tap-wait`, `l6max-tap-assert`, `l6max-tap-release`, `l6max-tap-end` | none | Ordered L6max stock-firmware TAP handler check. The scope retains debugger and input ownership, uses one shared step budget, and bounds the handler wait by 5,000 MAIN guest milliseconds. |
+| `l6-dispatch-*` | `group`, `cc`, `value` on begin; `index`, `value` for each setter | Ordered terminal L6 stock-firmware DIN event and nine setter observations. MAIN remains stopped after this synthetic-context probe. |
+| `l6-usb-startup-begin`, `l6-usb-startup-capture`, `l6-usb-startup-assert-hits`, `l6-usb-startup-assert-writes`, `l6-usb-startup-assert-replay`, `l6-usb-startup-end` | — | First-step L6 scope. The capture interleaves three breakpoint observations and timed input replay, then freezes the controller trace for separate assertions. |
+| `l6-sweep-*` | `target`, `index` on selected steps | Exercise all L6 panel targets and encoders, compare UART reports, and check unsupported inputs are rejected. The contiguous L6-only scope shares a deadline; only successfully verified rejection steps update the runner’s permitted counts. |
 | `l6-din-sweep` | — | Sweep supported L6 DIN values and record dispatch behavior |
-| `l6max-timing-*` | `wall_ms`, `guest_ms`, `target`, `hold_ms`, `pairs`, `index` and `steps` on selected steps | L6max: an ordered, shared-deadline scope pauses MAIN and panel, verifies queued input and clock behavior, resumes, checks UART reports and display change, then checks one encoder report. Wall observations and guest-time observations are separate. |
+| `l6max-timing-*` | `wall_ms`, `guest_ms`, `target`, `hold_ms`, `pairs`, `index` and `steps` on selected steps | L6max: an ordered, shared-deadline scope pauses MAIN and panel, captures one input snapshot and separately checks queued input and clock behavior, resumes, checks UART reports and display change, then checks one encoder report. Wall observations and guest-time observations are separate. |
+
+First activation shares the existing knob preflight debugger. Journal state
+and cleanup ordering live in `l6max-host`; the debugger lease, semaphore
+restoration and pause/resume ownership still live in the test harness.
+Migrating that existing ownership to the host is separate work.
+If legacy debugger cleanup fails, it leaves MAIN stopped but can release its
+cross-process debugger lease; the stopped state alone does not exclude another
+debugger client.
+During preflight, an in-process host check stops MAIN and compares the widget 7,
+background 10 and notification semaphore pointers with their live table slots
+and mapped writable spans. Before each widget/background probe write, it
+rechecks those slots; the widget 60 alias probes also check that widget's slot
+and span. These observations do not establish allocation ownership or grant a
+complete write capability. Later semaphore and bitmap mutations and the
+debugger lease remain in the existing harness transaction; the target checks
+have no standalone socket or CLI counterpart.
+The observation uses bounded `l6ctl` memory reads, also available through
+`l6ctl memory-read`, but there is no standalone CLI for the full transaction.
+
 
 The shared indicator fragment budgets 10,000 guest ms and 90 wall seconds per
 campaign. Its fixed 6,000 guest ms of observations remain unchanged; the
@@ -418,6 +459,8 @@ value is established by the state and firmware. Reverse movement in the
 quick scenario must restore channel 2's known initial mask `0x001`.
 
 The MIDI state request fragment begins a sync scope, drains until 500 ms of wall-time quiet, sends CC 127/127, asserts the reply, then ends the scope. The System menu fragment begins and asserts without a drain or request so a response queued by the menu action is preserved. Guest time is measured from scope start; the reply wall deadline begins after the send, or after preparation for a menu response. The shared guest and wall deadlines also bound preparation, the quiet drain and request.
+
+`capture-effect-ring` records one encoder's exact Q16.16 position from the fixture-bound effect module. `expect-effect-ring-changed` compares a later observation against that baseline, rejecting a different encoder, effect slot, or live module. Encoder numbers are one-based; the matching assertion must appear before any restart or SD card change. Pair these with a real `effect-paced-turn` to test an edit without a debugger-injected call.
 
 `effect-paced-turn` applies a signed number of one-step L6max effect-editor turns. Each turn waits for its exact panel acknowledgement and one consumed effect edit, with an empty mailbox and idle callback gate. A dropped edit, unexpected counter jump, lost acknowledgement, or the step's shared guest/wall deadline fails the step. The watcher shows completed turns; subsequent ring assertions retain their original baseline and report-count checks.
 

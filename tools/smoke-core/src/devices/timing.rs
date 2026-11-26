@@ -13,6 +13,7 @@ pub(super) struct Scope {
     paused_at: Instant,
     before_display: [u8; 1024],
     before: Option<InputCounters>,
+    paused: Option<InputCounters>,
     presses: usize,
     releases: usize,
     pressed: usize,
@@ -59,6 +60,24 @@ fn bounded_action<T>(
     }
     Ok(value)
 }
+fn check_paused_clock(before: u32, after: u32) -> Result<(), String> {
+    if after != before {
+        Err(format!(
+            "guest clock advanced while paused: before={before}, after={after}"
+        ))
+    } else {
+        Ok(())
+    }
+}
+fn check_paused_input(before: u64, after: u64) -> Result<(), String> {
+    if before.checked_add(1) != Some(after) {
+        Err(format!(
+            "expected one applied input while paused: before={before}, after={after}"
+        ))
+    } else {
+        Ok(())
+    }
+}
 fn release_held(
     held: &mut Option<u32>,
     mut release: impl FnMut(u32) -> Result<(), String>,
@@ -100,6 +119,7 @@ impl Scope {
             paused_at,
             before_display,
             before: None,
+            paused: None,
             presses: 0,
             releases: 0,
             pressed: 0,
@@ -223,15 +243,29 @@ impl Scope {
         )?;
         Ok(json!({"observed_wall_ms":ms}))
     }
-    pub(super) fn assert_paused(&self, s: &Session) -> Result<Value, String> {
-        let before = self.before.as_ref().ok_or("missing input baseline")?;
+    pub(super) fn capture_paused(&mut self, s: &Session) -> Result<Value, String> {
         let now = Self::input(s)?;
-        if now.applied != before.applied + 1 || now.guest_ms != before.guest_ms {
-            return Err(format!(
-                "input progressed while paused: before={before:?}, after={now:?}"
-            ));
-        }
-        Ok(json!({"guest_clock_stopped":true,"applied":1}))
+        let result = json!({"guest_ms":now.guest_ms,"applied":now.applied});
+        self.paused = Some(now);
+        Ok(result)
+    }
+    pub(super) fn assert_paused_clock(&self) -> Result<Value, String> {
+        let before = self.before.as_ref().ok_or("missing input baseline")?;
+        let now = self
+            .paused
+            .as_ref()
+            .ok_or("missing paused input snapshot")?;
+        check_paused_clock(before.guest_ms, now.guest_ms)?;
+        Ok(json!({"guest_clock_stopped":true}))
+    }
+    pub(super) fn assert_paused_input(&self) -> Result<Value, String> {
+        let before = self.before.as_ref().ok_or("missing input baseline")?;
+        let now = self
+            .paused
+            .as_ref()
+            .ok_or("missing paused input snapshot")?;
+        check_paused_input(before.applied, now.applied)?;
+        Ok(json!({"applied":1}))
     }
     pub(super) fn resume(&mut self, s: &Session) -> Result<Value, String> {
         self.check(s, self.guest_budget, self.wall_budget)?;
@@ -376,6 +410,28 @@ impl Scope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn paused_clock_and_input_failures_are_distinct() {
+        assert!(check_paused_clock(17, 17).is_ok());
+        assert!(check_paused_input(40, 41).is_ok());
+        assert!(
+            check_paused_clock(17, 18)
+                .unwrap_err()
+                .contains("guest clock")
+        );
+        assert!(
+            check_paused_input(40, 40)
+                .unwrap_err()
+                .contains("applied input")
+        );
+        assert!(
+            check_paused_input(40, 42)
+                .unwrap_err()
+                .contains("applied input")
+        );
+        assert!(check_paused_input(u64::MAX, 0).is_err());
+        assert!(check_paused_input(u64::MAX, u64::MAX).is_err());
+    }
     #[test]
     fn delayed_poll_or_ready_read_cannot_be_accepted() {
         let start = Instant::now();

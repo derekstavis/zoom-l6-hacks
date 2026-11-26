@@ -2802,16 +2802,12 @@ impl State {
                 if session.engine.model() != l6fw::Model::L6max || self.panel_keys.is_some() {
                     return Err("panel key scope requires a fresh L6max".into());
                 }
-                let inputs = session
-                    .engine
-                    .inputs
-                    .as_ref()
-                    .ok_or("panel inputs unavailable")?
-                    .clone();
+                l6ctl::OwnedControl::new(&session.engine)
+                    .input_observer()
+                    .map_err(|_| "panel inputs unavailable")?;
                 self.panel_keys = Some(PanelKeyScope {
                     deadline: Instant::now() + Duration::from_secs(wall_timeout_s),
                     held: None,
-                    inputs,
                 });
                 Ok(json!({"started":true}))
             }
@@ -2820,14 +2816,18 @@ impl State {
                 if Instant::now() >= scope.deadline {
                     return Err("panel key scope deadline exceeded".into());
                 }
-                if (pressed && scope.held.is_some()) || (!pressed && scope.held != Some(target)) {
+                if (pressed && scope.held.is_some())
+                    || (!pressed && scope.held.as_ref().map(|(target, _)| *target) != Some(target))
+                {
                     return Err("panel key held state mismatch".into());
                 }
                 let control = l6ctl::OwnedControl::new(&session.engine);
                 let before = control.input_status(l6ctl::InputSource::Panel)?.applied;
                 if pressed {
-                    scope.held = Some(target);
-                    control.down(target, 0)?;
+                    let source = l6ctl::button_source(target).ok_or("invalid held button")?;
+                    let button = control.raw_button(source, target)?;
+                    scope.held = Some((target, button));
+                    scope.held.as_mut().unwrap().1.press(0)?;
                 } else {
                     control.up(target)?;
                 }

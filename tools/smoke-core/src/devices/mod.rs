@@ -1250,14 +1250,13 @@ pub struct State {
 
 struct PanelKeyScope {
     deadline: Instant,
-    held: Option<u32>,
-    inputs: std::sync::Arc<l6max_host::input::InputHub>,
+    held: Option<(u32, l6ctl::RawHeldButton)>,
 }
 impl PanelKeyScope {
     fn release(&mut self) -> Result<(), String> {
-        if let Some(target) = self.held.take() {
-            self.inputs
-                .up(target)
+        if let Some((target, mut button)) = self.held.take() {
+            button
+                .release()
                 .map_err(|error| format!("release panel key {target}: {error}"))?;
         }
         Ok(())
@@ -1398,11 +1397,21 @@ mod tests {
             l6max_host::input::EngineInput::new(panel_host).unwrap(),
             l6fw::Model::L6max,
         ));
+        let mut options = l6max_host::engine::Options::parse_args(std::iter::empty()).unwrap();
+        options.qemu = None;
+        options.auto_setup = false;
+        let mut engine = l6max_host::engine::Engine::start(&options).unwrap();
+        engine.inputs = Some(inputs);
+        let mut button = l6ctl::OwnedControl::new(&engine)
+            .raw_button(l6ctl::InputSource::Panel, 1)
+            .unwrap();
+        button.press(0).unwrap();
+        let press = l6max_host::protocol::Message::read(&mut panel_peer).unwrap();
+        assert_eq!(press.kind, l6max_host::protocol::DOWN);
         let mut state = State::default();
         state.panel_keys = Some(PanelKeyScope {
             deadline: Instant::now(),
-            held: Some(1),
-            inputs,
+            held: Some((1, button)),
         });
         state.restarted().unwrap();
         let message = l6max_host::protocol::Message::read(&mut panel_peer).unwrap();
@@ -1423,6 +1432,15 @@ mod tests {
             l6max_host::input::EngineInput::new(panel_host).unwrap(),
             l6fw::Model::L6max,
         ));
+        let mut options = l6max_host::engine::Options::parse_args(std::iter::empty()).unwrap();
+        options.qemu = None;
+        options.auto_setup = false;
+        let mut engine = l6max_host::engine::Engine::start(&options).unwrap();
+        engine.inputs = Some(inputs.clone());
+        let mut button = l6ctl::OwnedControl::new(&engine)
+            .raw_button(l6ctl::InputSource::Panel, 1)
+            .unwrap();
+        button.press(0).unwrap();
         panel_peer.shutdown(Shutdown::Both).unwrap();
         let until = Instant::now() + std::time::Duration::from_secs(2);
         while inputs.panel.snapshot().connected && Instant::now() < until {
@@ -1435,8 +1453,7 @@ mod tests {
         let mut state = State::default();
         state.panel_keys = Some(PanelKeyScope {
             deadline: Instant::now(),
-            held: Some(1),
-            inputs,
+            held: Some((1, button)),
         });
         assert!(
             state

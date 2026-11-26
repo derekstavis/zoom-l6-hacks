@@ -48,7 +48,7 @@ loaded = false
 
 [[step]]
 action = "include"
-path = "tests/emulator/fragments/l6max-din-mixer-setup.toml"
+path = "tests/emulator/fragments/l6max-din-mixer-usb.toml"
 
 [[step]]
 action = "include"

@@ -603,6 +603,94 @@ mod tests {
     use super::*;
 
     #[test]
+    fn recorder_active_din_cases_only_skip_redundant_prepared_boot_wait() {
+        use smoke_core::Action;
+        let root = l6max_host::paths::repository_root();
+        for path in [
+            "tests/emulator/cases/patching/sd-all-patches.toml",
+            "tests/emulator/cases/patching/sd-mixed-static.toml",
+            "patches/din-mixer-control/tests/emulator/cases/sd-din-mixer-control.toml",
+        ] {
+            let source = fs::read_to_string(root.join(path)).unwrap();
+            let old = source.replace("l6max-din-mixer-usb.toml", "l6max-din-mixer-setup.toml");
+            assert_ne!(source, old, "{path}");
+            let actual = Scenario::from_text(&source)
+                .unwrap()
+                .without_setup_input()
+                .unwrap();
+            let mut previous = Scenario::from_text(&old)
+                .unwrap()
+                .without_setup_input()
+                .unwrap();
+            let usb = previous
+                .step
+                .iter()
+                .position(|step| matches!(step.action, Action::UsbDescriptors))
+                .unwrap();
+            assert!(
+                matches!(&previous.step[usb-1].action, Action::Wait { until } if until == "boot-ready"),
+                "{path}"
+            );
+            previous.step.remove(usb - 1);
+            assert_eq!(
+                serde_json::to_value(&actual.step).unwrap(),
+                serde_json::to_value(&previous.step).unwrap(),
+                "{path}"
+            );
+            let record = actual.step.iter().position(|step| matches!(&step.action, Action::Press { control } if control == "rec-record")).unwrap();
+            let descriptors = actual
+                .step
+                .iter()
+                .position(|step| matches!(step.action, Action::UsbDescriptors))
+                .unwrap();
+            assert!(record < descriptors, "{path}");
+            assert!(actual.step[..record].iter().any(|step| matches!(&step.action, Action::ExpectDisplayImage { image, .. } if image == "tests/emulator/references/l6max-recorder-home.png")), "{path}");
+            let usb = &actual.step[descriptors..descriptors + 6];
+            assert_eq!(
+                (usb[0].guest_timeout_ms, usb[0].wall_timeout_s),
+                (60_000, 300)
+            );
+            assert!(matches!(usb[1].action, Action::UsbSysexBegin));
+            assert_eq!(
+                (usb[1].guest_timeout_ms, usb[1].wall_timeout_s),
+                (15_000, 120)
+            );
+            let requests: Vec<_> = usb[2..5]
+                .iter()
+                .map(|step| match &step.action {
+                    Action::UsbSysexExchange { request, .. } => (
+                        request.bytes.clone(),
+                        request.expect_prefix.clone(),
+                        request.min_reply_bytes,
+                        request.expect_reply,
+                    ),
+                    _ => panic!("missing USB SysEx exchange in {path}"),
+                })
+                .collect();
+            assert_eq!(
+                requests,
+                vec![
+                    (
+                        vec![240, 126, 0, 6, 1, 247],
+                        Some(vec![240, 126]),
+                        None,
+                        false
+                    ),
+                    (
+                        vec![240, 82, 0, 0, 43, 247],
+                        Some(vec![240, 82, 0, 0, 42]),
+                        Some(182),
+                        false
+                    ),
+                    (vec![240, 82, 0, 0, 49, 3, 1, 247], None, None, true),
+                ],
+                "{path}"
+            );
+            assert!(matches!(usb[5].action, Action::UsbSysexEnd));
+        }
+    }
+
+    #[test]
     fn static_update_direct_selection_keeps_model_scoped_order() {
         use smoke_core::UpdateFixture::*;
         let catalog = load(l6max_host::paths::repository_root()).unwrap();

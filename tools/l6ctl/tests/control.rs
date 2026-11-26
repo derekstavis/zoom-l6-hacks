@@ -1243,3 +1243,65 @@ fn symbol_read_client_and_cli_use_model_scoped_wire_request() {
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn reset_and_sd_card_client_and_cli_use_typed_requests() {
+    let path = socket_path();
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"warm-reset","timeout_s":45}),
+                json!({"ok":true,"result":{"reset":"qmp-system-reset"}}),
+            ),
+            (
+                json!({"command":"warm-reset","timeout_s":30}),
+                json!({"ok":true,"result":{"reset":"qmp-system-reset"}}),
+            ),
+            (
+                json!({"command":"sd-card","path":"/tmp/card.img"}),
+                json!({"ok":true,"result":{"inserted":true}}),
+            ),
+            (
+                json!({"command":"sd-card","path":null}),
+                json!({"ok":true,"result":{"inserted":false}}),
+            ),
+        ],
+    );
+    let client = ControlClient::new(&path);
+    assert_eq!(client.warm_reset(45).unwrap().reset, "qmp-system-reset");
+    let reset = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .arg("warm-reset")
+        .output()
+        .unwrap();
+    assert!(
+        reset.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reset.stderr)
+    );
+    assert!(
+        client
+            .sd_card(Some("/tmp/card.img".into()))
+            .unwrap()
+            .inserted
+    );
+    let eject = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["sd-card", "eject"])
+        .output()
+        .unwrap();
+    assert!(
+        eject.status.success(),
+        "{}",
+        String::from_utf8_lossy(&eject.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&eject.stdout).unwrap(),
+        json!({"inserted":false})
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}

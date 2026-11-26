@@ -537,3 +537,10 @@ The in-process `OwnedControl` API offers USB SysEx send and poll against an alre
 firmware API catalog and reads 1–4096 bytes from MAIN. This includes symbols
 outside SDRAM, such as DSP coefficients in DTCM. The read is non-atomic; a
 catalog match does not verify the running firmware revision.
+
+`l6ctl warm-reset [TIMEOUT_S]` requests a MAIN reset and waits for QEMU's reset
+completion event (default 30 seconds, maximum 3600). This does not establish
+firmware or panel readiness. `l6ctl sd-card insert PATH` and `l6ctl sd-card eject`
+change the running guest's SD medium; the CLI resolves an inserted path before
+sending it to the local control socket. Rust control clients sending a path
+directly should use an absolute path.

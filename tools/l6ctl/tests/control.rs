@@ -1028,3 +1028,77 @@ fn power_receipt_and_qmp_status_are_available_to_socket_and_cli() {
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn meter_finish_closes_typed_client_and_cli_session() {
+    use l6ctl::{DebugCommand, DebugObservation};
+    use std::process::Stdio;
+    let path = socket_path();
+    let listener = UnixListener::bind(&path).unwrap();
+    let server = thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut input = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            input.read_line(&mut line).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&line).unwrap(),
+                json!({"command":"debug-begin"})
+            );
+            writeln!(stream, "{}", json!({"ok":true,"result":{"started":true}})).unwrap();
+            line.clear();
+            input.read_line(&mut line).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&line).unwrap(),
+                json!({"command":"l6-meter-finish","timeout_ms":1000})
+            );
+            writeln!(
+                stream,
+                "{}",
+                json!({"ok":true,"result":{"kind":"l6-meter-finished","requires_restart":true}})
+            )
+            .unwrap();
+        }
+    });
+    let mut session = ControlClient::new(&path).debug_session().unwrap();
+    assert!(matches!(
+        session
+            .execute(DebugCommand::L6MeterFinish { timeout_ms: 1000 })
+            .unwrap(),
+        DebugObservation::L6MeterFinished {
+            requires_restart: true
+        }
+    ));
+    assert!(
+        session
+            .execute(DebugCommand::Register { index: 15 })
+            .is_err()
+    );
+    let mut child = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .arg("debug-session")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(
+        child.stdin.take().unwrap(),
+        "{{\"command\":\"l6-meter-finish\",\"timeout_ms\":1000}}"
+    )
+    .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("\"requires_restart\":true")
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}

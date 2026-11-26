@@ -28,6 +28,7 @@ pub fn run(client: &ControlClient) -> Result<(), String> {
             DebugCommand::Close
                 | DebugCommand::L6MidiFinish { .. }
                 | DebugCommand::L6DinFinish { .. }
+                | DebugCommand::L6MeterFinish { .. }
         );
         match session.execute(command) {
             Ok(result) => writeln!(output, "{}", json!({"ok":true,"result":result}))

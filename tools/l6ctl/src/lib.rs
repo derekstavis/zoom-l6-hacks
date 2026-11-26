@@ -247,6 +247,7 @@ impl SocketDebugSession {
             DebugCommand::Close
                 | DebugCommand::L6MidiFinish { .. }
                 | DebugCommand::L6DinFinish { .. }
+                | DebugCommand::L6MeterFinish { .. }
         );
         let result = (|| {
             serde_json::to_writer(&mut self.writer, &command).map_err(ControlError::Protocol)?;

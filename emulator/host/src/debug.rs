@@ -29,6 +29,20 @@ const SIGNAL_ACCUMULATORS: u32 = 0x2001_50e0;
 const SIGNAL_ROUTINE: u32 = 0x8001_0aa8;
 const SIGNAL_ROUTINE_SHA256: &str =
     "75aa1f22ed2934b38a18a09cb0c9ec2fe01aa09c1cc1d362473eae39b6216f52";
+// L6 1.10 stock task and threshold builder; the startup-call bytes are the
+// four bytes that the focused PWM probe temporarily replaces with Thumb NOPs.
+const L6_METER_TASK: u32 = 0x8002_b140;
+const L6_METER_CALL: u32 = 0x8002_b150;
+const L6_METER_BUILDER: u32 = 0x8002_6f88;
+const L6_METER_GATES: u32 = 0x801f_8e74;
+const L6_METER_ACCUMULATORS: u32 = 0x801f_90b8;
+const L6_METER_TASK_BYTES: [u8; 16] = [
+    0x48, 0xf6, 0x74, 0x6b, 0x41, 0xf2, 0x10, 0x00, 0xc8, 0xf2, 0x1f, 0x0b, 0xab, 0xf8, 0x03, 0x00,
+];
+const L6_METER_BUILDER_BYTES: [u8; 16] = [
+    0x2d, 0xe9, 0xf0, 0x4f, 0x82, 0xb0, 0x48, 0xf6, 0x74, 0x6e, 0x4d, 0xf6, 0x3b, 0x45, 0xc8, 0xf2,
+];
+const L6_METER_CALL_BYTES: [u8; 4] = [0xdc, 0xf7, 0x6a, 0xf8];
 
 /// Identity derived from the selected patch report and, for SD, its module.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -64,6 +78,22 @@ pub enum Command {
     Step,
     L6maxSignalWrite {
         values: [f32; 12],
+        timeout_ms: u64,
+    },
+    L6MeterGuard {
+        timeout_ms: u64,
+    },
+    L6MeterSkipStartup {
+        timeout_ms: u64,
+    },
+    L6MeterActivate {
+        timeout_ms: u64,
+    },
+    L6MeterSeed {
+        value: u32,
+        timeout_ms: u64,
+    },
+    L6MeterFinish {
         timeout_ms: u64,
     },
     L6ScratchRead,
@@ -212,6 +242,17 @@ pub enum Observation {
     L6DinFinished {
         requires_restart: bool,
     },
+    L6MeterGuarded,
+    L6MeterStartupSkipped {
+        requires_restart: bool,
+    },
+    L6MeterActivated,
+    L6MeterSeeded {
+        value: u32,
+    },
+    L6MeterFinished {
+        requires_restart: bool,
+    },
     Closed,
 }
 
@@ -262,6 +303,11 @@ trait Guest: Send + Sync {
     fn resume(&self) -> Result<(), String>;
     fn guard_l6_scratch(&self) -> Result<(), String>;
     fn guard_l6max_signal(&self, deadline: Instant) -> Result<(), String>;
+    fn guard_l6_meter(
+        &self,
+        deadline: Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<(), String>;
     fn l6_din_idle_tasks(
         &self,
         deadline: Instant,
@@ -292,6 +338,33 @@ struct MainGuest {
     model: Model,
 }
 impl Guest for MainGuest {
+    fn guard_l6_meter(
+        &self,
+        deadline: Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<(), String> {
+        if self.model != Model::L6 {
+            return Err("level-meter probe requires L6".into());
+        }
+        for (address, expected) in [
+            (L6_METER_TASK, &L6_METER_TASK_BYTES[..]),
+            (L6_METER_CALL, &L6_METER_CALL_BYTES[..]),
+            (L6_METER_BUILDER, &L6_METER_BUILDER_BYTES[..]),
+        ] {
+            check()?;
+            let actual = self
+                .qmp
+                .read_memory_before(0, address, expected.len(), deadline)
+                .map_err(|e| e.to_string())?;
+            check()?;
+            if actual != expected {
+                return Err(format!(
+                    "unsupported L6 level-meter code at {address:#010x}"
+                ));
+            }
+        }
+        Ok(())
+    }
     fn resume_for_breakpoint_before(&self, deadline: Instant) -> Result<(), String> {
         self.qmp.resume_before(deadline).map_err(|e| e.to_string())
     }
@@ -784,6 +857,10 @@ pub struct Session {
     l6_midi: Option<L6MidiContext>,
     l6_din_semaphore: Option<u32>,
     l6_din: Option<L6DinContext>,
+    // Once the startup instruction may have been written, the guest must not
+    // be resumed on ordinary close, even if the transport fails partway.
+    l6_meter_mutated: bool,
+    l6_meter_original: Option<(Vec<u8>, Vec<u8>)>,
     unusable: Arc<AtomicBool>,
     lease: Option<l6max_diagnostics::gdb::Lease>,
     retained_lease: Arc<Mutex<Option<l6max_diagnostics::gdb::Lease>>>,
@@ -807,6 +884,8 @@ impl Session {
             l6_midi: None,
             l6_din_semaphore: None,
             l6_din: None,
+            l6_meter_mutated: false,
+            l6_meter_original: None,
             unusable,
             lease,
             retained_lease,
@@ -867,7 +946,7 @@ impl Session {
         deadline: Instant,
         mut cancelled: impl FnMut() -> bool,
     ) -> Result<Observation, String> {
-        if self.l6_midi.is_some() {
+        if self.l6_midi.is_some() || self.l6_meter_mutated {
             return Err("L6 MIDI injection is already active".into());
         }
         if values
@@ -891,6 +970,241 @@ impl Session {
         Ok(Observation::SignalWritten {
             address: SIGNAL_ACCUMULATORS,
         })
+    }
+
+    /// Verify the code used by the L6 level-meter probe while MAIN is stopped.
+    pub fn l6_meter_guard_before(
+        &mut self,
+        deadline: Instant,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<(), String> {
+        if cancelled() || Instant::now() >= deadline {
+            return Err("L6 level-meter guard cancelled or timed out".into());
+        }
+        if self.guest.running_before(deadline)? {
+            return Err("L6 level-meter guard requires stopped MAIN".into());
+        }
+        let cancelled = std::cell::RefCell::new(&mut cancelled);
+        self.guest.guard_l6_meter(deadline, &|| {
+            if (*cancelled.borrow_mut())() || Instant::now() >= deadline {
+                Err("L6 level-meter guard cancelled or timed out".into())
+            } else {
+                Ok(())
+            }
+        })?;
+        if (*cancelled.borrow_mut())() || Instant::now() >= deadline {
+            return Err("L6 level-meter guard deadline exceeded".into());
+        }
+        Ok(())
+    }
+
+    /// Replace the guarded startup call. This is a terminal diagnostic: even
+    /// when the instruction is restored, the changed task execution cannot
+    /// be rolled back, so the guest must be restarted afterward.
+    pub fn l6_meter_skip_startup_before(
+        &mut self,
+        deadline: Instant,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<(), String> {
+        if self.l6_meter_mutated
+            || self.l6_midi.is_some()
+            || self.l6_din.is_some()
+            || self.scratch.is_some()
+        {
+            return Err("another debug mutation is active".into());
+        }
+        self.l6_meter_guard_before(deadline, &mut cancelled)?;
+        if cancelled() || Instant::now() >= deadline {
+            return Err("L6 level-meter cancelled or timed out".into());
+        }
+        if self.register_before(15, deadline)? & !1 != L6_METER_TASK {
+            return Err("L6 level-meter task entry was not reached".into());
+        }
+        if cancelled() || Instant::now() >= deadline {
+            return Err("L6 level-meter cancelled or timed out".into());
+        }
+        let gates = self.timed(deadline, &mut cancelled, |g| g.read(L6_METER_GATES, 2))?;
+        let accumulators = self.timed(deadline, &mut cancelled, |g| {
+            g.read(L6_METER_ACCUMULATORS, 40)
+        })?;
+        if gates.len() != 2 || accumulators.len() != 40 {
+            return Err("short L6 level-meter journal read".into());
+        }
+        self.l6_meter_original = Some((gates, accumulators));
+        if cancelled() || Instant::now() >= deadline {
+            return Err("L6 level-meter cancelled or timed out".into());
+        }
+        self.l6_meter_mutated = true;
+        self.transact(|g| g.write_before(L6_METER_CALL, &[0x00, 0xbf, 0x00, 0xbf], deadline))?;
+        let actual = self.timed(deadline, &mut cancelled, |g| g.read(L6_METER_CALL, 4))?;
+        if actual != [0x00, 0xbf, 0x00, 0xbf] {
+            return Err("L6 level-meter startup-skip readback mismatch".into());
+        }
+        Ok(())
+    }
+
+    /// Seed the ten converted level accumulators at a stopped builder entry.
+    pub fn l6_meter_activate_before(
+        &mut self,
+        deadline: Instant,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<(), String> {
+        if cancelled()
+            || Instant::now() >= deadline
+            || !self.l6_meter_mutated
+            || self.guest.running_before(deadline)?
+        {
+            return Err("L6 level-meter activation requires an active stopped session".into());
+        }
+        if cancelled() || Instant::now() >= deadline {
+            return Err("L6 level-meter activation cancelled or timed out".into());
+        }
+        self.transact(|g| g.write_before(L6_METER_GATES, &[1, 1], deadline))?;
+        if cancelled() || Instant::now() >= deadline {
+            return Err("L6 level-meter activation cancelled or timed out".into());
+        }
+        Ok(())
+    }
+
+    /// Seed the ten converted level accumulators at a stopped builder entry.
+    pub fn l6_meter_seed_before(
+        &mut self,
+        value: u32,
+        deadline: Instant,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<(), String> {
+        if cancelled() || Instant::now() >= deadline {
+            return Err("L6 level-meter cancelled or timed out".into());
+        }
+        if !self.l6_meter_mutated || self.guest.running_before(deadline)? {
+            return Err("L6 level-meter session is not stopped and active".into());
+        }
+        if cancelled() || Instant::now() >= deadline {
+            return Err("L6 level-meter cancelled or timed out".into());
+        }
+        if self.register_before(15, deadline)? & !1 != L6_METER_BUILDER {
+            return Err("L6 level-meter builder entry was not reached".into());
+        }
+        let bytes: Vec<u8> = (0..10).flat_map(|_| value.to_le_bytes()).collect();
+        if cancelled() || Instant::now() >= deadline {
+            return Err("L6 level-meter cancelled or timed out".into());
+        }
+        self.transact(|g| g.write_before(L6_METER_GATES, &[1, 1], deadline))?;
+        if cancelled() || Instant::now() >= deadline {
+            return Err("L6 level-meter cancelled or timed out".into());
+        }
+        self.transact(|g| g.write_before(L6_METER_ACCUMULATORS, &bytes, deadline))?;
+        let actual = self.timed(deadline, &mut cancelled, |g| {
+            g.read(L6_METER_ACCUMULATORS, bytes.len())
+        })?;
+        if actual != bytes {
+            return Err("L6 level-meter accumulator readback mismatch".into());
+        }
+        Ok(())
+    }
+
+    /// Best-effort restoration of journalled memory before leaving MAIN
+    /// stopped. The diagnostic cannot restore task or panel progression.
+    pub fn l6_meter_finish_before(
+        &mut self,
+        deadline: Instant,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<(), String> {
+        if cancelled() || Instant::now() >= deadline {
+            return Err("L6 level-meter restoration cancelled or timed out".into());
+        }
+        if !self.l6_meter_mutated {
+            return Err("L6 level-meter session is not active".into());
+        }
+        if self.guest.running_before(deadline)? {
+            return Err("L6 level-meter restoration requires stopped MAIN".into());
+        }
+        let (gates, accumulators) = self
+            .l6_meter_original
+            .clone()
+            .ok_or("L6 level-meter journal missing")?;
+        if cancelled() || Instant::now() >= deadline {
+            return Err("L6 level-meter restoration cancelled or timed out".into());
+        }
+        self.transact(|g| g.write_before(L6_METER_CALL, &L6_METER_CALL_BYTES, deadline))?;
+        if cancelled() || Instant::now() >= deadline {
+            return Err("L6 level-meter restoration cancelled or timed out".into());
+        }
+        self.transact(|g| g.write_before(L6_METER_GATES, &gates, deadline))?;
+        if cancelled() || Instant::now() >= deadline {
+            return Err("L6 level-meter restoration cancelled or timed out".into());
+        }
+        self.transact(|g| g.write_before(L6_METER_ACCUMULATORS, &accumulators, deadline))?;
+        for (address, expected) in [
+            (L6_METER_CALL, &L6_METER_CALL_BYTES[..]),
+            (L6_METER_GATES, gates.as_slice()),
+            (L6_METER_ACCUMULATORS, accumulators.as_slice()),
+        ] {
+            if self.timed(deadline, &mut cancelled, |g| {
+                g.read(address, expected.len())
+            })? != expected
+            {
+                return Err(format!(
+                    "L6 level-meter restoration mismatch at {address:#010x}"
+                ));
+            }
+        }
+        if !self.breakpoints.is_empty() {
+            return Err("remove L6 level-meter breakpoints before finishing".into());
+        }
+        if cancelled() || Instant::now() >= deadline {
+            return Err("L6 level-meter restoration cancelled or timed out".into());
+        }
+        self.guest.stop_before(deadline)?;
+        if cancelled() || Instant::now() >= deadline {
+            return Err("L6 level-meter restoration cancelled or timed out".into());
+        }
+        self.transact(|g| g.disconnect())?;
+        if cancelled() || Instant::now() >= deadline {
+            return Err("L6 level-meter restoration cancelled or timed out".into());
+        }
+        self.guest.stop_before(deadline)?;
+        if cancelled() || Instant::now() >= deadline {
+            return Err("L6 level-meter restoration cancelled or timed out".into());
+        }
+        self.unusable.store(true, Ordering::Release);
+        if let Some(lease) = self.lease.take() {
+            *self
+                .retained_lease
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(lease);
+        }
+        self.transport.take();
+        Ok(())
+    }
+
+    /// Abandon a terminal meter probe, holding the lease until guest teardown.
+    /// The journal is intentionally not written if debugger state is uncertain.
+    pub fn l6_meter_abort_before(&mut self, deadline: Instant) -> Result<(), String> {
+        if !self.l6_meter_mutated {
+            return self.close_stopped_before(deadline);
+        }
+        let stopped = self.guest.stop_before(deadline);
+        let disconnected = self
+            .transport
+            .as_deref_mut()
+            .map(|g| g.disconnect())
+            .unwrap_or(Ok(()));
+        let stopped_again = self.guest.stop_before(deadline);
+        self.unusable.store(true, Ordering::Release);
+        if let Some(lease) = self.lease.take() {
+            *self
+                .retained_lease
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(lease);
+        }
+        self.transport.take();
+        match (stopped, disconnected, stopped_again) {
+            (Ok(()), Ok(()), Ok(())) => Ok(()),
+            (first, disconnect, second) => Err(format!(
+                "L6 meter abort failed; stop={first:?}, disconnect={disconnect:?}, final stop={second:?}; guest state may be unknown"
+            )),
+        }
     }
 
     /// Clone a local emergency handle; shutting it down makes this debugger unusable and requires restart.
@@ -1184,6 +1498,23 @@ impl Session {
         command: Command,
         mut cancelled: impl FnMut() -> bool,
     ) -> Result<Observation, String> {
+        if self.l6_meter_mutated
+            && !matches!(
+                command,
+                Command::Register { .. }
+                    | Command::Read { .. }
+                    | Command::AddBreakpoint { .. }
+                    | Command::RemoveBreakpoint { .. }
+                    | Command::Continue { .. }
+                    | Command::Step
+                    | Command::L6MeterActivate { .. }
+                    | Command::L6MeterSeed { .. }
+                    | Command::L6MeterFinish { .. }
+                    | Command::Close
+            )
+        {
+            return Err("L6 level-meter terminal diagnostic is active".into());
+        }
         if self.l6_midi.is_some()
             && matches!(
                 command,
@@ -1209,6 +1540,30 @@ impl Session {
             return Err("L6 DIN injection is already active".into());
         }
         match command {
+            Command::L6MeterGuard { timeout_ms } => {
+                self.l6_meter_guard_before(l6_probe_deadline(timeout_ms)?, cancelled)?;
+                Ok(Observation::L6MeterGuarded)
+            }
+            Command::L6MeterSkipStartup { timeout_ms } => {
+                self.l6_meter_skip_startup_before(l6_probe_deadline(timeout_ms)?, cancelled)?;
+                Ok(Observation::L6MeterStartupSkipped {
+                    requires_restart: true,
+                })
+            }
+            Command::L6MeterActivate { timeout_ms } => {
+                self.l6_meter_activate_before(l6_probe_deadline(timeout_ms)?, cancelled)?;
+                Ok(Observation::L6MeterActivated)
+            }
+            Command::L6MeterSeed { value, timeout_ms } => {
+                self.l6_meter_seed_before(value, l6_probe_deadline(timeout_ms)?, cancelled)?;
+                Ok(Observation::L6MeterSeeded { value })
+            }
+            Command::L6MeterFinish { timeout_ms } => {
+                self.l6_meter_finish_before(l6_probe_deadline(timeout_ms)?, cancelled)?;
+                Ok(Observation::L6MeterFinished {
+                    requires_restart: true,
+                })
+            }
             Command::L6DinEvent { timeout_ms } => {
                 let deadline = l6_probe_deadline(timeout_ms)?;
                 if self.l6_din.is_none() {
@@ -1821,6 +2176,7 @@ impl Session {
             || !self.breakpoints.is_empty()
             || self.l6_midi.is_some()
             || self.l6_din.is_some()
+            || self.l6_meter_mutated
         {
             self.unusable.store(true, Ordering::Release);
             if let Some(lease) = self.lease.take() {
@@ -1889,7 +2245,14 @@ impl Session {
         if self.l6_din.is_some() {
             errors.push("L6 DIN synthetic execution requires a guest restart".to_owned());
         }
-        if !self.poisoned && self.l6_midi.is_none() && self.l6_din.is_none() {
+        if self.l6_meter_mutated {
+            errors.push("L6 level-meter diagnostic requires a guest restart".to_owned());
+        }
+        if !self.poisoned
+            && self.l6_midi.is_none()
+            && self.l6_din.is_none()
+            && !self.l6_meter_mutated
+        {
             if let Some(bytes) = self.scratch.take() {
                 if let Err(error) = self.transact(|g| g.write(SCRATCH, &bytes)) {
                     errors.push(format!("restore scratch: {error}"));
@@ -1903,6 +2266,16 @@ impl Session {
                     }
                     self.breakpoints.remove(&address);
                 }
+            }
+        }
+        // A terminal meter diagnostic must not detach while MAIN could run
+        // with its transiently patched startup code.
+        if self.l6_meter_mutated {
+            if let Err(error) = self
+                .guest
+                .stop_before(Instant::now() + Duration::from_secs(3))
+            {
+                errors.push(format!("could not stop MAIN before disconnect: {error}"));
             }
         }
         // Retain the transport's cross-process lease through detach and QMP
@@ -2070,6 +2443,8 @@ mod tests {
     struct FakeState {
         operations: Vec<String>,
         scratch: Vec<u8>,
+        meter_memory: std::collections::BTreeMap<u32, Vec<u8>>,
+        meter_partial_write: bool,
         registers: [u32; 26],
         fail: Option<&'static str>,
         guarded: bool,
@@ -2083,6 +2458,18 @@ mod tests {
     }
     struct FakeGuest(Arc<Mutex<FakeState>>);
     impl Guest for FakeGuest {
+        fn guard_l6_meter(
+            &self,
+            _deadline: Instant,
+            check: &dyn Fn() -> Result<(), String>,
+        ) -> Result<(), String> {
+            check()?;
+            self.guard_l6_scratch()?;
+            if let Some(flag) = &self.0.lock().unwrap().cancel_on_guard {
+                flag.store(true, Ordering::Release);
+            }
+            check()
+        }
         fn resume_for_breakpoint_before(&self, deadline: Instant) -> Result<(), String> {
             self.resume_before(deadline)
         }
@@ -2236,12 +2623,34 @@ mod tests {
             if address == SCRATCH {
                 Ok(self.0.lock().unwrap().scratch[..length].to_vec())
             } else {
-                Ok(vec![0; length])
+                Ok(self
+                    .0
+                    .lock()
+                    .unwrap()
+                    .meter_memory
+                    .get(&address)
+                    .cloned()
+                    .unwrap_or_else(|| vec![0; length]))
             }
         }
-        fn write(&mut self, _: u32, bytes: &[u8]) -> Result<(), String> {
+        fn write(&mut self, address: u32, bytes: &[u8]) -> Result<(), String> {
+            {
+                let mut state = self.0.lock().unwrap();
+                if state.meter_partial_write {
+                    state.operations.push("partial-write".into());
+                    state
+                        .meter_memory
+                        .insert(address, bytes[..bytes.len().min(2)].to_vec());
+                    return Err("partial write".into());
+                }
+            }
             self.record("write")?;
-            self.0.lock().unwrap().scratch = bytes.to_vec();
+            let mut state = self.0.lock().unwrap();
+            if address == SCRATCH {
+                state.scratch = bytes.to_vec();
+            } else {
+                state.meter_memory.insert(address, bytes.to_vec());
+            }
             Ok(())
         }
         fn write_before(
@@ -2343,6 +2752,335 @@ mod tests {
             ),
             state,
         )
+    }
+
+    #[test]
+    fn meter_guard_rejects_unsupported_before_any_write() {
+        let (mut session, state) = fake(false, false);
+        state.lock().unwrap().idle_snapshot = true;
+        assert!(
+            session
+                .l6_meter_skip_startup_before(Instant::now() + Duration::from_secs(1), || false)
+                .is_err()
+        );
+        assert!(
+            !state
+                .lock()
+                .unwrap()
+                .operations
+                .iter()
+                .any(|op| op == "write")
+        );
+    }
+
+    #[test]
+    fn meter_cancelled_during_guard_never_mutates() {
+        let (mut session, state) = fake(false, true);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        {
+            let mut state = state.lock().unwrap();
+            state.idle_snapshot = true;
+            state.registers[15] = L6_METER_TASK;
+            state.cancel_on_guard = Some(cancelled.clone());
+        }
+        assert!(
+            session
+                .l6_meter_skip_startup_before(Instant::now() + Duration::from_secs(1), || cancelled
+                    .load(Ordering::Acquire))
+                .is_err()
+        );
+        assert!(
+            !state
+                .lock()
+                .unwrap()
+                .operations
+                .iter()
+                .any(|op| op == "write")
+        );
+    }
+
+    #[test]
+    fn meter_failed_first_write_never_resumes() {
+        let (mut session, state) = fake(true, true);
+        {
+            let mut state = state.lock().unwrap();
+            state.idle_snapshot = true;
+            state.registers[15] = L6_METER_TASK;
+            state.fail = Some("write");
+        }
+        assert!(
+            session
+                .l6_meter_skip_startup_before(Instant::now() + Duration::from_secs(1), || false)
+                .is_err()
+        );
+        assert!(
+            session
+                .close_before(Instant::now() + Duration::from_secs(1))
+                .is_err()
+        );
+        let state = state.lock().unwrap();
+        assert!(state.operations.iter().any(|op| op == "stop"));
+        assert!(!state.operations.iter().any(|op| op == "resume-before"));
+        assert!(session.unusable.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn meter_partial_code_write_keeps_guest_terminal() {
+        let (mut session, state) = fake(true, true);
+        {
+            let mut state = state.lock().unwrap();
+            state.idle_snapshot = true;
+            state.registers[15] = L6_METER_TASK;
+            state.meter_partial_write = true;
+        }
+        let deadline = Instant::now() + Duration::from_secs(1);
+        assert!(
+            session
+                .l6_meter_skip_startup_before(deadline, || false)
+                .is_err()
+        );
+        assert_eq!(
+            state.lock().unwrap().meter_memory[&L6_METER_CALL],
+            [0, 0xbf]
+        );
+        session.l6_meter_abort_before(deadline).unwrap();
+        assert!(session.unusable.load(Ordering::Acquire));
+        assert!(
+            !state
+                .lock()
+                .unwrap()
+                .operations
+                .iter()
+                .any(|op| op == "resume-before")
+        );
+    }
+
+    #[test]
+    fn meter_abort_retains_cross_process_lease_until_guest_teardown() {
+        let path = std::env::temp_dir().join(format!(
+            "l6-meter-lease-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::write(&path, b"").unwrap();
+        let (mut session, state) = fake(true, true);
+        session.lease = Some(l6max_diagnostics::gdb::Lease::acquire(&path).unwrap());
+        {
+            let mut state = state.lock().unwrap();
+            state.idle_snapshot = true;
+            state.registers[15] = L6_METER_TASK;
+            state.meter_partial_write = true;
+        }
+        let deadline = Instant::now() + Duration::from_secs(1);
+        assert!(
+            session
+                .l6_meter_skip_startup_before(deadline, || false)
+                .is_err()
+        );
+        session.l6_meter_abort_before(deadline).unwrap();
+        assert!(l6max_diagnostics::gdb::Lease::acquire(&path).is_err());
+        session.retained_lease.lock().unwrap().take();
+        assert!(l6max_diagnostics::gdb::Lease::acquire(&path).is_ok());
+        std::fs::remove_file(&path).unwrap();
+        let _ = std::fs::remove_file(format!("{}.lease", path.display()));
+    }
+
+    #[test]
+    fn meter_socket_session_completes_and_leaves_guest_terminal() {
+        use std::{
+            io::{BufRead, BufReader, Write},
+            os::unix::net::UnixStream,
+            thread,
+        };
+        let (session, state) = fake(true, true);
+        {
+            let mut state = state.lock().unwrap();
+            state.idle_snapshot = true;
+            state.registers[15] = L6_METER_TASK;
+        }
+        let unusable = session.unusable.clone();
+        let (server, mut client) = UnixStream::pair().unwrap();
+        let worker = thread::spawn(move || {
+            crate::control::serve_debug(
+                server.try_clone().unwrap(),
+                BufReader::new(server),
+                session,
+                &AtomicBool::new(false),
+            )
+        });
+        let mut reader = BufReader::new(client.try_clone().unwrap());
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        write!(client, "{{\"command\":\"l6-meter-guard\",\"timeout_ms\":1000}}\n{{\"command\":\"l6-meter-skip-startup\",\"timeout_ms\":1000}}\n{{\"command\":\"l6-meter-activate\",\"timeout_ms\":1000}}\n").unwrap();
+        for expected in [
+            "l6-meter-guarded",
+            "l6-meter-startup-skipped",
+            "l6-meter-activated",
+        ] {
+            line.clear();
+            reader.read_line(&mut line).unwrap();
+            assert!(line.contains(expected), "{line}");
+        }
+        state.lock().unwrap().registers[15] = L6_METER_BUILDER;
+        write!(client, "{{\"command\":\"l6-meter-seed\",\"value\":1500000,\"timeout_ms\":1000}}\n{{\"command\":\"l6-meter-finish\",\"timeout_ms\":1000}}\n").unwrap();
+        for expected in ["l6-meter-seeded", "l6-meter-finished"] {
+            line.clear();
+            reader.read_line(&mut line).unwrap();
+            assert!(line.contains(expected), "{line}");
+        }
+        worker.join().unwrap();
+        assert!(unusable.load(Ordering::Acquire));
+        assert!(
+            !state
+                .lock()
+                .unwrap()
+                .operations
+                .iter()
+                .any(|op| op == "resume-before")
+        );
+    }
+
+    #[test]
+    fn meter_socket_eof_after_mutation_stops_and_poison_session() {
+        use std::{
+            io::{BufRead, BufReader, Write},
+            os::unix::net::UnixStream,
+            thread,
+        };
+        let (session, state) = fake(true, true);
+        {
+            let mut state = state.lock().unwrap();
+            state.idle_snapshot = true;
+            state.registers[15] = L6_METER_TASK;
+        }
+        let unusable = session.unusable.clone();
+        let (server, mut client) = UnixStream::pair().unwrap();
+        let worker = thread::spawn(move || {
+            crate::control::serve_debug(
+                server.try_clone().unwrap(),
+                BufReader::new(server),
+                session,
+                &AtomicBool::new(false),
+            )
+        });
+        let mut reader = BufReader::new(client.try_clone().unwrap());
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        writeln!(
+            client,
+            "{{\"command\":\"l6-meter-skip-startup\",\"timeout_ms\":1000}}"
+        )
+        .unwrap();
+        line.clear();
+        reader.read_line(&mut line).unwrap();
+        assert!(line.contains("l6-meter-startup-skipped"), "{line}");
+        drop(reader);
+        drop(client);
+        worker.join().unwrap();
+        assert!(unusable.load(Ordering::Acquire));
+        assert!(
+            !state
+                .lock()
+                .unwrap()
+                .operations
+                .iter()
+                .any(|op| op == "resume" || op == "resume-before")
+        );
+    }
+
+    #[test]
+    fn meter_socket_commands_reject_invalid_timeout_before_write() {
+        let (mut session, state) = fake(false, true);
+        state.lock().unwrap().idle_snapshot = true;
+        assert!(
+            session
+                .execute(Command::L6MeterSkipStartup { timeout_ms: 0 })
+                .is_err()
+        );
+        assert!(
+            session
+                .execute(Command::L6MeterGuard { timeout_ms: 60_001 })
+                .is_err()
+        );
+        assert!(
+            !state
+                .lock()
+                .unwrap()
+                .operations
+                .iter()
+                .any(|op| op == "write")
+        );
+    }
+
+    #[test]
+    fn meter_restores_journal_but_retains_terminal_ownership() {
+        let (mut session, state) = fake(true, true);
+        {
+            let mut state = state.lock().unwrap();
+            state.idle_snapshot = true;
+            state.registers[15] = L6_METER_TASK;
+            state.meter_memory.insert(L6_METER_GATES, vec![7, 8]);
+            state
+                .meter_memory
+                .insert(L6_METER_ACCUMULATORS, vec![9; 40]);
+        }
+        let deadline = Instant::now() + Duration::from_secs(1);
+        session
+            .l6_meter_skip_startup_before(deadline, || false)
+            .unwrap();
+        state.lock().unwrap().registers[15] = L6_METER_BUILDER;
+        session
+            .l6_meter_seed_before(1_500_000, deadline, || false)
+            .unwrap();
+        session.l6_meter_finish_before(deadline, || false).unwrap();
+        let state = state.lock().unwrap();
+        assert_eq!(state.meter_memory[&L6_METER_CALL], L6_METER_CALL_BYTES);
+        assert_eq!(state.meter_memory[&L6_METER_GATES], [7, 8]);
+        assert_eq!(state.meter_memory[&L6_METER_ACCUMULATORS], vec![9; 40]);
+        assert!(!state.operations.iter().any(|op| op == "resume-before"));
+        assert!(session.unusable.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn meter_rejects_other_active_mutation_and_restore_failure_is_terminal() {
+        let (mut session, state) = fake(true, true);
+        {
+            let mut state = state.lock().unwrap();
+            state.idle_snapshot = true;
+            state.registers[15] = L6_METER_TASK;
+        }
+        let deadline = Instant::now() + Duration::from_secs(1);
+        session.scratch = Some(vec![9; SCRATCH_LEN]);
+        assert!(
+            session
+                .l6_meter_skip_startup_before(deadline, || false)
+                .is_err()
+        );
+        assert!(
+            !state
+                .lock()
+                .unwrap()
+                .operations
+                .iter()
+                .any(|op| op == "write")
+        );
+        session.scratch = None;
+        session
+            .l6_meter_skip_startup_before(deadline, || false)
+            .unwrap();
+        assert!(session.execute(Command::L6ScratchRead).is_err());
+        state.lock().unwrap().fail = Some("write");
+        assert!(session.l6_meter_finish_before(deadline, || false).is_err());
+        assert!(session.close_before(deadline).is_err());
+        assert!(session.unusable.load(Ordering::Acquire));
+        assert!(
+            !state
+                .lock()
+                .unwrap()
+                .operations
+                .iter()
+                .any(|op| op == "resume-before")
+        );
     }
 
     #[test]

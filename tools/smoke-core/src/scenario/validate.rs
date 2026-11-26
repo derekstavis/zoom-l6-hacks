@@ -686,6 +686,58 @@ impl Scenario {
             }
         }
         for model in &value.models {
+            let mut meter: Option<(usize, u32, u32, u64)> = None;
+            let mut meter_terminal = false;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                if meter_terminal {
+                    if matches!(step.action, Action::Restart) {
+                        meter_terminal = false;
+                    } else {
+                        return Err(
+                            "L6 meter diagnostic requires restart before further steps".into()
+                        );
+                    }
+                }
+                match (&step.action, meter) {
+                    (Action::L6MeterBegin, None) if *model == Model::L6 => {
+                        meter = Some((0, 0, step.guest_timeout_ms, step.wall_timeout_s));
+                    }
+                    (Action::L6MeterStage { value }, Some((i, last, guest, wall)))
+                        if i < 6
+                            && ((i == 0 && *value == 0) || (i > 0 && *value > last))
+                            && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        meter = Some((i + 1, *value, guest, wall));
+                    }
+                    (Action::L6MeterAssert, Some((6, last, guest, wall)))
+                        if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        meter = Some((7, last, guest, wall));
+                    }
+                    (Action::L6MeterEnd, Some((7, _, guest, wall)))
+                        if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        meter = None;
+                        meter_terminal = true;
+                    }
+                    (
+                        Action::L6MeterBegin
+                        | Action::L6MeterStage { .. }
+                        | Action::L6MeterAssert
+                        | Action::L6MeterEnd,
+                        _,
+                    )
+                    | (_, Some(_)) => {
+                        return Err("invalid L6 meter sequence, model or shared budget".into());
+                    }
+                    _ => {}
+                }
+            }
+            if meter.is_some() {
+                return Err("unterminated L6 meter diagnostic".into());
+            }
+        }
+        for model in &value.models {
             let steps: Vec<_> = value
                 .step
                 .iter()

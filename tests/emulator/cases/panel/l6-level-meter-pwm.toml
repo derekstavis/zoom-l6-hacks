@@ -12,6 +12,52 @@ no_sd = true
 wall_timeout_s = 1800
 
 [[step]]
-action = "l6-level-meter-pwm"
+action = "l6-meter-begin"
+guest_timeout_ms = 1200000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-meter-stage"
+value = 0
+guest_timeout_ms = 1200000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-meter-stage"
+value = 1500000
+guest_timeout_ms = 1200000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-meter-stage"
+value = 2000000
+guest_timeout_ms = 1200000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-meter-stage"
+value = 3000000
+guest_timeout_ms = 1200000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-meter-stage"
+value = 4000000
+guest_timeout_ms = 1200000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-meter-stage"
+value = 6000000
+guest_timeout_ms = 1200000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-meter-assert"
+guest_timeout_ms = 1200000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-meter-end"
 guest_timeout_ms = 1200000
 wall_timeout_s = 1800

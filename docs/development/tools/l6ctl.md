@@ -371,6 +371,20 @@ verify MAIN is stopped, it reports that uncertainty, retains the lease and
 requires a guest restart. A failed cleanup may spend up to three additional
 seconds attempting an emergency stop.
 
+For a disposable L6 1.10 guest, the same persistent session exposes
+`l6-meter-guard`, `l6-meter-skip-startup`, `l6-meter-activate`,
+`l6-meter-seed` and `l6-meter-finish`. Each takes `timeout_ms` (1–60000);
+`l6-meter-seed` also takes a `value` as an unsigned 32-bit integer. The
+caller owns breakpoints and must reach the task entry before skipping the
+startup call, then reach the threshold builder before seeding. The host
+checks the model, code bytes and stopped PC before mutation. Remove owned
+breakpoints before finish. Finish restores the journalled bytes where
+possible, leaves MAIN stopped and returns `requires_restart: true`; task and
+panel progression cannot be rolled back. An interrupted or failed session
+also requires a fresh guest. The control socket has a 300-second maximum
+session lifetime. These are debugger operations; they do not run the l6test
+panel sampling windows or evaluate their PWM assertions.
+
 For in-process L6 recorder diagnostics, `l6_recorder_reader_before` checks
 three immutable L6 1.10 code spans and provides typed event, selection and
 SAI DMA observations. The caller must keep MAIN stopped, supply an absolute

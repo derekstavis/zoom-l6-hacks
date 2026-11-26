@@ -20,6 +20,7 @@ mod knob_dialog;
 mod l6_din_sweep;
 mod l6_dispatch;
 mod l6_input_sweep;
+mod l6_meter_pwm;
 mod lifecycle;
 mod midi;
 mod midi_probe;
@@ -42,7 +43,6 @@ use lifecycle::*;
 use midi::*;
 use midi_probe::*;
 use mode_primitives::wait_parameter_mode_checked;
-use panel::*;
 use sd::*;
 use usb::*;
 
@@ -846,7 +846,12 @@ pub enum Operation {
         channel: u8,
     },
     SignalPwmEnd,
-    L6LevelMeterPwm,
+    L6MeterBegin,
+    L6MeterStage {
+        value: u32,
+    },
+    L6MeterAssert,
+    L6MeterEnd,
 }
 
 fn uses_native_host_midi(scenario: &Scenario, model: l6fw::Model) -> bool {
@@ -895,7 +900,7 @@ fn validate_native_midi_capabilities(
                     | crate::Action::L6UsbStartupBegin
                     | crate::Action::L6DispatchBegin { .. }
                     | crate::Action::SignalPwmBegin
-                    | crate::Action::L6LevelMeterPwm
+                    | crate::Action::L6MeterBegin
             )
     });
     if native && direct {
@@ -942,7 +947,7 @@ pub(crate) fn prepare_with_report(
     if scenario.step.iter().any(|step| {
         matches!(
             step.action,
-            crate::Action::SignalPwmBegin | crate::Action::L6LevelMeterPwm
+            crate::Action::SignalPwmBegin | crate::Action::L6MeterBegin
         )
     }) {
         options.usb_enabled = false;
@@ -1151,6 +1156,7 @@ pub struct State {
     editor_assignment: Option<editor::EditorAssignmentScope>,
     l6_input_sweep: Option<l6_input_sweep::Scope>,
     signal_pwm: Option<signal_pwm::Scope>,
+    l6_meter_pwm: Option<l6_meter_pwm::Scope>,
     l6_indicator: Option<L6IndicatorScope>,
     gdb: Option<l6max_diagnostics::gdb::Gdb>,
     host_midi: Option<Box<dyn crate::host_midi::Client>>,
@@ -1589,7 +1595,7 @@ mod native_midi_capability_tests {
                 value: 1,
             },
             crate::Action::SignalPwmBegin,
-            crate::Action::L6LevelMeterPwm,
+            crate::Action::L6MeterBegin,
         ] {
             let mut step = scenario.step[0].clone();
             step.action = action;

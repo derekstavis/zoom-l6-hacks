@@ -83,6 +83,39 @@ fn compare_bytes(
         digest(native)
     ))
 }
+fn knob_callback(report: &Value) -> Result<Option<u64>, String> {
+    let patches = report["patches"]
+        .as_array()
+        .ok_or("patch report has no patches")?;
+    let mut entries = patches
+        .iter()
+        .filter(|entry| entry["name"].as_str() == Some("knob-dialog"));
+    let Some(entry) = entries.next() else {
+        return Ok(None);
+    };
+    if entries.next().is_some() {
+        return Err("duplicate knob-dialog report entry".into());
+    }
+    Ok(Some(
+        entry["knob_callback"]
+            .as_u64()
+            .ok_or("knob callback export missing")?,
+    ))
+}
+fn compare_callback_metadata(native_path: &Path, browser: &Value) -> Result<(), String> {
+    let native: Value = serde_json::from_slice(
+        &fs::read(native_path.join("patch.json")).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let a = knob_callback(&native)?;
+    let b = knob_callback(browser)?;
+    if a != b {
+        return Err(format!(
+            "native/browser knob callback metadata mismatch: {a:?} != {b:?}"
+        ));
+    }
+    Ok(())
+}
 
 fn validate_overlap_rejection(
     patches: &[String],
@@ -141,6 +174,7 @@ impl Parity {
         let (browser, report) = patch_wasm::apply_patches(&self.stock, &selected)
             .map_err(|e| format!("WASM patching failed for {patches:?}: {e}"))?;
         compare_bytes(self.model, patches, &browser, &native)?;
+        compare_callback_metadata(&out, &report)?;
         self.profiles.push(evidence(patches, &browser, &report));
         Ok(())
     }
@@ -193,6 +227,7 @@ impl Parity {
                 digest(&native)
             ));
         }
+        compare_callback_metadata(&out, &report)?;
         self.loader_profiles
             .push(evidence(patches, &browser, &report));
         Ok(())
@@ -305,6 +340,17 @@ pub(crate) fn run(scenario: Scenario, options: Options) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn knob_metadata_requires_one_export_only_when_knob_is_present() {
+        assert_eq!(knob_callback(&json!({"patches":[]})).unwrap(), None);
+        assert_eq!(
+            knob_callback(&json!({"patches":[{"name":"knob-dialog","knob_callback":42}]})).unwrap(),
+            Some(42)
+        );
+        assert!(knob_callback(&json!({"patches":[{"name":"knob-dialog"}]})).is_err());
+        assert!(knob_callback(&json!({"patches":[{"name":"knob-dialog","knob_callback":42},{"name":"knob-dialog","knob_callback":42}]})).is_err());
+    }
 
     #[test]
     fn loader_rejection_requires_matching_overlap_class() {

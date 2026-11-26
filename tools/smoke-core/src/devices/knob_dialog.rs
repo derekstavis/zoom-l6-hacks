@@ -728,6 +728,7 @@ pub(super) struct PreflightContext {
     activation_semaphore_count: Option<Vec<u8>>,
     activation_callback: Option<u32>,
     sd_expected_callback: Option<u32>,
+    firmware_callback: Option<l6max_host::knob_binding::FirmwareBinding>,
     activation_phase: u8,
     activation_started: Option<(u32, Instant)>,
     activation_snapshot: Option<FirstActivationSnapshot>,
@@ -763,6 +764,36 @@ fn verify_sd_callback(expected: Option<u32>, callback: u32) -> Result<(), String
     } else {
         Ok(())
     }
+}
+fn load_firmware_knob_fixture(
+    options: &Options,
+) -> Result<l6max_host::knob_binding::FirmwareBinding, String> {
+    let image = selected_main_image(options)?;
+    let candidates = [
+        options.logs.join(crate::fixture_layout::FIRMWARE_REPORT),
+        options.fixture_firmware_report.clone().unwrap_or_default(),
+        options
+            .firmware_dir
+            .join(crate::fixture_layout::FIRMWARE_REPORT),
+        options
+            .firmware_dir
+            .join(crate::fixture_layout::PATCH_REPORT),
+    ];
+    let mut errors = Vec::new();
+    for path in candidates {
+        if !path.is_file() {
+            continue;
+        }
+        let report = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        match l6max_host::knob_binding::FirmwareBinding::from_fixture(&report, &image) {
+            Ok(binding) => return Ok(binding),
+            Err(error) => errors.push(format!("{}: {error}", path.display())),
+        }
+    }
+    Err(format!(
+        "no matching knob firmware callback report: {}",
+        errors.join("; ")
+    ))
 }
 fn load_sd_knob_fixture(
     options: &Options,
@@ -952,6 +983,11 @@ pub(super) fn begin_preflight(
         .gdb_socket
         .as_ref()
         .ok_or("knob-dialog lock-contention check needs GDB")?;
+    let firmware_callback = if sd_knob {
+        None
+    } else {
+        Some(load_firmware_knob_fixture(options)?)
+    };
     let mut debugger = KnobDebugSession::connect(qmp, socket)?;
     let sd_expected_callback =
         verify_sd_knob_fixture(session, options, &mut debugger, sd_knob, shared)?;
@@ -984,6 +1020,7 @@ pub(super) fn begin_preflight(
         activation_semaphore_count: None,
         activation_callback: None,
         sd_expected_callback,
+        firmware_callback,
         activation_phase: 0,
         activation_started: None,
         activation_snapshot: None,
@@ -1297,6 +1334,23 @@ pub(super) fn wait_race_registration(
         return Err(format!("unexpected display callback registration: pc={pc:#010x}, slot={slot}, callback={callback:#010x}").into());
     }
     verify_sd_callback(context.sd_expected_callback, callback)?;
+    if let Some(binding) = &context.firmware_callback {
+        let deadline = shared.0 + Duration::from_secs(shared.3);
+        let ctl = l6ctl::OwnedControl::new(&session.engine);
+        binding.validate_live(callback, |address, length| {
+            remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)
+                .map_err(|e| e.to_string())?;
+            let bytes = ctl
+                .read_main_memory_before(address, length, deadline)
+                .map_err(|e| e.to_string())?
+                .bytes;
+            remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)
+                .map_err(|e| e.to_string())?;
+            Ok(bytes)
+        })?;
+    } else if context.sd_expected_callback.is_none() {
+        return Err("knob callback has no verified firmware or SD binding".into());
+    }
     race.callback = Some(callback);
     Ok(json!({"pc": pc, "slot": slot, "callback": callback}))
 }
@@ -6069,6 +6123,79 @@ mod sd_knob_binding_tests {
         )
         .unwrap();
         assert!(load_sd_knob_fixture(&options, true).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod firmware_knob_binding_tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+
+    #[test]
+    fn retained_report_binds_after_restart_and_rejects_missing_or_wrong_image() {
+        let root = std::env::temp_dir().join(format!(
+            "knob-restart-binding-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let firmware = root.join("firmware");
+        fs::create_dir_all(&firmware).unwrap();
+        fs::create_dir_all(root.join("restart")).unwrap();
+        let base = l6fw::Model::L6max.main_base();
+        let image = vec![0u8; 0x100000];
+        let payload = base + 0xe0000;
+        let report = serde_json::json!({"model":"L6max","image_length":image.len(),"patched_sha256":format!("{:x}",Sha256::digest(&image)),"patches":[{"name":"knob-dialog","payload_address":format!("{payload:#x}"),"payload_length":1024,"knob_callback":payload + 0x100}]});
+        let report_path = root.join("patch-report.json");
+        fs::write(firmware.join("main_firmware.bin"), &image).unwrap();
+        fs::write(&report_path, serde_json::to_vec(&report).unwrap()).unwrap();
+        let mut options = Options::parse_args(std::iter::empty()).unwrap();
+        options.firmware_dir = firmware.clone();
+        options.state_dir = None;
+        options.logs = root.join("restart");
+        options.fixture_firmware_report = Some(report_path.clone());
+        assert!(load_firmware_knob_fixture(&options).is_ok());
+        let mut wrong = image;
+        wrong[0] ^= 1;
+        fs::write(firmware.join("main_firmware.bin"), wrong).unwrap();
+        assert!(load_firmware_knob_fixture(&options).is_err());
+        fs::remove_file(report_path).unwrap();
+        assert!(load_firmware_knob_fixture(&options).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    #[ignore = "requires L6_KNOB_FIRMWARE_REPORT and L6_KNOB_FIRMWARE_MAIN"]
+    fn direct_and_installed_nor_are_bound_to_the_same_report() {
+        let report = fs::read(std::env::var("L6_KNOB_FIRMWARE_REPORT").unwrap()).unwrap();
+        let image = fs::read(std::env::var("L6_KNOB_FIRMWARE_MAIN").unwrap()).unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "knob-firmware-binding-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let firmware = root.join("firmware");
+        let logs = root.join("logs");
+        let state = root.join("state");
+        fs::create_dir_all(&firmware).unwrap();
+        fs::create_dir_all(&logs).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::write(firmware.join("main_firmware.bin"), &image).unwrap();
+        fs::write(logs.join("patch-report.json"), &report).unwrap();
+        let mut options = Options::parse_args(std::iter::empty()).unwrap();
+        options.firmware_dir = firmware.clone();
+        options.logs = logs.clone();
+        let direct = load_firmware_knob_fixture(&options).unwrap();
+        fs::remove_file(logs.join("patch-report.json")).unwrap();
+        fs::write(firmware.join("patch.json"), &report).unwrap();
+        let mut nor = vec![0u8; 0x50000 + image.len()];
+        nor[0x50000..].copy_from_slice(&image);
+        fs::write(state.join("main-nor.bin"), &nor).unwrap();
+        options.state_dir = Some(state.clone());
+        let installed = load_firmware_knob_fixture(&options).unwrap();
+        assert_eq!(direct.callback, installed.callback);
+        nor[0x50000] ^= 1;
+        fs::write(state.join("main-nor.bin"), nor).unwrap();
+        assert!(load_firmware_knob_fixture(&options).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 }

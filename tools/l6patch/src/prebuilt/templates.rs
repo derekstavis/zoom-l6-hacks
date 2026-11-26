@@ -535,6 +535,7 @@ struct Unit {
     hooks: Vec<(u32, u32, usize)>, // (address, target, length)
     /// Offset of the payload's identity record from `base`.
     patch_info_offset: u32,
+    knob_callback_offset: Option<u32>,
 }
 
 /// Regenerate `patch-wasm/templates` from unpacked stock firmware
@@ -661,6 +662,15 @@ pub(crate) fn generate(
                 let patch_info_offset = symbol(&symbols, patch_compile::PATCH_INFO_SYMBOL)?
                     .checked_sub(base)
                     .ok_or("identity record precedes the payload")?;
+                let knob_callback_offset = if name == "knob-dialog" {
+                    Some(
+                        symbol(&symbols, "knob_dialog_display_tick")?
+                            .checked_sub(base)
+                            .ok_or("knob callback precedes payload")?,
+                    )
+                } else {
+                    None
+                };
                 units.insert(
                     (name, base),
                     Unit {
@@ -670,6 +680,7 @@ pub(crate) fn generate(
                         windows,
                         hooks,
                         patch_info_offset,
+                        knob_callback_offset,
                     },
                 );
             }
@@ -737,6 +748,15 @@ pub(crate) fn generate(
                 let patch_info_offset = symbol(&symbols, patch_compile::PATCH_INFO_SYMBOL)?
                     .checked_sub(base)
                     .ok_or("identity record precedes the payload")?;
+                let knob_callback_offset = if name == "knob-dialog" {
+                    Some(
+                        symbol(&symbols, "knob_dialog_display_tick")?
+                            .checked_sub(base)
+                            .ok_or("knob callback precedes payload")?,
+                    )
+                } else {
+                    None
+                };
                 units.insert(
                     (name, base),
                     Unit {
@@ -746,6 +766,7 @@ pub(crate) fn generate(
                         windows,
                         hooks,
                         patch_info_offset,
+                        knob_callback_offset,
                     },
                 );
             }
@@ -804,7 +825,7 @@ pub(crate) fn generate(
                 })
             })
             .collect();
-        let metadata = serde_json::json!({
+        let mut metadata = serde_json::json!({
             "name": unit.name,
             "model": Model::L6max.label(),
             "base": format!("{:#x}", unit.base),
@@ -815,6 +836,9 @@ pub(crate) fn generate(
             "patch_info_offset": unit.patch_info_offset,
             "window_byte_total": unit.windows.iter().map(|w| w.length).sum::<usize>(),
         });
+        if let Some(offset) = unit.knob_callback_offset {
+            metadata["knob_callback_offset"] = serde_json::json!(offset);
+        }
         fs::write(
             templates_dir.join(format!("{stem}.json")),
             serde_json::to_string_pretty(&metadata)?,

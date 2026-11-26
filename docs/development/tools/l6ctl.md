@@ -102,6 +102,10 @@ exact L6 panel trace markers in supplied text.
 and module and prints the derived immutable identity and knob callback/hook
 offsets. It requires no emulator connection. This is fixture inspection; it
 does not verify a running guest or authorize debugger mutations.
+`cargo l6ctl knob-firmware-inspect REPORT MAIN` similarly verifies that a
+firmware report identifies the supplied MAIN image and contains an exact
+in-bounds knob callback export. The command reports fixture-derived guards;
+it does not inspect a running guest.
 
 `ControlClient::heap_counters()` returns one guarded, non-atomic sample of the
 four allocator counters. In-process callers can create

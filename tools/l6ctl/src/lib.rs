@@ -584,6 +584,19 @@ impl ControlClient {
     }
 }
 
+/// Narrow emergency handle retained while a bounded diagnostic worker runs.
+/// Stopping MAIN does not resume it; the caller must restart after an emergency.
+pub struct MainStopHandle {
+    qmp: qmp::QmpClient,
+}
+impl MainStopHandle {
+    pub fn stop_before(&self, deadline: std::time::Instant) -> Result<(), ControlError> {
+        self.qmp
+            .stop_before(deadline)
+            .map_err(|e| ControlError::Rejected(e.to_string()))
+    }
+}
+
 /// Access the same host-owned guest directly without opening a control socket.
 /// The engine and its QMP/input resources remain owned by the caller.
 pub struct OwnedControl<'a> {
@@ -1000,6 +1013,25 @@ impl<'a> OwnedControl<'a> {
             .ok_or_else(|| ControlError::Rejected("USB backend unavailable".into()))?;
         l6max_host::usb_midi::poll_sysex(usb, endpoints.input, cable, decoder)
             .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+
+    pub fn main_stop_handle(&self) -> Result<MainStopHandle, ControlError> {
+        Ok(MainStopHandle {
+            qmp: self.main_qmp()?.clone(),
+        })
+    }
+    pub fn verify_l6_din_dispatch_before_checked(
+        &self,
+        deadline: std::time::Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<(), ControlError> {
+        l6max_host::l6_din_dispatch::verify_before_checked(
+            self.main_qmp()?,
+            self.engine.model(),
+            deadline,
+            check,
+        )
+        .map_err(ControlError::Rejected)
     }
 
     pub fn l6_din_reader_before_checked(

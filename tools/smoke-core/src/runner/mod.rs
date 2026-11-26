@@ -1135,6 +1135,14 @@ impl Runner {
                         dialog,
                     }));
                 }
+                Action::ExpectEffectName { name } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectEffectName {
+                        name,
+                    }));
+                }
+                Action::ExpectEffectOutput => {
+                    return Ok(Progress::Device(devices::Operation::ExpectEffectOutput));
+                }
                 Action::ExpectEffectEdits { minimum } => {
                     return Ok(Progress::Device(devices::Operation::ExpectEffectEdits {
                         minimum,
@@ -1179,35 +1187,6 @@ impl Runner {
                         expected_effect,
                         require_output,
                     }));
-                }
-                Action::EffectReplacementState {
-                    expected_effect_type,
-                    expected_processor_type,
-                    expected_panel_mode,
-                    expected_edit_mode,
-                    minimum_parameter_edits,
-                    expected_parameter_id,
-                    expected_parameter_value,
-                    expected_dialog_active,
-                    minimum_exit_ring_refreshes,
-                    expected_effect,
-                    require_output,
-                } => {
-                    return Ok(Progress::Device(
-                        devices::Operation::EffectReplacementState {
-                            expected_effect_type,
-                            expected_processor_type,
-                            expected_panel_mode,
-                            expected_edit_mode,
-                            minimum_parameter_edits,
-                            expected_parameter_id,
-                            expected_parameter_value,
-                            expected_dialog_active,
-                            minimum_exit_ring_refreshes,
-                            expected_effect,
-                            require_output,
-                        },
-                    ));
                 }
                 Action::ExpectHeap { minimum_free } => {
                     return Ok(Progress::Device(devices::Operation::ExpectHeap {

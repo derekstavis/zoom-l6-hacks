@@ -26,10 +26,21 @@ expected_processor_type = 1
 require_output = true
 
 [[step]]
-action = "effect-replacement-state"
-expected_effect_type = 1
-expected_processor_type = 1
-require_output = true
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-type"
+value = 1
+
+[[step]]
+action = "expect-effect-processor"
+value = 1
+
+[[step]]
+action = "expect-effect-output"
+
+[[step]]
+action = "effect-state-end"
 
 [[step]]
 action = "press"

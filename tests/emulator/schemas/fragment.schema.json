@@ -8097,6 +8097,84 @@
           "additionalProperties": false,
           "properties": {
             "action": {
+              "const": "expect-effect-name",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "name": {
+              "type": "string"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "expect-effect-output",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
               "const": "expect-effect-edits",
               "type": "string"
             },
@@ -8501,136 +8579,6 @@
             "action",
             "expected_effect_type",
             "expected_processor_type"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "action": {
-              "const": "effect-replacement-state",
-              "type": "string"
-            },
-            "expected_dialog_active": {
-              "default": null,
-              "type": [
-                "boolean",
-                "null"
-              ]
-            },
-            "expected_edit_mode": {
-              "default": null,
-              "type": [
-                "boolean",
-                "null"
-              ]
-            },
-            "expected_effect": {
-              "default": null,
-              "description": "The effect ID the effect loader runs for the selected slot.",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "expected_effect_type": {
-              "default": null,
-              "format": "uint8",
-              "maximum": 255,
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "expected_panel_mode": {
-              "default": null,
-              "format": "uint8",
-              "maximum": 255,
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "expected_parameter_id": {
-              "default": null,
-              "format": "uint8",
-              "maximum": 255,
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "expected_parameter_value": {
-              "default": null,
-              "format": "float",
-              "type": [
-                "number",
-                "null"
-              ]
-            },
-            "expected_processor_type": {
-              "default": null,
-              "format": "uint8",
-              "maximum": 255,
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "guest_timeout_ms": {
-              "default": 10000,
-              "format": "uint32",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "minimum_exit_ring_refreshes": {
-              "default": null,
-              "format": "uint32",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "minimum_parameter_edits": {
-              "default": null,
-              "format": "uint32",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "models": {
-              "default": [],
-              "items": {
-                "$ref": "#/definitions/Model"
-              },
-              "type": "array"
-            },
-            "require_output": {
-              "default": false,
-              "description": "The selected slot's replacement has produced nonzero output.",
-              "type": "boolean"
-            },
-            "setup_input": {
-              "default": false,
-              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
-              "type": "boolean"
-            },
-            "wall_timeout_s": {
-              "default": 180,
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "action"
           ],
           "type": "object"
         },
@@ -20046,6 +19994,8 @@
             "capture-effect-ring",
             "expect-effect-ring-changed",
             "capture-effect-state",
+            "expect-effect-name",
+            "expect-effect-output",
             "expect-effect-edits",
             "expect-effect-dialog",
             "expect-effect-type",
@@ -20055,7 +20005,6 @@
             "effect-state-end",
             "wait-effect-mode",
             "wait-effect-slot",
-            "effect-replacement-state",
             "expect-heap",
             "hold-chord",
             "audio-callbacks-begin",

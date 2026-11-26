@@ -1208,6 +1208,14 @@ impl Runner {
                 Action::KnobOverlayFinish => {
                     return Ok(Progress::Device(devices::Operation::KnobOverlayFinish));
                 }
+                Action::KnobBitmapReactivate { delta } => {
+                    return Ok(Progress::Device(devices::Operation::KnobBitmapReactivate {
+                        delta,
+                    }));
+                }
+                Action::KnobBitmapWaitActive => {
+                    return Ok(Progress::Device(devices::Operation::KnobBitmapWaitActive));
+                }
                 Action::KnobBitmapBegin => {
                     return Ok(Progress::Device(devices::Operation::KnobBitmapBegin));
                 }

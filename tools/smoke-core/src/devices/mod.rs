@@ -433,6 +433,10 @@ pub enum Operation {
     KnobOverlayCheckBitmap,
     KnobOverlayCheckHeap,
     KnobOverlayFinish,
+    KnobBitmapReactivate {
+        delta: i32,
+    },
+    KnobBitmapWaitActive,
     KnobBitmapBegin,
     KnobBitmapCheckBackground {
         background: u32,

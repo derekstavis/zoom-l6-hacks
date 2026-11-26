@@ -161,6 +161,8 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobOverlayCheckBitmap
         | Action::KnobOverlayCheckHeap
         | Action::KnobOverlayFinish
+        | Action::KnobBitmapReactivate { .. }
+        | Action::KnobBitmapWaitActive
         | Action::KnobBitmapBegin
         | Action::KnobBitmapCheckBackground { .. }
         | Action::KnobBitmapStoreBefore

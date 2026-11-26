@@ -364,6 +364,8 @@ pub fn step_label(action: &crate::Action) -> String {
         Action::SoundPadFinish => "Finish sound pad playback".into(),
         Action::KnobLevelStart { .. } => "Capture initial level demo".into(),
         Action::KnobLevelSweep { sweep } => format!("Sweep level {:?}", sweep.direction),
+        Action::KnobBitmapReactivate { .. } => "Reactivate overlay for bitmap probe".into(),
+        Action::KnobBitmapWaitActive => "Wait for fresh bitmap overlay".into(),
         Action::KnobOverlayReactivate { delta } => {
             format!("Reactivate zero-level overlay (delta {delta})")
         }

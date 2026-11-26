@@ -269,7 +269,7 @@ message delivered just after the interval.
 | `knob-level-*` | — | Capture the bounded level sweep to at least 69% and back to 0% |
 | `knob-task-*` | — | Verify the input hook and display callback run in different FreeRTOS tasks, retaining their task IDs as evidence |
 | `knob-overlay-*` | field for descriptor checks | Check the active window, saved descriptor snapshot, resource, background pixels, bitmap and heap against the baseline using the shared overlay fragment |
-| `knob-bitmap-*` | — | Verify bitmap ID 0 safely short-circuits an injected display-task draw |
+| `knob-bitmap-*` | — | Reactivate the unchanged zero-level overlay, require a fresh consumed mailbox and countdown of at least 15 ticks before the baseline, then require at least 10 ticks while stopped before checking bitmap ID 0 with the original frame, signature and descriptor assertions |
 | `knob-overlay-reactivate`, `knob-overlay-wait-active` | delta for reactivation | Reopen the zero-level overlay without changing its value, then wait for its callback |
 | `knob-overlay-refresh-*` | — | Check the rendered value and stable overlay pixels after the bitmap probe |
 | `knob-lock-*` | — | Verify the dialog consumes and displays a level update while the notification semaphore is held, then restore the lock and check the mailbox |

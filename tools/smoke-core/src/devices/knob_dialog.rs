@@ -337,7 +337,13 @@ fn turn_and_wait_hook_bounded(
     }
     qmp.stop()?;
     if let Some((reader, _)) = expected_mailbox {
-        let pending = reader.mailbox()?;
+        let pending = if let Some(shared) = shared {
+            let deadline = shared.0 + Duration::from_secs(shared.3);
+            let check = || notification_observation_check(session, shared, wall_timeout_s);
+            reader.mailbox_before_checked(deadline, &check)?
+        } else {
+            reader.mailbox()?
+        };
         if pending != u8::MAX {
             return Err(
                 format!("knob hook mailbox was not empty before input: {pending:#04x}").into(),
@@ -369,7 +375,13 @@ fn turn_and_wait_hook_bounded(
         return Err(format!("knob turn stopped at {pc:#x}, not the mixer hook return").into());
     }
     if let Some((reader, expected)) = expected_mailbox {
-        let actual = reader.mailbox()?;
+        let actual = if let Some(shared) = shared {
+            let deadline = shared.0 + Duration::from_secs(shared.3);
+            let check = || notification_observation_check(session, shared, wall_timeout_s);
+            reader.mailbox_before_checked(deadline, &check)?
+        } else {
+            reader.mailbox()?
+        };
         if actual != expected {
             return Err(format!(
                 "knob hook published mailbox {actual:#04x}, expected {expected:#04x}"
@@ -2252,6 +2264,21 @@ pub(super) fn finish_overlay_invariants(
     Ok(json!({"overlay_invariants":true}))
 }
 
+// The dialog lasts 20 callback ticks. Require at least 15 immediately before
+// the baseline and at least 10 while stopped before the injected draw.
+const BITMAP_BASELINE_MIN_TICKS: u8 = 15;
+const BITMAP_DRAW_MIN_TICKS: u8 = 10;
+
+fn require_bitmap_countdown(ticks: u8, minimum: u8) -> Result<(), String> {
+    if ticks < minimum {
+        Err(format!(
+            "bitmap overlay countdown too low: {ticks}, need {minimum}"
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 struct BitmapProbe {
     before: Option<[u8; 1024]>,
     deadline: Option<Instant>,
@@ -2293,20 +2320,26 @@ pub(super) fn begin_bitmap_probe(
 }
 
 pub(super) fn check_bitmap_background(
+    session: &Session,
     context: &mut PreflightContext,
     reader: &l6max_host::knob_popup::OverlayReader,
     background: u32,
     expected: u16,
+    shared: (Instant, u32, u32, u64, u16),
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    if reader.background_bitmap_id(background)? != expected {
+    let deadline = shared.0 + Duration::from_secs(shared.3);
+    let check = || notification_observation_check(session, shared, shared.3);
+    if reader.background_bitmap_id_before_checked(background, deadline, &check)? != expected {
         return Err(format!("background {background} no longer uses bitmap ID {expected}").into());
     }
+    let ticks = reader.countdown_ticks_before_checked(deadline, &check)?;
+    require_bitmap_countdown(ticks, BITMAP_BASELINE_MIN_TICKS)?;
     context
         .bitmap_probe
         .as_mut()
         .ok_or("missing bitmap probe")?
         .capture_phase = 1;
-    Ok(json!({"background":background,"bitmap_id":expected}))
+    Ok(json!({"background":background,"bitmap_id":expected,"countdown_ticks":ticks}))
 }
 
 pub(super) fn note_bitmap_capture(
@@ -2403,6 +2436,18 @@ pub(super) fn invoke_bitmap_probe(
         .ok_or("missing knob-dialog debugger")?;
     debugger.breakpoint(entry, false)?;
     let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, 5)?;
+    let deadline = shared.0 + Duration::from_secs(shared.3);
+    let check = || notification_observation_check(session, shared, shared.3);
+    let reader = l6max_host::knob_popup::overlay_reader_before_checked(
+        &session.engine.management[0],
+        l6fw::Model::L6max,
+        deadline,
+        &check,
+    )?;
+    let ticks = reader.countdown_ticks_before_checked(deadline, &check)?;
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, 5)?;
+    require_bitmap_countdown(ticks, BITMAP_DRAW_MIN_TICKS)?;
     let timeout = remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, 5)?;
     debugger.call_thumb(l6max::gui_draw_background, &[background], timeout)?;
     remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, 5)?;
@@ -2412,7 +2457,7 @@ pub(super) fn invoke_bitmap_probe(
         .as_mut()
         .ok_or("missing bitmap probe")?
         .capture_phase = 6;
-    Ok(json!({"background":background}))
+    Ok(json!({"background":background,"countdown_ticks":ticks}))
 }
 
 pub(super) fn check_bitmap_frame(
@@ -2498,11 +2543,14 @@ pub(super) fn reactivate_zero_overlay(
     reader: &l6max_host::knob_popup::OverlayReader,
     delta: i32,
     shared: (Instant, u32, u32, u64, u16),
+    expected_next: usize,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    if context.next != 12 || context.overlay_reactivation.is_some() {
+    if context.next != expected_next || context.overlay_reactivation.is_some() {
         return Err("overlay reactivation out of order".into());
     }
-    let before = reader.level()?;
+    let deadline = shared.0 + Duration::from_secs(shared.3);
+    let check = || notification_observation_check(session, shared, shared.3);
+    let before = reader.level_before_checked(deadline, &check)?;
     validate_zero_reactivation(before, delta)?;
     let debugger = context
         .debugger
@@ -2528,8 +2576,8 @@ pub(super) fn reactivate_zero_overlay(
     Ok(json!({"channel":1,"delta":delta,"raw_before":before}))
 }
 
-fn overlay_reactivation_ready(pending: u8, ticks: u8) -> bool {
-    pending == u8::MAX && ticks > 0
+fn overlay_reactivation_ready(pending: u8, ticks: u8, minimum_ticks: u8) -> bool {
+    pending == u8::MAX && ticks >= minimum_ticks
 }
 
 pub(super) fn wait_zero_overlay_active(
@@ -2537,29 +2585,43 @@ pub(super) fn wait_zero_overlay_active(
     context: &mut PreflightContext,
     reader: &l6max_host::knob_popup::OverlayReader,
     shared: (Instant, u32, u32, u64, u16),
+    minimum_ticks: u8,
 ) -> Result<Value, Box<dyn std::error::Error>> {
     let (start, wall) = context
         .overlay_reactivation
         .ok_or("missing overlay reactivation")?;
     let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    let deadline = (shared.0 + Duration::from_secs(shared.3)).min(wall + Duration::from_secs(180));
+    let check = || {
+        if overlay_reactivation_expired(
+            start,
+            inputs.panel.snapshot().guest_ms,
+            wall.elapsed(),
+            shared,
+        ) {
+            Err("zero-level overlay did not reactivate before its deadline".to_owned())
+        } else {
+            Ok(())
+        }
+    };
     loop {
         let now = inputs.panel.snapshot().guest_ms;
         if overlay_reactivation_expired(start, now, wall.elapsed(), shared) {
             return Err("zero-level overlay did not reactivate before its deadline".into());
         }
         session.poll()?;
-        let pending = reader.mailbox()?;
+        let pending = reader.mailbox_before_checked(deadline, &check)?;
         let ticks = if pending == u8::MAX {
-            reader.countdown_ticks()?
+            reader.countdown_ticks_before_checked(deadline, &check)?
         } else {
             0
         };
-        if overlay_reactivation_ready(pending, ticks) {
+        if overlay_reactivation_ready(pending, ticks, minimum_ticks) {
             let now = inputs.panel.snapshot().guest_ms;
             if overlay_reactivation_expired(start, now, wall.elapsed(), shared) {
                 return Err("zero-level overlay did not reactivate before its deadline".into());
             }
-            let after = reader.level()?;
+            let after = reader.level_before_checked(deadline, &check)?;
             if after != 0 {
                 return Err(format!("overlay reactivation changed zero level to {after}").into());
             }
@@ -3609,7 +3671,7 @@ pub(super) fn wait_notification_callback(
     Ok(json!({}))
 }
 
-fn notification_observation_check(
+pub(super) fn notification_observation_check(
     session: &Session,
     shared: (Instant, u32, u32, u64, u16),
     wall_timeout_s: u64,
@@ -5581,7 +5643,8 @@ mod task_probe_deadline_tests {
 #[cfg(test)]
 mod overlay_reactivation_tests {
     use super::{
-        overlay_reactivation_expired, overlay_reactivation_ready, validate_zero_reactivation,
+        BITMAP_DRAW_MIN_TICKS, overlay_reactivation_expired, overlay_reactivation_ready,
+        require_bitmap_countdown, validate_zero_reactivation,
     };
     use std::time::{Duration, Instant};
     #[test]
@@ -5613,10 +5676,22 @@ mod overlay_reactivation_tests {
         ));
     }
     #[test]
+    fn delayed_final_level_read_cannot_succeed_after_local_guest_deadline() {
+        let shared = (Instant::now(), 0, 50_000, 600, 0);
+        let before = overlay_reactivation_expired(100, 10_099, Duration::from_secs(1), shared);
+        let after = overlay_reactivation_expired(100, 10_100, Duration::from_secs(1), shared);
+        assert!(!before);
+        assert!(after);
+    }
+    #[test]
     fn requires_consumed_mailbox_and_active_countdown() {
-        assert!(!overlay_reactivation_ready(0, 20));
-        assert!(!overlay_reactivation_ready(255, 0));
-        assert!(overlay_reactivation_ready(255, 20));
+        assert!(!overlay_reactivation_ready(0, 20, 15));
+        assert!(!overlay_reactivation_ready(255, 0, 15));
+        assert!(!overlay_reactivation_ready(255, 14, 15));
+        assert!(overlay_reactivation_ready(255, 15, 15));
+        assert!(require_bitmap_countdown(9, BITMAP_DRAW_MIN_TICKS).is_err());
+        assert!(require_bitmap_countdown(10, BITMAP_DRAW_MIN_TICKS).is_ok());
+        assert!(overlay_reactivation_ready(255, 20, 15));
     }
 }
 

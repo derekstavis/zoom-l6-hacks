@@ -10,6 +10,7 @@ impl Scenario {
         validate_models(&value.models)?;
         crate::requirements::check_scope(value)?;
         validate_power_steps(value)?;
+        validate_popup_steps(value)?;
         if value.step.iter().any(|step| {
             matches!(
                 step.action,
@@ -3195,6 +3196,70 @@ impl Scenario {
             }
         }
         Ok(())
+    }
+}
+
+/// The popup's baseline and overall deadline belong to one uninterrupted
+/// transaction; each independent observation remains visible in the report.
+fn validate_popup_steps(value: &Scenario) -> Result<(), String> {
+    for model in &value.models {
+        let mut scope: Option<(u8, u32, u64)> = None;
+        for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+            let phase = match step.action {
+                Action::KnobPopupOpen { .. } => Some(0),
+                Action::KnobPopupExpectOpen => Some(1),
+                Action::KnobPopupExpectDisplay => Some(2),
+                Action::KnobPopupExpectValue => Some(3),
+                _ => None,
+            };
+            match (scope, phase) {
+                (None, Some(0)) if *model == l6fw::Model::L6max =>
+                    scope = Some((1, step.guest_timeout_ms, step.wall_timeout_s)),
+                (Some((expected, guest, wall)), Some(actual))
+                    if expected == actual && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => {
+                    scope = if actual == 3 { None } else { Some((actual + 1, guest, wall)) };
+                }
+                (None, None) => (),
+                _ => return Err("knob popup requires ordered open, state, display and value steps with one shared budget".into()),
+            }
+        }
+        if scope.is_some() {
+            return Err("knob popup transaction is incomplete".into());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod popup_transaction_tests {
+    use super::super::Scenario;
+    #[test]
+    fn requires_each_observation_in_order_with_one_budget() {
+        let header = "version=1\nname='popup'\nmodels=['l6max']\nbackends=['headless']\n";
+        let fragment =
+            include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/check.toml");
+        Scenario::from_text(&format!("{header}{fragment}")).unwrap();
+        for action in [
+            "knob-popup-expect-open",
+            "knob-popup-expect-display",
+            "knob-popup-expect-value",
+        ] {
+            let marker = format!("action = \"{action}\"");
+            let at = fragment.find(&marker).unwrap();
+            let start = fragment[..at].rfind("[[step]]").unwrap();
+            let end = fragment[at..]
+                .find("[[step]]")
+                .map_or(fragment.len(), |offset| at + offset);
+            let shortened = format!("{header}{}{}", &fragment[..start], &fragment[end..]);
+            assert!(Scenario::from_text(&shortened).is_err(), "missing {action}");
+        }
+        assert!(
+            Scenario::from_text(&format!(
+                "{header}{}",
+                fragment.replacen("wall_timeout_s = 120", "wall_timeout_s = 119", 1)
+            ))
+            .is_err()
+        );
     }
 }
 

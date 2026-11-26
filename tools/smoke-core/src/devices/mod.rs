@@ -657,6 +657,7 @@ pub enum Operation {
         attempt_guest_ms: u32,
     },
     KnobPopupExpectOpen,
+    KnobPopupExpectDisplay,
     KnobPopupExpectValue,
     CaptureMenu {
         menu: String,

@@ -4774,6 +4774,7 @@ impl State {
             }
             operation @ (Operation::KnobPopupOpen { .. }
             | Operation::KnobPopupExpectOpen
+            | Operation::KnobPopupExpectDisplay
             | Operation::KnobPopupExpectValue) => {
                 self.run_knob_popup(session, operation, guest_timeout_ms, wall_timeout_s)
             }

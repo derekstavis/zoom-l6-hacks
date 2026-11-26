@@ -1881,6 +1881,9 @@ impl Runner {
                 Action::KnobPopupExpectOpen => {
                     return Ok(Progress::Device(devices::Operation::KnobPopupExpectOpen));
                 }
+                Action::KnobPopupExpectDisplay => {
+                    return Ok(Progress::Device(devices::Operation::KnobPopupExpectDisplay));
+                }
                 Action::KnobPopupExpectValue => {
                     return Ok(Progress::Device(devices::Operation::KnobPopupExpectValue));
                 }

@@ -324,6 +324,7 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobDialog
         | Action::KnobPopupOpen { .. }
         | Action::KnobPopupExpectOpen
+        | Action::KnobPopupExpectDisplay
         | Action::KnobPopupExpectValue
         | Action::CaptureMenu { .. }
         | Action::ExpectMenuItems { .. }

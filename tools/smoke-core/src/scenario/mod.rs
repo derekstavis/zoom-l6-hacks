@@ -1028,6 +1028,7 @@ pub enum Action {
         attempt_guest_ms: u32,
     },
     KnobPopupExpectOpen,
+    KnobPopupExpectDisplay,
     KnobPopupExpectValue,
     /// Compare a menu's child titles with `items`. `menu` names a stock menu
     /// (`main`, `project`, `sound-pad`, `mixer` or `system`); `path` then

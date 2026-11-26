@@ -5272,15 +5272,19 @@ impl State {
                 if !popup_active(&snapshot) {
                     return Err(format!("Knob Dialog did not open after turning channel 1 level {:?}: state={:02x?}, slot5={:#010x}", context.turns, &snapshot.state[..2], snapshot.callback).into());
                 }
+                if context.expired(Instant::now(), inputs.panel.snapshot().guest_ms) {
+                    return Err("knob-dialog popup exceeded its shared deadline".into());
+                }
+                Ok(json!({"state": snapshot.state, "callback": snapshot.callback}))
+            }
+            Operation::KnobPopupExpectDisplay => {
                 if session.poll()?.display == context.before {
                     return Err("Knob Dialog opened but the display did not change".into());
                 }
                 if context.expired(Instant::now(), inputs.panel.snapshot().guest_ms) {
                     return Err("knob-dialog popup exceeded its shared deadline".into());
                 }
-                Ok(
-                    json!({"state":snapshot.state,"callback":snapshot.callback,"display_changed":true}),
-                )
+                Ok(json!({"display_changed": true}))
             }
             Operation::KnobPopupExpectValue => {
                 let start = inputs.panel.snapshot().guest_ms;

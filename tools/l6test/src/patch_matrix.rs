@@ -20,8 +20,8 @@
 
 use l6fw::Model;
 use patch_core::{
-    EFFECT_REPLACEMENT_ROUTER_PACKAGE, PackageKind, PatchCategory, PatchPackage,
-    STOCK_EFFECT_SLOTS, patch_catalog, patch_package, resolve_patch_dependencies,
+    patch_catalog, patch_package, resolve_patch_dependencies, PackageKind, PatchCategory,
+    PatchPackage, EFFECT_REPLACEMENT_ROUTER_PACKAGE, STOCK_EFFECT_SLOTS,
 };
 use serde::Deserialize;
 use std::collections::BTreeSet;
@@ -562,18 +562,8 @@ fn menu_checks(
     let plan = menu_plan(combination, all, stock_system_items)?;
     let rows = &plan.rows;
     let items = &plan.items;
-    // Earlier input may have opened a Knob Dialog or notification. Wait for
-    // the reviewed home screen to remain visible before opening the menu.
-    step(
-        text,
-        "action = \"expect-display-image\"\nimage = \"tests/emulator/references/l6max-recorder-home.png\"\nsettle_ms = 500\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
-    );
-    // Menu, then System at main-menu index 7.
-    press(text, "recorder-function-1", 1);
-    step(
-        text,
-        "action = \"expect-display-image\"\nimage = \"tests/smoke/images/l6max-sound-assign/menu-project.png\"\nguest_timeout_ms = 30000\nwall_timeout_s = 300",
-    );
+    // Open the menu from a reviewed, settled recorder screen.
+    include(text, "tests/emulator/fragments/patch-matrix-menu-open.toml");
     step(text, "action = \"capture-menu\"\nmenu = \"system\"");
     step(
         text,
@@ -650,15 +640,10 @@ fn menu_checks(
         cursor = index;
         include(text, action.steps);
         if action.wait_for_dump_notification {
-            // The dump's final file appears before its completion popup
-            // clears. Do not let the next Down press dismiss that popup.
-            step(
+            // The file appears before the completion notification clears.
+            include(
                 text,
-                "action = \"wait-memory\"\nsymbol = \"notification_busy\"\nbytes = [0]\nguest_timeout_ms = 30000\nwall_timeout_s = 120",
-            );
-            step(
-                text,
-                "action = \"wait-memory\"\nsymbol = \"notification_active\"\nbytes = [0]\nguest_timeout_ms = 30000\nwall_timeout_s = 120",
+                "tests/emulator/fragments/patch-matrix-dump-notification-clear.toml",
             );
         }
     }
@@ -1049,6 +1034,62 @@ mod tests {
     use super::*;
 
     #[test]
+    fn matrix_menu_fragments_preserve_original_expanded_steps() {
+        let header =
+            "version = 1\nname = \"test\"\nmodels = [\"l6max\"]\nbackends = [\"headless\"]\n";
+        let cases = [
+            (
+                "tests/emulator/fragments/patch-matrix-menu-open.toml",
+                r#"
+[[step]]
+action = "expect-display-image"
+image = "tests/emulator/references/l6max-recorder-home.png"
+settle_ms = 500
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+[[step]]
+action = "press"
+control = "recorder-function-1"
+[[step]]
+action = "expect-display-image"
+image = "tests/smoke/images/l6max-sound-assign/menu-project.png"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+"#,
+            ),
+            (
+                "tests/emulator/fragments/patch-matrix-dump-notification-clear.toml",
+                r#"
+[[step]]
+action = "wait-memory"
+symbol = "notification_busy"
+bytes = [0]
+guest_timeout_ms = 30000
+wall_timeout_s = 120
+[[step]]
+action = "wait-memory"
+symbol = "notification_active"
+bytes = [0]
+guest_timeout_ms = 30000
+wall_timeout_s = 120
+"#,
+            ),
+        ];
+        for (path, original) in cases {
+            let previous = smoke_core::Scenario::from_text(&format!("{header}{original}")).unwrap();
+            let included = smoke_core::Scenario::from_text(&format!(
+                "{header}\n[[step]]\naction = \"include\"\npath = {path:?}\n"
+            ))
+            .unwrap();
+            assert_eq!(
+                serde_json::to_value(previous.step).unwrap(),
+                serde_json::to_value(included.step).unwrap(),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
     fn effect_slot_plan_represents_stock_and_assigned_slots() {
         let combination = Combination {
             firmware: vec![],
@@ -1088,16 +1129,14 @@ mod tests {
         let plan = menu_plan(&combination, &checks, &menu_checks.stock_system_items).unwrap();
         assert!(plan.rows[0].starts_with("patch-loader "));
         assert_eq!(plan.items[plan.patches_index], "Patches");
-        assert!(
-            plan.rows
-                .iter()
-                .any(|row| row.starts_with("dump-rom ") && !row.ends_with(" (SD)"))
-        );
-        assert!(
-            plan.rows
-                .iter()
-                .any(|row| row.starts_with("midi-sync ") && row.ends_with(" (SD)"))
-        );
+        assert!(plan
+            .rows
+            .iter()
+            .any(|row| row.starts_with("dump-rom ") && !row.ends_with(" (SD)")));
+        assert!(plan
+            .rows
+            .iter()
+            .any(|row| row.starts_with("midi-sync ") && row.ends_with(" (SD)")));
         assert_eq!(plan.actions.len(), 2);
         let dump = &plan.actions[0];
         let midi = &plan.actions[1];
@@ -1226,17 +1265,13 @@ mod tests {
         // such set.
         assert_eq!(l6max.len(), (18 + 8 * 6) * 3 - 1);
         assert_eq!(combinations(Model::L6).unwrap().len(), 2);
-        assert!(
-            l6max
-                .iter()
-                .all(|c| !(c.firmware.contains(&"dump-rom".into())
-                    && !c.firmware.contains(&"menu-loader".into())))
-        );
-        assert!(
-            l6max
-                .iter()
-                .all(|c| c.effects.is_empty() || c.sd.contains(&"knob-dialog".into()))
-        );
+        assert!(l6max
+            .iter()
+            .all(|c| !(c.firmware.contains(&"dump-rom".into())
+                && !c.firmware.contains(&"menu-loader".into()))));
+        assert!(l6max
+            .iter()
+            .all(|c| c.effects.is_empty() || c.sd.contains(&"knob-dialog".into())));
     }
 
     #[test]

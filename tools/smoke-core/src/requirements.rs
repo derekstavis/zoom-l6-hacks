@@ -84,12 +84,44 @@ pub fn of(action: &Action) -> Requirement {
         Action::L6maxRecorderPlayback { .. }
         | Action::L6maxInputTiming
         | Action::L6maxPanelKeyMap
-        | Action::L6maxDinMixerControl { .. }
+        | Action::MidiProbeBegin
+        | Action::MidiProbeSendCc { .. }
+        | Action::MidiProbeExpectRing { .. }
+        | Action::MidiProbeWaitRingStable { .. }
+        | Action::MidiProbeDrainAndTap { .. }
+        | Action::MidiProbeExpectNoEvents { .. }
+        | Action::MidiProbeEnd
+        | Action::KnobDialogReady
+        | Action::KnobDialogGuard
+        | Action::KnobDialogBaseline
+        | Action::KnobDialogPreflightBegin
+        | Action::KnobDialogPreflightDescriptor
+        | Action::KnobDialogPreflightTextAlias
+        | Action::KnobDialogPreflightLayerCollision
+        | Action::KnobDialogPreflightWidgetLayer
+        | Action::KnobDialogPreflightBackgroundLayer
+        | Action::KnobDialogCallbackRace
+        | Action::KnobDialogFirstActivation
+        | Action::KnobDialogActiveDisplay
+        | Action::KnobDialogLevelDemo
+        | Action::KnobDialogTaskContexts
+        | Action::KnobDialogOverlayInvariants
+        | Action::KnobDialogBitmapZero
+        | Action::KnobDialogActiveOverlay
+        | Action::KnobDialogLockedUpdate
+        | Action::KnobDialogModeBegin { .. }
+        | Action::WaitKnobParameterMode { .. }
+        | Action::KnobDialogExpectHeap
+        | Action::KnobDialogModeEnd
+        | Action::CaptureDisplay { .. }
+        | Action::ExpectCapturedDisplayImage { .. }
         | Action::KnobDialog
-        | Action::KnobDialogPopup
+        | Action::KnobPopupOpen { .. }
+        | Action::KnobPopupExpectOpen
+        | Action::KnobPopupExpectValue
         | Action::ExpectMenu { .. }
         | Action::WaitEffectMode { .. } => on(L6MAX),
-        Action::PressDisplayChange { .. } => Requirement {
+        Action::ExpectDisplayAfterPress => Requirement {
             models: L6MAX,
             ..ANY
         },
@@ -98,8 +130,21 @@ pub fn of(action: &Action) -> Requirement {
         | Action::UsbStorage
         | Action::UsbMidi { .. }
         | Action::HostMidiRoundTrip
+        | Action::HostMidiConnect
+        | Action::HostMidiBegin
+        | Action::HostMidiSyncBegin
+        | Action::HostMidiExpectSync
+        | Action::HostMidiDrain { .. }
+        | Action::HostMidiExpectCount { .. }
+        | Action::HostMidiEnd
+        | Action::EnqueueEncoder { .. }
+        | Action::EnqueueTap { .. }
+        | Action::WaitInputApplied
+        | Action::HostMidiExpectCc { .. }
+        | Action::HostMidiSettle { .. }
+        | Action::HostMidiSendCc { .. }
+        | Action::ExpectRingChanged { .. }
         | Action::DirectUsbMidiRoundTrip { .. }
-        | Action::HostMidiSync { .. }
         | Action::L6MidiSync
         | Action::L6MidiRingPinSweep { .. }
         | Action::L6MidiMuteIndicators

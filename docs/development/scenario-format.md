@@ -82,7 +82,7 @@ card-reader mode), stays unmarked.
 | Action | Fields | Meaning |
 | --- | --- | --- |
 | `wait` | `until = "boot-ready"`, `"mixer-ready"`, `"panel-settled"`, `"sd-patch-loaded"` or `"sd-patch-empty"` | Boot waits for the full LED sweep, then an L6 mode lamp or L6max pixels; prepared mixer readiness requires nonzero values on every visible ring and, on L6, a lit mode lamp; settling waits for one guest second of unchanged output; SD readiness waits for either the loader’s successful claim after installation or its completed scan without a module. Both use 10 guest seconds, 180 wall seconds and 10 ms wall-time polling. A separate assertion must check the expected module state or behavior |
-| `press-display-change` | `control` | Press an L6max control, wait for its acknowledgement and for the display to change from its pre-press state. Use a reviewed image assertion when verifying a specific screen |
+| `expect-display-after-press` | — | Wait for the L6max display to change from the preceding press's baseline, within that press's original guest and wall deadlines. Use a reviewed image assertion when verifying a specific screen |
 | `wait-effect-mode` | `panel_mode`, `edit_mode` (at least one) | Wait for the loaded L6max effect module’s published editor state, bounded by 10 guest seconds and 180 wall seconds with 10 ms wall-time polling |
 | `wait-recorded-files` | `files` | Wait for each named WAV in the newest recorder project to have a complete RIFF container and at least two seconds of audio (20 guest seconds maximum, 180 wall seconds maximum, 100 ms wall-time polling). Check the audio contents separately |
 | `wait-audio-input` | `playing`, `min_ms`, `max_ms` | Wait for the input transport’s reported state and position, bounded by 10 guest seconds and 180 wall seconds with 10 ms wall-time polling |
@@ -153,15 +153,67 @@ devices require `backends = ["headless"]`; a scenario that names another backend
 is rejected when it loads.
 `trace_sd = true` enables SD trace instrumentation (also enabled by `sd-card`).
 
+Native MIDI steps retain one session and its receive queue across steps. `host-midi-connect`
+starts the first bounded transaction. A ring assertion with `midi_transaction = true`
+uses the last CC send as its deadline anchor; a plain ring assertion is
+independent. `host-midi-end` completes the transaction without closing the
+session, and `host-midi-begin` starts another transaction on that session.
+Receive, settle, and send steps require an active transaction. Encoder input channels are one-based; MIDI channels use the zero-based wire convention,
+matching `l6ctl midi`. `enqueue-encoder` reports enqueueing without waiting for
+the normal encoder acknowledgment, and `expect-ring-changed` compares a named
+checkpoint without requiring encoder reports. A native MIDI session cannot share
+USB endpoints with direct USB operations in the same scenario. The existing
+L6max DIN mixer setup uses direct USB descriptors and SysEx, so it cannot be
+combined with the native bridge in one scenario under this policy. The migrated
+`host-midi` case enqueues one explicit -4 turn; repeated legacy round trips still
+alternate direction. Typed MIDI receive filters non-CC ALSA events. Connection
+retries honor the shared guest and wall limits while retaining the independent
+10-second discovery cap. Ring observations at or after the declared wall deadline
+fail even if the ring changed by that observation.
+
+The L6max mixer/DIN cases use a separate `midi-probe-begin` / `midi-probe-end`
+transaction. It owns a namespaced native DIN session and either reuses the
+preceding native mixer session or owns direct USB cable 1. All probe steps use
+the same guest/wall timeouts as the begin step; the total deadline starts before
+endpoint discovery. No unrelated device operation may interrupt the sequence.
+The probe releases its own sessions on completion, failure or restart, without
+discarding an earlier mixer session. DIN receive uses the existing legacy
+control-observation behavior, including its documented ALSA limitations.
+
+`midi-probe-send-cc` captures the declared ring channel immediately before the
+stimulus. `midi-probe-expect-ring` compares against that capture, with its wall
+window anchored to the send; a negative result requires the whole declared
+guest window. For parity with the former mixer/DIN action, a ring change is
+considered before that phase's deadline; the enclosing transaction deadline
+still applies. `midi-probe-wait-ring-stable` anchors its wall limit to the same
+send and restarts its guest-time stability clock whenever the ring changes.
+`midi-probe-expect-no-events` observes until the wall deadline anchored to the
+preceding `midi-probe-drain-and-tap`; it fails if that interval already elapsed before
+the observation starts. It also drains the receive queue at the boundary so
+messages from the final polling gap cannot be missed. Native MIDI observations
+have no event timestamps, so the boundary drain may conservatively count a
+message delivered just after the interval.
+
 | Action | Fields | Contract |
 | --- | --- | --- |
 | `sd-card` | `inserted` | QMP removal or insertion of the case's copied card |
 | `usb-descriptors` | — | Validate device/configuration descriptors and SET_CONFIGURATION |
 | `usb-midi` | `value` | Require the preceding encoder input's model-mapped channel-1 CC on USB MIDI IN, then send that CC with `value` |
 | `host-midi-round-trip` | — | Verify host MIDI input/output delivery through the configured host MIDI backend |
+| `host-midi-connect` | — | Connect the model's native mixer endpoint and start the first MIDI transaction |
+| `host-midi-drain` | `quiet_wall_ms` | Drain the retained native session until no legacy control observation arrives for the declared wall interval, within the transaction budget |
+| `host-midi-expect-count` | `count` | Collect that many legacy control observations on the retained native session; preserve their order and remaining queue |
+| `host-midi-begin` | — | Start a new bounded transaction on the retained session |
+| `host-midi-end` | — | End the active transaction while retaining the session and its queue |
+| `enqueue-encoder` | `channel`, `steps`, optional `midi_transaction` | Enqueue an encoder input without waiting for guest acknowledgment; optionally enforce the active MIDI budget |
+| `host-midi-expect-cc` | `channel`, `controller` | Wait for a matching CC on the retained native session |
+| `host-midi-settle` | `guest_ms` | Allow guest time to pass within the shared MIDI deadline |
+| `host-midi-send-cc` | `channel`, `controller`, `value` | Send a CC through the retained native session |
+| `expect-ring-changed` | `channel`, `checkpoint`, optional `midi_transaction` | Wait for a ring to differ from a named checkpoint; when `midi_transaction` is true, anchor its deadline at the MIDI send |
 | `direct-usb-midi-round-trip` | optional `cable` (0–15), `expect_ring_change` (defaults to true) | Check the encoder report and channel-1 mixer CC on a selected USB MIDI cable; set `expect_ring_change = false` to verify other cables are ignored |
 | `l6-din-usb-forwarding` | — | Verify L6 DIN-to-USB forwarding behavior |
-| `host-midi-sync` | optional `request` (default `true`) | Send the CC 127 state request on the client of a preceding round trip and collect the model's full Control Change reply. With `request = false`, only collect a reply to a request made another way, such as the **Send MIDI State** menu item |
+| `host-midi-sync-begin` | — | Capture the L6 MIDI map and configured channel, or the L6max reply count, using a retained MIDI session. Begin the shared guest deadline. |
+| `host-midi-expect-sync` | — | Assert the captured L6 channel and CC multiset, including duplicate mappings, or 94 L6max Control Change replies. Follow with `host-midi-end`. |
 | `l6-midi-sync` | — | Exercise the L6 MIDI synchronization path |
 | `l6-midi-ring-pin-sweep` | `cc` | Sweep L6 MIDI CC values and compare ring-pin output |
 | `l6-midi-mute-indicators` | — | Check L6 MIDI mute-indicator responses |
@@ -174,11 +226,41 @@ is rejected when it loads.
 | `wasm-patch` | — | Exercise a generated WebAssembly patch package through the firmware update path |
 | `l6-recorder-playback` | `target` | L6 only; GDB verifies event `0x20`, handler acceptance, and the mode-0 callback on MAIN target 4; after five guest seconds it requires a changed SAI1 TX signature and sample data in the channel-14 TCD source. Requires a mode-0 state, valid `MASTER.WAV`, GDB support, and `L6_AUDIO_SAMPLE_TRACE=1` |
 | `l6max-recorder-playback` | `target` | L6max only, MAIN target 4; GDB verifies Play event `0x2c`, event dispatch, callback slot 2, and the recorder action, then requires nonzero changed SAI1 TX windows and sample data in channel-14's TCD source. Requires a prepared playable recording, GDB support, and `L6_AUDIO_SAMPLE_TRACE=1` |
-| `l6max-din-mixer-control` | `expect_din_ring_change` | With Mixer Control via MIDI on, set by editor SysEx or a state, verify USB mixer control, stock/patched DIN response, and DIN mute-echo suppression. The USB reference uses the client of a preceding round trip when there is one, else USB cable 1 directly |
+| `midi-probe-begin` / `midi-probe-end` | — | Open/close a bounded L6max mixer/DIN observation; retain any previously opened native mixer session |
+| `midi-probe-send-cc` | `port`, `channel`, `controller`, `value`, `capture_ring_channel` | Capture the ring immediately before sending on `mixer` or `din` |
+| `midi-probe-expect-ring` | `channel`, `changed`, optional `guest_ms`, `wall_ms` | Observe change or a full unchanged guest window, anchored to the preceding send |
+| `midi-probe-wait-ring-stable` | `channel`, `guest_ms`, `wall_ms` | Require a ring to remain unchanged for guest time, bounded by wall time since the send |
+| `midi-probe-drain-and-tap` | `port`, `target`, `hold_ms` | Drain queued legacy control observations and immediately enqueue a tap to anchor the following wall-time observation |
+| `midi-probe-expect-no-events` | `port`, `wall_ms` | Observe the selected session for the complete wall-time interval after the tap |
 | `usb-storage` | — | Enumerate storage, compare sector zero to the copied card, round-trip its last sector, then create/read/compare/delete a 1,537-byte FAT file through the USB disk |
 | `audio-callbacks` | — | First step only; arm revision-guarded breakpoints before boot and require every model callback |
+| `knob-dialog-ready` | — | Wait for the L6max recorder window, idle notification state and reviewed transport-control pixels before `knob-dialog-guard`; all steps use matching deadlines shared across the sequence |
+| `knob-dialog-guard` | — | Verify first-use rejection outside the recorder screen and return to the recorder; retain a screenshot and read state while QEMU is stopped |
+| `knob-dialog-baseline` | — | Select level mode and capture the baseline frame for the later race check |
+| `knob-dialog-preflight-begin` | — | Capture the original descriptors, resources and heap, and open the debugger for the following five probes |
+| `knob-dialog-preflight-descriptor` | — | Verify first use rejects a changed widget descriptor |
+| `knob-dialog-preflight-text-alias` | — | Verify first use rejects a conflicting text resource |
+| `knob-dialog-preflight-layer-collision` | — | Verify first use rejects a conflicting scene layer |
+| `knob-dialog-preflight-widget-layer` | — | Verify first use rejects a changed widget layer |
+| `knob-dialog-preflight-background-layer` | — | Verify first use rejects a changed background layer |
+| `knob-dialog-callback-race` | — | Verify callback-side preflight rejects descriptor drift while retaining the notification semaphore in the owned debugger context |
+| `knob-dialog-first-activation` | — | Wait for the display callback to return, then verify first activation and restore the notification semaphore |
+| `knob-dialog-active-display` | — | Turn the knob, capture the active display and preserve its frame and callback pointer |
+| `knob-dialog-level-demo` | — | Capture the bounded level sweep to at least 69% and back to 0% |
+| `knob-dialog-task-contexts` | — | Verify the input hook and display callback run in different FreeRTOS tasks, retaining their task IDs as evidence |
+| `knob-dialog-overlay-invariants` | — | Check the active window, borrowed descriptors, background pixels and heap against the saved baseline |
+| `knob-dialog-bitmap-zero` | — | Verify bitmap ID 0 safely short-circuits an injected display-task draw |
+| `knob-dialog-active-overlay` | — | Check the rendered value and stable overlay pixels after the bitmap probe |
+| `knob-dialog-locked-update` | — | Verify the dialog consumes and displays a level update while the notification semaphore is held, then restore the lock and check the mailbox |
+| `knob-dialog-mode-begin` / `knob-dialog-mode-end` | `scene` on begin | Scope each declared recorder scene inside the owned debugger transaction and its overall deadline. The subsequent Pan sweep requires the final declared parameter mode to be 8. |
+| `enqueue-tap` / `wait-input-applied` | `target`, `hold_ms` on enqueue | Enqueue a tap and wait for one aggregate APPLIED counter increment on the routed input channel, with a 10-second wall deadline. An increment is not proof of which client caused it. |
+| `wait-knob-parameter-mode` | `mode` | Wait for the guarded parameter selector with its 10,000-guest-ms / 180-second wall caps. |
+| `capture-display` / `expect-captured-display-image` | `guest_ms`, `artifact` / `image` | Capture a frame after the requested guest duration, then compare that exact frame once with a reviewed PNG and write its named artifact. |
+| `knob-dialog-expect-heap` | — | Compare allocation and free counters with the active-dialog baseline. The bounded mode walk validates the 1.10 allocator once; images replacing that allocator are rejected. |
 | `knob-dialog` | — | Patched L6max only; compare all ten parameter scenes with reviewed display images, then verify heap lifetime, busy-aware expiry, display cleanup, widget restoration and exact encoder reports |
-| `knob-dialog-popup` | — | L6max with Knob Dialog, on the recorder screen; turn the channel 1 level knob and require the dialog's state, display callback and value text for the new level, then let the window close |
+| `knob-popup-open` | `first_steps`, `fallback_steps`, `attempt_guest_ms` | On the L6max recorder screen, try the channel 1 level knob by `first_steps`, then by `fallback_steps` if the popup does not open within `attempt_guest_ms`; retain the initial display and level as evidence |
+| `knob-popup-expect-open` | — | Require the dialog signature, callback and a changed display under the shared popup deadline |
+| `knob-popup-expect-value` | — | Require the rendered channel 1 level text and changed mixer value under the shared popup deadline; unlike the original monolithic action, fail promptly when its overall step deadline expires |
 | `expect-menu` | `menu`, optional `path`, `items` | L6max; read a menu's children from guest memory and require exactly the titles in `items`. `menu` is `main`, `project`, `sound-pad`, `mixer` or `system`; `path` descends through child titles. Menu Loader adds its rows when the menu is first entered |
 | `effect-replacement-state` | optional `expected_effect_type`, `expected_processor_type`, `expected_effect`, `require_output`, `wait_for_slot` and other module fields | L6max effect replacement bundle; compare the selected stock slot and the loader's state with the expectations. `expected_effect` is the effect ID running in the selected slot; `require_output` requires that slot's replacement to have produced nonzero output; `wait_for_slot` waits for the selected slot and processor and, when output is required, a fresh nonzero output count |
 | `firmware-update` | — | L6 and L6max disposable-state update lifecycle, corrupt-checksum rejection, NOR segment install, L6max panel programming, protected-region preservation and clean restart; an `update_patches` package additionally checks model-specific post-install behavior |
@@ -274,3 +356,5 @@ Mapping scenarios use `changed = true` because presets and firmware processing
 can change the numerical value associated with detents. Use `mask` when an exact
 value is established by the state and firmware. Reverse movement in the
 quick scenario must restore channel 2's known initial mask `0x001`.
+
+The MIDI state request fragment begins a sync scope, drains until 500 ms of wall-time quiet, sends CC 127/127, asserts the reply, then ends the scope. The System menu fragment begins and asserts without a drain or request so a response queued by the menu action is preserved. Guest time is measured from scope start; the reply wall deadline begins after the send, or after preparation for a menu response. The shared guest and wall deadlines also bound preparation, the quiet drain and request.

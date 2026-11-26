@@ -280,7 +280,10 @@ fn build_fixture(
             }
         }
         let runnable = if spec_state {
-            scenario.clone().without_setup_input()
+            scenario
+                .clone()
+                .without_setup_input()
+                .map_err(|error| failed(format!("invalid scenario after setup pruning: {error}")))?
         } else {
             scenario.clone()
         };

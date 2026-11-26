@@ -1,0 +1,590 @@
+[[step]]
+action = "knob-dialog-mode-begin"
+scene = "level"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-tap"
+target = 35
+hold_ms = 50
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-knob-parameter-mode"
+mode = 9
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-encoder"
+channel = 1
+steps = 1
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "capture-display"
+guest_ms = 400
+artifact = "window-scene-level"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "expect-captured-display-image"
+image = "patches/knob-dialog/tests/emulator/references/level.png"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-expect-heap"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-mode-end"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-mode-begin"
+scene = "high"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-tap"
+target = 28
+hold_ms = 50
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-knob-parameter-mode"
+mode = 0
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-encoder"
+channel = 1
+steps = 1
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "capture-display"
+guest_ms = 400
+artifact = "window-scene-high"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "expect-captured-display-image"
+image = "patches/knob-dialog/tests/emulator/references/high.png"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-expect-heap"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-mode-end"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-mode-begin"
+scene = "freq"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-tap"
+target = 33
+hold_ms = 50
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-knob-parameter-mode"
+mode = 1
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-encoder"
+channel = 1
+steps = 1
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "capture-display"
+guest_ms = 400
+artifact = "window-scene-freq"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "expect-captured-display-image"
+image = "patches/knob-dialog/tests/emulator/references/freq.png"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-expect-heap"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-mode-end"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-mode-begin"
+scene = "mid"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-tap"
+target = 38
+hold_ms = 50
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-knob-parameter-mode"
+mode = 2
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-encoder"
+channel = 1
+steps = 1
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "capture-display"
+guest_ms = 400
+artifact = "window-scene-mid"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "expect-captured-display-image"
+image = "patches/knob-dialog/tests/emulator/references/mid.png"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-expect-heap"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-mode-end"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-mode-begin"
+scene = "low"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-tap"
+target = 43
+hold_ms = 50
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-knob-parameter-mode"
+mode = 3
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-encoder"
+channel = 1
+steps = 1
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "capture-display"
+guest_ms = 400
+artifact = "window-scene-low"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "expect-captured-display-image"
+image = "patches/knob-dialog/tests/emulator/references/low.png"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-expect-heap"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-mode-end"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-mode-begin"
+scene = "aux1"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-tap"
+target = 10
+hold_ms = 50
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-knob-parameter-mode"
+mode = 4
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-encoder"
+channel = 1
+steps = 1
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "capture-display"
+guest_ms = 400
+artifact = "window-scene-aux1"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "expect-captured-display-image"
+image = "patches/knob-dialog/tests/emulator/references/aux1.png"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-expect-heap"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-mode-end"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-mode-begin"
+scene = "aux2"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-tap"
+target = 15
+hold_ms = 50
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-knob-parameter-mode"
+mode = 5
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-encoder"
+channel = 1
+steps = 1
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "capture-display"
+guest_ms = 400
+artifact = "window-scene-aux2"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "expect-captured-display-image"
+image = "patches/knob-dialog/tests/emulator/references/aux2.png"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-expect-heap"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-mode-end"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-mode-begin"
+scene = "efx"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-tap"
+target = 20
+hold_ms = 50
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-knob-parameter-mode"
+mode = 6
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-encoder"
+channel = 1
+steps = 1
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "capture-display"
+guest_ms = 400
+artifact = "window-scene-efx"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "expect-captured-display-image"
+image = "patches/knob-dialog/tests/emulator/references/efx.png"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-expect-heap"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-mode-end"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-mode-begin"
+scene = "sub-mix"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-tap"
+target = 25
+hold_ms = 50
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-knob-parameter-mode"
+mode = 7
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-encoder"
+channel = 1
+steps = 1
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "capture-display"
+guest_ms = 400
+artifact = "window-scene-sub-mix"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "expect-captured-display-image"
+image = "patches/knob-dialog/tests/emulator/references/sub-mix.png"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-expect-heap"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-mode-end"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-mode-begin"
+scene = "pan"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-tap"
+target = 30
+hold_ms = 50
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-knob-parameter-mode"
+mode = 8
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-encoder"
+channel = 1
+steps = 1
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "capture-display"
+guest_ms = 400
+artifact = "window-scene-pan"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "expect-captured-display-image"
+image = "patches/knob-dialog/tests/emulator/references/pan.png"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-expect-heap"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-mode-end"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+

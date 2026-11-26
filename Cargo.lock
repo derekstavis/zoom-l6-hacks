@@ -3517,6 +3517,7 @@ version = "0.1.0"
 dependencies = [
  "l6fw",
  "l6max-host",
+ "serde",
  "serde_json",
 ]
 
@@ -6532,10 +6533,9 @@ name = "smoke-core"
 version = "0.1.0"
 dependencies = [
  "aho-corasick",
- "alsa",
- "coremidi",
  "firmware-api",
  "image",
+ "l6ctl",
  "l6fw",
  "l6max-diagnostics",
  "l6max-host",

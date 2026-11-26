@@ -75,6 +75,8 @@ pub struct Runner {
     dispatched: bool,
     baseline: Option<Observation>,
     last_command: Option<Command>,
+    /// The previous press's start and budgets, shared with its display check.
+    last_press_deadline: Option<(Instant, u32, u64, u32)>,
     startup: BootReadiness,
     trace: TraceCursor,
     trace_path: PathBuf,
@@ -165,6 +167,7 @@ impl Runner {
             dispatched: false,
             baseline: None,
             last_command: None,
+            last_press_deadline: None,
             startup: BootReadiness::new(no_setup_screens),
             trace,
             history: Default::default(),
@@ -181,9 +184,12 @@ impl Runner {
             progress,
         })
     }
+    /// Advance the scenario. After `Complete`, the adapter must call `finish`
+    /// only after its own cleanup and result checks succeed.
     pub fn tick(&mut self, data: PanelData, inputs: &InputHub) -> Result<Progress, String> {
         self.tick_observation(data, inputs.main.snapshot(), inputs.panel.snapshot())
     }
+    /// Advance without input; completion has the same explicit `finish` contract as `tick`.
     pub fn tick_without_input(&mut self, data: PanelData) -> Result<Progress, String> {
         let guest_ms = self.last.as_ref().map_or(0, |last| last.panel.guest_ms);
         let status = l6max_host::input::InputStatus {
@@ -297,8 +303,9 @@ impl Runner {
                 (now, obs.panel.guest_ms)
             });
             let elapsed = obs.panel.guest_ms.wrapping_sub(guest_start);
-            if now.duration_since(entered) > Duration::from_secs(step.wall_timeout_s)
-                || elapsed > step.guest_timeout_ms
+            if !matches!(step.action, Action::ExpectDisplayAfterPress)
+                && (now.duration_since(entered) > Duration::from_secs(step.wall_timeout_s)
+                    || elapsed > step.guest_timeout_ms)
             {
                 if let Action::ExpectDisplayImage { image, .. } = &step.action {
                     let path = crate::scenario::spec_path(image)?;
@@ -478,8 +485,143 @@ impl Runner {
                 Action::UsbMidi { value } => {
                     return Ok(Progress::Device(devices::Operation::UsbMidi { value }));
                 }
+                Action::HostMidiConnect => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiConnect));
+                }
+                Action::HostMidiDrain { quiet_wall_ms } => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiDrain {
+                        quiet_wall_ms,
+                    }));
+                }
+                Action::HostMidiExpectCount { count } => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiExpectCount {
+                        count,
+                    }));
+                }
+                Action::HostMidiBegin => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiBegin));
+                }
+                Action::HostMidiEnd => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiEnd));
+                }
+                Action::EnqueueEncoder {
+                    channel,
+                    steps,
+                    midi_transaction,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::EnqueueEncoder {
+                        channel,
+                        steps,
+                        midi_transaction,
+                    }));
+                }
+                Action::HostMidiExpectCc {
+                    channel,
+                    controller,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiExpectCc {
+                        channel,
+                        controller,
+                    }));
+                }
+                Action::HostMidiSettle { guest_ms } => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiSettle {
+                        guest_ms,
+                    }));
+                }
+                Action::HostMidiSendCc {
+                    channel,
+                    controller,
+                    value,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiSendCc {
+                        channel,
+                        controller,
+                        value,
+                    }));
+                }
+                Action::ExpectRingChanged {
+                    channel,
+                    checkpoint,
+                    midi_transaction,
+                } => {
+                    let before = self
+                        .checkpoints
+                        .get(&checkpoint)
+                        .ok_or("checkpoint not executed for this model")?
+                        .data
+                        .indicators;
+                    return Ok(Progress::Device(devices::Operation::ExpectRingChanged {
+                        channel,
+                        before,
+                        midi_transaction,
+                    }));
+                }
                 Action::HostMidiRoundTrip => {
                     return Ok(Progress::Device(devices::Operation::HostMidiRoundTrip));
+                }
+                Action::MidiProbeBegin => {
+                    return Ok(Progress::Device(devices::Operation::MidiProbeBegin));
+                }
+                Action::MidiProbeSendCc {
+                    port,
+                    channel,
+                    controller,
+                    value,
+                    capture_ring_channel,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::MidiProbeSendCc {
+                        port,
+                        channel,
+                        controller,
+                        value,
+                        capture_ring_channel,
+                    }));
+                }
+                Action::MidiProbeExpectRing {
+                    channel,
+                    changed,
+                    guest_ms,
+                    wall_ms,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::MidiProbeExpectRing {
+                        channel,
+                        changed,
+                        guest_ms,
+                        wall_ms,
+                    }));
+                }
+                Action::MidiProbeWaitRingStable {
+                    channel,
+                    guest_ms,
+                    wall_ms,
+                } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::MidiProbeWaitRingStable {
+                            channel,
+                            guest_ms,
+                            wall_ms,
+                        },
+                    ));
+                }
+                Action::MidiProbeDrainAndTap {
+                    port,
+                    target,
+                    hold_ms,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::MidiProbeDrainAndTap {
+                        port,
+                        target,
+                        hold_ms,
+                    }));
+                }
+                Action::MidiProbeExpectNoEvents { port, wall_ms } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::MidiProbeExpectNoEvents { port, wall_ms },
+                    ));
+                }
+                Action::MidiProbeEnd => {
+                    return Ok(Progress::Device(devices::Operation::MidiProbeEnd));
                 }
                 Action::DirectUsbMidiRoundTrip {
                     cable,
@@ -492,20 +634,14 @@ impl Runner {
                         },
                     ));
                 }
-                Action::L6maxDinMixerControl {
-                    expect_din_ring_change,
-                } => {
-                    return Ok(Progress::Device(devices::Operation::L6maxDinMixerControl {
-                        expect_din_ring_change,
-                    }));
-                }
                 Action::L6DinUsbForwarding => {
                     return Ok(Progress::Device(devices::Operation::L6DinUsbForwarding));
                 }
-                Action::HostMidiSync { request } => {
-                    return Ok(Progress::Device(devices::Operation::HostMidiSync {
-                        request,
-                    }));
+                Action::HostMidiSyncBegin => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiSyncBegin));
+                }
+                Action::HostMidiExpectSync => {
+                    return Ok(Progress::Device(devices::Operation::HostMidiExpectSync));
                 }
                 Action::L6MidiSync => {
                     return Ok(Progress::Device(devices::Operation::L6MidiSync));
@@ -690,11 +826,137 @@ impl Runner {
                 Action::AudioCallbacks => {
                     return Ok(Progress::Device(devices::Operation::AudioCallbacks));
                 }
+                Action::KnobDialogReady => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogReady));
+                }
+                Action::KnobDialogGuard => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogGuard));
+                }
+                Action::KnobDialogBaseline => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogBaseline));
+                }
+                Action::KnobDialogPreflightBegin => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogPreflightBegin,
+                    ));
+                }
+                Action::KnobDialogPreflightDescriptor => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogPreflightDescriptor,
+                    ));
+                }
+                Action::KnobDialogPreflightTextAlias => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogPreflightTextAlias,
+                    ));
+                }
+                Action::KnobDialogPreflightLayerCollision => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogPreflightLayerCollision,
+                    ));
+                }
+                Action::KnobDialogPreflightWidgetLayer => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogPreflightWidgetLayer,
+                    ));
+                }
+                Action::KnobDialogPreflightBackgroundLayer => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogPreflightBackgroundLayer,
+                    ));
+                }
+                Action::KnobDialogCallbackRace => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogCallbackRace));
+                }
+                Action::KnobDialogFirstActivation => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogFirstActivation,
+                    ));
+                }
+                Action::KnobDialogActiveDisplay => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogActiveDisplay,
+                    ));
+                }
+                Action::KnobDialogLevelDemo => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogLevelDemo));
+                }
+                Action::KnobDialogTaskContexts => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogTaskContexts));
+                }
+                Action::KnobDialogOverlayInvariants => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogOverlayInvariants,
+                    ));
+                }
+                Action::KnobDialogBitmapZero => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogBitmapZero));
+                }
+                Action::KnobDialogActiveOverlay => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogActiveOverlay,
+                    ));
+                }
+                Action::KnobDialogLockedUpdate => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogLockedUpdate));
+                }
+                Action::KnobDialogModeBegin { scene } => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogModeBegin {
+                        scene: scene.clone(),
+                    }));
+                }
+                Action::EnqueueTap { target, hold_ms } => {
+                    return Ok(Progress::Device(devices::Operation::EnqueueTap {
+                        target,
+                        hold_ms,
+                    }));
+                }
+                Action::WaitInputApplied => {
+                    return Ok(Progress::Device(devices::Operation::WaitInputApplied));
+                }
+                Action::WaitKnobParameterMode { mode } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::WaitKnobParameterMode { mode },
+                    ));
+                }
+                Action::CaptureDisplay { guest_ms, artifact } => {
+                    return Ok(Progress::Device(devices::Operation::CaptureDisplay {
+                        guest_ms,
+                        artifact: artifact.clone(),
+                    }));
+                }
+                Action::ExpectCapturedDisplayImage { image } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectCapturedDisplayImage {
+                            image: image.clone(),
+                        },
+                    ));
+                }
+                Action::KnobDialogExpectHeap => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogExpectHeap));
+                }
+                Action::KnobDialogModeEnd => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogModeEnd));
+                }
                 Action::KnobDialog => {
                     return Ok(Progress::Device(devices::Operation::KnobDialog));
                 }
-                Action::KnobDialogPopup => {
-                    return Ok(Progress::Device(devices::Operation::KnobDialogPopup));
+                Action::KnobPopupOpen {
+                    first_steps,
+                    fallback_steps,
+                    attempt_guest_ms,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::KnobPopupOpen {
+                        first_steps,
+                        fallback_steps,
+                        attempt_guest_ms,
+                    }));
+                }
+                Action::KnobPopupExpectOpen => {
+                    return Ok(Progress::Device(devices::Operation::KnobPopupExpectOpen));
+                }
+                Action::KnobPopupExpectValue => {
+                    return Ok(Progress::Device(devices::Operation::KnobPopupExpectValue));
                 }
                 Action::ExpectMenu { menu, path, items } => {
                     return Ok(Progress::Device(devices::Operation::ExpectMenu {
@@ -916,14 +1178,22 @@ impl Runner {
                         && obs.data.switches[control_target(self.model, &control)? as usize]
                             == enabled
                 }
-                Action::PressDisplayChange { control } => {
-                    if !self.dispatched {
-                        return self.dispatch(
-                            Command::Press {
-                                target: control_target(self.model, &control)?,
-                            },
-                            obs,
-                        );
+                Action::ExpectDisplayAfterPress => {
+                    let (press_started, press_guest, wall_timeout, guest_timeout) = self
+                        .last_press_deadline
+                        .ok_or("display change requires a preceding press")?;
+                    if !matches!(self.last_command, Some(Command::Press { .. })) {
+                        return Err("display change requires a preceding press".into());
+                    }
+                    if now.duration_since(press_started) > Duration::from_secs(wall_timeout)
+                        || obs.panel.guest_ms.wrapping_sub(press_guest) > guest_timeout
+                    {
+                        return Err(format!(
+                            "step {} timed out: display did not change before the press deadline; observed {}; startup={:?}",
+                            self.step + 1,
+                            obs.summary(),
+                            self.startup
+                        ));
                     }
                     self.acknowledged(&obs)?
                         && self
@@ -1274,7 +1544,6 @@ impl Runner {
             self.dispatched = false;
             self.scene_save = None;
         }
-        self.finish("PASS", None)?;
         Ok(Progress::Complete)
     }
     fn encoder_reports_ready(&self, obs: &Observation) -> Result<bool, String> {
@@ -1305,6 +1574,7 @@ impl Runner {
         self.startup = BootReadiness::new(self.scenario.spec_state);
         self.entered = None;
         self.settling = None;
+        self.last_press_deadline = None;
         self.panel_quiet = None;
         self.ring_quiet = None;
         self.last_report_guest = 0;
@@ -1333,6 +1603,17 @@ impl Runner {
         self.dispatched = false;
     }
     fn dispatch(&mut self, command: Command, obs: Observation) -> Result<Progress, String> {
+        self.last_press_deadline = match (
+            &command,
+            &self.scenario.step[self.step].action,
+            self.entered,
+        ) {
+            (Command::Press { .. }, Action::Press { .. }, Some((started, guest))) => {
+                let step = &self.scenario.step[self.step];
+                Some((started, guest, step.wall_timeout_s, step.guest_timeout_ms))
+            }
+            _ => None,
+        };
         self.record(json!({"event":"dispatch","step":self.step+1,"command":format!("{command:?}"),"observation":obs.summary()}));
         self.baseline = Some(obs);
         self.last_command = Some(command.clone());

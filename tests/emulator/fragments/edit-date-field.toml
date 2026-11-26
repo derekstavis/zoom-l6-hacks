@@ -1,11 +1,20 @@
 [[step]]
-action = "press-display-change"
+action = "press"
 control = "recorder.confirm"
 
 [[step]]
-action = "press-display-change"
+action = "expect-display-after-press"
+
+[[step]]
+action = "press"
 control = "recorder.up"
 
 [[step]]
-action = "press-display-change"
+action = "expect-display-after-press"
+
+[[step]]
+action = "press"
 control = "recorder.confirm"
+
+[[step]]
+action = "expect-display-after-press"

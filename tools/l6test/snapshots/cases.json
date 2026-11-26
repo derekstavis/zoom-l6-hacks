@@ -332,7 +332,7 @@
     "suites": [
       "full"
     ],
-    "definition": "8536082ef5a1fc8187e31db0874073d05de1bac753721d753b76db84248180bd"
+    "definition": "56d5906ef629cb6d2d7a972d3cd348f1debf353319d0bda6864365875615694a"
   },
   {
     "case": "host-midi",
@@ -341,7 +341,7 @@
     "suites": [
       "full"
     ],
-    "definition": "ada9a30b7cb3779b573dd58f6d82402f50fe7ce689a2f2d717bca9609c198a3d"
+    "definition": "2f3eb02c81a2b8343582edb280fcf6193fb38dab84abbefc1f8c427903b1a35c"
   },
   {
     "case": "host-midi-sync",
@@ -350,7 +350,7 @@
     "suites": [
       "full"
     ],
-    "definition": "2c8a5c71530bc215286ea116ac0b824718502f091dab0a6bd0e1b3c092c9d8e3"
+    "definition": "edf99cf7f8a74f066e225906fc2b00f94b2503369b2a58c682ce0d5710509c39"
   },
   {
     "case": "host-sd-midi-sync",
@@ -360,7 +360,7 @@
       "sd-matrix",
       "full"
     ],
-    "definition": "ef1b623fd64e1c2e5e65c3afacf2734efe9df1c69670aea8a3d05f1fa9fc97bc"
+    "definition": "79423a427993e43b63f832ae0db9231b1204121891845e65d502748ebcb7866e"
   },
   {
     "case": "host-sd-midi-sync",
@@ -370,21 +370,21 @@
       "sd-matrix",
       "full"
     ],
-    "definition": "df09276418e4ed83068675406a5d37dd51ac8caca125a2646eb9c907eaa6c745"
+    "definition": "dbe2efb186c64e2cf60e6effddebd191de373a4143e0ee4af64b04a1d39fd1c1"
   },
   {
     "case": "host-sd-midi-sync-fresh",
     "model": "l6",
     "backend": "headless",
     "suites": [],
-    "definition": "9e44ef7ab43a61e5ef78c7d83565d26790a4b52a9392513d73dab67e278a64cb"
+    "definition": "6e878b705721c4a987c4bebe5fe8579a87de06d999a14657b5b520cf7925e967"
   },
   {
     "case": "host-sd-midi-sync-fresh",
     "model": "l6max",
     "backend": "headless",
     "suites": [],
-    "definition": "ad2646d5b2c93d7b04d6d8fe388970b385e643f1d42107e5c758da78dcaa74f6"
+    "definition": "1e764926c6b19313f875bcae29eb598769c790596d4d4a86ee946ec5bd87161a"
   },
   {
     "case": "indicators",
@@ -421,7 +421,7 @@
     "suites": [
       "full"
     ],
-    "definition": "dabfcf84680af1d75ed31229c0090095ebe3d35119b0009c922c2df00cd1bcce"
+    "definition": "3216797399e30c32dfaf9f21bffc6a1fd40fe3ee381858a608d1cdf3372abe5a"
   },
   {
     "case": "knob-dialog-menu",
@@ -484,14 +484,14 @@
     "suites": [
       "full"
     ],
-    "definition": "85a51c3909992452d90815fe66042387137ebb5496bbc7f97d9ba7f8ef88e137"
+    "definition": "85579e25325fe2b6a67e2e4963dbacff929a1b60cf466ad2273e144468e367ea"
   },
   {
     "case": "l6-direct-midi-sync-fresh",
     "model": "l6",
     "backend": "headless",
     "suites": [],
-    "definition": "3a46c2a3bb166f15a0e9a2a0ec410846e0ac1212da387ce5dc62d58fa744f1a5"
+    "definition": "33887e86c394d9e97b40a0d7e795acc7620d9c8746502b10d994b08b4e2aa02f"
   },
   {
     "case": "l6-editor-pad-playback",
@@ -538,7 +538,7 @@
     "suites": [
       "full"
     ],
-    "definition": "0478b75a873a0d1552d4b58c42b400d9bdbf85439aeb79acf88986419b46e18d"
+    "definition": "dd9c0172fba296c6bc3bd7918688cd83842c73cfd31a7b41dbf089385f817ad5"
   },
   {
     "case": "l6-level-meter-pwm",
@@ -669,7 +669,7 @@
     "suites": [
       "full"
     ],
-    "definition": "fff091e93cf393e6bcfbe29f1ee85b375fb66473c8fa1addc39922b94c89f501"
+    "definition": "9e5083037f8458b5ae8b1382b78984764fb580dcabc70b0105698c77c3d4974d"
   },
   {
     "case": "l6max-din-mixer-control-fresh",
@@ -678,14 +678,23 @@
     "suites": [
       "full"
     ],
-    "definition": "d239b0ba261b9452d0db77e83b88c9f0f9aa6aa7444da9d3808251ecb07e354d"
+    "definition": "f7b52f5fcd87f4895e795a68237affcbc102e9f3ac85a33574580abb6af88609"
   },
   {
     "case": "l6max-din-mixer-control-patched",
     "model": "l6max",
     "backend": "headless",
     "suites": [],
-    "definition": "94fcd2440f6a8cc0e3df025c2f1a7ee9bf904c66f41bc46366ce171ff17d95eb"
+    "definition": "c4436099fe945b037c72a55721ee889562ac1ca0bfd8dfa56eb4b4d7fda7d1a8"
+  },
+  {
+    "case": "l6max-din-native-reuse",
+    "model": "l6max",
+    "backend": "headless",
+    "suites": [
+      "full"
+    ],
+    "definition": "e153df0b66a1ea224fe2c75f7f575ff618b929d85303ab7f73c81d7877165b3e"
   },
   {
     "case": "l6max-direct-midi-sync",
@@ -694,14 +703,14 @@
     "suites": [
       "full"
     ],
-    "definition": "74508b273c8c817d9c8862afbd839902343a0ff95d94389c7a7a3ba82231bec4"
+    "definition": "653ec74d8be8596b1292e205bc30aa044e168dcc23f3954c6bb5b2ddcb7b3ff2"
   },
   {
     "case": "l6max-direct-midi-sync-fresh",
     "model": "l6max",
     "backend": "headless",
     "suites": [],
-    "definition": "a62c772f8d416283176dc7ed9a0da4c1175560c9a139c90e4502ac13473d1b24"
+    "definition": "680bd8d82fd64a0aa9db4cdad18175304c77c9c98470398bb44e980bd83083e7"
   },
   {
     "case": "l6max-eq-audio-update",
@@ -730,7 +739,7 @@
     "suites": [
       "full"
     ],
-    "definition": "761a3dc6f36e8825052bba25dfaa1db61830aaf261b959404f77d29d61c50b33"
+    "definition": "4a0c70d49bc1bd54686b21ded5d3ac6eb396b9842a5bd895288c878f5c17de42"
   },
   {
     "case": "l6max-patch-heap",
@@ -914,7 +923,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "44372660da04e00054a677696821a6e6b54902709dc634aad219b3969aa2e9b0"
+    "definition": "c141b64dca77a97f8151ebff62edd43de4e3d568b16f11b7afa773d9b24d15c4"
   },
   {
     "case": "patches-l6_installed_midi-sync",
@@ -925,7 +934,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "f6887ceb31a0a14796d8c5cedd0d8d211e3bebc77f65a1c3fb8173c86fa606c7"
+    "definition": "653cefd64853d29dcd4549be7bd4fbd57bbb1cdf781e9df79de8c0096dfe4054"
   },
   {
     "case": "patches-l6_midi-sync.fw",
@@ -936,7 +945,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "b8eb7f0dba21c1f6cd2c334ea436d4364b28f7056b5a3b4d4d31a09d9231feb8"
+    "definition": "82768391554a5ba6ef39ebec82062a11b99c28d8aa59dba521b0368a0e7edd43"
   },
   {
     "case": "patches-l6_midi-sync.sd",
@@ -947,7 +956,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "291cdfc3df37d2624e7372da8f750cfa7355dc12885867851dd08bed3a2948c8"
+    "definition": "bf3984fec23db72edb436a383ff187e60dc52fe5c9e24219ec6b2bedf8fdc6da"
   },
   {
     "case": "patches-l6_update_midi-sync",
@@ -969,7 +978,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "74ca2f75fc869b16c7645b1e40e55950f2f021812b4eda53745bbf259835ce65"
+    "definition": "c88809984ed1707285b2bbefd3032fecd8c1b8e29a45f3e65d8760919599c531"
   },
   {
     "case": "patches-l6max_hosted-sd_knob-dialog",
@@ -980,7 +989,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "2447bb7c1bd96f78c9933998bb4b1eafcac30878bc8ee9322a92cbb9995c52a7"
+    "definition": "68b60ca37bae2a6154179014ec16f9e6e23f637ad06694cc117d550c75d1ed5c"
   },
   {
     "case": "patches-l6max_hosted-sd_midi-sync",
@@ -991,7 +1000,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "c689c30f3f94a773f099af316b0cb18fba741cd2d3345dc368c12658dc0f960b"
+    "definition": "f24ce260d7c377518b242ce15a7aaab143bf75d0bbaf314ae295b3870b9c01ed"
   },
   {
     "case": "patches-l6max_installed_din-mixer-control",
@@ -1002,7 +1011,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "351d99287ddd86951c77af4d19d9d2d4444451e9ee8ac526143f0206692ddd20"
+    "definition": "2f2f879f6c5f8bbb1c3c4d9aa4bf73de7976fcc7271113466dd1734ab489325b"
   },
   {
     "case": "patches-l6max_installed_knob-dialog",
@@ -1013,7 +1022,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "79eb4201cfb703b2fd2c6223d5e433beac00a96dd44e302d651341effc6f9d9f"
+    "definition": "5634d8984a77755978a17d0479fe3094f52df5aef9be48902f7c7de4f90f0579"
   },
   {
     "case": "patches-l6max_installed_midi-sync",
@@ -1024,7 +1033,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "8537640daf391b42cc9b16176cce7cf6f7e14f1a18a88b15177bbc8610c62125"
+    "definition": "e008b4db99418d0b7ee2c9a70c83dc584f85ad4cb0bbc6ad82a228665a6061fc"
   },
   {
     "case": "patches-l6max_knob-dialog.fw",
@@ -1035,7 +1044,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "59bde87b349f302fd93f87d7d8022e393736dfd8e9d4159bd0b0176d876e1a5c"
+    "definition": "a9b54d9a029d88b8f5c119e639c2d723ee2339b5749442afe05ce88a22d76335"
   },
   {
     "case": "patches-l6max_knob-dialog.fw_din-mixer-control.fw",
@@ -1044,7 +1053,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "7816c69e9fe1172a92ff427dbac4adb2ea94b6790a59ade14fe9084545300afb"
+    "definition": "47981ff4f159effd4e220d4e25f795b0c6e7d2154fda7dfefc9b084d76d49b0a"
   },
   {
     "case": "patches-l6max_knob-dialog.fw_midi-sync.fw",
@@ -1054,7 +1063,7 @@
       "patches",
       "patches-pairwise"
     ],
-    "definition": "c19247d47deceb196b27b3ef9ae5435ae208300b24faf13c7c45a8420f246564"
+    "definition": "e63fa42234b105752d7d044f87eac92ea86ee42f22b5dcd8906ca7df4615a9a4"
   },
   {
     "case": "patches-l6max_knob-dialog.fw_midi-sync.fw_din-mixer-control.fw",
@@ -1063,7 +1072,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "1d62202b76fc47a7299a11f1ed35057b1da4059ad1323656fa5ccab448a6aed8"
+    "definition": "511352bdb5b0a62e70c60f0810b870d626f0de78d359cd239a040e73e1f1a2cb"
   },
   {
     "case": "patches-l6max_knob-dialog.fw_midi-sync.sd",
@@ -1072,7 +1081,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "d3c0505fe6c84429fcc210cd11919c201476649bd38b6274e8090110a38294ad"
+    "definition": "816cbb3f1cd9f7f106fed58dad6f6d6af3025b2f8d2d6962072c94a54714d3dc"
   },
   {
     "case": "patches-l6max_knob-dialog.fw_midi-sync.sd_din-mixer-control.fw",
@@ -1081,7 +1090,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "187e25f2ac3be5f93d178de97b05402f3cb9f7420617ac3c76824a97c9a43703"
+    "definition": "2f0346de1b18fd4fc9f8f4ec95f4c92ec185661f1b8e621229ef5278639c5156"
   },
   {
     "case": "patches-l6max_knob-dialog.sd",
@@ -1091,7 +1100,7 @@
       "patches",
       "patches-single"
     ],
-    "definition": "929e224af51bda91fd89fb82040388f1c2490492d44d296392fe8d68c49cb8c6"
+    "definition": "31f16a67cfddf9fc9f995631fe927fd8771279d2ba50db11d3ed91fc971c28c4"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw",
@@ -1100,7 +1109,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "538f04e1aaf2cc61b526bd6c13504aaa8cc2088f0e5a8ed449531d3abd687393"
+    "definition": "76eb62c44be75bed0708f1b287353dcea2a6f09377e53df4cc2bd156752e8149"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_room.plateau",
@@ -1109,7 +1118,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "9f769a3677409cbbe905eea0abb08df6dafec7593c608a7f5a135ca5e65a3406"
+    "definition": "fe3c823fe0f2e1189edf9eb806867af0c922c19b1ec1e6325aad294eedc14c68"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_room.plateau_spring.plateau",
@@ -1118,7 +1127,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "1f856a3e26ee044a7e5ad9c06d86ff7502a0cd451056c1d785f0619fafa4b52e"
+    "definition": "cf66f1666b07e02bb907b8649c1bedb608fd195076e35c6f04281fb9e8cf14c4"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_room.plateau_spring.velvet",
@@ -1127,7 +1136,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "ffa4086e10eb5048b0bbf611b7eabf5ac612ee41736473bb6047a589eca13fad"
+    "definition": "a3952905618a3de09cdba15912968152907ad6a72297ce895ba7ed7581d4f14e"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_room.velvet",
@@ -1136,7 +1145,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "b6651cb7721d5d60e7e7de1c139be2b6da98b85c9717a81397e5f3ca6e791e9f"
+    "definition": "5bdaa03963f4f22b4e060e783e4d83472b2b3351851839aea93dfc0f50d8b1e6"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_room.velvet_spring.plateau",
@@ -1145,7 +1154,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "a10706089a0eba1f5860f55be536625ab2daf567a19f7eb3ab6a7cb91dac0e3f"
+    "definition": "2ff9af64b2349c8bcfc589660c63c37cfb0e8357802d4fa5008f827e38f0c3bd"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_room.velvet_spring.velvet",
@@ -1155,7 +1164,7 @@
       "patches",
       "patches-pairwise"
     ],
-    "definition": "67e868aacdb26135e63ee4e906746a77b99fe143a65debee01403193acad6edd"
+    "definition": "df4984dd9a1d4a6efed2fcf0b717f6a47fa78943138177bbf3aa714491c0a190"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_spring.plateau",
@@ -1164,7 +1173,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "4d3d5dbe94dd6a3a122ab6bf8f60351f2610e4387633d0edec30f1837123dce3"
+    "definition": "0ce02a5197be6089f68457bc6b0ac8f053ad480894f319b206707329840ab182"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_din-mixer-control.fw_spring.velvet",
@@ -1173,7 +1182,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "480f1ea6fd74b85aca9d6495e7828830879325d24c12cead67fd00d24025482f"
+    "definition": "0cd6ffa18edd1178f66000395923e1616fca248a173a19244b620f6017019fbb"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.fw",
@@ -1182,7 +1191,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "c45254614edd85ae4cac8d63512da9d935dbd91b4e9759fe9960eea194d65006"
+    "definition": "345cba7f95f56fc224c8c93c610c6c9226a73bdb058e2b091eda939f083bd5d6"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw",
@@ -1191,7 +1200,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "fd6f9078887e717231709ad634a1cb2eee9ac729257bc2559524cf1a7214ce22"
+    "definition": "d7a88cc4331b2b657b19b9af397284cd229cf2647aa311e7278d1961dd94827c"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau",
@@ -1200,7 +1209,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "73feea1cfb144f4f006c1c3700e2d8d603181e3b53ea73974f5941ad67e91f1a"
+    "definition": "7b76756e1fee0c781aadfb9765ca3cdf2bc2c6fc32f77be7a7a3fa7459f7dede"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau_spring.plateau",
@@ -1209,7 +1218,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "0bd4dd6f6da778c7ba59d7a30879fd2c354bbe0005e66cd8d6b96ef0db667682"
+    "definition": "7a38cc4483063856715e1517579e22676dc87e94b6e0848ae93843713b8f1033"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau_spring.velvet",
@@ -1218,7 +1227,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "386c50df9a86299eb8ba6510d989e5bbf574731d17ab2caeecefc5476da80f42"
+    "definition": "ded78c45959727a93cc80edc2d9979be4c92479e4a171f31844977e044e3b71c"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet",
@@ -1227,7 +1236,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "69d62dc2cb64237236ca1ec43ed6da391c1bda51abe717fd7a015c1f415e4b12"
+    "definition": "985682a365b17b5aefd47c5c3ad259e32c9bf5e260eb130ddc3581e6435c7a6b"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet_spring.plateau",
@@ -1236,7 +1245,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "ef7ef218db77251b60b542c83c605b75ad9b7e862ba54f6a9dfad67f48a2f787"
+    "definition": "2b7ccae637efe278ca386a5d837ab1b97903259c07ee790738ce5661ea7c9166"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet_spring.velvet",
@@ -1245,7 +1254,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "e11f0149fe0d70b95dcbcb7db95c67d5127085ea7af67bdc2f71d2470fc62f38"
+    "definition": "edc5530ca5048d9d35a137c339e7ebe7d4d5b0955634fbb31058d787674ce298"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_spring.plateau",
@@ -1254,7 +1263,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "a1de2644b3e82d604759be5db41bedf95057bc4527a0adb4c622445a0f085c1c"
+    "definition": "3630a5813434eca8c6d8c49a7ef8e813e13f59ac7de2f0e1dd779e344d25ac83"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_spring.velvet",
@@ -1263,7 +1272,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "b0bb60fea842a8251f59e0379406e07e649f354eca5378b26d88cb1525f3933e"
+    "definition": "024fecc2fac65d739d86f49645cfa4444008b5faee86af68c54e23a428820b0b"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_room.plateau",
@@ -1273,7 +1282,7 @@
       "patches",
       "patches-pairwise"
     ],
-    "definition": "331f57a23a7bed3a5557522fde451fb4c42538edb8e46b9c6abee4138a7ba929"
+    "definition": "d2db72a96685eb93075ff1abf7fba9df4c103189992c0c8feeb0291172155ac6"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_room.plateau_spring.plateau",
@@ -1282,7 +1291,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "e2f991b06cb98fd526809749dd71f8c96536d4f73af0663f703280673dc9a75b"
+    "definition": "bba0c6452a8a9645f9b4f06bb898beec232ae0d58deaf9f6291d31b60fc84007"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_room.plateau_spring.velvet",
@@ -1291,7 +1300,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "f6e86574bf5bd3efe4a3b083898e50dad918c5a03bde3b71f6323269bd88fb98"
+    "definition": "e411f270bb50ad98c7a27b7c76dcdff204fb8d339bcef29ee76e4ae08e5802e9"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_room.velvet",
@@ -1300,7 +1309,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "a1fc7cc1454475b2f4fe1b60981b3443c11b7ed73b4b6d61782c062c5bc6a52c"
+    "definition": "3babf97ac3d7299e41515c756775073b696be3c928dfe3fb2d68c0d946b8518d"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_room.velvet_spring.plateau",
@@ -1309,7 +1318,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "4eccfddf31d366cd9766f788386be64ec75eca245e8ece1b1aca9bc6b3ffb4bd"
+    "definition": "c1404acf2527d64e593549088ce2c618d931d8c1a7f12992a082daab65af29d1"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_room.velvet_spring.velvet",
@@ -1318,7 +1327,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "b8654155c5e09bb3d460915b2690ba28063b94e86b0107747657ae26b7e68ab4"
+    "definition": "055c156ab7a09195688840874b8ccee47fa72ef3939beaafa58850b5c42dcd7c"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_spring.plateau",
@@ -1327,7 +1336,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "317377df770136c8c2c0de7a68328edaadf5b598723f2d52316948358e043235"
+    "definition": "ca09b83c387953cb26c276cd35d7922b3303488e9f3a67528aacb1a899033a11"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.fw_spring.velvet",
@@ -1336,7 +1345,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "5d4dd708b4d4ca843d6820feb154f1350b49da32595ac4163ce1d1eee4a5b327"
+    "definition": "c4f6f16996ee059486816e8c8f1a450679cac8b43a2ce2aa958523f0f9d99c04"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.sd",
@@ -1345,7 +1354,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "1d677addb566568568133545036481be4f9c03d9ce1d49b4f908f2dcd137a08c"
+    "definition": "722a15288b611b443ea70d4e96eb3f3479c27e91c5d027bb18168309586f0a18"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw",
@@ -1354,7 +1363,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "0011340d7b9c35cc5a7bf049b832ee57cd800091c3131a22eb2b14770aabae75"
+    "definition": "b0110bee5cc4573325500dd78a9fff9d644d318ffa59c97349b81d727c28638a"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau",
@@ -1363,7 +1372,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "287ee5c8e4182458faf2c6dfb558a3d8a203554231839f605ecc6d3395babddc"
+    "definition": "e7abae565a874ebc98c449791d03498ad791b870a9f0f7767212da2a449bbec6"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau_spring.plateau",
@@ -1372,7 +1381,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "2cd58f9a2a1bf55b6e7910d00672e0c07ad28c1fa0023f43e0c9ec0ffd98612d"
+    "definition": "79e12f52081ada8596f350d4b8810e37e17a483bb5b862386285057a74cc44f3"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau_spring.velvet",
@@ -1381,7 +1390,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "e678474654aa48a9fcdeb5c0233cb93645acfcf9147686314f5684333e9af69d"
+    "definition": "ca058db02384e33c3e8410c3a1a31506d92506c4f3dc6326280f5aaa35aa8939"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet",
@@ -1390,7 +1399,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "b699e23efb67040a6741e47984dbb9e17192c1c3323dc9dbae26144d50b5bb5e"
+    "definition": "1ff57d7b30cf231fc1ee7d955472d125cb8783f96947510bdb9b2e062ce85995"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet_spring.plateau",
@@ -1399,7 +1408,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "6e699890554de1b6da5cd2c757cc7b8f5a22661bfb8d0b04e4edfeb741befed9"
+    "definition": "7a8b459c7d97ac63f6e248ef78f8e3b11a1fb7efe4bcf4b7ecea71f866e894ad"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet_spring.velvet",
@@ -1408,7 +1417,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "7a7ec6e2f49343de643384ae91e0031853c97d59a30b814614d4ac47db46a452"
+    "definition": "30aa7a5f0b78c007621895c67006bab3fddd0debc69498a1775610ee4642a342"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_spring.plateau",
@@ -1417,7 +1426,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "d4fd8620410bd47ee75cd5a1dc4ee7c8906f714c1f16eb1c200ff3173f2d2d12"
+    "definition": "fecf9c5363332a61056e416007195b0d513f10d8d08507bd6d06dad6832ee4e1"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_spring.velvet",
@@ -1426,7 +1435,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "c3eda6b1d1b35ac3fc4bf001c46e8b6210c0fc16bdba0d1866d8e2090c9768af"
+    "definition": "1db9d9473ab9ca9dbfb9b693cc3e8731a23a451b6356dc8fae5ac2a8f35af52a"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_room.plateau",
@@ -1435,7 +1444,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "a4147926d63f1a20bcd3297730955aa0c21a62d5d172fa3f2110bc5a568cffb6"
+    "definition": "c5c1b04a36a7779b82a490c0e633440185cda40e955edb60ba466fba51ced1fb"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_room.plateau_spring.plateau",
@@ -1445,7 +1454,7 @@
       "patches",
       "patches-pairwise"
     ],
-    "definition": "ee74f998c10fa2f5beb2d13bdcf3c141c533b5bbdb21d820c33281c7435ad18a"
+    "definition": "ca6c709f8f31370a7f08fe240a3ca8678492332867a4bd15541019a71400db4a"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_room.plateau_spring.velvet",
@@ -1454,7 +1463,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "f75297ba511b5f2422bd7adb2cffd89627174ef999722c2f1df7fd438da27256"
+    "definition": "902e2a2b76e27a13a8992fdee061c25de579280e69fbe64b8b3d2ebea738fe7f"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_room.velvet",
@@ -1464,7 +1473,7 @@
       "patches",
       "patches-pairwise"
     ],
-    "definition": "cf531181a857b408f5e7b64b31eb7f31ee63de7b5c0f897827fa5416ae1b2dbb"
+    "definition": "4c897d1a87f7c3c763e0b8fb4fc28dbab7357b980ed20f857bd09e8be101c5ab"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_room.velvet_spring.plateau",
@@ -1473,7 +1482,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "0dd5ba8c4b5c1a32e47048e8bacaf2686a52c3d54b65ecebc7ce1a9d5994d8e1"
+    "definition": "565bc61e6dcbabaff303b82235231b8fd0fb305810b00c4d942b738d5ba3cfb4"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_room.velvet_spring.velvet",
@@ -1482,7 +1491,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "42c1af7bca1ff469ac79d3ae5d2b445a87aead0cb35416d2dcf44f6acc1e537e"
+    "definition": "0daad491d48e3951c1a6511a9da6f1ececee64a99f1c1b3ee9741e3b21d27dce"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_spring.plateau",
@@ -1491,7 +1500,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "c86d2f098b97c46c355ee8cd13c179513c7eb215dc654eefb9b24038694d59bd"
+    "definition": "1ec9b48977ff83cee38164d63b7a8f6fba49c84f874df4db80a57ab491da1d74"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_midi-sync.sd_spring.velvet",
@@ -1501,7 +1510,7 @@
       "patches",
       "patches-pairwise"
     ],
-    "definition": "f5168ef4c10483da5b5307f7067cf2837a246bcf4625cecaedc22985074b4f9f"
+    "definition": "6afe8d0eb7aed95d2119e01c9eee039a14501493e1f18996039230112576be37"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_room.plateau",
@@ -1511,7 +1520,7 @@
       "patches",
       "patches-single"
     ],
-    "definition": "eb8834fe458031f34291ba1be1e4ba9b21e93ec34ba40a8b4ab44b4b92dff6bb"
+    "definition": "653ae6b25fe4b6db51d4e3ee4c96ce8d6208816eaecbeed4d6dbccb22060dce1"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_room.plateau_spring.plateau",
@@ -1520,7 +1529,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "43254dce629283fc6e782d67bab538d379ae18131e236df5b079e999dde48973"
+    "definition": "f4e2e5f9ee463a33f0bd4c8da2c95c882d859e212dbbde5f3b0ba020cfad028f"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_room.plateau_spring.velvet",
@@ -1530,7 +1539,7 @@
       "patches",
       "patches-pairwise"
     ],
-    "definition": "a424f72f6b059ca90c4511ca7a5ce462651f3d8156a112abd658c28e02b0d687"
+    "definition": "afd0d8c911066c0583e74e09861c41a6746b1980b152044d8161d0c47ea564bb"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_room.velvet",
@@ -1540,7 +1549,7 @@
       "patches",
       "patches-single"
     ],
-    "definition": "e3c0ee292ed14953473540c772c5fdcda4dabe1c40d99f8a7d2d8dccddaf6b0d"
+    "definition": "faea78d54a14ff014726868c223f65dc9dd70d45e0561a33516ba7ec0e80ff00"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_room.velvet_spring.plateau",
@@ -1550,7 +1559,7 @@
       "patches",
       "patches-pairwise"
     ],
-    "definition": "65f69f3b269784515116993abe50a2dac78e7b86d5f0dcf897184558812fbdbb"
+    "definition": "bde193bfa08af85c3f63f2d6f9a94b6bd3bc2dd767d9b7f26d4801b2831f78a9"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_room.velvet_spring.velvet",
@@ -1559,7 +1568,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "2d54c8a117da20f77772f401d5d6c692e414bfe2e91e373e149a3b9f270d816e"
+    "definition": "12d4bb391430c2a45158a8839458a5a41e4b59532abad83421a834aa4711522c"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_spring.plateau",
@@ -1569,7 +1578,7 @@
       "patches",
       "patches-single"
     ],
-    "definition": "e15e3a0becd4d10cd60fc6d1f0f305c8db8b9f0fcae4af15fcdbd81814b9d6f7"
+    "definition": "a3c6922a6166e1f1b64632e616fc4c6983fb87b099f47601b541de19340369b4"
   },
   {
     "case": "patches-l6max_knob-dialog.sd_spring.velvet",
@@ -1579,7 +1588,7 @@
       "patches",
       "patches-single"
     ],
-    "definition": "db0fce96276556e81b42ce11bd1edbc1055af3b3826f488b463fdb8291b08f45"
+    "definition": "21fbe30b010e18fc952b7175c90ea185086b1e03b0fc80db4473b08bec11acf4"
   },
   {
     "case": "patches-l6max_menu-loader.fw",
@@ -1598,7 +1607,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "c902ddd75e70d0faad8174e0caad912ef7d7e67c64d046c5ac4d7e51da5d48ff"
+    "definition": "a89ded49afdf6422aa008f5aa827093b24eacad0ae129379617f156128c2f280"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw",
@@ -1618,7 +1627,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "0ec7ece3d182851eb0e5312e8d2ea85196edf30d4b4c51a10771b0570f2a8b0d"
+    "definition": "7c62df19bd21e27454250c3504d3639f8e6e7304c0f45eb8c963226ebd7b8d12"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.fw",
@@ -1627,7 +1636,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "61eecb694a8d9a9851ea1d519771084b9e95489a773467509958f94f1551fff6"
+    "definition": "02a34045c034e09a8ad42895ad187a157875d2bb76ce9974030fbc3a7c7126ce"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.fw_din-mixer-control.fw",
@@ -1636,7 +1645,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "6e93cd2d3948e71c54c308eeb6edc92c7e4a1b235634f673a0adda808b21925d"
+    "definition": "1c1e0a655454d7129109b23f6deb711119b78b4c255b4e66a3439473d265d2a5"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.fw_midi-sync.fw",
@@ -1645,7 +1654,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "a381c0f17875aedb9f2178bb3658b216badabd95a25f9febd9eefa4ab5afd080"
+    "definition": "c7d926fadcd4e6a223c566dcc9f2ab79267c24c3fadf98b610fae4538226512d"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.fw_midi-sync.fw_din-mixer-control.fw",
@@ -1654,7 +1663,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "a48393d533c0e0054925fac1bd6ff23f20ee3efde2dcf2dbad8a7e3a756f126b"
+    "definition": "3a5c585960f481d89ab2a6dc93e95c8c441c09cdadce55afde59a8607393cf36"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.fw_midi-sync.sd",
@@ -1663,7 +1672,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "e2cd10d6826d759bf9bcf0c59272ed61a520207d362dbaf687722674b10e7da0"
+    "definition": "56863b100fd9e375345a3246593919c43e54e78cf84014c4d886d6f4012945da"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.fw_midi-sync.sd_din-mixer-control.fw",
@@ -1673,7 +1682,7 @@
       "patches",
       "patches-pairwise"
     ],
-    "definition": "336e8df758ce87757a4c8e6e439d672065420aab8251633fde9c4bd35575a7f4"
+    "definition": "b066d1a6ed26c60cda41c7c923c3f78758a7f4b987b2c7af97c1258d0dd92838"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd",
@@ -1682,7 +1691,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "d8f33f058127d24e53a6a28ba8efb3cec39809b71f5323d7ce755703be5530d4"
+    "definition": "8a349fa1b4eca639ade17300258ae26f7bdb68d94ce9b8e768db1451fda338c0"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw",
@@ -1691,7 +1700,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "93089395fa413724495c1df620bcd2353848d69f63d2d7b382971f609e9a1890"
+    "definition": "4e57eb88bdc2f2560ec7adc5a15501f5de4054aebd88fc38279e11fad5d9dece"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_room.plateau",
@@ -1700,7 +1709,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "05cecbc9934a30b7b9e467354a3ae1565cce3c12374eaad1bc1401722244157e"
+    "definition": "ea41aca9b0b695893386284a7b12068bcc2bf008bc376c0e3f8e572fa7c8ce0e"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_room.plateau_spring.plateau",
@@ -1710,7 +1719,7 @@
       "patches",
       "patches-pairwise"
     ],
-    "definition": "16a39a209f459d1486c386b4ae3566a044c6ed17ca1df53422c3fddd441aafe8"
+    "definition": "8d719d2f16d9c1d5d5e10a6c7c592c2a6fb3506848cdeb716410311c5c219c24"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_room.plateau_spring.velvet",
@@ -1719,7 +1728,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "0b9ae8da7b693332c620fb84880265104c9fc834b6c837ae6a37cfcf521f156c"
+    "definition": "d3da1f0bf71bae7f39d6f4e2f91e5767b9be70b28558a171cf1ab4c690e608cb"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_room.velvet",
@@ -1728,7 +1737,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "09e79d83fa693e239e7dabb972d646c3bb7c7ce03cec9befeaae6def75c17f78"
+    "definition": "f82b94e2b9b3b74edd9ba2bed82af4148383e694d02fe3983eeb7f5d710c0209"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_room.velvet_spring.plateau",
@@ -1737,7 +1746,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "3611200d7305ea2da1e1b5bb6b602fc88b8875ff8305993c24bc5c8d453d576d"
+    "definition": "4e55d5b7505710b0317c912aa6bd0bce293582b277112e384977438533b9a352"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_room.velvet_spring.velvet",
@@ -1746,7 +1755,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "6f8388d9486a5da88f67b45ee102da66c71d2b4a75a18c599e9307aa4247a2ee"
+    "definition": "c74a75ef9985f26a4d04982af003929cc657eef6b9ea140bd90e3e39685f4b4d"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_spring.plateau",
@@ -1755,7 +1764,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "69e5f7a084d85e0f7d35497bf70f6e532346a7e6870b405815de17c08c60604c"
+    "definition": "2eba7494c5dc3e733797c897625ac40d92a1ff7c139acfbef250d3f12a8ad717"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_din-mixer-control.fw_spring.velvet",
@@ -1764,7 +1773,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "6a8e55bc0c30ad2d72003f8e98dac28f0ccb1a23eb25b43437a535830aa0c4dd"
+    "definition": "3caeb4640a6ca81d6112dd2b3db5c85e7fb56be3abfb82d97339094d5990e84a"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw",
@@ -1773,7 +1782,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "f018ec5c8c3e5466454b469cea3910e157d204b3ab7de093620662f483c4fd1f"
+    "definition": "69a80b56e934232e4fbfcb3a630b8cc7756d50f80b085e371a0ed4c6e638f4ad"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw",
@@ -1782,7 +1791,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "fda3f782fb54cc2eb4fe6f22c27e862bb31031ba2ac238fe008981c3489f0fce"
+    "definition": "b548b8eb8954424ac45f57a6207e826ca2ad2568fcda424d735ff9b1a0cfafd3"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau",
@@ -1791,7 +1800,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "8360a2a0fa0fe14eacc67ddadd279c72365fe273e9ee1a25604b58f465a9a817"
+    "definition": "ef25c834d9d25eb40420cd7f749e4913c11be7b9aa8cb492ebb894e40efd0ac8"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau_spring.plateau",
@@ -1800,7 +1809,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "be93bf268122c563b3c96d7ecb5e801bc2041df4ae8551e3f49f7c88448c1559"
+    "definition": "ede649adb9d1519a6d79f32366aa8dff31cb615ae76248319cf37b514034bd19"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau_spring.velvet",
@@ -1809,7 +1818,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "8c01ba0b6954cb2a94cf4b779df51cc37990534426629e7712dcef7881fe38b8"
+    "definition": "b996ed2c5f016704cd4c7160e3a09d3f783e6cb3ea8d4a2dd625504fea9744df"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet",
@@ -1818,7 +1827,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "0c273fb52c53da33c8e305f4de3759b58729d5fbad9e0a3908350759ef99ec70"
+    "definition": "a4e21ffed1cdad685828de8d4e17b9cf1ba4f83a31c4fbb2e96c901bf77989ac"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet_spring.plateau",
@@ -1827,7 +1836,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "e0d4abad4e94d81d41ef363efefbe995b0771f6225542477ee267083c2b55886"
+    "definition": "192ec24c6ef1ac8fd44fbbc96ee105f71e0c436859ed0e1fdfb94887f61a4b57"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet_spring.velvet",
@@ -1836,7 +1845,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "b0b651c5c6ecf5060930f9abd2b64255fbca012ccfb842cad8a7cfd1c9e5d11d"
+    "definition": "a7db33a31a7b654ba8348b471b10635d04d8929bbf88f52a700ebfcf3cf2369a"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_spring.plateau",
@@ -1845,7 +1854,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "3fd49d5fa717d17dd601bbad8b13cf50f5856f7c37d29a512738495c95c795c4"
+    "definition": "3a7ab8479c075a64d7a97fd8271ca4d112eebec0cd0fc2e1e547d2d5d36d8f05"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_spring.velvet",
@@ -1854,7 +1863,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "883a55385718a474c2450dce5c35817a10e621dfab09dfcc3f968119fd5426a1"
+    "definition": "3303d960aa340beacc63e8b4ea7a4e289d050890a6aeb1daf5d93122b1ea741a"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_room.plateau",
@@ -1863,7 +1872,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "01d10faa45d22673267488a6e8b5332b0918f190651bd88e725cbcfc1aaf1018"
+    "definition": "eda3aa2a54531478a4e70d80b618c7861ae29c4a57fd68e3cf04769517cc58a1"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_room.plateau_spring.plateau",
@@ -1872,7 +1881,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "35154d8d3d7ec9277b4d88fd5491bb58382c4e7888d5253e709745ef7eb9a7d4"
+    "definition": "e8c378d827280da1308af139359c79001daadaba7d0e090ed5828b4e158a2358"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_room.plateau_spring.velvet",
@@ -1881,7 +1890,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "70c7579e66b3bc47405bcadc769a1c1478e2e8bca460be8581eb3954a139209b"
+    "definition": "bdd0eabd1f6a440e647de04507c4094108f8456fc54724be9bf11fc2e7e07bfa"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_room.velvet",
@@ -1890,7 +1899,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "c257f34003af49007ba61883d43897a3c1b81f2d7fbb55f21d87fd7f1fded545"
+    "definition": "0866ded4c1b9877a36bdc04778e2f71e142a466d4047d3c31a2864ec2dc082c3"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_room.velvet_spring.plateau",
@@ -1899,7 +1908,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "d02cf10647112ff72b120f79f0dddb70447d17c46681530f125d39f4c7e2c272"
+    "definition": "540329ff355ae9aa358e4060efa82b0a4f1e75e3ff84e2df7678913c38eda087"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_room.velvet_spring.velvet",
@@ -1909,7 +1918,7 @@
       "patches",
       "patches-pairwise"
     ],
-    "definition": "1f739a8dfe2b91f1deea00f2b2090705c5d3dc66d34f37cc3dba7f9a3870d9db"
+    "definition": "a268ff6836dd86dbb4590423cbcd2f6b2717bbd312fb78634671c43a03521982"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_spring.plateau",
@@ -1918,7 +1927,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "3eef7356cc6965272d0d94bfc17925eb5cc2c0818dae7314e007c75721f5e0f7"
+    "definition": "fefe4e5eda0b6229c8ff123ad30de0e03fb6f387e9f76b6470e32ef45dd74957"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.fw_spring.velvet",
@@ -1927,7 +1936,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "ecc7427000d7d1afe2540b5ace30e09fe115012c3671937e293e2d11c709d012"
+    "definition": "c419b56a37e76a08d51aa7d18bf2817688ecff649a9b207cb6c1b49290b668ad"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd",
@@ -1936,7 +1945,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "04d13457aaeb2a769a17e9caf486f207a5be3d25ec5b690193b075e2fa4e686c"
+    "definition": "6c586b25a5632cd6e0d46847ec14b321b6fdf6824313d7ccbcb0aeab91381075"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw",
@@ -1945,7 +1954,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "3ca353caccff3422e2dc444855136b6d3cfed75c48869e1820fffb1e625813df"
+    "definition": "eb75a8eb53012ab3ed1bff0ede9fb845f61a97ff40ead268880d4b9d887e0bc5"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau",
@@ -1954,7 +1963,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "bbacfb3a141c68ad7cf728619f133bfc0077f9607ba322c2926b9f8bf0b74e45"
+    "definition": "806de044cdc1e223e638ebd1b39087921f86b569fcd89a93804167fff9dadd21"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau_spring.plateau",
@@ -1963,7 +1972,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "c8cb1b59cf1803c18a55fab12c454bea333faebff5090c44227657104569d790"
+    "definition": "415a60c258c6c7d58da755442154a5aac32350c8040e53a07ce973f29a0fd71c"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau_spring.velvet",
@@ -1972,7 +1981,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "6b6f1f911e722f06c015766eba1460cf38c2b4a1522ac6b66bc8c6cdac43d0f1"
+    "definition": "93a49e8385e81f3560466fcc16c6b054d7f3d75c3876a20beeeca28dd11d8a4b"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet",
@@ -1981,7 +1990,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "572b5ed43081091475ac4febe499d0e0fb3871fd0dc572b0237477e698054498"
+    "definition": "fe3ed7ea27fe4e6e451c6e74a2dc0d9ea79b1d3f02e93a5c90b8fe3d469fb3b7"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet_spring.plateau",
@@ -1990,7 +1999,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "f047a766e80a58aeca217d110be29a57d294626beaf7f15084385dfe352238e1"
+    "definition": "b27389ce7507c4105882e2bd3e63d15583caf0bdfe89aa8de10e7f7f6373e2e9"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet_spring.velvet",
@@ -1999,7 +2008,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "7e0da4e305ce9250f43e926601e2742fb84b4d1bb1aa8f731f8834472d9fadfc"
+    "definition": "178ee5a481ccce90f3fbbe94ee319fd750f1c874b3acc1212c2cf59d66ae8cc7"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_spring.plateau",
@@ -2008,7 +2017,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "661dde72df1b73918109c68da75db5f8836124f63bb7cef6535e5daa58da44a1"
+    "definition": "7e4215d6b93b894d88cc8a9634316d66d72f77915cc19232902a70a784b37c78"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_spring.velvet",
@@ -2017,7 +2026,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "566ff2a5d8d38fef1dff44c6e183d5dab095ceaab5e2b653617250e0841a9125"
+    "definition": "1fe86a649e2f5ad70dcfe93c3c73ba4677ea2dcf16040956dbedcad79b8dcb93"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_room.plateau",
@@ -2026,7 +2035,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "42aad8fd6ff0c4f49dd15a3dfde4bc8a2397287560d6114d77fa0b7f4160fa1b"
+    "definition": "615479d91fb34850b14587e3d614f2a2d2dcd0ac5d659de3cc9bf20a34751275"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_room.plateau_spring.plateau",
@@ -2035,7 +2044,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "3e381bdaa7aceb10a1e176540855f7b8d25e5608598de18bf9712c17a7b49363"
+    "definition": "5f898ce7fabcbb2da3784cb137ec8dcce302d49632db47082fae78010a8f3dce"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_room.plateau_spring.velvet",
@@ -2044,7 +2053,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "e01460d5d7718b1ee42e5a796a97f9b461a18a6d90e3d548943e4bda537e2f30"
+    "definition": "80c0175ff186b54198d0232f0bc29ad0442543c9c47d5b461a8fde340006c853"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_room.velvet",
@@ -2053,7 +2062,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "8780b8e5bf8587236a128984539349ff59f616799e66c4845ae0fd67b56cc150"
+    "definition": "2245a81bd60ca744cb999b6b564d5203dbef87e27aa339516fbd21a030d1c96c"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_room.velvet_spring.plateau",
@@ -2062,7 +2071,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "feb3b8cbdcc6c9dd52341d929c8f03dea7e5159bf6dcdaddfb36475b6bbf189b"
+    "definition": "9d467f11883cc7a6786302db020d702a0f9f4ae44f9bfba32055788a55bcaadd"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_room.velvet_spring.velvet",
@@ -2071,7 +2080,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "4735417a7f329f12c561734a6c3625c73824a48d3cf18d8020f7a78416638b9b"
+    "definition": "c1c336e76a4880c34266587c6f8d42c6bde63bc1c5917726e5b0efcfb09bc547"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_spring.plateau",
@@ -2080,7 +2089,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "defd8ac08fa2b7a7dce2357bfc984dc727b09bf363afded416c39fcfde770795"
+    "definition": "750ba7f32d37c635632ad28957d79354357d8dedd878dc13d12e561a42de34e9"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_midi-sync.sd_spring.velvet",
@@ -2089,7 +2098,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "daad0d0256581c200874a4ef96eff8351efaf84fcb3d6a3abed30191c9fdfc93"
+    "definition": "27d4a05e0e6ecd3aa2723a72846661c14126666087c5d584b76ea3a2a452ebf1"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_room.plateau",
@@ -2098,7 +2107,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "ee92afeb5c36c998c8e07a56e0c346620e23133acdfcd5d0a9894506ad3b41f6"
+    "definition": "a8ba42212c80e9d5e87f9ba06f99e7f19901711f30a758c0c37d5d3c51d5358d"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_room.plateau_spring.plateau",
@@ -2107,7 +2116,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "5432743236dac2a0233c619aae69705710708cda2c1ccc526cb26ff166a73b40"
+    "definition": "ddd206e08fc743471c16f106af40ed7aad8e15e4f5300b080c7d0cd3f64a547a"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_room.plateau_spring.velvet",
@@ -2116,7 +2125,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "6aba12a35d8de0a13c5d6738b59699d896086496cea27049609c6b8855b06e4a"
+    "definition": "aec4aebd04d048a8c70368bc3bca030db3249c86957b04bbe524305a1f370f42"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_room.velvet",
@@ -2125,7 +2134,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "e4bbbde4c453168befde62e982593de863392329c44c424ec857d59376a55677"
+    "definition": "b3ed646abe5038fc2c2d5f940419a633dba6c2d8945a77f6ba9c0669eae6af74"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_room.velvet_spring.plateau",
@@ -2134,7 +2143,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "08c6ee6b38a940a02835277a7e1a6358a87dfeb00dbdc07b0d6a5cefd74f00ab"
+    "definition": "ea42025a413e43544015280f8fcf60447f505b1c62f37ea1dcd82db12ae401f5"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_room.velvet_spring.velvet",
@@ -2143,7 +2152,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "ef3f10068dc878432618b71c560f81f20d8f55dd1ae6824c3e86c3401f3a5a5c"
+    "definition": "11eb63d9c2e0927fe6e4b363356358ce243e800546e18979cdd1cb19e83e40a3"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_spring.plateau",
@@ -2152,7 +2161,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "40633d46c031f8fe974b11a517859b80275a0b35a235782256c64b3bd64b89b4"
+    "definition": "d7e5c9af21313825cd2918a3eae818785cadc2ce6d323153f7d3bbe2d019ba50"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_knob-dialog.sd_spring.velvet",
@@ -2161,7 +2170,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "a233f183faec1f41db65c951bdd7cb10783abad3b2c127f8c5baca1290fdcb0e"
+    "definition": "5d972b30396d0222f8906ec289ed6ffcddc5df85aed1cc7008397e7f5475ce36"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_midi-sync.fw",
@@ -2170,7 +2179,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "f90816c452181232e8eac1ef4cf33f26d7fb4f43bae1021ab55c041788f1a63e"
+    "definition": "69a391cbdbcd1c7db77ac70341912576396977d833686789aa0a308b50960d69"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_midi-sync.fw_din-mixer-control.fw",
@@ -2179,7 +2188,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "155e1c3c7acb181c3a010ff0f330140dd9fe31d4f6e9cc1615b36fa4deec53d5"
+    "definition": "22376be4d0d9cc787477eefafe53e44883198c7ec90cbf83176b1dae832f0852"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_midi-sync.sd",
@@ -2188,7 +2197,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "1d90ede4fe6bcfa4f2c26c0c42d67d62e1c18f9c8f09801f254d2a5eb6a7633c"
+    "definition": "92b6d557a6e71654e7cd06ba69f1cb60fc707054633429ddb45b7da1ef5f8364"
   },
   {
     "case": "patches-l6max_menu-loader.fw_dump-rom.fw_midi-sync.sd_din-mixer-control.fw",
@@ -2197,7 +2206,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "9f6ca8bb831808c0c1a5f038f7b022a3220c3ebb2bd37212b00a4412cff016e3"
+    "definition": "4842ef9920aff7db7f53f22d804b42456404f29497fc356d0c7206c6cf56bf4b"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.fw",
@@ -2206,7 +2215,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "c109a59092a0f24de33a8daca564401f03ebc40a38082818a1f78e0059705468"
+    "definition": "1d704f5794a322f284cfd00d589ff52b0d9a719905b5aa51a4fdef6aabf9e7b4"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.fw_din-mixer-control.fw",
@@ -2215,7 +2224,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "16e8f373a6c362cd89ea5d6791c233c2bc826948ae158a8ec41ac47a67d89aa2"
+    "definition": "25f1a054c358c8ab3e62cdc485efd3ec05a00b1c9e206894fecffc8af68d43eb"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.fw_midi-sync.fw",
@@ -2224,7 +2233,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "6724358cdee2e1816682a843824d285e329e72f8b1b7003effabcc0d19afe620"
+    "definition": "e2284fbca31c55c6dec7773e911a0ab6d16d00512c587e56d64b7c1a297cc5c1"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.fw_midi-sync.fw_din-mixer-control.fw",
@@ -2233,7 +2242,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "a576b68cbb5aff9c7edf2fbd7e3e2d2dca7d96641f1e6fa3f0a1a9ecc026ec84"
+    "definition": "49d9f4852ae160a104bb6fa7f44d36d7bdaef931519b4569808cb704d956ec23"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.fw_midi-sync.sd",
@@ -2242,7 +2251,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "014dcdbace0d97030db9c60d4d1b47227c7255de9243556d65381fdc2cf70f3d"
+    "definition": "687993460edce6b09500fa2a6a847b8a47eb5839f2ea70420499928a58136a61"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.fw_midi-sync.sd_din-mixer-control.fw",
@@ -2251,7 +2260,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "7b7a3116472de25f3c5a67673e57ce2636352d424f57b2eca40234e60d805805"
+    "definition": "c53dcdd49a0f9da1fb7d2d9ea490094461f7716c528fb372046dbe887229cfeb"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd",
@@ -2260,7 +2269,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "0813b3472da09178571ec5d8b35748136fe3a990de5cc0205e983029513fcef2"
+    "definition": "299e41362e92cb2f41fcf06c2ecb4fac70c39be32024afe4b338fbd7c4b23fce"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw",
@@ -2269,7 +2278,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "92b3e4601b0df05ff7f4a517a51a8bb8ac7ebcb184bcf06c4f6dea0e6da2dc3f"
+    "definition": "d8275bd7516ce88e16fe23ad4736896d2497ba2133a98b8419e1dbebf43c1015"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_room.plateau",
@@ -2278,7 +2287,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "4e68976a92c878b92bbf1192fba45b72907405276c85482247bbf638e655bc00"
+    "definition": "c133a3fb68acdc6ae5eae7b45fbd286e27421f2ce572f080257288f62e1f74b3"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_room.plateau_spring.plateau",
@@ -2287,7 +2296,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "be6735f4804dbf368181d4560f5b6eda53811d7d98a294a2eb8665aaab1e7453"
+    "definition": "6a25b7cf83f5f657405d4be35f2337a70583d80812dd9ee1d45b4b106896d575"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_room.plateau_spring.velvet",
@@ -2296,7 +2305,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "4f5980256fd8ad768320e8e16eaceb17d6be05ea4316b94e2ab112ff81014a3d"
+    "definition": "ebeb60c38fe47e8c4876a18e660a32fb49e120d90e718507d3098fd10c5fa51f"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_room.velvet",
@@ -2305,7 +2314,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "236c5d0383f671c7d27b71117cdb8c1aa10a21403e091a8a20a4363ca1386eb6"
+    "definition": "0a8edef3130118b680e2b1cb166226cfef523b83963e7aaa7ba10bd9f8a2a924"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_room.velvet_spring.plateau",
@@ -2314,7 +2323,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "1cf0d2e6264e71db103fd9913e3685be301ebc9cbceb6e0f61ab651f5f5c7a87"
+    "definition": "48b4f59d814c6a24f9c9aafeb6c450cb19dd502d02fbaecea52a61e3c8e92bbb"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_room.velvet_spring.velvet",
@@ -2323,7 +2332,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "4c58ee1d7e4f09eab2834a0e48cb6ded3d0125fdbc653588c21c4429d64827fd"
+    "definition": "982d725a8df48c34ce327352bb222182c15f14d4a03e0938a05e712368a9583a"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_spring.plateau",
@@ -2332,7 +2341,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "54e6307580e105b7c4f85bb2e1b18f52d2e28b92758f787d0ed1da25615348bc"
+    "definition": "37239b880ca8e65039db7ab0c805661d2ae832a0632343efa218358dcb99a2d5"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_din-mixer-control.fw_spring.velvet",
@@ -2341,7 +2350,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "a3e76d34d776ae45b4deb401b06e94d61b1e6582437eade11609e085e8dfa6a8"
+    "definition": "66288ea262099328a9eff71389ed6d93b0c0b199df75ede2855cf24f4255702c"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw",
@@ -2350,7 +2359,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "f98c9c602b57714a36276fe8519f0371630ae4fd6e459d1e0e16e44bc5ed8460"
+    "definition": "ae1518895cf9ab83681b1ace6a42b1c10f734451823833d8bf2ff2706eb57511"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw",
@@ -2359,7 +2368,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "2432c532c2742981bdc6094d91920360cd7b871e8b58d58ebe3f0d1dd447f394"
+    "definition": "bd2b87fd114de287456a3b65af01e4dffd266d8e2ac664f91c17c19c061ad633"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau",
@@ -2368,7 +2377,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "994d468b918a0de18300bd75ddbd0cc3fc762a66a8f9c42bfe8fe95a2a473882"
+    "definition": "ee012e371388398226b2b0e6e8a3b690920e31886acbea017cc2d9abdc7e3884"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau_spring.plateau",
@@ -2377,7 +2386,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "f233102723876b904a916505dc7b42fbf74e5d920c8a950dba109063c2dcc0df"
+    "definition": "fbd4eb3935774ceaefb9036e705cad2bfc4b0c83d2da7b6787cbd597122678a6"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.plateau_spring.velvet",
@@ -2386,7 +2395,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "aa448e2add6cde660166c5f53784bf050011f61e2ffaf2ca21757f46b7ac49be"
+    "definition": "82da78536048983afe35649ae0396df8585b0556046db4b091f31cd05cf18d04"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet",
@@ -2395,7 +2404,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "250dc9e18fe37c9e98f45cfcec3cbf3ba7882027240275c59c04b55f3c9db3f3"
+    "definition": "88339df6fee139206cc158922998bae5a18970ac4d90c2c8624a2fe587eb25b5"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet_spring.plateau",
@@ -2404,7 +2413,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "b26077723ece5ea6cf40cdc0a2f7633012d9cd79f71873e58c4d5c030d12eebe"
+    "definition": "e8fd34264412b40fb30dde541cc9f1cddf18c871805606d5691a70278d696fb2"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_room.velvet_spring.velvet",
@@ -2413,7 +2422,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "df53616436fc590c22fb00dbd1a658945ddde8e2b105464d7d7561d955d49f38"
+    "definition": "d6908a31e80dada6ed207d8ac783c2c80ff911eda3d54cf9087fe3bb84f5988c"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_spring.plateau",
@@ -2423,7 +2432,7 @@
       "patches",
       "patches-pairwise"
     ],
-    "definition": "0a32842ae5fe4f6fa8abc034a1eb978f6b55e759121eb8dc5c7325903b093351"
+    "definition": "3a1c2606a9f72a93df4ba7114c303968545931bdf8cb5cc399f6ddcde3e806c6"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_din-mixer-control.fw_spring.velvet",
@@ -2432,7 +2441,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "14c1b8dd8a84efd5120d1489c9a951f383246cceffc5631c579d2aafc5e2921f"
+    "definition": "9f3092bdc313a7711595947a7f41162342d26b16318552a4ad0c13132a347d44"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_room.plateau",
@@ -2441,7 +2450,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "18d0751eca20ab185fcfa0c70ca8f2935e97dc0ebe84ed278c046c2431e0a57f"
+    "definition": "2e6143fb118574acd925d252099896ea092ef0ad81dc88370b0abf5aab51e33e"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_room.plateau_spring.plateau",
@@ -2450,7 +2459,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "1096d92b9c20ee86ba3b8b400a7569c5f4ddd7168708641443addb0d20bd1ac2"
+    "definition": "6bf87edb838644c8af2f4a305f02e3a3c1d959a3fef60ef974e931de9ef7344e"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_room.plateau_spring.velvet",
@@ -2459,7 +2468,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "6f0294fdb588d1b84b03fe9ae9912b29d2cdb9f90bed2de4b2ae5e1e423e6e3c"
+    "definition": "33f4871ec253091770edf3bd30b7210d6f871b5445f02483b23cfe5a29cbd5fa"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_room.velvet",
@@ -2468,7 +2477,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "17e8320bbf2f651dcc871b3b63e56cbba3afecbddbaba9ce3ecc95947fe90a0c"
+    "definition": "1f36dd4c653c7041996209dcae02f0a42229d6f623966d9d0b9ff6a83730167e"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_room.velvet_spring.plateau",
@@ -2477,7 +2486,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "0d6ee220ac5581e2feab1722b3711e9a925cac56ceeb2b5c9015da9834844b1a"
+    "definition": "20025b8a26e2f2f004a85e2bdabc40c742b683659b523a34096c75022f83522a"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_room.velvet_spring.velvet",
@@ -2486,7 +2495,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "dc2a6dafc6ff9eac835d28f13c53d103a1d5d5e6e5e15a152c6f3ab300b31d8f"
+    "definition": "3c59ef0f82ab1b3082c786ad2cdb663eef5da3786fc479a07fa7a976f2d92c15"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_spring.plateau",
@@ -2495,7 +2504,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "4ee2b1c642009de70e90b403ced9150c58ad8f34b39501add2be1838160905c5"
+    "definition": "0b4e2b50bcc51de0cfd6e105d7dc4c66a094a592c99efe1bfe9c88dd641b361d"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.fw_spring.velvet",
@@ -2504,7 +2513,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "4b930e7a3d27b5ad8163046c02cdbeb578c070750f635a6496917c89a2539ef8"
+    "definition": "43fada38183d3b6e594b36098664ab4cdb11cd3238c94512fcd29bd73b12c764"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd",
@@ -2513,7 +2522,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "f90c424a2d063b391d1c4088131abe3e057c31db4dde15a39bb2198d5449a9b7"
+    "definition": "25e89433d3e41847bb87d7bfd9afc1b68e03d705e890997b5d156380aaa909be"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw",
@@ -2522,7 +2531,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "df38ebb05f8f00a43ec9f52a70e143b5ca4005b60a2119a39f50beecaf091be8"
+    "definition": "faa6310f409259f125ff40e14dd4805714c541a3b247814feae177ba3e0cdcbd"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau",
@@ -2531,7 +2540,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "2de4f0c7809193bbb64bbd64bca95dfb31fa4b49eaca50a3f17be65b2d2a1f27"
+    "definition": "275d29c1409c8063e4f43a4e937580983990616c27d5d8e182258e779bcf3df3"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau_spring.plateau",
@@ -2540,7 +2549,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "c5f27fa3a2a632c78c1193df6d6ca42c074b67936744ef3e4d2401abe49d62eb"
+    "definition": "cc35ab56a9d5762ba8964a8af8e1f49c566fe6e1e6ab5e357f143530d501bd8b"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.plateau_spring.velvet",
@@ -2549,7 +2558,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "52ac08b9b5a3ed6a501f76cdda8f01002155d64f92a2df366c15b0a21dc178d7"
+    "definition": "cc6e4dba43b9d2d81ece3bc8aafbb9d56e1f89964901d85bfaa3b152ce74c135"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet",
@@ -2558,7 +2567,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "380aebf3b62b8bdada3073ec8d5983c12ccc66b371f7b1396164e75b11235367"
+    "definition": "03361d5b25152eaff1876f63cb366aa7180b97edc384d3d2a9638daefd77d792"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet_spring.plateau",
@@ -2567,7 +2576,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "891967ba3862fb9f5e1401ba6ca2273f385db7179da3dbd30a505827876d2f88"
+    "definition": "81f3b24bed36ae9485235ec5a4a10c81257f0af3f6d6270011f9884595191b51"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_room.velvet_spring.velvet",
@@ -2576,7 +2585,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "778455baa3fe9cf3ea94ff9f39ee1e3196174de4a7e38e7131d3730237188439"
+    "definition": "2968296b218f0961120e736388dacc3587b9fb9d3775abd6879f48ec89ea3543"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_spring.plateau",
@@ -2585,7 +2594,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "0dea395d3b68b30c360016b221964ed2deaa344c6b6fd75774ccb419ffbfbce5"
+    "definition": "44964536ed20262737970a2a4186cda635e17b6f59689c6bad860d71929d3c1c"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_din-mixer-control.fw_spring.velvet",
@@ -2594,7 +2603,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "10d55c1c333b5a36064aff83e541b9c4b14d8eea0d2c82970088e1b4a9216c22"
+    "definition": "c54e59c48af7e9a55647a3513448536651116f9bddcad05d8d1db2c9618fb5c9"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_room.plateau",
@@ -2603,7 +2612,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "d97c25ea88acf184a7b6b66fedb0b67c3feb594801b2b0bcec26d2e9c87a6c21"
+    "definition": "ea9bc5d2739e4d3cf13927f1ca06c52ad5c69791e49649e5631482526b1597e6"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_room.plateau_spring.plateau",
@@ -2612,7 +2621,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "ec3e1b653bea8be1990b0ca14a3b168dc84563f37ff37a25639f0364cb4d7556"
+    "definition": "90acc946cf6e21e9445b06b463874b28cdb9065a2617af4be5c3f427bbdad27e"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_room.plateau_spring.velvet",
@@ -2621,7 +2630,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "b851abf2c4fa535dbd383f1d95e7535bafeb4ee7b83b04a9dc33d54a0f6bc980"
+    "definition": "06f567697b62b688d5e9a8864bf94063e851f8d48b17b3de934d140b01cd98d6"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_room.velvet",
@@ -2630,7 +2639,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "b671c3a960990f94cba3826f245d329b1337066f90fc61658cb17af7b46e302d"
+    "definition": "e7bea41f3d0fcba40e4d97364b5c2237308a026bcb2870b353cdb02590269558"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_room.velvet_spring.plateau",
@@ -2639,7 +2648,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "bea17c0bd1589416c6265d70f3b90d63f09ef24947a6df8f7525c9363ba6c17e"
+    "definition": "6847326c4f18c85901cb663647149828ce8f49799bc0c8248804586b7d0b2aa0"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_room.velvet_spring.velvet",
@@ -2648,7 +2657,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "a425a59240f4e01449331f75aa8c90aed03345a1db972f742279ecc5e28631b6"
+    "definition": "d3f166c6fa03fa11674e90556eedf8d2822221261ce4318557b416d24659a146"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_spring.plateau",
@@ -2657,7 +2666,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "58e35e0561f80466569e01d71a71dd799e081bba8f80c5112740363cec53b274"
+    "definition": "3078354c194247e968390498d8ca3f2833c096e2f7538cd107608ce5cf7f666b"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_midi-sync.sd_spring.velvet",
@@ -2666,7 +2675,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "642c3ce941d4f6d2e18311e81116db6394a78ff844d4228c21f977be73f25556"
+    "definition": "8954c946a76f82de0e433865541472413a7a0d0f5dcfd3f08b9564b7cef8fa20"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_room.plateau",
@@ -2675,7 +2684,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "970dfbe44e100ac813a0a65241420bfd5c668be82ffef4e94ffa5b0d19f99588"
+    "definition": "795958cafcb8e9f27879df932535f57a7a341f57c0b429d0d4da542ec05c1067"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_room.plateau_spring.plateau",
@@ -2684,7 +2693,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "58fa5a967bf814ab174f5ae0b453288750454ba00c16cf05ff970f3245086a4a"
+    "definition": "d3bef13502a195d6279ec5900f1f2357c5450aaed9484efe39c2bab852e07019"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_room.plateau_spring.velvet",
@@ -2693,7 +2702,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "a28f56858bb785989513283933a849f2e10841ad1adcd54a9a16a54d166b738b"
+    "definition": "8aa9ff9e024ac485da19e66461fd2646524cc8b985b567b5e1f28846da427d94"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_room.velvet",
@@ -2702,7 +2711,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "5e27628da87e8f928fb3405f39503de0ba9d628d9a860694a492389fe4dd3f8c"
+    "definition": "d2692014e2715e08ccd36a640e97450ccaa39fae1785402bd9d0fd0e3b16ef95"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_room.velvet_spring.plateau",
@@ -2711,7 +2720,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "8299544f6192e26d324031073191c1e77ffd6d420f7c4ced5557d95cc80c5da0"
+    "definition": "f3e0d381b108414ccf8cdc3e6eadacf90e7bd7d1d83fb7effcd1be5f78ddd371"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_room.velvet_spring.velvet",
@@ -2720,7 +2729,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "724556c23cda6ea513aabba41f27c78c5ff71faeb793257e182b21b8cb9dffcc"
+    "definition": "19fceadbe1b296b17d42a2ebef076906a47002719c543fc6b1c2a7aeb228e95d"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_spring.plateau",
@@ -2729,7 +2738,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "c56485ff1374c2e9c4c4617666ac01985f69ace5654621176e135ae49fff56e1"
+    "definition": "e6131f1560a514e3443b242a5f922b70a4c4ed6fbd2c4a418278175b6cf495ca"
   },
   {
     "case": "patches-l6max_menu-loader.fw_knob-dialog.sd_spring.velvet",
@@ -2738,7 +2747,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "8f108296570f31e19cb96d13151622a10bb063a9c8bc1fbdbcfc93ef14477449"
+    "definition": "14b1788cdf13adb7ae07ffd82534dcab8a1f3c19c80db644af062711311ce2b3"
   },
   {
     "case": "patches-l6max_menu-loader.fw_midi-sync.fw",
@@ -2747,7 +2756,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "e2d7fbaa182ca0f9f3686f4e3cc7cbc07f81f7c94184d9644d32366aa841b6ef"
+    "definition": "207965f06a3a1add36a009fc52ac5be6b811a225efd3bd5270327d95cab1d763"
   },
   {
     "case": "patches-l6max_menu-loader.fw_midi-sync.fw_din-mixer-control.fw",
@@ -2756,7 +2765,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "3cc53b525cfd79e05952dd5b8fb78b50c50e77af7c670d0fad4ca62fc308fa7d"
+    "definition": "e59c308851db22e3d9fad763ab3082900ba81ff5d9430b98ddab5d5019ef1222"
   },
   {
     "case": "patches-l6max_menu-loader.fw_midi-sync.sd",
@@ -2765,7 +2774,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "e2ce12a75f8748da4e0896b06a16c22e39371d126f54ca9367214d72b8800ed2"
+    "definition": "5a9a4aab05e2a621076831d6fcdcaba409929723de414c771c4d21e17bfb61dd"
   },
   {
     "case": "patches-l6max_menu-loader.fw_midi-sync.sd_din-mixer-control.fw",
@@ -2774,7 +2783,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "76c9dd0fe868b77dea318ac4c6f0f11f8a9e262beaf153fee52c1b07afd574ad"
+    "definition": "b6a09e8b81eaac439c9bbf7024e1feb5203ee72945511bfa413d9ddb5cb1bc57"
   },
   {
     "case": "patches-l6max_midi-sync.fw",
@@ -2785,7 +2794,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "35859d35096d42d0d366d88143735c2054094e99ddc181a865d1e28d9de8717a"
+    "definition": "09d9880ff45594a62ab66c12f5428369e96ab0ddcecab436cbc4076569fa3e4e"
   },
   {
     "case": "patches-l6max_midi-sync.fw_din-mixer-control.fw",
@@ -2794,7 +2803,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "12091cef101f6c56978065281cd284a25b47469e10e68d7b99af236b0b828440"
+    "definition": "52d79cadad42782c9afe04875c869d74fb1f208395f551638b5916ce967ab2ba"
   },
   {
     "case": "patches-l6max_midi-sync.sd",
@@ -2805,7 +2814,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "93433ee3a844950ac362c7bbc00b17d3de5bf3e2896e6c280f0c432d484d82b8"
+    "definition": "5e3a890c723ae16104929899563c66edde81742f49f8d775a318d41a90a63cdb"
   },
   {
     "case": "patches-l6max_midi-sync.sd_din-mixer-control.fw",
@@ -2814,7 +2823,7 @@
     "suites": [
       "patches"
     ],
-    "definition": "d79d54c21e7c9737e886b0d19068bdb237c254ba299e907ed1b8bf0eba62024c"
+    "definition": "6d9259daa9f6aa64e0b8d22e23195fe28ed45f7a57f674829da49743c036f5c0"
   },
   {
     "case": "patches-l6max_update_din-mixer-control",
@@ -2857,7 +2866,7 @@
       "lifecycle",
       "full"
     ],
-    "definition": "1091183f99cd20f3298672e84b6e4abc7189875101345bdce83c7eec48465227"
+    "definition": "64c4c96d37ee24a68c460e7b56a031f2ed11bf7668838731eddf75a5aa737171"
   },
   {
     "case": "power",
@@ -2930,7 +2939,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "47bc13cfc7de0b955b385c83335b3bcd7fcab9e35219f8ff7eaeb074cbcfc58c"
+    "definition": "d3b67b50e64dc4659b8ea357515ced79e7357a8009666bef06af29af6163d560"
   },
   {
     "case": "sd-din-mixer-control",
@@ -2939,7 +2948,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "6b59e564b16ea9050e42f42c68c263245a7649bbe2469bef85deb9b6335fe1c8"
+    "definition": "8d555288bc30a6ea4fd57eb130f49f99447a189bd6d28502ebe4f91107d8364f"
   },
   {
     "case": "sd-duplicate-bundle",
@@ -3006,7 +3015,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "a7bf80b27b9ad5579301dde274d8c42260121ac87becb61025973b458ac26011"
+    "definition": "2ca7f48abf276e1112031be0638ed207f2e889b8fe15e8f3601aa1b2ce515777"
   },
   {
     "case": "sd-knob-dialog",
@@ -3015,7 +3024,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "851d3fd065a6d25499e82f04fc94f9feac5ba9906ff8e0734ed030269206245d"
+    "definition": "808f8c4628b17f3596d6a20bf4387acd03896fa1341f5183d10a2043f8a6bdc9"
   },
   {
     "case": "sd-knob-dialog-dynamic",
@@ -3024,7 +3033,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "c627e490cf87a99cce949732452eb0a520f471b1c0ea752f4be7474efa9dc09a"
+    "definition": "021c22f896fbacafe83ee12896026c5a5cddce3cf23b1a1b294ba6c1d8075d6d"
   },
   {
     "case": "sd-knob-midi",
@@ -3033,7 +3042,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "a4626b9da6b8335f1090f1516e94642f284a99035d7590a22cdf16a57830c2f9"
+    "definition": "41bd667b81a2b2166cac0daafcac404e0c0f318411254eeecd4bccf49eb37508"
   },
   {
     "case": "sd-knob-midi-sync-dynamic",
@@ -3051,7 +3060,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "7449fa161cfb3e140e4c754ef172d5ff0c89122c8155b588e679be9a412cb830"
+    "definition": "c803031e8d70bf9b9b501385be4a6b6d174c4ef93104df9a1432f249a8d7a42d"
   },
   {
     "case": "sd-menu-loader",
@@ -3095,7 +3104,7 @@
     "model": "l6max",
     "backend": "headless",
     "suites": [],
-    "definition": "4aad1dc2eb0a1736ca3656f0f2ea86f9b2dfe8ecc8c65559cfbe2a27736a3400"
+    "definition": "696b9e5c48bb737ae387677112bbce9824193b748e69a9af04e01c359301190f"
   },
   {
     "case": "sd-midi-sync",
@@ -3136,7 +3145,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "19a23c0d8ebfbeb79e706f2fedf8036bccefae6c46d4259e6039753dea682013"
+    "definition": "9c6be54059b6b508aa48ef45e2646bb8d0760adbb3c830bc7347d566b2e4663f"
   },
   {
     "case": "sd-older-module",
@@ -3154,7 +3163,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "a441601d400f2b9e792e0c5cc2229da0a7d1e8e6ee9ff7ee0d86eb8f1ebfb72b"
+    "definition": "b9f48fa430bfb21146d39da0e4962affac6269ac2aa19ba39a768c2396c2e23f"
   },
   {
     "case": "sd-warm-reset",

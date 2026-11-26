@@ -1,3 +1,6 @@
 [[step]]
-action = "press-display-change"
+action = "press"
 control = "recorder.down"
+
+[[step]]
+action = "expect-display-after-press"

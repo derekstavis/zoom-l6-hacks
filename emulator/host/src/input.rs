@@ -1,6 +1,7 @@
 //! Socket input transport. QEMU owns the returned engine endpoint; the UI owns
 //! EngineInput. Dropping the final handle shuts down its reply reader.
 use crate::protocol::{self, Message};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::VecDeque,
     io,
@@ -35,6 +36,42 @@ pub struct InputStatus {
     pub audio_input_position_ms: u32,
     pub audio_input_playing: bool,
     pub last_ack: Option<Message>,
+    pub error: Option<String>,
+}
+
+/// The engine input channel being observed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InputSource {
+    Main,
+    Panel,
+}
+
+/// Input channel receiving a button target. Rejects targets outside the protocol.
+pub fn button_source(target: u32) -> Option<InputSource> {
+    if target >= crate::controls::INPUT_COUNT as u32 {
+        None
+    } else if matches!(target, 0 | 4 | 5 | 48..=53) {
+        Some(InputSource::Main)
+    } else {
+        Some(InputSource::Panel)
+    }
+}
+
+/// Host-maintained input counters sampled from one channel's status lock.
+/// Counters aggregate all clients on that channel and do not attribute an
+/// acknowledgement to a particular input command.
+/// `applied` can briefly exceed `sent` when the reply arrives before the
+/// sender records its completed write.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct InputCounters {
+    pub source: InputSource,
+    pub connected: bool,
+    pub guest_ms: u32,
+    pub sent: u64,
+    pub applied: u64,
+    pub released: u64,
+    pub rejected: u64,
     pub error: Option<String>,
 }
 
@@ -363,6 +400,24 @@ pub struct InputHub {
     analog_channels: [u32; 5],
 }
 impl InputHub {
+    /// Observe one channel without consuming its acknowledgements.
+    pub fn counters(&self, source: InputSource) -> InputCounters {
+        let status = match source {
+            InputSource::Main => self.main.snapshot(),
+            InputSource::Panel => self.panel.snapshot(),
+        };
+        InputCounters {
+            source,
+            connected: status.connected,
+            guest_ms: status.guest_ms,
+            sent: status.sent,
+            applied: status.applied,
+            released: status.released,
+            rejected: status.rejected,
+            error: status.error,
+        }
+    }
+
     pub fn new(main: EngineInput, panel: EngineInput, model: l6fw::Model) -> Self {
         Self {
             main,
@@ -372,7 +427,7 @@ impl InputHub {
         }
     }
     fn button_engine(&self, button: u32) -> &EngineInput {
-        if matches!(button, 0 | 4 | 5 | 48..=53) {
+        if button_source(button) == Some(InputSource::Main) {
             &self.main
         } else {
             &self.panel

@@ -1,0 +1,16 @@
+[[step]]
+action = "include"
+path = "patches/din-mixer-control/tests/emulator/fragments/midi-probe-start.toml"
+
+[[step]]
+action = "midi-probe-expect-ring"
+channel = 1
+changed = false
+guest_ms = 500
+wall_ms = 3000
+guest_timeout_ms = 10000
+wall_timeout_s = 120
+
+[[step]]
+action = "include"
+path = "patches/din-mixer-control/tests/emulator/fragments/midi-probe-finish.toml"

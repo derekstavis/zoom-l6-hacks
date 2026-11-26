@@ -9,6 +9,8 @@ pub mod firmware_patches;
 pub mod freertos;
 pub mod heap;
 pub mod input;
+pub mod knob_popup;
+pub mod midi_config;
 pub mod protocol;
 pub mod qmp;
 pub mod sd_patches;

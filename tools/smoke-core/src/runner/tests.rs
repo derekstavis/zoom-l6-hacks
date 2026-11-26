@@ -129,8 +129,8 @@ fn direct_usb_midi_cable_is_configurable_and_range_checked() {
     .is_err());
 }
 #[test]
-fn press_display_change_requires_ack_and_new_display() {
-    let scenario = Scenario::parse("version=1\nname='press-screen'\nmodels=['l6max']\n[[step]]\naction='press-display-change'\ncontrol='recorder.down'\n").unwrap();
+fn display_after_press_requires_ack_and_new_display() {
+    let scenario = Scenario::parse("version=1\nname='press-screen'\nmodels=['l6max']\n[[step]]\naction='press'\ncontrol='recorder.down'\n[[step]]\naction='expect-display-after-press'\n").unwrap();
     let logs = std::env::temp_dir().join(format!(
         "smoke-press-screen-{}-{}",
         std::process::id(),
@@ -163,7 +163,179 @@ fn press_display_change_requires_ack_and_new_display() {
         Progress::Complete
     ));
     fs::remove_dir_all(logs).unwrap();
-    assert!(Scenario::parse("version=1\nname='invalid'\nmodels=['l6']\n[[step]]\naction='press-display-change'\ncontrol='recorder.down'\n").is_err());
+    assert!(Scenario::parse("version=1\nname='invalid'\nmodels=['l6']\n[[step]]\naction='expect-display-after-press'\n").is_err());
+}
+
+#[test]
+fn display_after_press_accepts_the_changed_frame_when_ack_arrives() {
+    let scenario = Scenario::parse("version=1\nname='ack-frame'\nmodels=['l6max']\n[[step]]\naction='press'\ncontrol='recorder.down'\n[[step]]\naction='expect-display-after-press'\n").unwrap();
+    let logs = std::env::temp_dir().join(format!(
+        "smoke-press-ack-frame-{}-{}",
+        std::process::id(),
+        NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let mut runner = Runner::new(scenario, Model::L6max, logs.clone()).unwrap();
+    let now = Instant::now();
+    assert!(matches!(
+        runner.advance(sample(0), now).unwrap(),
+        Progress::Dispatch(_)
+    ));
+    let mut changed = sample(20);
+    changed.data.display[0] = 1;
+    assert!(matches!(
+        runner.advance(changed.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    changed.main.sent = 2;
+    changed.main.applied = 2;
+    changed.panel.sent = 2;
+    changed.panel.applied = 2;
+    assert!(matches!(
+        runner.advance(changed, now).unwrap(),
+        Progress::Complete
+    ));
+    fs::remove_dir_all(logs).unwrap();
+}
+
+#[test]
+fn display_after_press_keeps_the_press_guest_and_wall_deadlines() {
+    for wall in [false, true] {
+        let scenario = Scenario::parse("version=1\nname='deadline'\nmodels=['l6max']\n[[step]]\naction='press'\ncontrol='recorder.down'\nguest_timeout_ms=100\nwall_timeout_s=1\n[[step]]\naction='expect-display-after-press'\nguest_timeout_ms=1000\nwall_timeout_s=10\n").unwrap();
+        let logs = std::env::temp_dir().join(format!(
+            "smoke-press-deadline-{}-{}",
+            std::process::id(),
+            NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let mut runner = Runner::new(scenario, Model::L6max, logs.clone()).unwrap();
+        let now = Instant::now();
+        assert!(matches!(
+            runner.advance(sample(0), now).unwrap(),
+            Progress::Dispatch(_)
+        ));
+        let mut ack = sample(50);
+        ack.main.sent = 2;
+        ack.main.applied = 2;
+        ack.panel.sent = 2;
+        ack.panel.applied = 2;
+        assert!(matches!(
+            runner
+                .advance(ack.clone(), now + Duration::from_millis(500))
+                .unwrap(),
+            Progress::Waiting
+        ));
+        ack.data.display[0] = 1;
+        if wall {
+            assert!(
+                runner
+                    .advance(ack, now + Duration::from_millis(1001))
+                    .unwrap_err()
+                    .contains("press deadline")
+            );
+        } else {
+            ack.panel.guest_ms = 101;
+            assert!(
+                runner
+                    .advance(ack, now + Duration::from_millis(501))
+                    .unwrap_err()
+                    .contains("press deadline")
+            );
+        }
+        fs::remove_dir_all(logs).unwrap();
+    }
+}
+
+#[test]
+fn display_after_press_does_not_start_a_shorter_new_deadline() {
+    let scenario = Scenario::parse("version=1\nname='long-press-budget'\nmodels=['l6max']\n[[step]]\naction='press'\ncontrol='recorder.down'\nguest_timeout_ms=2000\nwall_timeout_s=10\n[[step]]\naction='expect-display-after-press'\nguest_timeout_ms=100\nwall_timeout_s=1\n").unwrap();
+    let logs = std::env::temp_dir().join(format!(
+        "smoke-press-long-{}-{}",
+        std::process::id(),
+        NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let mut runner = Runner::new(scenario, Model::L6max, logs.clone()).unwrap();
+    let now = Instant::now();
+    runner.advance(sample(0), now).unwrap();
+    let mut ack = sample(50);
+    ack.main.sent = 2;
+    ack.main.applied = 2;
+    ack.panel.sent = 2;
+    ack.panel.applied = 2;
+    assert!(matches!(
+        runner.advance(ack.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    ack.panel.guest_ms = 500;
+    assert!(matches!(
+        runner
+            .advance(ack.clone(), now + Duration::from_secs(2))
+            .unwrap(),
+        Progress::Waiting
+    ));
+    ack.data.display[0] = 1;
+    assert!(matches!(
+        runner.advance(ack, now + Duration::from_secs(3)).unwrap(),
+        Progress::Complete
+    ));
+    fs::remove_dir_all(logs).unwrap();
+}
+
+#[test]
+fn display_after_press_requires_adjacent_press_for_each_model() {
+    let prefix = "version=1\nname='adjacent'\nmodels=['l6max']\n";
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}[[step]]\naction='expect-display-after-press'\n"
+        ))
+        .is_err()
+    );
+    assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='press'\ncontrol='recorder.down'\n[[step]]\naction='delay'\nguest_ms=1\n[[step]]\naction='expect-display-after-press'\n")).is_err());
+    assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='press'\ncontrol='recorder.down'\n[[step]]\naction='expect-display-after-press'\n")).is_ok());
+}
+
+#[test]
+fn display_after_press_rejects_new_input_and_restart_invalidates_baseline() {
+    let make_runner = || {
+        let scenario = Scenario::parse("version=1\nname='baseline'\nmodels=['l6max']\n[[step]]\naction='press'\ncontrol='recorder.down'\n[[step]]\naction='expect-display-after-press'\n").unwrap();
+        Runner::new(
+            scenario,
+            Model::L6max,
+            std::env::temp_dir().join(format!(
+                "smoke-press-baseline-{}-{}",
+                std::process::id(),
+                NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            )),
+        )
+        .unwrap()
+    };
+    let now = Instant::now();
+    let mut runner = make_runner();
+    runner.advance(sample(0), now).unwrap();
+    let mut ack = sample(1);
+    ack.panel.sent = 2;
+    ack.panel.applied = 2;
+    ack.main.sent = 2;
+    ack.main.applied = 2;
+    assert!(matches!(
+        runner.advance(ack.clone(), now).unwrap(),
+        Progress::Waiting
+    ));
+    ack.panel.sent = 3;
+    ack.main.sent = 3;
+    assert!(
+        runner
+            .advance(ack.clone(), now)
+            .unwrap_err()
+            .contains("unexpected concurrent input")
+    );
+    let logs = runner.logs.clone();
+    runner.guest_restarted(&logs);
+    assert!(
+        runner
+            .advance(ack, now)
+            .unwrap_err()
+            .contains("preceding press")
+    );
+    fs::remove_dir_all(logs).unwrap();
 }
 
 #[test]
@@ -196,6 +368,7 @@ fn output_alone_cannot_pass_before_the_command_acknowledgement() {
         runner.advance(feedback, now).unwrap(),
         Progress::Complete
     ));
+    runner.finish("PASS", None).unwrap();
     assert!(runner.logs.join("scenario.json").is_file());
     fs::remove_dir_all(&runner.logs).unwrap();
 }
@@ -931,7 +1104,7 @@ fn setup_input_propagates_through_includes_and_is_dropped_for_spec_state() {
             .collect::<Vec<_>>(),
         [true, true, false]
     );
-    let kept = loaded.without_setup_input();
+    let kept = loaded.without_setup_input().unwrap();
     assert_eq!(kept.step.len(), 1);
     assert!(matches!(kept.step[0].action, Action::Delay { guest_ms: 4 }));
     fs::remove_dir_all(&dir).unwrap();
@@ -1071,4 +1244,179 @@ fn unexpected_power_loss_fails_but_explicit_restart_accepts_shutdown() {
         }
         fs::remove_dir_all(&runner.logs).unwrap();
     }
+}
+
+#[test]
+fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
+    let prefix = "version=1\nname='knob'\nmodels=['l6max']\nbackends=['headless']\n";
+    let ready =
+        "[[step]]\naction='knob-dialog-ready'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
+    let guard =
+        "[[step]]\naction='knob-dialog-guard'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
+    let baseline =
+        "[[step]]\naction='knob-dialog-baseline'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
+    let preflight = ["begin", "descriptor", "text-alias", "layer-collision", "widget-layer", "background-layer"].iter().map(|name| format!("[[step]]\naction='knob-dialog-preflight-{name}'\nguest_timeout_ms=180000\nwall_timeout_s=600\n")).collect::<String>();
+    let activation = "[[step]]\naction='knob-dialog-callback-race'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-first-activation'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
+    let active_demo = "[[step]]\naction='knob-dialog-active-display'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-level-demo'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
+    let tasks = "[[step]]\naction='knob-dialog-task-contexts'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
+    let overlay = "[[step]]\naction='knob-dialog-overlay-invariants'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-bitmap-zero'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-active-overlay'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
+    let locked = "[[step]]\naction='knob-dialog-locked-update'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
+    let dialog = "[[step]]\naction='knob-dialog'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
+    let modes =
+        include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/mode-walk.toml");
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}{ready}{guard}{baseline}{preflight}{activation}{active_demo}{tasks}{overlay}{locked}{modes}{dialog}"
+        ))
+        .is_ok()
+    );
+    assert!(Scenario::parse(&format!("{prefix}{ready}{guard}{baseline}{preflight}")).is_err());
+    let complete = format!(
+        "{prefix}{ready}{guard}{baseline}{preflight}{activation}{active_demo}{tasks}{overlay}{locked}{modes}{dialog}"
+    );
+    // The fragment supplies parameters; changing a valid input is permitted,
+    // but the scoped sequence and final Pan mode remain required.
+    assert!(Scenario::parse(&complete.replacen("hold_ms = 50", "hold_ms = 100", 1)).is_ok());
+    assert!(
+        Scenario::parse(&complete.replacen(
+            "action = \"wait-input-applied\"",
+            "action = \"knob-dialog-expect-heap\"",
+            1
+        ))
+        .is_err()
+    );
+    assert!(Scenario::parse(&complete.replace("mode = 8", "mode = 7")).is_err());
+
+    let setup_pruned =
+        format!("{prefix}{ready}{guard}{baseline}{preflight}{activation}{active_demo}{tasks}{overlay}{locked}{modes}{dialog}")
+            .replace(
+                "action='knob-dialog-preflight-widget-layer'",
+                "setup_input=true\naction='knob-dialog-preflight-widget-layer'",
+            );
+    assert!(
+        Scenario::parse(&setup_pruned)
+            .unwrap()
+            .without_setup_input()
+            .is_err()
+    );
+    assert!(Scenario::parse(&format!("{prefix}{ready}{dialog}")).is_err());
+    assert!(Scenario::parse(&format!("{prefix}{dialog}")).is_err());
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}{ready}[[step]]\naction='wait'\nuntil='boot-ready'\n{dialog}"
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}{ready}{guard}{baseline}{preflight}{activation}{active_demo}{tasks}{overlay}{locked}{modes}{}",
+            dialog.replace("wall_timeout_s=600", "wall_timeout_s=599")
+        ))
+        .is_err()
+    );
+}
+
+#[test]
+fn captured_display_primitives_reject_screenless_l6() {
+    let prefix = "version=1\nname='display'\nmodels=['l6']\nbackends=['headless']\n";
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}[[step]]\naction='capture-display'\nguest_ms=400\nartifact='capture'\n"
+        ))
+        .is_err()
+    );
+    assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='expect-captured-display-image'\nimage='tests/emulator/references/l6max-recorder-home.png'\n")).is_err());
+}
+
+#[test]
+fn completion_does_not_publish_pass_before_adapter_cleanup() {
+    let mut runner = test_runner("[[step]]\naction='delay'\nguest_ms=1\n");
+    let mut skipped = runner.scenario.step[0].clone();
+    skipped.models = vec![Model::L6max];
+    runner.scenario.step.push(skipped);
+    let now = Instant::now();
+    assert!(matches!(
+        runner.advance(sample(0), now).unwrap(),
+        Progress::Waiting
+    ));
+    assert!(matches!(
+        runner.advance(sample(1), now).unwrap(),
+        Progress::Complete
+    ));
+    assert!(!runner.logs.join("scenario.json").exists());
+    runner.finish("FAIL", Some("cleanup failed")).unwrap();
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(runner.logs.join("scenario.json")).unwrap()).unwrap();
+    assert_eq!(report["outcome"], "FAIL");
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+
+#[test]
+fn midi_probe_requires_complete_model_scoped_transaction_and_matching_deadlines() {
+    let prefix = "version=1\nname='probe'\nmodels=['l6max']\nbackends=['headless']\n";
+    let begin = "[[step]]\naction='midi-probe-begin'\nguest_timeout_ms=10000\nwall_timeout_s=120\n";
+    let send = "[[step]]\naction='midi-probe-send-cc'\nport='din'\nchannel=0\ncontroller=81\nvalue=40\ncapture_ring_channel=1\nguest_timeout_ms=10000\nwall_timeout_s=120\n";
+    let expect = "[[step]]\naction='midi-probe-expect-ring'\nchannel=1\nchanged=false\nguest_ms=500\nwall_ms=3000\nguest_timeout_ms=10000\nwall_timeout_s=120\n";
+    let end = "[[step]]\naction='midi-probe-end'\nguest_timeout_ms=10000\nwall_timeout_s=120\n";
+    assert!(Scenario::parse(&format!("{prefix}{begin}{send}{expect}{end}")).is_ok());
+    assert!(Scenario::parse(&format!("{prefix}{begin}{send}{expect}")).is_err());
+    assert!(Scenario::parse(&format!("{prefix}{send}{end}")).is_err());
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}{begin}{send}[[step]]\naction='delay'\nguest_ms=1\n{end}"
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}{begin}{send}{}",
+            end.replace("wall_timeout_s=120", "wall_timeout_s=121")
+        ))
+        .is_err()
+    );
+    let no_guest_window = expect.replace("guest_ms=500\n", "");
+    assert!(Scenario::parse(&format!("{prefix}{begin}{send}{no_guest_window}{end}")).is_err());
+    let tap = "[[step]]\naction='midi-probe-drain-and-tap'\nport='din'\ntarget=22\nhold_ms=50\nguest_timeout_ms=10000\nwall_timeout_s=120\n";
+    let observe = "[[step]]\naction='midi-probe-expect-no-events'\nport='mixer'\nwall_ms=600\nguest_timeout_ms=10000\nwall_timeout_s=120\n";
+    assert!(Scenario::parse(&format!("{prefix}{begin}{tap}{observe}{end}")).is_err());
+    let pruned = format!(
+        "{prefix}{begin}{}{expect}{}",
+        send.replace(
+            "action='midi-probe-send-cc'",
+            "setup_input=true\naction='midi-probe-send-cc'"
+        ),
+        end
+    );
+    assert!(
+        Scenario::parse(&pruned)
+            .unwrap()
+            .without_setup_input()
+            .is_err()
+    );
+}
+
+#[test]
+fn midi_sync_requires_ordered_complete_scope_and_matching_deadlines() {
+    let prefix = "version=1\nname='sync'\nmodels=['l6','l6max']\nbackends=['headless']\n";
+    let begin = "[[step]]\naction='host-midi-sync-begin'\n";
+    let drain = "[[step]]\naction='host-midi-drain'\nquiet_wall_ms=500\n";
+    let send = "[[step]]\naction='host-midi-send-cc'\nchannel=0\ncontroller=127\nvalue=127\n";
+    let expect = "[[step]]\naction='host-midi-expect-sync'\n";
+    let end = "[[step]]\naction='host-midi-end'\n";
+    assert!(Scenario::parse(&format!("{prefix}{begin}{drain}{send}{expect}{end}")).is_ok());
+    assert!(Scenario::parse(&format!("{prefix}{begin}{expect}{end}")).is_ok());
+    assert!(Scenario::parse(&format!("{prefix}{begin}{drain}{expect}{end}")).is_err());
+    assert!(Scenario::parse(&format!("{prefix}{begin}{send}{expect}{end}")).is_err());
+    assert!(Scenario::parse(&format!("{prefix}{begin}{expect}")).is_err());
+    assert!(Scenario::parse(&format!("{prefix}{expect}{end}")).is_err());
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}{begin}{}{end}",
+            expect.replace(
+                "action='host-midi-expect-sync'",
+                "action='host-midi-expect-sync'\nwall_timeout_s=121"
+            )
+        ))
+        .is_err()
+    );
 }

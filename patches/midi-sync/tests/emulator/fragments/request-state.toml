@@ -1,0 +1,28 @@
+[[step]]
+action = "host-midi-sync-begin"
+guest_timeout_ms = 30000
+wall_timeout_s = 120
+
+[[step]]
+action = "host-midi-drain"
+quiet_wall_ms = 500
+guest_timeout_ms = 30000
+wall_timeout_s = 120
+
+[[step]]
+action = "host-midi-send-cc"
+channel = 0
+controller = 127
+value = 127
+guest_timeout_ms = 30000
+wall_timeout_s = 120
+
+[[step]]
+action = "host-midi-expect-sync"
+guest_timeout_ms = 30000
+wall_timeout_s = 120
+
+[[step]]
+action = "host-midi-end"
+guest_timeout_ms = 30000
+wall_timeout_s = 120

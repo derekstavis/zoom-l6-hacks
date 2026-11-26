@@ -1,0 +1,69 @@
+[[step]]
+action = "host-midi-connect"
+guest_timeout_ms = 15000
+wall_timeout_s = 120
+
+[[step]]
+action = "enqueue-encoder"
+midi_transaction = true
+channel = 1
+steps = -4
+guest_timeout_ms = 15000
+wall_timeout_s = 120
+
+[[step]]
+models = ["l6"]
+action = "host-midi-expect-cc"
+channel = 0
+controller = 83
+guest_timeout_ms = 15000
+wall_timeout_s = 120
+
+[[step]]
+models = ["l6max"]
+action = "host-midi-expect-cc"
+channel = 0
+controller = 81
+guest_timeout_ms = 15000
+wall_timeout_s = 120
+
+[[step]]
+action = "host-midi-settle"
+guest_ms = 1000
+guest_timeout_ms = 15000
+wall_timeout_s = 120
+
+[[step]]
+action = "checkpoint"
+name = "before-midi-cc"
+guest_timeout_ms = 15000
+wall_timeout_s = 120
+
+[[step]]
+models = ["l6"]
+action = "host-midi-send-cc"
+channel = 0
+controller = 83
+value = 100
+guest_timeout_ms = 15000
+wall_timeout_s = 120
+
+[[step]]
+models = ["l6max"]
+action = "host-midi-send-cc"
+channel = 0
+controller = 81
+value = 100
+guest_timeout_ms = 15000
+wall_timeout_s = 120
+
+[[step]]
+action = "expect-ring-changed"
+channel = 1
+midi_transaction = true
+checkpoint = "before-midi-cc"
+wall_timeout_s = 3
+guest_timeout_ms = 15000
+
+[[step]]
+action = "host-midi-end"

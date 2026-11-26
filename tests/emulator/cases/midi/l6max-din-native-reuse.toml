@@ -1,0 +1,26 @@
+version = 1
+name = "l6max-din-native-reuse"
+models = ["l6max"]
+backends = ["headless"]
+state = "patch-matrix"
+patches = ["din-mixer-control"]
+
+[case]
+suites = ["full"]
+wall_timeout_s = 900
+
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/prepared-home.toml"
+
+[[step]]
+action = "host-midi-connect"
+guest_timeout_ms = 15000
+wall_timeout_s = 120
+
+[[step]]
+action = "host-midi-end"
+
+[[step]]
+action = "include"
+path = "patches/din-mixer-control/tests/emulator/fragments/check.toml"

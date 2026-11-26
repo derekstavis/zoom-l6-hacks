@@ -47,6 +47,14 @@ pub enum ObservationActivity {
     AudioOutput,
 }
 
+/// MIDI transport used by a bounded mixer/DIN observation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, schemars::JsonSchema, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MidiProbePort {
+    Mixer,
+    Din,
+}
+
 impl Backend {
     pub fn name(self) -> &'static str {
         match self {
@@ -256,22 +264,78 @@ pub enum Action {
         value: u8,
     },
     HostMidiRoundTrip,
+    MidiProbeBegin,
+    MidiProbeSendCc {
+        port: MidiProbePort,
+        channel: u8,
+        controller: u8,
+        value: u8,
+        capture_ring_channel: usize,
+    },
+    MidiProbeExpectRing {
+        channel: usize,
+        changed: bool,
+        guest_ms: Option<u32>,
+        wall_ms: u32,
+    },
+    MidiProbeWaitRingStable {
+        channel: usize,
+        guest_ms: u32,
+        wall_ms: u32,
+    },
+    MidiProbeDrainAndTap {
+        port: MidiProbePort,
+        target: u32,
+        hold_ms: u32,
+    },
+    MidiProbeExpectNoEvents {
+        port: MidiProbePort,
+        wall_ms: u32,
+    },
+    MidiProbeEnd,
+    HostMidiConnect,
+    HostMidiBegin,
+    HostMidiSyncBegin,
+    HostMidiExpectSync,
+    HostMidiDrain {
+        quiet_wall_ms: u32,
+    },
+    HostMidiExpectCount {
+        count: usize,
+    },
+    HostMidiEnd,
+    EnqueueEncoder {
+        channel: usize,
+        steps: i32,
+        #[serde(default)]
+        midi_transaction: bool,
+    },
+    HostMidiExpectCc {
+        channel: u8,
+        controller: u8,
+    },
+    HostMidiSettle {
+        guest_ms: u32,
+    },
+    HostMidiSendCc {
+        channel: u8,
+        controller: u8,
+        value: u8,
+    },
+    ExpectRingChanged {
+        channel: usize,
+        checkpoint: String,
+        #[serde(default)]
+        midi_transaction: bool,
+    },
+
     DirectUsbMidiRoundTrip {
         #[serde(default = "default_midi_cable")]
         cable: u8,
         #[serde(default = "default_true")]
         expect_ring_change: bool,
     },
-    L6maxDinMixerControl {
-        expect_din_ring_change: bool,
-    },
     L6DinUsbForwarding,
-    HostMidiSync {
-        /// Send the CC 127 state request. When false the step only collects
-        /// the reply to a request made another way, such as a menu item.
-        #[serde(default = "default_true")]
-        request: bool,
-    },
     L6MidiSync,
     L6MidiRingPinSweep {
         cc: u8,
@@ -383,10 +447,54 @@ pub enum Action {
         until: Option<ChordCondition>,
     },
     AudioCallbacks,
+    KnobDialogReady,
+    KnobDialogGuard,
+    KnobDialogBaseline,
+    KnobDialogPreflightBegin,
+    KnobDialogPreflightDescriptor,
+    KnobDialogPreflightTextAlias,
+    KnobDialogPreflightLayerCollision,
+    KnobDialogPreflightWidgetLayer,
+    KnobDialogPreflightBackgroundLayer,
+    KnobDialogCallbackRace,
+    KnobDialogFirstActivation,
+    KnobDialogActiveDisplay,
+    KnobDialogLevelDemo,
+    KnobDialogTaskContexts,
+    KnobDialogOverlayInvariants,
+    KnobDialogBitmapZero,
+    KnobDialogActiveOverlay,
+    KnobDialogLockedUpdate,
+    KnobDialogModeBegin {
+        scene: String,
+    },
+    EnqueueTap {
+        target: u32,
+        hold_ms: u32,
+    },
+    WaitInputApplied,
+    WaitKnobParameterMode {
+        mode: u8,
+    },
+    CaptureDisplay {
+        guest_ms: u32,
+        artifact: String,
+    },
+    ExpectCapturedDisplayImage {
+        image: PathBuf,
+    },
+    KnobDialogExpectHeap,
+    KnobDialogModeEnd,
     KnobDialog,
     /// Turn the channel 1 level knob once on the recorder screen and check
     /// that Knob Dialog shows the new value.
-    KnobDialogPopup,
+    KnobPopupOpen {
+        first_steps: i32,
+        fallback_steps: i32,
+        attempt_guest_ms: u32,
+    },
+    KnobPopupExpectOpen,
+    KnobPopupExpectValue,
     /// Compare a menu's child titles with `items`. `menu` names a stock menu
     /// (`main`, `project`, `sound-pad`, `mixer` or `system`); `path` then
     /// descends through child titles.
@@ -422,10 +530,8 @@ pub enum Action {
         activity: ObservationActivity,
         guest_ms: u32,
     },
-    /// Press an L6max control and wait until the display changes.
-    PressDisplayChange {
-        control: String,
-    },
+    /// Wait for the display to differ from the preceding press's baseline.
+    ExpectDisplayAfterPress,
     Press {
         control: String,
     },
@@ -639,16 +745,17 @@ impl Scenario {
     /// steps are dropped because the state already holds their result.
     pub fn load_for_case(path: &Path) -> Result<Self, String> {
         let scenario = Self::load(path)?;
-        Ok(if std::env::var(STATE_SPEC_ENV).as_deref() == Ok("1") {
+        if std::env::var(STATE_SPEC_ENV).as_deref() == Ok("1") {
             scenario.without_setup_input()
         } else {
-            scenario
-        })
+            Ok(scenario)
+        }
     }
-    pub fn without_setup_input(mut self) -> Self {
+    pub fn without_setup_input(mut self) -> Result<Self, String> {
         self.step.retain(|step| !step.setup_input);
         self.spec_state = true;
-        self
+        self.validate()?;
+        Ok(self)
     }
     /// Whether this scenario needs the native patch builder for its setup or
     /// for a native-versus-WASM patch comparison.
@@ -695,6 +802,31 @@ pub const STATE_SPEC_ENV: &str = "SMOKE_STATE_SPEC";
 pub struct Fragment {
     pub step: Vec<Step>,
 }
+/// Validate a bounded mode transaction without embedding scene test data in Rust.
+/// The final Pan selector is required by the diagnostic's subsequent Pan sweep.
+pub(crate) fn valid_knob_mode_steps(steps: &[&Step]) -> bool {
+    if steps.is_empty() || steps.len() % 10 != 0 || steps.len() / 10 > 23 {
+        return false;
+    }
+    let valid = steps.chunks_exact(10).all(|group| {
+        matches!(&group[0].action, Action::KnobDialogModeBegin { scene } if !scene.is_empty() && scene.len() <= 64 && scene.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+        && matches!(group[1].action, Action::EnqueueTap { target, hold_ms } if l6ctl::button_source(target).is_some() && (1..=60_000).contains(&hold_ms))
+        && matches!(group[2].action, Action::WaitInputApplied)
+        && matches!(group[3].action, Action::WaitKnobParameterMode { mode } if mode <= 9)
+        && matches!(group[4].action, Action::EnqueueEncoder { channel, steps, midi_transaction: false } if (1..=8).contains(&channel) && steps != 0 && steps.unsigned_abs() <= 1000)
+        && matches!(group[5].action, Action::WaitInputApplied)
+        && matches!(&group[6].action, Action::CaptureDisplay { guest_ms, artifact } if *guest_ms > 0 && *guest_ms <= group[6].guest_timeout_ms && !artifact.is_empty() && artifact.len() <= 64 && artifact.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+        && matches!(&group[7].action, Action::ExpectCapturedDisplayImage { image } if spec_path(image).is_ok() && image.extension().is_some_and(|extension| extension == "png"))
+        && matches!(group[8].action, Action::KnobDialogExpectHeap)
+        && matches!(group[9].action, Action::KnobDialogModeEnd)
+    });
+    valid
+        && matches!(
+            steps[steps.len() - 7].action,
+            Action::WaitKnobParameterMode { mode: 8 }
+        )
+}
+
 /// Expand includes. A fragment is shared, so its steps scoped only to models
 /// the scenario does not run (`scope`) are left out.
 fn expand_steps(

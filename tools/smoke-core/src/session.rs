@@ -222,8 +222,13 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
     }));
     let mut device_state = devices::State::default();
     let mut card_inserted = options.sd_image.is_some() && !options.no_sd;
-    let result: Result<(), String> = (|| {
+    let mut result: Result<(), String> = (|| {
         loop {
+            if runner.current_step() == runner.scenario.step.len()
+                && device_state.has_knob_preflight()
+            {
+                return Err("knob-dialog preflight ended before diagnostic completion".into());
+            }
             let progress = {
                 let current = session.as_ref().unwrap();
                 let data = current.poll()?;
@@ -236,6 +241,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     if options.state_dir.is_none() {
                         return Err("restart requires isolated persistent state".into());
                     }
+                    device_state.restarted()?;
                     drop(session.take());
                     options.logs = options.logs.join("restart");
                     let mut restart_options = options.clone();
@@ -244,7 +250,6 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         restart_options.no_sd = true;
                     }
                     session = Some(Session::start(&restart_options)?);
-                    device_state.restarted();
                     runner.restarted(&options.logs);
                     runner.trace_file(options.logs.join(if options.trace_sd {
                         "sdhci.trace"
@@ -276,6 +281,23 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
             std::thread::sleep(Duration::from_millis(16));
         }
     })();
+    if result.is_ok() && device_state.has_knob_preflight() {
+        result = Err("knob-dialog preflight ended before diagnostic completion".into());
+    }
+    if result.is_ok() && device_state.has_midi_probe() {
+        result = Err("MIDI probe transaction ended before completion".into());
+    }
+    if result.is_ok() && device_state.has_midi_sync() {
+        result = Err("MIDI sync transaction ended before completion".into());
+    }
+    device_state.abort_midi_sync();
+    device_state.abort_midi_probe();
+    if let Err(cleanup) = device_state.abort_knob_preflight() {
+        result = Err(match result {
+            Ok(()) => format!("debugger cleanup failed: {cleanup}"),
+            Err(error) => format!("{error}; debugger cleanup failed: {cleanup}"),
+        });
+    }
     if let Err(error) = &result {
         runner.finish("FAIL", Some(error))?;
     }
@@ -292,6 +314,9 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
         let error = "host MIDI endpoint remained after engine shutdown".to_owned();
         runner.finish("FAIL", Some(&error))?;
         return Err(error);
+    }
+    if result.is_ok() {
+        runner.finish("PASS", None)?;
     }
     result
 }

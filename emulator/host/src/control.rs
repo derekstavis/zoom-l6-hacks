@@ -1,6 +1,11 @@
 //! Optional local Unix-socket control endpoint for a running emulator.
-use crate::{freertos, input::InputHub, qmp::QmpClient};
+use crate::{
+    freertos,
+    input::{InputHub, InputSource},
+    qmp::QmpClient,
+};
 use l6fw::Model;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -17,6 +22,80 @@ use std::{
     thread::{self, JoinHandle},
     time::Duration,
 };
+
+/// Basic state shared by in-process callers and the control socket.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct Info {
+    pub model: Model,
+    pub guest_ms: u32,
+    pub powered_off: bool,
+    pub main_indicators: [u32; 8],
+    pub panel_indicators: [u32; 8],
+}
+
+pub fn info(inputs: &InputHub, model: Model) -> Info {
+    let main = inputs.main.snapshot();
+    let panel = inputs.panel.snapshot();
+    Info {
+        model,
+        guest_ms: panel.guest_ms,
+        powered_off: main.powered_off,
+        main_indicators: main.indicators,
+        panel_indicators: panel.indicators,
+    }
+}
+
+/// Validate a one-based channel and enqueue a panel encoder input.
+/// Success reports enqueueing only; the guest may not have applied it yet.
+pub fn enqueue_encoder(
+    inputs: &InputHub,
+    model: Model,
+    channel: u32,
+    steps: i32,
+) -> Result<(), String> {
+    enqueue_encoder_with(model, channel, steps, |index, steps| {
+        inputs
+            .encoder(index, steps)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    })
+}
+
+/// Enqueue a tap. This confirms enqueueing, not guest acknowledgement.
+pub fn enqueue_tap(inputs: &InputHub, target: u32, hold_ms: u32) -> Result<(), String> {
+    if target >= crate::controls::INPUT_COUNT as u32 {
+        return Err(format!(
+            "button target must be less than {}",
+            crate::controls::INPUT_COUNT
+        ));
+    }
+    if hold_ms == 0 || hold_ms > 60_000 {
+        return Err("hold_ms must be between 1 and 60000".into());
+    }
+    inputs
+        .tap(target, hold_ms)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+fn enqueue_encoder_with(
+    model: Model,
+    channel: u32,
+    steps: i32,
+    enqueue: impl FnOnce(u32, i32) -> Result<(), String>,
+) -> Result<(), String> {
+    let count = model.channels() as u32;
+    if channel == 0 || channel > count {
+        return Err(format!(
+            "encoder channel must be 1..{count} for {}",
+            model.name()
+        ));
+    }
+    if steps == 0 || steps.unsigned_abs() > 1000 {
+        return Err("steps must be between -1000 and 1000, excluding zero".into());
+    }
+    enqueue(channel - 1, steps)
+}
 
 pub struct ControlServer {
     path: PathBuf,
@@ -189,6 +268,20 @@ fn execute(
         .and_then(Value::as_str)
         .ok_or("request needs a command")?;
     match command {
+        "input-status" => {
+            let source = match request.get("source").and_then(Value::as_str) {
+                Some("main") => InputSource::Main,
+                Some("panel") => InputSource::Panel,
+                _ => return Err("input-status source must be main or panel".into()),
+            };
+            serde_json::to_value(inputs.counters(source)).map_err(|error| error.to_string())
+        }
+        "heap-counters" => {
+            let counters = crate::heap::counters(qmp, model)?;
+            serde_json::to_value(counters).map_err(|error| error.to_string())
+        }
+        "midi-config" => serde_json::to_value(crate::midi_config::config(qmp, model)?)
+            .map_err(|error| error.to_string()),
         "rtos" => {
             let kind = request
                 .get("kind")
@@ -204,17 +297,23 @@ fn execute(
                 sample(kind)
             }
         }
-        "info" => {
-            let main = inputs.main.snapshot();
-            let panel = inputs.panel.snapshot();
-            Ok(json!({
-                "model": model.name(),
-                "guest_ms": panel.guest_ms,
-                "powered_off": main.powered_off,
-                "main_indicators": main.indicators,
-                "panel_indicators": panel.indicators,
-            }))
+        "knob-parameter-state" => {
+            let state = crate::knob_popup::parameter_reader(qmp, model)?.parameter_state()?;
+            serde_json::to_value(state).map_err(|error| error.to_string())
         }
+        "recorder-state" => {
+            let state = crate::knob_popup::reader(qmp, model)?.recorder_state()?;
+            serde_json::to_value(state).map_err(|error| error.to_string())
+        }
+        "knob-popup" => {
+            let with_text = request
+                .get("with_text")
+                .and_then(Value::as_bool)
+                .ok_or("knob-popup requires with_text")?;
+            let snapshot = crate::knob_popup::snapshot(qmp, model, with_text)?;
+            serde_json::to_value(snapshot).map_err(|error| error.to_string())
+        }
+        "info" => serde_json::to_value(info(inputs, model)).map_err(|error| error.to_string()),
         "tap" | "down" | "up" => {
             let target = number(request, "target")?;
             if target >= crate::controls::INPUT_COUNT as u64 {
@@ -227,12 +326,9 @@ fn execute(
             match command {
                 "tap" => {
                     let hold = number(request, "hold_ms")?;
-                    if hold == 0 || hold > 60_000 {
-                        return Err("hold_ms must be between 1 and 60000".into());
-                    }
-                    inputs
-                        .tap(target, hold as u32)
-                        .map_err(|error| error.to_string())?;
+                    let hold =
+                        u32::try_from(hold).map_err(|_| "hold_ms must be between 1 and 60000")?;
+                    enqueue_tap(inputs, target, hold)?;
                 }
                 "down" => {
                     let duration = number(request, "duration_ms")?;
@@ -252,20 +348,9 @@ fn execute(
         }
         "encoder" => {
             let channel = number(request, "channel")?;
-            let count = model.channels() as u64;
-            if channel == 0 || channel > count {
-                return Err(format!(
-                    "encoder channel must be 1..{count} for {}",
-                    model.name()
-                ));
-            }
             let steps = signed(request, "steps")?;
-            if steps == 0 || steps.unsigned_abs() > 1000 {
-                return Err("steps must be between -1000 and 1000, excluding zero".into());
-            }
-            inputs
-                .encoder(channel as u32 - 1, steps)
-                .map_err(|error| error.to_string())?;
+            let channel = u32::try_from(channel).map_err(|_| "encoder channel is too large")?;
+            enqueue_encoder(inputs, model, channel, steps)?;
             Ok(json!({"channel":channel,"steps":steps}))
         }
         "analog" => {
@@ -343,6 +428,108 @@ mod tests {
     use super::*;
 
     #[test]
+    fn input_status_request_dispatches_and_rejects_invalid_sources() {
+        use crate::input::EngineInput;
+        let (main, _main_peer) = EngineInput::pair().unwrap();
+        let (panel, _panel_peer) = EngineInput::pair().unwrap();
+        let inputs = InputHub::new(main, panel, Model::L6max);
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || {
+            peer.write_all(b"{\"QMP\":{\"version\":{\"qemu\":{\"major\":10,\"minor\":0,\"micro\":0},\"package\":\"\"},\"capabilities\":[]}}\r\n").unwrap();
+            let mut line = String::new();
+            BufReader::new(&mut peer).read_line(&mut line).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&line).unwrap()["execute"],
+                "qmp_capabilities"
+            );
+            peer.write_all(b"{\"return\":{}}\r\n").unwrap();
+        });
+        let qmp = QmpClient::connect(stream).unwrap();
+        server.join().unwrap();
+        for (source, expected) in [("main", InputSource::Main), ("panel", InputSource::Panel)] {
+            let result = execute(
+                &json!({"command":"input-status", "source":source}),
+                &inputs,
+                Model::L6max,
+                &qmp,
+            )
+            .unwrap();
+            assert_eq!(
+                result,
+                serde_json::to_value(inputs.counters(expected)).unwrap()
+            );
+        }
+        assert!(
+            execute(
+                &json!({"command":"input-status", "source":"other"}),
+                &inputs,
+                Model::L6max,
+                &qmp
+            )
+            .is_err()
+        );
+        assert!(
+            execute(
+                &json!({"command":"input-status"}),
+                &inputs,
+                Model::L6max,
+                &qmp
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn input_status_samples_channel_counters_without_consuming_acknowledgements() {
+        use crate::{
+            input::EngineInput,
+            protocol::{self, Message},
+        };
+        let (main, _main_peer) = EngineInput::pair().unwrap();
+        let (panel, mut panel_peer) = EngineInput::pair().unwrap();
+        let inputs = InputHub::new(main, panel, Model::L6max);
+        let sent = inputs.tap(35, 50).unwrap();
+        let command = Message::read(&mut panel_peer).unwrap();
+        assert_eq!(command.sequence, sent);
+        Message {
+            kind: protocol::APPLIED,
+            sequence: sent,
+            target: 35,
+            value: 0,
+            duration_ms: 0,
+        }
+        .write(&mut panel_peer)
+        .unwrap();
+        Message {
+            kind: protocol::CLOCK,
+            sequence: 1,
+            target: 0,
+            value: 0,
+            duration_ms: 4321,
+        }
+        .write(&mut panel_peer)
+        .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let panel = inputs.counters(InputSource::Panel);
+            if panel.applied == 1 && panel.guest_ms == 4321 {
+                assert_eq!((panel.sent, panel.released, panel.rejected), (1, 0, 0));
+                assert!(panel.connected);
+                assert_eq!(panel.error, None);
+                assert_eq!(inputs.counters(InputSource::Panel), panel);
+                let main = inputs.counters(InputSource::Main);
+                assert_eq!((main.sent, main.applied, main.guest_ms), (0, 0, 0));
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "input status did not observe messages: {panel:?}"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[test]
     fn large_unicode_response_is_complete_json() {
         let (mut client, mut server) = UnixStream::pair().unwrap();
         server.set_nonblocking(true).unwrap();
@@ -355,5 +542,43 @@ mod tests {
         assert!(line.ends_with('\n'));
         assert_eq!(serde_json::from_str::<Value>(&line).unwrap(), expected);
         writer.join().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod encoder_enqueue_tests {
+    use super::*;
+    #[test]
+    fn one_based_channels_are_validated_and_enqueued_without_waiting() {
+        let mut observed = None;
+        enqueue_encoder_with(Model::L6, 1, -4, |index, steps| {
+            observed = Some((index, steps));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(observed, Some((0, -4)));
+        enqueue_encoder_with(Model::L6max, 8, 1000, |index, steps| {
+            assert_eq!((index, steps), (7, 1000));
+            Ok(())
+        })
+        .unwrap();
+        for (model, channel, steps) in [
+            (Model::L6, 0, 1),
+            (Model::L6, 7, 1),
+            (Model::L6max, 9, 1),
+            (Model::L6, 1, 0),
+            (Model::L6, 1, 1001),
+        ] {
+            assert!(
+                enqueue_encoder_with(model, channel, steps, |_, _| panic!(
+                    "invalid input was enqueued"
+                ))
+                .is_err()
+            );
+        }
+        assert_eq!(
+            enqueue_encoder_with(Model::L6, 1, 1, |_, _| Err("enqueue failed".into())).unwrap_err(),
+            "enqueue failed"
+        );
     }
 }

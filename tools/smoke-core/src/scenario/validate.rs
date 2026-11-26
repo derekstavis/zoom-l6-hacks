@@ -69,8 +69,283 @@ impl Scenario {
             return Err("backends must contain headless and/or gui".into());
         }
         let mut checkpoints = std::collections::BTreeSet::new();
+        for model in &value.models {
+            let mut sync: Option<(u8, u32, u64)> = None;
+            let mut probe_budget = None;
+            let mut probe_stimulus = None;
+            let mut probe_ring = None;
+            let mut probe_tap = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                if let Action::HostMidiSyncBegin = step.action {
+                    if sync
+                        .replace((0, step.guest_timeout_ms, step.wall_timeout_s))
+                        .is_some()
+                    {
+                        return Err("MIDI sync transaction is already active".into());
+                    }
+                } else if let Some((phase, guest, wall)) = sync.as_mut() {
+                    if (*guest, *wall) != (step.guest_timeout_ms, step.wall_timeout_s) {
+                        return Err("MIDI sync actions need matching timeouts".into());
+                    }
+                    *phase = match (&step.action, *phase) {
+                        (Action::HostMidiDrain { .. }, 0) => 1,
+                        (Action::HostMidiSendCc { .. }, 1) => 2,
+                        (Action::HostMidiExpectSync, 0 | 2) => 3,
+                        (Action::HostMidiEnd, 3) => 4,
+                        _ => {
+                            return Err(
+                                "MIDI sync transaction has an invalid or interrupted sequence"
+                                    .into(),
+                            );
+                        }
+                    };
+                    if *phase == 4 {
+                        sync = None;
+                    }
+                } else if matches!(step.action, Action::HostMidiExpectSync) {
+                    return Err("MIDI sync assertion needs an active transaction".into());
+                }
+                match &step.action {
+                    Action::MidiProbeBegin => {
+                        if probe_budget
+                            .replace((step.guest_timeout_ms, step.wall_timeout_s))
+                            .is_some()
+                        {
+                            return Err("MIDI probe is already active".into());
+                        }
+                        probe_stimulus = None;
+                        probe_ring = None;
+                        probe_tap = None;
+                    }
+                    Action::MidiProbeEnd => {
+                        if probe_budget.take() != Some((step.guest_timeout_ms, step.wall_timeout_s))
+                        {
+                            return Err(
+                                "MIDI probe end needs a matching active transaction and timeouts"
+                                    .into(),
+                            );
+                        }
+                    }
+                    Action::MidiProbeSendCc { .. }
+                    | Action::MidiProbeExpectRing { .. }
+                    | Action::MidiProbeWaitRingStable { .. }
+                    | Action::MidiProbeDrainAndTap { .. }
+                    | Action::MidiProbeExpectNoEvents { .. } => {
+                        if probe_budget != Some((step.guest_timeout_ms, step.wall_timeout_s)) {
+                            return Err("MIDI probe action needs an active transaction with matching timeouts".into());
+                        }
+                        match &step.action {
+                            Action::MidiProbeSendCc {
+                                capture_ring_channel,
+                                ..
+                            } => {
+                                probe_stimulus = Some(*capture_ring_channel);
+                                probe_ring = None;
+                            }
+                            Action::MidiProbeExpectRing { channel, .. } => {
+                                if probe_stimulus != Some(*channel) {
+                                    return Err("MIDI ring observation needs a preceding stimulus capturing that channel".into());
+                                }
+                                probe_ring = Some(*channel);
+                            }
+                            Action::MidiProbeWaitRingStable { channel, .. } => {
+                                if probe_ring != Some(*channel) {
+                                    return Err("MIDI ring stability needs a preceding observation of that channel".into());
+                                }
+                            }
+                            Action::MidiProbeDrainAndTap { port, .. } => probe_tap = Some(*port),
+                            Action::MidiProbeExpectNoEvents { port, .. } => {
+                                if probe_tap != Some(*port) {
+                                    return Err(
+                                        "MIDI no-events observation needs a preceding tap for the same port".into()
+                                    );
+                                }
+                                probe_tap = None;
+                            }
+                            _ => {}
+                        }
+                    }
+                    Action::Checkpoint { .. } if probe_budget.is_some() => {}
+                    _ if probe_budget.is_some() => {
+                        return Err("MIDI probe transaction interrupted by another action".into());
+                    }
+                    _ => {}
+                }
+            }
+            if probe_budget.is_some() {
+                return Err("MIDI probe transaction is not ended".into());
+            }
+            if sync.is_some() {
+                return Err("MIDI sync transaction is not ended".into());
+            }
+        }
         let mut usb_descriptors_seen = false;
         let mut pad_assignments_seen = false;
+        // The display comparison borrows the immediately preceding applicable
+        // press's frame and deadline. Do not let unrelated steps reuse it.
+        for (index, step) in value.step.iter().enumerate() {
+            if !matches!(step.action, Action::ExpectDisplayAfterPress) {
+                continue;
+            }
+            for model in &value.models {
+                if !step.applies_to(*model) {
+                    continue;
+                }
+                let previous = value.step[..index]
+                    .iter()
+                    .rev()
+                    .find(|previous| previous.applies_to(*model));
+                if !previous.is_some_and(|previous| matches!(previous.action, Action::Press { .. }))
+                {
+                    return Err("expect-display-after-press requires an immediately preceding press for each model".into());
+                }
+            }
+        }
+        for (index, step) in value.step.iter().enumerate() {
+            let expected = match step.action {
+                Action::KnobDialogGuard => "knob-dialog-ready",
+                Action::KnobDialogBaseline => "knob-dialog-guard",
+                Action::KnobDialogPreflightBegin => "knob-dialog-baseline",
+                Action::KnobDialogPreflightDescriptor => "knob-dialog-preflight-begin",
+                Action::KnobDialogPreflightTextAlias => "knob-dialog-preflight-descriptor",
+                Action::KnobDialogPreflightLayerCollision => "knob-dialog-preflight-text-alias",
+                Action::KnobDialogPreflightWidgetLayer => "knob-dialog-preflight-layer-collision",
+                Action::KnobDialogPreflightBackgroundLayer => "knob-dialog-preflight-widget-layer",
+                Action::KnobDialogCallbackRace => "knob-dialog-preflight-background-layer",
+                Action::KnobDialogFirstActivation => "knob-dialog-callback-race",
+                Action::KnobDialogActiveDisplay => "knob-dialog-first-activation",
+                Action::KnobDialogLevelDemo => "knob-dialog-active-display",
+                Action::KnobDialogTaskContexts => "knob-dialog-level-demo",
+                Action::KnobDialogOverlayInvariants => "knob-dialog-task-contexts",
+                Action::KnobDialogBitmapZero => "knob-dialog-overlay-invariants",
+                Action::KnobDialogActiveOverlay => "knob-dialog-bitmap-zero",
+                Action::KnobDialogLockedUpdate => "knob-dialog-active-overlay",
+                Action::KnobDialog => "knob-dialog-mode-end",
+                _ => continue,
+            };
+            for model in &value.models {
+                if !step.applies_to(*model) {
+                    continue;
+                }
+                let previous = value.step[..index]
+                    .iter()
+                    .rev()
+                    .find(|previous| previous.applies_to(*model));
+                if !previous.is_some_and(|previous| {
+                    let correct = match expected {
+                        "knob-dialog-ready" => matches!(previous.action, Action::KnobDialogReady),
+                        "knob-dialog-guard" => matches!(previous.action, Action::KnobDialogGuard),
+                        "knob-dialog-baseline" => {
+                            matches!(previous.action, Action::KnobDialogBaseline)
+                        }
+                        "knob-dialog-preflight-begin" => {
+                            matches!(previous.action, Action::KnobDialogPreflightBegin)
+                        }
+                        "knob-dialog-preflight-descriptor" => {
+                            matches!(previous.action, Action::KnobDialogPreflightDescriptor)
+                        }
+                        "knob-dialog-preflight-text-alias" => {
+                            matches!(previous.action, Action::KnobDialogPreflightTextAlias)
+                        }
+                        "knob-dialog-preflight-layer-collision" => {
+                            matches!(previous.action, Action::KnobDialogPreflightLayerCollision)
+                        }
+                        "knob-dialog-preflight-widget-layer" => {
+                            matches!(previous.action, Action::KnobDialogPreflightWidgetLayer)
+                        }
+                        "knob-dialog-preflight-background-layer" => {
+                            matches!(previous.action, Action::KnobDialogPreflightBackgroundLayer)
+                        }
+                        "knob-dialog-callback-race" => {
+                            matches!(previous.action, Action::KnobDialogCallbackRace)
+                        }
+                        "knob-dialog-first-activation" => {
+                            matches!(previous.action, Action::KnobDialogFirstActivation)
+                        }
+                        "knob-dialog-active-display" => {
+                            matches!(previous.action, Action::KnobDialogActiveDisplay)
+                        }
+                        "knob-dialog-level-demo" => {
+                            matches!(previous.action, Action::KnobDialogLevelDemo)
+                        }
+                        "knob-dialog-task-contexts" => {
+                            matches!(previous.action, Action::KnobDialogTaskContexts)
+                        }
+                        "knob-dialog-overlay-invariants" => {
+                            matches!(previous.action, Action::KnobDialogOverlayInvariants)
+                        }
+                        "knob-dialog-bitmap-zero" => {
+                            matches!(previous.action, Action::KnobDialogBitmapZero)
+                        }
+                        "knob-dialog-active-overlay" => {
+                            matches!(previous.action, Action::KnobDialogActiveOverlay)
+                        }
+                        "knob-dialog-mode-end" => {
+                            matches!(previous.action, Action::KnobDialogModeEnd)
+                        }
+                        _ => matches!(previous.action, Action::KnobDialogLockedUpdate),
+                    };
+                    correct
+                        && previous.guest_timeout_ms == step.guest_timeout_ms
+                        && previous.wall_timeout_s == step.wall_timeout_s
+                }) {
+                    return Err(format!(
+                        "knob-dialog step requires immediately preceding {expected} with matching deadlines"
+                    ));
+                }
+            }
+        }
+        // An intrusive debugger session must not outlive a truncated scenario.
+        for (index, step) in value.step.iter().enumerate() {
+            if !matches!(step.action, Action::KnobDialogPreflightBegin) {
+                continue;
+            }
+            for model in &value.models {
+                if !step.applies_to(*model) {
+                    continue;
+                }
+                let applicable = value.step[index + 1..]
+                    .iter()
+                    .filter(|next| next.applies_to(*model))
+                    .collect::<Vec<_>>();
+                let Some(end) = applicable
+                    .iter()
+                    .position(|next| matches!(next.action, Action::KnobDialog))
+                else {
+                    return Err("knob-dialog preflight must end with the diagnostic".into());
+                };
+                let subsequent = &applicable[..=end];
+                if subsequent.len() < 25
+                    || !matches!(subsequent[0].action, Action::KnobDialogPreflightDescriptor)
+                    || !matches!(subsequent[1].action, Action::KnobDialogPreflightTextAlias)
+                    || !matches!(
+                        subsequent[2].action,
+                        Action::KnobDialogPreflightLayerCollision
+                    )
+                    || !matches!(subsequent[3].action, Action::KnobDialogPreflightWidgetLayer)
+                    || !matches!(
+                        subsequent[4].action,
+                        Action::KnobDialogPreflightBackgroundLayer
+                    )
+                    || !matches!(subsequent[5].action, Action::KnobDialogCallbackRace)
+                    || !matches!(subsequent[6].action, Action::KnobDialogFirstActivation)
+                    || !matches!(subsequent[7].action, Action::KnobDialogActiveDisplay)
+                    || !matches!(subsequent[8].action, Action::KnobDialogLevelDemo)
+                    || !matches!(subsequent[9].action, Action::KnobDialogTaskContexts)
+                    || !matches!(subsequent[10].action, Action::KnobDialogOverlayInvariants)
+                    || !matches!(subsequent[11].action, Action::KnobDialogBitmapZero)
+                    || !matches!(subsequent[12].action, Action::KnobDialogActiveOverlay)
+                    || !matches!(subsequent[13].action, Action::KnobDialogLockedUpdate)
+                    || !valid_knob_mode_steps(&subsequent[14..subsequent.len() - 1])
+                    || subsequent.iter().any(|next| {
+                        next.guest_timeout_ms != step.guest_timeout_ms
+                            || next.wall_timeout_s != step.wall_timeout_s
+                    })
+                {
+                    return Err("knob-dialog preflight must be followed immediately by every probe and the diagnostic with matching deadlines".into());
+                }
+            }
+        }
         for step in &value.step {
             if matches!(step.action, Action::EditorPadAssignments) && !usb_descriptors_seen {
                 return Err(
@@ -156,6 +431,24 @@ impl Scenario {
             }
             if step.wall_timeout_s == 0 || step.guest_timeout_ms == 0 {
                 return Err("timeouts must be positive".into());
+            }
+            if let Action::MidiProbeExpectRing {
+                channel,
+                changed,
+                guest_ms,
+                wall_ms,
+                ..
+            } = &step.action
+                && (*channel == 0
+                    || *channel > 8
+                    || (!*changed && guest_ms.is_none())
+                    || guest_ms.is_some_and(|ms| ms == 0 || ms > step.guest_timeout_ms)
+                    || *wall_ms == 0
+                    || u64::from(*wall_ms) > step.wall_timeout_s.saturating_mul(1000))
+            {
+                return Err(
+                    "MIDI ring observation needs channel 1..8 and bounded positive windows".into(),
+                );
             }
             if let Action::ObserveDuration { guest_ms, .. } = &step.action
                 && (*guest_ms == 0 || *guest_ms > step.guest_timeout_ms)
@@ -376,6 +669,45 @@ impl Scenario {
                 }
             }
             match &step.action {
+                Action::KnobDialogModeBegin { scene } => {
+                    if scene.is_empty()
+                        || scene.len() > 64
+                        || !scene
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                    {
+                        return Err("knob-dialog-mode-begin requires a simple scene name".into());
+                    }
+                }
+                Action::EnqueueTap { target, hold_ms } => {
+                    if l6ctl::button_source(*target).is_none() || *hold_ms == 0 || *hold_ms > 60_000
+                    {
+                        return Err(
+                            "enqueue-tap requires a valid target and hold_ms in 1..=60000".into(),
+                        );
+                    }
+                }
+                Action::WaitKnobParameterMode { mode } if *mode > 9 => {
+                    return Err("wait-knob-parameter-mode requires mode 0..9".into());
+                }
+                Action::CaptureDisplay { guest_ms, artifact } => {
+                    if *guest_ms == 0
+                        || *guest_ms > step.guest_timeout_ms
+                        || artifact.is_empty()
+                        || artifact.len() > 64
+                        || !artifact
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                    {
+                        return Err("capture-display requires a positive duration within its deadline and a simple artifact name".into());
+                    }
+                }
+                Action::ExpectCapturedDisplayImage { image } => {
+                    spec_path(image)?;
+                    if image.extension().is_none_or(|extension| extension != "png") {
+                        return Err("expect-captured-display-image needs a PNG image".into());
+                    }
+                }
                 Action::ExpectDisplayImage { image, settle_ms } => {
                     spec_path(image)?;
                     if image.extension().is_none_or(|extension| extension != "png") {
@@ -398,7 +730,8 @@ impl Scenario {
                         return Err("checkpoint needs a unique nonempty name".into());
                     }
                 }
-                Action::ExpectDisplay { checkpoint, .. }
+                Action::ExpectRingChanged { checkpoint, .. }
+                | Action::ExpectDisplay { checkpoint, .. }
                 | Action::ExpectScene {
                     checkpoint: Some(checkpoint),
                     ..
@@ -486,7 +819,6 @@ impl Scenario {
                     return Err(format!("unknown wait condition: {until}"));
                 }
                 Action::Press { control }
-                | Action::PressDisplayChange { control }
                 | Action::Hold { control, .. }
                 | Action::Switch { control, .. }
                 | Action::ExpectButtonReport { control }
@@ -499,12 +831,8 @@ impl Scenario {
                             {
                                 return Err("switch action requires a latching switch".into());
                             }
-                            if matches!(
-                                step.action,
-                                Action::Press { .. }
-                                    | Action::PressDisplayChange { .. }
-                                    | Action::Hold { .. }
-                            ) && is_switch(*model, target)
+                            if matches!(step.action, Action::Press { .. } | Action::Hold { .. })
+                                && is_switch(*model, target)
                             {
                                 return Err("use switch action for a latching switch".into());
                             }
@@ -518,12 +846,101 @@ impl Scenario {
                         }
                     }
                 }
-                Action::Encoder { channel, steps, .. }
+                Action::EnqueueEncoder { channel, steps, .. }
+                | Action::Encoder { channel, steps, .. }
                     if *steps == 0 || steps.unsigned_abs() > 120 || *channel == 0 =>
                 {
                     return Err(
                         "encoder channel must be positive, steps must be nonzero and at most 120"
                             .into(),
+                    );
+                }
+                Action::HostMidiExpectCc {
+                    channel,
+                    controller,
+                } if *channel > 15 || *controller > 127 => {
+                    return Err("MIDI channel must be 0..15 and controller 0..127".into());
+                }
+                Action::HostMidiSendCc {
+                    channel,
+                    controller,
+                    value,
+                } if *channel > 15 || *controller > 127 || *value > 127 => {
+                    return Err("MIDI channel must be 0..15 and controller/value 0..127".into());
+                }
+                Action::MidiProbeSendCc {
+                    channel,
+                    controller,
+                    value,
+                    capture_ring_channel,
+                    ..
+                } if *channel > 15
+                    || *controller > 127
+                    || *value > 127
+                    || *capture_ring_channel == 0
+                    || *capture_ring_channel > 8 =>
+                {
+                    return Err(
+                        "MIDI channel must be 0..15, controller/value 0..127 and ring channel 1..8"
+                            .into(),
+                    );
+                }
+                Action::MidiProbeWaitRingStable {
+                    channel,
+                    guest_ms,
+                    wall_ms,
+                } if *channel == 0
+                    || *channel > 8
+                    || *guest_ms == 0
+                    || *guest_ms > step.guest_timeout_ms
+                    || *wall_ms == 0
+                    || u64::from(*wall_ms) > step.wall_timeout_s.saturating_mul(1000) =>
+                {
+                    return Err(
+                        "MIDI ring stability needs channel 1..8 and bounded positive windows"
+                            .into(),
+                    );
+                }
+                Action::MidiProbeDrainAndTap {
+                    target, hold_ms, ..
+                } if l6ctl::button_source(*target).is_none() || !(1..=60_000).contains(hold_ms) => {
+                    return Err("MIDI probe tap needs valid target and hold duration".into());
+                }
+                Action::MidiProbeExpectNoEvents { wall_ms, .. }
+                    if *wall_ms == 0
+                        || u64::from(*wall_ms) > step.wall_timeout_s.saturating_mul(1000) =>
+                {
+                    return Err("MIDI no-events wall interval must fit within timeout".into());
+                }
+                Action::HostMidiDrain { quiet_wall_ms }
+                    if *quiet_wall_ms == 0
+                        || u64::from(*quiet_wall_ms) > step.wall_timeout_s.saturating_mul(1000) =>
+                {
+                    return Err(
+                        "MIDI quiet interval must be positive and within the wall timeout".into(),
+                    );
+                }
+                Action::HostMidiExpectCount { count } if *count == 0 || *count > 16384 => {
+                    return Err("MIDI message count must be 1..16384".into());
+                }
+                Action::KnobPopupOpen {
+                    first_steps,
+                    fallback_steps,
+                    attempt_guest_ms,
+                } if *first_steps == 0
+                    || *fallback_steps == 0
+                    || first_steps.unsigned_abs() > 120
+                    || fallback_steps.unsigned_abs() > 120
+                    || *attempt_guest_ms == 0
+                    || *attempt_guest_ms > step.guest_timeout_ms =>
+                {
+                    return Err("knob popup turns must be nonzero and at most 120, and its attempt duration must fit the guest timeout".into());
+                }
+                Action::HostMidiSettle { guest_ms }
+                    if *guest_ms == 0 || *guest_ms > step.guest_timeout_ms =>
+                {
+                    return Err(
+                        "MIDI settle duration must be positive and within the guest timeout".into(),
                     );
                 }
                 Action::EffectParameterEdit { encoder, steps }
@@ -575,7 +992,9 @@ impl Scenario {
             {
                 return Err("expect-button-led same=true requires a checkpoint".into());
             }
-            if let Action::Encoder { channel, .. }
+            if let Action::EnqueueEncoder { channel, .. }
+            | Action::ExpectRingChanged { channel, .. }
+            | Action::Encoder { channel, .. }
             | Action::ExpectRingLevel { channel, .. }
             | Action::ExpectRing { channel, .. }
             | Action::ExpectMute { channel } = &step.action

@@ -26,7 +26,10 @@ pub fn tick(
     };
     match progress {
         Progress::Device(_) => Err("device operation requires the headless backend".into()),
-        Progress::Complete => Ok(true),
+        Progress::Complete => {
+            runner.finish("PASS", None)?;
+            Ok(true)
+        }
         Progress::Waiting => Ok(false),
         Progress::Dispatch(command) => {
             if let Err(error) = dispatch(command, layout, data, press_duration, window, cx) {

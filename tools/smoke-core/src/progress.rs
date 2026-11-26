@@ -183,10 +183,43 @@ pub fn step_label(action: &crate::Action) -> String {
     use crate::Action;
     match action {
         Action::Wait { until } => format!("Wait for {}", until.replace('-', " ")),
-        Action::PressDisplayChange { control } => format!(
-            "Press {} and wait for display",
-            control.replace(['-', '.'], " ")
-        ),
+        Action::MidiProbeBegin => "Connect MIDI probe sessions".into(),
+        Action::MidiProbeSendCc {
+            port,
+            controller,
+            value,
+            ..
+        } => format!("Send {port:?} MIDI CC {controller} value {value}"),
+        Action::MidiProbeExpectRing {
+            channel,
+            changed,
+            guest_ms,
+            ..
+        } => {
+            if *changed {
+                format!("Wait for channel {channel} ring change")
+            } else {
+                format!(
+                    "Observe channel {channel} ring unchanged for {} ms guest time",
+                    guest_ms.unwrap_or(0)
+                )
+            }
+        }
+        Action::MidiProbeWaitRingStable {
+            channel, guest_ms, ..
+        } => format!("Wait for channel {channel} ring stable for {guest_ms} ms guest time"),
+        Action::MidiProbeDrainAndTap {
+            port,
+            target,
+            hold_ms,
+        } => {
+            format!("Drain {port:?} MIDI and tap button {target} ({hold_ms} ms)")
+        }
+        Action::MidiProbeExpectNoEvents { port, wall_ms } => {
+            format!("Observe {port:?} MIDI silence for {wall_ms} ms wall time")
+        }
+        Action::MidiProbeEnd => "Close MIDI probe sessions".into(),
+        Action::ExpectDisplayAfterPress => "Wait for display change".into(),
         Action::Press { control } => format!("Press {}", control.replace(['-', '.'], " ")),
         Action::Hold { control, .. } => format!("Hold {}", control.replace(['-', '.'], " ")),
         Action::HoldChord {
@@ -197,6 +230,26 @@ pub fn step_label(action: &crate::Action) -> String {
             duration_ms: Some(ms),
             ..
         } => format!("Hold chord for {ms} ms guest time"),
+        Action::KnobDialogModeBegin { scene } => {
+            format!("Check knob dialog {} scene", scene.replace('-', " "))
+        }
+        Action::EnqueueTap { target, hold_ms } => {
+            format!("Enqueue button {target} tap ({hold_ms} ms)")
+        }
+        Action::WaitInputApplied => "Wait for input applied".into(),
+        Action::WaitKnobParameterMode { mode } => format!("Wait for knob parameter mode {mode}"),
+        Action::CaptureDisplay { guest_ms, artifact } => {
+            format!("Capture {artifact} after {guest_ms} ms guest time")
+        }
+        Action::ExpectCapturedDisplayImage { image } => format!(
+            "Check captured {} screen",
+            image
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("expected")
+        ),
+        Action::KnobDialogExpectHeap => "Check persistent heap counters".into(),
+        Action::KnobDialogModeEnd => "Finish knob dialog mode".into(),
         Action::SelectMode { mode } => format!("Select {} mode", mode.replace('-', " ")),
         Action::ExpectMode { mode } => format!("Check {} mode", mode.replace('-', " ")),
         Action::ExpectRing { channel, .. } => format!("Check channel {channel} ring"),
@@ -219,6 +272,26 @@ pub fn step_label(action: &crate::Action) -> String {
                 .unwrap_or("expected")
                 .replace('-', " ")
         ),
+        Action::EnqueueEncoder { channel, steps, .. } => {
+            format!("Enqueue channel {channel} encoder ({steps} steps)")
+        }
+        Action::HostMidiExpectCc {
+            channel,
+            controller,
+        } => format!("Wait for MIDI CC {controller} on channel {channel}"),
+        Action::HostMidiSendCc {
+            channel,
+            controller,
+            value,
+        } => format!("Send MIDI CC {controller}={value} on channel {channel}"),
+        Action::HostMidiDrain { quiet_wall_ms } => {
+            format!("Drain MIDI until {quiet_wall_ms} ms wall quiet")
+        }
+        Action::HostMidiExpectCount { count } => format!("Wait for {count} MIDI messages"),
+        Action::HostMidiSettle { guest_ms } => format!("Settle MIDI for {guest_ms} ms guest time"),
+        Action::ExpectRingChanged { channel, .. } => {
+            format!("Wait for channel {channel} ring change")
+        }
         Action::Encoder { channel, steps, .. } => {
             format!("Turn channel {channel} encoder ({steps} steps)")
         }

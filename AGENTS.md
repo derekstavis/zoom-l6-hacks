@@ -1,5 +1,9 @@
 # Working in the tooling repository
 
+For a guarded single-read sample of live allocator counters, use
+`l6ctl heap-counters` or `OwnedControl::heap_counter_reader()`; `rtos heap`
+also traverses and validates the full heap and has different costs and semantics.
+
 This repository owns the simulator, package/patch tools and executable tests.
 Keep changes on a feature branch until the user approves a merge.
 
@@ -14,7 +18,11 @@ For focused runtime observations outside qualification, use
 emulator started with `--control-socket`, while `l6dbg` starts a disposable
 guest for scripted observations. Use `cargo l6ctl rtos` for the running guest's
 guarded FreeRTOS snapshots; see `docs/development/tools/l6ctl.md` for the JSON
-schema, supported revisions and live-sampling limits.
+schema, supported revisions and live-sampling limits. Rust callers can use the
+`l6ctl` crate for typed socket requests or borrow an existing host engine;
+socket input receipts mean enqueue, not guest acknowledgement.
+`cargo l6ctl input status main|panel` exposes aggregate per-channel counters;
+they cannot attribute an acknowledgement to a particular caller.
 Local firmware package and audio paths belong in ignored `config.toml`; never commit
 firmware, SD cards, saved flash, generated analysis artifacts or runtime logs.
 Persistent fixture caching is experimental and must not be used for qualification;

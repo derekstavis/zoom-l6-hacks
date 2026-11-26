@@ -9,7 +9,7 @@ mod runner;
 mod scenario;
 mod session;
 mod trace;
-mod waveform;
+use l6ctl::audio_analysis as waveform;
 pub use runner::{Progress, Runner};
 pub use scenario::{
     Action, AudioInput, Backend, Fragment, Gesture, ObservationActivity, STATE_SPEC_ENV, Scenario,

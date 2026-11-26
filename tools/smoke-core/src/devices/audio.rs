@@ -155,8 +155,9 @@ pub(super) fn compare_pad_waveform(
 ) -> Result<Value, Box<dyn std::error::Error>> {
     let wav = sd_image::read_file(card, source, u64::MAX)?;
     let source = waveform::decode_wav(&wav).map_err(std::io::Error::other)?;
-    waveform::compare(&source, &waveform::decode_capture(capture))
-        .map_err(|error| std::io::Error::other(error).into())
+    let comparison = waveform::compare(&source, &waveform::decode_capture(capture))
+        .map_err(std::io::Error::other)?;
+    Ok(serde_json::to_value(comparison)?)
 }
 
 pub(super) fn master_meter_levels(model: l6fw::Model, levels: [[u8; 24]; 8]) -> [u8; 2] {

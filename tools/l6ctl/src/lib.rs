@@ -34,6 +34,7 @@ pub use l6max_host::qmp::Status as QmpStatus;
 pub use l6max_host::sd_loader::{Site as SdLoaderSite, Snapshot as SdLoaderSnapshot};
 pub use l6max_host::usb::Enumeration as UsbEnumeration;
 
+pub use l6max_host::audio_analysis;
 pub use l6max_host::editor::pad_assignment_present as editor_pad_assignment_present;
 pub use l6max_host::editor::{
     Request as EditorRequest, pad_dialog_pending as editor_pad_dialog_pending,

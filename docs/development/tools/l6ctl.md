@@ -544,3 +544,7 @@ firmware or panel readiness. `l6ctl sd-card insert PATH` and `l6ctl sd-card ejec
 change the running guest's SD medium; the CLI resolves an inserted path before
 sending it to the local control socket. Rust control clients sending a path
 directly should use an absolute path.
+
+### Offline audio analysis
+
+`l6ctl audio compare SOURCE.wav CAPTURE.s32le` reports the best alignment, per-channel gains and residual for a WAV source against a raw stereo S32LE capture. `l6ctl audio tone CAPTURE.s32le HZ RATE` reports per-channel tone levels in dBFS. Both commands output JSON and require no emulator socket. They measure audio; callers choose their own pass/fail thresholds. The WAV analysis reader accepts 16-bit PCM or 32-bit float with one or two channels, matching the test runner's existing analysis policy.

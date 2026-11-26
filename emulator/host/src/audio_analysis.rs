@@ -1,10 +1,10 @@
-//! Compares captured SAI output with the source WAV of a one-shot sound pad.
+//! Decode and compare captured audio without applying test thresholds.
 
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
 
 /// Decode a 16-bit PCM or 32-bit float WAV; mono is copied to both channels.
 pub fn decode_wav(bytes: &[u8]) -> Result<Vec<[f64; 2]>, String> {
-    let chunks = l6ctl::WavChunks::new(bytes).ok_or("source is not a RIFF/WAVE file")?;
+    let chunks = crate::wav::Chunks::new(bytes).ok_or("source is not a RIFF/WAVE file")?;
     let mut format = None;
     for (id, body) in chunks {
         match id {
@@ -82,7 +82,6 @@ fn fit(source: &[[f64; 2]], capture: &[[f64; 2]]) -> ([f64; 2], f64) {
     (gains, worst)
 }
 
-/// Locate the complete source in the capture and report how closely it fits.
 /// The level in dB relative to full scale of a tone in each channel.
 pub fn tone_levels_db(frames: &[[f64; 2]], hz: f64, rate: f64) -> [f64; 2] {
     [0, 1].map(|channel| {
@@ -98,7 +97,17 @@ pub fn tone_levels_db(frames: &[[f64; 2]], hz: f64, rate: f64) -> [f64; 2] {
     })
 }
 
-pub fn compare(source: &[[f64; 2]], capture: &[[f64; 2]]) -> Result<Value, String> {
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Comparison {
+    pub source_frames: usize,
+    pub audible_capture_frames: usize,
+    pub offset_frames: usize,
+    pub gains: [f64; 2],
+    pub residual_db: f64,
+}
+
+/// Locate the complete source in the capture and report how closely it fits.
+pub fn compare(source: &[[f64; 2]], capture: &[[f64; 2]]) -> Result<Comparison, String> {
     const SEARCH: isize = 64;
     // Idle output can carry low-level firmware dither, so find the signal
     // relative to each stream's own peak rather than the first nonzero word.
@@ -134,13 +143,13 @@ pub fn compare(source: &[[f64; 2]], capture: &[[f64; 2]]) -> Result<Value, Strin
             source.len()
         ));
     }
-    Ok(json!({
-        "source_frames": source.len(),
-        "audible_capture_frames": capture_end - capture_start,
-        "offset_frames": best_offset,
-        "gains": best_gains,
-        "residual_db": best_residual,
-    }))
+    Ok(Comparison {
+        source_frames: source.len(),
+        audible_capture_frames: capture_end - capture_start,
+        offset_frames: best_offset,
+        gains: best_gains,
+        residual_db: best_residual,
+    })
 }
 
 #[cfg(test)]
@@ -165,9 +174,7 @@ mod tests {
     }
 
     fn residual(source: &[[f64; 2]], capture: &[[f64; 2]]) -> f64 {
-        compare(source, capture).unwrap()["residual_db"]
-            .as_f64()
-            .unwrap()
+        compare(source, capture).unwrap().residual_db
     }
 
     #[test]
@@ -188,8 +195,8 @@ mod tests {
     fn inverted_scaled_copy_matches() {
         let source = source();
         let report = compare(&source, &captured(&source, -0.35)).unwrap();
-        assert_eq!(report["offset_frames"], 100);
-        assert!(report["residual_db"].as_f64().unwrap() < -120.);
+        assert_eq!(report.offset_frames, 100);
+        assert!(report.residual_db < -120.);
     }
 
     #[test]

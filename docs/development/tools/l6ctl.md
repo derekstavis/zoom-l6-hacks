@@ -121,6 +121,8 @@ input. A failed or cancelled bounded attach, probe or enumeration makes the
 transport unusable until guest restart. A raw reservation coordinates against
 native and direct MIDI owners; callers sharing that reservation must still
 coordinate their own operations.
+The in-process `usb_midi_send` and `usb_midi_poll` operations use that
+configured session, retaining encoder state and cable-tagged packet ordering.
 
 `ControlClient::heap_counters()` returns one guarded, non-atomic sample of the
 four allocator counters. In-process callers can create

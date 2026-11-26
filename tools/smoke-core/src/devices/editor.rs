@@ -4,7 +4,7 @@ use super::*;
 #[allow(clippy::too_many_arguments)]
 pub(super) fn editor_exchange(
     session: &Session,
-    usb: &l6max_host::usb::UsbHost,
+    usb: &l6ctl::OwnedControl<'_>,
     endpoints: l6max_host::usb::Endpoints,
     encoder: &mut l6max_host::usb_midi::Encoder,
     message: &[u8],
@@ -13,8 +13,7 @@ pub(super) fn editor_exchange(
     guest_timeout_ms: u32,
     wall_deadline: Instant,
 ) -> Result<Vec<Vec<u8>>, Box<dyn std::error::Error>> {
-    let wire = encoder.push(2, message);
-    usb.send(endpoints.output, &wire)?;
+    usb.usb_midi_send(endpoints.output, encoder, 2, message)?;
     collect_editor_sysex(
         session,
         usb,
@@ -31,7 +30,7 @@ pub(super) fn editor_exchange(
 #[allow(clippy::too_many_arguments)]
 fn editor_exchange_expected(
     session: &Session,
-    usb: &l6max_host::usb::UsbHost,
+    usb: &l6ctl::OwnedControl<'_>,
     endpoints: l6max_host::usb::Endpoints,
     encoder: &mut l6max_host::usb_midi::Encoder,
     message: &[u8],
@@ -42,8 +41,7 @@ fn editor_exchange_expected(
 ) -> Result<Vec<Vec<u8>>, Box<dyn std::error::Error>> {
     const RESPONSE_GUEST_TIMEOUT_MS: u32 = 2_000;
     const RESPONSE_WALL_TIMEOUT_S: u64 = 30;
-    let wire = encoder.push(2, message);
-    usb.send(endpoints.output, &wire)?;
+    usb.usb_midi_send(endpoints.output, encoder, 2, message)?;
     let matches = |reply: &[u8]| reply.starts_with(expected);
     collect_editor_sysex_inner(
         session,
@@ -59,7 +57,7 @@ fn editor_exchange_expected(
 
 pub(super) fn refresh_editor_session(
     session: &Session,
-    usb: &l6max_host::usb::UsbHost,
+    usb: &l6ctl::OwnedControl<'_>,
     endpoints: l6max_host::usb::Endpoints,
     encoder: &mut l6max_host::usb_midi::Encoder,
     start_guest: u32,
@@ -98,7 +96,7 @@ pub(super) fn require_editor_reply(
 
 pub(super) fn collect_editor_sysex(
     session: &Session,
-    usb: &l6max_host::usb::UsbHost,
+    usb: &l6ctl::OwnedControl<'_>,
     input: u8,
     timeout_ms: u32,
     start_guest: u32,
@@ -120,7 +118,7 @@ pub(super) fn collect_editor_sysex(
 #[allow(clippy::too_many_arguments)]
 fn collect_editor_sysex_inner(
     session: &Session,
-    usb: &l6max_host::usb::UsbHost,
+    usb: &l6ctl::OwnedControl<'_>,
     input: u8,
     timeout_ms: u32,
     start_guest: u32,
@@ -140,9 +138,9 @@ fn collect_editor_sysex_inner(
     let mut replies = Vec::new();
     loop {
         session.poll().map_err(std::io::Error::other)?;
-        match usb.try_receive(input, 16_384) {
-            Ok(data) => {
-                for (cable, fragment) in l6max_host::usb_midi::decode(&data)? {
+        match usb.usb_midi_poll(input)? {
+            Some(messages) => {
+                for (cable, fragment) in messages {
                     if cable != 2 {
                         continue;
                     }
@@ -159,8 +157,7 @@ fn collect_editor_sysex_inner(
                     }
                 }
             }
-            Err(error) if error.raw_os_error() == Some(libc::EAGAIN) => {}
-            Err(error) => return Err(error.into()),
+            None => {}
         }
         if pending.is_empty()
             && expected.is_some_and(|matches| replies.iter().any(|reply| matches(reply)))
@@ -189,7 +186,7 @@ fn collect_editor_sysex_inner(
 }
 
 pub(super) fn answer_editor_pad_dialog(
-    usb: &l6max_host::usb::UsbHost,
+    usb: &l6ctl::OwnedControl<'_>,
     output: u8,
     encoder: &mut l6max_host::usb_midi::Encoder,
     replies: &[Vec<u8>],
@@ -200,8 +197,12 @@ pub(super) fn answer_editor_pad_dialog(
     if !pending {
         return Ok(false);
     }
-    let answer = encoder.push(2, &[0xf0, 0x52, 0, 0, 0x31, 0x12, 0x06, 0x01, 0xf7]);
-    usb.send(output, &answer)?;
+    usb.usb_midi_send(
+        output,
+        encoder,
+        2,
+        &[0xf0, 0x52, 0, 0, 0x31, 0x12, 0x06, 0x01, 0xf7],
+    )?;
     Ok(true)
 }
 
@@ -282,13 +283,14 @@ impl UiPadScope {
         &mut self,
         session: &Session,
     ) -> Result<Value, Box<dyn std::error::Error>> {
-        let usb = session
-            .engine
-            .usb
-            .as_ref()
-            .ok_or("USB backend unavailable")?;
-        let wire = self.encoder.push(2, &[0xf0, 0x7e, 0, 0x06, 0x01, 0xf7]);
-        usb.send(self.endpoints.output, &wire)?;
+        let control = l6ctl::OwnedControl::new(&session.engine);
+        let usb = &control;
+        usb.usb_midi_send(
+            self.endpoints.output,
+            &mut self.encoder,
+            2,
+            &[0xf0, 0x7e, 0, 0x06, 0x01, 0xf7],
+        )?;
         self.identity = collect_editor_sysex(
             session,
             usb,
@@ -319,11 +321,8 @@ impl UiPadScope {
         expected: &[u8],
         label: &str,
     ) -> Result<Value, Box<dyn std::error::Error>> {
-        let usb = session
-            .engine
-            .usb
-            .as_ref()
-            .ok_or("USB backend unavailable")?;
+        let control = l6ctl::OwnedControl::new(&session.engine);
+        let usb = &control;
         let replies = editor_exchange_expected(
             session,
             usb,
@@ -340,11 +339,8 @@ impl UiPadScope {
     }
 
     pub(super) fn query(&mut self, session: &Session) -> Result<Value, Box<dyn std::error::Error>> {
-        let usb = session
-            .engine
-            .usb
-            .as_ref()
-            .ok_or("USB backend unavailable")?;
+        let control = l6ctl::OwnedControl::new(&session.engine);
+        let usb = &control;
         for _ in 0..8 {
             self.check(session, self.guest_budget, self.wall_budget)?;
             self.assignments = editor_exchange(
@@ -495,11 +491,8 @@ impl EditorPlaybackScope {
             .filter(|line| line.starts_with(l6ctl::SAI1_TX_PREFIX))
             .count();
         self.check(session, self.guest_budget, self.wall_budget)?;
-        let usb = session
-            .engine
-            .usb
-            .as_ref()
-            .ok_or("USB backend unavailable")?;
+        let control = l6ctl::OwnedControl::new(&session.engine);
+        let usb = &control;
         self.play = editor_exchange(
             session,
             usb,
@@ -520,11 +513,8 @@ impl EditorPlaybackScope {
         &mut self,
         session: &Session,
     ) -> Result<Value, Box<dyn std::error::Error>> {
-        let usb = session
-            .engine
-            .usb
-            .as_ref()
-            .ok_or("USB backend unavailable")?;
+        let control = l6ctl::OwnedControl::new(&session.engine);
+        let usb = &control;
         for _ in 0..12 {
             self.check(session, self.guest_budget, self.wall_budget)?;
             self.state = editor_exchange(
@@ -698,13 +688,14 @@ impl EditorAssignmentScope {
         &mut self,
         session: &Session,
     ) -> Result<Value, Box<dyn std::error::Error>> {
-        let usb = session
-            .engine
-            .usb
-            .as_ref()
-            .ok_or("USB backend unavailable")?;
-        let wire = self.encoder.push(2, &[0xf0, 0x7e, 0, 0x06, 0x01, 0xf7]);
-        usb.send(self.endpoints.output, &wire)?;
+        let control = l6ctl::OwnedControl::new(&session.engine);
+        let usb = &control;
+        usb.usb_midi_send(
+            self.endpoints.output,
+            &mut self.encoder,
+            2,
+            &[0xf0, 0x7e, 0, 0x06, 0x01, 0xf7],
+        )?;
         let replies = collect_editor_sysex(
             session,
             usb,
@@ -729,11 +720,8 @@ impl EditorAssignmentScope {
         expected: &[u8],
         label: &str,
     ) -> Result<Value, Box<dyn std::error::Error>> {
-        let usb = session
-            .engine
-            .usb
-            .as_ref()
-            .ok_or("USB backend unavailable")?;
+        let control = l6ctl::OwnedControl::new(&session.engine);
+        let usb = &control;
         let replies = editor_exchange_expected(
             session,
             usb,
@@ -750,11 +738,8 @@ impl EditorAssignmentScope {
     }
     fn refresh(&mut self, session: &Session) -> Result<(), Box<dyn std::error::Error>> {
         self.check(session, self.guest_budget, self.wall_budget)?;
-        let usb = session
-            .engine
-            .usb
-            .as_ref()
-            .ok_or("USB backend unavailable")?;
+        let control = l6ctl::OwnedControl::new(&session.engine);
+        let usb = &control;
         refresh_editor_session(
             session,
             usb,
@@ -779,15 +764,14 @@ impl EditorAssignmentScope {
     ) -> Result<Value, Box<dyn std::error::Error>> {
         self.refresh(session)?;
         self.check(session, self.guest_budget, self.wall_budget)?;
-        let usb = session
-            .engine
-            .usb
-            .as_ref()
-            .ok_or("USB backend unavailable")?;
-        let wire = self
-            .encoder
-            .push(2, &[0xf0, 0x52, 0, 0, 0x46, 0, pad, 0xf7]);
-        usb.send(self.endpoints.output, &wire)?;
+        let control = l6ctl::OwnedControl::new(&session.engine);
+        let usb = &control;
+        usb.usb_midi_send(
+            self.endpoints.output,
+            &mut self.encoder,
+            2,
+            &[0xf0, 0x52, 0, 0, 0x46, 0, pad, 0xf7],
+        )?;
         let replies = collect_editor_sysex_inner(
             session,
             usb,
@@ -818,15 +802,14 @@ impl EditorAssignmentScope {
         for _ in 0..4 {
             self.refresh(session)?;
             self.check(session, self.guest_budget, self.wall_budget)?;
-            let usb = session
-                .engine
-                .usb
-                .as_ref()
-                .ok_or("USB backend unavailable")?;
-            let wire = self
-                .encoder
-                .push(2, &[0xf0, 0x52, 0, 0, 0x46, 1, pad, 0, 0, 0xf7]);
-            usb.send(self.endpoints.output, &wire)?;
+            let control = l6ctl::OwnedControl::new(&session.engine);
+            let usb = &control;
+            usb.usb_midi_send(
+                self.endpoints.output,
+                &mut self.encoder,
+                2,
+                &[0xf0, 0x52, 0, 0, 0x46, 1, pad, 0, 0, 0xf7],
+            )?;
             let replies = collect_editor_sysex_inner(
                 session,
                 usb,
@@ -864,13 +847,9 @@ impl EditorAssignmentScope {
         let mut request = vec![0xf0, 0x52, 0, 0, 0x31, 0x05];
         request.extend_from_slice(args);
         request.push(0xf7);
-        let usb = session
-            .engine
-            .usb
-            .as_ref()
-            .ok_or("USB backend unavailable")?;
-        let wire = self.encoder.push(2, &request);
-        usb.send(self.endpoints.output, &wire)?;
+        let control = l6ctl::OwnedControl::new(&session.engine);
+        let usb = &control;
+        usb.usb_midi_send(self.endpoints.output, &mut self.encoder, 2, &request)?;
         self.assignment_replies = collect_editor_sysex(
             session,
             usb,
@@ -912,15 +891,14 @@ impl EditorAssignmentScope {
         for _ in 0..8 {
             self.refresh(session)?;
             self.check(session, self.guest_budget, self.wall_budget)?;
-            let usb = session
-                .engine
-                .usb
-                .as_ref()
-                .ok_or("USB backend unavailable")?;
-            let wire = self
-                .encoder
-                .push(2, &[0xf0, 0x52, 0, 0, 0x46, 2, pad, 0xf7]);
-            usb.send(self.endpoints.output, &wire)?;
+            let control = l6ctl::OwnedControl::new(&session.engine);
+            let usb = &control;
+            usb.usb_midi_send(
+                self.endpoints.output,
+                &mut self.encoder,
+                2,
+                &[0xf0, 0x52, 0, 0, 0x46, 2, pad, 0xf7],
+            )?;
             replies = collect_editor_sysex(
                 session,
                 usb,

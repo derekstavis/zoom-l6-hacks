@@ -13,7 +13,7 @@ use crate::{
     hashing::{digest, files, hash, hash_sparse},
     identity::CaseIdentity,
     report::{CaseError, CaseResult, InPhase, Outcome, Phase, Stage, StageRecorder},
-    supervise::{cancelled, supervise},
+    supervise::{LaunchMode, cancelled, supervise},
 };
 use l6fw::Model;
 use l6max_host::engine::Options;
@@ -101,6 +101,7 @@ fn checked_update(
 
 /// What every case of a run shares.
 pub(crate) struct Context<'a> {
+    pub(crate) nested_campaign: bool,
     pub(crate) root: &'a Path,
     pub(crate) output: &'a Path,
     pub(crate) config: &'a Config,
@@ -135,6 +136,10 @@ struct Invocation {
     arguments: Vec<String>,
     environment: BTreeMap<String, String>,
     audio_input: Vec<(u8, String)>,
+}
+
+fn supervised_din_case(id: &str, nested: bool, wall_timeout_s: u64, backend: Backend) -> bool {
+    id == "l6-din-sweep" && !nested && wall_timeout_s <= 900 && backend == Backend::Headless
 }
 
 /// Run one attempt of a case in `dir`.
@@ -391,20 +396,18 @@ fn run_campaign_member_process(
         return Err("campaign wall deadline expired before member preparation".into());
     }
     let mut command = Command::new(env::current_exe().map_err(|e| e.to_string())?);
-    command
-        .arg("__campaign-member")
-        .arg(&request_path)
-        .env("L6TEST_CAMPAIGN_MEMBER", "1");
-    let supervised = supervise(command, &supervisor_dir, remaining).and_then(|success| {
-        if success {
-            return Ok(());
-        }
-        let stderr = fs::read_to_string(supervisor_dir.join("stderr.log")).unwrap_or_default();
-        let detail: String = stderr.chars().take(1000).collect();
-        Err(format!(
-            "campaign member process failed: {detail}; inspect supervisor logs"
-        ))
-    });
+    command.arg("__campaign-member").arg(&request_path);
+    let supervised = supervise(command, &supervisor_dir, remaining, LaunchMode::FreshGroup)
+        .and_then(|success| {
+            if success {
+                return Ok(());
+            }
+            let stderr = fs::read_to_string(supervisor_dir.join("stderr.log")).unwrap_or_default();
+            let detail: String = stderr.chars().take(1000).collect();
+            Err(format!(
+                "campaign member process failed: {detail}; inspect supervisor logs"
+            ))
+        });
     finish_campaign_supervision(ctx.cache, dir, supervised)?;
     let bytes =
         fs::read(dir.join("result.json")).map_err(|e| format!("missing member result: {e}"))?;
@@ -485,6 +488,7 @@ pub(crate) fn campaign_member_entry(path: &Path) -> Result<(), String> {
     case.scenario = Some(frozen);
     let cache = RunCache::from_shared(req.cache);
     let ctx = Context {
+        nested_campaign: true,
         root: &req.root,
         output: &req.output,
         config: &req.config,
@@ -982,7 +986,15 @@ fn plan_invocation(
     if let Some(path) = &case.scenario {
         let scenario = crate::catalog::scenario_file(path);
         if backend == Backend::Headless {
-            command.arg("__scenario").arg(&scenario);
+            let supervised_din =
+                supervised_din_case(&case.id, ctx.nested_campaign, case.wall_timeout_s, backend);
+            command
+                .arg(if supervised_din {
+                    "__supervised-din-scenario"
+                } else {
+                    "__scenario"
+                })
+                .arg(&scenario);
         } else {
             command.arg("--smoke-scenario").arg(&scenario);
         }
@@ -1092,7 +1104,16 @@ fn execute(
     .failed_in(Phase::Execute)?;
     drop(timer);
     let started = Instant::now();
-    let success = supervise(command, dir, case.wall_timeout_s);
+    let success = supervise(
+        command,
+        dir,
+        case.wall_timeout_s,
+        if ctx.nested_campaign {
+            LaunchMode::NestedGroup
+        } else {
+            LaunchMode::FreshGroup
+        },
+    );
     result.timings.execute_s = started.elapsed().as_secs_f64();
     if let Some(seconds) = crate::report::child_shutdown_seconds(
         &dir.join("progress.jsonl"),
@@ -1157,6 +1178,40 @@ fn apply_expected(result: &mut CaseResult, scenario: &Value, expected: &[Expecte
 #[cfg(test)]
 mod tests {
     #[test]
+    fn din_supervision_is_limited_to_direct_headless_case() {
+        use smoke_core::Backend;
+        assert!(super::supervised_din_case(
+            "l6-din-sweep",
+            false,
+            900,
+            Backend::Headless
+        ));
+        assert!(!super::supervised_din_case(
+            "l6-din-sweep",
+            true,
+            900,
+            Backend::Headless
+        ));
+        assert!(!super::supervised_din_case(
+            "l6-din-sweep",
+            false,
+            901,
+            Backend::Headless
+        ));
+        assert!(!super::supervised_din_case(
+            "l6-din-sweep",
+            false,
+            900,
+            Backend::Gui
+        ));
+        assert!(!super::supervised_din_case(
+            "other",
+            false,
+            900,
+            Backend::Headless
+        ));
+    }
+    #[test]
     fn failed_first_campaign_member_prevents_second_and_keeps_partial_result() {
         let root = l6max_host::paths::repository_root();
         let catalog = crate::catalog::load(root).unwrap();
@@ -1181,6 +1236,7 @@ mod tests {
             crate::fixture::case_fixture(&config, l6fw::Model::L6max, &case.id, None).unwrap();
         let cache = crate::cache::RunCache::new(dir.join("cache"));
         let ctx = super::Context {
+            nested_campaign: false,
             root,
             output: &dir,
             config: &config,

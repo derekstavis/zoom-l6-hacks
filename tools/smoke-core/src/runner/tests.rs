@@ -1091,15 +1091,11 @@ action='l6-usb-startup'",
 }
 #[test]
 fn l6_din_sweep_is_scoped_to_l6() {
-    let base = "version=1
-name='din-sweep'
-models=['l6']
-backends=['headless']
-[[step]]
-action='l6-din-sweep'
-";
-    assert!(Scenario::parse(base).is_ok());
-    assert!(Scenario::parse(&base.replace("models=['l6']", "models=['l6max']")).is_err());
+    let path =
+        l6max_host::paths::repository_root().join("tests/emulator/cases/midi/l6-din-sweep.toml");
+    let base = fs::read_to_string(path).unwrap();
+    assert!(Scenario::parse(&base).is_ok());
+    assert!(Scenario::parse(&base.replace("models = [\"l6\"]", "models = [\"l6max\"]")).is_err());
 }
 #[test]
 fn every_checked_in_scenario_loads_after_composition() {
@@ -1883,6 +1879,27 @@ fn effect_slot_wait_requires_matching_adjacent_assertion_and_budget() {
         .is_err()
     );
     assert!(Scenario::from_text(&source.replace("[[step]]\naction='effect-replacement-state'\nexpected_effect_type=1\nexpected_processor_type=1\nrequire_output=true\n", "")).is_err());
+}
+
+#[test]
+fn l6_din_sweep_requires_all_128_ordered_samples_and_shared_budget() {
+    let source = include_str!("../../../../tests/emulator/cases/midi/l6-din-sweep.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    let sample = "[[step]]\naction = \"l6-din-sweep-sample\"\ncc = 64\nguest_timeout_ms = 30000\nwall_timeout_s = 600\n\n";
+    assert!(source.contains(sample));
+    assert!(Scenario::from_text(&source.replace(sample, "")).is_err());
+    assert!(Scenario::from_text(&source.replacen("cc = 64\n", "cc = 65\n", 1)).is_err());
+    assert!(
+        Scenario::from_text(&source.replacen("wall_timeout_s = 600", "wall_timeout_s = 599", 1))
+            .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replace(
+            "action = \"l6-din-sweep-assert\"",
+            "action = \"l6-din-sweep-end\""
+        ))
+        .is_err()
+    );
 }
 
 #[test]

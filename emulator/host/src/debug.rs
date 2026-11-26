@@ -20,7 +20,7 @@ use std::{
 
 const SCRATCH: u32 = 0x841f_f000;
 const SCRATCH_LEN: usize = 8;
-const MAX_BREAKPOINTS: usize = 5;
+const MAX_BREAKPOINTS: usize = 6;
 const MAX_CONTINUE_MS: u64 = 60_000;
 const IDLE_GUARD: &str = "f4870ac4ce0c3cb238f92e437a9f5511912eee645168943b43a0166622b85ba2";
 const SENDER_GUARD: &str = "f07c456c512bff15fb7112a0f8ad5993dab518b4fbfd4ed1544de2208681c27d";
@@ -403,6 +403,9 @@ fn validate_l6_probe_guards(
 }
 
 trait Transport: Send {
+    fn cancellation_handle(&self) -> Result<std::os::unix::net::UnixStream, String> {
+        Err("debug transport cannot be interrupted independently".into())
+    }
     fn set_timeout(&mut self, timeout: Duration) -> Result<(), String>;
     fn read_register(&mut self, index: u32) -> Result<u32, String>;
     fn write_register(&mut self, index: u32, value: u32) -> Result<(), String>;
@@ -420,7 +423,11 @@ trait Transport: Send {
     fn register_before(&mut self, index: u32, deadline: Instant) -> Result<u32, String>;
     fn resume_before(&mut self, deadline: Instant) -> Result<(), String>;
     fn step_start_before(&mut self, deadline: Instant) -> Result<(), String>;
-    fn poll_stop_before(&mut self, deadline: Instant) -> Result<Option<String>, String>;
+    fn poll_stop_before(
+        &mut self,
+        poll_deadline: Instant,
+        packet_deadline: Instant,
+    ) -> Result<Option<String>, String>;
     fn interrupt_before(&mut self, deadline: Instant) -> Result<String, String>;
     fn resume(&mut self) -> Result<(), String>;
     fn poll_stop(&mut self, wait: Duration) -> Result<Option<String>, String>;
@@ -429,6 +436,9 @@ trait Transport: Send {
     fn disconnect(&mut self) -> Result<(), String>;
 }
 impl Transport for Gdb {
+    fn cancellation_handle(&self) -> Result<std::os::unix::net::UnixStream, String> {
+        Gdb::cancellation_handle(self).map_err(|e| e.to_string())
+    }
     fn set_timeout(&mut self, timeout: Duration) -> Result<(), String> {
         Gdb::set_request_timeout(self, timeout).map_err(|e| e.to_string())
     }
@@ -469,8 +479,12 @@ impl Transport for Gdb {
     fn step_start_before(&mut self, deadline: Instant) -> Result<(), String> {
         Gdb::step_start_before(self, deadline).map_err(|e| e.to_string())
     }
-    fn poll_stop_before(&mut self, deadline: Instant) -> Result<Option<String>, String> {
-        Gdb::poll_stop_before(self, deadline).map_err(|e| e.to_string())
+    fn poll_stop_before(
+        &mut self,
+        poll_deadline: Instant,
+        packet_deadline: Instant,
+    ) -> Result<Option<String>, String> {
+        Gdb::poll_stop_before(self, poll_deadline, packet_deadline).map_err(|e| e.to_string())
     }
     fn interrupt_before(&mut self, deadline: Instant) -> Result<String, String> {
         Gdb::interrupt_before(self, deadline).map_err(|e| e.to_string())
@@ -638,6 +652,28 @@ struct L6MidiContext {
     last_return: Option<u32>,
 }
 
+/// Emergency cancellation retains the cross-process lease and marks this controller unusable.
+pub struct CancellationHandle {
+    socket: std::os::unix::net::UnixStream,
+    unusable: Arc<AtomicBool>,
+    retained_lease: Arc<Mutex<Option<l6max_diagnostics::gdb::Lease>>>,
+    lease: Option<l6max_diagnostics::gdb::Lease>,
+}
+impl CancellationHandle {
+    pub fn poison_and_shutdown(mut self) -> Result<(), String> {
+        self.unusable.store(true, Ordering::Release);
+        if let Some(lease) = self.lease.take() {
+            *self
+                .retained_lease
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(lease);
+        }
+        self.socket
+            .shutdown(std::net::Shutdown::Both)
+            .map_err(|e| e.to_string())
+    }
+}
+
 pub struct Session {
     transport: Option<Box<dyn Transport>>,
     guest: Arc<dyn Guest>,
@@ -753,6 +789,26 @@ impl Session {
         })
     }
 
+    /// Clone a local emergency handle; shutting it down makes this debugger unusable and requires restart.
+    pub fn cancellation_handle(&self) -> Result<CancellationHandle, String> {
+        let socket = self
+            .transport
+            .as_deref()
+            .ok_or("debug session is closed")?
+            .cancellation_handle()?;
+        let lease = self
+            .lease
+            .as_ref()
+            .map(|lease| lease.try_clone().map_err(|e| e.to_string()))
+            .transpose()?;
+        Ok(CancellationHandle {
+            socket,
+            unusable: self.unusable.clone(),
+            retained_lease: self.retained_lease.clone(),
+            lease,
+        })
+    }
+
     /// Change one owned breakpoint under a shared wall deadline.
     pub fn breakpoint_before(
         &mut self,
@@ -854,7 +910,12 @@ impl Session {
                 return Ok(None);
             }
             let until = (now + Duration::from_millis(50)).min(deadline);
-            if let Some(reply) = self.transact(|g| g.poll_stop_before(until))? {
+            if let Some(reply) = self.transact(|g| {
+                g.poll_stop_before(
+                    until,
+                    (Instant::now() + Duration::from_secs(1)).min(deadline),
+                )
+            })? {
                 let reply = validate_stop(reply).map_err(|error| {
                     self.poisoned = true;
                     error
@@ -870,6 +931,12 @@ impl Session {
     /// Callers must own the guest lifecycle and intend to start a previously paused guest.
     pub fn close_resuming_before(&mut self, deadline: Instant) -> Result<(), String> {
         self.was_running = true;
+        self.close_before(deadline)
+    }
+
+    /// Restore owned debug state and explicitly leave MAIN stopped while releasing its lease.
+    pub fn close_stopped_before(&mut self, deadline: Instant) -> Result<(), String> {
+        self.was_running = false;
         self.close_before(deadline)
     }
 
@@ -1582,8 +1649,12 @@ mod tests {
             }
             self.record("step-start")
         }
-        fn poll_stop_before(&mut self, deadline: Instant) -> Result<Option<String>, String> {
-            self.poll_stop(deadline.saturating_duration_since(Instant::now()))
+        fn poll_stop_before(
+            &mut self,
+            poll_deadline: Instant,
+            _packet_deadline: Instant,
+        ) -> Result<Option<String>, String> {
+            self.poll_stop(poll_deadline.saturating_duration_since(Instant::now()))
         }
         fn interrupt_before(&mut self, deadline: Instant) -> Result<String, String> {
             if Instant::now() >= deadline {
@@ -1745,10 +1816,42 @@ mod tests {
     }
 
     #[test]
-    fn five_audio_breakpoints_are_owned_and_cleaned_up() {
+    fn emergency_cancellation_retains_cross_process_lease() {
+        use std::os::unix::net::{UnixListener, UnixStream};
+        let dir = std::env::temp_dir().join(format!(
+            "l6-debug-emergency-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("stub.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let original = l6max_diagnostics::gdb::Lease::acquire(&path).unwrap();
+        let duplicate = original.try_clone().unwrap();
+        let (socket, _peer) = UnixStream::pair().unwrap();
+        let unusable = Arc::new(AtomicBool::new(false));
+        let retained = Arc::new(Mutex::new(None));
+        let handle = CancellationHandle {
+            socket,
+            unusable: unusable.clone(),
+            retained_lease: retained.clone(),
+            lease: Some(duplicate),
+        };
+        handle.poison_and_shutdown().unwrap();
+        drop(original);
+        assert!(unusable.load(Ordering::Acquire));
+        assert!(l6max_diagnostics::gdb::Lease::acquire(&path).is_err());
+        retained.lock().unwrap().take();
+        assert!(l6max_diagnostics::gdb::Lease::acquire(&path).is_ok());
+        drop(listener);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn six_sweep_breakpoints_are_owned_and_cleaned_up() {
         let (mut session, state) = fake(false, true);
         let deadline = Instant::now() + Duration::from_secs(1);
-        for index in 0..5 {
+        for index in 0..6 {
             session
                 .breakpoint_before(0x8000_1000 + index * 2, true, deadline)
                 .unwrap();
@@ -1767,7 +1870,7 @@ mod tests {
                 .iter()
                 .filter(|operation| *operation == "remove")
                 .count(),
-            5
+            6
         );
     }
 

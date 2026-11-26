@@ -33,6 +33,7 @@ pub use l6max_host::editor::{
     pad_file_count as editor_pad_file_count, pad_filename_valid as editor_pad_filename_valid,
 };
 pub use l6max_host::input_trace::panel_uart_count;
+pub use l6max_host::l6_din::Snapshot as L6DinSnapshot;
 pub use l6max_host::l6_recorder::{
     Dma as L6RecorderDma, Event as L6RecorderEvent, Selection as L6RecorderSelection,
 };
@@ -86,6 +87,7 @@ pub enum Request {
         length: usize,
     },
     MidiConfig,
+    L6DinState,
     EffectEditor {
         binding: EffectEditorBinding,
     },
@@ -345,6 +347,7 @@ impl ControlClient {
                 | Request::HeapCounters
                 | Request::MemoryRead { .. }
                 | Request::MidiConfig
+                | Request::L6DinState
                 | Request::EffectEditor { .. }
                 | Request::EffectSlot { .. }
                 | Request::MixerLevel
@@ -411,6 +414,10 @@ impl ControlClient {
         fields: EffectSlotFields,
     ) -> Result<EffectSlotSnapshot, ControlError> {
         self.request_as(&Request::EffectSlot { binding, fields })
+    }
+
+    pub fn l6_din_state(&self) -> Result<L6DinSnapshot, ControlError> {
+        self.request_as(&Request::L6DinState)
     }
 
     pub fn panel_key(&self, code: u32) -> Result<PanelKeySnapshot, ControlError> {
@@ -748,6 +755,20 @@ impl<'a> OwnedControl<'a> {
             .ok_or_else(|| ControlError::Rejected("USB backend unavailable".into()))?;
         l6max_host::usb_midi::poll_sysex(usb, endpoints.input, cable, decoder)
             .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+
+    pub fn l6_din_reader_before_checked(
+        &self,
+        deadline: std::time::Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<l6max_host::l6_din::Reader, ControlError> {
+        l6max_host::l6_din::Reader::new_before_checked(
+            self.main_qmp()?,
+            self.engine.model(),
+            deadline,
+            check,
+        )
+        .map_err(ControlError::Rejected)
     }
 
     pub fn effect_slot_reader_before_checked(

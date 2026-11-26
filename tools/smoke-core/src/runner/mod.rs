@@ -2053,8 +2053,42 @@ impl Runner {
                         index,
                     }));
                 }
-                Action::L6DinSweep => {
-                    return Ok(Progress::Device(devices::Operation::L6DinSweep));
+                Action::L6DinSweepBegin => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepBegin));
+                }
+                Action::L6DinSweepReady => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepReady));
+                }
+                Action::L6DinSweepMonitor => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepMonitor));
+                }
+                Action::L6DinSweepBaseline => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepBaseline));
+                }
+                Action::L6DinSweepSample { cc } => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepSample {
+                        cc,
+                    }));
+                }
+                Action::L6DinSweepTrace => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepTrace));
+                }
+                Action::L6DinSweepDrain => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepDrain));
+                }
+                Action::L6DinSweepStop => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepStop));
+                }
+                Action::L6DinSweepCapture => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepCapture));
+                }
+                Action::L6DinSweepAssert { check } => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepAssert {
+                        check,
+                    }));
+                }
+                Action::L6DinSweepEnd => {
+                    return Ok(Progress::Device(devices::Operation::L6DinSweepEnd));
                 }
                 Action::L6maxTimingBegin => {
                     return Ok(Progress::Device(devices::Operation::L6maxTimingBegin));

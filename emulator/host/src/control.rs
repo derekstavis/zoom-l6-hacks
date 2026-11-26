@@ -338,6 +338,12 @@ fn execute(
         }
         "update-state" => serde_json::to_value(crate::update_state::update_state(qmp, model)?)
             .map_err(|error| error.to_string()),
+        "l6-din-state" => {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            let reader =
+                crate::l6_din::Reader::new_before_checked(qmp, model, deadline, &|| Ok(()))?;
+            serde_json::to_value(reader.snapshot(deadline, &|| Ok(()))?).map_err(|e| e.to_string())
+        }
         "effect-slot" => {
             let binding: crate::effect_editor::SlotBinding = serde_json::from_value(
                 request

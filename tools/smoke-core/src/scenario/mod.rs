@@ -32,6 +32,21 @@ pub enum Backend {
     Gui,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum DinSweepCheck {
+    Uart,
+    RingBytes,
+    WriteIndex,
+    ReadIndex,
+    Indicator,
+    Handler,
+    Submitter,
+    Reader,
+    Setter,
+    Mixer,
+}
+
 /// Named fields in the ordered, non-atomic dialog restoration snapshot.
 #[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -1188,7 +1203,21 @@ pub enum Action {
     L6SweepRejectPanel,
     L6SweepRejectEncoder,
     L6SweepEnd,
-    L6DinSweep,
+    L6DinSweepBegin,
+    L6DinSweepReady,
+    L6DinSweepMonitor,
+    L6DinSweepBaseline,
+    L6DinSweepSample {
+        cc: u8,
+    },
+    L6DinSweepTrace,
+    L6DinSweepDrain,
+    L6DinSweepStop,
+    L6DinSweepCapture,
+    L6DinSweepAssert {
+        check: DinSweepCheck,
+    },
+    L6DinSweepEnd,
     L6maxTimingBegin,
     L6maxTimingSettle {
         wall_ms: u32,

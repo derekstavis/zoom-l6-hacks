@@ -16,6 +16,7 @@ mod display;
 mod editor;
 mod execute;
 mod knob_dialog;
+mod l6_din_sweep;
 mod l6_input_sweep;
 mod lifecycle;
 mod midi;
@@ -717,7 +718,21 @@ pub enum Operation {
     L6SweepRejectPanel,
     L6SweepRejectEncoder,
     L6SweepEnd,
-    L6DinSweep,
+    L6DinSweepBegin,
+    L6DinSweepReady,
+    L6DinSweepMonitor,
+    L6DinSweepBaseline,
+    L6DinSweepSample {
+        cc: u8,
+    },
+    L6DinSweepTrace,
+    L6DinSweepDrain,
+    L6DinSweepStop,
+    L6DinSweepCapture,
+    L6DinSweepAssert {
+        check: crate::scenario::DinSweepCheck,
+    },
+    L6DinSweepEnd,
     L6maxTimingBegin,
     L6maxTimingSettle {
         wall_ms: u32,
@@ -826,7 +841,7 @@ fn validate_native_midi_capabilities(
                     | crate::Action::EditorAssignBegin
                     | crate::Action::EditorPlaybackBegin { .. }
                     | crate::Action::UiPadBegin { .. }
-                    | crate::Action::L6DinSweep
+                    | crate::Action::L6DinSweepBegin
                     | crate::Action::L6MidiProbeBegin
                     | crate::Action::L6UsbStartup
                     | crate::Action::L6DinEventDispatch { .. }
@@ -969,7 +984,7 @@ pub(crate) fn prepare_with_report(
     if scenario
         .step
         .iter()
-        .any(|s| s.applies_to(model) && matches!(s.action, crate::Action::L6DinSweep))
+        .any(|s| s.applies_to(model) && matches!(s.action, crate::Action::L6DinSweepBegin))
     {
         options.usb_enabled = false;
         options.midi_enabled = true;
@@ -1107,6 +1122,7 @@ pub struct State {
     l6_recorder: Option<audio::recorder::Scope>,
     l6max_recorder: Option<audio::max_recorder::Scope>,
     audio_callbacks: Option<audio::callbacks::Scope>,
+    l6_din_sweep: Option<l6_din_sweep::Scope>,
     effect_slot_deadline: Option<sd::EffectSlotScope>,
     l6max_timing: Option<timing::Scope>,
     usb_storage_scope: Option<usb_storage_steps::Scope>,
@@ -1562,7 +1578,7 @@ mod native_midi_capability_tests {
             crate::Action::EditorAssignBegin,
             crate::Action::EditorPlaybackBegin { pad: 1 },
             crate::Action::UiPadBegin { pad: 1 },
-            crate::Action::L6DinSweep,
+            crate::Action::L6DinSweepBegin,
             crate::Action::L6MidiProbeBegin,
             crate::Action::DinUsbBegin,
             crate::Action::L6UsbStartup,

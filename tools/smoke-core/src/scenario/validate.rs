@@ -686,6 +686,45 @@ impl Scenario {
             }
         }
         for model in &value.models {
+            let mut panel_event: Option<(u8, u32, u64)> = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                let phase = match step.action {
+                    Action::PanelEventBegin { .. } if *model == Model::L6 => Some(0),
+                    Action::PanelEventPress => Some(1),
+                    Action::PanelEventCapture => Some(2),
+                    Action::PanelEventReport => Some(3),
+                    Action::PanelEventMapping => Some(4),
+                    Action::PanelEventRelease => Some(5),
+                    Action::PanelEventSettle => Some(6),
+                    Action::PanelEventEnd => Some(7),
+                    Action::PanelEventBegin { .. } => return Err("panel event requires L6".into()),
+                    _ => None,
+                };
+                match (panel_event, phase) {
+                    (None, Some(0)) => {
+                        panel_event = Some((1, step.guest_timeout_ms, step.wall_timeout_s))
+                    }
+                    (Some((want, guest, wall)), Some(actual))
+                        if want == actual
+                            && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        panel_event = if want == 7 {
+                            None
+                        } else {
+                            Some((want + 1, guest, wall))
+                        };
+                    }
+                    (Some(_), _) | (None, Some(_)) => {
+                        return Err("invalid panel event sequence or budget".into());
+                    }
+                    _ => {}
+                }
+            }
+            if panel_event.is_some() {
+                return Err("unterminated panel event scope".into());
+            }
+        }
+        for model in &value.models {
             let mut meter: Option<(usize, u32, u32, u64)> = None;
             let mut meter_terminal = false;
             for step in value.step.iter().filter(|step| step.applies_to(*model)) {
@@ -2321,7 +2360,7 @@ impl Scenario {
                     return Err("analog assertion requires channel 1..5 and value 0..1023".into());
                 }
             }
-            if let Action::PanelEvent {
+            if let Action::PanelEventBegin {
                 target,
                 column,
                 row,

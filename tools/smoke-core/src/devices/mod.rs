@@ -26,6 +26,7 @@ mod midi;
 mod midi_probe;
 mod mode_primitives;
 mod panel;
+mod panel_event;
 mod power;
 mod sd;
 mod settings;
@@ -662,12 +663,19 @@ pub enum Operation {
     SettingsRtcTiming,
     SettingsEnd,
 
-    PanelEvent {
+    PanelEventBegin {
         target: u32,
         column: u8,
         row: u8,
         event: u8,
     },
+    PanelEventPress,
+    PanelEventCapture,
+    PanelEventReport,
+    PanelEventMapping,
+    PanelEventRelease,
+    PanelEventSettle,
+    PanelEventEnd,
     L6GpioBegin {
         target: u32,
         event: u8,
@@ -999,7 +1007,7 @@ pub(crate) fn prepare_with_report(
     if scenario
         .step
         .iter()
-        .any(|s| matches!(s.action, crate::Action::PanelEvent { .. }))
+        .any(|s| matches!(s.action, crate::Action::PanelEventBegin { .. }))
     {
         options.gdb_socket = Some(gdb_socket_path(&options.logs, "panel-event-map"));
     }
@@ -1158,7 +1166,7 @@ pub struct State {
     signal_pwm: Option<signal_pwm::Scope>,
     l6_meter_pwm: Option<l6_meter_pwm::Scope>,
     l6_indicator: Option<L6IndicatorScope>,
-    gdb: Option<l6max_diagnostics::gdb::Gdb>,
+    panel_event: Option<panel_event::Scope>,
     host_midi: Option<Box<dyn crate::host_midi::Client>>,
     encoder_turned_up: bool,
     knob_popup: Option<knob_dialog::PopupContext>,

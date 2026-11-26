@@ -1942,18 +1942,39 @@ impl Runner {
                 | Action::PatchParityFinish => {
                     return Ok(Progress::Device(devices::Operation::PatchParityHostOnly));
                 }
-                Action::PanelEvent {
+                Action::PanelEventBegin {
                     target,
                     column,
                     row,
                     event,
                 } => {
-                    return Ok(Progress::Device(devices::Operation::PanelEvent {
+                    return Ok(Progress::Device(devices::Operation::PanelEventBegin {
                         target,
                         column,
                         row,
                         event,
                     }));
+                }
+                Action::PanelEventPress => {
+                    return Ok(Progress::Device(devices::Operation::PanelEventPress));
+                }
+                Action::PanelEventCapture => {
+                    return Ok(Progress::Device(devices::Operation::PanelEventCapture));
+                }
+                Action::PanelEventReport => {
+                    return Ok(Progress::Device(devices::Operation::PanelEventReport));
+                }
+                Action::PanelEventMapping => {
+                    return Ok(Progress::Device(devices::Operation::PanelEventMapping));
+                }
+                Action::PanelEventRelease => {
+                    return Ok(Progress::Device(devices::Operation::PanelEventRelease));
+                }
+                Action::PanelEventSettle => {
+                    return Ok(Progress::Device(devices::Operation::PanelEventSettle));
+                }
+                Action::PanelEventEnd => {
+                    return Ok(Progress::Device(devices::Operation::PanelEventEnd));
                 }
                 Action::L6GpioBegin { target, event } => {
                     return Ok(Progress::Device(devices::Operation::L6GpioBegin {

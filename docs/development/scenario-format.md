@@ -129,7 +129,7 @@ card-reader mode), stays unmarked.
 | `expect-powered` | `powered` | Check the current power state |
 | `expect-memory` | `symbol`, `bytes` | Compare MAIN memory at `symbol`, a name declared in `patches/api` for each model the step runs on; an undeclared name fails when the scenario loads |
 | `expect-heap` | `minimum_free` | Require the FreeRTOS heap's lowest free byte count since boot to be at least `minimum_free`, which must fit the heap. Runs on patched images; see [heap headroom](../../patches/README.md#heap-headroom) |
-| `panel-event` | `target`, `column`, `row`, `event` | Inject a panel-controller event for focused event-path scenarios |
+| `panel-event-begin`, `panel-event-press`, `panel-event-capture`, `panel-event-report`, `panel-event-mapping`, `panel-event-release`, `panel-event-settle`, `panel-event-end` | `target`, `column`, `row`, `event` on begin | L6 guarded panel input transaction. Capture observes dispatcher and submit breakpoints together, skipping unrelated reports within 15 wall seconds; release observes 250 panel guest ms. |
 
 Boot steps explicitly allow a longer ceiling for slow L6 TCG. Assertion
 baselines are captured immediately before an action, never after its output

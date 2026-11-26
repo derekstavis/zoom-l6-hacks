@@ -227,34 +227,7 @@ fn sysex_reply_complete(
 
 /// Require a complete RIFF container and enough audio for the tone checks.
 fn recorded_wav_ready(bytes: &[u8]) -> Result<(), String> {
-    if bytes.len() < 12 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
-        return Err("missing WAV header".into());
-    }
-    let declared = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
-    if declared.saturating_add(8) != bytes.len() {
-        return Err(format!(
-            "length is {}, RIFF declares {}",
-            bytes.len(),
-            declared.saturating_add(8)
-        ));
-    }
-    let mut offset = 12usize;
-    while offset + 8 <= bytes.len() {
-        let size = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
-        let end = offset
-            .checked_add(8)
-            .and_then(|start| start.checked_add(size))
-            .ok_or("WAV chunk length overflow")?;
-        if end > bytes.len() {
-            return Err("truncated WAV chunk".into());
-        }
-        offset = end
-            .checked_add(size & 1)
-            .ok_or("WAV chunk length overflow")?;
-    }
-    if offset != bytes.len() {
-        return Err("incomplete WAV chunk padding".into());
-    }
+    l6ctl::validate_complete_wav(bytes)?;
     let frames = waveform::decode_wav(bytes)?;
     if frames.len() < 96_000 {
         return Err(format!("only {} frames", frames.len()));

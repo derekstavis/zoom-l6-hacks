@@ -57,7 +57,7 @@ pub use l6max_host::sound_pad::Assignment as SoundPadAssignment;
 pub use l6max_host::update_bootloader::Outcome as InstallerOutcome;
 pub use l6max_host::update_state::{UpdateGuiState, UpdateState};
 pub use l6max_host::usb_midi::SysexDecoder as UsbSysexDecoder;
-pub use l6max_host::wav::Chunks as WavChunks;
+pub use l6max_host::wav::{Chunks as WavChunks, validate_complete as validate_complete_wav};
 pub use l6max_host::{audio_analysis, audio_input};
 use l6max_host::{control, engine::Engine, freertos, qmp};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};

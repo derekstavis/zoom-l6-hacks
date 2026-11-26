@@ -3,7 +3,7 @@ use l6ctl::audio_analysis;
 use serde_json::{Value, json};
 use std::fs;
 
-const USAGE: &str = "usage: l6ctl audio prepare SOURCE.wav DIRECTORY CHANNEL | l6ctl audio compare SOURCE.wav CAPTURE.s32le | l6ctl audio tone CAPTURE.s32le HZ RATE";
+const USAGE: &str = "usage: l6ctl audio prepare SOURCE.wav DIRECTORY CHANNEL | l6ctl audio inspect SOURCE.wav | l6ctl audio compare SOURCE.wav CAPTURE.s32le | l6ctl audio tone CAPTURE.s32le HZ RATE";
 
 fn capture(path: &str) -> Result<Vec<[f64; 2]>, String> {
     let bytes = fs::read(path).map_err(|error| format!("cannot read capture {path}: {error}"))?;
@@ -26,6 +26,13 @@ pub fn run(args: &[String]) -> Result<Value, String> {
             Ok(
                 json!({"channel": channel, "prepared_path": l6ctl::audio_input::channel_path(directory, channel)}),
             )
+        }
+        [command, source] if command == "inspect" => {
+            let bytes = fs::read(source)
+                .map_err(|error| format!("cannot read source {source}: {error}"))?;
+            l6ctl::validate_complete_wav(&bytes)?;
+            let frames = audio_analysis::decode_wav(&bytes)?;
+            Ok(json!({"complete":true,"bytes":bytes.len(),"frames":frames.len()}))
         }
         [command, source, captured] if command == "compare" => {
             let bytes = fs::read(source)
@@ -77,8 +84,18 @@ mod tests {
             captured.extend(value);
             captured.extend(value);
         }
+        let riff_len = (wav.len() - 8) as u32;
+        wav[4..8].copy_from_slice(&riff_len.to_le_bytes());
         fs::write(&source, wav).unwrap();
         fs::write(&raw, captured).unwrap();
+        let inspected = run(&["inspect".into(), source.to_str().unwrap().into()]).unwrap();
+        assert_eq!(
+            (
+                inspected["complete"].as_bool(),
+                inspected["frames"].as_u64()
+            ),
+            (Some(true), Some(480))
+        );
         let prepared = run(&[
             "prepare".into(),
             source.to_str().unwrap().into(),

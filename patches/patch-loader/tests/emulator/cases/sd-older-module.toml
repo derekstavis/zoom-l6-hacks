@@ -31,4 +31,3 @@ path = "tests/emulator/fragments/sd-module-loaded.toml"
 [[step]]
 action = "include"
 path = "tests/emulator/fragments/host-midi-native-round-trip.toml"
-

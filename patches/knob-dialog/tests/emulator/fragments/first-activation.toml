@@ -22,4 +22,3 @@ wall_timeout_s = 600
 action = "knob-activation-assert"
 guest_timeout_ms = 180000
 wall_timeout_s = 600
-

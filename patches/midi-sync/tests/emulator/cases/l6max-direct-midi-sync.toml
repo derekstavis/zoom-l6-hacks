@@ -42,4 +42,3 @@ path = "tests/emulator/fragments/host-midi-direct-cable-2.toml"
 [[step]]
 action = "include"
 path = "tests/emulator/fragments/host-midi-direct-cable-5.toml"
-

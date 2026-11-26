@@ -27,8 +27,12 @@ struct Observation {
     traces: BTreeMap<String, u64>,
 }
 #[derive(Clone)]
-struct SceneSaveState {
-    scene: usize,
+struct MomentaryState {
+    control: String,
+    started: Instant,
+    guest_start: u32,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
     target: u32,
     press_pattern: String,
     release_pattern: String,
@@ -107,7 +111,7 @@ pub struct Runner {
     ring_quiet: Option<([u32; 8], u32)>,
     last_report_guest: u32,
     checkpoints: BTreeMap<String, Observation>,
-    scene_save: Option<SceneSaveState>,
+    momentary: Option<MomentaryState>,
     allowed_rejections: [u64; 2],
     progress: crate::progress::CaseProgress,
 }
@@ -158,11 +162,8 @@ impl Runner {
                         trace.watch(&pattern)?;
                     }
                 }
-                Action::SaveScene { scene } => {
-                    for pattern in trace::button_packets(
-                        model,
-                        &format!("scene-{}", ['a', 'b', 'c'][scene - 1]),
-                    )? {
+                Action::MomentaryDown { control, .. } => {
+                    for pattern in trace::button_packets(model, control)? {
                         trace.watch(&pattern)?;
                     }
                 }
@@ -198,7 +199,7 @@ impl Runner {
             ring_quiet: None,
             last_report_guest: 0,
             checkpoints: Default::default(),
-            scene_save: None,
+            momentary: None,
             allowed_rejections: [0, 0],
             progress,
         })
@@ -343,6 +344,31 @@ impl Runner {
                 (now, obs.panel.guest_ms)
             });
             let elapsed = obs.panel.guest_ms.wrapping_sub(guest_start);
+            if let Some(scope) = &self.momentary {
+                if now.duration_since(scope.started) > Duration::from_secs(scope.wall_timeout_s)
+                    || obs.panel.guest_ms.wrapping_sub(scope.guest_start) > scope.guest_timeout_ms
+                {
+                    return Err("momentary input shared deadline exceeded".into());
+                }
+                let presses = obs
+                    .traces
+                    .get(&scope.press_pattern)
+                    .copied()
+                    .unwrap_or(0)
+                    .saturating_sub(scope.press_count);
+                let releases = obs
+                    .traces
+                    .get(&scope.release_pattern)
+                    .copied()
+                    .unwrap_or(0)
+                    .saturating_sub(scope.release_count);
+                if presses > 1 {
+                    return Err(format!("duplicate {} press report", scope.control));
+                }
+                if releases > 1 {
+                    return Err(format!("duplicate {} release report", scope.control));
+                }
+            }
             if !matches!(step.action, Action::ExpectDisplayAfterPress)
                 && (now.duration_since(entered) > Duration::from_secs(step.wall_timeout_s)
                     || elapsed > step.guest_timeout_ms)
@@ -2465,77 +2491,66 @@ impl Runner {
                         }
                     }
                 }
-                Action::SaveScene { scene } => {
-                    if self.model != Model::L6 {
-                        return Err("save-scene currently supports L6 only".into());
-                    }
-                    let control = format!("scene-{}", ['a', 'b', 'c'][scene - 1]);
-                    let target = control_target(self.model, &control)?;
+                Action::MomentaryDown {
+                    control,
+                    duration_ms,
+                } => {
                     if !self.dispatched {
+                        if self.momentary.is_some() {
+                            return Err("momentary input already held".into());
+                        }
+                        let target = control_target(self.model, &control)?;
                         let [press_pattern, release_pattern] =
                             trace::button_packets(self.model, &control)?;
-                        let state = SceneSaveState {
-                            scene,
+                        self.momentary = Some(MomentaryState {
+                            control,
                             target,
+                            started: entered,
+                            guest_start,
+                            guest_timeout_ms: step.guest_timeout_ms,
+                            wall_timeout_s: step.wall_timeout_s,
                             press_count: obs.traces.get(&press_pattern).copied().unwrap_or(0),
                             release_count: obs.traces.get(&release_pattern).copied().unwrap_or(0),
                             press_pattern,
                             release_pattern,
-                        };
-                        self.scene_save = Some(state);
+                        });
                         return self.dispatch(
                             Command::HoldDown {
                                 target,
-                                // Keep the panel key down until the scene lamp responds.
-                                // This is the same 50 ms minimum used by a normal click.
-                                duration_ms: 50,
+                                duration_ms,
                             },
                             obs,
                         );
                     }
-                    let state = self
-                        .scene_save
-                        .as_ref()
-                        .ok_or("save-scene lost its press baseline")?
-                        .clone();
-                    if state.scene != scene || state.target != target {
-                        return Err("save-scene state does not match the current step".into());
+                    let state = self.momentary.as_ref().ok_or("momentary input missing")?;
+                    let presses = obs
+                        .traces
+                        .get(&state.press_pattern)
+                        .copied()
+                        .unwrap_or(0)
+                        .saturating_sub(state.press_count);
+                    self.acknowledged(&obs)? && presses == 1
+                }
+                Action::MomentaryUp { control } => {
+                    let state = self.momentary.as_ref().ok_or("momentary input missing")?;
+                    if state.control != control {
+                        return Err("momentary release does not match held input".into());
                     }
-                    match self.last_command.as_ref() {
-                        Some(Command::HoldDown { target: held, .. }) if *held == target => {
-                            let press_delta = obs
-                                .traces
-                                .get(&state.press_pattern)
-                                .copied()
-                                .unwrap_or(0)
-                                .saturating_sub(state.press_count);
-                            if press_delta > 1 {
-                                return Err(format!("duplicate L6 scene {scene} press report"));
-                            }
-                            // Only this scene's lamp: another just saved can still be
-                            // flashing, so the others are not a stable baseline.
-                            if self.acknowledged(&obs)?
-                                && press_delta == 1
-                                && l6max_host::indicators::l6_scene_leds(obs.data.indicators)
-                                    [scene - 1]
-                            {
-                                return self.dispatch(Command::Release { target }, obs);
-                            }
-                            false
-                        }
-                        Some(Command::Release { target: released }) if *released == target => {
-                            let release_delta = obs
-                                .traces
-                                .get(&state.release_pattern)
-                                .copied()
-                                .unwrap_or(0)
-                                .saturating_sub(state.release_count);
-                            if release_delta > 1 {
-                                return Err(format!("duplicate L6 scene {scene} release report"));
-                            }
-                            self.acknowledged(&obs)? && release_delta == 1
-                        }
-                        _ => return Err("save-scene lost its input state".into()),
+                    let target = state.target;
+                    if !self.dispatched {
+                        return self.dispatch(Command::Release { target }, obs);
+                    }
+                    let releases = obs
+                        .traces
+                        .get(&state.release_pattern)
+                        .copied()
+                        .unwrap_or(0)
+                        .saturating_sub(state.release_count);
+                    if self.acknowledged(&obs)? && releases == 1 {
+                        self.momentary = None;
+                        true
+                    } else {
+                        false
                     }
                 }
                 Action::ExpectScene {
@@ -2753,7 +2768,6 @@ impl Runner {
             self.entered = None;
             self.settling = None;
             self.dispatched = false;
-            self.scene_save = None;
         }
         Ok(Progress::Complete)
     }
@@ -2863,6 +2877,13 @@ impl Runner {
         self.dispatched = true;
         Ok(Progress::Dispatch(command))
     }
+    /// Take a held momentary input for adapter cleanup after any failure.
+    pub fn take_held_release(&mut self) -> Option<Command> {
+        self.momentary.take().map(|scope| Command::Release {
+            target: scope.target,
+        })
+    }
+
     fn acknowledged(&self, obs: &Observation) -> Result<bool, String> {
         let base = self.baseline.as_ref().unwrap();
         let (current, old, count) = match self.last_command.as_ref().unwrap() {

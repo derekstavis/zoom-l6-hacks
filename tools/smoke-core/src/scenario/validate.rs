@@ -685,6 +685,47 @@ impl Scenario {
                 }
             }
         }
+        for model in &value.models {
+            let steps: Vec<_> = value
+                .step
+                .iter()
+                .filter(|step| step.applies_to(*model))
+                .collect();
+            let mut i = 0;
+            while i < steps.len() {
+                match &steps[i].action {
+                    Action::MomentaryDown { control, .. } => {
+                        if *model != Model::L6 {
+                            return Err("momentary trace scope currently supports L6 only".into());
+                        }
+                        crate::trace::button_packets(*model, control)?;
+                        let scope = steps.get(i..i + 3).ok_or("incomplete momentary scope")?;
+                        let observation = matches!(&scope[1].action,
+                            Action::ExpectScene { scene, .. } if control == &format!("scene-{}", ['a','b','c'].get(scene.saturating_sub(1)).unwrap_or(&'?')))
+                            || matches!(
+                                scope[1].action,
+                                Action::ExpectButtonLed { .. }
+                                    | Action::ExpectRing { .. }
+                                    | Action::ExpectMode { .. }
+                            );
+                        if !observation
+                            || !matches!(&scope[2].action, Action::MomentaryUp { control: actual } if actual == control)
+                            || scope.iter().any(|s| {
+                                (s.guest_timeout_ms, s.wall_timeout_s)
+                                    != (scope[0].guest_timeout_ms, scope[0].wall_timeout_s)
+                            })
+                        {
+                            return Err("momentary scope needs a condition, matching release and shared budget".into());
+                        }
+                        i += 3;
+                    }
+                    Action::MomentaryUp { .. } => {
+                        return Err("momentary release without hold".into());
+                    }
+                    _ => i += 1,
+                }
+            }
+        }
         if value.backends.is_empty() {
             return Err("backends must contain headless and/or gui".into());
         }
@@ -2395,15 +2436,10 @@ impl Scenario {
                 Action::Hold { duration_ms, .. } if *duration_ms == 0 || *duration_ms > 59_000 => {
                     return Err("hold duration must be between 1 and 59000 ms".into());
                 }
-                Action::SaveScene { scene } if !(1..=3).contains(scene) => {
-                    return Err("scene index must be between 1 and 3".into());
-                }
-                Action::SaveScene { .. }
-                    if (value.models.iter().any(|m| *m == Model::L6max)
-                        && (step.models.is_empty()
-                            || step.models.iter().any(|m| *m == Model::L6max))) =>
+                Action::MomentaryDown { duration_ms, .. }
+                    if *duration_ms == 0 || *duration_ms > 59_000 =>
                 {
-                    return Err("save-scene currently supports L6 only".into());
+                    return Err("momentary duration must be between 1 and 59000 ms".into());
                 }
                 Action::ExpectScene { scene, .. } if !(1..=3).contains(scene) => {
                     return Err("scene index must be between 1 and 3".into());

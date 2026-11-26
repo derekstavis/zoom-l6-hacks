@@ -13863,8 +13863,16 @@
           "additionalProperties": false,
           "properties": {
             "action": {
-              "const": "save-scene",
+              "const": "momentary-down",
               "type": "string"
+            },
+            "control": {
+              "type": "string"
+            },
+            "duration_ms": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
             },
             "guest_timeout_ms": {
               "default": 10000,
@@ -13878,11 +13886,6 @@
                 "$ref": "#/definitions/Model"
               },
               "type": "array"
-            },
-            "scene": {
-              "format": "uint",
-              "minimum": 0,
-              "type": "integer"
             },
             "setup_input": {
               "default": false,
@@ -13898,7 +13901,49 @@
           },
           "required": [
             "action",
-            "scene"
+            "control",
+            "duration_ms"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "momentary-up",
+              "type": "string"
+            },
+            "control": {
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "control"
           ],
           "type": "object"
         },
@@ -18685,7 +18730,8 @@
             "expect-display-after-press",
             "press",
             "hold",
-            "save-scene",
+            "momentary-down",
+            "momentary-up",
             "expect-scene",
             "expect-button-led",
             "expect-effect",

@@ -415,6 +415,7 @@ fn checks(text: &mut String, combination: &Combination, all: &Checks) -> Result<
         step(text, "action = \"capture-sd-module\"\nloaded = true");
         step(text, "action = \"expect-sd-allocation\"\nloaded = true");
         step(text, "action = \"expect-sd-chains\"\nloaded = true");
+        step(text, "action = \"expect-sd-continuations\"\nloaded = true");
         step(text, "action = \"expect-sd-module\"\nloaded = true");
     }
     for (name, patch) in &all.order {
@@ -1437,7 +1438,20 @@ wall_timeout_s = 120
                     "{}",
                     case.id
                 );
-                let module = &steps[index + 4];
+                let continuations = &steps[index + 4];
+                assert_eq!(
+                    continuations.get("action").and_then(toml::Value::as_str),
+                    Some("expect-sd-continuations"),
+                    "{}",
+                    case.id
+                );
+                assert_eq!(
+                    continuations.get("loaded").and_then(toml::Value::as_bool),
+                    Some(true),
+                    "{}",
+                    case.id
+                );
+                let module = &steps[index + 5];
                 assert_eq!(
                     module.get("action").and_then(toml::Value::as_str),
                     Some("expect-sd-module"),

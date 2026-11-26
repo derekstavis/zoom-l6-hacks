@@ -1107,6 +1107,11 @@ impl Runner {
                         chain_count,
                     }));
                 }
+                Action::ExpectSdContinuations { loaded } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectSdContinuations { loaded },
+                    ));
+                }
                 Action::ExpectSdModule { loaded } => {
                     return Ok(Progress::Device(devices::Operation::ExpectSdModule {
                         loaded,

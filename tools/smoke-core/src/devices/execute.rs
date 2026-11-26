@@ -892,6 +892,7 @@ impl State {
                 Operation::CaptureSdModule { .. }
                     | Operation::ExpectSdAllocation { .. }
                     | Operation::ExpectSdChains { .. }
+                    | Operation::ExpectSdContinuations { .. }
                     | Operation::ExpectSdModule { .. }
             )
         {
@@ -1624,6 +1625,7 @@ impl State {
                     snapshot: None,
                     allocation_checked: false,
                     chains: None,
+                    continuation_modules: None,
                     wall_deadline,
                     guest_start: operation_start.1,
                     guest_timeout_ms,
@@ -1835,94 +1837,61 @@ impl State {
                 });
                 Ok(evidence)
             }
-            Operation::ExpectSdModule { loaded } => {
-                let context = self
-                    .sd_inspection
-                    .take()
-                    .ok_or("SD module assertion needs preceding inspection")?;
-                if !context.allocation_checked {
-                    return Err("SD allocation assertion missing".into());
+            Operation::ExpectSdContinuations { loaded } => {
+                let context = self.sd_inspection.as_mut().ok_or("SD inspection missing")?;
+                let (captured_loaded, snapshot) = context
+                    .snapshot
+                    .as_ref()
+                    .ok_or("SD module snapshot missing")?;
+                if *captured_loaded != loaded || context.continuation_modules.is_some() {
+                    return Err("SD continuation assertion has unexpected state".into());
                 }
-                let (captured_loaded, typed_snapshot) =
-                    context.snapshot.ok_or("SD module snapshot missing")?;
-                if captured_loaded != loaded {
-                    return Err("SD module assertion does not match captured state".into());
-                }
-                let chains = context.chains.ok_or("SD chain assertion missing")?;
-                let expected_function = chains.expected_function;
-                let registered_count = chains.count;
-                let chain_count = chains.expected_count;
-                let chain_links = chains.links;
-                let inspection_deadline = context.wall_deadline;
-                let inspection_guest_start = context.guest_start;
-                let inspection_guest_budget = context.guest_timeout_ms;
-                let sd::FrozenSdFixture {
-                    edits: fixture,
-                    loader_report: frozen_loader,
-                    patch_report: frozen_patch,
-                    chain_first: frozen_chain,
-                } = context.fixture;
-                let (edits, link_base, payload, _, _relocations, module_hooks, module_images) =
-                    fixture;
-                let Some(_registry) = typed_snapshot.registry else {
-                    return Ok(json!({"loaded":false,"registry":null,"guarded_hooks":edits.len()}));
-                };
-                let loaded_base = typed_snapshot.module_base.ok_or("SD module base missing")?;
-                let loaded_len = typed_snapshot
-                    .module_len
-                    .ok_or("SD module length missing")?;
-                let control = l6ctl::OwnedControl::new(&session.engine);
-                let reader = control.sd_loader_reader(inspection_deadline)?;
-                let read_live =
-                    |address: u32, length: usize| -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-                        reader
-                            .read_chunk_cancellable(address, length, inspection_deadline, || {
-                                guest_now(session).wrapping_sub(inspection_guest_start)
-                                    >= inspection_guest_budget
-                            })
-                            .map_err(|e| std::io::Error::other(e).into())
-                    };
+                let chains = context
+                    .chains
+                    .as_ref()
+                    .ok_or("SD chain assertion missing")?;
+                let mut matched_modules = Vec::new();
                 if loaded {
+                    if snapshot.registry.is_none() {
+                        return Err("SD module registry missing".into());
+                    }
+                    let expected_function = chains.expected_function;
+                    let chain_count = chains.expected_count;
+                    let chain_links = &chains.links;
+                    let (_, _, _, _, _, module_hooks, module_images) = &context.fixture.edits;
+                    let frozen_chain = &context.fixture.chain_first;
+                    let frozen_loader = &context.fixture.loader_report;
+                    let patch_report = context
+                        .fixture
+                        .patch_report
+                        .as_ref()
+                        .ok_or("dynamic report missing")?;
+                    let ordered_chain = frozen_chain.is_some();
+                    let inspection_deadline = context.wall_deadline;
+                    let inspection_guest_start = context.guest_start;
+                    let inspection_guest_budget = context.guest_timeout_ms;
+                    let control = l6ctl::OwnedControl::new(&session.engine);
+                    let reader = control.sd_loader_reader(inspection_deadline)?;
+                    let read_live =
+                        |address: u32,
+                         length: usize|
+                         -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+                            reader
+                                .read_chunk_cancellable(
+                                    address,
+                                    length,
+                                    inspection_deadline,
+                                    || {
+                                        guest_now(session).wrapping_sub(inspection_guest_start)
+                                            >= inspection_guest_budget
+                                    },
+                                )
+                                .map_err(|e| std::io::Error::other(e).into())
+                        };
                     let hook = module_hooks
                         .iter()
                         .find(|hook| Some(hook.address) == expected_function)
                         .ok_or("dynamic patch bundle has no hook record")?;
-                    let ordered_chain = frozen_chain.is_some();
-                    let patch_report = frozen_patch.as_ref().ok_or("dynamic report missing")?;
-                    let patch_for_size = |size: usize| {
-                        patch_report["patches"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .find(|patch| patch["memory_length"].as_u64() == Some(size as u64))
-                    };
-                    let mutable_ranges_for_size = |size: usize| {
-                        let patch = patch_for_size(size);
-                        let mut ranges = patch
-                            .and_then(|patch| patch["writable_data"].as_object())
-                            .and_then(|data| {
-                                Some((
-                                    usize::try_from(data["offset"].as_u64()?).ok()?,
-                                    usize::try_from(data["length"].as_u64()?).ok()?,
-                                ))
-                            })
-                            .filter(|(_, length)| *length > 0)
-                            .into_iter()
-                            .collect::<Vec<_>>();
-                        if let Some(code_len) = patch
-                            .and_then(|patch| patch["payload_length"].as_u64())
-                            .and_then(|length| usize::try_from(length).ok())
-                            && code_len < size
-                        {
-                            // The loader zeroes this NOBITS tail before module
-                            // initialization. Once running, it is module-owned
-                            // writable state, so runtime byte comparison must
-                            // not mistake legitimate initialization for code
-                            // corruption.
-                            ranges.push((code_len, size - code_len));
-                        }
-                        ranges
-                    };
                     let pass_through_entry_offset = if ordered_chain {
                         Some(
                             patch_report["patches"][0]["pass_through_entry_offsets"][0]
@@ -1969,34 +1938,29 @@ impl State {
                     for (index, (entry, next_slot, _order, module)) in
                         chain_links.iter().enumerate()
                     {
-                        let (module_payload, module_relocations, module_payload_hooks) =
-                            module_images
-                                .iter()
-                                .find_map(|(payload, relocations, hooks)| {
-                                    hooks
-                                        .iter()
-                                        .find(|candidate| {
-                                            candidate.address == hook.address
-                                                && (*entry
-                                                    == ((*module + candidate.entry_offset) | 1)
-                                                    || ordered_chain
-                                                        && index == 0
-                                                        && *entry
-                                                            == ((*module
-                                                                + pass_through_entry_offset
-                                                                    .unwrap_or(u32::MAX))
-                                                                | 1))
-                                                && *next_slot
-                                                    == *module + candidate.next_slot_offset
-                                        })
-                                        .map(|_| (payload, relocations, hooks))
-                                })
-                                .ok_or_else(|| {
-                                    format!(
-                                        "hook {index} does not match any module's hook metadata"
-                                    )
-                                })?;
-                        let mutable_symbol_ranges = mutable_ranges_for_size(module_payload.len());
+                        let module_index = module_images
+                            .iter()
+                            .enumerate()
+                            .find_map(|(module_index, (_, _, hooks))| {
+                                hooks
+                                    .iter()
+                                    .find(|candidate| {
+                                        candidate.address == hook.address
+                                            && (*entry == ((*module + candidate.entry_offset) | 1)
+                                                || ordered_chain
+                                                    && index == 0
+                                                    && *entry
+                                                        == ((*module
+                                                            + pass_through_entry_offset
+                                                                .unwrap_or(u32::MAX))
+                                                            | 1))
+                                            && *next_slot == *module + candidate.next_slot_offset
+                                    })
+                                    .map(|_| module_index)
+                            })
+                            .ok_or_else(|| {
+                                format!("hook {index} does not match any module's hook metadata")
+                            })?;
                         let expected_next =
                             chain_links.get(index + 1).map_or(fallback, |next| next.0);
                         let actual_next =
@@ -2007,6 +1971,109 @@ impl State {
                             )
                             .into());
                         }
+                        matched_modules.push(module_index);
+                    }
+                }
+                let count = matched_modules.len();
+                context.continuation_modules = Some(matched_modules);
+                Ok(json!({"loaded":loaded,"continuations":count}))
+            }
+            Operation::ExpectSdModule { loaded } => {
+                let context = self
+                    .sd_inspection
+                    .take()
+                    .ok_or("SD module assertion needs preceding inspection")?;
+                if !context.allocation_checked {
+                    return Err("SD allocation assertion missing".into());
+                }
+                let (captured_loaded, typed_snapshot) =
+                    context.snapshot.ok_or("SD module snapshot missing")?;
+                if captured_loaded != loaded {
+                    return Err("SD module assertion does not match captured state".into());
+                }
+                let chains = context.chains.ok_or("SD chain assertion missing")?;
+                let registered_count = chains.count;
+                let chain_links = chains.links;
+                let continuation_modules = context
+                    .continuation_modules
+                    .ok_or("SD continuation assertion missing")?;
+                let inspection_deadline = context.wall_deadline;
+                let inspection_guest_start = context.guest_start;
+                let inspection_guest_budget = context.guest_timeout_ms;
+                let sd::FrozenSdFixture {
+                    edits: fixture,
+                    loader_report: _,
+                    patch_report: frozen_patch,
+                    chain_first: frozen_chain,
+                } = context.fixture;
+                let (edits, link_base, payload, _, _relocations, _module_hooks, module_images) =
+                    fixture;
+                let Some(_registry) = typed_snapshot.registry else {
+                    return Ok(json!({"loaded":false,"registry":null,"guarded_hooks":edits.len()}));
+                };
+                let loaded_base = typed_snapshot.module_base.ok_or("SD module base missing")?;
+                let loaded_len = typed_snapshot
+                    .module_len
+                    .ok_or("SD module length missing")?;
+                let control = l6ctl::OwnedControl::new(&session.engine);
+                let reader = control.sd_loader_reader(inspection_deadline)?;
+                let read_live =
+                    |address: u32, length: usize| -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+                        reader
+                            .read_chunk_cancellable(address, length, inspection_deadline, || {
+                                guest_now(session).wrapping_sub(inspection_guest_start)
+                                    >= inspection_guest_budget
+                            })
+                            .map_err(|e| std::io::Error::other(e).into())
+                    };
+                if loaded {
+                    let ordered_chain = frozen_chain.is_some();
+                    let patch_report = frozen_patch.as_ref().ok_or("dynamic report missing")?;
+                    let patch_for_size = |size: usize| {
+                        patch_report["patches"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .find(|patch| patch["memory_length"].as_u64() == Some(size as u64))
+                    };
+                    let mutable_ranges_for_size = |size: usize| {
+                        let patch = patch_for_size(size);
+                        let mut ranges = patch
+                            .and_then(|patch| patch["writable_data"].as_object())
+                            .and_then(|data| {
+                                Some((
+                                    usize::try_from(data["offset"].as_u64()?).ok()?,
+                                    usize::try_from(data["length"].as_u64()?).ok()?,
+                                ))
+                            })
+                            .filter(|(_, length)| *length > 0)
+                            .into_iter()
+                            .collect::<Vec<_>>();
+                        if let Some(code_len) = patch
+                            .and_then(|patch| patch["payload_length"].as_u64())
+                            .and_then(|length| usize::try_from(length).ok())
+                            && code_len < size
+                        {
+                            // The loader zeroes this NOBITS tail before module
+                            // initialization. Once running, it is module-owned
+                            // writable state, so runtime byte comparison must
+                            // not mistake legitimate initialization for code
+                            // corruption.
+                            ranges.push((code_len, size - code_len));
+                        }
+                        ranges
+                    };
+                    for (index, (entry, _next_slot, _order, module)) in
+                        chain_links.iter().enumerate()
+                    {
+                        let module_index = *continuation_modules
+                            .get(index)
+                            .ok_or("SD continuation evidence missing")?;
+                        let (module_payload, module_relocations, module_payload_hooks) =
+                            module_images
+                                .get(module_index)
+                                .ok_or("SD continuation module missing")?;
+                        let mutable_symbol_ranges = mutable_ranges_for_size(module_payload.len());
                         let mut expected = module_payload.clone();
                         if ordered_chain && index == 0 {
                             // The first copy names its own package, so its

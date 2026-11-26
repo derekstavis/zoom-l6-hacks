@@ -30,5 +30,9 @@ action = "expect-sd-chains"
 loaded = true
 
 [[step]]
+action = "expect-sd-continuations"
+loaded = true
+
+[[step]]
 action = "expect-sd-module"
 loaded = true

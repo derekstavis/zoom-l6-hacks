@@ -30,6 +30,10 @@ action = "expect-sd-chains"
 loaded = true
 
 [[step]]
+action = "expect-sd-continuations"
+loaded = true
+
+[[step]]
 action = "expect-sd-module"
 loaded = true
 
@@ -61,6 +65,10 @@ loaded = true
 
 [[step]]
 action = "expect-sd-chains"
+loaded = true
+
+[[step]]
+action = "expect-sd-continuations"
 loaded = true
 
 [[step]]
@@ -100,6 +108,10 @@ action = "expect-sd-chains"
 loaded = false
 
 [[step]]
+action = "expect-sd-continuations"
+loaded = false
+
+[[step]]
 action = "expect-sd-module"
 loaded = false
 
@@ -130,6 +142,12 @@ wall_timeout_s = 600
 
 [[step]]
 action = "expect-sd-chains"
+loaded = true
+guest_timeout_ms = 30000
+wall_timeout_s = 600
+
+[[step]]
+action = "expect-sd-continuations"
 loaded = true
 guest_timeout_ms = 30000
 wall_timeout_s = 600

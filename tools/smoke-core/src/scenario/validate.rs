@@ -1543,8 +1543,9 @@ impl Scenario {
                     (Action::CaptureSdModule { loaded }, Some((0, _, guest, wall))) if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = Some((1, *loaded, guest, wall)),
                     (Action::ExpectSdAllocation { loaded }, Some((1, expected, guest, wall))) if *loaded == expected && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = Some((2, expected, guest, wall)),
                     (Action::ExpectSdChains { loaded, .. }, Some((2, expected, guest, wall))) if *loaded == expected && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = Some((3, expected, guest, wall)),
-                    (Action::ExpectSdModule { loaded }, Some((3, expected, guest, wall))) if *loaded == expected && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = None,
-                    (Action::ExpectSdLoader | Action::CaptureSdModule { .. } | Action::ExpectSdAllocation { .. } | Action::ExpectSdChains { .. } | Action::ExpectSdModule { .. }, _) => return Err("SD inspection requires adjacent loader, capture, allocation, chains and module steps with matching state and timeouts".into()),
+                    (Action::ExpectSdContinuations { loaded }, Some((3, expected, guest, wall))) if *loaded == expected && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = Some((4, expected, guest, wall)),
+                    (Action::ExpectSdModule { loaded }, Some((4, expected, guest, wall))) if *loaded == expected && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = None,
+                    (Action::ExpectSdLoader | Action::CaptureSdModule { .. } | Action::ExpectSdAllocation { .. } | Action::ExpectSdChains { .. } | Action::ExpectSdContinuations { .. } | Action::ExpectSdModule { .. }, _) => return Err("SD inspection requires adjacent loader, capture, allocation, chains, continuations and module steps with matching state and timeouts".into()),
                     (_, Some(_)) => return Err("SD inspection cannot be interrupted".into()),
                     _ => {},
                 }
@@ -3242,13 +3243,31 @@ mod sd_inspection_tests {
         let capture = "[[step]]\naction='capture-sd-module'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
         let allocation = "[[step]]\naction='expect-sd-allocation'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
         let chains = "[[step]]\naction='expect-sd-chains'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
+        let continuations = "[[step]]\naction='expect-sd-continuations'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
         let fixture = "sd_patches=['midi-sync']";
+        assert!(
+            parse(
+                &format!("{begin}{capture}{allocation}{chains}{continuations}{end}"),
+                fixture
+            )
+            .is_ok()
+        );
         assert!(
             parse(
                 &format!("{begin}{capture}{allocation}{chains}{end}"),
                 fixture
             )
-            .is_ok()
+            .is_err()
+        );
+        assert!(
+            parse(
+                &format!(
+                    "{begin}{capture}{allocation}{chains}{}{end}",
+                    continuations.replace("loaded=true", "loaded=false")
+                ),
+                fixture
+            )
+            .is_err()
         );
         assert!(parse(begin, fixture).is_err());
         assert!(parse(end, fixture).is_err());
@@ -3256,7 +3275,7 @@ mod sd_inspection_tests {
         assert!(
             parse(
                 &format!(
-                    "{begin}{}{allocation}{chains}{end}",
+                    "{begin}{}{allocation}{chains}{continuations}{end}",
                     capture.replace("loaded=true", "loaded=false")
                 ),
                 fixture
@@ -3265,12 +3284,18 @@ mod sd_inspection_tests {
         );
         assert!(
             parse(
-                &format!("{begin}{capture}{capture}{allocation}{chains}{end}"),
+                &format!("{begin}{capture}{capture}{allocation}{chains}{continuations}{end}"),
                 fixture
             )
             .is_err()
         );
-        assert!(parse(&format!("{begin}{capture}{allocation}{chains}{end}"), "").is_err());
+        assert!(
+            parse(
+                &format!("{begin}{capture}{allocation}{chains}{continuations}{end}"),
+                ""
+            )
+            .is_err()
+        );
         assert!(
             parse(
                 &format!("{begin}[[step]]\naction='wait'\nuntil='boot-ready'\n{end}"),
@@ -3281,7 +3306,7 @@ mod sd_inspection_tests {
         assert!(
             parse(
                 &format!(
-                    "{begin}{capture}{allocation}{chains}{}",
+                    "{begin}{capture}{allocation}{chains}{continuations}{}",
                     end.replace("wall_timeout_s=30", "wall_timeout_s=29")
                 ),
                 fixture
@@ -3291,7 +3316,7 @@ mod sd_inspection_tests {
         assert!(
             parse(
                 &format!(
-                    "{begin}{capture}{allocation}{}{end}",
+                    "{begin}{capture}{allocation}{}{continuations}{end}",
                     chains.replace("loaded=true", "loaded=true\nchain_count=9")
                 ),
                 fixture

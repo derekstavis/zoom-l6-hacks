@@ -38,6 +38,10 @@ loaded = true
 chain_count = 2
 
 [[step]]
+action = "expect-sd-continuations"
+loaded = true
+
+[[step]]
 action = "expect-sd-module"
 loaded = true
 

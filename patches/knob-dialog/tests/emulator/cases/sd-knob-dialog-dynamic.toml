@@ -28,9 +28,13 @@ action = "expect-sd-allocation"
 loaded = true
 
 [[step]]
-action = "expect-sd-module"
+action = "expect-sd-chains"
 loaded = true
 chain_count = 2
+
+[[step]]
+action = "expect-sd-module"
+loaded = true
 
 [[step]]
 action = "knob-dialog-ready"

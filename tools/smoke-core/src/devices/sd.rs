@@ -20,10 +20,18 @@ pub(super) struct SdInspectionContext {
     pub fixture: FrozenSdFixture,
     pub snapshot: Option<(bool, l6ctl::SdLoaderSnapshot)>,
     pub allocation_checked: bool,
+    pub chains: Option<SdChainEvidence>,
     pub wall_deadline: Instant,
     pub guest_start: u32,
     pub guest_timeout_ms: u32,
     pub wall_timeout_s: u64,
+}
+
+pub(super) struct SdChainEvidence {
+    pub expected_function: Option<u32>,
+    pub count: u32,
+    pub links: Vec<(u32, u32, u32, u32)>,
+    pub expected_count: Option<u8>,
 }
 
 /// Validate the captured allocation and claim against the frozen module sizes.

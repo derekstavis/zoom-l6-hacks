@@ -54,6 +54,10 @@ action = "expect-sd-allocation"
 loaded = true
 
 [[step]]
+action = "expect-sd-chains"
+loaded = true
+
+[[step]]
 action = "expect-sd-module"
 loaded = true
 

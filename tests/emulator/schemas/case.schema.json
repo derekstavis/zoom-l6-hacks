@@ -8312,7 +8312,7 @@
           "additionalProperties": false,
           "properties": {
             "action": {
-              "const": "expect-sd-module",
+              "const": "expect-sd-chains",
               "type": "string"
             },
             "chain_count": {
@@ -8324,6 +8324,47 @@
                 "integer",
                 "null"
               ]
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "loaded": {
+              "type": "boolean"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "loaded"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "expect-sd-module",
+              "type": "string"
             },
             "guest_timeout_ms": {
               "default": 10000,
@@ -20438,6 +20479,7 @@
             "expect-sd-loader",
             "capture-sd-module",
             "expect-sd-allocation",
+            "expect-sd-chains",
             "expect-sd-module",
             "effect-paced-turn",
             "capture-effect-ring",

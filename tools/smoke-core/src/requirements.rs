@@ -462,6 +462,7 @@ pub fn of(action: &Action) -> Requirement {
         | Action::ExpectSdLoader
         | Action::CaptureSdModule { .. }
         | Action::ExpectSdAllocation { .. }
+        | Action::ExpectSdChains { .. }
         | Action::ExpectSdModule { .. }
         | Action::EffectPacedTurn { .. }
         | Action::WaitEffectSlot { .. }

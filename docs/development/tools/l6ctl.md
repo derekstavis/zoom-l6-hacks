@@ -34,7 +34,7 @@ cargo l6ctl --socket /tmp/l6-control.sock rtos tasks --pretty
 
 `--socket PATH` can be omitted when `L6_CONTROL_SOCKET` is set. The socket is
 created with current-user-only permissions and is removed when the emulator
-exits. `info` reports model, guest time, power state, and indicator snapshots.
+exits. `info` reports model, guest time, power state, and indicator snapshots. `qmp-status` reports MAIN's QMP run state. Button receipts include a sequence number, and `input ack` includes the applied virtual timestamp when available.
 
 `sd-loader status` reads the model-scoped L6/L6max 1.10 loader root and,
 when allocated, its stage, claim, latest module and site count. `sd-loader
@@ -45,7 +45,7 @@ can make a snapshot inconsistent or cause an inspection to fail. Retry only
 when a caller's own readiness condition and deadline allow it.
 
 `input status main|panel` returns a compact JSON observation of one input
-channel: its `source`, `connected` state, `guest_ms`, `sent`, `applied`,
+channel: its `source`, `connected` state, `guest_ms`, `clock_updates`, `powered_off`, `powered_off_guest_ms`, `sent`, `applied`,
 `released`, `rejected`, and optional `error`. The counters aggregate all
 clients on that channel and live for that host connection. They are not a
 per-command acknowledgement: another input can advance them, and a socket

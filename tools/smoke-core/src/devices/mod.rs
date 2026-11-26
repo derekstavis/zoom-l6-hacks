@@ -22,6 +22,7 @@ mod midi;
 mod midi_probe;
 mod mode_primitives;
 mod panel;
+mod power;
 mod sd;
 mod signal_pwm;
 mod timing;
@@ -608,10 +609,23 @@ pub enum Operation {
     WarmReset,
     Restart,
     ExpectRecorder,
-    PowerPress {
+    PowerBegin {
         hold_ms: u32,
         powered: bool,
     },
+    PowerWaitAck,
+    PowerObserveOn {
+        guest_ms: u32,
+    },
+    PowerWaitOff {
+        min_cutoff_ms: Option<u32>,
+        max_cutoff_ms: Option<u32>,
+    },
+    PowerObserveStopped {
+        settle_wall_ms: u64,
+        observe_wall_ms: u64,
+    },
+    PowerEnd,
     ExpectSettings {
         restored: bool,
     },
@@ -1070,6 +1084,7 @@ pub struct State {
     knob_mode: Option<KnobModeScope>,
     knob_heap_reader: Option<l6max_host::heap::CounterReader>,
     pending_input: Option<PendingInput>,
+    power: Option<power::Scope>,
     captured_display: Option<CapturedDisplay>,
     midi_round_trip: Option<MidiRoundTrip>,
     midi_sync: Option<midi::MidiSync>,

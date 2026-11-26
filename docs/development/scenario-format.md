@@ -319,7 +319,7 @@ message delivered just after the interval.
 | `expect-update-comparison` | `field` | Assert one stopped-state package, protected NOR or panel comparison. |
 | `capture-installed-panel` | — | Save/hash the stopped installed panel flash before restart. |
 | `expect-panel-unchanged` | — | Compare the stopped panel flash against the captured install snapshot. |
-| `power-press` | `hold_ms`, `powered` | Check expected power result, model cutoff timing and stopped clock |
+| `power-begin`, `power-wait-ack`, `power-observe-on`, `power-wait-off`, `power-observe-stopped`, `power-end` | A contiguous transaction with matching step budgets. | Observe an exact button receipt, power result and stopped panel clock. MAIN acknowledgement and power-off timestamps use the MAIN clock; the powered-on window uses the panel clock. |
 | `restart` | — | Retire the session before reopening its isolated persistent state; reset readiness, trace counters and action baselines |
 | `expect-recorder` | — | L6max startup mode restored after restart |
 | `expect-settings` | `restored` | L6max edited RTC/NOR/version records, or reload and RTC startup timing after restart |

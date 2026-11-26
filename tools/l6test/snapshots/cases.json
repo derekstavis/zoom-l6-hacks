@@ -2957,7 +2957,7 @@
       "lifecycle",
       "full"
     ],
-    "definition": "4e606aad66a97edb51592fdd7f4f032c72631909225963f72d82d1e5aa0b5376"
+    "definition": "15ee5159db198d2f5c4decb2ecf19a235cd672f853667d5944e503660bddc2f5"
   },
   {
     "case": "power",
@@ -2967,7 +2967,7 @@
       "lifecycle",
       "full"
     ],
-    "definition": "763781c481ffc56147b706e620f0c061f06124d087566bc94e85501dc9754966"
+    "definition": "f970a4b92b7f650054e913b22807278bd5d8dc6b7743bf898e23b15e59a6ee5d"
   },
   {
     "case": "ring-pwm",

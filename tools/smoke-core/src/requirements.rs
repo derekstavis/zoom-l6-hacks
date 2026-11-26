@@ -387,7 +387,12 @@ pub fn of(action: &Action) -> Requirement {
         | Action::HoldChord { .. }
         | Action::WarmReset
         | Action::Restart
-        | Action::PowerPress { .. }
+        | Action::PowerBegin { .. }
+        | Action::PowerWaitAck
+        | Action::PowerObserveOn { .. }
+        | Action::PowerWaitOff { .. }
+        | Action::PowerObserveStopped { .. }
+        | Action::PowerEnd
         | Action::ExpectCardEntry { .. }
         | Action::AudioInputTransport { .. }
         | Action::AudioInputLoad { .. }

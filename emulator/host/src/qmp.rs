@@ -11,7 +11,7 @@ use std::{
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Status {
     pub running: bool,
     pub status: String,
@@ -147,6 +147,21 @@ impl QmpClient {
 
     pub fn query_status(&self) -> io::Result<Status> {
         let result = self.execute(&qmp::query_status {})?;
+        let status = serde_json::to_value(result.status)?;
+        Ok(Status {
+            running: result.running,
+            status: status
+                .as_str()
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "QMP status is not a name")
+                })?
+                .to_owned(),
+        })
+    }
+
+    /// Query the named run state within a caller-owned deadline.
+    pub fn status_before(&self, deadline: Instant) -> io::Result<Status> {
+        let result = self.execute_before(&qmp::query_status {}, deadline)?;
         let status = serde_json::to_value(result.status)?;
         Ok(Status {
             running: result.running,

@@ -995,10 +995,23 @@ pub enum Action {
     WarmReset,
     Restart,
     ExpectRecorder,
-    PowerPress {
+    PowerBegin {
         hold_ms: u32,
         powered: bool,
     },
+    PowerWaitAck,
+    PowerObserveOn {
+        guest_ms: u32,
+    },
+    PowerWaitOff {
+        min_cutoff_ms: Option<u32>,
+        max_cutoff_ms: Option<u32>,
+    },
+    PowerObserveStopped {
+        settle_wall_ms: u64,
+        observe_wall_ms: u64,
+    },
+    PowerEnd,
     ExpectPowered {
         powered: bool,
     },

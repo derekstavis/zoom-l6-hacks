@@ -78,6 +78,12 @@ pub enum RtosKind {
 pub enum Request {
     Info,
     QmpStatus,
+    WarmReset {
+        timeout_s: u64,
+    },
+    SdCard {
+        path: Option<String>,
+    },
     InputStatus {
         source: InputSource,
     },
@@ -158,6 +164,15 @@ pub enum Request {
         channel: u32,
         value: u16,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ResetReceipt {
+    pub reset: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SdCardReceipt {
+    pub inserted: bool,
 }
 
 /// The attach request only signals cable attachment, not enumeration.
@@ -360,7 +375,9 @@ impl ControlClient {
             })?;
         // SD inspection itself owns a 30-second deadline; leave room to
         // serialize and return its bounded error to this client.
-        let timeout = if matches!(request, Request::UsbEnumerate) {
+        let timeout = if let Request::WarmReset { timeout_s } = request {
+            timeout_s.saturating_add(5)
+        } else if matches!(request, Request::UsbEnumerate) {
             105
         } else if matches!(
             request,
@@ -409,6 +426,13 @@ impl ControlClient {
             ));
         }
         Ok(reply.get("result").cloned().unwrap_or(Value::Null))
+    }
+
+    pub fn warm_reset(&self, timeout_s: u64) -> Result<ResetReceipt, ControlError> {
+        self.request_as(&Request::WarmReset { timeout_s })
+    }
+    pub fn sd_card(&self, path: Option<String>) -> Result<SdCardReceipt, ControlError> {
+        self.request_as(&Request::SdCard { path })
     }
 
     pub fn info(&self) -> Result<Info, ControlError> {
@@ -712,6 +736,27 @@ impl<'a> OwnedControl<'a> {
             .ok_or(ControlError::Unavailable("panel management unavailable"))?;
         l6max_host::debug::Observer::acquire(controller, main, panel, deadline)
             .map_err(ControlError::Rejected)
+    }
+
+    /// Wait for QEMU's reset event; guest readiness is a separate observation.
+    pub fn warm_reset(&self, timeout: std::time::Duration) -> Result<ResetReceipt, ControlError> {
+        self.main_qmp()?
+            .system_reset_and_wait(timeout)
+            .map_err(|e| ControlError::Rejected(e.to_string()))?;
+        Ok(ResetReceipt {
+            reset: "qmp-system-reset".into(),
+        })
+    }
+    pub fn sd_card(&self, path: Option<&std::path::Path>) -> Result<SdCardReceipt, ControlError> {
+        let qmp = self.main_qmp()?;
+        match path {
+            Some(path) => qmp.insert_sd(path),
+            None => qmp.eject_sd(),
+        }
+        .map_err(|e| ControlError::Rejected(e.to_string()))?;
+        Ok(SdCardReceipt {
+            inserted: path.is_some(),
+        })
     }
 
     pub fn info(&self) -> Result<Info, ControlError> {

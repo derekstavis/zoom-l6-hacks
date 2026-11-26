@@ -2788,9 +2788,9 @@ impl State {
             }
             Operation::Restart => Err("restart is supervised by the session runner".into()),
             Operation::WarmReset => {
-                session.engine.management[0]
-                    .system_reset_and_wait(Duration::from_secs(wall_timeout_s))?;
-                Ok(json!({"reset":"qmp-system-reset"}))
+                let receipt = l6ctl::OwnedControl::new(&session.engine)
+                    .warm_reset(Duration::from_secs(wall_timeout_s))?;
+                Ok(serde_json::to_value(receipt)?)
             }
             operation @ (Operation::PowerBegin { .. }
             | Operation::PowerWaitAck
@@ -2845,17 +2845,18 @@ impl State {
                 Ok(evidence)
             }
             Operation::SdCard { inserted } => {
-                if inserted {
-                    session.engine.management[0].insert_sd(
+                let path = if inserted {
+                    Some(
                         options
                             .sd_image
-                            .as_ref()
+                            .as_deref()
                             .ok_or("SD insertion requires a fixture card")?,
-                    )?;
+                    )
                 } else {
-                    session.engine.management[0].eject_sd()?;
-                }
-                Ok(json!({"inserted":inserted}))
+                    None
+                };
+                let receipt = l6ctl::OwnedControl::new(&session.engine).sd_card(path)?;
+                Ok(serde_json::to_value(receipt)?)
             }
             Operation::UsbControllerReady => {
                 if self.usb_descriptor_budget.is_some() {

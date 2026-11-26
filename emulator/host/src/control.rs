@@ -284,6 +284,28 @@ fn execute(
         .and_then(Value::as_str)
         .ok_or("request needs a command")?;
     match command {
+        "warm-reset" => {
+            let timeout = number(request, "timeout_s")?;
+            if timeout == 0 || timeout > 3600 {
+                return Err("reset timeout must be 1..3600 seconds".into());
+            }
+            qmp.system_reset_and_wait(std::time::Duration::from_secs(timeout))
+                .map_err(|e| e.to_string())?;
+            Ok(json!({"reset":"qmp-system-reset"}))
+        }
+        "sd-card" => {
+            let path = match request.get("path") {
+                Some(Value::String(path)) => Some(std::path::Path::new(path)),
+                Some(Value::Null) => None,
+                _ => return Err("sd-card needs a path or null".into()),
+            };
+            match path {
+                Some(path) => qmp.insert_sd(path),
+                None => qmp.eject_sd(),
+            }
+            .map_err(|e| e.to_string())?;
+            Ok(json!({"inserted":path.is_some()}))
+        }
         "sd-loader-status" => {
             serde_json::to_value(crate::sd_loader::snapshot(qmp, model)?).map_err(|e| e.to_string())
         }

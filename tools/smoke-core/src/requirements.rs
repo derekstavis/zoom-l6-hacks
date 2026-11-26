@@ -72,7 +72,16 @@ pub fn of(action: &Action) -> Requirement {
             until: Some(crate::scenario::ChordCondition::FactoryMode),
             ..
         } => stock_on(L6MAX),
-        Action::ExpectSettings { .. } | Action::ExpectRecorder => stock_on(L6MAX),
+        Action::SettingsCapture { .. }
+        | Action::SettingsVersions
+        | Action::SettingsRtc
+        | Action::SettingsBank
+        | Action::SettingsTrace
+        | Action::SettingsPanel
+        | Action::SettingsReload
+        | Action::SettingsRtcTiming
+        | Action::SettingsEnd
+        | Action::ExpectRecorder => stock_on(L6MAX),
         Action::SignalPwmBegin
         | Action::SignalPwmWarmup { .. }
         | Action::SignalPwmDrain { .. }

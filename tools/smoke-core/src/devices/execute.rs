@@ -404,6 +404,7 @@ impl State {
         self.din_usb = None;
         self.sd_inspection = None;
         self.effect_slot_deadline = None;
+        self.settings = None;
         self.usb_midi = None;
         self.l6_indicator = None;
         self.ui_pad = None;
@@ -2724,78 +2725,49 @@ impl State {
             | Operation::PowerEnd) => {
                 self.run_power(session, operation, guest_timeout_ms, wall_timeout_s)
             }
-            Operation::ExpectSettings { restored } => {
-                let state = options
-                    .state_dir
-                    .as_ref()
-                    .ok_or("settings assertion requires persistent state")?;
-                let saved = fs::read(state.join("panel-rtc.bin"))?;
-                let panel = fs::read(state.join("panel-flash.bin"))?;
-                let nor = fs::read(state.join("main-nor.bin"))?;
-                if session.engine.model() != l6fw::Model::L6max {
-                    return Err("settings layout currently supports L6max 1.10 only".into());
+            Operation::SettingsCapture { restored } => {
+                if self.settings.is_some() {
+                    return Err("settings observation already active".into());
                 }
-                if panel.get(0x3ffc..0x4000) != Some(&l6fw::STOCK_PANEL_VERSION)
-                    || nor.get(0x1f7ffc..0x1f8000) != Some(&l6fw::STOCK_VERSION)
-                    || nor.get(0x1f6ffc..0x1f7000) != Some(&l6fw::STOCK_PANEL_VERSION)
-                {
-                    return Err("persisted firmware version records do not match".into());
+                self.settings = Some(settings::Scope::capture(
+                    session,
+                    options,
+                    restored,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"restored":restored}))
+            }
+            operation @ (Operation::SettingsVersions
+            | Operation::SettingsRtc
+            | Operation::SettingsBank
+            | Operation::SettingsTrace
+            | Operation::SettingsPanel
+            | Operation::SettingsReload
+            | Operation::SettingsRtcTiming
+            | Operation::SettingsEnd) => {
+                let scope = self
+                    .settings
+                    .as_mut()
+                    .ok_or("settings observation missing")?;
+                let evidence = match operation {
+                    Operation::SettingsVersions => scope.versions(session),
+                    Operation::SettingsRtc => scope.rtc(session, self.saved.as_ref()),
+                    Operation::SettingsBank => scope.bank(session),
+                    Operation::SettingsTrace => scope.trace(session, options),
+                    Operation::SettingsPanel => scope.panel(session),
+                    Operation::SettingsReload => scope.reload(session, self.saved.as_ref()),
+                    Operation::SettingsRtcTiming => scope.rtc_timing(session),
+                    Operation::SettingsEnd => scope.finish(session),
+                    _ => unreachable!(),
+                }?;
+                if matches!(operation, Operation::SettingsEnd) {
+                    let scope = self.settings.take().unwrap();
+                    if let Some(saved) = scope.saved_checkpoint()? {
+                        self.saved = Some(saved);
+                    }
                 }
-                let time = u32::from_le_bytes(saved.get(..4).ok_or("short RTC file")?.try_into()?);
-                let calendar =
-                    u32::from_le_bytes(saved.get(4..8).ok_or("short RTC file")?.try_into()?);
-                if restored {
-                    let (before, bank) = self
-                        .saved
-                        .as_ref()
-                        .ok_or("restore assertion needs saved-settings checkpoint")?;
-                    if before[4..8] != saved[4..8]
-                        || u32::from_le_bytes(before[..4].try_into()?) & 0x003f7f00
-                            != time & 0x003f7f00
-                    {
-                        return Err("RTC fields changed across restart".into());
-                    }
-                    let mut trace = fs::read_to_string(options.logs.join("engine.trace"))?;
-                    if let Ok(panel) = fs::read_to_string(options.logs.join("engine-panel.trace")) {
-                        trace.push_str(&panel);
-                    }
-                    if trace.contains("l6 panel ROM write") {
-                        return Err("panel reprogrammed on restart".into());
-                    }
-                    if !trace.contains(&format!("addr={:08x} ipcr1=000017e0", bank + 4)) {
-                        return Err("settings bank was not reloaded".into());
-                    }
-                    let timestamp = |prefix: &str| -> Option<u32> {
-                        trace.lines().find_map(|line| {
-                            line.strip_prefix(prefix)?
-                                .split_whitespace()
-                                .next()?
-                                .parse()
-                                .ok()
-                        })
-                    };
-                    let request =
-                        timestamp("l6 main RTC request at ").ok_or("missing RTC request")?;
-                    let response = timestamp("l6 panel RTC response start at ")
-                        .ok_or("missing RTC response")?;
-                    if response < request || response - request >= 2000 {
-                        return Err("RTC response missed startup deadline".into());
-                    }
-                } else {
-                    if calendar & 0x00ff1f3f != 0x00260202 || time & 0x003f7f00 != 0x00010100 {
-                        return Err("date editor did not save all five fields".into());
-                    }
-                    let bank = [0x1f9000usize, 0x1fc000]
-                        .into_iter()
-                        .find(|&base| {
-                            nor.get(base..base + 4).is_some_and(|b| {
-                                (1..=3).contains(&u32::from_le_bytes(b.try_into().unwrap()))
-                            })
-                        })
-                        .ok_or("settings bank not committed")?;
-                    self.saved = Some((saved.clone(), bank));
-                }
-                Ok(json!({"restored":restored,"rtc":saved}))
+                Ok(evidence)
             }
             Operation::SdCard { inserted } => {
                 if inserted {

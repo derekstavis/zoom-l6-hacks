@@ -2041,6 +2041,39 @@ fn effect_slot_wait_requires_matching_adjacent_assertion_and_budget() {
 }
 
 #[test]
+fn persistence_requires_complete_saved_and_restored_settings_scopes() {
+    let source = include_str!("../../../../tests/emulator/cases/boot/persistence.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    assert!(
+        Scenario::from_text(&source.replacen(
+            "action = \"settings-bank\"",
+            "action = \"settings-end\"",
+            1
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replacen(
+            "action = \"settings-reload\"",
+            "action = \"settings-end\"",
+            1
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replacen(
+            "action = \"restart\"",
+            "action = \"settings-end\"",
+            1
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replace("models = [\"l6max\"]", "models = [\"l6\"]")).is_err()
+    );
+}
+
+#[test]
 fn terminal_l6_dispatch_requires_all_ordered_setters_and_shared_budget() {
     let source = include_str!("../../../../tests/emulator/cases/panel/l6-event-dispatch.toml");
     assert!(Scenario::from_text(source).is_ok());

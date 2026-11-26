@@ -1044,9 +1044,18 @@ pub enum Action {
     ExpectPowered {
         powered: bool,
     },
-    ExpectSettings {
+    SettingsCapture {
         restored: bool,
     },
+    SettingsVersions,
+    SettingsRtc,
+    SettingsBank,
+    SettingsTrace,
+    SettingsPanel,
+    SettingsReload,
+    SettingsRtcTiming,
+    SettingsEnd,
+
     Wait {
         until: String,
     },

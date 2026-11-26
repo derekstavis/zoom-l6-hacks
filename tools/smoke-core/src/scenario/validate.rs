@@ -726,6 +726,78 @@ impl Scenario {
                 }
             }
         }
+        for model in &value.models {
+            let steps: Vec<_> = value.step.iter().filter(|s| s.applies_to(*model)).collect();
+            let is_settings = |a: &Action| {
+                matches!(
+                    a,
+                    Action::SettingsCapture { .. }
+                        | Action::SettingsVersions
+                        | Action::SettingsRtc
+                        | Action::SettingsBank
+                        | Action::SettingsTrace
+                        | Action::SettingsPanel
+                        | Action::SettingsReload
+                        | Action::SettingsRtcTiming
+                        | Action::SettingsEnd
+                )
+            };
+            let Some(start) = steps.iter().position(|s| is_settings(&s.action)) else {
+                continue;
+            };
+            let first = steps
+                .get(start..start + 5)
+                .ok_or("incomplete saved settings observation")?;
+            if *model != Model::L6max
+                || !matches!(first[0].action, Action::SettingsCapture { restored: false })
+                || !matches!(first[1].action, Action::SettingsVersions)
+                || !matches!(first[2].action, Action::SettingsRtc)
+                || !matches!(first[3].action, Action::SettingsBank)
+                || !matches!(first[4].action, Action::SettingsEnd)
+                || first.iter().any(|s| {
+                    (s.guest_timeout_ms, s.wall_timeout_s)
+                        != (first[0].guest_timeout_ms, first[0].wall_timeout_s)
+                })
+            {
+                return Err(
+                    "saved settings require ordered L6max observations and shared deadline".into(),
+                );
+            }
+            let rest_start = steps[start + 5..]
+                .iter()
+                .position(|s| is_settings(&s.action))
+                .map(|i| start + 5 + i)
+                .ok_or("restored settings observation missing")?;
+            if !steps[start + 5..rest_start]
+                .iter()
+                .any(|s| matches!(s.action, Action::Restart))
+            {
+                return Err("settings restoration requires a restart".into());
+            }
+            let rest = steps
+                .get(rest_start..rest_start + 8)
+                .ok_or("incomplete restored settings observation")?;
+            if !matches!(rest[0].action, Action::SettingsCapture { restored: true })
+                || !matches!(rest[1].action, Action::SettingsVersions)
+                || !matches!(rest[2].action, Action::SettingsRtc)
+                || !matches!(rest[3].action, Action::SettingsTrace)
+                || !matches!(rest[4].action, Action::SettingsPanel)
+                || !matches!(rest[5].action, Action::SettingsReload)
+                || !matches!(rest[6].action, Action::SettingsRtcTiming)
+                || !matches!(rest[7].action, Action::SettingsEnd)
+                || rest.iter().any(|s| {
+                    (s.guest_timeout_ms, s.wall_timeout_s)
+                        != (rest[0].guest_timeout_ms, rest[0].wall_timeout_s)
+                })
+                || steps[rest_start + 8..]
+                    .iter()
+                    .any(|s| is_settings(&s.action))
+            {
+                return Err(
+                    "restored settings require ordered observations and shared deadline".into(),
+                );
+            }
+        }
         if value.backends.is_empty() {
             return Err("backends must contain headless and/or gui".into());
         }

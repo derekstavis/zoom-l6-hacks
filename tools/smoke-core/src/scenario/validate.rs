@@ -734,6 +734,7 @@ impl Scenario {
             let mut recorder: Option<(u8, u32, u64)> = None;
             let mut max_recorder: Option<(u8, u32, u64)> = None;
             let mut input_timing: Option<(u8, u32, u64)> = None;
+            let mut usb_storage: Option<(u8, u32, u64)> = None;
             let mut sd_inspection: Option<(u32, u64)> = None;
 
             let panel_steps: Vec<_> = value
@@ -853,6 +854,46 @@ impl Scenario {
             let mut probe_ring = None;
             let mut probe_tap = None;
             for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                let storage_phase = match &step.action {
+                    Action::UsbStorageInquiry => Some(0),
+                    Action::UsbStorageReady => Some(1),
+                    Action::UsbStorageCapacity => Some(2),
+                    Action::UsbStorageReadBoot => Some(3),
+                    Action::UsbStorageAssertBoot => Some(4),
+                    Action::UsbStorageLastRead => Some(5),
+                    Action::UsbStorageLastWrite => Some(6),
+                    Action::UsbStorageLastAssert => Some(7),
+                    Action::UsbStorageFatOpen => Some(8),
+                    Action::UsbStorageCreate { .. } => Some(9),
+                    Action::UsbStorageFlushCreated => Some(10),
+                    Action::UsbStorageReadFile => Some(11),
+                    Action::UsbStorageRemoveFile => Some(12),
+                    Action::UsbStorageAssertFile => Some(13),
+                    Action::UsbStorageFlushRemoved => Some(14),
+                    Action::UsbStorageEnd => Some(15),
+                    _ => None,
+                };
+                match (&step.action, usb_storage, storage_phase) {
+                    (Action::UsbStorageBegin, None, None) => {
+                        usb_storage = Some((0, step.guest_timeout_ms, step.wall_timeout_s))
+                    }
+                    (_, Some((phase, guest, wall)), Some(actual))
+                        if phase == actual
+                            && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        usb_storage = if phase == 15 {
+                            None
+                        } else {
+                            Some((phase + 1, guest, wall))
+                        }
+                    }
+                    (_, Some(_), _) | (_, None, Some(_)) => {
+                        return Err(
+                            "USB storage requires ordered steps with matching budgets".into()
+                        );
+                    }
+                    _ => {}
+                }
                 let timing_phase = match &step.action {
                     Action::L6maxTimingSettle { .. } => Some(0),
                     Action::L6maxTimingBaseline => Some(1),
@@ -1147,6 +1188,9 @@ impl Scenario {
                     }
                     _ => {}
                 }
+            }
+            if usb_storage.is_some() {
+                return Err("USB storage transaction incomplete".into());
             }
             if input_timing.is_some() {
                 return Err("L6max timing transaction incomplete".into());

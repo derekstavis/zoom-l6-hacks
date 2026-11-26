@@ -401,6 +401,15 @@ impl State {
     pub fn has_ui_pad(&self) -> bool {
         self.ui_pad.is_some()
     }
+    pub fn has_usb_storage(&self) -> bool {
+        self.usb_storage_scope.is_some()
+    }
+    pub fn abort_usb_storage(&mut self) -> Result<(), String> {
+        match self.usb_storage_scope.take() {
+            Some(mut context) => context.abort(),
+            None => Ok(()),
+        }
+    }
     pub fn has_l6max_timing(&self) -> bool {
         self.l6max_timing.is_some()
     }
@@ -626,6 +635,38 @@ impl State {
             ) {
                 self.l6_indicator = None;
                 return Err("L6 indicator campaign exceeded its shared deadline".into());
+            }
+        }
+        if let Some(context) = self.usb_storage_scope.as_ref() {
+            let expected = match operation {
+                Operation::UsbStorageInquiry => Some(0),
+                Operation::UsbStorageReady => Some(1),
+                Operation::UsbStorageCapacity => Some(2),
+                Operation::UsbStorageReadBoot => Some(3),
+                Operation::UsbStorageAssertBoot => Some(4),
+                Operation::UsbStorageLastRead => Some(5),
+                Operation::UsbStorageLastWrite => Some(6),
+                Operation::UsbStorageLastAssert => Some(7),
+                Operation::UsbStorageFatOpen => Some(8),
+                Operation::UsbStorageCreate { .. } => Some(9),
+                Operation::UsbStorageFlushCreated => Some(10),
+                Operation::UsbStorageReadFile => Some(11),
+                Operation::UsbStorageRemoveFile => Some(12),
+                Operation::UsbStorageAssertFile => Some(13),
+                Operation::UsbStorageFlushRemoved => Some(14),
+                Operation::UsbStorageEnd => Some(15),
+                _ => None,
+            };
+            if expected != Some(context.phase)
+                || context
+                    .check(session, guest_timeout_ms, wall_timeout_s)
+                    .is_err()
+            {
+                let error = "USB storage interrupted or exceeded shared deadline";
+                return match self.abort_usb_storage() {
+                    Ok(()) => Err(error.into()),
+                    Err(cleanup) => Err(format!("{error}; cleanup failed: {cleanup}")),
+                };
             }
         }
         if let Some(context) = self.l6max_timing.as_ref() {
@@ -3355,68 +3396,65 @@ impl State {
                 }
                 Ok(result)
             }
-            Operation::UsbStorage => {
-                let usb = session
-                    .engine
-                    .usb
-                    .as_ref()
-                    .ok_or("USB backend unavailable")?;
-                let configuration = usb.enumerate()?;
-                let mut disk = l6max_host::usb_storage::MassStorage::new(
-                    usb,
-                    configuration
-                        .storage
-                        .ok_or("firmware did not expose mass storage")?,
-                );
-                let inquiry = disk.inquiry()?;
-                disk.ready()?;
-                let (blocks, size) = disk.capacity()?;
-                if size != 512 || blocks == 0 {
-                    return Err("invalid sector geometry".into());
+            Operation::UsbStorageBegin => {
+                if self.usb_storage_scope.is_some() {
+                    return Err("USB storage already active".into());
                 }
-                let boot = disk.read_sector(0)?;
-                use std::io::Read;
-                let mut expected = [0; 512];
-                fs::File::open(
-                    options
-                        .sd_image
-                        .as_ref()
-                        .ok_or("USB storage requires an SD card")?,
-                )?
-                .read_exact(&mut expected)?;
-                if boot != expected {
-                    return Err("USB sector did not match attached SD image".into());
+                self.usb_storage_scope = Some(usb_storage_steps::Scope::begin(
+                    session,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            operation @ (Operation::UsbStorageInquiry
+            | Operation::UsbStorageReady
+            | Operation::UsbStorageCapacity
+            | Operation::UsbStorageReadBoot
+            | Operation::UsbStorageAssertBoot
+            | Operation::UsbStorageLastRead
+            | Operation::UsbStorageLastWrite
+            | Operation::UsbStorageLastAssert
+            | Operation::UsbStorageFatOpen
+            | Operation::UsbStorageCreate { .. }
+            | Operation::UsbStorageFlushCreated
+            | Operation::UsbStorageReadFile
+            | Operation::UsbStorageRemoveFile
+            | Operation::UsbStorageAssertFile
+            | Operation::UsbStorageFlushRemoved
+            | Operation::UsbStorageEnd) => {
+                let context = self
+                    .usb_storage_scope
+                    .as_mut()
+                    .ok_or("missing USB storage scope")?;
+                let value = match operation {
+                    Operation::UsbStorageInquiry => context.inquiry(),
+                    Operation::UsbStorageReady => context.ready(),
+                    Operation::UsbStorageCapacity => context.capacity(),
+                    Operation::UsbStorageReadBoot => context.read_boot(),
+                    Operation::UsbStorageAssertBoot => context.assert_boot(options),
+                    Operation::UsbStorageLastRead => context.last_read(),
+                    Operation::UsbStorageLastWrite => context.last_write(),
+                    Operation::UsbStorageLastAssert => context.last_assert(),
+                    Operation::UsbStorageFatOpen => context.fat_open(),
+                    Operation::UsbStorageCreate {
+                        length,
+                        multiplier,
+                        increment,
+                    } => context.create(length, multiplier, increment),
+                    Operation::UsbStorageFlushCreated => context.flush(),
+                    Operation::UsbStorageReadFile => context.read(),
+                    Operation::UsbStorageRemoveFile => context.remove(),
+                    Operation::UsbStorageAssertFile => context.assert_file(),
+                    Operation::UsbStorageFlushRemoved => context.flush(),
+                    Operation::UsbStorageEnd => context.finish(),
+                    _ => unreachable!(),
+                }?;
+                context.phase += 1;
+                if matches!(operation, Operation::UsbStorageEnd) {
+                    self.usb_storage_scope = None;
                 }
-                let original = disk.read_sector((blocks - 1) as u32)?;
-                disk.write_sector((blocks - 1) as u32, &original)?;
-                if disk.read_sector((blocks - 1) as u32)? != original {
-                    return Err("USB sector write/read mismatch".into());
-                }
-                let disk = l6max_host::usb_storage::UsbDisk::new(disk)?;
-                let mut volume = sd_image::Volume::open(disk)?;
-                let filename = format!("L6T{:05X}.TXT", std::process::id() & 0xfffff);
-                let expected = (0..1537)
-                    .map(|index| ((index * 37 + 11) % 256) as u8)
-                    .collect::<Vec<_>>();
-                if volume.exists(&filename) {
-                    return Err("USB FAT roundtrip filename already exists".into());
-                }
-                volume.write(&filename, &expected)?;
-                volume.flush()?;
-                let actual = volume.read(&filename)?;
-                volume.remove(&filename)?;
-                if expected != actual {
-                    return Err(format!(
-                        "USB FAT file roundtrip mismatch: wrote {} bytes, read {} bytes",
-                        expected.len(),
-                        actual.len()
-                    )
-                    .into());
-                }
-                volume.flush()?;
-                Ok(
-                    json!({"inquiry":String::from_utf8_lossy(&inquiry[8..36]),"blocks":blocks,"sector_size":size,"sector_round_trip":true,"fat_file_round_trip_bytes":expected.len()}),
-                )
+                Ok(value)
             }
             Operation::AudioCallbacks => {
                 let points = callbacks(session.engine.model());

@@ -2212,3 +2212,46 @@ fn patch_parity_rejects_missing_duplicate_or_mixed_steps() {
         .is_err()
     );
 }
+
+#[test]
+fn usb_storage_requires_ordered_scope_and_matching_budgets() {
+    let prefix = "version=1\nname='storage'\nmodels=['l6max']\nbackends=['headless']\n";
+    let mut scenario = format!("{prefix}[[step]]\naction='usb-storage-begin'\n");
+    for action in [
+        "inquiry",
+        "ready",
+        "capacity",
+        "read-boot",
+        "assert-boot",
+        "last-read",
+        "last-write",
+        "last-assert",
+        "fat-open",
+        "create",
+        "flush-created",
+        "read-file",
+        "remove-file",
+        "assert-file",
+        "flush-removed",
+        "end",
+    ] {
+        scenario.push_str(&format!("[[step]]\naction='usb-storage-{action}'\n"));
+        if action == "create" {
+            scenario.push_str("length=1537\nmultiplier=37\nincrement=11\n");
+        }
+    }
+    assert!(Scenario::parse(&scenario).is_ok());
+    assert!(
+        Scenario::parse(&scenario.replace("usb-storage-ready", "usb-storage-last-write")).is_err()
+    );
+    assert!(
+        Scenario::parse(&scenario.replace(
+            "action='usb-storage-ready'",
+            "action='usb-storage-ready'\nwall_timeout_s=1"
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&scenario.replace("[[step]]\naction='usb-storage-end'\n", "")).is_err()
+    );
+}

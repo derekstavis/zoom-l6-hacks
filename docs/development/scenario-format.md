@@ -256,7 +256,7 @@ message delivered just after the interval.
 | `midi-probe-wait-ring-stable` | `channel`, `guest_ms`, `wall_ms` | Require a ring to remain unchanged for guest time, bounded by wall time since the send |
 | `midi-probe-drain-and-tap` | `port`, `target`, `hold_ms` | Drain queued legacy control observations and immediately enqueue a tap to anchor the following wall-time observation |
 | `midi-probe-expect-no-events` | `port`, `wall_ms` | Observe the selected session for the complete wall-time interval after the tap |
-| `usb-storage` | — | Enumerate storage, compare sector zero to the copied card, round-trip its last sector, then create/read/compare/delete a 1,537-byte FAT file through the USB disk |
+| `usb-storage-*` | `length`, `multiplier`, `increment` on create | Ordered, shared-deadline USB storage scope: enumerate and check readiness and geometry, compare sector zero with the copied card, round-trip the last sector, then create/read/compare/delete a 1,537-byte FAT file. Cleanup attempts to remove any owned file on failure. |
 | `audio-callbacks` | — | First step only; arm revision-guarded breakpoints before boot and require every model callback |
 | `knob-dialog-ready` | — | Wait for the L6max recorder window, idle notification state and reviewed transport-control pixels before `knob-dialog-guard`; all steps use matching deadlines shared across the sequence |
 | `knob-dialog-guard` | — | Verify first-use rejection outside the recorder screen and return to the recorder; retain a screenshot and read state while QEMU is stopped |

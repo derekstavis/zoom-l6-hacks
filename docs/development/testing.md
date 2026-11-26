@@ -211,7 +211,9 @@ identical shared scenarios through headless and GPUI adapters on separate
 copies of the same state and card. Legacy cases execute their declared backend only;
 a low-level diagnostic pass does not qualify GUI parity.
 
-`--no-build` explicitly reuses installed debug executables. Their hashes are
+GUI scenarios use the release-profile GUI executable; patch fixture builds use
+the debug-profile procedural macro artifacts. `--no-build` explicitly reuses
+those existing artifacts and the current driver executable. Their hashes are
 still recorded. It is useful for repeated diagnostic runs and binary comparisons,
 but does not attest that an executable was built from the current sources.
 The driver pins QEMU by binary hash and records it for every run. A source checkout

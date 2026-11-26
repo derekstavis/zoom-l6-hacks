@@ -482,35 +482,46 @@ fn execute() -> Result<i32, String> {
     run_timings.selection_s = started.elapsed().as_secs_f64();
     // Fixture building uses the l6patch library in this process. Payload
     // compilation needs its procedural macro artifact, not the l6patch CLI.
-    let mut build_packages = packages.clone();
-    if needs_patch_macros {
-        build_packages.insert("patch-hook-macros");
-    }
-    // With no explicit packages Cargo builds workspace defaults (the GUI),
-    // which a headless, non-patching run does not need.
-    if args.build && !build_packages.is_empty() {
+    // Patch compilation resolves its procedural macro in the debug artifact
+    // directory. GUI scenarios use the independently built release binary.
+    if args.build && (!packages.is_empty() || needs_patch_macros) {
         progress.run_phase(smoke_core::progress::RunPhase::Building);
         let started = Instant::now();
-        let mut command = Command::new("cargo");
-        command
-            .current_dir(root)
-            .args(["build", "--offline", "--locked"]);
-        for package in &build_packages {
-            command.arg("-p").arg(package);
-        }
-        let built = supervise(
-            command,
-            &output,
-            600,
-            crate::supervise::LaunchMode::FreshGroup,
-        );
-        run_timings.build_s = Some(started.elapsed().as_secs_f64());
-        if !matches!(built, Ok(true)) {
-            let error = built
-                .err()
-                .unwrap_or_else(|| "build failed; inspect stdout.log/stderr.log".into());
-            blocked_report(&error, &run_timings)?;
-            return Err(error);
+        for (enabled, cargo_args) in [
+            (
+                needs_patch_macros,
+                &["build", "--offline", "--locked", "-p", "patch-hook-macros"][..],
+            ),
+            (
+                !packages.is_empty(),
+                &[
+                    "build",
+                    "--offline",
+                    "--locked",
+                    "--release",
+                    "-p",
+                    "l6max-gui",
+                ][..],
+            ),
+        ] {
+            if enabled {
+                let mut command = Command::new("cargo");
+                command.current_dir(root).args(cargo_args);
+                let built = supervise(
+                    command,
+                    &output,
+                    600,
+                    crate::supervise::LaunchMode::FreshGroup,
+                );
+                run_timings.build_s = Some(started.elapsed().as_secs_f64());
+                if !matches!(built, Ok(true)) {
+                    let error = built
+                        .err()
+                        .unwrap_or_else(|| "build failed; inspect stdout.log/stderr.log".into());
+                    blocked_report(&error, &run_timings)?;
+                    return Err(error);
+                }
+            }
         }
     }
     progress.run_phase(smoke_core::progress::RunPhase::Staging);
@@ -533,12 +544,12 @@ fn execute() -> Result<i32, String> {
         return Err("cargo metadata failed while resolving built executables".into());
     }
     let metadata: Value = serde_json::from_slice(&metadata.stdout).map_err(|e| e.to_string())?;
-    let built_dir = PathBuf::from(
+    let target_dir = PathBuf::from(
         metadata["target_directory"]
             .as_str()
             .ok_or("Cargo metadata omitted target_directory")?,
-    )
-    .join("debug");
+    );
+    let built_dir = target_dir.join("debug");
     fs::create_dir_all(output.join("bin")).map_err(|e| e.to_string())?;
     fs::copy(
         env::current_exe().map_err(|e| e.to_string())?,
@@ -546,8 +557,9 @@ fn execute() -> Result<i32, String> {
     )
     .map_err(|e| e.to_string())?;
     for package in packages {
-        fs::copy(built_dir.join(package), output.join("bin").join(package))
-            .map_err(|e| e.to_string())?;
+        let source = target_dir.join("release").join(package);
+        fs::copy(&source, output.join("bin").join(package))
+            .map_err(|e| format!("cannot stage release executable {}: {e}", source.display()))?;
     }
     if args.no_cache && args.persistent_cache.is_some() {
         return Err("--no-cache and --persistent-cache cannot be combined".into());

@@ -42,6 +42,29 @@ pub struct InputStatus {
     pub error: Option<String>,
 }
 
+/// Audio transport command; a returned sequence only confirms enqueueing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AudioTransport {
+    Stop,
+    Play,
+    Pause,
+    Seek,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct AudioInputStatus {
+    pub playing: bool,
+    pub position_ms: u32,
+    pub rejected: u64,
+    pub last_ack_sequence: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct AudioInputReceipt {
+    pub sequence: u32,
+}
+
 /// Receipt tracking is bounded. Unknown means the sequence was never tracked
 /// or has been evicted; it must not be interpreted as an acknowledgement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -472,6 +495,41 @@ pub struct InputHub {
     analog_channels: [u32; 5],
 }
 impl InputHub {
+    pub fn audio_input_status(&self) -> AudioInputStatus {
+        let status = self.main.snapshot();
+        AudioInputStatus {
+            playing: status.audio_input_playing,
+            position_ms: status.audio_input_position_ms,
+            rejected: status.rejected,
+            last_ack_sequence: status.last_ack.map(|ack| ack.sequence),
+        }
+    }
+    pub fn audio_input_load(&self, channel: u32, loaded: bool) -> io::Result<AudioInputReceipt> {
+        let index = channel
+            .checked_sub(1)
+            .filter(|index| *index < 8)
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "audio channel must be 1..8")
+            })?;
+        self.main
+            .audio_input_load(index, loaded)
+            .map(|sequence| AudioInputReceipt { sequence })
+    }
+    pub fn audio_input_transport(
+        &self,
+        command: AudioTransport,
+        position_ms: i32,
+    ) -> io::Result<AudioInputReceipt> {
+        let target = match command {
+            AudioTransport::Stop => protocol::AUDIO_INPUT_STOP,
+            AudioTransport::Play => protocol::AUDIO_INPUT_PLAY,
+            AudioTransport::Pause => protocol::AUDIO_INPUT_PAUSE,
+            AudioTransport::Seek => protocol::AUDIO_INPUT_SEEK,
+        };
+        self.main
+            .audio_input_transport(target, position_ms)
+            .map(|sequence| AudioInputReceipt { sequence })
+    }
     pub fn acknowledgement(&self, source: InputSource, sequence: u32) -> InputAck {
         let input = match source {
             InputSource::Main => &self.main,

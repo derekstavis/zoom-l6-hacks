@@ -1305,3 +1305,55 @@ fn reset_and_sd_card_client_and_cli_use_typed_requests() {
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn audio_input_client_and_cli_share_typed_socket_contract() {
+    let path = socket_path();
+    let status = json!({"playing":true,"position_ms":123,"rejected":2,"last_ack_sequence":8});
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"audio-input-status"}),
+                json!({"ok":true,"result":status}),
+            ),
+            (
+                json!({"command":"audio-input-load","channel":2,"loaded":true}),
+                json!({"ok":true,"result":{"sequence":9}}),
+            ),
+            (
+                json!({"command":"audio-input-transport","operation":"seek","position_ms":500}),
+                json!({"ok":true,"result":{"sequence":10}}),
+            ),
+        ],
+    );
+    let client = ControlClient::new(&path);
+    let actual = client.audio_input_status().unwrap();
+    assert_eq!(
+        (
+            actual.playing,
+            actual.position_ms,
+            actual.rejected,
+            actual.last_ack_sequence
+        ),
+        (true, 123, 2, Some(8))
+    );
+    assert_eq!(client.audio_input_load(2, true).unwrap().sequence, 9);
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["audio-input", "seek", "500"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        json!({"sequence":10})
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}

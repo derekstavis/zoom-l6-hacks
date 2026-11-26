@@ -2379,35 +2379,32 @@ impl State {
                 command,
                 position_ms,
             } => {
-                use l6max_host::protocol;
-                let target = match command.as_str() {
-                    "stop" => protocol::AUDIO_INPUT_STOP,
-                    "play" => protocol::AUDIO_INPUT_PLAY,
-                    "pause" => protocol::AUDIO_INPUT_PAUSE,
-                    "seek" => protocol::AUDIO_INPUT_SEEK,
+                let operation = match command.as_str() {
+                    "stop" => l6ctl::AudioTransport::Stop,
+                    "play" => l6ctl::AudioTransport::Play,
+                    "pause" => l6ctl::AudioTransport::Pause,
+                    "seek" => l6ctl::AudioTransport::Seek,
                     other => return Err(format!("unknown audio input command {other}").into()),
                 };
-                let main = &session.engine.inputs.as_ref().unwrap().main;
-                let sequence = main.audio_input_transport(target, position_ms)?;
-                Ok(json!({"command": command, "position_ms": position_ms, "sequence": sequence}))
+                let control = l6ctl::OwnedControl::new(&session.engine);
+                let receipt = control.audio_input_transport(operation, position_ms)?;
+                Ok(
+                    json!({"command": command, "position_ms": position_ms, "sequence": receipt.sequence}),
+                )
             }
             Operation::AudioInputLoad { channel, loaded } => {
-                let main = &session.engine.inputs.as_ref().unwrap().main;
-                let before = main.snapshot().rejected;
-                let sequence = main.audio_input_load(channel - 1, loaded)?;
+                let control = l6ctl::OwnedControl::new(&session.engine);
+                let before = control.audio_input_status()?.rejected;
+                let sequence = control.audio_input_load(channel, loaded)?.sequence;
                 let deadline =
                     std::time::Instant::now() + std::time::Duration::from_secs(wall_timeout_s);
-                while main
-                    .snapshot()
-                    .last_ack
-                    .is_none_or(|ack| ack.sequence != sequence)
-                {
+                while control.audio_input_status()?.last_ack_sequence != Some(sequence) {
                     if std::time::Instant::now() >= deadline {
                         return Err("audio input load was not acknowledged".into());
                     }
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
-                if main.snapshot().rejected != before {
+                if control.audio_input_status()?.rejected != before {
                     return Err(format!("channel {channel} has no prepared audio").into());
                 }
                 Ok(json!({"channel": channel, "loaded": loaded}))
@@ -2425,19 +2422,16 @@ impl State {
                     Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
                 loop {
                     session.poll()?;
-                    let status = session.engine.inputs.as_ref().unwrap().main.snapshot();
-                    if status.audio_input_playing == playing
-                        && (min_ms..=max_ms).contains(&status.audio_input_position_ms)
+                    let status = l6ctl::OwnedControl::new(&session.engine).audio_input_status()?;
+                    if status.playing == playing && (min_ms..=max_ms).contains(&status.position_ms)
                     {
-                        break Ok(
-                            json!({"playing": playing, "position_ms": status.audio_input_position_ms}),
-                        );
+                        break Ok(json!({"playing": playing, "position_ms": status.position_ms}));
                     }
                     if Instant::now() >= deadline
                         || guest_now(session).wrapping_sub(start)
                             >= guest_timeout_ms.min(GUEST_TIMEOUT_MS)
                     {
-                        break Err(format!("audio input did not reach playing={playing}, {min_ms}..={max_ms} ms: playing={}, position={} ms",status.audio_input_playing,status.audio_input_position_ms).into());
+                        break Err(format!("audio input did not reach playing={playing}, {min_ms}..={max_ms} ms: playing={}, position={} ms",status.playing,status.position_ms).into());
                     }
                     thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
                 }
@@ -2447,14 +2441,12 @@ impl State {
                 min_ms,
                 max_ms,
             } => {
-                let status = session.engine.inputs.as_ref().unwrap().main.snapshot();
+                let status = l6ctl::OwnedControl::new(&session.engine).audio_input_status()?;
                 let evidence = json!({
-                    "playing": status.audio_input_playing,
-                    "position_ms": status.audio_input_position_ms,
+                    "playing": status.playing,
+                    "position_ms": status.position_ms,
                 });
-                if status.audio_input_playing != playing
-                    || !(min_ms..=max_ms).contains(&status.audio_input_position_ms)
-                {
+                if status.playing != playing || !(min_ms..=max_ms).contains(&status.position_ms) {
                     return Err(format!(
                         "audio input state {evidence} is not playing={playing}, {min_ms}..={max_ms} ms"
                     )

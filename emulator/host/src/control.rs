@@ -317,6 +317,39 @@ fn execute(
         }
         "qmp-status" => serde_json::to_value(qmp.query_status().map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string()),
+        "audio-input-status" => {
+            serde_json::to_value(inputs.audio_input_status()).map_err(|error| error.to_string())
+        }
+        "audio-input-load" => {
+            let channel =
+                u32::try_from(number(request, "channel")?).map_err(|_| "invalid audio channel")?;
+            let loaded = request
+                .get("loaded")
+                .and_then(Value::as_bool)
+                .ok_or("loaded must be a boolean")?;
+            serde_json::to_value(
+                inputs
+                    .audio_input_load(channel, loaded)
+                    .map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())
+        }
+        "audio-input-transport" => {
+            let operation = serde_json::from_value(
+                request
+                    .get("operation")
+                    .cloned()
+                    .ok_or("missing audio transport operation")?,
+            )
+            .map_err(|_| "invalid audio transport operation")?;
+            let position_ms = signed(request, "position_ms")?;
+            serde_json::to_value(
+                inputs
+                    .audio_input_transport(operation, position_ms)
+                    .map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())
+        }
         "input-status" => {
             let source = match request.get("source").and_then(Value::as_str) {
                 Some("main") => InputSource::Main,
@@ -945,6 +978,86 @@ mod tests {
                 serde_json::from_value::<Outcome>(expected).unwrap(),
                 outcome
             );
+        }
+    }
+
+    #[test]
+    fn audio_input_dispatch_uses_main_channel_and_validates_requests() {
+        use crate::input::EngineInput;
+        use crate::protocol::{self, Message};
+        let (main, mut main_peer) = EngineInput::pair().unwrap();
+        let (panel, _panel_peer) = EngineInput::pair().unwrap();
+        let inputs = InputHub::new(main, panel, Model::L6max);
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || {
+            peer.write_all(b"{\"QMP\":{\"version\":{\"qemu\":{\"major\":10,\"minor\":0,\"micro\":0},\"package\":\"\"},\"capabilities\":[]}}\r\n").unwrap();
+            let mut line = String::new();
+            BufReader::new(&mut peer).read_line(&mut line).unwrap();
+            peer.write_all(b"{\"return\":{}}\r\n").unwrap();
+        });
+        let qmp = QmpClient::connect(stream).unwrap();
+        server.join().unwrap();
+        let status = execute(
+            &json!({"command":"audio-input-status"}),
+            &inputs,
+            Model::L6max,
+            &qmp,
+        )
+        .unwrap();
+        assert_eq!(
+            (status["playing"].as_bool(), status["position_ms"].as_u64()),
+            (Some(false), Some(0))
+        );
+        let load = execute(
+            &json!({"command":"audio-input-load","channel":2,"loaded":true}),
+            &inputs,
+            Model::L6max,
+            &qmp,
+        )
+        .unwrap();
+        let message = Message::read(&mut main_peer).unwrap();
+        assert_eq!(
+            (
+                message.kind,
+                message.target,
+                message.value,
+                u64::from(message.sequence)
+            ),
+            (
+                protocol::AUDIO_INPUT_LOAD,
+                1,
+                1,
+                load["sequence"].as_u64().unwrap()
+            )
+        );
+        let seek = execute(
+            &json!({"command":"audio-input-transport","operation":"seek","position_ms":500}),
+            &inputs,
+            Model::L6max,
+            &qmp,
+        )
+        .unwrap();
+        let message = Message::read(&mut main_peer).unwrap();
+        assert_eq!(
+            (
+                message.kind,
+                message.target,
+                message.value,
+                u64::from(message.sequence)
+            ),
+            (
+                protocol::AUDIO_INPUT_TRANSPORT,
+                protocol::AUDIO_INPUT_SEEK,
+                500,
+                seek["sequence"].as_u64().unwrap()
+            )
+        );
+        for request in [
+            json!({"command":"audio-input-load","channel":0,"loaded":true}),
+            json!({"command":"audio-input-transport","operation":"seek","position_ms":-1}),
+            json!({"command":"audio-input-transport","operation":"other","position_ms":0}),
+        ] {
+            assert!(execute(&request, &inputs, Model::L6max, &qmp).is_err());
         }
     }
 

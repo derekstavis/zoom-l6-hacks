@@ -17,7 +17,10 @@ pub use l6max_host::effect_editor::{
 pub use l6max_host::heap::Counters as HeapCounters;
 pub use l6max_host::indicators::rings as decode_indicator_rings;
 pub use l6max_host::input::button_source;
-pub use l6max_host::input::{InputAck, InputAckState, InputCounters, InputSource};
+pub use l6max_host::input::{
+    AudioInputReceipt, AudioInputStatus, AudioTransport, InputAck, InputAckState, InputCounters,
+    InputSource,
+};
 pub use l6max_host::knob_binding::{
     FirmwareBinding as KnobFirmwareBinding, PreflightTargets as KnobPreflightTargets,
     SdBinding as KnobSdBinding, verify_bitmap_probe_state, verify_notification_semaphore,
@@ -84,6 +87,15 @@ pub enum RtosKind {
 pub enum Request {
     Info,
     QmpStatus,
+    AudioInputStatus,
+    AudioInputLoad {
+        channel: u32,
+        loaded: bool,
+    },
+    AudioInputTransport {
+        operation: AudioTransport,
+        position_ms: i32,
+    },
     WarmReset {
         timeout_s: u64,
     },
@@ -356,6 +368,26 @@ impl ControlClient {
     /// Sample aggregate counters for one running emulator input channel.
     pub fn qmp_status(&self) -> Result<QmpStatus, ControlError> {
         self.request_as(&Request::QmpStatus)
+    }
+    pub fn audio_input_status(&self) -> Result<AudioInputStatus, ControlError> {
+        self.request_as(&Request::AudioInputStatus)
+    }
+    pub fn audio_input_load(
+        &self,
+        channel: u32,
+        loaded: bool,
+    ) -> Result<AudioInputReceipt, ControlError> {
+        self.request_as(&Request::AudioInputLoad { channel, loaded })
+    }
+    pub fn audio_input_transport(
+        &self,
+        operation: AudioTransport,
+        position_ms: i32,
+    ) -> Result<AudioInputReceipt, ControlError> {
+        self.request_as(&Request::AudioInputTransport {
+            operation,
+            position_ms,
+        })
     }
     pub fn input_status(&self, source: InputSource) -> Result<InputCounters, ControlError> {
         self.request_as(&Request::InputStatus { source })
@@ -848,6 +880,38 @@ impl<'a> OwnedControl<'a> {
         .map_err(ControlError::Rejected)
     }
 
+    pub fn audio_input_status(&self) -> Result<AudioInputStatus, ControlError> {
+        Ok(self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .audio_input_status())
+    }
+    pub fn audio_input_load(
+        &self,
+        channel: u32,
+        loaded: bool,
+    ) -> Result<AudioInputReceipt, ControlError> {
+        self.engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .audio_input_load(channel, loaded)
+            .map_err(ControlError::Io)
+    }
+    pub fn audio_input_transport(
+        &self,
+        operation: AudioTransport,
+        position_ms: i32,
+    ) -> Result<AudioInputReceipt, ControlError> {
+        self.engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .audio_input_transport(operation, position_ms)
+            .map_err(ControlError::Io)
+    }
     /// Sample the host's channel counters without opening a control socket.
     pub fn qmp_status_before(
         &self,

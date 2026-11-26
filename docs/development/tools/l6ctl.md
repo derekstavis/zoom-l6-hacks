@@ -548,3 +548,7 @@ directly should use an absolute path.
 ### Offline audio analysis
 
 `l6ctl audio compare SOURCE.wav CAPTURE.s32le` reports the best alignment, per-channel gains and residual for a WAV source against a raw stereo S32LE capture. `l6ctl audio tone CAPTURE.s32le HZ RATE` reports per-channel tone levels in dBFS. Both commands output JSON and require no emulator socket. They measure audio; callers choose their own pass/fail thresholds. The WAV analysis reader accepts 16-bit PCM or 32-bit float with one or two channels, matching the test runner's existing analysis policy.
+
+### Audio input transport
+
+For a running emulator, `l6ctl --socket PATH audio-input status` returns the latest MAIN audio position, playing flag, rejection count and last acknowledged input sequence. `audio-input load CHANNEL true|false`, `audio-input play`, `pause`, `stop`, and `seek MS` enqueue input commands and return their sequence; use `input ack main SEQUENCE` to inspect acknowledgement. Channels are one-based. Loading expects audio already prepared for that channel. The status is a live observation, not a synchronized audio capture.

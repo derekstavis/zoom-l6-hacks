@@ -1,0 +1,50 @@
+[[step]]
+action = "knob-dialog-prepare-notification"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-arm-notification-callback"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-wait-notification-callback"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-invoke-notification"
+message = 4
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-wait-notification-frame"
+clear = false
+artifact = "window-scene-stock-notification"
+guest_ms = 100
+limit_ms = 1500
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-expect-notification-invariants"
+clear = false
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-wait-notification-frame"
+clear = true
+artifact = "window-scene-after-notification"
+guest_ms = 100
+limit_ms = 5000
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-expect-notification-invariants"
+clear = true
+guest_timeout_ms = 180000
+wall_timeout_s = 600

@@ -285,6 +285,15 @@ fn execute(
         .and_then(Value::as_str)
         .ok_or("request needs a command")?;
     match command {
+        "sd-loader-status" => {
+            serde_json::to_value(crate::sd_loader::snapshot(qmp, model)?).map_err(|e| e.to_string())
+        }
+        "sd-loader-site" => {
+            let index =
+                u32::try_from(number(request, "index")?).map_err(|_| "invalid SD site index")?;
+            serde_json::to_value(crate::sd_loader::site(qmp, model, index)?)
+                .map_err(|e| e.to_string())
+        }
         "input-status" => {
             let source = match request.get("source").and_then(Value::as_str) {
                 Some("main") => InputSource::Main,
@@ -328,7 +337,29 @@ fn execute(
         }
         "update-state" => serde_json::to_value(crate::update_state::update_state(qmp, model)?)
             .map_err(|error| error.to_string()),
+        "effect-editor" => {
+            let binding: crate::effect_editor::Binding = serde_json::from_value(
+                request
+                    .get("binding")
+                    .cloned()
+                    .ok_or("effect-editor needs binding")?,
+            )
+            .map_err(|e| e.to_string())?;
+            serde_json::to_value(crate::effect_editor::Reader::new(qmp, model, binding)?.read()?)
+                .map_err(|e| e.to_string())
+        }
+        "panel-key" => {
+            let code = request
+                .get("code")
+                .and_then(Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok())
+                .ok_or("panel-key needs a code")?;
+            serde_json::to_value(crate::panel_keys::snapshot(qmp, model, code)?)
+                .map_err(|e| e.to_string())
+        }
         "midi-config" => serde_json::to_value(crate::midi_config::config(qmp, model)?)
+            .map_err(|error| error.to_string()),
+        "mixer-level" => serde_json::to_value(crate::mixer_level::first_channel(qmp, model)?)
             .map_err(|error| error.to_string()),
         "rtos" => {
             let kind = request

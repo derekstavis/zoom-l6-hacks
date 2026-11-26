@@ -15,6 +15,86 @@ pub(super) type SdEdits = (
         Vec<patch_abi::dynamic::Hook>,
     )>,
 );
+
+pub(super) struct SdInspectionContext {
+    pub fixture: FrozenSdFixture,
+    pub wall_deadline: Instant,
+    pub guest_start: u32,
+    pub guest_timeout_ms: u32,
+    pub wall_timeout_s: u64,
+}
+
+/// Compare the pinned loader image's persistent stubs with running MAIN.
+pub(super) fn verify_sd_loader_hooks(
+    session: &Session,
+    main: &[u8],
+    edits: &[(u32, Vec<u8>, u32)],
+    deadline: Instant,
+    guest_start: u32,
+    guest_timeout_ms: u32,
+) -> Result<usize, String> {
+    let model = session.engine.model();
+    let image_base = model.main_base();
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let check = || -> Result<(), String> {
+        if Instant::now() >= deadline
+            || guest_now(session).wrapping_sub(guest_start) >= guest_timeout_ms
+        {
+            Err("SD inspection exceeded its shared deadline".into())
+        } else {
+            Ok(())
+        }
+    };
+    let loader_calls: &[u32] = match model {
+        l6fw::Model::L6 => &[0x8000_9a60, 0x8000_9aa0],
+        l6fw::Model::L6max => &[
+            l6max::sys_main_startup_initialize,
+            0x8000_e9fa,
+            0x8000_ea24,
+            0x8001_0118,
+            0x8002_bc7e,
+            0x8000_ebac,
+        ],
+    };
+    for &address in loader_calls {
+        check()?;
+        let offset = address
+            .checked_sub(image_base)
+            .ok_or("loader address precedes image")? as usize;
+        let expected = main
+            .get(offset..offset + 4)
+            .ok_or("Patch loader image too short")?;
+        if control
+            .read_main_memory_before(address, 4, deadline)
+            .map_err(|e| e.to_string())?
+            .bytes
+            != expected
+        {
+            return Err(format!("persistent loader hook missing at {address:#010x}"));
+        }
+    }
+    for (address, original, _) in edits {
+        check()?;
+        let offset = address
+            .checked_sub(image_base)
+            .ok_or("dispatch address precedes image")? as usize;
+        let expected = main
+            .get(offset..offset + original.len())
+            .ok_or("Patch loader image too short")?;
+        if control
+            .read_main_memory_before(*address, expected.len(), deadline)
+            .map_err(|e| e.to_string())?
+            .bytes
+            != expected
+        {
+            return Err(format!(
+                "persistent SD dispatch stub missing at {address:#010x}"
+            ));
+        }
+    }
+    check()?;
+    Ok(edits.len())
+}
 pub(super) fn sd_fixture_root(options: &Options) -> Result<&std::path::Path, String> {
     options
         .logs
@@ -689,11 +769,26 @@ pub(super) fn effect_replacement_state(
     )
 }
 
+pub(super) struct FrozenSdFixture {
+    pub edits: SdEdits,
+    pub loader_report: Value,
+    pub patch_report: Option<Value>,
+    pub chain_first: Option<Vec<u8>>,
+}
+
 pub(super) fn sd_fixture_edits(
     options: &Options,
     main: &[u8],
     model: l6fw::Model,
 ) -> Result<SdEdits, String> {
+    Ok(freeze_sd_fixture(options, main, model)?.edits)
+}
+
+pub(super) fn freeze_sd_fixture(
+    options: &Options,
+    main: &[u8],
+    model: l6fw::Model,
+) -> Result<FrozenSdFixture, String> {
     use sha2::{Digest, Sha256};
     let root = sd_fixture_root(options)?;
     let stock = fs::read(
@@ -716,16 +811,26 @@ pub(super) fn sd_fixture_edits(
     }
     let patch_output = root.join(crate::fixture_layout::SD_BUNDLE_BUILD);
     let patch_report_path = patch_output.join("patch.json");
+    let chain_first = match fs::read(root.join(crate::fixture_layout::CHAIN_FIRST)) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.to_string()),
+    };
     if !patch_report_path.exists() {
-        return Ok((
-            Vec::new(),
-            0,
-            Vec::new(),
-            None,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        ));
+        return Ok(FrozenSdFixture {
+            edits: (
+                Vec::new(),
+                0,
+                Vec::new(),
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+            loader_report: loader,
+            patch_report: None,
+            chain_first,
+        });
     }
     let patch_report: Value =
         serde_json::from_slice(&fs::read(&patch_report_path).map_err(|e| e.to_string())?)
@@ -789,15 +894,20 @@ pub(super) fn sd_fixture_edits(
         last = Some((payload, init, relocations));
     }
     let (payload, init, relocations) = last.ok_or("dynamic report contains no modules")?;
-    Ok((
-        all_edits,
-        0,
-        payload,
-        init,
-        relocations,
-        all_hooks,
-        module_images,
-    ))
+    Ok(FrozenSdFixture {
+        edits: (
+            all_edits,
+            0,
+            payload,
+            init,
+            relocations,
+            all_hooks,
+            module_images,
+        ),
+        loader_report: loader,
+        patch_report: Some(patch_report),
+        chain_first,
+    })
 }
 
 /// The Patch loader's heap-allocated registry, read through its pointer word.
@@ -808,6 +918,47 @@ pub(super) fn wait_sd_patch_loaded(
     wall_timeout_s: u64,
 ) -> Result<u32, Box<dyn std::error::Error>> {
     wait_sd_patch_result(session, guest_timeout_ms, wall_timeout_s, true)
+}
+
+pub(super) fn wait_sd_loader_snapshot(
+    session: &Session,
+    reader: &l6max_host::sd_loader::Reader<'_>,
+    shared_wall: Instant,
+    shared_guest: u32,
+    shared_guest_budget: u32,
+) -> Result<l6max_host::sd_loader::Snapshot, String> {
+    let start = guest_now(session);
+    let deadline = shared_wall.min(Instant::now() + Duration::from_secs(180));
+    let mut last = String::from("registry not allocated");
+    loop {
+        if Instant::now() >= deadline
+            || guest_now(session).wrapping_sub(start) >= 10_000
+            || guest_now(session).wrapping_sub(shared_guest) >= shared_guest_budget
+        {
+            return Err(format!(
+                "SD patch loader did not finish within its deadline ({last})"
+            ));
+        }
+        session.poll().map_err(|e| e.to_string())?;
+        let state = reader.readiness_cancellable(deadline, || {
+            guest_now(session).wrapping_sub(start) >= 10_000
+                || guest_now(session).wrapping_sub(shared_guest) >= shared_guest_budget
+        })?;
+        if Instant::now() >= deadline
+            || guest_now(session).wrapping_sub(start) >= 10_000
+            || guest_now(session).wrapping_sub(shared_guest) >= shared_guest_budget
+        {
+            return Err("SD patch loader readiness exceeded its deadline".into());
+        }
+        if state.registry.is_some() && state.claim == Some(1) {
+            return reader.snapshot_cancellable(deadline, || {
+                guest_now(session).wrapping_sub(start) >= 10_000
+                    || guest_now(session).wrapping_sub(shared_guest) >= shared_guest_budget
+            });
+        }
+        last = format!("stage={:?}, claim={:?}", state.stage, state.claim);
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 /// Wait for a completed scan that installed no module. This requires a card
@@ -894,21 +1045,11 @@ pub(super) fn sd_registry_if_allocated(
     Ok(Some(base))
 }
 
-pub(super) fn sd_dynamic_handler_slot(
-    options: &Options,
-    _model: l6fw::Model,
+pub(super) fn sd_frozen_handler_slot(
+    report: &Value,
     registry: u32,
     function_address: u32,
 ) -> Result<u32, String> {
-    let root = sd_fixture_root(options)?;
-    let report: Value = serde_json::from_slice(
-        &fs::read(
-            root.join(crate::fixture_layout::LOADER_BUILD)
-                .join(crate::fixture_layout::PATCH_REPORT),
-        )
-        .map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
     let sites = report["patches"]
         .as_array()
         .and_then(|patches| {
@@ -930,60 +1071,235 @@ pub(super) fn sd_dynamic_handler_slot(
 
 /// A dispatch site's registry record, at the record's address, and the links
 /// it chains, read from guest memory.
-pub(super) fn sd_site_chain(
-    qmp: &l6max_host::qmp::QmpClient,
+/// Use the guarded host interpretation while retaining the existing assertion types.
+pub(super) fn sd_typed_site_chain(
+    reader: &l6max_host::sd_loader::Reader<'_>,
+    session: &Session,
+    registry: u32,
     record: u32,
+    deadline: Instant,
+    guest_start: u32,
+    guest_budget: u32,
 ) -> Result<
     (
         patch_abi::dynamic::SiteChain,
         Vec<patch_abi::dynamic::HookLink>,
     ),
-    Box<dyn std::error::Error>,
+    String,
 > {
-    let words = |address: u32, count: usize| -> Result<Vec<u32>, Box<dyn std::error::Error>> {
-        Ok(qmp
-            .read_memory(0, address, count * 4)?
-            .chunks_exact(4)
-            .map(|word| u32::from_le_bytes(word.try_into().unwrap()))
-            .collect())
-    };
-    let value = words(record, 4)?;
+    let offset = record
+        .checked_sub(registry)
+        .and_then(|n| n.checked_sub(patch_abi::registry::SITES_OFFSET))
+        .ok_or("SD site record precedes registry")?;
+    if offset % patch_abi::registry::SITE_RECORD_LEN != 0 {
+        return Err("misaligned SD site record".into());
+    }
+    let site = reader.site_cancellable(
+        offset / patch_abi::registry::SITE_RECORD_LEN,
+        deadline,
+        || guest_now(session).wrapping_sub(guest_start) >= guest_budget,
+    )?;
+    if site.registry != registry || site.record != record {
+        return Err("SD registry changed during inspection".into());
+    }
     let chain = patch_abi::dynamic::SiteChain {
-        handler: value[0],
-        first: value[1],
-        last: value[2],
-        count: value[3],
+        handler: site.handler,
+        first: site.first,
+        last: site.last,
+        count: site.count,
     };
-    let mut links = Vec::new();
-    let mut next = chain.first;
-    while next != 0 {
-        if links.len() >= chain.count as usize {
-            return Err(format!(
-                "site record {record:#010x} chains more than {} links",
-                chain.count
-            )
-            .into());
-        }
-        let value = words(next, 6)?;
-        links.push(patch_abi::dynamic::HookLink {
-            entry: value[0],
-            next_slot: value[1],
-            order: value[2],
-            module_base: value[3],
-            next: value[4],
-            site: value[5],
-        });
-        next = value[4];
-    }
-    if links.len() != chain.count as usize
-        || links.last().is_some_and(|_| chain.last == 0)
-        || (chain.count != 0 && chain.handler != links[0].entry)
-    {
-        return Err(format!(
-            "site record {record:#010x} is inconsistent: {chain:?}, {} links",
-            links.len()
-        )
-        .into());
-    }
+    let links = site
+        .links
+        .into_iter()
+        .map(|v| patch_abi::dynamic::HookLink {
+            entry: v.entry,
+            next_slot: v.next_slot,
+            order: v.order,
+            module_base: v.module_base,
+            next: v.next,
+            site: v.site,
+        })
+        .collect();
     Ok((chain, links))
+}
+
+/// Fixture-scoped control of the effect editor's single-slot mailbox.
+pub(super) fn effect_editor_reader(
+    options: &Options,
+    session: &Session,
+    deadline: Instant,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<l6max_host::effect_editor::Reader, String> {
+    let main = selected_main_image(options)?;
+    sd_fixture_edits(options, &main, session.engine.model())?;
+    let root = sd_fixture_root(options)?;
+    let output = root.join(crate::fixture_layout::SD_BUNDLE_BUILD);
+    let report_bytes =
+        fs::read(output.join(crate::fixture_layout::PATCH_REPORT)).map_err(|e| e.to_string())?;
+    let report: Value = serde_json::from_slice(&report_bytes).map_err(|e| e.to_string())?;
+    let patches = report["patches"]
+        .as_array()
+        .ok_or("effect module report missing")?;
+    if patches.len() != 1 {
+        return Err("paced effect edits require one composed module".into());
+    }
+    let filename = patches[0]["file"]
+        .as_str()
+        .and_then(|v| Path::new(v).file_name())
+        .ok_or("effect module file missing")?;
+    let bytes = fs::read(output.join("PATCHES").join(filename)).map_err(|e| e.to_string())?;
+    let binding = l6ctl::EffectEditorBinding::from_fixture(&report_bytes, &bytes)?;
+    l6ctl::OwnedControl::new(&session.engine)
+        .effect_editor_reader_before_checked(binding, deadline, check)
+        .map_err(|e| e.to_string())
+}
+
+/// Interpret a non-atomic sample against the counters preceding one input.
+fn paced_effect_state(
+    before: &l6ctl::EffectEditorSnapshot,
+    now: &l6ctl::EffectEditorSnapshot,
+) -> Result<bool, String> {
+    if now.dropped != before.dropped {
+        return Err("effect editor dropped a paced turn".into());
+    }
+    match now.applied.wrapping_sub(before.applied) {
+        0 => Ok(false),
+        1 => Ok(now.pending == 0 && now.gate == 0),
+        count => Err(format!(
+            "effect editor applied {count} turns while awaiting one"
+        )),
+    }
+}
+
+fn paced_acknowledged(state: l6ctl::InputAckState) -> Result<bool, String> {
+    match state {
+        l6ctl::InputAckState::Applied => Ok(true),
+        l6ctl::InputAckState::Pending => Ok(false),
+        l6ctl::InputAckState::Rejected => Err("paced effect encoder was rejected".into()),
+        l6ctl::InputAckState::Unknown => {
+            Err("paced effect encoder acknowledgement unavailable".into())
+        }
+    }
+}
+
+pub(super) fn effect_paced_turn(
+    options: &Options,
+    session: &Session,
+    channel: usize,
+    steps: i32,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+    progress: crate::progress::CaseProgress,
+    index: usize,
+) -> Result<Value, String> {
+    if session.engine.model() != l6fw::Model::L6max
+        || !(1..=8).contains(&channel)
+        || steps == 0
+        || steps.unsigned_abs() > 128
+    {
+        return Err("invalid paced effect turn".into());
+    }
+    let start = Instant::now();
+    let start_guest = guest_now(session);
+    let check = || -> Result<(), String> {
+        if start.elapsed() >= Duration::from_secs(wall_timeout_s)
+            || guest_now(session).wrapping_sub(start_guest) >= guest_timeout_ms
+        {
+            Err("paced effect turn exceeded its shared deadline".into())
+        } else {
+            Ok(())
+        }
+    };
+    check()?;
+    let deadline = start
+        .checked_add(Duration::from_secs(wall_timeout_s))
+        .ok_or("paced effect deadline overflow")?;
+    let reader = effect_editor_reader(options, session, deadline, &check)?;
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let total = steps.unsigned_abs();
+    let mut prior = None;
+    let mut before = loop {
+        check()?;
+        session.poll()?;
+        let now = reader.read_before_checked(deadline, &check)?;
+        check()?;
+        if now.pending == 0 && now.gate == 0 && prior.as_ref() == Some(&now) {
+            break now;
+        }
+        prior = (now.pending == 0 && now.gate == 0).then_some(now);
+        thread::sleep(Duration::from_millis(5));
+    };
+    progress.emit(crate::progress::CaseEvent::StepProgress {
+        index,
+        completed: 0,
+        total,
+    });
+    for completed in 1..=total {
+        check()?;
+        // Gesture polarity is the inverse of the wire-level encoder command.
+        let receipt = control
+            .encoder(channel as u32, -steps.signum())
+            .map_err(|e| e.to_string())?;
+        let mut acknowledged = false;
+        loop {
+            check()?;
+            session.poll()?;
+            let ack = control
+                .input_ack(l6ctl::InputSource::Panel, receipt.sequence)
+                .map_err(|e| e.to_string())?
+                .state;
+            acknowledged |= paced_acknowledged(ack)?;
+            let now = reader.read_before_checked(deadline, &check)?;
+            check()?;
+            let applied = paced_effect_state(&before, &now)?;
+            if acknowledged && applied {
+                before = now;
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        progress.emit(crate::progress::CaseEvent::StepProgress {
+            index,
+            completed,
+            total,
+        });
+    }
+    Ok(
+        json!({"channel":channel,"steps":steps,"applied":total,"dropped_counter":before.dropped,"fixture_module_sha256":before.fixture_module_sha256}),
+    )
+}
+
+#[cfg(test)]
+mod paced_effect_tests {
+    use super::*;
+    fn sample(applied: u32, dropped: u32, pending: u32) -> l6ctl::EffectEditorSnapshot {
+        l6ctl::EffectEditorSnapshot {
+            revision_guard: "test".into(),
+            fixture_module_sha256: "test".into(),
+            atomic: false,
+            applied,
+            dropped,
+            pending,
+            gate: 0,
+        }
+    }
+    #[test]
+    fn acknowledgement_fails_closed() {
+        assert!(!paced_acknowledged(l6ctl::InputAckState::Pending).unwrap());
+        assert!(paced_acknowledged(l6ctl::InputAckState::Applied).unwrap());
+        assert!(paced_acknowledged(l6ctl::InputAckState::Rejected).is_err());
+        assert!(paced_acknowledged(l6ctl::InputAckState::Unknown).is_err());
+    }
+    #[test]
+    fn requires_one_consumed_edit_and_rejects_drops_or_jumps_even_on_wrap() {
+        let before = sample(u32::MAX, 9, 0);
+        assert!(!paced_effect_state(&before, &sample(u32::MAX, 9, 0)).unwrap());
+        assert!(!paced_effect_state(&before, &sample(0, 9, 1)).unwrap());
+        let mut busy = sample(0, 9, 0);
+        busy.gate = 1;
+        assert!(!paced_effect_state(&before, &busy).unwrap());
+        assert!(paced_effect_state(&before, &sample(0, 9, 0)).unwrap());
+        assert!(paced_effect_state(&before, &sample(1, 9, 0)).is_err());
+        assert!(paced_effect_state(&before, &sample(0, 10, 0)).is_err());
+    }
 }

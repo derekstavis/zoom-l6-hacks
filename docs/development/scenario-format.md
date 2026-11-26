@@ -91,6 +91,8 @@ card-reader mode), stays unmarked.
 | Action | Fields | Meaning |
 | --- | --- | --- |
 | `wait` | `until = "boot-ready"`, `"mixer-ready"`, `"panel-settled"`, `"sd-patch-loaded"` or `"sd-patch-empty"` | Boot waits for the full LED sweep, then an L6 mode lamp or L6max pixels; prepared mixer readiness requires nonzero values on every visible ring and, on L6, a lit mode lamp; settling waits for one guest second of unchanged output; SD readiness waits for either the loader’s successful claim after installation or its completed scan without a module. Both use 10 guest seconds, 180 wall seconds and 10 ms wall-time polling. A separate assertion must check the expected module state or behavior |
+| `expect-sd-loader` | — | Freeze and validate the loader fixture, then check persistent loader and dispatch bytes in running MAIN |
+| `expect-sd-module` | `loaded`, optional `chain_count` | Immediately follow `expect-sd-loader` with matching deadlines; assert the registry, hook chains and relocated immutable module bytes using that fixture. Loaded modules wait for the loader claim; absent modules are inspected immediately. |
 | `expect-display-after-press` | — | Wait for the L6max display to change from the preceding press's baseline, within that press's original guest and wall deadlines. Use a reviewed image assertion when verifying a specific screen |
 | `wait-effect-mode` | `panel_mode`, `edit_mode` (at least one) | Wait for the loaded L6max effect module’s published editor state, bounded by 10 guest seconds and 180 wall seconds with 10 ms wall-time polling |
 | `wait-recorded-files` | `files` | Wait for each named WAV in the newest recorder project to have a complete RIFF container and at least two seconds of audio (20 guest seconds maximum, 180 wall seconds maximum, 100 ms wall-time polling). Check the audio contents separately |
@@ -216,7 +218,7 @@ message delivered just after the interval.
 | --- | --- | --- |
 | `sd-card` | `inserted` | QMP removal or insertion of the case's copied card |
 | `usb-descriptors` | — | Validate device/configuration descriptors and SET_CONFIGURATION |
-| `usb-midi` | `value` | Require the preceding encoder input's model-mapped channel-1 CC on USB MIDI IN, then send that CC with `value` |
+| `usb-midi-open`, `usb-midi-begin`, `usb-midi-expect-encoder`, `usb-midi-prepare-level`, `usb-midi-set-alternate`, `usb-midi-set-target`, `usb-midi-end` | `value` on prepare | Retain the previously enumerated endpoints before the encoder; observe its model-mapped CC on any USB cable, then set and verify channel 1 on cable 1. The transaction keeps a single guest/wall budget; an alternate value is sent first when the target is already present. |
 | `host-midi-round-trip` | — | Verify host MIDI input/output delivery through the configured host MIDI backend |
 | `host-midi-connect` | — | Connect the model's native mixer endpoint and start the first MIDI transaction |
 | `host-midi-drain` | `quiet_wall_ms` | Drain the retained native session until no legacy control observation arrives for the declared wall interval, within the transaction budget |
@@ -236,9 +238,10 @@ message delivered just after the interval.
 | `l6-midi-probe-inject` | — | Inject the guarded sync request; the guest must be restarted afterwards |
 | `l6-midi-probe-expect-hook` | — | Verify the request reaches the selected firmware or SD hook unchanged |
 | `l6-midi-probe-expect-replies` | — | Check the ordered configured CC replies, wait for the last sender return, and leave MAIN stopped |
-| `l6-midi-ring-pin-sweep` | `cc` | Sweep L6 MIDI CC values and compare ring-pin output |
-| `l6-midi-mute-indicators` | — | Check L6 MIDI mute-indicator responses |
-| `usb-sysex` | `requests` with `bytes`, optional `expect_prefix`, `expect_reply`, `min_reply_bytes`; optional `complete_on_match` | Send cable-2 SysEx requests and check replies. When `complete_on_match` is true, a positive request completes on its matching complete reply; no-reply requests, rejected-prefix checks and explicit reply windows still observe the full interval |
+| `l6-indicator-begin`, `l6-indicator-end` | Begin carries shared guest/wall deadline | Bound an L6 MIDI indicator campaign using the retained direct MIDI session. |
+| `l6-ring-sample`, `l6-ring-coverage` | `cc`, `value`, `guest_ms`, optional `ring`; coverage `mask` | Send a CC, observe for the declared guest duration, reject unrelated ring changes, and check the accumulated segment mask. |
+| `l6-mute-sample` | `cc`, `value`, `guest_ms`, `expected`, optional `reuse_previous` | Compare all eight panel indicator rows; `reuse_previous` uses the preceding sample as the baseline for a release edge. |
+| `usb-sysex-begin`, `usb-sysex-exchange`, `usb-sysex-end` | Begin carries the shared guest/wall timeout; exchanges carry `bytes` and optional `expect_prefix`, `expect_reply`, `min_reply_bytes`, `reject_prefixes`, `reply_timeout_ms`, and `complete_on_match` | Send cable-2 requests over the previously enumerated USB connection. Each exchange is reported separately; no-reply requests, rejected-prefix checks and explicit reply windows observe the full interval. |
 | `editor-pad-assignments` | — | Initialize the Editor session, enumerate WAV files, assign the first file on all four pads and verify assignment state through SysEx readback; requires a preceding `usb-descriptors` step |
 | `editor-pad-playback` | `pad` | L6-only assigned-pad playback check; requires preceding `editor-pad-assignments` |
 | `l6max-ui-pad-assignment` | `pad` | L6max UI assignment check; requires preceding `usb-descriptors` and an L6max-scoped scenario |
@@ -258,27 +261,38 @@ message delivered just after the interval.
 | `knob-dialog-ready` | — | Wait for the L6max recorder window, idle notification state and reviewed transport-control pixels before `knob-dialog-guard`; all steps use matching deadlines shared across the sequence |
 | `knob-dialog-guard` | — | Verify first-use rejection outside the recorder screen and return to the recorder; retain a screenshot and read state while QEMU is stopped |
 | `knob-dialog-baseline` | — | Select level mode and capture the baseline frame for the later race check |
+| `knob-probe-*` | probe for prepare, delta for trigger | Inject a guarded descriptor conflict, sample rejection, restore it and assert the saved state and heap |
 | `knob-dialog-preflight-begin` | — | Capture the original descriptors, resources and heap, and open the debugger for the following five probes |
-| `knob-dialog-preflight-descriptor` | — | Verify first use rejects a changed widget descriptor |
-| `knob-dialog-preflight-text-alias` | — | Verify first use rejects a conflicting text resource |
-| `knob-dialog-preflight-layer-collision` | — | Verify first use rejects a conflicting scene layer |
-| `knob-dialog-preflight-widget-layer` | — | Verify first use rejects a changed widget layer |
-| `knob-dialog-preflight-background-layer` | — | Verify first use rejects a changed background layer |
-| `knob-dialog-callback-race` | — | Verify callback-side preflight rejects descriptor drift while retaining the notification semaphore in the owned debugger context |
+| `knob-race-*` | capture duration and artifact | Observe registration and callback breakpoints, capture and sample rejected descriptor drift, then restore the descriptor before asserting while retaining the notification semaphore for first activation |
 | `knob-dialog-first-activation` | — | Wait for the display callback to return, then verify first activation and restore the notification semaphore |
-| `knob-dialog-active-display` | — | Turn the knob, capture the active display and preserve its frame and callback pointer |
-| `knob-dialog-level-demo` | — | Capture the bounded level sweep to at least 69% and back to 0% |
-| `knob-dialog-task-contexts` | — | Verify the input hook and display callback run in different FreeRTOS tasks, retaining their task IDs as evidence |
-| `knob-dialog-overlay-invariants` | — | Check the active window, borrowed descriptors, background pixels and heap against the saved baseline |
-| `knob-dialog-bitmap-zero` | — | Verify bitmap ID 0 safely short-circuits an injected display-task draw |
-| `knob-dialog-active-overlay` | — | Check the rendered value and stable overlay pixels after the bitmap probe |
-| `knob-dialog-locked-update` | — | Verify the dialog consumes and displays a level update while the notification semaphore is held, then restore the lock and check the mailbox |
+| `knob-active-*` | — | Turn the knob, capture the active display and preserve its frame and callback pointer |
+| `knob-level-*` | — | Capture the bounded level sweep to at least 69% and back to 0% |
+| `knob-task-*` | — | Verify the input hook and display callback run in different FreeRTOS tasks, retaining their task IDs as evidence |
+| `knob-overlay-*` | field for descriptor checks | Check the active window, saved descriptor snapshot, resource, background pixels, bitmap and heap against the baseline using the shared overlay fragment |
+| `knob-bitmap-*` | — | Verify bitmap ID 0 safely short-circuits an injected display-task draw |
+| `knob-overlay-reactivate`, `knob-overlay-wait-active` | delta for reactivation | Reopen the zero-level overlay without changing its value, then wait for its callback |
+| `knob-overlay-refresh-*` | — | Check the rendered value and stable overlay pixels after the bitmap probe |
+| `knob-lock-*` | — | Verify the dialog consumes and displays a level update while the notification semaphore is held, then restore the lock and check the mailbox |
 | `knob-dialog-mode-begin` / `knob-dialog-mode-end` | `scene` on begin | Scope each declared recorder scene inside the owned debugger transaction and its overall deadline. The subsequent Pan sweep requires the final declared parameter mode to be 8. |
 | `enqueue-tap` / `wait-input-applied` | `target`, `hold_ms` on enqueue | Enqueue a tap and wait for one aggregate APPLIED counter increment on the routed input channel, with a 10-second wall deadline. An increment is not proof of which client caused it. |
 | `wait-knob-parameter-mode` | `mode` | Wait for the guarded parameter selector with its 10,000-guest-ms / 180-second wall caps. |
 | `capture-display` / `expect-captured-display-image` | `guest_ms`, `artifact` / `image` | Capture a frame after the requested guest duration, then compare that exact frame once with a reviewed PNG and write its named artifact. |
 | `knob-dialog-expect-heap` | — | Compare allocation and free counters with the active-dialog baseline. The bounded mode walk validates the 1.10 allocator once; images replacing that allocator are rejected. |
-| `knob-dialog` | — | Patched L6max only; compare all ten parameter scenes with reviewed display images, then verify heap lifetime, busy-aware expiry, display cleanup, widget restoration and exact encoder reports |
+| `knob-dialog-adaptive` | `plan` | Execute the bounded, typed Pan and channel-2 attempts, reporting individual child operations while retaining the debugger context. |
+| `knob-dialog-inject-invalid-tag` / `knob-dialog-wait-invalid-tag` / `knob-dialog-confirm-invalid-tag` | `tag` on injection | Hand a tag to the callback while the debugger owns the guest, wait for the cleared mailbox with a deadline starting at handoff, and recheck while stopped. An interrupted handoff leaves the guest stopped. |
+| `knob-dialog-settle-level` | `artifact` | Turn channel 1 and wait until the changed level is displayed and the mailbox is clear; capture 50 ms guest-time frames under the bounded transaction. |
+| `knob-dialog-inject-invalid-signature` / `knob-dialog-observe-invalid-signature` / `knob-dialog-sample-invalid-signature` / `knob-dialog-restore-invalid-signature` | `guest_ms` on observation | Journal and inject the invalid state word, observe from guest resume, sample state and bitmap while stopped, then restore and assert rejection. Debugger cleanup restores outstanding writes on abort. |
+| `knob-dialog-prepare-notification` | — | Verify both text lines are visible and capture the borrowed text-resource baseline. |
+| `knob-dialog-arm-notification-callback` / `knob-dialog-wait-notification-callback` / `knob-dialog-invoke-notification` | `message` on invocation | Break on the active display callback, then invoke the stock notification with the retained debugger. The callback deadline starts when MAIN resumes. |
+| `knob-dialog-wait-notification-frame` / `knob-dialog-expect-notification-invariants` | `clear`, `artifact`, `guest_ms`, `limit_ms` on wait; `clear` on assertion | Capture until the notification appears or clears, using guest-time limits from the same invocation. Check the callback and borrowed text pointer and contents during overlap and after expiry. |
+| `knob-dialog-wait-expiry` | `interval_ms`, `limit_ms` | Wait for the dialog countdown to reach zero using guest-time polling and a grace limit anchored after notification expiry. |
+| `knob-dialog-expect-expiry-frame` | `after` | Compare the retained expiry capture against the saved post-notification scene (`true`) or notification (`false`) frame. Both comparisons use the same capture. |
+| `knob-dialog-snapshot-restoration` / `knob-dialog-check-restoration` / `knob-dialog-finish-restoration` | `field` on check | Take one ordered, non-atomic restoration snapshot; compare its individual fields with the saved preflight evidence and report all mismatches together. |
+| `knob-dialog-expect-restored-heap` | — | Check free bytes, allocation count and free count against the active-dialog heap baseline using the guarded allocator reader. |
+| `enqueue-encoder-no-ack` / `enqueue-tap-no-ack` | `channel`, `steps` / `target`, `hold_ms` | Enqueue navigation inputs without waiting for guest acknowledgement, preserving the diagnostic's original input timing. |
+| `release-captured-display` | — | Release a retained navigation capture after its artifact has been written, so the next capture can begin. |
+| `knob-dialog-snapshot-navigation` / `knob-dialog-check-navigation` | `field` on check | Capture the ordered, non-atomic navigation state, stopping at the first failed check, then assert each recorded field against the saved baseline. The window must have changed. |
+| `knob-dialog` | — | Finish the L6max diagnostic: check heap lifetime, notification expiry, display cleanup, widget restoration and exact encoder reports. The preceding mode walk checks reviewed display images. |
 | `knob-popup-open` | `first_steps`, `fallback_steps`, `attempt_guest_ms` | On the L6max recorder screen, try the channel 1 level knob by `first_steps`, then by `fallback_steps` if the popup does not open within `attempt_guest_ms`; retain the initial display and level as evidence |
 | `knob-popup-expect-open` | — | Require the dialog signature, callback and a changed display under the shared popup deadline |
 | `knob-popup-expect-value` | — | Require the rendered channel 1 level text and changed mixer value under the shared popup deadline; unlike the original monolithic action, fail promptly when its overall step deadline expires |
@@ -325,6 +339,11 @@ message delivered just after the interval.
 | `l6-input-sweep` | — | Sweep supported L6 controls and record their input responses |
 | `l6-din-sweep` | — | Sweep supported L6 DIN values and record dispatch behavior |
 | `l6max-input-timing` | — | Measure L6max input timing and applied acknowledgements |
+
+The shared indicator fragment budgets 10,000 guest ms and 90 wall seconds per
+campaign. Its fixed 6,000 guest ms of observations remain unchanged; the
+remaining budget covers runner work between samples and slower guests under
+parallel load. Both ceilings remain hard failures.
 
 Peripheral calls have bounded I/O and the step's guest/wall deadline. Callback,
 startup and settings operations require the known MAIN revision; existing
@@ -399,3 +418,9 @@ value is established by the state and firmware. Reverse movement in the
 quick scenario must restore channel 2's known initial mask `0x001`.
 
 The MIDI state request fragment begins a sync scope, drains until 500 ms of wall-time quiet, sends CC 127/127, asserts the reply, then ends the scope. The System menu fragment begins and asserts without a drain or request so a response queued by the menu action is preserved. Guest time is measured from scope start; the reply wall deadline begins after the send, or after preparation for a menu response. The shared guest and wall deadlines also bound preparation, the quiet drain and request.
+
+`effect-paced-turn` applies a signed number of one-step L6max effect-editor turns. Each turn waits for its exact panel acknowledgement and one consumed effect edit, with an empty mailbox and idle callback gate. A dropped edit, unexpected counter jump, lost acknowledgement, or the step's shared guest/wall deadline fails the step. The watcher shows completed turns; subsequent ring assertions retain their original baseline and report-count checks.
+
+The `l6max-panel-key-begin`, `l6max-panel-key-check`, `l6max-panel-key-input`, and `l6max-panel-key-end` actions describe the bounded sound-pad lookup and held-key sequence. The begin step owns the shared wall deadline, and pressed controls are released on scope cleanup.
+
+The `din-usb-begin`, `din-usb-attach`, `din-usb-send`, `din-usb-expect`, and `din-usb-end` actions keep a native DIN sender and an exclusive direct USB receiver alive across a forwarding test. Send and expect actions must pair the same bounded byte sequence; each expectation has a three-second wall deadline anchored after the corresponding send. The initial `delay` states the guest-time bridge settling period.

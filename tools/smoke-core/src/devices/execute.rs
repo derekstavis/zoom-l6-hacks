@@ -6,27 +6,146 @@ fn knob_dialog_phase(
     scope: Option<&KnobModeScope>,
     pending: Option<&PendingInput>,
     next_mode: Option<usize>,
-) -> Option<u8> {
+    final_phase: Option<u8>,
+    overlay_capture: bool,
+    locked_capture: bool,
+    active_display: bool,
+    probe_index: Option<usize>,
+    task_probe: bool,
+    task_capture: bool,
+    level_phase: Option<u8>,
+    bitmap_capture: Option<u8>,
+) -> Option<u16> {
     let fixed = match operation {
         Operation::KnobDialogGuard => Some(0),
         Operation::KnobDialogBaseline => Some(1),
         Operation::KnobDialogPreflightBegin => Some(2),
-        Operation::KnobDialogPreflightDescriptor => Some(3),
-        Operation::KnobDialogPreflightTextAlias => Some(4),
-        Operation::KnobDialogPreflightLayerCollision => Some(5),
-        Operation::KnobDialogPreflightWidgetLayer => Some(6),
-        Operation::KnobDialogPreflightBackgroundLayer => Some(7),
-        Operation::KnobDialogCallbackRace => Some(8),
-        Operation::KnobDialogFirstActivation => Some(9),
-        Operation::KnobDialogActiveDisplay => Some(10),
-        Operation::KnobDialogLevelDemo => Some(11),
-        Operation::KnobDialogTaskContexts => Some(12),
-        Operation::KnobDialogOverlayInvariants => Some(13),
-        Operation::KnobDialogBitmapZero => Some(14),
-        Operation::KnobDialogActiveOverlay => Some(15),
-        Operation::KnobDialogLockedUpdate => Some(16),
-        Operation::KnobDialogModeBegin { .. } | Operation::KnobDialog => {
-            next_mode.and_then(|index| u8::try_from(17 + index * 10).ok())
+        Operation::KnobProbePrepare { probe } => u16::try_from(3 + probe.index() * 6).ok(),
+        Operation::KnobProbeInject => probe_index.and_then(|i| u16::try_from(4 + i * 6).ok()),
+        Operation::KnobProbeTrigger { .. } => {
+            probe_index.and_then(|i| u16::try_from(5 + i * 6).ok())
+        }
+        Operation::KnobProbeSample => probe_index.and_then(|i| u16::try_from(6 + i * 6).ok()),
+        Operation::KnobProbeRestore => probe_index.and_then(|i| u16::try_from(7 + i * 6).ok()),
+        Operation::KnobProbeAssert => probe_index.and_then(|i| u16::try_from(8 + i * 6).ok()),
+        Operation::KnobRaceBegin => Some(33),
+        Operation::KnobRaceWaitRegistration => Some(34),
+        Operation::KnobRaceArmCallback => Some(35),
+        Operation::KnobRaceWaitCallback => Some(36),
+        Operation::KnobRaceCapture { .. } => Some(37),
+        Operation::KnobRaceSample => Some(38),
+        Operation::KnobRaceRestore => Some(39),
+        Operation::KnobRaceAssert => Some(40),
+        Operation::KnobDialogFirstActivation => Some(41),
+        Operation::KnobActiveBegin => Some(42),
+        Operation::EnqueueEncoderNoAck { .. } if active_display => Some(43),
+        Operation::CaptureDisplay { .. } if active_display => Some(44),
+        Operation::KnobActiveSampleCallbacks => Some(45),
+        Operation::KnobActiveCheckCallbacks => Some(46),
+        Operation::KnobActiveCheckFrame => Some(47),
+        Operation::KnobActiveFinish => Some(48),
+        Operation::KnobLevelBegin => Some(49),
+        Operation::KnobLevelStart { .. } => Some(50),
+        Operation::KnobLevelSweep { sweep } => Some(match sweep.direction {
+            crate::scenario::adaptive::LevelDirection::Up => 51,
+            crate::scenario::adaptive::LevelDirection::Down => 53,
+        }),
+        Operation::CaptureDisplay { .. } if scope.is_none() && level_phase == Some(2) => Some(52),
+        Operation::KnobLevelExpectZero => Some(54),
+        Operation::CaptureDisplay { .. } if scope.is_none() && level_phase == Some(5) => Some(55),
+        Operation::KnobLevelFinish => Some(56),
+        Operation::KnobTaskBegin => Some(57),
+        Operation::KnobTaskArmHook => Some(58),
+        Operation::EnqueueEncoderNoAck { .. } if task_probe => Some(59),
+        Operation::KnobTaskWaitHook => Some(60),
+        Operation::KnobTaskArmCallback => Some(61),
+        Operation::KnobTaskWaitCallback => Some(62),
+        Operation::KnobTaskAssertDistinct => Some(63),
+        Operation::KnobTaskRelease => Some(64),
+        Operation::CaptureDisplay { .. } if task_capture => Some(65),
+        Operation::KnobTaskFinish => Some(66),
+        Operation::KnobOverlayBegin => Some(67),
+        Operation::KnobOverlayCheckWindow => Some(68),
+        Operation::KnobOverlaySnapshotDescriptors => Some(69),
+        Operation::KnobOverlayFinishDescriptors => Some(75),
+        Operation::KnobOverlayCheckResource => Some(76),
+        Operation::KnobOverlayCheckCorners => Some(77),
+        Operation::KnobOverlayCheckSignature => Some(78),
+        Operation::KnobOverlayCheckBitmap => Some(79),
+        Operation::KnobOverlayCheckHeap => Some(80),
+        Operation::KnobOverlayFinish => Some(81),
+        Operation::KnobBitmapBegin => Some(82),
+        Operation::KnobBitmapCheckBackground { .. } => Some(83),
+        Operation::CaptureDisplay { .. } if bitmap_capture == Some(1) => Some(84),
+        Operation::KnobBitmapStoreBefore => Some(85),
+        Operation::KnobBitmapArm => Some(86),
+        Operation::KnobBitmapWait => Some(87),
+        Operation::KnobBitmapInvoke { .. } => Some(88),
+        Operation::CaptureDisplay { .. } if bitmap_capture == Some(6) => Some(89),
+        Operation::KnobBitmapCheckFrame => Some(90),
+        Operation::KnobBitmapCheckSignature => Some(91),
+        Operation::KnobBitmapCheckDescriptor => Some(92),
+        Operation::KnobBitmapFinish => Some(93),
+        Operation::KnobOverlayReactivate { .. } => Some(94),
+        Operation::KnobOverlayWaitActive => Some(95),
+        Operation::KnobOverlayRefreshBegin => Some(96),
+        Operation::KnobOverlayRefreshValue => Some(97),
+        Operation::CaptureDisplay { .. } if scope.is_none() && overlay_capture => Some(98),
+        Operation::KnobOverlayRefreshPixels => Some(99),
+        Operation::KnobOverlayRefreshFinish => Some(100),
+        Operation::KnobLockAcquire => Some(101),
+        Operation::KnobLockTrigger { .. } => Some(102),
+        Operation::KnobLockWait => Some(103),
+        Operation::KnobLockSample => Some(104),
+        Operation::KnobLockRestore => Some(105),
+        Operation::KnobLockAssert => Some(106),
+        Operation::CaptureDisplay { .. } if scope.is_none() && locked_capture => Some(107),
+        Operation::KnobLockFinish => Some(108),
+        Operation::KnobOverlayCheckDescriptor { field } => Some(
+            70 + match field {
+                crate::scenario::OverlayDescriptorField::Widget7 => 0,
+                crate::scenario::OverlayDescriptorField::Widget33 => 1,
+                crate::scenario::OverlayDescriptorField::Background10 => 2,
+                crate::scenario::OverlayDescriptorField::Background37 => 3,
+                crate::scenario::OverlayDescriptorField::Background48 => 4,
+            },
+        ),
+        Operation::KnobDialogModeBegin { .. } => {
+            next_mode.and_then(|index| u16::try_from(109 + index * 10).ok())
+        }
+        Operation::KnobDialogAdaptive { .. }
+        | Operation::KnobDialogInjectInvalidTag { .. }
+        | Operation::KnobDialogWaitInvalidTag
+        | Operation::KnobDialogConfirmInvalidTag
+        | Operation::KnobDialogSettleLevel { .. }
+        | Operation::KnobDialogInjectInvalidSignature
+        | Operation::KnobDialogObserveInvalidSignature { .. }
+        | Operation::KnobDialogSampleInvalidSignature
+        | Operation::KnobDialogRestoreInvalidSignature
+        | Operation::KnobDialogPrepareNotification
+        | Operation::KnobDialogArmNotificationCallback
+        | Operation::KnobDialogWaitNotificationCallback
+        | Operation::KnobDialogInvokeNotification { .. }
+        | Operation::KnobDialogWaitNotificationFrame { .. }
+        | Operation::KnobDialogExpectNotificationInvariants { .. }
+        | Operation::KnobDialogWaitExpiry { .. }
+        | Operation::KnobDialogExpectExpiryFrame { .. }
+        | Operation::KnobDialogSnapshotRestoration
+        | Operation::KnobDialogCheckRestoration { .. }
+        | Operation::KnobDialogFinishRestoration
+        | Operation::KnobDialogExpectRestoredHeap
+        | Operation::EnqueueEncoderNoAck { .. }
+        | Operation::EnqueueTapNoAck { .. }
+        | Operation::ReleaseCapturedDisplay
+        | Operation::KnobDialogSnapshotNavigation
+        | Operation::KnobDialogCheckNavigation { .. }
+        | Operation::KnobDialog => next_mode
+            .and_then(|index| u16::try_from(109 + index * 10 + usize::from(final_phase?)).ok()),
+        Operation::CaptureDisplay { .. }
+            if scope.is_none() && matches!(final_phase, Some(22 | 44 | 47)) =>
+        {
+            next_mode
+                .and_then(|index| u16::try_from(109 + index * 10 + usize::from(final_phase?)).ok())
         }
         _ => None,
     };
@@ -51,10 +170,10 @@ fn knob_dialog_phase(
         Operation::KnobDialogModeEnd => 9,
         _ => return None,
     };
-    Some(17 + scope.index as u8 * 10 + offset)
+    Some(109 + scope.index as u16 * 10 + offset)
 }
 
-type KnobDeadline = (Instant, u32, u32, u64, u8);
+type KnobDeadline = (Instant, u32, u32, u64, u16);
 
 fn advance_knob_deadline(is_terminal: bool, shared: KnobDeadline) -> Option<KnobDeadline> {
     if is_terminal {
@@ -63,6 +182,16 @@ fn advance_knob_deadline(is_terminal: bool, shared: KnobDeadline) -> Option<Knob
         let (start, guest_start, guest_budget, wall_budget, phase) = shared;
         Some((start, guest_start, guest_budget, wall_budget, phase + 1))
     }
+}
+
+fn sysex_deadline_expired(
+    elapsed: Duration,
+    guest_start: u32,
+    guest_now: u32,
+    guest_budget: u32,
+    wall_budget: u64,
+) -> bool {
+    elapsed > Duration::from_secs(wall_budget) || guest_now.wrapping_sub(guest_start) > guest_budget
 }
 
 /// Only positive, single-reply checks can end early. An explicit reply window
@@ -203,6 +332,7 @@ impl State {
     }
 
     pub fn restarted(&mut self) -> Result<(), String> {
+        let auxiliary_cleanup = self.abort_auxiliary_scopes();
         self.abort_midi_probe();
         if let Some(mut client) = self.native_midi.take() {
             client.release();
@@ -213,9 +343,31 @@ impl State {
         self.knob_popup = None;
         self.knob_dialog_deadline = None;
         self.knob_dialog_baseline = None;
-        self.abort_knob_preflight()?;
+        let debugger_cleanup = self.abort_knob_preflight();
         self.midi = None;
-        Ok(())
+        self.l6_indicator = None;
+        self.sysex_deadline = None;
+        self.usb_midi = None;
+        match (auxiliary_cleanup, debugger_cleanup) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+            (Err(error), Err(debugger)) => {
+                Err(format!("{error}; debugger cleanup failed: {debugger}"))
+            }
+        }
+    }
+    /// Release held inputs and owned transport scopes before the guest exits.
+    pub fn abort_auxiliary_scopes(&mut self) -> Result<(), String> {
+        let panel = self
+            .panel_keys
+            .take()
+            .map(|mut scope| scope.release())
+            .transpose();
+        self.din_usb = None;
+        self.sd_inspection = None;
+        self.usb_midi = None;
+        self.l6_indicator = None;
+        panel.map(|_| ())
     }
     pub fn has_knob_preflight(&self) -> bool {
         self.knob_dialog_preflight.is_some()
@@ -225,6 +377,9 @@ impl State {
     }
     pub fn has_midi_sync(&self) -> bool {
         self.midi_sync.is_some()
+    }
+    pub fn abort_usb_midi(&mut self) {
+        self.usb_midi = None;
     }
     pub fn abort_midi_sync(&mut self) {
         self.midi_sync = None;
@@ -236,6 +391,8 @@ impl State {
     }
     pub fn abort_knob_preflight(&mut self) -> Result<(), String> {
         self.knob_mode = None;
+        self.overlay_reader = None;
+        self.task_reader = None;
         self.knob_heap_reader = None;
         self.pending_input = None;
         self.captured_display = None;
@@ -252,6 +409,60 @@ impl State {
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
     ) -> Result<Value, String> {
+        if self.l6_indicator.is_some()
+            && !matches!(
+                operation,
+                Operation::L6RingSample { .. }
+                    | Operation::L6MuteSample { .. }
+                    | Operation::L6RingCoverage { .. }
+                    | Operation::L6IndicatorEnd
+            )
+        {
+            self.l6_indicator = None;
+            return Err("L6 indicator campaign interrupted by another operation".into());
+        }
+        if let Some(scope) = &self.l6_indicator {
+            if indicator_deadline_expired(
+                scope.start.elapsed(),
+                scope.guest_start,
+                guest_now(session),
+                scope.guest_budget,
+                scope.wall_budget,
+            ) {
+                self.l6_indicator = None;
+                return Err("L6 indicator campaign exceeded its shared deadline".into());
+            }
+        }
+        if self.sd_inspection.is_some() && !matches!(operation, Operation::ExpectSdModule { .. }) {
+            self.sd_inspection = None;
+            return Err("SD inspection interrupted before module assertion".into());
+        }
+        if let Some(context) = &self.sd_inspection {
+            if (context.guest_timeout_ms, context.wall_timeout_s)
+                != (guest_timeout_ms, wall_timeout_s)
+                || Instant::now() >= context.wall_deadline
+                || guest_now(session).wrapping_sub(context.guest_start) >= context.guest_timeout_ms
+            {
+                self.sd_inspection = None;
+                return Err("SD inspection exceeded its shared deadline or changed budgets".into());
+            }
+        }
+        let sd_shared = self.sd_inspection.as_ref().map(|context| {
+            (
+                context.wall_deadline,
+                context.guest_start,
+                context.guest_timeout_ms,
+            )
+        });
+        if self.sysex_deadline.is_some()
+            && !matches!(
+                operation,
+                Operation::UsbSysexExchange { .. } | Operation::UsbSysexEnd
+            )
+        {
+            self.sysex_deadline = None;
+            return Err("USB SysEx campaign interrupted by another operation".into());
+        }
         if self.l6_midi_probe.is_some()
             && !matches!(
                 operation,
@@ -262,6 +473,29 @@ impl State {
         {
             self.l6_midi_probe.take();
             return Err("L6 MIDI probe interrupted by another operation".into());
+        }
+        if self.din_usb.is_some()
+            && !matches!(
+                operation,
+                Operation::DinUsbAttach
+                    | Operation::DinUsbSend { .. }
+                    | Operation::DinUsbExpect { .. }
+                    | Operation::DinUsbEnd
+            )
+        {
+            self.din_usb.take();
+            return Err("DIN USB forwarding scope interrupted".into());
+        }
+        if self.panel_keys.is_some()
+            && !matches!(
+                operation,
+                Operation::L6maxPanelKeyCheck { .. }
+                    | Operation::L6maxPanelKeyInput { .. }
+                    | Operation::L6maxPanelKeyEnd
+            )
+        {
+            self.panel_keys.take();
+            return Err("panel key scope interrupted by another operation".into());
         }
         if self.midi_sync.is_some()
             && !matches!(
@@ -301,6 +535,29 @@ impl State {
             self.knob_mode.as_ref(),
             self.pending_input.as_ref(),
             self.knob_dialog_preflight.as_ref().map(knob_mode_index),
+            self.knob_dialog_preflight.as_ref().map(final_phase),
+            self.knob_dialog_preflight
+                .as_ref()
+                .is_some_and(expecting_overlay_refresh),
+            self.knob_dialog_preflight
+                .as_ref()
+                .is_some_and(expecting_locked_capture),
+            self.knob_dialog_preflight
+                .as_ref()
+                .is_some_and(expecting_active_display),
+            self.knob_dialog_preflight
+                .as_ref()
+                .map(preflight_probe_index),
+            self.knob_dialog_preflight
+                .as_ref()
+                .is_some_and(expecting_task_probe),
+            self.knob_dialog_preflight
+                .as_ref()
+                .is_some_and(expecting_task_capture),
+            self.knob_dialog_preflight.as_ref().and_then(level_phase),
+            self.knob_dialog_preflight
+                .as_ref()
+                .and_then(bitmap_capture_phase),
         );
         let deadline_operation = expected.map(|_| matches!(operation, Operation::KnobDialog));
         if expected.is_none() && self.has_knob_preflight() {
@@ -364,12 +621,22 @@ impl State {
             Ok(value) => value,
             Err(error) => {
                 let primary = error.to_string();
+                self.l6_indicator = None;
+                self.sysex_deadline = None;
+                self.abort_usb_midi();
                 return match self.abort_knob_preflight() {
                     Ok(()) => Err(primary),
                     Err(cleanup) => Err(format!("{primary}; debugger cleanup failed: {cleanup}")),
                 };
             }
         };
+        if let Some((wall_deadline, guest_start, guest_budget)) = sd_shared {
+            if Instant::now() >= wall_deadline
+                || guest_now(session).wrapping_sub(guest_start) >= guest_budget
+            {
+                return Err("SD inspection exceeded its shared deadline".into());
+            }
+        }
         let elapsed = control
             .input_status(l6ctl::InputSource::Panel)
             .map_err(|e| e.to_string())?
@@ -411,7 +678,7 @@ impl State {
         operation: Operation,
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
-        shared: Option<(Instant, u32, u32, u64, u8)>,
+        shared: Option<(Instant, u32, u32, u64, u16)>,
         operation_start: (Instant, u32),
     ) -> Result<Value, Box<dyn std::error::Error>> {
         match operation {
@@ -490,6 +757,17 @@ impl State {
                     thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
                 }
             }
+            Operation::EffectPacedTurn { channel, steps } => Ok(effect_paced_turn(
+                options,
+                session,
+                channel,
+                steps,
+                guest_timeout_ms,
+                wall_timeout_s,
+                self.paced_progress.clone(),
+                self.paced_index,
+            )
+            .map_err(std::io::Error::other)?),
             Operation::EffectParameterEdit { encoder, steps } => {
                 Ok(effect_parameter_edit(options, session, encoder, steps)
                     .map_err(std::io::Error::other)?)
@@ -561,94 +839,128 @@ impl State {
                 let registry = wait_sd_patch_empty(session, guest_timeout_ms, wall_timeout_s)?;
                 Ok(json!({"registry": format!("{registry:#010x}")}))
             }
-            Operation::ExpectSdPatch {
+            Operation::ExpectSdLoader => {
+                if self.sd_inspection.is_some() {
+                    return Err("SD inspection already active".into());
+                }
+                let wall_deadline = operation_start
+                    .0
+                    .checked_add(Duration::from_secs(wall_timeout_s))
+                    .ok_or("SD inspection deadline overflow")?;
+                let main = selected_main_image(options).map_err(std::io::Error::other)?;
+                let fixture = freeze_sd_fixture(options, &main, session.engine.model())
+                    .map_err(std::io::Error::other)?;
+                let guarded = verify_sd_loader_hooks(
+                    session,
+                    &main,
+                    &fixture.edits.0,
+                    wall_deadline,
+                    operation_start.1,
+                    guest_timeout_ms,
+                )
+                .map_err(std::io::Error::other)?;
+                self.sd_inspection = Some(sd::SdInspectionContext {
+                    fixture,
+                    wall_deadline,
+                    guest_start: operation_start.1,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                });
+                Ok(json!({"guarded_hooks":guarded}))
+            }
+            Operation::ExpectSdModule {
                 loaded,
                 chain_count,
             } => {
-                let main = selected_main_image(options).map_err(std::io::Error::other)?;
+                let context = self
+                    .sd_inspection
+                    .take()
+                    .ok_or("SD module assertion needs preceding loader assertion")?;
+                let fixture = context.fixture;
+                let inspection_deadline = context.wall_deadline;
+                let inspection_guest_start = context.guest_start;
+                let inspection_guest_budget = context.guest_timeout_ms;
+                let sd::FrozenSdFixture {
+                    edits: fixture,
+                    loader_report: frozen_loader,
+                    patch_report: frozen_patch,
+                    chain_first: frozen_chain,
+                } = fixture;
                 let (edits, link_base, payload, _, _relocations, module_hooks, module_images) =
-                    sd_fixture_edits(options, &main, session.engine.model())
-                        .map_err(std::io::Error::other)?;
-                let qmp = &session.engine.management[0];
-                let image_base = session.engine.model().main_base();
-                // The patch loader's own hook sites (patches/patch-loader),
-                // which its build report does not list.
-                let loader_calls: &[u32] = match session.engine.model() {
-                    l6fw::Model::L6 => &[0x8000_9a60, 0x8000_9aa0],
-                    l6fw::Model::L6max => &[
-                        l6max::sys_main_startup_initialize,
-                        0x8000_e9fa,
-                        0x8000_ea24,
-                        0x8001_0118,
-                        0x8002_bc7e,
-                        0x8000_ebac,
-                    ],
-                };
-                for &address in loader_calls {
-                    let offset = (address - image_base) as usize;
-                    let expected = main
-                        .get(offset..offset + 4)
-                        .ok_or("Patch loader image too short")?;
-                    if qmp.read_memory(0, address, 4)? != expected {
-                        return Err(
-                            format!("persistent loader hook missing at {address:#010x}").into()
-                        );
-                    }
-                }
-                for (address, original, _entry_offset) in &edits {
-                    let offset = (*address - image_base) as usize;
-                    let expected = &main[offset..offset + original.len()];
-                    let actual = qmp.read_memory(0, *address, expected.len())?;
-                    if actual != expected {
-                        return Err(format!(
-                            "persistent SD dispatch stub missing at {address:#010x}"
-                        )
-                        .into());
-                    }
-                }
+                    fixture;
                 // Without a card mount since the last reset the loader has no
                 // registry, so every dispatch stub takes the stock path.
                 // A successful loader claim is published only after the SD
                 // scan and hook installation have finished. Wait for that
                 // signal when a module is expected; absence checks remain
                 // immediate and require their own observation window.
-                let registry = if loaded {
-                    Some(wait_sd_patch_loaded(
+                let control = l6ctl::OwnedControl::new(&session.engine);
+                let reader = control
+                    .sd_loader_reader(inspection_deadline)
+                    .map_err(std::io::Error::other)?;
+                let read_live =
+                    |address: u32, length: usize| -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+                        reader
+                            .read_chunk_cancellable(address, length, inspection_deadline, || {
+                                guest_now(session).wrapping_sub(inspection_guest_start)
+                                    >= inspection_guest_budget
+                            })
+                            .map_err(|e| std::io::Error::other(e).into())
+                    };
+                let typed_snapshot = if loaded {
+                    wait_sd_loader_snapshot(
                         session,
-                        guest_timeout_ms,
-                        wall_timeout_s,
-                    )?)
+                        &reader,
+                        inspection_deadline,
+                        inspection_guest_start,
+                        inspection_guest_budget,
+                    )
+                    .map_err(std::io::Error::other)?
                 } else {
-                    sd_registry_if_allocated(qmp, session.engine.model())?
+                    reader
+                        .snapshot_cancellable(inspection_deadline, || {
+                            guest_now(session).wrapping_sub(inspection_guest_start)
+                                >= inspection_guest_budget
+                        })
+                        .map_err(std::io::Error::other)?
                 };
+                let registry = typed_snapshot.registry;
                 let Some(registry) = registry else {
                     if loaded {
                         return Err("the Patch loader has not allocated its registry".into());
                     }
                     return Ok(json!({"loaded":false,"registry":null,"guarded_hooks":edits.len()}));
                 };
-                let loaded_base =
-                    u32::from_le_bytes(qmp.read_memory(0, registry + 160, 4)?.try_into().unwrap());
-                let loaded_len =
-                    u32::from_le_bytes(qmp.read_memory(0, registry + 164, 4)?.try_into().unwrap());
+                let inspect_chain = |record| -> Result<_, Box<dyn std::error::Error>> {
+                    sd_typed_site_chain(
+                        &reader,
+                        session,
+                        registry,
+                        record,
+                        inspection_deadline,
+                        inspection_guest_start,
+                        inspection_guest_budget,
+                    )
+                    .map_err(|e| std::io::Error::other(e).into())
+                };
+                let slot_for = |address| {
+                    sd_frozen_handler_slot(&frozen_loader, registry, address)
+                        .map_err(std::io::Error::other)
+                };
+                let loaded_base = typed_snapshot.module_base.ok_or("SD module base missing")?;
+                let loaded_len = typed_snapshot
+                    .module_len
+                    .ok_or("SD module length missing")?;
                 let known_module_size = module_images
                     .iter()
                     .any(|(module_payload, _, _)| module_payload.len() == loaded_len as usize);
                 if loaded != (loaded_base != 0) || (loaded && !known_module_size) {
-                    let stage = u32::from_le_bytes(
-                        qmp.read_memory(0, registry + 4, 4)?.try_into().unwrap(),
-                    );
-                    return Err(format!(
-                        "SD allocation state loaded={loaded}, base={loaded_base:#010x}, len={loaded_len}, loader stage={stage:#x}"
-                    )
-                    .into());
+                    let stage = typed_snapshot.stage.unwrap_or_default();
+                    return Err(format!("SD allocation state loaded={loaded}, base={loaded_base:#010x}, len={loaded_len}, loader stage={stage:#x}").into());
                 }
-                let claim =
-                    u32::from_le_bytes(qmp.read_memory(0, registry + 8, 4)?.try_into().unwrap());
+                let claim = typed_snapshot.claim.ok_or("SD claim missing")?;
                 if (claim == 1) != loaded {
-                    let stage = u32::from_le_bytes(
-                        qmp.read_memory(0, registry + 4, 4)?.try_into().unwrap(),
-                    );
+                    let stage = typed_snapshot.stage.unwrap_or_default();
                     return Err(format!(
                         "SD module loaded={loaded}, claim={claim:#x}, loader stage={stage:#x}"
                     )
@@ -674,10 +986,8 @@ impl State {
                     *expected_chains.entry(module_hook.address).or_default() += 1;
                 }
                 for (address, module_count) in expected_chains {
-                    let record =
-                        sd_dynamic_handler_slot(options, session.engine.model(), registry, address)
-                            .map_err(std::io::Error::other)?;
-                    let (chain, _) = sd_site_chain(qmp, record)?;
+                    let record = slot_for(address)?;
+                    let (chain, _) = inspect_chain(record)?;
                     let expected_count = if !loaded {
                         0
                     } else if Some(address) == expected_function {
@@ -694,17 +1004,14 @@ impl State {
                     }
                 }
 
-                let (registered_count, chain_head, chain_links) = if let Some(address) =
-                    expected_function
-                {
-                    let record =
-                        sd_dynamic_handler_slot(options, session.engine.model(), registry, address)
-                            .map_err(std::io::Error::other)?;
-                    let (chain, links) = sd_site_chain(qmp, record)?;
-                    (chain.count, chain.handler, links)
-                } else {
-                    (0, 0, Vec::new())
-                };
+                let (registered_count, chain_head, chain_links) =
+                    if let Some(address) = expected_function {
+                        let record = slot_for(address)?;
+                        let (chain, links) = inspect_chain(record)?;
+                        (chain.count, chain.handler, links)
+                    } else {
+                        (0, 0, Vec::new())
+                    };
                 if loaded != (registered_count != 0)
                     || chain_count.is_some_and(|expected| registered_count != u32::from(expected))
                 {
@@ -733,15 +1040,8 @@ impl State {
                     .collect();
                 for (address, _, _entry_offset) in &edits {
                     // Every edit is one of the module's hooks (sd_fixture_edits).
-                    let slot = sd_dynamic_handler_slot(
-                        options,
-                        session.engine.model(),
-                        registry,
-                        *address,
-                    )
-                    .map_err(std::io::Error::other)?;
-                    let handler =
-                        u32::from_le_bytes(qmp.read_memory(0, slot, 4)?.try_into().unwrap());
+                    let slot = slot_for(*address)?;
+                    let handler = u32::from_le_bytes(read_live(slot, 4)?.try_into().unwrap());
                     let valid = if !loaded {
                         handler == 0
                     } else if Some(*address) == expected_function {
@@ -761,12 +1061,8 @@ impl State {
                         .iter()
                         .find(|hook| Some(hook.address) == expected_function)
                         .ok_or("dynamic patch bundle has no hook record")?;
-                    let root = sd_fixture_root(options).map_err(std::io::Error::other)?;
-                    let ordered_chain = root.join(crate::fixture_layout::CHAIN_FIRST).is_file();
-                    let patch_report: Value = serde_json::from_slice(&fs::read(
-                        root.join(crate::fixture_layout::SD_BUNDLE_BUILD)
-                            .join(crate::fixture_layout::PATCH_REPORT),
-                    )?)?;
+                    let ordered_chain = frozen_chain.is_some();
+                    let patch_report = frozen_patch.as_ref().ok_or("dynamic report missing")?;
                     let patch_for_size = |size: usize| {
                         patch_report["patches"]
                             .as_array()
@@ -811,10 +1107,7 @@ impl State {
                     } else {
                         None
                     };
-                    let loader_report: Value = serde_json::from_slice(&fs::read(
-                        root.join(crate::fixture_layout::LOADER_BUILD)
-                            .join(crate::fixture_layout::PATCH_REPORT),
-                    )?)?;
+                    let loader_report = &frozen_loader;
                     let _loader_patch = loader_report["patches"]
                         .as_array()
                         .and_then(|patches| {
@@ -880,9 +1173,8 @@ impl State {
                         let mutable_symbol_ranges = mutable_ranges_for_size(module_payload.len());
                         let expected_next =
                             chain_links.get(index + 1).map_or(fallback, |next| next.0);
-                        let actual_next = u32::from_le_bytes(
-                            qmp.read_memory(0, *next_slot, 4)?.try_into().unwrap(),
-                        );
+                        let actual_next =
+                            u32::from_le_bytes(read_live(*next_slot, 4)?.try_into().unwrap());
                         if actual_next != expected_next {
                             return Err(format!(
                                 "hook {index} continues to {actual_next:#010x}, expected {expected_next:#010x}"
@@ -893,7 +1185,9 @@ impl State {
                         if ordered_chain && index == 0 {
                             // The first copy names its own package, so its
                             // code is the fixture file's, not the bundle's.
-                            let file = fs::read(root.join(crate::fixture_layout::CHAIN_FIRST))?;
+                            let file = frozen_chain
+                                .as_ref()
+                                .ok_or("ordered-chain fixture missing")?;
                             let start = patch_abi::dynamic::HEADER_LEN_V1;
                             expected = file
                                 .get(start..start + expected.len())
@@ -912,13 +1206,13 @@ impl State {
                                 continue;
                             }
                             let slot = *module + payload_hook.next_slot_offset;
-                            let target = qmp.read_memory(0, slot, 4)?;
+                            let target = read_live(slot, 4)?;
                             let slot_offset = payload_hook.next_slot_offset as usize;
                             expected[slot_offset..slot_offset + 4].copy_from_slice(&target);
                         }
                         for (chunk_index, chunk) in expected.chunks(4096).enumerate() {
                             let address = *module + (chunk_index * 4096) as u32;
-                            let actual = qmp.read_memory(0, address, chunk.len())?;
+                            let actual = read_live(address, chunk.len())?;
                             let mismatch = actual.iter().zip(chunk).enumerate().find(
                                 |(index, (actual, expected))| {
                                     let module_offset = chunk_index * 4096 + index;
@@ -961,13 +1255,13 @@ impl State {
                                 continue;
                             }
                             let slot = loaded_base + latest_hook.next_slot_offset;
-                            let target = qmp.read_memory(0, slot, 4)?;
+                            let target = read_live(slot, 4)?;
                             let offset = latest_hook.next_slot_offset as usize;
                             expected[offset..offset + 4].copy_from_slice(&target);
                         }
                         for (chunk_index, chunk) in expected.chunks(4096).enumerate() {
                             let address = loaded_base + (chunk_index * 4096) as u32;
-                            let actual = qmp.read_memory(0, address, chunk.len())?;
+                            let actual = read_live(address, chunk.len())?;
                             let mismatch = actual.iter().zip(chunk).enumerate().any(
                                 |(index, (actual, expected))| {
                                     let module_offset = chunk_index * 4096 + index;
@@ -1595,12 +1889,107 @@ impl State {
             Operation::L6DinSweep => {
                 Ok(run_l6_din_sweep(session, options).map_err(std::io::Error::other)?)
             }
-            Operation::L6maxInputTiming => {
-                Ok(run_l6max_input_timing(session, options).map_err(std::io::Error::other)?)
+            Operation::L6maxInputTiming => Ok(run_l6max_input_timing(
+                session,
+                options,
+                operation_start,
+                guest_timeout_ms,
+                wall_timeout_s,
+            )
+            .map_err(std::io::Error::other)?),
+            Operation::L6maxPanelKeyBegin => {
+                if session.engine.model() != l6fw::Model::L6max || self.panel_keys.is_some() {
+                    return Err("panel key scope requires a fresh L6max".into());
+                }
+                let inputs = session
+                    .engine
+                    .inputs
+                    .as_ref()
+                    .ok_or("panel inputs unavailable")?
+                    .clone();
+                self.panel_keys = Some(PanelKeyScope {
+                    deadline: Instant::now() + Duration::from_secs(wall_timeout_s),
+                    held: None,
+                    inputs,
+                });
+                Ok(json!({"started":true}))
             }
-            Operation::L6maxPanelKeyMap => {
-                Ok(run_l6max_panel_key_map(session, wall_timeout_s)
-                    .map_err(std::io::Error::other)?)
+            Operation::L6maxPanelKeyInput { target, pressed } => {
+                let scope = self.panel_keys.as_mut().ok_or("missing panel key scope")?;
+                if Instant::now() >= scope.deadline {
+                    return Err("panel key scope deadline exceeded".into());
+                }
+                if (pressed && scope.held.is_some()) || (!pressed && scope.held != Some(target)) {
+                    return Err("panel key held state mismatch".into());
+                }
+                let before = scope.inputs.panel.snapshot().applied;
+                let control = l6ctl::OwnedControl::new(&session.engine);
+                if pressed {
+                    scope.held = Some(target);
+                    control.down(target, 0)?;
+                } else {
+                    control.up(target)?;
+                }
+                let deadline = scope.deadline.min(Instant::now() + Duration::from_secs(10));
+                loop {
+                    session.poll()?;
+                    if Instant::now() >= deadline {
+                        return Err("panel key input acknowledgement timed out".into());
+                    }
+                    if scope.inputs.panel.snapshot().applied > before {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+                if !pressed {
+                    scope.held = None;
+                }
+                Ok(json!({"target":target,"pressed":pressed}))
+            }
+            Operation::L6maxPanelKeyCheck {
+                code,
+                bit,
+                word_index,
+                active,
+                wait,
+            } => {
+                let scope = self.panel_keys.as_ref().ok_or("missing panel key scope")?;
+                let control = l6ctl::OwnedControl::new(&session.engine);
+                let start = guest_now(session);
+                loop {
+                    if Instant::now() >= scope.deadline {
+                        return Err("panel key scope deadline exceeded".into());
+                    }
+                    session.poll()?;
+                    let snapshot = control.panel_key(code)?;
+                    if Instant::now() >= scope.deadline {
+                        return Err("panel key scope deadline exceeded".into());
+                    }
+                    let mask = 1u32.checked_shl(snapshot.bit).unwrap_or(0);
+                    if bit >= 32
+                        || snapshot.bit != bit
+                        || snapshot.word_index != word_index
+                        || word_index >= 6
+                    {
+                        return Err("unexpected panel key lookup".into());
+                    }
+                    let observed = snapshot.words[word_index as usize] & mask != 0;
+                    if observed == active {
+                        break Ok(serde_json::to_value(snapshot)?);
+                    }
+                    if !wait || guest_now(session).wrapping_sub(start) >= 5_000 {
+                        return Err(format!("panel key {code:#x} did not become {active}").into());
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
+            Operation::L6maxPanelKeyEnd => {
+                let scope = self.panel_keys.as_ref().ok_or("missing panel key scope")?;
+                if scope.held.is_some() || Instant::now() >= scope.deadline {
+                    return Err("panel key scope incomplete or expired".into());
+                }
+                self.panel_keys.take();
+                Ok(json!({"complete":true}))
             }
             Operation::L6maxChannelSignalPwm => Ok(run_l6max_channel_signal_pwm(
                 session,
@@ -1799,102 +2188,22 @@ impl State {
                     json!({"vid":u16::from_le_bytes([descriptor[8],descriptor[9]]),"pid":u16::from_le_bytes([descriptor[10],descriptor[11]]),"configuration_bytes":config.len(),"interfaces":config[4]}),
                 )
             }
-            Operation::UsbMidi { value } => {
-                let usb = session
-                    .engine
-                    .usb
-                    .as_ref()
-                    .ok_or("USB backend unavailable")?;
-                let endpoints = self
-                    .midi
-                    .ok_or("usb-midi needs a preceding USB MIDI enumeration")?;
-                let cc = if session.engine.model() == l6fw::Model::L6 {
-                    0x53
-                } else {
-                    0x51
-                };
-                let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
-                let start = session
-                    .engine
-                    .inputs
-                    .as_ref()
-                    .unwrap()
-                    .panel
-                    .snapshot()
-                    .guest_ms;
-                let mut midi = Vec::new();
-                loop {
-                    session.poll()?;
-                    match usb.try_receive(endpoints.input, 16384) {
-                        Ok(bytes) => {
-                            // The preceding encoder step's channel-1 CC.
-                            let matching = l6max_host::usb_midi::decode(&bytes)?
-                                .iter()
-                                .any(|(_, msg)| msg.starts_with(&[0xb0, cc]));
-                            midi.extend_from_slice(&bytes);
-                            fs::write(options.logs.join("usb-midi.bin"), &midi)?;
-                            if matching {
-                                break;
-                            }
-                        }
-                        Err(e) if e.raw_os_error() == Some(libc::EAGAIN) => {}
-                        Err(e) => return Err(e.into()),
-                    }
-                    if Instant::now() > deadline
-                        || session
-                            .engine
-                            .inputs
-                            .as_ref()
-                            .unwrap()
-                            .panel
-                            .snapshot()
-                            .guest_ms
-                            .wrapping_sub(start)
-                            > guest_timeout_ms
-                    {
-                        return Err("USB MIDI receive deadline exceeded".into());
-                    }
-                    thread::sleep(Duration::from_millis(5));
-                }
-                fs::write(options.logs.join("usb-midi.bin"), &midi)?;
-                // Confirm that MAIN consumed the incoming CC. If the mixer is
-                // already at the requested value, first send a different one
-                // so the final check cannot succeed on stale state.
-                let level_address = match session.engine.model() {
-                    l6fw::Model::L6 => l6::mixer_state_tail,
-                    l6fw::Model::L6max => l6max::mixer_channel_levels,
-                };
-                let qmp = &session.engine.management[0];
-                let send_and_wait = |level: u8| -> Result<(), Box<dyn std::error::Error>> {
-                    const GUEST_TIMEOUT_MS: u32 = 10_000;
-                    const WALL_TIMEOUT_S: u64 = 180;
-                    const POLL_INTERVAL_MS: u64 = 10;
-                    let start = guest_now(session);
-                    let deadline =
-                        Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
-                    usb.send(endpoints.output, &[0x1b, 0xb0, cc, level])?;
-                    loop {
-                        session.poll()?;
-                        if qmp.read_memory(0, level_address, 1)? == [level] {
-                            return Ok(());
-                        }
-                        if guest_now(session).wrapping_sub(start)
-                            >= guest_timeout_ms.min(GUEST_TIMEOUT_MS)
-                            || Instant::now() >= deadline
-                        {
-                            return Err(
-                                format!("USB MIDI channel level did not become {level}").into()
-                            );
-                        }
-                        thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
-                    }
-                };
-                if qmp.read_memory(0, level_address, 1)? == [value] {
-                    send_and_wait(if value == 0 { 127 } else { 0 })?;
-                }
-                send_and_wait(value)?;
-                Ok(json!({"received":midi,"sent":[0x1b,0xb0,cc,value]}))
-            }
+            operation @ (Operation::UsbMidiOpen
+            | Operation::UsbMidiBegin
+            | Operation::UsbMidiExpectEncoder
+            | Operation::UsbMidiPrepareLevel { .. }
+            | Operation::UsbMidiSetAlternate
+            | Operation::UsbMidiSetTarget
+            | Operation::UsbMidiEnd) => self
+                .run_usb_midi_steps(
+                    session,
+                    options,
+                    operation,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                    operation_start,
+                )
+                .map_err(Into::into),
             Operation::HostMidiConnect => self.run_declarative_midi(
                 session,
                 Operation::HostMidiConnect,
@@ -1910,6 +2219,7 @@ impl State {
                 operation,
                 guest_timeout_ms,
                 wall_timeout_s,
+                shared,
             ),
             operation @ (Operation::HostMidiBegin
             | Operation::HostMidiSyncBegin
@@ -1950,9 +2260,6 @@ impl State {
                 Some(cable),
                 expect_ring_change,
             ),
-            Operation::L6DinUsbForwarding => {
-                self.run_l6_din_usb_forwarding(session, wall_timeout_s)
-            }
             operation @ (Operation::L6MidiProbeBegin
             | Operation::L6MidiProbeInject
             | Operation::L6MidiProbeExpectHook
@@ -1963,25 +2270,152 @@ impl State {
                 guest_timeout_ms,
                 wall_timeout_s,
             )?),
-            Operation::L6MidiRingPinSweep { cc } => {
-                self.run_l6_midi_ring_pin_sweep(session, cc, wall_timeout_s)
+            operation @ (Operation::DinUsbBegin
+            | Operation::DinUsbAttach
+            | Operation::DinUsbSend { .. }
+            | Operation::DinUsbExpect { .. }
+            | Operation::DinUsbEnd) => self.run_din_usb(session, operation),
+            Operation::L6IndicatorBegin => {
+                if session.engine.model() != l6fw::Model::L6 {
+                    return Err("L6 indicator campaign requires L6".into());
+                }
+                if self.host_midi_client().is_none() {
+                    return Err(
+                        "L6 indicator campaign requires a retained direct USB MIDI session".into(),
+                    );
+                }
+                self.l6_indicator = Some(L6IndicatorScope {
+                    start: operation_start.0,
+                    guest_start: operation_start.1,
+                    guest_budget: guest_timeout_ms,
+                    wall_budget: wall_timeout_s,
+                    changed_segments: 0,
+                    last_mute: None,
+                });
+                Ok(json!({"started":true}))
             }
-            Operation::L6MidiMuteIndicators => {
-                self.run_l6_midi_mute_indicators(session, wall_timeout_s)
+            Operation::L6RingSample {
+                cc,
+                value,
+                guest_ms,
+                ring,
+            } => Ok(self.run_l6_indicator_sample(session, cc, value, guest_ms, ring, None, false)?),
+            Operation::L6MuteSample {
+                cc,
+                value,
+                guest_ms,
+                expected,
+                reuse_previous,
+            } => Ok(self.run_l6_indicator_sample(
+                session,
+                cc,
+                value,
+                guest_ms,
+                None,
+                Some(expected),
+                reuse_previous,
+            )?),
+            Operation::L6RingCoverage { mask } => {
+                let actual = self
+                    .l6_indicator
+                    .as_ref()
+                    .ok_or("L6 indicator campaign is not active")?
+                    .changed_segments;
+                if actual != mask {
+                    return Err(format!(
+                        "L6 changed ring segments {actual:#05x}, expected {mask:#05x}"
+                    )
+                    .into());
+                }
+                Ok(json!({"changed_segments":actual}))
             }
-            Operation::UsbSysex {
-                requests,
+            Operation::L6IndicatorEnd => {
+                self.l6_indicator
+                    .take()
+                    .ok_or("L6 indicator campaign is not active")?;
+                Ok(json!({"finished":true}))
+            }
+            Operation::UsbSysexBegin => {
+                if self.midi.is_none() {
+                    return Err("usb-sysex needs a preceding USB MIDI enumeration".into());
+                }
+                let guest = session
+                    .engine
+                    .inputs
+                    .as_ref()
+                    .ok_or("panel input unavailable")?
+                    .panel
+                    .snapshot()
+                    .guest_ms;
+                self.sysex_deadline =
+                    Some((Instant::now(), guest, guest_timeout_ms, wall_timeout_s));
+                Ok(json!({"started": true}))
+            }
+            Operation::UsbSysexEnd => {
+                let (start, guest, budget, wall) = self
+                    .sysex_deadline
+                    .take()
+                    .ok_or("USB SysEx campaign is not active")?;
+                if sysex_deadline_expired(
+                    start.elapsed(),
+                    guest,
+                    session
+                        .engine
+                        .inputs
+                        .as_ref()
+                        .ok_or("panel input unavailable")?
+                        .panel
+                        .snapshot()
+                        .guest_ms,
+                    budget,
+                    wall,
+                ) {
+                    return Err("USB SysEx deadline exceeded".into());
+                }
+                Ok(json!({"finished": true}))
+            }
+            Operation::UsbSysexExchange {
+                request,
                 complete_on_match,
             } => {
-                let usb = session
-                    .engine
-                    .usb
-                    .as_ref()
-                    .ok_or("USB backend unavailable")?;
+                let control = l6ctl::OwnedControl::new(&session.engine);
                 let endpoints = self
                     .midi
                     .ok_or("usb-sysex needs a preceding USB MIDI enumeration")?;
-                let start = session
+                let (started, start, guest_timeout_ms, wall_timeout_s) = self
+                    .sysex_deadline
+                    .ok_or("USB SysEx campaign is not active")?;
+                let check = || -> Result<(), Box<dyn std::error::Error>> {
+                    let now = session
+                        .engine
+                        .inputs
+                        .as_ref()
+                        .ok_or("panel input unavailable")?
+                        .panel
+                        .snapshot()
+                        .guest_ms;
+                    if sysex_deadline_expired(
+                        started.elapsed(),
+                        start,
+                        now,
+                        guest_timeout_ms,
+                        wall_timeout_s,
+                    ) {
+                        return Err(format!(
+                            "USB SysEx deadline exceeded for request {:02x?}",
+                            request.bytes
+                        )
+                        .into());
+                    }
+                    Ok(())
+                };
+                check()?;
+                let reply_timeout_ms = request.reply_timeout_ms.unwrap_or(400);
+                control
+                    .usb_sysex_send(endpoints, 2, &request.bytes)
+                    .map_err(|error| error.to_string())?;
+                check()?;
+                let request_start = session
                     .engine
                     .inputs
                     .as_ref()
@@ -1989,124 +2423,75 @@ impl State {
                     .panel
                     .snapshot()
                     .guest_ms;
-                let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
-                let mut evidence = Vec::new();
-                for request in requests {
-                    let reply_timeout_ms = request.reply_timeout_ms.unwrap_or(400);
-                    let wire = l6max_host::usb_midi::Encoder::default().push(2, &request.bytes);
-                    usb.send(endpoints.output, &wire)?;
-                    let request_start = session
+                let mut decoder = l6ctl::UsbSysexDecoder::default();
+                loop {
+                    check()?;
+                    session.poll()?;
+                    check()?;
+                    control
+                        .usb_sysex_poll(endpoints, 2, &mut decoder)
+                        .map_err(|error| error.to_string())?;
+                    check()?;
+                    let elapsed = session
                         .engine
                         .inputs
                         .as_ref()
                         .unwrap()
                         .panel
                         .snapshot()
-                        .guest_ms;
-                    let mut pending = Vec::new();
-                    let mut replies: Vec<Vec<u8>> = Vec::new();
-                    loop {
-                        session.poll()?;
-                        match usb.try_receive(endpoints.input, 16_384) {
-                            Ok(data) => {
-                                for (cable, fragment) in l6max_host::usb_midi::decode(&data)? {
-                                    if cable != 2 {
-                                        continue;
-                                    }
-                                    for byte in fragment {
-                                        if byte == 0xf0 {
-                                            pending.clear();
-                                        }
-                                        if byte == 0xf0 || !pending.is_empty() {
-                                            pending.push(byte);
-                                            if byte == 0xf7 {
-                                                replies.push(std::mem::take(&mut pending));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            Err(e) if e.raw_os_error() == Some(libc::EAGAIN) => {}
-                            Err(e) => return Err(e.into()),
-                        }
-                        let elapsed = session
-                            .engine
-                            .inputs
-                            .as_ref()
-                            .unwrap()
-                            .panel
-                            .snapshot()
-                            .guest_ms
-                            .wrapping_sub(request_start);
-                        if complete_on_match && sysex_reply_complete(&request, &pending, &replies) {
-                            break;
-                        }
-                        if elapsed >= reply_timeout_ms {
-                            break;
-                        }
-                        if Instant::now() > deadline
-                            || session
-                                .engine
-                                .inputs
-                                .as_ref()
-                                .unwrap()
-                                .panel
-                                .snapshot()
-                                .guest_ms
-                                .wrapping_sub(start)
-                                > guest_timeout_ms
-                        {
-                            return Err(format!(
-                                "USB SysEx deadline exceeded for request {:02x?}",
-                                request.bytes
-                            )
-                            .into());
-                        }
-                        thread::sleep(Duration::from_millis(2));
+                        .guest_ms
+                        .wrapping_sub(request_start);
+                    if complete_on_match
+                        && sysex_reply_complete(&request, decoder.pending(), decoder.replies())
+                    {
+                        break;
                     }
-                    if !pending.is_empty() {
-                        return Err(format!("truncated USB SysEx reply: {pending:02x?}").into());
+                    if elapsed >= reply_timeout_ms {
+                        break;
                     }
-                    if request.expect_reply && replies.is_empty() {
+                    thread::sleep(Duration::from_millis(2));
+                }
+                let pending = decoder.pending();
+                let replies = decoder.replies();
+                if !pending.is_empty() {
+                    return Err(format!("truncated USB SysEx reply: {pending:02x?}").into());
+                }
+                if request.expect_reply && replies.is_empty() {
+                    return Err(
+                        format!("missing SysEx reply for request {:02x?}", request.bytes).into(),
+                    );
+                }
+                if let Some(minimum) = request.min_reply_bytes {
+                    if !replies.iter().any(|reply| reply.len() >= minimum) {
                         return Err(format!(
-                            "missing SysEx reply for request {:02x?}",
-                            request.bytes
-                        )
-                        .into());
-                    }
-                    if let Some(minimum) = request.min_reply_bytes {
-                        if !replies.iter().any(|reply| reply.len() >= minimum) {
-                            return Err(format!(
                                 "SysEx reply for {:02x?} was shorter than {minimum} bytes: {replies:02x?}",
                                 request.bytes
                             )
                             .into());
-                        }
                     }
-                    if let Some(prefix) = &request.expect_prefix {
-                        if !replies
-                            .iter()
-                            .any(|reply| reply.starts_with(prefix) && reply.last() == Some(&0xf7))
-                        {
-                            return Err(format!(
-                                "missing SysEx reply {prefix:02x?}; got {replies:02x?}"
-                            )
-                            .into());
-                        }
-                    } else if !request.expect_reply && !replies.is_empty() {
-                        return Err(format!("unexpected SysEx reply: {replies:02x?}").into());
-                    }
-                    for prefix in &request.reject_prefixes {
-                        if replies.iter().any(|reply| reply.starts_with(prefix)) {
-                            return Err(format!(
-                                "SysEx reply matched rejected prefix {prefix:02x?}: {replies:02x?}"
-                            )
-                            .into());
-                        }
-                    }
-                    evidence.push(json!({"sent":request.bytes,"replies":replies}));
                 }
-                Ok(json!({"exchanges":evidence}))
+                if let Some(prefix) = &request.expect_prefix {
+                    if !replies
+                        .iter()
+                        .any(|reply| reply.starts_with(prefix) && reply.last() == Some(&0xf7))
+                    {
+                        return Err(format!(
+                            "missing SysEx reply {prefix:02x?}; got {replies:02x?}"
+                        )
+                        .into());
+                    }
+                } else if !request.expect_reply && !replies.is_empty() {
+                    return Err(format!("unexpected SysEx reply: {replies:02x?}").into());
+                }
+                for prefix in &request.reject_prefixes {
+                    if replies.iter().any(|reply| reply.starts_with(prefix)) {
+                        return Err(format!(
+                            "SysEx reply matched rejected prefix {prefix:02x?}: {replies:02x?}"
+                        )
+                        .into());
+                    }
+                }
+                Ok(json!({"sent":request.bytes,"replies":replies}))
             }
             Operation::EditorPadAssignments => {
                 let endpoints = self
@@ -2330,44 +2715,126 @@ impl State {
             }
             Operation::KnobDialogPreflightBegin => {
                 self.knob_dialog_preflight = Some(begin_preflight(session, options)?);
+                let control = l6ctl::OwnedControl::new(&session.engine);
+                self.overlay_reader = Some(control.knob_overlay_reader()?);
+                self.knob_heap_reader = Some(control.heap_counter_reader()?);
                 Ok(json!({"preflight": "begin"}))
             }
-            operation @ (Operation::KnobDialogPreflightDescriptor
-            | Operation::KnobDialogPreflightTextAlias
-            | Operation::KnobDialogPreflightLayerCollision
-            | Operation::KnobDialogPreflightWidgetLayer
-            | Operation::KnobDialogPreflightBackgroundLayer) => {
-                let index = match operation {
-                    Operation::KnobDialogPreflightDescriptor => 0,
-                    Operation::KnobDialogPreflightTextAlias => 1,
-                    Operation::KnobDialogPreflightLayerCollision => 2,
-                    Operation::KnobDialogPreflightWidgetLayer => 3,
-                    _ => 4,
-                };
-                let context = self
-                    .knob_dialog_preflight
+            Operation::KnobProbePrepare { probe } => prepare_preflight_probe(
+                session,
+                self.knob_dialog_preflight
                     .as_mut()
-                    .ok_or("missing knob-dialog preflight")?;
-                run_preflight_probe(session, context, index, wall_timeout_s)
-            }
-            Operation::KnobDialogCallbackRace => {
-                let baseline = self
-                    .knob_dialog_baseline
+                    .ok_or("missing knob-dialog preflight")?,
+                probe,
+            ),
+            Operation::KnobProbeInject => inject_preflight_probe(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobProbeTrigger { delta } => trigger_preflight_probe(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                delta,
+                wall_timeout_s,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobProbeSample => sample_preflight_probe(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                self.overlay_reader
                     .as_ref()
-                    .ok_or("missing knob-dialog baseline")?;
-                let context = self
-                    .knob_dialog_preflight
+                    .ok_or("missing preflight reader")?,
+                self.knob_heap_reader
+                    .as_ref()
+                    .ok_or("missing preflight heap reader")?,
+            ),
+            Operation::KnobProbeRestore => restore_preflight_probe(
+                self.knob_dialog_preflight
                     .as_mut()
-                    .ok_or("missing knob-dialog preflight")?;
-                run_callback_race(
-                    session,
-                    options,
-                    context,
-                    baseline,
-                    guest_timeout_ms,
-                    wall_timeout_s,
-                )
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobProbeAssert => {
+                let result = assert_preflight_probe(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                )?;
+                if self
+                    .knob_dialog_preflight
+                    .as_ref()
+                    .is_some_and(|c| preflight_probe_index(c) == 5)
+                {
+                    self.overlay_reader = None;
+                    self.knob_heap_reader = None;
+                }
+                Ok(result)
             }
+            Operation::KnobRaceBegin => begin_callback_race(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobRaceWaitRegistration => wait_race_registration(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobRaceArmCallback => arm_race_callback(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobRaceWaitCallback => wait_race_callback(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobRaceCapture { guest_ms, artifact } => capture_callback_race(
+                session,
+                options,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                guest_ms,
+                &artifact,
+                guest_timeout_ms,
+                wall_timeout_s,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobRaceSample => sample_callback_race(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                self.knob_dialog_baseline
+                    .as_ref()
+                    .ok_or("missing knob-dialog baseline")?,
+            ),
+            Operation::KnobRaceRestore => restore_callback_race(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobRaceAssert => assert_callback_race(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
             Operation::KnobDialogFirstActivation => {
                 let context = self
                     .knob_dialog_preflight
@@ -2381,66 +2848,496 @@ impl State {
                     shared.ok_or("missing shared deadline")?,
                 )
             }
-            Operation::KnobDialogActiveDisplay => {
+            Operation::KnobActiveBegin => begin_active_display(
+                options,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobActiveSampleCallbacks => sample_active_callbacks(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobActiveCheckCallbacks => check_active_callbacks(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobActiveCheckFrame => {
+                let frame = &self
+                    .captured_display
+                    .as_ref()
+                    .ok_or("missing active display capture")?
+                    .frame;
                 let baseline = self
                     .knob_dialog_baseline
                     .as_ref()
                     .ok_or("missing knob-dialog baseline")?;
-                let context = self
-                    .knob_dialog_preflight
-                    .as_mut()
-                    .ok_or("missing knob-dialog preflight")?;
-                run_active_display(
-                    session,
-                    options,
-                    context,
-                    baseline,
-                    guest_timeout_ms,
-                    wall_timeout_s,
+                check_active_frame(frame, baseline)
+            }
+            Operation::KnobActiveFinish => {
+                let frame = self
+                    .captured_display
+                    .take()
+                    .ok_or("missing active display capture")?
+                    .frame;
+                finish_active_display(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    frame,
                 )
             }
-            Operation::KnobDialogLevelDemo => {
-                let context = self
-                    .knob_dialog_preflight
+            Operation::KnobLevelBegin => begin_level_demo(
+                session,
+                self.knob_dialog_preflight
                     .as_mut()
-                    .ok_or("missing knob-dialog preflight")?;
-                run_level_demo(session, options, context, guest_timeout_ms, wall_timeout_s)
-            }
-            Operation::KnobDialogTaskContexts => {
-                let context = self
-                    .knob_dialog_preflight
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobLevelStart { demo, artifact } => run_level_demo_frame(
+                session,
+                options,
+                self.knob_dialog_preflight
                     .as_mut()
-                    .ok_or("missing knob-dialog preflight")?;
-                run_task_contexts(session, options, context, guest_timeout_ms, wall_timeout_s)
-            }
-            operation @ (Operation::KnobDialogOverlayInvariants
-            | Operation::KnobDialogBitmapZero
-            | Operation::KnobDialogActiveOverlay) => {
-                let phase = match operation {
-                    Operation::KnobDialogOverlayInvariants => OverlayPhase::Invariants,
-                    Operation::KnobDialogBitmapZero => OverlayPhase::BitmapZero,
-                    Operation::KnobDialogActiveOverlay => OverlayPhase::Refreshed,
-                    _ => unreachable!(),
-                };
-                let context = self
-                    .knob_dialog_preflight
-                    .as_mut()
-                    .ok_or("missing knob-dialog preflight")?;
-                run_active_overlay(
+                    .ok_or("missing knob-dialog preflight")?,
+                &demo,
+                &artifact,
+                self.adaptive_progress.clone(),
+                self.adaptive_index,
+                guest_timeout_ms,
+                wall_timeout_s,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobLevelSweep { sweep } => {
+                self.captured_display = None;
+                run_level_sweep(
                     session,
                     options,
-                    context,
-                    phase,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    &sweep,
+                    self.adaptive_progress.clone(),
+                    self.adaptive_index,
                     guest_timeout_ms,
                     wall_timeout_s,
+                    shared.ok_or("missing shared deadline")?,
                 )
             }
-            Operation::KnobDialogLockedUpdate => {
-                let context = self
-                    .knob_dialog_preflight
+            Operation::KnobLevelExpectZero => run_level_expect_zero(
+                session,
+                options,
+                self.knob_dialog_preflight
                     .as_mut()
-                    .ok_or("missing knob-dialog preflight")?;
-                run_locked_value_update(session, options, context, guest_timeout_ms, wall_timeout_s)
+                    .ok_or("missing knob-dialog preflight")?,
+                self.adaptive_progress.clone(),
+                self.adaptive_index,
+                guest_timeout_ms,
+                wall_timeout_s,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobLevelFinish => {
+                if self.captured_display.take().is_none() {
+                    return Err("missing level zero capture".into());
+                }
+                finish_level_demo(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                )
+            }
+            Operation::KnobTaskBegin => {
+                let result = begin_task_probe(
+                    session,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                )?;
+                self.task_reader =
+                    Some(l6ctl::OwnedControl::new(&session.engine).current_task_reader()?);
+                Ok(result)
+            }
+            Operation::KnobTaskArmHook => arm_task_hook(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobTaskWaitHook => wait_task_hook(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                self.task_reader.as_ref().ok_or("missing task reader")?,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobTaskArmCallback => arm_task_callback(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobTaskWaitCallback => wait_task_callback(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                self.task_reader.as_ref().ok_or("missing task reader")?,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobTaskAssertDistinct => assert_task_distinct(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobTaskRelease => release_task_probe(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobTaskFinish => {
+                if self.captured_display.take().is_none() {
+                    return Err("missing task probe capture".into());
+                }
+                let value = finish_task_probe(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                )?;
+                self.task_reader = None;
+                Ok(value)
+            }
+            Operation::KnobOverlayBegin => {
+                begin_overlay_invariants(
+                    session,
+                    options,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                )?;
+                self.overlay_reader =
+                    Some(l6ctl::OwnedControl::new(&session.engine).knob_overlay_reader()?);
+                Ok(json!({"overlay": "opened"}))
+            }
+            Operation::KnobOverlayCheckWindow => {
+                check_overlay_window(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing overlay reader")?,
+                )?;
+                Ok(json!({"checked": true}))
+            }
+            Operation::KnobOverlaySnapshotDescriptors => {
+                snapshot_overlay_descriptors(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing overlay reader")?,
+                )?;
+                Ok(json!({"checked": true}))
+            }
+            Operation::KnobOverlayFinishDescriptors => {
+                finish_overlay_descriptors(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                )?;
+                Ok(json!({"checked": true}))
+            }
+            Operation::KnobOverlayCheckResource => {
+                check_overlay_resource(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing overlay reader")?,
+                )?;
+                Ok(json!({"checked": true}))
+            }
+            Operation::KnobOverlayCheckCorners => {
+                check_overlay_corners(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                )?;
+                Ok(json!({"checked": true}))
+            }
+            Operation::KnobOverlayCheckSignature => {
+                check_overlay_signature(
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing overlay reader")?,
+                )?;
+                Ok(json!({"checked": true}))
+            }
+            Operation::KnobOverlayCheckBitmap => {
+                check_overlay_bitmap(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing overlay reader")?,
+                )?;
+                Ok(json!({"checked": true}))
+            }
+            Operation::KnobOverlayCheckDescriptor { field } => check_overlay_descriptor(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                field,
+            ),
+            Operation::KnobOverlayCheckHeap => check_overlay_heap(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobOverlayFinish => {
+                let value = finish_overlay_invariants(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                )?;
+                self.overlay_reader = None;
+                Ok(value)
+            }
+            Operation::KnobBitmapBegin => {
+                let value = begin_bitmap_probe(
+                    session,
+                    options,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                )?;
+                self.overlay_reader =
+                    Some(l6ctl::OwnedControl::new(&session.engine).knob_overlay_reader()?);
+                Ok(value)
+            }
+            Operation::KnobBitmapCheckBackground {
+                background,
+                expected,
+            } => check_bitmap_background(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                self.overlay_reader
+                    .as_ref()
+                    .ok_or("missing bitmap reader")?,
+                background,
+                expected,
+            ),
+            Operation::KnobBitmapStoreBefore => {
+                let frame = self
+                    .captured_display
+                    .take()
+                    .ok_or("missing bitmap before capture")?
+                    .frame;
+                store_bitmap_before(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    frame,
+                )
+            }
+            Operation::KnobBitmapArm => arm_bitmap_callback(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobBitmapWait => wait_bitmap_callback(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobBitmapInvoke { background } => invoke_bitmap_probe(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                background,
+                shared.ok_or("missing shared deadline")?,
+            ),
+            Operation::KnobBitmapCheckFrame => {
+                let frame = &self
+                    .captured_display
+                    .as_ref()
+                    .ok_or("missing bitmap after capture")?
+                    .frame;
+                check_bitmap_frame(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    frame,
+                )
+            }
+            Operation::KnobBitmapCheckSignature => check_bitmap_signature(
+                self.overlay_reader
+                    .as_ref()
+                    .ok_or("missing bitmap reader")?,
+            ),
+            Operation::KnobBitmapCheckDescriptor => check_bitmap_descriptor(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                self.overlay_reader
+                    .as_ref()
+                    .ok_or("missing bitmap reader")?,
+            ),
+            Operation::KnobBitmapFinish => {
+                self.captured_display = None;
+                let value = finish_bitmap_probe(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                )?;
+                self.overlay_reader = None;
+                Ok(value)
+            }
+            Operation::KnobOverlayReactivate { delta } => {
+                self.overlay_reader =
+                    Some(l6ctl::OwnedControl::new(&session.engine).knob_overlay_reader()?);
+                reactivate_zero_overlay(
+                    session,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing overlay reactivation reader")?,
+                    delta,
+                    shared.ok_or("missing shared deadline")?,
+                )
+            }
+            Operation::KnobOverlayWaitActive => {
+                let value = wait_zero_overlay_active(
+                    session,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing overlay reactivation reader")?,
+                    shared.ok_or("missing shared deadline")?,
+                )?;
+                self.overlay_reader = None;
+                Ok(value)
+            }
+            Operation::KnobOverlayRefreshBegin => {
+                begin_refreshed_overlay(
+                    session,
+                    options,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                )?;
+                Ok(json!({"overlay": "opened"}))
+            }
+            Operation::KnobOverlayRefreshValue => check_refreshed_value(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobOverlayRefreshPixels => {
+                let frame = self
+                    .captured_display
+                    .as_ref()
+                    .ok_or("missing refreshed capture")?
+                    .frame;
+                check_refreshed_pixels(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    &frame,
+                )?;
+                Ok(json!({"pixels_match": true}))
+            }
+            Operation::KnobOverlayRefreshFinish => {
+                let capture = self
+                    .captured_display
+                    .take()
+                    .ok_or("missing refreshed capture")?;
+                finish_refreshed_overlay(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    capture.frame,
+                )
+            }
+            Operation::KnobLockAcquire => {
+                self.overlay_reader =
+                    Some(l6ctl::OwnedControl::new(&session.engine).knob_overlay_reader()?);
+                acquire_locked_update(
+                    session,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing locked update reader")?,
+                )
+            }
+            Operation::KnobLockTrigger { delta } => trigger_locked_update(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                delta,
+                wall_timeout_s,
+            ),
+            Operation::KnobLockWait => wait_locked_update(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                self.overlay_reader
+                    .as_ref()
+                    .ok_or("missing locked update reader")?,
+                guest_timeout_ms,
+                wall_timeout_s,
+            ),
+            Operation::KnobLockSample => sample_locked_update(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+                self.overlay_reader
+                    .as_ref()
+                    .ok_or("missing locked update reader")?,
+            ),
+            Operation::KnobLockRestore => restore_locked_update(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobLockAssert => assert_locked_update(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?,
+            ),
+            Operation::KnobLockFinish => {
+                let result = finish_locked_update(
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob-dialog preflight")?,
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing locked update reader")?,
+                )?;
+                self.overlay_reader = None;
+                self.captured_display = None;
+                Ok(result)
             }
             operation @ (Operation::KnobDialogModeBegin { .. }
             | Operation::EnqueueTap { .. }
@@ -2455,6 +3352,221 @@ impl State {
                 operation,
                 guest_timeout_ms,
                 wall_timeout_s,
+                shared,
+            ),
+            Operation::KnobDialogAdaptive { plan } => {
+                self.knob_heap_reader = None;
+                run_adaptive_demo(
+                    &plan,
+                    session,
+                    options,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob preflight")?,
+                    self.adaptive_progress.clone(),
+                    self.adaptive_index,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                    shared.ok_or("missing shared deadline")?,
+                )
+            }
+            Operation::KnobDialogInjectInvalidTag { tag } => inject_invalid_tag(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                tag,
+                wall_timeout_s,
+            ),
+            Operation::KnobDialogWaitInvalidTag => wait_invalid_tag(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                guest_timeout_ms,
+                wall_timeout_s,
+            ),
+            Operation::KnobDialogConfirmInvalidTag => confirm_invalid_tag(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
+            Operation::KnobDialogSettleLevel { artifact } => settle_level(
+                session,
+                options,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                &artifact,
+                guest_timeout_ms,
+                wall_timeout_s,
+            ),
+            Operation::KnobDialogInjectInvalidSignature => inject_invalid_signature(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
+            Operation::KnobDialogObserveInvalidSignature { guest_ms } => observe_invalid_signature(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                guest_ms,
+                guest_timeout_ms,
+                wall_timeout_s,
+            ),
+            Operation::KnobDialogSampleInvalidSignature => sample_invalid_signature(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
+            Operation::KnobDialogRestoreInvalidSignature => restore_invalid_signature(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
+            Operation::KnobDialogPrepareNotification => prepare_notification(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
+            Operation::KnobDialogArmNotificationCallback => arm_notification_callback(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
+            Operation::KnobDialogWaitNotificationCallback => wait_notification_callback(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
+            Operation::KnobDialogInvokeNotification { message } => invoke_notification(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                message,
+            ),
+            Operation::KnobDialogWaitNotificationFrame {
+                clear,
+                artifact,
+                guest_ms,
+                limit_ms,
+            } => wait_notification_frame(
+                session,
+                options,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                clear,
+                &artifact,
+                guest_ms,
+                limit_ms,
+                guest_timeout_ms,
+                wall_timeout_s,
+            ),
+            Operation::KnobDialogExpectNotificationInvariants { clear } => {
+                expect_notification_invariants(
+                    session,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob preflight")?,
+                    clear,
+                )
+            }
+            Operation::KnobDialogWaitExpiry {
+                interval_ms,
+                limit_ms,
+            } => wait_dialog_expiry(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                interval_ms,
+                limit_ms,
+                guest_timeout_ms,
+                wall_timeout_s,
+            ),
+            Operation::KnobDialogExpectExpiryFrame { after } => {
+                let capture = self
+                    .captured_display
+                    .as_ref()
+                    .ok_or("missing expiry capture")?;
+                let context = self
+                    .knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?;
+                expect_expiry_frame(context, &capture.frame, after)?;
+                if !after {
+                    self.captured_display = None;
+                }
+                Ok(json!({"after":after}))
+            }
+            Operation::KnobDialogSnapshotRestoration => snapshot_restoration(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
+            Operation::KnobDialogCheckRestoration { field } => check_restoration_field(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                field,
+            ),
+            Operation::KnobDialogFinishRestoration => finish_restoration(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
+            Operation::KnobDialogExpectRestoredHeap => expect_restored_heap(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
+            Operation::EnqueueEncoderNoAck { channel, steps } => {
+                let context = self
+                    .knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob-dialog preflight")?;
+                if expecting_active_display(context) {
+                    l6ctl::OwnedControl::new(&session.engine).encoder(channel, steps)?;
+                    Ok(json!({"channel":channel,"steps":steps}))
+                } else if expecting_task_probe(context) {
+                    l6ctl::OwnedControl::new(&session.engine).encoder(channel, steps)?;
+                    mark_task_hook_input(context)?;
+                    Ok(json!({"channel":channel,"steps":steps}))
+                } else {
+                    enqueue_navigation_encoder(session, context, channel, steps)
+                }
+            }
+            Operation::EnqueueTapNoAck { target, hold_ms } => enqueue_navigation_tap(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                target,
+                hold_ms,
+            ),
+            Operation::ReleaseCapturedDisplay => self.release_navigation_capture(options),
+            Operation::KnobDialogSnapshotNavigation => snapshot_navigation(
+                session,
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+            ),
+            Operation::KnobDialogCheckNavigation { field } => check_navigation_field(
+                self.knob_dialog_preflight
+                    .as_mut()
+                    .ok_or("missing knob preflight")?,
+                field,
             ),
             Operation::KnobDialog => {
                 self.knob_heap_reader = None;
@@ -2462,15 +3574,7 @@ impl State {
                     .knob_dialog_baseline
                     .take()
                     .ok_or("knob-dialog requires baseline frame")?;
-                run_knob_dialog(
-                    session,
-                    options,
-                    &mut self.knob_dialog_preflight,
-                    guest_timeout_ms,
-                    wall_timeout_s,
-                    shared,
-                    operation_start,
-                )
+                finish_knob_dialog(options, &mut self.knob_dialog_preflight)
             }
             operation @ (Operation::KnobPopupOpen { .. }
             | Operation::KnobPopupExpectOpen
@@ -2495,6 +3599,32 @@ mod sysex_completion_tests {
     use super::sysex_reply_complete;
     use crate::scenario::UsbSysexRequest;
 
+    #[test]
+    fn shared_deadline_handles_guest_wrap_and_wall_expiry() {
+        use super::sysex_deadline_expired;
+        use std::time::Duration;
+        assert!(!sysex_deadline_expired(
+            Duration::from_secs(1),
+            u32::MAX - 2,
+            2,
+            5,
+            2
+        ));
+        assert!(sysex_deadline_expired(
+            Duration::from_secs(1),
+            u32::MAX - 2,
+            3,
+            5,
+            2
+        ));
+        assert!(sysex_deadline_expired(
+            Duration::from_millis(2001),
+            0,
+            1,
+            5,
+            2
+        ));
+    }
     #[test]
     fn early_completion_requires_a_complete_positive_reply_without_observation_constraints() {
         let mut request = UsbSysexRequest {
@@ -2532,20 +3662,201 @@ mod knob_phase_tests {
             Operation::KnobDialogGuard,
             Operation::KnobDialogBaseline,
             Operation::KnobDialogPreflightBegin,
-            Operation::KnobDialogPreflightDescriptor,
-            Operation::KnobDialogPreflightTextAlias,
-            Operation::KnobDialogPreflightLayerCollision,
-            Operation::KnobDialogPreflightWidgetLayer,
-            Operation::KnobDialogPreflightBackgroundLayer,
-            Operation::KnobDialogCallbackRace,
+            Operation::KnobProbePrepare {
+                probe: crate::scenario::PreflightProbe::Descriptor,
+            },
+            Operation::KnobProbeInject,
+            Operation::KnobProbeTrigger { delta: -1 },
+            Operation::KnobProbeSample,
+            Operation::KnobProbeRestore,
+            Operation::KnobProbeAssert,
+            Operation::KnobProbePrepare {
+                probe: crate::scenario::PreflightProbe::TextAlias,
+            },
+            Operation::KnobProbeInject,
+            Operation::KnobProbeTrigger { delta: -1 },
+            Operation::KnobProbeSample,
+            Operation::KnobProbeRestore,
+            Operation::KnobProbeAssert,
+            Operation::KnobProbePrepare {
+                probe: crate::scenario::PreflightProbe::LayerCollision,
+            },
+            Operation::KnobProbeInject,
+            Operation::KnobProbeTrigger { delta: -1 },
+            Operation::KnobProbeSample,
+            Operation::KnobProbeRestore,
+            Operation::KnobProbeAssert,
+            Operation::KnobProbePrepare {
+                probe: crate::scenario::PreflightProbe::WidgetLayer,
+            },
+            Operation::KnobProbeInject,
+            Operation::KnobProbeTrigger { delta: -1 },
+            Operation::KnobProbeSample,
+            Operation::KnobProbeRestore,
+            Operation::KnobProbeAssert,
+            Operation::KnobProbePrepare {
+                probe: crate::scenario::PreflightProbe::BackgroundLayer,
+            },
+            Operation::KnobProbeInject,
+            Operation::KnobProbeTrigger { delta: -1 },
+            Operation::KnobProbeSample,
+            Operation::KnobProbeRestore,
+            Operation::KnobProbeAssert,
+            Operation::KnobRaceBegin,
+            Operation::KnobRaceWaitRegistration,
+            Operation::KnobRaceArmCallback,
+            Operation::KnobRaceWaitCallback,
+            Operation::KnobRaceCapture {
+                guest_ms: 150,
+                artifact: "window-scene-callback-preflight-race".into(),
+            },
+            Operation::KnobRaceSample,
+            Operation::KnobRaceRestore,
+            Operation::KnobRaceAssert,
             Operation::KnobDialogFirstActivation,
-            Operation::KnobDialogActiveDisplay,
-            Operation::KnobDialogLevelDemo,
-            Operation::KnobDialogTaskContexts,
-            Operation::KnobDialogOverlayInvariants,
-            Operation::KnobDialogBitmapZero,
-            Operation::KnobDialogActiveOverlay,
-            Operation::KnobDialogLockedUpdate,
+            Operation::KnobActiveBegin,
+            Operation::EnqueueEncoderNoAck {
+                channel: 1,
+                steps: 3,
+            },
+            Operation::CaptureDisplay {
+                guest_ms: 500,
+                artifact: "knob-dialog-active".into(),
+            },
+            Operation::KnobActiveSampleCallbacks,
+            Operation::KnobActiveCheckCallbacks,
+            Operation::KnobActiveCheckFrame,
+            Operation::KnobActiveFinish,
+            Operation::KnobLevelBegin,
+            Operation::KnobLevelStart {
+                demo: crate::scenario::adaptive::DemoCapture {
+                    guest_ms: 100,
+                    min_lit: 100,
+                    checked_frames: 6,
+                },
+                artifact: "knob-dialog-demo-level-start".into(),
+            },
+            Operation::KnobLevelSweep {
+                sweep: crate::scenario::adaptive::LevelSweep {
+                    direction: crate::scenario::adaptive::LevelDirection::Up,
+                    children: vec![],
+                    min_percent: 69,
+                    max_attempts: 128,
+                    artifact_prefix: "up".into(),
+                    demo: crate::scenario::adaptive::DemoCapture {
+                        guest_ms: 100,
+                        min_lit: 100,
+                        checked_frames: 6,
+                    },
+                },
+            },
+            Operation::CaptureDisplay {
+                guest_ms: 500,
+                artifact: "knob-dialog-demo-level-peak".into(),
+            },
+            Operation::KnobLevelSweep {
+                sweep: crate::scenario::adaptive::LevelSweep {
+                    direction: crate::scenario::adaptive::LevelDirection::Down,
+                    children: vec![],
+                    min_percent: 0,
+                    max_attempts: 128,
+                    artifact_prefix: "down".into(),
+                    demo: crate::scenario::adaptive::DemoCapture {
+                        guest_ms: 100,
+                        min_lit: 100,
+                        checked_frames: 6,
+                    },
+                },
+            },
+            Operation::KnobLevelExpectZero,
+            Operation::CaptureDisplay {
+                guest_ms: 500,
+                artifact: "knob-dialog-demo-level-zero".into(),
+            },
+            Operation::KnobLevelFinish,
+            Operation::KnobTaskBegin,
+            Operation::KnobTaskArmHook,
+            Operation::EnqueueEncoderNoAck {
+                channel: 1,
+                steps: 1,
+            },
+            Operation::KnobTaskWaitHook,
+            Operation::KnobTaskArmCallback,
+            Operation::KnobTaskWaitCallback,
+            Operation::KnobTaskAssertDistinct,
+            Operation::KnobTaskRelease,
+            Operation::CaptureDisplay {
+                guest_ms: 150,
+                artifact: "window-scene-task-context-probe".into(),
+            },
+            Operation::KnobTaskFinish,
+            Operation::KnobOverlayBegin,
+            Operation::KnobOverlayCheckWindow,
+            Operation::KnobOverlaySnapshotDescriptors,
+            Operation::KnobOverlayCheckDescriptor {
+                field: crate::scenario::OverlayDescriptorField::Widget7,
+            },
+            Operation::KnobOverlayCheckDescriptor {
+                field: crate::scenario::OverlayDescriptorField::Widget33,
+            },
+            Operation::KnobOverlayCheckDescriptor {
+                field: crate::scenario::OverlayDescriptorField::Background10,
+            },
+            Operation::KnobOverlayCheckDescriptor {
+                field: crate::scenario::OverlayDescriptorField::Background37,
+            },
+            Operation::KnobOverlayCheckDescriptor {
+                field: crate::scenario::OverlayDescriptorField::Background48,
+            },
+            Operation::KnobOverlayFinishDescriptors,
+            Operation::KnobOverlayCheckResource,
+            Operation::KnobOverlayCheckCorners,
+            Operation::KnobOverlayCheckSignature,
+            Operation::KnobOverlayCheckBitmap,
+            Operation::KnobOverlayCheckHeap,
+            Operation::KnobOverlayFinish,
+            Operation::KnobBitmapBegin,
+            Operation::KnobBitmapCheckBackground {
+                background: 47,
+                expected: 0,
+            },
+            Operation::CaptureDisplay {
+                guest_ms: 50,
+                artifact: "window-scene-before-null-bitmap-probe".into(),
+            },
+            Operation::KnobBitmapStoreBefore,
+            Operation::KnobBitmapArm,
+            Operation::KnobBitmapWait,
+            Operation::KnobBitmapInvoke { background: 47 },
+            Operation::CaptureDisplay {
+                guest_ms: 100,
+                artifact: "window-scene-after-null-bitmap-probe".into(),
+            },
+            Operation::KnobBitmapCheckFrame,
+            Operation::KnobBitmapCheckSignature,
+            Operation::KnobBitmapCheckDescriptor,
+            Operation::KnobBitmapFinish,
+            Operation::KnobOverlayReactivate { delta: -1 },
+            Operation::KnobOverlayWaitActive,
+            Operation::KnobOverlayRefreshBegin,
+            Operation::KnobOverlayRefreshValue,
+            Operation::CaptureDisplay {
+                guest_ms: 500,
+                artifact: "window-scene-refreshed".into(),
+            },
+            Operation::KnobOverlayRefreshPixels,
+            Operation::KnobOverlayRefreshFinish,
+            Operation::KnobLockAcquire,
+            Operation::KnobLockTrigger { delta: -1 },
+            Operation::KnobLockWait,
+            Operation::KnobLockSample,
+            Operation::KnobLockRestore,
+            Operation::KnobLockAssert,
+            Operation::CaptureDisplay {
+                guest_ms: 500,
+                artifact: "window-scene-after-callback-contention".into(),
+            },
+            Operation::KnobLockFinish,
         ];
         let start = Instant::now();
         let mut shared = Some((start, 17, 180_000, 600, 0));
@@ -2556,7 +3867,43 @@ mod knob_phase_tests {
                      shared: &mut Option<KnobDeadline>| {
             let before = shared.expect("deadline lost before the final operation");
             assert_eq!(
-                knob_dialog_phase(operation, scope, pending, next_mode),
+                knob_dialog_phase(
+                    operation,
+                    scope,
+                    pending,
+                    next_mode,
+                    Some(0),
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 98,
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 107,
+                    (matches!(operation, Operation::EnqueueEncoderNoAck { .. }) && before.4 == 43)
+                        || (matches!(operation, Operation::CaptureDisplay { .. })
+                            && before.4 == 44),
+                    if (3..33).contains(&before.4) {
+                        Some(usize::from((before.4 - 3) / 6))
+                    } else {
+                        None
+                    },
+                    matches!(operation, Operation::EnqueueEncoderNoAck { .. }) && before.4 == 59,
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 65,
+                    if matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 52 {
+                        Some(2)
+                    } else if matches!(operation, Operation::CaptureDisplay { .. })
+                        && before.4 == 55
+                    {
+                        Some(5)
+                    } else {
+                        None
+                    },
+                    if matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 84 {
+                        Some(1)
+                    } else if matches!(operation, Operation::CaptureDisplay { .. })
+                        && before.4 == 89
+                    {
+                        Some(6)
+                    } else {
+                        None
+                    }
+                ),
                 Some(before.4)
             );
             *shared = advance_knob_deadline(matches!(operation, Operation::KnobDialog), before);
@@ -2625,7 +3972,192 @@ mod knob_phase_tests {
                 check(op, Some(&scope), *pending, Some(index), &mut shared);
             }
         }
-        check(&Operation::KnobDialog, None, None, Some(3), &mut shared);
+        for (phase, op) in [
+            Operation::KnobDialogAdaptive {
+                plan: {
+                    let fragment: crate::Fragment = toml::from_str(include_str!(
+                        "../../../../patches/knob-dialog/tests/emulator/fragments/invalid-tags.toml"
+                    ))
+                    .unwrap();
+                    match &fragment.step[0].action {
+                        crate::Action::KnobDialogAdaptive { plan } => plan.clone(),
+                        _ => panic!("missing adaptive plan"),
+                    }
+                },
+            },
+            Operation::KnobDialogInjectInvalidTag { tag: 15 },
+            Operation::KnobDialogWaitInvalidTag,
+            Operation::KnobDialogConfirmInvalidTag,
+            Operation::KnobDialogInjectInvalidTag { tag: 240 },
+            Operation::KnobDialogWaitInvalidTag,
+            Operation::KnobDialogConfirmInvalidTag,
+            Operation::KnobDialogSettleLevel {
+                artifact: "before".into(),
+            },
+            Operation::KnobDialogInjectInvalidSignature,
+            Operation::KnobDialogObserveInvalidSignature { guest_ms: 150 },
+            Operation::KnobDialogSampleInvalidSignature,
+            Operation::KnobDialogRestoreInvalidSignature,
+            Operation::KnobDialogSettleLevel {
+                artifact: "after".into(),
+            },
+            Operation::KnobDialogPrepareNotification,
+            Operation::KnobDialogArmNotificationCallback,
+            Operation::KnobDialogWaitNotificationCallback,
+            Operation::KnobDialogInvokeNotification { message: 4 },
+            Operation::KnobDialogWaitNotificationFrame {
+                clear: false,
+                artifact: "shown".into(),
+                guest_ms: 100,
+                limit_ms: 1500,
+            },
+            Operation::KnobDialogExpectNotificationInvariants { clear: false },
+            Operation::KnobDialogWaitNotificationFrame {
+                clear: true,
+                artifact: "cleared".into(),
+                guest_ms: 100,
+                limit_ms: 5000,
+            },
+            Operation::KnobDialogExpectNotificationInvariants { clear: true },
+            Operation::KnobDialogWaitExpiry {
+                interval_ms: 100,
+                limit_ms: 10_000,
+            },
+            Operation::CaptureDisplay {
+                guest_ms: 150,
+                artifact: "expired".into(),
+            },
+            Operation::KnobDialogExpectExpiryFrame { after: true },
+            Operation::KnobDialogExpectExpiryFrame { after: false },
+            Operation::KnobDialogSnapshotRestoration,
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::Window,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::Signature,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::Bitmap,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::BitmapDescriptor,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::NotificationSemaphore,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::TextResources,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::SharedPointer,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::SharedContents,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::TextLengths,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::Widget7,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::Widget33,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::Background10,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::Background37,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::Background48,
+            },
+            Operation::KnobDialogCheckRestoration {
+                field: crate::scenario::RestorationField::Callback,
+            },
+            Operation::KnobDialogFinishRestoration,
+            Operation::KnobDialogExpectRestoredHeap,
+            Operation::EnqueueEncoderNoAck {
+                channel: 1,
+                steps: 3,
+            },
+            Operation::CaptureDisplay {
+                guest_ms: 400,
+                artifact: "before-nav".into(),
+            },
+            Operation::ReleaseCapturedDisplay,
+            Operation::EnqueueTapNoAck {
+                target: 0,
+                hold_ms: 120,
+            },
+            Operation::CaptureDisplay {
+                guest_ms: 500,
+                artifact: "after-nav".into(),
+            },
+            Operation::ReleaseCapturedDisplay,
+            Operation::KnobDialogSnapshotNavigation,
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::Window,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::Signature,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::Bitmap,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::BitmapDescriptor,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::NotificationSemaphore,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::SharedContents,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::Widget7,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::Widget33,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::Background10,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::Background37,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::Background48,
+            },
+            Operation::KnobDialogCheckNavigation {
+                field: crate::scenario::NavigationField::Callback,
+            },
+            Operation::KnobDialog,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let before = shared.unwrap();
+            assert_eq!(
+                knob_dialog_phase(
+                    &op,
+                    None,
+                    None,
+                    Some(3),
+                    Some(phase as u8),
+                    false,
+                    false,
+                    false,
+                    None,
+                    false,
+                    false,
+                    None,
+                    None
+                ),
+                Some(before.4)
+            );
+            shared = advance_knob_deadline(matches!(op, Operation::KnobDialog), before);
+        }
         assert!(shared.is_none());
     }
 }

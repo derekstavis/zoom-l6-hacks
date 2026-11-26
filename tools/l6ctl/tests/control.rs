@@ -91,6 +91,46 @@ fn input_status_client_and_cli_use_the_same_typed_wire_contract() {
 }
 
 #[test]
+fn sd_loader_status_and_site_use_typed_socket_and_cli() {
+    let path = socket_path();
+    let status = json!({"revision_guard":"l6_1_10","atomic":false,"registry":null,"stage":null,"claim":null,"module_base":null,"module_len":null,"site_count":null});
+    let site = json!({"atomic":false,"registry":2155876352u64,"index":1,"record":2155876624u64,"handler":0,"first":0,"last":0,"count":0,"links":[]});
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"sd-loader-status"}),
+                json!({"ok":true,"result":status}),
+            ),
+            (
+                json!({"command":"sd-loader-site","index":1}),
+                json!({"ok":true,"result":site}),
+            ),
+        ],
+    );
+    let actual = ControlClient::new(&path).sd_loader_status().unwrap();
+    assert_eq!(actual.registry, None);
+    assert!(!actual.atomic);
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["sd-loader", "site", "1"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        site
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn input_ack_client_and_cli_preserve_sequence_and_state() {
     let path = socket_path();
     let response = json!({"source":"panel", "sequence":17, "state":"applied"});
@@ -324,6 +364,51 @@ fn midi_config_cli_and_client_use_typed_snapshot() {
     );
     assert!(
         matches!(client.midi_config(), Err(ControlError::Rejected(message)) if message == "unsupported L6 MIDI revision")
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn mixer_level_client_and_cli_preserve_guard_and_value() {
+    let path = socket_path();
+    let sample = json!({"model":"l6","channel":1,"value":32,"getter_guard":"l6_1_10_mixer_getter","atomic":false});
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"mixer-level"}),
+                json!({"ok":true,"result":sample}),
+            ),
+            (
+                json!({"command":"mixer-level"}),
+                json!({"ok":true,"result":sample}),
+            ),
+            (
+                json!({"command":"mixer-level"}),
+                json!({"ok":false,"error":"unsupported getter"}),
+            ),
+        ],
+    );
+    let client = ControlClient::new(&path);
+    assert_eq!(client.mixer_level().unwrap().value, 32);
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .arg("mixer-level")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        sample
+    );
+    assert!(
+        matches!(client.mixer_level(), Err(ControlError::Rejected(message)) if message == "unsupported getter")
     );
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();
@@ -767,6 +852,87 @@ fn debugger_uses_one_persistent_typed_connection_for_api_and_cli() {
     assert!(
         lines.contains("\"value\":42") && lines.contains("\"kind\":\"closed\""),
         "{lines}"
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn effect_editor_client_uses_bounded_typed_wire_contract() {
+    let path = socket_path();
+    let binding = l6ctl::EffectEditorBinding {
+        module_len: 512,
+        code_len: 256,
+        state_offset: 128,
+        hook_offset: 0,
+        hook_guard: [3; 32],
+        immutable_sha256: "b".repeat(64),
+        masked_words: vec![],
+        applied_offset: 256,
+        dropped_offset: 260,
+        pending_offset: 264,
+        gate_offset: 128,
+        fixture_module_sha256: "a".repeat(64),
+    };
+    let response = json!({"revision_guard":"l6max_1_10_fixture_hook","fixture_module_sha256":"a".repeat(64),"atomic":false,"applied":7,"dropped":1,"pending":0,"gate":0});
+    let server = server(
+        &path,
+        vec![(
+            json!({"command":"effect-editor","binding":binding}),
+            json!({"ok":true,"result":response}),
+        )],
+    );
+    let sample = ControlClient::new(&path).effect_editor(binding).unwrap();
+    assert_eq!(
+        (sample.applied, sample.dropped, sample.pending, sample.gate),
+        (7, 1, 0, 0)
+    );
+    assert!(!sample.atomic);
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn panel_key_client_and_cli_use_typed_wire_contract() {
+    let path = socket_path();
+    let result = json!({"revision_guard":"l6max_1_10_panel_handler_and_gui","atomic":false,"key_code":25,"bit":1,"word_index":4,"words":[0,0,0,0,2,0]});
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"panel-key","code":25}),
+                json!({"ok":true,"result":result}),
+            ),
+            (
+                json!({"command":"panel-key","code":25}),
+                json!({"ok":true,"result":result}),
+            ),
+        ],
+    );
+    let sample = ControlClient::new(&path).panel_key(25).unwrap();
+    assert_eq!(
+        (
+            sample.key_code,
+            sample.bit,
+            sample.word_index,
+            sample.words[4]
+        ),
+        (25, 1, 4, 2)
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["panel-key", "25"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        result
     );
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();

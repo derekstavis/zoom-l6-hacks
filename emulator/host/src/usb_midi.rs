@@ -361,3 +361,180 @@ mod tests {
         assert!(forward_usb_to_host(&mut ports, &packets[..3]).is_err());
     }
 }
+
+/// Reassembles complete SysEx messages from USB MIDI packets on one cable.
+/// A new F0 replaces an incomplete message, matching the device test protocol.
+#[derive(Default)]
+pub struct SysexDecoder {
+    pending: Vec<u8>,
+    replies: Vec<Vec<u8>>,
+}
+
+impl SysexDecoder {
+    pub fn push_usb(&mut self, bytes: &[u8], cable: u8) -> io::Result<()> {
+        for (source, fragment) in decode(bytes)? {
+            if source != cable {
+                continue;
+            }
+            for byte in fragment {
+                if byte == 0xf0 {
+                    self.pending.clear();
+                }
+                if byte == 0xf0 || !self.pending.is_empty() {
+                    self.pending.push(byte);
+                    if byte == 0xf7 {
+                        self.replies.push(std::mem::take(&mut self.pending));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+    pub fn pending(&self) -> &[u8] {
+        &self.pending
+    }
+    pub fn replies(&self) -> &[Vec<u8>] {
+        &self.replies
+    }
+}
+
+#[cfg(test)]
+mod sysex_decoder_tests {
+    use super::*;
+    #[test]
+    fn preserves_fragmentation_cable_filter_and_restarts() {
+        let mut encoder = Encoder::default();
+        let mut decoder = SysexDecoder::default();
+        decoder
+            .push_usb(&encoder.push(1, &[0xf0, 1, 0xf7]), 2)
+            .unwrap();
+        decoder.push_usb(&[0x24, 0xf0, 3, 4], 2).unwrap();
+        assert_eq!(decoder.pending(), &[0xf0, 3, 4]);
+        decoder.push_usb(&[0x27, 0xf0, 5, 0xf7], 2).unwrap();
+        assert_eq!(decoder.replies(), &[vec![0xf0, 5, 0xf7]]);
+        assert!(decoder.pending().is_empty());
+        assert!(decoder.push_usb(&[0], 2).is_err());
+    }
+}
+
+/// Send one complete SysEx request through an already-enumerated USB endpoint.
+/// The caller retains ownership of the USB connection and its receive queue.
+pub fn send_sysex(usb: &UsbHost, endpoint: u8, cable: u8, bytes: &[u8]) -> io::Result<()> {
+    if cable > 15 || bytes.first() != Some(&0xf0) || bytes.last() != Some(&0xf7) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid USB SysEx request",
+        ));
+    }
+    usb.send(endpoint, &Encoder::default().push(cable, bytes))
+}
+
+/// Read and decode one available USB packet batch; the caller owns scheduling.
+pub fn poll_sysex(
+    usb: &UsbHost,
+    endpoint: u8,
+    cable: u8,
+    decoder: &mut SysexDecoder,
+) -> io::Result<()> {
+    match usb.try_receive(endpoint, 16_384) {
+        Ok(bytes) => decoder.push_usb(&bytes, cable),
+        Err(error) if error.raw_os_error() == Some(libc::EAGAIN) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+/// Exclusive, in-process USB-MIDI receiver preserving USB cable and packet chunks.
+/// Attaching reserves the cable; enumeration can be retried without detaching it.
+/// Dropping releases the exclusive lease but leaves the cable attached, like
+/// the direct MIDI client. This API is not available through the control socket.
+pub struct RawReceiver {
+    host: Arc<UsbHost>,
+    _lease: crate::usb::DirectLease,
+    input: Option<u8>,
+    output: Option<u8>,
+}
+
+impl RawReceiver {
+    /// Claim an already enumerated MIDI interface without resetting its queued transfers.
+    pub fn claim_enumerated(
+        host: Arc<UsbHost>,
+        endpoints: crate::usb::Endpoints,
+    ) -> io::Result<Self> {
+        let lease = host.acquire_direct().map_err(io::Error::other)?;
+        Ok(Self {
+            host,
+            _lease: lease,
+            input: Some(endpoints.input),
+            output: Some(endpoints.output),
+        })
+    }
+    pub fn attach(host: Arc<UsbHost>) -> Result<Self, String> {
+        let lease = host.acquire_direct()?;
+        if let Err(error) = host.connect(true) {
+            return Err(match lease.rollback(&host) {
+                Ok(()) => error.to_string(),
+                Err(cleanup) => format!("{error}; USB detach after failed setup: {cleanup}"),
+            });
+        }
+        Ok(Self {
+            host,
+            _lease: lease,
+            input: None,
+            output: None,
+        })
+    }
+
+    /// Enumerate once. The caller owns retry policy and deadlines.
+    pub fn enumerate(&mut self) -> io::Result<()> {
+        let configuration = self.host.enumerate()?;
+        let endpoints = configuration
+            .midi
+            .ok_or_else(|| io::Error::other("USB device has no MIDI interface"))?;
+        self.input = Some(endpoints.input);
+        self.output = Some(endpoints.output);
+        Ok(())
+    }
+
+    /// Send a complete MIDI control change on the selected virtual cable.
+    pub fn send_control_change(
+        &mut self,
+        cable: u8,
+        channel: u8,
+        controller: u8,
+        value: u8,
+    ) -> io::Result<()> {
+        if cable > 15 || channel > 15 || controller > 127 || value > 127 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid USB MIDI control change",
+            ));
+        }
+        let output = self
+            .output
+            .ok_or_else(|| io::Error::other("USB MIDI is not enumerated"))?;
+        self.host.send(
+            output,
+            &[(cable << 4) | 0x0b, 0xb0 | channel, controller, value],
+        )
+    }
+
+    /// Return raw transfer bytes together with decoded cable-tagged messages.
+    pub fn poll_transfer(&mut self) -> io::Result<Option<(Vec<u8>, Vec<(u8, Vec<u8>)>)>> {
+        let input = self
+            .input
+            .ok_or_else(|| io::Error::other("USB MIDI is not enumerated"))?;
+        match self.host.try_receive(input, 16_384) {
+            Ok(bytes) => {
+                let messages = decode(&bytes)?;
+                Ok(Some((bytes, messages)))
+            }
+            Err(error) if error.raw_os_error() == Some(libc::EAGAIN) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Return one USB transfer's MIDI packets, preserving cable and payload.
+    pub fn poll(&mut self) -> io::Result<Option<Vec<(u8, Vec<u8>)>>> {
+        Ok(self.poll_transfer()?.map(|(_, messages)| messages))
+    }
+}

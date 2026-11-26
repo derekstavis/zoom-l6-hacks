@@ -779,31 +779,35 @@ fn parser_rejects_typos_and_unavailable_model_controls() {
 }
 
 #[test]
-fn usb_sysex_scenario_requires_complete_messages_and_accepts_reply_prefixes() {
-    let valid = Scenario::parse(
-        "version=1\nname='sysex'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='usb-descriptors'\n[[step]]\naction='usb-sysex'\nrequests=[{bytes=[240,126,127,6,1,247],expect_prefix=[240,126,127,6,2],reject_prefixes=[[240,82]]}]\n",
-    )
-    .unwrap();
-    assert!(matches!(valid.step[1].action, Action::UsbSysex { .. }));
-    let invalid = Scenario::parse(
-        "version=1\nname='sysex'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='usb-sysex'\nrequests=[{bytes=[240,1,2]}]\n",
+fn usb_sysex_scenario_requires_scoped_complete_messages() {
+    let prefix = "version=1\nname='sysex'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='usb-descriptors'\n[[step]]\naction='usb-sysex-begin'\nguest_timeout_ms=1000\n";
+    let suffix = "[[step]]\naction='usb-sysex-end'\n";
+    let good = format!(
+        "{prefix}[[step]]\naction='usb-sysex-exchange'\nbytes=[240,1,247]\nexpect_prefix=[240,1]\n{suffix}"
     );
-    assert!(invalid.unwrap_err().contains("complete F0..F7"));
-    let invalid_reject = Scenario::parse(
-        "version=1\nname='sysex'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='usb-sysex'\nrequests=[{bytes=[240,1,247],reject_prefixes=[[]]}]\n",
+    assert!(Scenario::parse(&good).is_ok());
+    let invalid = good.replace("[240,1,247]", "[240,1,2]");
+    assert!(
+        Scenario::parse(&invalid)
+            .unwrap_err()
+            .contains("complete F0..F7")
+    );
+    let invalid = good.replace("expect_prefix=[240,1]", "reject_prefixes=[[]]");
+    assert!(
+        Scenario::parse(&invalid)
+            .unwrap_err()
+            .contains("reject_prefixes")
     );
     assert!(
-        invalid_reject
+        Scenario::parse(&good.replace(suffix, ""))
             .unwrap_err()
-            .contains("reject_prefixes must not contain empty prefixes")
+            .contains("unterminated")
     );
-    let invalid_timeout = Scenario::parse(
-        "version=1\nname='sysex'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='usb-sysex'\nguest_timeout_ms=100\nrequests=[{bytes=[240,1,247],reply_timeout_ms=101}]\n",
-    );
+    let invalid = good.replace("expect_prefix=[240,1]", "reply_timeout_ms=1001");
     assert!(
-        invalid_timeout
+        Scenario::parse(&invalid)
             .unwrap_err()
-            .contains("reply_timeout_ms must be positive and fit")
+            .contains("exceeds campaign")
     );
 }
 #[test]
@@ -1293,13 +1297,53 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
         "[[step]]\naction='knob-dialog-guard'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
     let baseline =
         "[[step]]\naction='knob-dialog-baseline'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
-    let preflight = ["begin", "descriptor", "text-alias", "layer-collision", "widget-layer", "background-layer"].iter().map(|name| format!("[[step]]\naction='knob-dialog-preflight-{name}'\nguest_timeout_ms=180000\nwall_timeout_s=600\n")).collect::<String>();
-    let activation = "[[step]]\naction='knob-dialog-callback-race'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-first-activation'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
-    let active_demo = "[[step]]\naction='knob-dialog-active-display'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-level-demo'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
-    let tasks = "[[step]]\naction='knob-dialog-task-contexts'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
-    let overlay = "[[step]]\naction='knob-dialog-overlay-invariants'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-bitmap-zero'\nguest_timeout_ms=180000\nwall_timeout_s=600\n[[step]]\naction='knob-dialog-active-overlay'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
-    let locked = "[[step]]\naction='knob-dialog-locked-update'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
-    let dialog = "[[step]]\naction='knob-dialog'\nguest_timeout_ms=180000\nwall_timeout_s=600\n";
+    let preflight = concat!(
+        "[[step]]\naction='knob-dialog-preflight-begin'\nguest_timeout_ms=180000\nwall_timeout_s=600\n",
+        include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/preflight-probes.toml"
+        )
+    );
+    let activation = concat!(
+        include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/callback-race.toml"),
+        "\n[[step]]\naction='knob-dialog-first-activation'\nguest_timeout_ms=180000\nwall_timeout_s=600\n"
+    );
+    let active_demo = concat!(
+        include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/active-display.toml"
+        ),
+        "\n",
+        include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/level-demo.toml")
+    );
+    let tasks =
+        include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/task-contexts.toml");
+    let overlay = concat!(
+        include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/overlay-invariants.toml"
+        ),
+        "\n",
+        include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/bitmap-zero.toml"),
+        include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/refreshed-overlay.toml"
+        )
+    );
+    let locked =
+        include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/locked-update.toml");
+    let tags =
+        include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/invalid-tags.toml");
+    let signature = include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/invalid-signature.toml"
+    );
+    let notification =
+        include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/notification.toml");
+    let expiry =
+        include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/expiry.toml");
+    let restoration =
+        include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/restoration.toml");
+    let navigation =
+        include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/navigation.toml");
+    let dialog = format!(
+        "{tags}{signature}{notification}{expiry}{restoration}{navigation}[[step]]\naction='knob-dialog'\nguest_timeout_ms=180000\nwall_timeout_s=600\n"
+    );
     let modes =
         include_str!("../../../../patches/knob-dialog/tests/emulator/fragments/mode-walk.toml");
     assert!(
@@ -1324,12 +1368,55 @@ fn knob_dialog_requires_adjacent_readiness_with_matching_budget() {
         .is_err()
     );
     assert!(Scenario::parse(&complete.replace("mode = 8", "mode = 7")).is_err());
+    assert!(Scenario::parse(&complete.replacen("steps = 3", "steps = -3", 1)).is_err());
+    assert!(
+        Scenario::parse(&complete.replacen(
+            "action = \"release-captured-display\"",
+            "action = \"wait-input-applied\"",
+            1
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&complete.replacen(
+            "field = \"bitmap-descriptor\"",
+            "field = \"bitmap\"",
+            1
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&complete.replacen("interval_ms = 100", "interval_ms = 0", 1)).is_err()
+    );
+    assert!(Scenario::parse(&complete.replacen("after = true", "after = false", 1)).is_err());
+    assert!(Scenario::parse(&complete.replacen("message = 4", "message = 3", 1)).is_err());
+    assert!(Scenario::parse(&complete.replacen("limit_ms = 1500", "limit_ms = 0", 1)).is_err());
+    assert!(Scenario::parse(&complete.replacen("clear = false", "clear = true", 1)).is_err());
+    assert!(
+        Scenario::parse(&complete.replacen(
+            "action = \"knob-dialog-sample-invalid-signature\"",
+            "action = \"knob-dialog-restore-invalid-signature\"",
+            1
+        ))
+        .is_err()
+    );
+    assert!(Scenario::parse(&complete.replacen("guest_ms = 150", "guest_ms = 0", 1)).is_err());
+    assert!(Scenario::parse(&complete.replacen("tag = 15", "tag = 1", 1)).is_err());
+    assert!(Scenario::parse(&complete.replacen("tag = 240", "tag = 16", 1)).is_err());
+    assert!(
+        Scenario::parse(&complete.replacen(
+            "action = \"knob-dialog-wait-invalid-tag\"",
+            "action = \"knob-dialog-confirm-invalid-tag\"",
+            1
+        ))
+        .is_err()
+    );
 
     let setup_pruned =
         format!("{prefix}{ready}{guard}{baseline}{preflight}{activation}{active_demo}{tasks}{overlay}{locked}{modes}{dialog}")
             .replace(
-                "action='knob-dialog-preflight-widget-layer'",
-                "setup_input=true\naction='knob-dialog-preflight-widget-layer'",
+                "action = \"knob-probe-prepare\"\nprobe = \"widget-layer\"",
+                "setup_input=true\naction = \"knob-probe-prepare\"\nprobe = \"widget-layer\"",
             );
     assert!(
         Scenario::parse(&setup_pruned)
@@ -1523,6 +1610,50 @@ fn synthetic_valid_handoff_requires_all_semantic_checks() {
 }
 
 #[test]
+fn stock_checksum_rejection_requires_complete_observation() {
+    let source =
+        include_str!("../../../../tests/emulator/cases/boot/l6max-update-stock-bad-checksum.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    for changed in [
+        source.replace("guest_ms = 40000", "guest_ms = 1"),
+        source.replace("mode = 1", "mode = 6"),
+        source.replace("flags_mask = 9", "flags_mask = 1"),
+        source.replace(
+            "action = \"expect-update-marker-absent\"",
+            "action = \"lifecycle-stop\"",
+        ),
+        source.replace("models = [\"l6max\"]", "models = [\"l6\"]"),
+    ] {
+        assert!(Scenario::from_text(&changed).is_err());
+    }
+}
+
+#[test]
+fn l6_patched_update_requires_full_terminal_verification() {
+    let source = include_str!("../../../../tests/emulator/cases/boot/l6-update-patched-midi.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    for changed in [
+        source.replace("profile = \"verify\"", "profile = \"restart\""),
+        source.replace("guest_ms = 5000", "guest_ms = 1"),
+        source.replace(
+            "patches/midi-sync/tests/emulator/fragments/l6-hook-probe.toml",
+            "tests/emulator/fragments/l6-update-install.toml",
+        ),
+        source.replace("models = [\"l6\"]", "models = [\"l6max\"]"),
+        source.replace(
+            "update_patches.l6 = [\"midi-sync\"]",
+            "update_patches.l6 = []",
+        ),
+        source.replace(
+            "action = \"lifecycle-stop\"",
+            "action = \"delay\"\nguest_ms = 1",
+        ),
+    ] {
+        assert!(Scenario::from_text(&changed).is_err());
+    }
+}
+
+#[test]
 fn synthetic_install_requires_all_boot_and_storage_checks() {
     let source =
         include_str!("../../../../tests/emulator/cases/boot/l6max-update-valid-install.toml");
@@ -1592,6 +1723,95 @@ fn patched_update_requires_complete_four_boot_verification() {
 }
 
 #[test]
+fn patched_knob_update_requires_full_install_and_knob_checks() {
+    let source =
+        include_str!("../../../../tests/emulator/cases/boot/l6max-update-patched-knob.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    for changed in [
+        source.replace(
+            "action = \"knob-dialog-guard\"",
+            "action = \"knob-dialog-ready\"",
+        ),
+        source.replace(
+            "fragments/locked-update.toml",
+            "fragments/active-display.toml",
+        ),
+        source.replace("action = \"knob-dialog\"", "action = \"knob-dialog-ready\""),
+        source.replace(
+            "action = \"expect-panel-unchanged\"",
+            "action = \"expect-update-marker-absent\"",
+        ),
+        source.replace(
+            "include_wall_timeout_s = 300",
+            "include_wall_timeout_s = 600",
+        ),
+        source.replace(
+            "update_patches.l6max = [\"knob-dialog\"]",
+            "update_patches.l6max = [\"midi-sync\"]",
+        ),
+    ] {
+        assert!(Scenario::from_text(&changed).is_err());
+    }
+}
+
+#[test]
+fn patched_knob_midi_update_requires_both_ordered_verifications() {
+    let source =
+        include_str!("../../../../tests/emulator/cases/boot/l6max-update-patched-knob-midi.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    for changed in [
+        source.replace(
+            "action = \"knob-dialog-guard\"",
+            "action = \"knob-dialog-ready\"",
+        ),
+        source.replace("action = \"knob-dialog\"", "action = \"knob-dialog-ready\""),
+        source.replace(
+            "action = \"wait-usb-controller\"",
+            "action = \"knob-dialog-ready\"",
+        ),
+        source.replace(
+            "path = \"patches/midi-sync/tests/emulator/fragments/request-state.toml\"",
+            "path = \"patches/knob-dialog/tests/emulator/fragments/mode-walk.toml\"",
+        ),
+        source.replace(
+            "include_wall_timeout_s = 300",
+            "include_wall_timeout_s = 600",
+        ),
+        source.replace(
+            "update_patches.l6max = [\"knob-dialog\", \"midi-sync\"]",
+            "update_patches.l6max = [\"knob-dialog\"]",
+        ),
+    ] {
+        assert!(Scenario::from_text(&changed).is_err());
+    }
+}
+
+#[test]
+fn usb_midi_requires_retained_ordered_transaction() {
+    let source = include_str!("../../../../tests/emulator/cases/usb/usb.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    for changed in [
+        source.replace("action = \"usb-midi-open\"", "action = \"usb-midi-begin\""),
+        source.replace(
+            "action = \"usb-midi-expect-encoder\"",
+            "action = \"usb-midi-set-target\"",
+        ),
+        source.replace(
+            "action = \"usb-midi-set-alternate\"",
+            "action = \"usb-midi-set-target\"",
+        ),
+        source.replace("action = \"usb-midi-end\"", "action = \"usb-midi-open\""),
+        source.replace("value = 32", "value = 128"),
+        source.replace(
+            "action = \"usb-midi-set-target\"",
+            "action = \"usb-midi-set-target\"\nwall_timeout_s = 30",
+        ),
+    ] {
+        assert!(Scenario::from_text(&changed).is_err());
+    }
+}
+
+#[test]
 fn l6_stock_update_requires_both_boots_and_all_comparisons() {
     let source = include_str!("../../../../tests/emulator/cases/boot/l6-update-stock-install.toml");
     assert!(Scenario::from_text(source).is_ok());
@@ -1640,4 +1860,47 @@ fn l6_stock_update_requires_both_boots_and_all_comparisons() {
         Scenario::from_text(&source.replace("profile = \"installer\"", "profile = \"restart\""))
             .is_err()
     );
+}
+
+#[test]
+fn paced_turn_preserves_ring_baseline_and_exact_report_count() {
+    let scenario = Scenario::parse("version=1\nname='paced'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='effect-paced-turn'\nchannel=1\nsteps=2\n[[step]]\naction='expect-ring'\nchannel=1\nmask=31\nonly=true\n").unwrap();
+    let mut runner = Runner::new(
+        scenario,
+        Model::L6max,
+        std::env::temp_dir().join(format!(
+            "paced-unit-{}",
+            NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        )),
+    )
+    .unwrap();
+    let now = Instant::now();
+    assert!(matches!(
+        runner.advance(sample(0), now).unwrap(),
+        Progress::Device(crate::devices::Operation::EffectPacedTurn {
+            channel: 1,
+            steps: 2
+        })
+    ));
+    runner.device_finished(serde_json::json!({"applied":2}));
+    let mut extra = sample(200);
+    extra.reports = 3;
+    assert!(
+        matches!(runner.advance(extra, now), Err(error) if error.contains("duplicate encoder reports"))
+    );
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+
+#[test]
+fn l6_indicator_campaign_requires_scope_coverage_and_previous_mute_snapshot() {
+    let source = "version=1\nname='l6-indicators'\nmodels=['l6']\nbackends=['headless']\n[[step]]\naction='l6-indicator-begin'\nguest_timeout_ms=7000\nwall_timeout_s=30\n[[step]]\naction='l6-ring-sample'\ncc=83\nvalue=16\nguest_ms=500\nring=1\n[[step]]\naction='l6-ring-coverage'\nmask=510\n[[step]]\naction='l6-indicator-end'\n";
+    assert!(Scenario::parse(source).is_ok());
+    assert!(Scenario::parse(&source.replace("ring=1", "ring=7")).is_err());
+    assert!(
+        Scenario::parse(&source.replace("action='l6-ring-coverage'\nmask=510\n[[step]]\n", ""))
+            .is_err()
+    );
+    assert!(Scenario::parse(&source.replace("models=['l6']", "models=['l6max']")).is_err());
+    let mute = "version=1\nname='mute'\nmodels=['l6']\nbackends=['headless']\n[[step]]\naction='l6-indicator-begin'\n[[step]]\naction='l6-mute-sample'\ncc=93\nvalue=0\nguest_ms=500\nexpected=[0,0,0,0,2048,0,0,0]\nreuse_previous=true\n[[step]]\naction='l6-indicator-end'\n";
+    assert!(Scenario::parse(mute).is_err());
 }

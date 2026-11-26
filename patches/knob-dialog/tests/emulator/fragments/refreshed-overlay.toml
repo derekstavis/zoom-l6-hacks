@@ -1,0 +1,39 @@
+# The task and bitmap probes can span the two-second popup lifetime. At the
+# zero endpoint, a declared turn keeps the value unchanged and reactivates it.
+[[step]]
+action = "knob-overlay-reactivate"
+delta = -1
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-overlay-wait-active"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-overlay-refresh-begin"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-overlay-refresh-value"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "capture-display"
+guest_ms = 500
+artifact = "window-scene-refreshed"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-overlay-refresh-pixels"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-overlay-refresh-finish"
+guest_timeout_ms = 180000
+wall_timeout_s = 600

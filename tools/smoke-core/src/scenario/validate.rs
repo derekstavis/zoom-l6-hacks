@@ -10,30 +10,41 @@ impl Scenario {
         validate_models(&value.models)?;
         crate::requirements::check_scope(value)?;
         if let Some(fixture) = value.update_fixture {
-            let fixture_model = if fixture == UpdateFixture::L6Stock {
+            let fixture_model = if fixture.is_l6() {
                 Model::L6
             } else {
                 Model::L6max
+            };
+            let expected_patches = match fixture {
+                UpdateFixture::PatchedKnob => vec!["knob-dialog".to_string()],
+                UpdateFixture::PatchedKnobMidi => {
+                    vec!["knob-dialog".to_string(), "midi-sync".to_string()]
+                }
+                _ => vec!["midi-sync".to_string()],
             };
             if value.models != [fixture_model]
                 || value.backends != [Backend::Headless]
                 || value.state.is_some()
                 || value.card.is_some()
-                || (fixture != UpdateFixture::PatchedMidi && !value.update_patches.is_empty())
-                || (fixture == UpdateFixture::PatchedMidi
+                || (!fixture.is_patched() && !value.update_patches.is_empty())
+                || (fixture.is_patched()
                     && (value.update_patches.len() != 1
-                        || value.update_patches.get(&Model::L6max).map(Vec::as_slice)
-                            != Some(&["midi-sync".to_string()][..])))
+                        || value.update_patches.get(&fixture_model).map(Vec::as_slice)
+                            != Some(expected_patches.as_slice())))
                 || !value.patches.is_empty()
                 || value.sd_patches.is_some()
                 || !value.installed_patches.is_empty()
                 || !value.installed_sd_patches.is_empty()
                 || !value.effect_replacements.is_empty()
-                || (fixture != UpdateFixture::PatchedMidi
-                    && value
-                        .step
-                        .iter()
-                        .any(|step| !step.models.is_empty() || step.setup_input))
+                || (!matches!(
+                    fixture,
+                    UpdateFixture::PatchedMidi
+                        | UpdateFixture::PatchedKnob
+                        | UpdateFixture::PatchedKnobMidi
+                ) && value
+                    .step
+                    .iter()
+                    .any(|step| !step.models.is_empty() || step.setup_input))
             {
                 return Err(
                     "managed update needs a dedicated model-scoped headless stock fixture".into(),
@@ -45,12 +56,17 @@ impl Scenario {
                 .map(|step| &step.action)
                 .collect::<Vec<_>>();
             match fixture {
-                UpdateFixture::L6Stock => {
+                UpdateFixture::L6Stock | UpdateFixture::L6PatchedMidi => {
                     if value.update_goal != Some(UpdateGoal::Install) {
                         return Err("L6 update requires the full install goal".into());
                     }
+                    let prefix = if fixture == UpdateFixture::L6PatchedMidi {
+                        &actions[..actions.len().saturating_sub(7)]
+                    } else {
+                        actions.as_slice()
+                    };
                     if !matches!(
-                        actions.as_slice(),
+                        prefix,
                         [
                             Action::LifecycleStart {
                                 profile: LifecycleBoot::Initial
@@ -97,8 +113,44 @@ impl Scenario {
                     ) {
                         return Err("L6 stock update requires both complete boots, explicit marker, installed reset vector, every segment, resource and protected-region check".into());
                     }
+                    if fixture == UpdateFixture::L6PatchedMidi
+                        && !matches!(
+                            actions.as_slice(),
+                            [
+                                ..,
+                                Action::LifecycleStart {
+                                    profile: LifecycleBoot::Verify
+                                },
+                                Action::Delay { guest_ms: 5000 },
+                                Action::L6MidiProbeBegin,
+                                Action::L6MidiProbeInject,
+                                Action::L6MidiProbeExpectHook,
+                                Action::L6MidiProbeExpectReplies,
+                                Action::LifecycleStop
+                            ]
+                        )
+                    {
+                        return Err(
+                            "patched L6 update requires complete terminal MIDI verification".into(),
+                        );
+                    }
+                    if fixture == UpdateFixture::L6PatchedMidi {
+                        let tail = &value.step[value.step.len() - 7..];
+                        if tail[1].wall_timeout_s != 180
+                            || tail[2..6].iter().any(|step| {
+                                step.guest_timeout_ms != 120_000 || step.wall_timeout_s != 300
+                            })
+                        {
+                            return Err(
+                                "patched L6 verify needs the original readiness and probe budgets"
+                                    .into(),
+                            );
+                        }
+                    }
                 }
-                UpdateFixture::PatchedMidi => {
+                UpdateFixture::PatchedMidi
+                | UpdateFixture::PatchedKnob
+                | UpdateFixture::PatchedKnobMidi => {
                     if value.update_goal != Some(UpdateGoal::Install) {
                         return Err("patched update requires the full install goal".into());
                     }
@@ -108,7 +160,13 @@ impl Scenario {
                             !matches!(action, Action::WaitInputApplied | Action::Delay { .. })
                         })
                         .collect::<Vec<_>>();
-                    if !matches!(semantic.as_slice(), [
+                    let tail_start = semantic
+                        .iter()
+                        .position(|action| matches!(action, Action::EndWallDeadline))
+                        .map(|index| index + 1)
+                        .ok_or("missing patched verify setup deadline")?;
+                    let (common, tail) = semantic.split_at(tail_start);
+                    if !matches!(common, [
                         Action::LifecycleStart { profile: LifecycleBoot::Initial },
                         Action::ExpectDisplayImage { image: update_image, .. },
                         Action::ExpectUpdateState { mode: 6, flags_mask: 9, flags_value: 0 },
@@ -148,15 +206,7 @@ impl Scenario {
                         Action::Press { control: second_confirm },
                         Action::ExpectDisplayImage { image: home_image, .. },
                         Action::Wait { until: home_boot },
-                        Action::EndWallDeadline,
-                        Action::WaitUsbController,
-                        Action::DirectUsbMidiRoundTrip { cable: 1, expect_ring_change: true },
-                        Action::HostMidiSyncBegin,
-                        Action::HostMidiDrain { quiet_wall_ms: 500 },
-                        Action::HostMidiSendCc { channel: 0, controller: 127, value: 127 },
-                        Action::HostMidiExpectSync,
-                        Action::HostMidiEnd,
-                        Action::LifecycleStop
+                        Action::EndWallDeadline
                     ] if update_image == Path::new("tests/smoke/images/l6max-firmware-update-dialog.png")
                         && install_trace == &["l6 panel RTC response start"] && install_absent.is_empty()
                         && restart_contains.is_empty() && restart_absent == &["l6 panel ROM erase", "l6 panel ROM mass erase"]
@@ -167,6 +217,73 @@ impl Scenario {
                         && first_confirm == "recorder-function-4" && second_confirm == first_confirm)
                     {
                         return Err("patched update needs complete ordered handoff, installer, restart and MIDI verification checks".into());
+                    }
+                    let tail_valid = if fixture == UpdateFixture::PatchedMidi {
+                        matches!(
+                            tail,
+                            [
+                                Action::WaitUsbController,
+                                Action::DirectUsbMidiRoundTrip {
+                                    cable: 1,
+                                    expect_ring_change: true
+                                },
+                                Action::HostMidiSyncBegin,
+                                Action::HostMidiDrain { quiet_wall_ms: 500 },
+                                Action::HostMidiSendCc {
+                                    channel: 0,
+                                    controller: 127,
+                                    value: 127
+                                },
+                                Action::HostMidiExpectSync,
+                                Action::HostMidiEnd,
+                                Action::LifecycleStop
+                            ]
+                        )
+                    } else if fixture == UpdateFixture::PatchedKnobMidi {
+                        matches!(
+                            tail,
+                            [
+                                Action::KnobDialogReady,
+                                Action::KnobDialogGuard,
+                                Action::KnobDialogBaseline,
+                                Action::KnobDialogPreflightBegin,
+                                ..,
+                                Action::KnobDialog,
+                                Action::WaitUsbController,
+                                Action::DirectUsbMidiRoundTrip {
+                                    cable: 1,
+                                    expect_ring_change: true
+                                },
+                                Action::HostMidiSyncBegin,
+                                Action::HostMidiDrain { quiet_wall_ms: 500 },
+                                Action::HostMidiSendCc {
+                                    channel: 0,
+                                    controller: 127,
+                                    value: 127
+                                },
+                                Action::HostMidiExpectSync,
+                                Action::HostMidiEnd,
+                                Action::LifecycleStop
+                            ]
+                        )
+                    } else {
+                        matches!(
+                            tail,
+                            [
+                                Action::KnobDialogReady,
+                                Action::KnobDialogGuard,
+                                Action::KnobDialogBaseline,
+                                Action::KnobDialogPreflightBegin,
+                                ..,
+                                Action::KnobDialog,
+                                Action::LifecycleStop
+                            ]
+                        )
+                    };
+                    if !tail_valid {
+                        return Err(
+                            "patched update needs the complete patch-specific verification".into(),
+                        );
                     }
                     let verify = value
                         .step
@@ -194,8 +311,26 @@ impl Scenario {
                     }) {
                         return Err("post-update MIDI verification needs the original guest and wall budgets".into());
                     }
+                    if matches!(
+                        fixture,
+                        UpdateFixture::PatchedKnob | UpdateFixture::PatchedKnobMidi
+                    ) {
+                        let first = value.step[verify..]
+                            .iter()
+                            .position(|step| matches!(step.action, Action::KnobDialogReady))
+                            .ok_or("missing knob verification")?
+                            + verify;
+                        if value.step[first..value.step.len() - 1].iter().any(|step| {
+                            step.guest_timeout_ms != 180_000 || step.wall_timeout_s != 300
+                        }) {
+                            return Err(
+                                "post-update knob verification needs the original shared budgets"
+                                    .into(),
+                            );
+                        }
+                    }
                 }
-                UpdateFixture::BadChecksum => {
+                UpdateFixture::BadChecksum | UpdateFixture::BadChecksumStock => {
                     if value.update_goal.is_some() {
                         return Err("bad-checksum fixture has no install goal".into());
                     }
@@ -301,7 +436,12 @@ impl Scenario {
             let mut started = false;
             let mut last_profile = None;
             for step in &value.step {
-                if fixture == UpdateFixture::PatchedMidi {
+                if matches!(
+                    fixture,
+                    UpdateFixture::PatchedMidi
+                        | UpdateFixture::PatchedKnob
+                        | UpdateFixture::PatchedKnobMidi
+                ) {
                     let entering_verify = matches!(
                         step.action,
                         Action::LifecycleStart {
@@ -340,7 +480,12 @@ impl Scenario {
                                     last_profile == Some(LifecycleBoot::Installer)
                                 }
                                 LifecycleBoot::Verify => {
-                                    last_profile == Some(LifecycleBoot::Restart)
+                                    last_profile
+                                        == Some(if fixture == UpdateFixture::L6PatchedMidi {
+                                            LifecycleBoot::Installer
+                                        } else {
+                                            LifecycleBoot::Restart
+                                        })
                                 }
                             } =>
                     {
@@ -397,7 +542,10 @@ impl Scenario {
                 }
             }
             let expected_end = match fixture {
-                UpdateFixture::PatchedMidi => matches!(
+                UpdateFixture::PatchedMidi
+                | UpdateFixture::PatchedKnob
+                | UpdateFixture::PatchedKnobMidi
+                | UpdateFixture::L6PatchedMidi => matches!(
                     value.step.last().map(|s| &s.action),
                     Some(Action::LifecycleStop)
                 ),
@@ -405,7 +553,7 @@ impl Scenario {
                     value.step.last().map(|s| &s.action),
                     Some(Action::ExpectUpdateMarkerAbsent)
                 ),
-                UpdateFixture::BadChecksum => matches!(
+                UpdateFixture::BadChecksum | UpdateFixture::BadChecksumStock => matches!(
                     value.step.last().map(|s| &s.action),
                     Some(Action::ExpectUpdateMarkerAbsent)
                 ),
@@ -506,8 +654,172 @@ impl Scenario {
         if value.backends.is_empty() {
             return Err("backends must contain headless and/or gui".into());
         }
+        for model in &value.models {
+            let steps: Vec<_> = value
+                .step
+                .iter()
+                .filter(|step| step.applies_to(*model))
+                .collect();
+            let mut index = 0;
+            while index < steps.len() {
+                if matches!(steps[index].action, Action::UsbMidiOpen) {
+                    if index == 0
+                        || !matches!(steps[index - 1].action, Action::UsbDescriptors)
+                        || index + 8 >= steps.len()
+                    {
+                        return Err(
+                            "USB MIDI needs descriptor enumeration and a complete transaction"
+                                .into(),
+                        );
+                    }
+                    let group = &steps[index..index + 9];
+                    if !matches!(group[1].action, Action::Encoder { channel: 1, .. })
+                        || !matches!(group[2].action, Action::ExpectEncoderReports)
+                        || !matches!(group[3].action, Action::UsbMidiBegin)
+                        || !matches!(group[4].action, Action::UsbMidiExpectEncoder)
+                        || !matches!(
+                            group[5].action,
+                            Action::UsbMidiPrepareLevel { value: 0..=127 }
+                        )
+                        || !matches!(group[6].action, Action::UsbMidiSetAlternate)
+                        || !matches!(group[7].action, Action::UsbMidiSetTarget)
+                        || !matches!(group[8].action, Action::UsbMidiEnd)
+                        || group[4..].iter().any(|step| {
+                            step.guest_timeout_ms != group[3].guest_timeout_ms
+                                || step.wall_timeout_s != group[3].wall_timeout_s
+                        })
+                    {
+                        return Err("USB MIDI transaction requires ordered encoder, receive and level checks with shared deadlines".into());
+                    }
+                    index += 9;
+                } else if matches!(
+                    steps[index].action,
+                    Action::UsbMidiBegin
+                        | Action::UsbMidiExpectEncoder
+                        | Action::UsbMidiPrepareLevel { .. }
+                        | Action::UsbMidiSetAlternate
+                        | Action::UsbMidiSetTarget
+                        | Action::UsbMidiEnd
+                ) {
+                    return Err("USB MIDI action outside transaction".into());
+                } else {
+                    index += 1;
+                }
+            }
+        }
         let mut checkpoints = std::collections::BTreeSet::new();
         for model in &value.models {
+            let mut sd_inspection: Option<(u32, u64)> = None;
+
+            let panel_steps: Vec<_> = value
+                .step
+                .iter()
+                .filter(|step| step.applies_to(*model))
+                .collect();
+            let mut panel_index = 0;
+            while panel_index < panel_steps.len() {
+                if matches!(panel_steps[panel_index].action, Action::L6maxPanelKeyBegin) {
+                    if *model != l6fw::Model::L6max {
+                        return Err("panel-key scope requires L6max".into());
+                    }
+                    panel_index += 1;
+                    let mut groups = 0;
+                    while panel_index < panel_steps.len()
+                        && !matches!(panel_steps[panel_index].action, Action::L6maxPanelKeyEnd)
+                    {
+                        if panel_index + 4 >= panel_steps.len() {
+                            return Err("incomplete panel-key check sequence".into());
+                        }
+                        let group = &panel_steps[panel_index..panel_index + 5];
+                        let (code, bit, word_index) = match group[0].action {
+                            Action::L6maxPanelKeyCheck {
+                                code,
+                                bit,
+                                word_index,
+                                active: false,
+                                wait: false,
+                            } if (25..=28).contains(&code) && bit < 32 && word_index < 6 => {
+                                (code, bit, word_index)
+                            }
+                            _ => return Err("invalid panel-key initial check".into()),
+                        };
+                        let target = match group[1].action {
+                            Action::L6maxPanelKeyInput {
+                                target,
+                                pressed: true,
+                            } if target < 54 => target,
+                            _ => return Err("invalid panel-key press".into()),
+                        };
+                        let same = |action: &Action, expected_active| {
+                            matches!(action,
+                            Action::L6maxPanelKeyCheck { code: c, bit: b, word_index: w, active, wait: true }
+                            if (*c,*b,*w,*active) == (code,bit,word_index,expected_active))
+                        };
+                        if !same(&group[2].action, true)
+                            || !matches!(group[3].action, Action::L6maxPanelKeyInput { target: t, pressed: false } if t == target)
+                            || !same(&group[4].action, false)
+                        {
+                            return Err("invalid panel-key check sequence".into());
+                        }
+                        groups += 1;
+                        panel_index += 5;
+                    }
+                    if groups == 0 || panel_index == panel_steps.len() {
+                        return Err("panel-key scope missing end or checks".into());
+                    }
+                    panel_index += 1;
+                } else {
+                    if matches!(
+                        panel_steps[panel_index].action,
+                        Action::L6maxPanelKeyCheck { .. }
+                            | Action::L6maxPanelKeyInput { .. }
+                            | Action::L6maxPanelKeyEnd
+                    ) {
+                        return Err("panel-key action outside scope".into());
+                    }
+                    panel_index += 1;
+                }
+            }
+            let mut din_scope = 0u8;
+            let mut din_pending: Option<&[u8]> = None;
+            let mut din_pairs = 0usize;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                match (&step.action, din_scope) {
+                    (Action::DinUsbBegin, 0) if *model == l6fw::Model::L6 => {
+                        din_scope = 1;
+                        din_pairs = 0;
+                    }
+                    (Action::Delay { guest_ms }, 1) if *guest_ms > 0 => din_scope = 2,
+                    (Action::DinUsbAttach, 2) => din_scope = 3,
+                    (Action::DinUsbSend { bytes }, 3)
+                        if !bytes.is_empty() && bytes.len() <= 256 =>
+                    {
+                        din_pending = Some(bytes);
+                        din_scope = 4;
+                    }
+                    (Action::DinUsbExpect { bytes, cable }, 4)
+                        if *cable <= 15 && Some(bytes.as_slice()) == din_pending =>
+                    {
+                        din_pending = None;
+                        din_pairs += 1;
+                        din_scope = 3;
+                    }
+                    (Action::DinUsbEnd, 3) if din_pairs > 0 => din_scope = 0,
+                    (
+                        Action::DinUsbBegin
+                        | Action::DinUsbAttach
+                        | Action::DinUsbSend { .. }
+                        | Action::DinUsbExpect { .. }
+                        | Action::DinUsbEnd,
+                        _,
+                    ) => return Err("invalid DIN USB forwarding sequence or model".into()),
+                    (_, 0) => (),
+                    _ => return Err("DIN USB forwarding scope interrupted".into()),
+                }
+            }
+            if din_scope != 0 {
+                return Err("DIN USB forwarding scope incomplete".into());
+            }
             let mut sync: Option<(u8, u32, u64)> = None;
             let mut l6_probe: Option<(u8, u32, u64)> = None;
             let mut l6_probe_finished = false;
@@ -516,7 +828,18 @@ impl Scenario {
             let mut probe_ring = None;
             let mut probe_tap = None;
             for step in value.step.iter().filter(|step| step.applies_to(*model)) {
-                if l6_probe_finished {
+                match (&step.action, sd_inspection) {
+                    (Action::ExpectSdLoader, None) => sd_inspection = Some((step.guest_timeout_ms, step.wall_timeout_s)),
+                    (Action::ExpectSdModule { .. }, Some((guest, wall))) if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = None,
+                    (Action::ExpectSdLoader | Action::ExpectSdModule { .. }, _) => return Err("SD inspection requires adjacent loader/module steps with matching timeouts".into()),
+                    (_, Some(_)) => return Err("SD inspection cannot be interrupted".into()),
+                    _ => {},
+                }
+                if l6_probe_finished
+                    && !(value.update_fixture == Some(UpdateFixture::L6PatchedMidi)
+                        && matches!(step.action, Action::LifecycleStop)
+                        && std::ptr::eq(step, value.step.last().unwrap()))
+                {
                     return Err(
                         "L6 MIDI probe must be the final action for L6: it leaves MAIN stopped"
                             .into(),
@@ -648,6 +971,9 @@ impl Scenario {
                     _ => {}
                 }
             }
+            if sd_inspection.is_some() {
+                return Err("SD inspection is incomplete".into());
+            }
             if l6_probe.is_some() {
                 return Err("L6 MIDI probe transaction is incomplete".into());
             }
@@ -685,21 +1011,18 @@ impl Scenario {
                 Action::KnobDialogGuard => "knob-dialog-ready",
                 Action::KnobDialogBaseline => "knob-dialog-guard",
                 Action::KnobDialogPreflightBegin => "knob-dialog-baseline",
-                Action::KnobDialogPreflightDescriptor => "knob-dialog-preflight-begin",
-                Action::KnobDialogPreflightTextAlias => "knob-dialog-preflight-descriptor",
-                Action::KnobDialogPreflightLayerCollision => "knob-dialog-preflight-text-alias",
-                Action::KnobDialogPreflightWidgetLayer => "knob-dialog-preflight-layer-collision",
-                Action::KnobDialogPreflightBackgroundLayer => "knob-dialog-preflight-widget-layer",
-                Action::KnobDialogCallbackRace => "knob-dialog-preflight-background-layer",
-                Action::KnobDialogFirstActivation => "knob-dialog-callback-race",
-                Action::KnobDialogActiveDisplay => "knob-dialog-first-activation",
-                Action::KnobDialogLevelDemo => "knob-dialog-active-display",
-                Action::KnobDialogTaskContexts => "knob-dialog-level-demo",
-                Action::KnobDialogOverlayInvariants => "knob-dialog-task-contexts",
-                Action::KnobDialogBitmapZero => "knob-dialog-overlay-invariants",
-                Action::KnobDialogActiveOverlay => "knob-dialog-bitmap-zero",
-                Action::KnobDialogLockedUpdate => "knob-dialog-active-overlay",
-                Action::KnobDialog => "knob-dialog-mode-end",
+                Action::KnobRaceBegin => "knob-probe-assert",
+                Action::KnobDialogFirstActivation => "knob-race-assert",
+                Action::KnobActiveBegin => "knob-dialog-first-activation",
+                Action::KnobLevelBegin => "knob-active-finish",
+                Action::KnobTaskBegin => "knob-level-finish",
+                Action::KnobOverlayBegin => "knob-task-finish",
+                Action::KnobBitmapBegin => "knob-overlay-finish",
+                Action::KnobOverlayReactivate { .. } => "knob-bitmap-finish",
+                Action::KnobOverlayRefreshBegin => "knob-overlay-wait-active",
+                Action::KnobLockAcquire => "knob-overlay-refresh-finish",
+                Action::KnobDialogAdaptive { .. } => "knob-dialog-mode-end",
+                Action::KnobDialog => "knob-dialog-check-navigation",
                 _ => continue,
             };
             for model in &value.models {
@@ -720,49 +1043,61 @@ impl Scenario {
                         "knob-dialog-preflight-begin" => {
                             matches!(previous.action, Action::KnobDialogPreflightBegin)
                         }
-                        "knob-dialog-preflight-descriptor" => {
-                            matches!(previous.action, Action::KnobDialogPreflightDescriptor)
-                        }
-                        "knob-dialog-preflight-text-alias" => {
-                            matches!(previous.action, Action::KnobDialogPreflightTextAlias)
-                        }
-                        "knob-dialog-preflight-layer-collision" => {
-                            matches!(previous.action, Action::KnobDialogPreflightLayerCollision)
-                        }
-                        "knob-dialog-preflight-widget-layer" => {
-                            matches!(previous.action, Action::KnobDialogPreflightWidgetLayer)
-                        }
-                        "knob-dialog-preflight-background-layer" => {
-                            matches!(previous.action, Action::KnobDialogPreflightBackgroundLayer)
-                        }
-                        "knob-dialog-callback-race" => {
-                            matches!(previous.action, Action::KnobDialogCallbackRace)
+                        "knob-probe-assert" => matches!(previous.action, Action::KnobProbeAssert),
+                        "knob-race-assert" => {
+                            matches!(previous.action, Action::KnobRaceAssert)
                         }
                         "knob-dialog-first-activation" => {
                             matches!(previous.action, Action::KnobDialogFirstActivation)
                         }
-                        "knob-dialog-active-display" => {
-                            matches!(previous.action, Action::KnobDialogActiveDisplay)
+                        "knob-active-finish" => {
+                            matches!(previous.action, Action::KnobActiveFinish)
                         }
-                        "knob-dialog-level-demo" => {
-                            matches!(previous.action, Action::KnobDialogLevelDemo)
+                        "knob-level-finish" => {
+                            matches!(previous.action, Action::KnobLevelFinish)
                         }
-                        "knob-dialog-task-contexts" => {
-                            matches!(previous.action, Action::KnobDialogTaskContexts)
+                        "knob-task-finish" => {
+                            matches!(previous.action, Action::KnobTaskFinish)
                         }
-                        "knob-dialog-overlay-invariants" => {
-                            matches!(previous.action, Action::KnobDialogOverlayInvariants)
+                        "knob-overlay-finish" => {
+                            matches!(previous.action, Action::KnobOverlayFinish)
                         }
-                        "knob-dialog-bitmap-zero" => {
-                            matches!(previous.action, Action::KnobDialogBitmapZero)
+                        "knob-bitmap-finish" => {
+                            matches!(previous.action, Action::KnobBitmapFinish)
                         }
-                        "knob-dialog-active-overlay" => {
-                            matches!(previous.action, Action::KnobDialogActiveOverlay)
+                        "knob-overlay-wait-active" => {
+                            matches!(previous.action, Action::KnobOverlayWaitActive)
+                        }
+                        "knob-overlay-refresh-finish" => {
+                            matches!(previous.action, Action::KnobOverlayRefreshFinish)
+                        }
+                        "knob-dialog-check-navigation" => matches!(
+                            previous.action,
+                            Action::KnobDialogCheckNavigation {
+                                field: super::NavigationField::Callback
+                            }
+                        ),
+                        "knob-dialog-expect-restored-heap" => {
+                            matches!(previous.action, Action::KnobDialogExpectRestoredHeap)
+                        }
+                        "knob-dialog-expect-expiry-frame" => matches!(
+                            previous.action,
+                            Action::KnobDialogExpectExpiryFrame { after: false }
+                        ),
+                        "knob-dialog-expect-notification-invariants" => matches!(
+                            previous.action,
+                            Action::KnobDialogExpectNotificationInvariants { clear: true }
+                        ),
+                        "knob-dialog-settle-level" => {
+                            matches!(previous.action, Action::KnobDialogSettleLevel { .. })
+                        }
+                        "knob-dialog-confirm-invalid-tag" => {
+                            matches!(previous.action, Action::KnobDialogConfirmInvalidTag)
                         }
                         "knob-dialog-mode-end" => {
                             matches!(previous.action, Action::KnobDialogModeEnd)
                         }
-                        _ => matches!(previous.action, Action::KnobDialogLockedUpdate),
+                        _ => matches!(previous.action, Action::KnobLockFinish),
                     };
                     correct
                         && previous.guest_timeout_ms == step.guest_timeout_ms
@@ -794,28 +1129,41 @@ impl Scenario {
                     return Err("knob-dialog preflight must end with the diagnostic".into());
                 };
                 let subsequent = &applicable[..=end];
-                if subsequent.len() < 25
-                    || !matches!(subsequent[0].action, Action::KnobDialogPreflightDescriptor)
-                    || !matches!(subsequent[1].action, Action::KnobDialogPreflightTextAlias)
-                    || !matches!(
-                        subsequent[2].action,
-                        Action::KnobDialogPreflightLayerCollision
+                if subsequent.len() < 179
+                    || !super::valid_preflight_probe_steps(&subsequent[0..30])
+                    || !super::valid_callback_race_steps(&subsequent[30..38])
+                    || !matches!(subsequent[38].action, Action::KnobDialogFirstActivation)
+                    || !super::valid_active_display_steps(&subsequent[39..46])
+                    || !super::valid_level_demo_steps(&subsequent[46..54])
+                    || !super::valid_task_context_steps(&subsequent[54..64])
+                    || !super::valid_overlay_invariant_steps(&subsequent[64..79])
+                    || !super::valid_bitmap_probe_steps(&subsequent[79..91])
+                    || !super::valid_refreshed_overlay_steps(&subsequent[91..98])
+                    || !super::valid_locked_update_steps(&subsequent[98..106])
+                    || !valid_knob_mode_steps(&subsequent[106..subsequent.len().saturating_sub(63)])
+                    || !valid_invalid_tag_steps(
+                        &subsequent[subsequent.len().saturating_sub(63)
+                            ..subsequent.len().saturating_sub(56)],
                     )
-                    || !matches!(subsequent[3].action, Action::KnobDialogPreflightWidgetLayer)
-                    || !matches!(
-                        subsequent[4].action,
-                        Action::KnobDialogPreflightBackgroundLayer
+                    || !valid_invalid_signature_steps(
+                        &subsequent[subsequent.len().saturating_sub(56)
+                            ..subsequent.len().saturating_sub(50)],
                     )
-                    || !matches!(subsequent[5].action, Action::KnobDialogCallbackRace)
-                    || !matches!(subsequent[6].action, Action::KnobDialogFirstActivation)
-                    || !matches!(subsequent[7].action, Action::KnobDialogActiveDisplay)
-                    || !matches!(subsequent[8].action, Action::KnobDialogLevelDemo)
-                    || !matches!(subsequent[9].action, Action::KnobDialogTaskContexts)
-                    || !matches!(subsequent[10].action, Action::KnobDialogOverlayInvariants)
-                    || !matches!(subsequent[11].action, Action::KnobDialogBitmapZero)
-                    || !matches!(subsequent[12].action, Action::KnobDialogActiveOverlay)
-                    || !matches!(subsequent[13].action, Action::KnobDialogLockedUpdate)
-                    || !valid_knob_mode_steps(&subsequent[14..subsequent.len() - 1])
+                    || !valid_knob_notification_steps(
+                        &subsequent[subsequent.len().saturating_sub(50)
+                            ..subsequent.len().saturating_sub(42)],
+                    )
+                    || !valid_knob_expiry_steps(
+                        &subsequent[subsequent.len().saturating_sub(42)
+                            ..subsequent.len().saturating_sub(38)],
+                    )
+                    || !valid_knob_restoration_steps(
+                        &subsequent[subsequent.len().saturating_sub(38)
+                            ..subsequent.len().saturating_sub(20)],
+                    )
+                    || !valid_knob_navigation_steps(
+                        &subsequent[subsequent.len().saturating_sub(20)..subsequent.len() - 1],
+                    )
                     || subsequent.iter().any(|next| {
                         next.guest_timeout_ms != step.guest_timeout_ms
                             || next.wall_timeout_s != step.wall_timeout_s
@@ -825,7 +1173,127 @@ impl Scenario {
                 }
             }
         }
+        for model in &value.models {
+            let mut indicator_scope: Option<(u32, bool, Option<u8>, bool)> = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                match &step.action {
+                    Action::L6IndicatorBegin
+                        if indicator_scope.is_none() && *model == l6fw::Model::L6 =>
+                    {
+                        indicator_scope = Some((step.guest_timeout_ms, false, None, false))
+                    }
+                    Action::L6RingSample {
+                        cc,
+                        value,
+                        guest_ms,
+                        ring,
+                    } if indicator_scope.is_some() => {
+                        let (budget, checked, previous, coverage) =
+                            indicator_scope.as_mut().unwrap();
+                        if !(0x53..=0x58).contains(cc)
+                            || *value > 127
+                            || *guest_ms == 0
+                            || *guest_ms > *budget
+                            || ring.is_some_and(|ring| !(1..=6).contains(&ring))
+                        {
+                            return Err("invalid L6 ring sample".into());
+                        }
+                        *previous = None;
+                        if ring.is_some() {
+                            *checked = true;
+                            *coverage = true;
+                        }
+                    }
+                    Action::L6MuteSample {
+                        cc,
+                        value,
+                        guest_ms,
+                        reuse_previous,
+                        ..
+                    } if indicator_scope.is_some() => {
+                        let (budget, checked, previous, _) = indicator_scope.as_mut().unwrap();
+                        if *cc > 127
+                            || *value > 127
+                            || *guest_ms == 0
+                            || *guest_ms > *budget
+                            || (*reuse_previous && *previous != Some(*cc))
+                        {
+                            return Err("invalid L6 mute sample or baseline".into());
+                        }
+                        *checked = true;
+                        *previous = Some(*cc);
+                    }
+                    Action::L6RingCoverage { mask }
+                        if indicator_scope.is_some_and(|(_, _, _, coverage)| coverage)
+                            && *mask <= 0x1ff =>
+                    {
+                        indicator_scope.as_mut().unwrap().3 = false;
+                    }
+                    Action::L6IndicatorEnd
+                        if indicator_scope
+                            .is_some_and(|(_, checked, _, coverage)| checked && !coverage) =>
+                    {
+                        indicator_scope = None
+                    }
+                    _ if indicator_scope.is_some()
+                        || matches!(
+                            step.action,
+                            Action::L6IndicatorBegin
+                                | Action::L6RingSample { .. }
+                                | Action::L6MuteSample { .. }
+                                | Action::L6RingCoverage { .. }
+                                | Action::L6IndicatorEnd
+                        ) =>
+                    {
+                        return Err("invalid L6 indicator campaign sequence".into());
+                    }
+                    _ => {}
+                }
+            }
+            if indicator_scope.is_some() {
+                return Err("unterminated L6 indicator campaign".into());
+            }
+        }
+        for model in &value.models {
+            let mut scope = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                match &step.action {
+                    Action::UsbSysexBegin if scope.is_none() => {
+                        scope = Some((step.guest_timeout_ms, 0usize))
+                    }
+                    Action::UsbSysexExchange { request, .. } if scope.is_some() => {
+                        let (budget, count) = scope.as_mut().unwrap();
+                        if request.reply_timeout_ms.unwrap_or(400) > *budget {
+                            return Err(
+                                "USB SysEx reply window exceeds campaign guest deadline".into()
+                            );
+                        }
+                        *count += 1;
+                    }
+                    Action::UsbSysexEnd if scope.is_some_and(|(_, count)| count > 0) => {
+                        scope = None
+                    }
+                    _ if scope.is_some()
+                        || matches!(
+                            step.action,
+                            Action::UsbSysexBegin
+                                | Action::UsbSysexExchange { .. }
+                                | Action::UsbSysexEnd
+                        ) =>
+                    {
+                        return Err("invalid USB SysEx campaign sequence".into());
+                    }
+                    _ => {}
+                }
+            }
+            if scope.is_some() {
+                return Err("unterminated USB SysEx campaign".into());
+            }
+        }
         for step in &value.step {
+            if let Action::KnobDialogAdaptive { plan } = &step.action {
+                plan.validate()?;
+            }
             if matches!(step.action, Action::EditorPadAssignments) && !usb_descriptors_seen {
                 return Err(
                     "editor-pad-assignments requires a preceding usb-descriptors step".into(),
@@ -1019,31 +1487,24 @@ impl Scenario {
             {
                 return Err("wasm-patch is a standalone L6/L6max scenario operation".into());
             }
-            if let Action::UsbSysex { requests, .. } = &step.action {
-                if requests.is_empty() {
-                    return Err("usb-sysex needs at least one request".into());
+            if let Action::UsbSysexExchange { request, .. } = &step.action {
+                if request.bytes.len() < 2
+                    || request.bytes.first() != Some(&0xf0)
+                    || request.bytes.last() != Some(&0xf7)
+                {
+                    return Err("usb-sysex bytes must be a complete F0..F7 message".into());
                 }
-                for request in requests {
-                    if request.bytes.len() < 2
-                        || request.bytes.first() != Some(&0xf0)
-                        || request.bytes.last() != Some(&0xf7)
-                    {
-                        return Err("usb-sysex bytes must be a complete F0..F7 message".into());
-                    }
-                    if request.expect_prefix.as_ref().is_some_and(Vec::is_empty) {
-                        return Err("usb-sysex expect_prefix must not be empty".into());
-                    }
-                    if request.reject_prefixes.iter().any(Vec::is_empty) {
-                        return Err(
-                            "usb-sysex reject_prefixes must not contain empty prefixes".into()
-                        );
-                    }
-                    if request
-                        .reply_timeout_ms
-                        .is_some_and(|timeout| timeout == 0 || timeout > step.guest_timeout_ms)
-                    {
-                        return Err("usb-sysex reply_timeout_ms must be positive and fit the step guest timeout".into());
-                    }
+                if request.expect_prefix.as_ref().is_some_and(Vec::is_empty) {
+                    return Err("usb-sysex expect_prefix must not be empty".into());
+                }
+                if request.reject_prefixes.iter().any(Vec::is_empty) {
+                    return Err("usb-sysex reject_prefixes must not contain empty prefixes".into());
+                }
+                if request
+                    .reply_timeout_ms
+                    .is_some_and(|timeout| timeout == 0 || timeout > step.guest_timeout_ms)
+                {
+                    return Err("usb-sysex reply_timeout_ms must be positive and fit the step guest timeout".into());
                 }
             }
             if let Action::ExpectHeap { minimum_free } = &step.action {
@@ -1110,7 +1571,7 @@ impl Scenario {
                     }
                 }
             }
-            if let Action::ExpectSdPatch {
+            if let Action::ExpectSdModule {
                 loaded,
                 chain_count,
             } = &step.action
@@ -1119,6 +1580,9 @@ impl Scenario {
                     || chain_count.is_some_and(|count| count == 0 || count > 8))
             {
                 return Err("expect-patch-loader requires an Patch loader fixture (and a selected patch when loaded=true)".into());
+            }
+            if matches!(step.action, Action::ExpectSdLoader) && value.sd_patches.is_none() {
+                return Err("SD inspection requires a Patch loader fixture".into());
             }
             if let Action::HoldChord {
                 controls,
@@ -1486,6 +1950,22 @@ impl Scenario {
             }
         }
         for step in &value.step {
+            if let Action::EffectPacedTurn { channel, steps } = step.action {
+                if !(1..=8).contains(&channel)
+                    || steps == 0
+                    || steps.unsigned_abs() > 128
+                    || value
+                        .models
+                        .iter()
+                        .any(|model| step.applies_to(*model) && *model != l6fw::Model::L6max)
+                {
+                    return Err(
+                        "effect-paced-turn requires L6max, channel 1..8 and 1..128 turns".into(),
+                    );
+                }
+            }
+        }
+        for step in &value.step {
             if let Action::DirectUsbMidiRoundTrip { cable, .. } = &step.action
                 && *cable > 15
             {
@@ -1528,6 +2008,111 @@ mod l6_midi_probe_tests {
                 "l6"
             )
             .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod sd_inspection_tests {
+    fn parse(steps: &str, fixture: &str) -> Result<super::super::Scenario, String> {
+        super::super::Scenario::from_text(&format!(
+            "version=1\nname='sd-inspection'\nmodels=['l6','l6max']\nbackends=['headless']\n{fixture}\n{steps}"
+        ))
+    }
+    #[test]
+    fn phases_are_adjacent_and_share_budget_and_fixture() {
+        let begin =
+            "[[step]]\naction='expect-sd-loader'\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
+        let end = "[[step]]\naction='expect-sd-module'\nloaded=true\nguest_timeout_ms=10000\nwall_timeout_s=30\n";
+        let fixture = "sd_patches=['midi-sync']";
+        assert!(parse(&format!("{begin}{end}"), fixture).is_ok());
+        assert!(parse(begin, fixture).is_err());
+        assert!(parse(end, fixture).is_err());
+        assert!(parse(&format!("{begin}{end}"), "").is_err());
+        assert!(
+            parse(
+                &format!("{begin}[[step]]\naction='wait'\nuntil='boot-ready'\n{end}"),
+                fixture
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                &format!(
+                    "{begin}{}",
+                    end.replace("wall_timeout_s=30", "wall_timeout_s=29")
+                ),
+                fixture
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                &format!(
+                    "{begin}{}",
+                    end.replace("loaded=true", "loaded=true\nchain_count=9")
+                ),
+                fixture
+            )
+            .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod panel_key_scope_tests {
+    #[test]
+    fn rejects_incomplete_or_modified_panel_key_scope() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/emulator/cases/panel/l6max-input-smoke.toml");
+        let source = std::fs::read_to_string(path).unwrap();
+        assert!(crate::Scenario::parse(&source).is_ok());
+        assert!(crate::Scenario::parse(&source.replace("target = 15", "target = 16")).is_ok());
+        assert!(
+            crate::Scenario::parse(&source.replace("word_index = 4", "word_index = 6")).is_err()
+        );
+        assert!(
+            crate::Scenario::parse(&source.replace(
+                "action = \"l6max-panel-key-end\"",
+                "action = \"l6max-panel-key-begin\""
+            ))
+            .is_err()
+        );
+        assert!(
+            crate::Scenario::parse(&source.replacen("pressed = false", "pressed = true", 1))
+                .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod din_usb_scope_tests {
+    #[test]
+    fn requires_bounded_paired_messages_and_complete_scope() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/emulator/cases/midi/l6-din-usb-forwarding.toml");
+        let source = std::fs::read_to_string(path).unwrap();
+        // Scenario::parse does not expand includes, so keep just the scope.
+        let tail = source
+            .split("[[step]]\naction = \"din-usb-begin\"")
+            .nth(1)
+            .unwrap();
+        let text = format!(
+            "version=1\nname='din'\nmodels=['l6']\nbackends=['headless']\n[[step]]\naction='din-usb-begin'\n{tail}"
+        );
+        assert!(crate::Scenario::parse(&text).is_ok());
+        assert!(crate::Scenario::parse(&text.replace("cable = 0", "cable = 16")).is_err());
+        assert!(
+            crate::Scenario::parse(&text.replacen(
+                "bytes = [179, 16, 32]",
+                "bytes = [179, 16, 33]",
+                1
+            ))
+            .is_err()
+        );
+        assert!(crate::Scenario::parse(&text.replace("din-usb-end", "din-usb-begin")).is_err());
+        assert!(
+            crate::Scenario::parse(&text.replace("models=['l6']", "models=['l6max']")).is_err()
         );
     }
 }

@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const USAGE: &str = "Usage: l6ctl midi listen ENDPOINT [--timeout-ms MS] | l6ctl midi observe ENDPOINT --wall-ms MS | l6ctl midi send ENDPOINT CHANNEL CONTROLLER VALUE | l6ctl midi sync ENDPOINT --count N [--quiet-ms MS] [--timeout-ms MS]";
+const USAGE: &str = "Usage: l6ctl midi listen ENDPOINT [--timeout-ms MS] | l6ctl midi observe ENDPOINT --wall-ms MS | l6ctl midi send ENDPOINT CHANNEL CONTROLLER VALUE | l6ctl midi send-bytes ENDPOINT HEX_BYTE... | l6ctl midi sync ENDPOINT --count N [--quiet-ms MS] [--timeout-ms MS]";
 
 #[derive(Debug)]
 pub struct MidiCliError {
@@ -47,6 +47,10 @@ enum Command {
     Send {
         endpoint: String,
         message: ControlChange,
+    },
+    SendBytes {
+        endpoint: String,
+        bytes: Vec<u8>,
     },
     Observe {
         endpoint: String,
@@ -124,6 +128,21 @@ fn parse(args: &[String]) -> Result<Command, String> {
                 count: count.ok_or("sync requires --count")?,
                 quiet: Duration::from_millis(quiet),
                 timeout: Duration::from_millis(timeout),
+            })
+        }
+        Some("send-bytes") if (3..=258).contains(&args.len()) => {
+            let bytes = args[2..]
+                .iter()
+                .map(|byte| {
+                    if byte.len() != 2 {
+                        return Err("MIDI bytes must be two hexadecimal digits".to_string());
+                    }
+                    u8::from_str_radix(byte, 16).map_err(|_| "invalid MIDI byte".to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Command::SendBytes {
+                endpoint: args[1].clone(),
+                bytes,
             })
         }
         Some("send") if args.len() == 5 => {
@@ -391,6 +410,18 @@ pub fn run(args: &[String]) -> Result<(), MidiCliError> {
                 &mut std::io::stdout().lock(),
             )
         }
+        Command::SendBytes { endpoint, bytes } => {
+            let mut session =
+                MidiSession::connect_native(&endpoint).map_err(MidiCliError::connection)?;
+            session
+                .send_bytes(&bytes)
+                .map_err(|e| MidiCliError::new("transport", e))?;
+            println!(
+                "{}",
+                json!({"event":"sent", "endpoint":endpoint, "bytes":bytes})
+            );
+            Ok(())
+        }
         Command::Send { endpoint, message } => {
             let mut session =
                 MidiSession::connect_native(&endpoint).map_err(MidiCliError::connection)?;
@@ -424,6 +455,14 @@ mod tests {
             })
         );
         assert!(parse(&args(&["send", "port", "16", "1", "2"])).is_err());
+        assert_eq!(
+            parse(&args(&["send-bytes", "port", "f0", "7d", "f7"])),
+            Ok(Command::SendBytes {
+                endpoint: "port".into(),
+                bytes: vec![0xf0, 0x7d, 0xf7]
+            })
+        );
+        assert!(parse(&args(&["send-bytes", "port", "xyz"])).is_err());
         assert!(parse(&args(&["listen", "port", "--timeout-ms", "abc"])).is_err());
         assert!(parse(&args(&["observe", "port", "--wall-ms", "0"])).is_err());
         assert_eq!(

@@ -30,14 +30,17 @@ pub(super) fn prepare_factory_fixture(options: &mut Options) -> Result<(), Strin
 
 /// Run the firmware updater's full disposable-state lifecycle. This action owns
 /// its guest restarts because each boot changes the NOR and SD fixture.
-pub fn run_firmware_update(options: &Options) -> Result<(), String> {
+pub fn run_firmware_update(
+    options: &Options,
+    progress: crate::progress::CaseProgress,
+) -> Result<(), String> {
     let main =
         fs::read(options.firmware_dir.join("main_firmware.bin")).map_err(|e| e.to_string())?;
     let model = l6fw::model_from_main(&main).map_err(|e| e.to_string())?;
     if model == l6fw::Model::L6 {
         run_l6_update(options, &main)
     } else {
-        run_l6max_update(options, &main)
+        run_l6max_update(options, &main, progress)
     }
 }
 
@@ -645,7 +648,11 @@ pub(super) fn update_checksum(package: &[u8]) -> u32 {
         .fold(0u32, |sum, &byte| sum.wrapping_add(u32::from(byte)))
 }
 
-pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), String> {
+pub(super) fn run_l6max_update(
+    options: &Options,
+    main: &[u8],
+    progress: crate::progress::CaseProgress,
+) -> Result<(), String> {
     use sha2::{Digest, Sha256};
     let source = options
         .firmware_package
@@ -878,6 +885,7 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
                 // in full; din-mixer-control needs a DIN port and Mixer
                 // Control via MIDI, which this boot does not set up.
                 let mut state = State::default();
+                state.set_adaptive_progress(progress.clone(), 1);
                 let mut run = |operation: Operation, patch: &str| {
                     state
                         .execute(&session, &verify, operation, 180_000, 300)
@@ -891,23 +899,55 @@ pub(super) fn run_l6max_update(options: &Options, main: &[u8]) -> Result<(), Str
                     run(Operation::KnobDialogGuard, "knob-dialog")?;
                     run(Operation::KnobDialogBaseline, "knob-dialog")?;
                     run(Operation::KnobDialogPreflightBegin, "knob-dialog")?;
-                    run(Operation::KnobDialogPreflightDescriptor, "knob-dialog")?;
-                    run(Operation::KnobDialogPreflightTextAlias, "knob-dialog")?;
-                    run(Operation::KnobDialogPreflightLayerCollision, "knob-dialog")?;
-                    run(Operation::KnobDialogPreflightWidgetLayer, "knob-dialog")?;
-                    run(Operation::KnobDialogPreflightBackgroundLayer, "knob-dialog")?;
-                    run(Operation::KnobDialogCallbackRace, "knob-dialog")?;
+                    for (label, operation) in embedded_preflight_probe_operations()? {
+                        run(operation, &label)?;
+                    }
+                    for (label, operation) in embedded_callback_race_operations()? {
+                        run(operation, &label)?;
+                    }
                     run(Operation::KnobDialogFirstActivation, "knob-dialog")?;
-                    run(Operation::KnobDialogActiveDisplay, "knob-dialog")?;
-                    run(Operation::KnobDialogLevelDemo, "knob-dialog")?;
-                    run(Operation::KnobDialogTaskContexts, "knob-dialog")?;
-                    run(Operation::KnobDialogOverlayInvariants, "knob-dialog")?;
-                    run(Operation::KnobDialogBitmapZero, "knob-dialog")?;
-                    run(Operation::KnobDialogActiveOverlay, "knob-dialog")?;
-                    run(Operation::KnobDialogLockedUpdate, "knob-dialog")?;
+                    for (label, operation) in embedded_active_display_operations()? {
+                        run(operation, &label)?;
+                    }
+                    for (label, operation) in embedded_level_demo_operations()? {
+                        run(operation, &label)?;
+                    }
+                    for (label, operation) in embedded_task_context_operations()? {
+                        run(operation, &label)?;
+                    }
+                    for (label, operation) in embedded_overlay_operations()? {
+                        run(operation, &label)?;
+                    }
+                    for (label, operation) in embedded_bitmap_probe_operations()? {
+                        run(operation, &label)?;
+                    }
+                    for (label, operation) in embedded_refreshed_overlay_operations()? {
+                        run(operation, &label)?;
+                    }
+                    for (label, operation) in embedded_locked_update_operations()? {
+                        run(operation, &label)?;
+                    }
                     // The same fragment is embedded in the staged binary; no
                     // live checkout is consulted during the lifecycle run.
                     for (label, operation) in embedded_mode_operations()? {
+                        run(operation, &label)?;
+                    }
+                    for (label, operation) in embedded_invalid_tag_operations()? {
+                        run(operation, &label)?;
+                    }
+                    for (label, operation) in embedded_invalid_signature_operations()? {
+                        run(operation, &label)?;
+                    }
+                    for (label, operation) in embedded_notification_operations()? {
+                        run(operation, &label)?;
+                    }
+                    for (label, operation) in embedded_expiry_operations()? {
+                        run(operation, &label)?;
+                    }
+                    for (label, operation) in embedded_restoration_operations()? {
+                        run(operation, &label)?;
+                    }
+                    for (label, operation) in embedded_navigation_operations()? {
                         run(operation, &label)?;
                     }
                     run(Operation::KnobDialog, "knob-dialog")?;

@@ -96,6 +96,356 @@ fn midi_sync_operations(fragment: &str) -> Result<Vec<(String, Operation)>, Stri
     Ok(operations)
 }
 
+pub(super) fn embedded_overlay_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/overlay-invariants.toml"
+    ))
+    .map_err(|error| format!("invalid embedded overlay fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_overlay_invariant_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded overlay fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match step.action {
+                crate::Action::KnobOverlayBegin => Operation::KnobOverlayBegin,
+                crate::Action::KnobOverlayCheckWindow => Operation::KnobOverlayCheckWindow,
+                crate::Action::KnobOverlaySnapshotDescriptors => {
+                    Operation::KnobOverlaySnapshotDescriptors
+                }
+                crate::Action::KnobOverlayCheckDescriptor { field } => {
+                    Operation::KnobOverlayCheckDescriptor { field }
+                }
+                crate::Action::KnobOverlayFinishDescriptors => {
+                    Operation::KnobOverlayFinishDescriptors
+                }
+                crate::Action::KnobOverlayCheckResource => Operation::KnobOverlayCheckResource,
+                crate::Action::KnobOverlayCheckCorners => Operation::KnobOverlayCheckCorners,
+                crate::Action::KnobOverlayCheckSignature => Operation::KnobOverlayCheckSignature,
+                crate::Action::KnobOverlayCheckBitmap => Operation::KnobOverlayCheckBitmap,
+                crate::Action::KnobOverlayCheckHeap => Operation::KnobOverlayCheckHeap,
+                crate::Action::KnobOverlayFinish => Operation::KnobOverlayFinish,
+                _ => return Err("unsupported embedded overlay action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
+pub(super) fn embedded_refreshed_overlay_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/refreshed-overlay.toml"
+    ))
+    .map_err(|error| format!("invalid embedded refreshed overlay fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_refreshed_overlay_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded refreshed overlay fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobOverlayReactivate { delta } => {
+                    Operation::KnobOverlayReactivate { delta: *delta }
+                }
+                crate::Action::KnobOverlayWaitActive => Operation::KnobOverlayWaitActive,
+                crate::Action::KnobOverlayRefreshBegin => Operation::KnobOverlayRefreshBegin,
+                crate::Action::KnobOverlayRefreshValue => Operation::KnobOverlayRefreshValue,
+                crate::Action::KnobOverlayRefreshPixels => Operation::KnobOverlayRefreshPixels,
+                crate::Action::KnobOverlayRefreshFinish => Operation::KnobOverlayRefreshFinish,
+                crate::Action::CaptureDisplay { guest_ms, artifact } => Operation::CaptureDisplay {
+                    guest_ms: *guest_ms,
+                    artifact: artifact.clone(),
+                },
+                _ => return Err("unsupported embedded refreshed overlay action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
+pub(super) fn embedded_locked_update_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/locked-update.toml"
+    ))
+    .map_err(|error| format!("invalid embedded locked update fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_locked_update_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded locked update fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobLockAcquire => Operation::KnobLockAcquire,
+                crate::Action::KnobLockTrigger { delta } => {
+                    Operation::KnobLockTrigger { delta: *delta }
+                }
+                crate::Action::KnobLockWait => Operation::KnobLockWait,
+                crate::Action::KnobLockSample => Operation::KnobLockSample,
+                crate::Action::KnobLockRestore => Operation::KnobLockRestore,
+                crate::Action::KnobLockAssert => Operation::KnobLockAssert,
+                crate::Action::KnobLockFinish => Operation::KnobLockFinish,
+                crate::Action::CaptureDisplay { guest_ms, artifact } => Operation::CaptureDisplay {
+                    guest_ms: *guest_ms,
+                    artifact: artifact.clone(),
+                },
+                _ => return Err("unsupported embedded locked update action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
+pub(super) fn embedded_active_display_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/active-display.toml"
+    ))
+    .map_err(|error| format!("invalid embedded active display fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_active_display_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded active display fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobActiveBegin => Operation::KnobActiveBegin,
+                crate::Action::KnobActiveSampleCallbacks => Operation::KnobActiveSampleCallbacks,
+                crate::Action::KnobActiveCheckCallbacks => Operation::KnobActiveCheckCallbacks,
+                crate::Action::KnobActiveCheckFrame => Operation::KnobActiveCheckFrame,
+                crate::Action::KnobActiveFinish => Operation::KnobActiveFinish,
+                crate::Action::EnqueueEncoderNoAck { channel, steps } => {
+                    Operation::EnqueueEncoderNoAck {
+                        channel: *channel,
+                        steps: *steps,
+                    }
+                }
+                crate::Action::CaptureDisplay { guest_ms, artifact } => Operation::CaptureDisplay {
+                    guest_ms: *guest_ms,
+                    artifact: artifact.clone(),
+                },
+                _ => return Err("unsupported embedded active display action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
+pub(super) fn embedded_callback_race_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/callback-race.toml"
+    ))
+    .map_err(|error| format!("invalid embedded callback race fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_callback_race_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded callback race fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobRaceBegin => Operation::KnobRaceBegin,
+                crate::Action::KnobRaceWaitRegistration => Operation::KnobRaceWaitRegistration,
+                crate::Action::KnobRaceArmCallback => Operation::KnobRaceArmCallback,
+                crate::Action::KnobRaceWaitCallback => Operation::KnobRaceWaitCallback,
+                crate::Action::KnobRaceSample => Operation::KnobRaceSample,
+                crate::Action::KnobRaceRestore => Operation::KnobRaceRestore,
+                crate::Action::KnobRaceAssert => Operation::KnobRaceAssert,
+                crate::Action::KnobRaceCapture { guest_ms, artifact } => {
+                    Operation::KnobRaceCapture {
+                        guest_ms: *guest_ms,
+                        artifact: artifact.clone(),
+                    }
+                }
+                _ => return Err("unsupported embedded callback race action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
+pub(super) fn embedded_preflight_probe_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/preflight-probes.toml"
+    ))
+    .map_err(|error| format!("invalid embedded preflight fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_preflight_probe_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded preflight fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobProbePrepare { probe } => {
+                    Operation::KnobProbePrepare { probe: *probe }
+                }
+                crate::Action::KnobProbeInject => Operation::KnobProbeInject,
+                crate::Action::KnobProbeTrigger { delta } => {
+                    Operation::KnobProbeTrigger { delta: *delta }
+                }
+                crate::Action::KnobProbeSample => Operation::KnobProbeSample,
+                crate::Action::KnobProbeRestore => Operation::KnobProbeRestore,
+                crate::Action::KnobProbeAssert => Operation::KnobProbeAssert,
+                _ => return Err("unsupported embedded preflight action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
+pub(super) fn embedded_task_context_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/task-contexts.toml"
+    ))
+    .map_err(|error| format!("invalid embedded task contexts fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_task_context_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded task contexts fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobTaskBegin => Operation::KnobTaskBegin,
+                crate::Action::KnobTaskArmHook => Operation::KnobTaskArmHook,
+                crate::Action::KnobTaskWaitHook => Operation::KnobTaskWaitHook,
+                crate::Action::KnobTaskArmCallback => Operation::KnobTaskArmCallback,
+                crate::Action::KnobTaskWaitCallback => Operation::KnobTaskWaitCallback,
+                crate::Action::KnobTaskAssertDistinct => Operation::KnobTaskAssertDistinct,
+                crate::Action::KnobTaskRelease => Operation::KnobTaskRelease,
+                crate::Action::KnobTaskFinish => Operation::KnobTaskFinish,
+                crate::Action::EnqueueEncoderNoAck { channel, steps } => {
+                    Operation::EnqueueEncoderNoAck {
+                        channel: *channel,
+                        steps: *steps,
+                    }
+                }
+                crate::Action::CaptureDisplay { guest_ms, artifact } => Operation::CaptureDisplay {
+                    guest_ms: *guest_ms,
+                    artifact: artifact.clone(),
+                },
+                _ => return Err("unsupported embedded task contexts action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
+pub(super) fn embedded_level_demo_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/level-demo.toml"
+    ))
+    .map_err(|error| format!("invalid embedded level demo fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_level_demo_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded level demo fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobLevelBegin => Operation::KnobLevelBegin,
+                crate::Action::KnobLevelStart { demo, artifact } => Operation::KnobLevelStart {
+                    demo: demo.clone(),
+                    artifact: artifact.clone(),
+                },
+                crate::Action::KnobLevelSweep { sweep } => Operation::KnobLevelSweep {
+                    sweep: sweep.clone(),
+                },
+                crate::Action::KnobLevelExpectZero => Operation::KnobLevelExpectZero,
+                crate::Action::KnobLevelFinish => Operation::KnobLevelFinish,
+                crate::Action::CaptureDisplay { guest_ms, artifact } => Operation::CaptureDisplay {
+                    guest_ms: *guest_ms,
+                    artifact: artifact.clone(),
+                },
+                _ => return Err("unsupported embedded level demo action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
+pub(super) fn embedded_bitmap_probe_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/bitmap-zero.toml"
+    ))
+    .map_err(|error| format!("invalid embedded bitmap probe fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_bitmap_probe_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded bitmap probe fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobBitmapBegin => Operation::KnobBitmapBegin,
+                crate::Action::KnobBitmapCheckBackground {
+                    background,
+                    expected,
+                } => Operation::KnobBitmapCheckBackground {
+                    background: *background,
+                    expected: *expected,
+                },
+                crate::Action::KnobBitmapStoreBefore => Operation::KnobBitmapStoreBefore,
+                crate::Action::KnobBitmapArm => Operation::KnobBitmapArm,
+                crate::Action::KnobBitmapWait => Operation::KnobBitmapWait,
+                crate::Action::KnobBitmapInvoke { background } => Operation::KnobBitmapInvoke {
+                    background: *background,
+                },
+                crate::Action::KnobBitmapCheckFrame => Operation::KnobBitmapCheckFrame,
+                crate::Action::KnobBitmapCheckSignature => Operation::KnobBitmapCheckSignature,
+                crate::Action::KnobBitmapCheckDescriptor => Operation::KnobBitmapCheckDescriptor,
+                crate::Action::KnobBitmapFinish => Operation::KnobBitmapFinish,
+                crate::Action::CaptureDisplay { guest_ms, artifact } => Operation::CaptureDisplay {
+                    guest_ms: *guest_ms,
+                    artifact: artifact.clone(),
+                },
+                _ => return Err("unsupported embedded bitmap probe action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
 pub(super) fn embedded_mode_operations() -> Result<Vec<(String, Operation)>, String> {
     let fragment: crate::Fragment = toml::from_str(EMBEDDED_MODE_WALK)
         .map_err(|error| format!("invalid embedded knob mode fragment: {error}"))?;
@@ -112,6 +462,252 @@ pub(super) fn embedded_mode_operations() -> Result<Vec<(String, Operation)>, Str
         .map(|step| {
             let operation =
                 mode_step_operation(&step.action).ok_or("unsupported embedded knob mode action")?;
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
+pub(super) fn embedded_invalid_tag_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/invalid-tags.toml"
+    ))
+    .map_err(|error| format!("invalid embedded invalid-tag fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_invalid_tag_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded invalid-tag fragment has an invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match step.action {
+                crate::Action::KnobDialogAdaptive { ref plan } => {
+                    Operation::KnobDialogAdaptive { plan: plan.clone() }
+                }
+                crate::Action::KnobDialogInjectInvalidTag { tag } => {
+                    Operation::KnobDialogInjectInvalidTag { tag }
+                }
+                crate::Action::KnobDialogWaitInvalidTag => Operation::KnobDialogWaitInvalidTag,
+                crate::Action::KnobDialogConfirmInvalidTag => {
+                    Operation::KnobDialogConfirmInvalidTag
+                }
+                _ => return Err("unsupported embedded invalid-tag action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
+pub(super) fn embedded_invalid_signature_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/invalid-signature.toml"
+    ))
+    .map_err(|error| format!("invalid embedded signature fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_invalid_signature_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded signature fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobDialogSettleLevel { artifact } => {
+                    Operation::KnobDialogSettleLevel {
+                        artifact: artifact.clone(),
+                    }
+                }
+                crate::Action::KnobDialogInjectInvalidSignature => {
+                    Operation::KnobDialogInjectInvalidSignature
+                }
+                crate::Action::KnobDialogObserveInvalidSignature { guest_ms } => {
+                    Operation::KnobDialogObserveInvalidSignature {
+                        guest_ms: *guest_ms,
+                    }
+                }
+                crate::Action::KnobDialogSampleInvalidSignature => {
+                    Operation::KnobDialogSampleInvalidSignature
+                }
+                crate::Action::KnobDialogRestoreInvalidSignature => {
+                    Operation::KnobDialogRestoreInvalidSignature
+                }
+                _ => return Err("unsupported embedded signature action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
+pub(super) fn embedded_notification_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/notification.toml"
+    ))
+    .map_err(|error| format!("invalid embedded notification fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_knob_notification_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded notification fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobDialogPrepareNotification => {
+                    Operation::KnobDialogPrepareNotification
+                }
+                crate::Action::KnobDialogArmNotificationCallback => {
+                    Operation::KnobDialogArmNotificationCallback
+                }
+                crate::Action::KnobDialogWaitNotificationCallback => {
+                    Operation::KnobDialogWaitNotificationCallback
+                }
+                crate::Action::KnobDialogInvokeNotification { message } => {
+                    Operation::KnobDialogInvokeNotification { message: *message }
+                }
+                crate::Action::KnobDialogWaitNotificationFrame {
+                    clear,
+                    artifact,
+                    guest_ms,
+                    limit_ms,
+                } => Operation::KnobDialogWaitNotificationFrame {
+                    clear: *clear,
+                    artifact: artifact.clone(),
+                    guest_ms: *guest_ms,
+                    limit_ms: *limit_ms,
+                },
+                crate::Action::KnobDialogExpectNotificationInvariants { clear } => {
+                    Operation::KnobDialogExpectNotificationInvariants { clear: *clear }
+                }
+                _ => return Err("unsupported embedded notification action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
+pub(super) fn embedded_expiry_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/expiry.toml"
+    ))
+    .map_err(|error| format!("invalid embedded expiry fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_knob_expiry_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded expiry fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::KnobDialogWaitExpiry {
+                    interval_ms,
+                    limit_ms,
+                } => Operation::KnobDialogWaitExpiry {
+                    interval_ms: *interval_ms,
+                    limit_ms: *limit_ms,
+                },
+                crate::Action::CaptureDisplay { guest_ms, artifact } => Operation::CaptureDisplay {
+                    guest_ms: *guest_ms,
+                    artifact: artifact.clone(),
+                },
+                crate::Action::KnobDialogExpectExpiryFrame { after } => {
+                    Operation::KnobDialogExpectExpiryFrame { after: *after }
+                }
+                _ => return Err("unsupported embedded expiry action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
+pub(super) fn embedded_restoration_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/restoration.toml"
+    ))
+    .map_err(|error| format!("invalid embedded restoration fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_knob_restoration_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded restoration fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match step.action {
+                crate::Action::KnobDialogSnapshotRestoration => {
+                    Operation::KnobDialogSnapshotRestoration
+                }
+                crate::Action::KnobDialogCheckRestoration { field } => {
+                    Operation::KnobDialogCheckRestoration { field }
+                }
+                crate::Action::KnobDialogFinishRestoration => {
+                    Operation::KnobDialogFinishRestoration
+                }
+                crate::Action::KnobDialogExpectRestoredHeap => {
+                    Operation::KnobDialogExpectRestoredHeap
+                }
+                _ => return Err("unsupported embedded restoration action".into()),
+            };
+            Ok((crate::progress::step_label(&step.action), operation))
+        })
+        .collect()
+}
+
+pub(super) fn embedded_navigation_operations() -> Result<Vec<(String, Operation)>, String> {
+    let fragment: crate::Fragment = toml::from_str(include_str!(
+        "../../../../patches/knob-dialog/tests/emulator/fragments/navigation.toml"
+    ))
+    .map_err(|error| format!("invalid embedded navigation fragment: {error}"))?;
+    let steps = fragment.step.iter().collect::<Vec<_>>();
+    if !crate::scenario::valid_knob_navigation_steps(&steps)
+        || steps
+            .iter()
+            .any(|step| !step.models.is_empty() || step.setup_input)
+    {
+        return Err("embedded navigation fragment has invalid sequence or scope".into());
+    }
+    steps
+        .into_iter()
+        .map(|step| {
+            let operation = match &step.action {
+                crate::Action::EnqueueEncoderNoAck { channel, steps } => {
+                    Operation::EnqueueEncoderNoAck {
+                        channel: *channel,
+                        steps: *steps,
+                    }
+                }
+                crate::Action::EnqueueTapNoAck { target, hold_ms } => Operation::EnqueueTapNoAck {
+                    target: *target,
+                    hold_ms: *hold_ms,
+                },
+                crate::Action::CaptureDisplay { guest_ms, artifact } => Operation::CaptureDisplay {
+                    guest_ms: *guest_ms,
+                    artifact: artifact.clone(),
+                },
+                crate::Action::ReleaseCapturedDisplay => Operation::ReleaseCapturedDisplay,
+                crate::Action::KnobDialogSnapshotNavigation => {
+                    Operation::KnobDialogSnapshotNavigation
+                }
+                crate::Action::KnobDialogCheckNavigation { field } => {
+                    Operation::KnobDialogCheckNavigation { field: *field }
+                }
+                _ => return Err("unsupported embedded navigation action".into()),
+            };
             Ok((crate::progress::step_label(&step.action), operation))
         })
         .collect()
@@ -197,7 +793,103 @@ fn mode_operation_matches(operation: &Operation) -> bool {
     )
 }
 
+pub(super) fn wait_parameter_mode(
+    session: &Session,
+    control: &l6ctl::OwnedControl<'_>,
+    mode: u8,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    wait_parameter_mode_checked(
+        session,
+        control,
+        mode,
+        guest_timeout_ms,
+        wall_timeout_s,
+        || Ok(()),
+    )
+}
+
+pub(super) fn wait_parameter_mode_checked(
+    session: &Session,
+    control: &l6ctl::OwnedControl<'_>,
+    mode: u8,
+    guest_timeout_ms: u32,
+    wall_timeout_s: u64,
+    mut check: impl FnMut() -> Result<(), Box<dyn std::error::Error>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    check()?;
+    let reader = control.knob_parameter_reader()?;
+    let start = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
+    let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(180));
+    loop {
+        check()?;
+        session.poll()?;
+        let actual = reader.parameter_mode()?;
+        if actual == mode {
+            return Ok(());
+        }
+        let now = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
+        if now.wrapping_sub(start) >= guest_timeout_ms.min(10_000) || Instant::now() >= deadline {
+            return Err(format!("parameter mode did not become {mode}; found {actual}").into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn commit_level_capture(
+    mut check: impl FnMut() -> Result<(), Box<dyn std::error::Error>>,
+    save: impl FnOnce() -> Result<(), Box<dyn std::error::Error>>,
+    advance: impl FnOnce() -> Result<(), Box<dyn std::error::Error>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    check()?;
+    save()?;
+    check()?;
+    advance()
+}
+
+fn save_captured_display(
+    capture: &CapturedDisplay,
+    logs: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let native = image::GrayImage::from_fn(128, 64, |x, y| {
+        let index = ((63 - y as usize) / 8) * 128 + x as usize;
+        image::Luma([
+            if capture.frame[index] & (1 << ((63 - y as usize) % 8)) != 0 {
+                255
+            } else {
+                0
+            },
+        ])
+    });
+    image::DynamicImage::ImageLuma8(native)
+        .resize(768, 384, image::imageops::FilterType::Nearest)
+        .save(logs.join(format!("{}.png", capture.artifact)))?;
+    Ok(())
+}
+
 impl State {
+    pub(super) fn release_navigation_capture(
+        &mut self,
+        _options: &Options,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        let capture = self
+            .captured_display
+            .as_ref()
+            .ok_or("no display capture to save")?;
+        let context = self
+            .knob_dialog_preflight
+            .as_mut()
+            .ok_or("missing knob preflight")?;
+        if !matches!(final_phase(context), 45 | 48) {
+            return Err("navigation save out of order".into());
+        }
+        let artifact = capture.artifact.clone();
+        note_navigation_save(context)?;
+        self.captured_display = None;
+        Ok(json!({"artifact":artifact}))
+    }
+
     pub(super) fn run_mode_primitive(
         &mut self,
         session: &Session,
@@ -205,6 +897,7 @@ impl State {
         operation: Operation,
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
+        shared: Option<(Instant, u32, u32, u64, u16)>,
     ) -> Result<Value, Box<dyn std::error::Error>> {
         if let Some(scope) = &self.knob_mode {
             if !mode_operation_matches(&operation) {
@@ -299,29 +992,11 @@ impl State {
                 }
             }
             Operation::WaitKnobParameterMode { mode } => {
-                let reader = control.knob_parameter_reader()?;
-                let start = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
-                let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(180));
-                loop {
-                    session.poll()?;
-                    let actual = reader.parameter_mode()?;
-                    if actual == mode {
-                        if let Some(scope) = self.knob_mode.as_mut() {
-                            scope.selected_mode = Some(mode);
-                        }
-                        return Ok(json!({"mode":mode}));
-                    }
-                    let now = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
-                    if now.wrapping_sub(start) >= guest_timeout_ms.min(10_000)
-                        || Instant::now() >= deadline
-                    {
-                        return Err(format!(
-                            "parameter mode did not become {mode}; found {actual}"
-                        )
-                        .into());
-                    }
-                    thread::sleep(Duration::from_millis(5));
+                wait_parameter_mode(session, &control, mode, guest_timeout_ms, wall_timeout_s)?;
+                if let Some(scope) = self.knob_mode.as_mut() {
+                    scope.selected_mode = Some(mode);
                 }
+                Ok(json!({"mode":mode}))
             }
             Operation::CaptureDisplay { guest_ms, artifact } => {
                 if guest_ms == 0 || !valid_artifact(&artifact) {
@@ -332,12 +1007,29 @@ impl State {
                 }
                 let start = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
                 let wall = Instant::now();
+                let check_shared = |guest: u32| -> Result<(), Box<dyn std::error::Error>> {
+                    if let Some((begin, guest_begin, guest_budget, wall_budget, _)) = shared {
+                        if super::execute::deadline_exceeded(
+                            begin.elapsed(),
+                            guest_begin,
+                            guest,
+                            guest_budget,
+                            wall_budget,
+                        ) {
+                            return Err(
+                                "knob-dialog shared deadline exceeded during display capture"
+                                    .into(),
+                            );
+                        }
+                    }
+                    Ok(())
+                };
+                check_shared(start)?;
                 let frame = loop {
                     let data = session.poll()?;
-                    let elapsed = control
-                        .input_status(l6ctl::InputSource::Panel)?
-                        .guest_ms
-                        .wrapping_sub(start);
+                    let now = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
+                    check_shared(now)?;
+                    let elapsed = now.wrapping_sub(start);
                     if elapsed >= guest_ms {
                         break data.display;
                     }
@@ -348,10 +1040,62 @@ impl State {
                     }
                     thread::sleep(Duration::from_millis(5));
                 };
-                self.captured_display = Some(CapturedDisplay {
+                check_shared(control.input_status(l6ctl::InputSource::Panel)?.guest_ms)?;
+                let capture = CapturedDisplay {
                     frame,
                     artifact: artifact.clone(),
-                });
+                };
+                if self.knob_mode.is_none()
+                    && self
+                        .knob_dialog_preflight
+                        .as_ref()
+                        .and_then(bitmap_capture_phase)
+                        .is_some_and(|p| matches!(p, 1 | 6))
+                {
+                    commit_level_capture(
+                        || check_shared(control.input_status(l6ctl::InputSource::Panel)?.guest_ms),
+                        || save_captured_display(&capture, &options.logs),
+                        || note_bitmap_capture(self.knob_dialog_preflight.as_mut().unwrap()),
+                    )?;
+                } else if self.knob_mode.is_none()
+                    && self
+                        .knob_dialog_preflight
+                        .as_ref()
+                        .and_then(level_phase)
+                        .is_some_and(|phase| matches!(phase, 2 | 5))
+                {
+                    commit_level_capture(
+                        || check_shared(control.input_status(l6ctl::InputSource::Panel)?.guest_ms),
+                        || save_captured_display(&capture, &options.logs),
+                        || note_level_capture(self.knob_dialog_preflight.as_mut().unwrap()),
+                    )?;
+                } else if self.knob_mode.is_none()
+                    && self.knob_dialog_preflight.as_ref().is_some_and(|c| {
+                        expecting_overlay_refresh(c)
+                            || expecting_locked_capture(c)
+                            || expecting_active_display(c)
+                            || expecting_task_capture(c)
+                    })
+                {
+                    save_captured_display(&capture, &options.logs)?;
+                } else if self.knob_mode.is_none()
+                    && self
+                        .knob_dialog_preflight
+                        .as_ref()
+                        .is_some_and(|context| final_phase(context) == 22)
+                {
+                    save_captured_display(&capture, &options.logs)?;
+                    note_expiry_capture(self.knob_dialog_preflight.as_mut().unwrap())?;
+                } else if self.knob_mode.is_none()
+                    && self
+                        .knob_dialog_preflight
+                        .as_ref()
+                        .is_some_and(|context| matches!(final_phase(context), 44 | 47))
+                {
+                    save_captured_display(&capture, &options.logs)?;
+                    note_navigation_capture(self.knob_dialog_preflight.as_mut().unwrap())?;
+                }
+                self.captured_display = Some(capture);
                 Ok(json!({"guest_ms":guest_ms,"artifact":artifact}))
             }
             Operation::ExpectCapturedDisplayImage { image } => {
@@ -361,19 +1105,7 @@ impl State {
                     .ok_or("no display capture to check")?;
                 let path = crate::scenario::spec_path(&image)?;
                 check_display_reference(&capture.frame, &path, &options.logs, &capture.artifact)?;
-                let native = image::GrayImage::from_fn(128, 64, |x, y| {
-                    let index = ((63 - y as usize) / 8) * 128 + x as usize;
-                    image::Luma([
-                        if capture.frame[index] & (1 << ((63 - y as usize) % 8)) != 0 {
-                            255
-                        } else {
-                            0
-                        },
-                    ])
-                });
-                image::DynamicImage::ImageLuma8(native)
-                    .resize(768, 384, image::imageops::FilterType::Nearest)
-                    .save(options.logs.join(format!("{}.png", capture.artifact)))?;
+                save_captured_display(capture, &options.logs)?;
                 let artifact = capture.artifact.clone();
                 self.captured_display = None;
                 Ok(json!({"image":image,"artifact":artifact}))
@@ -491,5 +1223,51 @@ mod tests {
         );
         assert!(check_display_reference(&live, &reference, &root, "changed").is_err());
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod level_capture_deadline_tests {
+    use super::*;
+    #[test]
+    fn does_not_save_or_advance_if_deadline_expired() {
+        let saved = std::cell::Cell::new(false);
+        let advanced = std::cell::Cell::new(false);
+        let result = commit_level_capture(
+            || Err("expired".into()),
+            || {
+                saved.set(true);
+                Ok(())
+            },
+            || {
+                advanced.set(true);
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert!(!saved.get());
+        assert!(!advanced.get());
+    }
+    #[test]
+    fn does_not_advance_if_save_consumes_remaining_budget() {
+        let checks = std::cell::Cell::new(0);
+        let advanced = std::cell::Cell::new(false);
+        let result = commit_level_capture(
+            || {
+                checks.set(checks.get() + 1);
+                if checks.get() == 1 {
+                    Ok(())
+                } else {
+                    Err("expired".into())
+                }
+            },
+            || Ok(()),
+            || {
+                advanced.set(true);
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert!(!advanced.get());
     }
 }

@@ -32,7 +32,16 @@ pub use knob_dialog::*;
 pub use lifecycle::*;
 use midi::*;
 use midi_probe::*;
-use mode_primitives::{embedded_midi_sync_operations, embedded_mode_operations};
+use mode_primitives::{
+    embedded_active_display_operations, embedded_bitmap_probe_operations,
+    embedded_callback_race_operations, embedded_expiry_operations,
+    embedded_invalid_signature_operations, embedded_invalid_tag_operations,
+    embedded_level_demo_operations, embedded_locked_update_operations,
+    embedded_midi_sync_operations, embedded_mode_operations, embedded_navigation_operations,
+    embedded_notification_operations, embedded_overlay_operations,
+    embedded_preflight_probe_operations, embedded_refreshed_overlay_operations,
+    embedded_restoration_operations, embedded_task_context_operations, wait_parameter_mode_checked,
+};
 use panel::*;
 use sd::*;
 use usb::*;
@@ -129,9 +138,15 @@ pub enum Operation {
     },
     UsbDescriptors,
     UsbStorage,
-    UsbMidi {
+    UsbMidiOpen,
+    UsbMidiBegin,
+    UsbMidiExpectEncoder,
+    UsbMidiPrepareLevel {
         value: u8,
     },
+    UsbMidiSetAlternate,
+    UsbMidiSetTarget,
+    UsbMidiEnd,
     HostMidiRoundTrip,
     MidiProbeBegin,
     MidiProbeSendCc {
@@ -200,19 +215,44 @@ pub enum Operation {
         cable: u8,
         expect_ring_change: bool,
     },
-    L6DinUsbForwarding,
     L6MidiProbeBegin,
     L6MidiProbeInject,
     L6MidiProbeExpectHook,
     L6MidiProbeExpectReplies,
-    L6MidiRingPinSweep {
-        cc: u8,
+    DinUsbBegin,
+    DinUsbAttach,
+    DinUsbSend {
+        bytes: Vec<u8>,
     },
-    L6MidiMuteIndicators,
-    UsbSysex {
-        requests: Vec<crate::scenario::UsbSysexRequest>,
+    DinUsbExpect {
+        bytes: Vec<u8>,
+        cable: u8,
+    },
+    DinUsbEnd,
+    L6IndicatorBegin,
+    L6RingSample {
+        cc: u8,
+        value: u8,
+        guest_ms: u32,
+        ring: Option<usize>,
+    },
+    L6RingCoverage {
+        mask: u32,
+    },
+    L6MuteSample {
+        cc: u8,
+        value: u8,
+        guest_ms: u32,
+        expected: [u32; 8],
+        reuse_previous: bool,
+    },
+    L6IndicatorEnd,
+    UsbSysexBegin,
+    UsbSysexExchange {
+        request: crate::scenario::UsbSysexRequest,
         complete_on_match: bool,
     },
+    UsbSysexEnd,
     EditorPadAssignments,
     EditorPadPlayback {
         pad: u8,
@@ -251,9 +291,14 @@ pub enum Operation {
     },
     WaitSdPatchLoaded,
     WaitSdPatchEmpty,
-    ExpectSdPatch {
+    ExpectSdLoader,
+    ExpectSdModule {
         loaded: bool,
         chain_count: Option<u8>,
+    },
+    EffectPacedTurn {
+        channel: usize,
+        steps: i32,
     },
     EffectParameterEdit {
         encoder: usize,
@@ -290,20 +335,96 @@ pub enum Operation {
     KnobDialogGuard,
     KnobDialogBaseline,
     KnobDialogPreflightBegin,
-    KnobDialogPreflightDescriptor,
-    KnobDialogPreflightTextAlias,
-    KnobDialogPreflightLayerCollision,
-    KnobDialogPreflightWidgetLayer,
-    KnobDialogPreflightBackgroundLayer,
-    KnobDialogCallbackRace,
+    KnobProbePrepare {
+        probe: crate::scenario::PreflightProbe,
+    },
+    KnobProbeInject,
+    KnobProbeTrigger {
+        delta: i32,
+    },
+    KnobProbeSample,
+    KnobProbeRestore,
+    KnobProbeAssert,
+    KnobRaceBegin,
+    KnobRaceWaitRegistration,
+    KnobRaceArmCallback,
+    KnobRaceWaitCallback,
+    KnobRaceCapture {
+        guest_ms: u32,
+        artifact: String,
+    },
+    KnobRaceSample,
+    KnobRaceRestore,
+    KnobRaceAssert,
     KnobDialogFirstActivation,
-    KnobDialogActiveDisplay,
-    KnobDialogLevelDemo,
-    KnobDialogTaskContexts,
-    KnobDialogOverlayInvariants,
-    KnobDialogBitmapZero,
-    KnobDialogActiveOverlay,
-    KnobDialogLockedUpdate,
+    KnobActiveBegin,
+    KnobActiveSampleCallbacks,
+    KnobActiveCheckCallbacks,
+    KnobActiveCheckFrame,
+    KnobActiveFinish,
+    KnobLevelBegin,
+    KnobLevelStart {
+        demo: crate::scenario::adaptive::DemoCapture,
+        artifact: String,
+    },
+    KnobLevelSweep {
+        sweep: crate::scenario::adaptive::LevelSweep,
+    },
+    KnobLevelExpectZero,
+    KnobLevelFinish,
+    KnobTaskBegin,
+    KnobTaskArmHook,
+    KnobTaskWaitHook,
+    KnobTaskArmCallback,
+    KnobTaskWaitCallback,
+    KnobTaskAssertDistinct,
+    KnobTaskRelease,
+    KnobTaskFinish,
+    KnobOverlayBegin,
+    KnobOverlayCheckWindow,
+    KnobOverlaySnapshotDescriptors,
+    KnobOverlayCheckDescriptor {
+        field: crate::scenario::OverlayDescriptorField,
+    },
+    KnobOverlayFinishDescriptors,
+    KnobOverlayCheckResource,
+    KnobOverlayCheckCorners,
+    KnobOverlayCheckSignature,
+    KnobOverlayCheckBitmap,
+    KnobOverlayCheckHeap,
+    KnobOverlayFinish,
+    KnobBitmapBegin,
+    KnobBitmapCheckBackground {
+        background: u32,
+        expected: u16,
+    },
+    KnobBitmapStoreBefore,
+    KnobBitmapArm,
+    KnobBitmapWait,
+    KnobBitmapInvoke {
+        background: u32,
+    },
+    KnobBitmapCheckFrame,
+    KnobBitmapCheckSignature,
+    KnobBitmapCheckDescriptor,
+    KnobBitmapFinish,
+    KnobOverlayReactivate {
+        delta: i32,
+    },
+    KnobOverlayWaitActive,
+    KnobOverlayRefreshBegin,
+    KnobOverlayRefreshValue,
+    KnobOverlayRefreshPixels,
+    KnobOverlayRefreshFinish,
+    KnobLockAcquire,
+    KnobLockTrigger {
+        delta: i32,
+    },
+    KnobLockWait,
+    KnobLockSample,
+    KnobLockRestore,
+    KnobLockAssert,
+    KnobLockFinish,
     KnobDialogModeBegin {
         scene: String,
     },
@@ -324,6 +445,64 @@ pub enum Operation {
     },
     KnobDialogExpectHeap,
     KnobDialogModeEnd,
+    KnobDialogAdaptive {
+        plan: crate::scenario::adaptive::Plan,
+    },
+    KnobDialogInjectInvalidTag {
+        tag: u8,
+    },
+    KnobDialogWaitInvalidTag,
+    KnobDialogConfirmInvalidTag,
+    KnobDialogSettleLevel {
+        artifact: String,
+    },
+    KnobDialogInjectInvalidSignature,
+    KnobDialogObserveInvalidSignature {
+        guest_ms: u32,
+    },
+    KnobDialogSampleInvalidSignature,
+    KnobDialogRestoreInvalidSignature,
+    KnobDialogPrepareNotification,
+    KnobDialogArmNotificationCallback,
+    KnobDialogWaitNotificationCallback,
+    KnobDialogInvokeNotification {
+        message: u32,
+    },
+    KnobDialogWaitNotificationFrame {
+        clear: bool,
+        artifact: String,
+        guest_ms: u32,
+        limit_ms: u32,
+    },
+    KnobDialogExpectNotificationInvariants {
+        clear: bool,
+    },
+    KnobDialogWaitExpiry {
+        interval_ms: u32,
+        limit_ms: u32,
+    },
+    KnobDialogExpectExpiryFrame {
+        after: bool,
+    },
+    KnobDialogSnapshotRestoration,
+    KnobDialogCheckRestoration {
+        field: crate::scenario::RestorationField,
+    },
+    KnobDialogFinishRestoration,
+    KnobDialogExpectRestoredHeap,
+    EnqueueEncoderNoAck {
+        channel: u32,
+        steps: i32,
+    },
+    EnqueueTapNoAck {
+        target: u32,
+        hold_ms: u32,
+    },
+    ReleaseCapturedDisplay,
+    KnobDialogSnapshotNavigation,
+    KnobDialogCheckNavigation {
+        field: crate::scenario::NavigationField,
+    },
     KnobDialog,
     KnobPopupOpen {
         first_steps: i32,
@@ -401,7 +580,19 @@ pub enum Operation {
     L6InputSweep,
     L6DinSweep,
     L6maxInputTiming,
-    L6maxPanelKeyMap,
+    L6maxPanelKeyBegin,
+    L6maxPanelKeyCheck {
+        code: u32,
+        bit: u32,
+        word_index: u32,
+        active: bool,
+        wait: bool,
+    },
+    L6maxPanelKeyInput {
+        target: u32,
+        pressed: bool,
+    },
+    L6maxPanelKeyEnd,
     L6maxChannelSignalPwm,
     L6LevelMeterPwm,
 }
@@ -441,11 +632,14 @@ fn validate_native_midi_capabilities(
             && matches!(
                 step.action,
                 crate::Action::DirectUsbMidiRoundTrip { .. }
+                    | crate::Action::DinUsbBegin
                     | crate::Action::HostMidiRoundTrip
                     | crate::Action::UsbDescriptors
                     | crate::Action::UsbStorage
-                    | crate::Action::UsbMidi { .. }
-                    | crate::Action::UsbSysex { .. }
+                    | crate::Action::UsbMidiOpen
+                    | crate::Action::UsbSysexBegin
+                    | crate::Action::UsbSysexExchange { .. }
+                    | crate::Action::UsbSysexEnd
                     | crate::Action::EditorPadAssignments
                     | crate::Action::EditorPadPlayback { .. }
                     | crate::Action::L6maxUiPadVerify { .. }
@@ -465,11 +659,22 @@ fn validate_native_midi_capabilities(
 
 /// Configure only the hardware instrumentation explicitly requested by a scenario.
 pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String> {
+    prepare_with_report(scenario, options, None)
+}
+
+pub(crate) fn prepare_with_report(
+    scenario: &Scenario,
+    options: &mut Options,
+    report_directory: Option<&Path>,
+) -> Result<(), String> {
     // Managed patched updates boot stock before the verification generation.
     // Apply hardware requirements and firmware guards to that phase only;
     // the verify generation is checked against its own frozen build at startup.
     let mut initial_phase = None;
-    if scenario.update_fixture == Some(crate::scenario::UpdateFixture::PatchedMidi) {
+    if scenario
+        .update_fixture
+        .is_some_and(crate::scenario::UpdateFixture::is_patched)
+    {
         let mut initial = scenario.clone();
         let boundary = initial
             .step
@@ -506,7 +711,7 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
     crate::requirements::check_firmware(
         scenario,
         model,
-        &crate::firmware::identify(&main, &options.logs),
+        &crate::firmware::identify(&main, report_directory.unwrap_or(&options.logs)),
     )?;
     if scenario.step.iter().any(|s| {
         matches!(
@@ -616,8 +821,10 @@ pub fn prepare(scenario: &Scenario, options: &mut Options) -> Result<(), String>
                 s.action,
                 crate::Action::UsbDescriptors
                     | crate::Action::UsbStorage
-                    | crate::Action::UsbMidi { .. }
-                    | crate::Action::UsbSysex { .. }
+                    | crate::Action::UsbMidiOpen
+                    | crate::Action::UsbSysexBegin
+                    | crate::Action::UsbSysexExchange { .. }
+                    | crate::Action::UsbSysexEnd
                     | crate::Action::EditorPadAssignments
                     | crate::Action::EditorPadPlayback { .. }
                     | crate::Action::L6maxUiPadVerify { .. }
@@ -678,15 +885,27 @@ fn thumb_bl_target(address: u32, instruction: [u8; 4]) -> Option<u32> {
 
 #[derive(Default)]
 pub struct State {
+    paced_progress: crate::progress::CaseProgress,
+    paced_index: usize,
+    adaptive_progress: crate::progress::CaseProgress,
+    adaptive_index: usize,
+
+    din_usb: Option<midi::DinUsbScope>,
+    usb_midi: Option<midi::UsbMidiScope>,
+    panel_keys: Option<PanelKeyScope>,
     saved: Option<(Vec<u8>, usize)>,
     midi: Option<l6max_host::usb::Endpoints>,
+    sysex_deadline: Option<(Instant, u32, u32, u64)>,
+    l6_indicator: Option<L6IndicatorScope>,
     gdb: Option<l6max_diagnostics::gdb::Gdb>,
     host_midi: Option<Box<dyn crate::host_midi::Client>>,
     encoder_turned_up: bool,
     knob_popup: Option<knob_dialog::PopupContext>,
     knob_dialog_baseline: Option<[u8; 1024]>,
     knob_dialog_preflight: Option<knob_dialog::PreflightContext>,
-    knob_dialog_deadline: Option<(std::time::Instant, u32, u32, u64, u8)>,
+    overlay_reader: Option<l6max_host::knob_popup::OverlayReader>,
+    task_reader: Option<l6max_host::freertos::CurrentTaskReader>,
+    knob_dialog_deadline: Option<(std::time::Instant, u32, u32, u64, u16)>,
     knob_mode: Option<KnobModeScope>,
     knob_heap_reader: Option<l6max_host::heap::CounterReader>,
     pending_input: Option<PendingInput>,
@@ -694,8 +913,39 @@ pub struct State {
     midi_round_trip: Option<MidiRoundTrip>,
     midi_sync: Option<midi::MidiSync>,
     l6_midi_probe: Option<midi::L6MidiProbe>,
+    sd_inspection: Option<sd::SdInspectionContext>,
     native_midi: Option<l6ctl::midi::MidiSession>,
     midi_probe: Option<MidiProbeContext>,
+}
+
+struct PanelKeyScope {
+    deadline: Instant,
+    held: Option<u32>,
+    inputs: std::sync::Arc<l6max_host::input::InputHub>,
+}
+impl PanelKeyScope {
+    fn release(&mut self) -> Result<(), String> {
+        if let Some(target) = self.held.take() {
+            self.inputs
+                .up(target)
+                .map_err(|error| format!("release panel key {target}: {error}"))?;
+        }
+        Ok(())
+    }
+}
+impl Drop for PanelKeyScope {
+    fn drop(&mut self) {
+        let _ = self.release();
+    }
+}
+
+struct L6IndicatorScope {
+    start: Instant,
+    guest_start: u32,
+    guest_budget: u32,
+    wall_budget: u64,
+    changed_segments: u32,
+    last_mute: Option<(u8, [u32; 8])>,
 }
 
 struct KnobModeScope {
@@ -723,6 +973,14 @@ struct CapturedDisplay {
 }
 
 impl State {
+    pub fn set_paced_progress(&mut self, progress: crate::progress::CaseProgress, index: usize) {
+        self.paced_progress = progress;
+        self.paced_index = index;
+    }
+    pub fn set_adaptive_progress(&mut self, progress: crate::progress::CaseProgress, index: usize) {
+        self.adaptive_progress = progress;
+        self.adaptive_index = index;
+    }
     pub fn take_host_midi(&mut self) -> Option<Box<dyn crate::host_midi::Client>> {
         self.native_midi
             .take()
@@ -858,6 +1116,93 @@ fn wait_guest(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn restarted_releases_held_panel_key_before_input_shutdown() {
+        use super::*;
+        use std::{os::unix::net::UnixStream, sync::Arc};
+        let (main_host, _main_peer) = UnixStream::pair().unwrap();
+        let (panel_host, mut panel_peer) = UnixStream::pair().unwrap();
+        let inputs = Arc::new(l6max_host::input::InputHub::new(
+            l6max_host::input::EngineInput::new(main_host).unwrap(),
+            l6max_host::input::EngineInput::new(panel_host).unwrap(),
+            l6fw::Model::L6max,
+        ));
+        let mut state = State::default();
+        state.panel_keys = Some(PanelKeyScope {
+            deadline: Instant::now(),
+            held: Some(1),
+            inputs,
+        });
+        state.restarted().unwrap();
+        let message = l6max_host::protocol::Message::read(&mut panel_peer).unwrap();
+        assert_eq!(
+            (message.kind, message.target),
+            (l6max_host::protocol::UP, 1)
+        );
+        assert!(state.panel_keys.is_none());
+    }
+    #[test]
+    fn scope_cleanup_reports_failed_release_and_clears_scope() {
+        use super::*;
+        use std::{net::Shutdown, os::unix::net::UnixStream, sync::Arc};
+        let (main_host, _main_peer) = UnixStream::pair().unwrap();
+        let (panel_host, panel_peer) = UnixStream::pair().unwrap();
+        let inputs = Arc::new(l6max_host::input::InputHub::new(
+            l6max_host::input::EngineInput::new(main_host).unwrap(),
+            l6max_host::input::EngineInput::new(panel_host).unwrap(),
+            l6fw::Model::L6max,
+        ));
+        panel_peer.shutdown(Shutdown::Both).unwrap();
+        let until = Instant::now() + std::time::Duration::from_secs(2);
+        while inputs.panel.snapshot().connected && Instant::now() < until {
+            std::thread::yield_now();
+        }
+        assert!(
+            !inputs.panel.snapshot().connected,
+            "input reader did not observe disconnect"
+        );
+        let mut state = State::default();
+        state.panel_keys = Some(PanelKeyScope {
+            deadline: Instant::now(),
+            held: Some(1),
+            inputs,
+        });
+        assert!(
+            state
+                .abort_auxiliary_scopes()
+                .unwrap_err()
+                .contains("release panel key 1")
+        );
+        assert!(state.panel_keys.is_none());
+    }
+    #[test]
+    fn preparation_can_use_a_separately_staged_firmware_report() {
+        use super::{Options, Scenario, prepare, prepare_with_report};
+        use sha2::{Digest, Sha256};
+        let root = std::env::temp_dir().join(format!("l6-verify-report-{}", std::process::id()));
+        let firmware = root.join("firmware");
+        let logs = root.join("logs");
+        std::fs::create_dir_all(&firmware).unwrap();
+        std::fs::create_dir_all(&logs).unwrap();
+        let mut main = vec![0; 8];
+        main[..4].copy_from_slice(&0x20220000u32.to_le_bytes());
+        main[4..].copy_from_slice(&0x80001415u32.to_le_bytes());
+        std::fs::write(firmware.join("main_firmware.bin"), &main).unwrap();
+        let hash = format!("{:x}", Sha256::digest(&main));
+        std::fs::write(
+            firmware.join(crate::fixture_layout::FIRMWARE_REPORT),
+            format!(r#"{{"patched_sha256":"{hash}"}}"#),
+        )
+        .unwrap();
+        let scenario = Scenario::from_text("version=1\nname='verify'\nmodels=['l6']\nbackends=['headless']\n[[step]]\naction='delay'\nguest_ms=1\n").unwrap();
+        let mut options = Options::parse_args(std::iter::empty::<std::ffi::OsString>()).unwrap();
+        options.firmware_dir = firmware.clone();
+        options.logs = logs;
+        options.state_dir = None;
+        assert!(prepare(&scenario, &mut options).is_err());
+        assert!(prepare_with_report(&scenario, &mut options, Some(&firmware)).is_ok());
+        std::fs::remove_dir_all(root).unwrap();
+    }
     use super::{
         create_factory_card, display_difference_count, editor_pad_assignment_matches,
         editor_pad_file_count, editor_pad_filename_valid, knob_display_matches, sound_pad_led,
@@ -1014,11 +1359,8 @@ mod native_midi_capability_tests {
             crate::Action::HostMidiRoundTrip,
             crate::Action::UsbDescriptors,
             crate::Action::UsbStorage,
-            crate::Action::UsbMidi { value: 1 },
-            crate::Action::UsbSysex {
-                requests: vec![],
-                complete_on_match: false,
-            },
+            crate::Action::UsbMidiOpen,
+            crate::Action::UsbSysexBegin,
             crate::Action::DirectUsbMidiRoundTrip {
                 cable: 1,
                 expect_ring_change: true,
@@ -1028,6 +1370,7 @@ mod native_midi_capability_tests {
             crate::Action::L6maxUiPadVerify { pad: 1 },
             crate::Action::L6DinSweep,
             crate::Action::L6MidiProbeBegin,
+            crate::Action::DinUsbBegin,
             crate::Action::L6UsbStartup,
             crate::Action::L6DinEventDispatch {
                 group: 0,

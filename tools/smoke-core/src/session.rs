@@ -321,6 +321,18 @@ fn verify_patched_artifacts(
     Ok(())
 }
 
+fn device_options<'a>(
+    managed: bool,
+    case: &'a Options,
+    boot: Option<&'a Options>,
+) -> Result<&'a Options, String> {
+    if managed {
+        boot.ok_or_else(|| "device action needs active lifecycle boot options".into())
+    } else {
+        Ok(case)
+    }
+}
+
 /// Execute a scenario without GPUI, with the production panel feed and shared assertions.
 pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
     if !scenario.backends.contains(&crate::Backend::Headless) {
@@ -337,7 +349,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
         });
         devices::prepare(&scenario, &mut options)?;
         let started = std::time::Instant::now();
-        let result = devices::run_firmware_update(&options);
+        let result = devices::run_firmware_update(&options, progress.clone());
         let model = std::fs::read(options.firmware_dir.join("main_firmware.bin"))
             .map_err(|error| error.to_string())
             .and_then(|main| l6fw::model_from_main(&main).map_err(|error| error.to_string()))?;
@@ -427,7 +439,10 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
         if inputs["update_card_package_sha256"].as_str() != Some(digest.as_str()) {
             return Err("staged update package identity changed before execution".into());
         }
-        if scenario.update_fixture == Some(crate::scenario::UpdateFixture::PatchedMidi) {
+        if scenario
+            .update_fixture
+            .is_some_and(crate::scenario::UpdateFixture::is_patched)
+        {
             verify_patched_artifacts(&options.logs, &inputs)?;
         }
         managed_inputs = Some(inputs);
@@ -454,15 +469,17 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
             l6fw::model_from_main(&main).map_err(|error| error.to_string())?
         },
         options.logs.clone(),
-        progress,
+        progress.clone(),
     )?;
     runner.trace_file(options.logs.join(if options.trace_sd {
         "sdhci.trace"
     } else {
         "engine.trace"
     }));
+    let case_progress = progress.clone();
     let mut device_state = devices::State::default();
     let mut lifecycle_last_boot = None;
+    let mut lifecycle_boot_options: Option<Options> = None;
     let mut installer_anchor = None;
     let mut shared_wall_budget: Option<WallBudget> = None;
     let mut pending_snapshot: Option<Vec<u8>> = None;
@@ -525,7 +542,15 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         LifecycleBoot::Initial => None,
                         LifecycleBoot::Installer => Some(LifecycleBoot::Initial),
                         LifecycleBoot::Restart => Some(LifecycleBoot::Installer),
-                        LifecycleBoot::Verify => Some(LifecycleBoot::Restart),
+                        LifecycleBoot::Verify => Some(
+                            if runner.scenario.update_fixture
+                                == Some(crate::scenario::UpdateFixture::L6PatchedMidi)
+                            {
+                                LifecycleBoot::Installer
+                            } else {
+                                LifecycleBoot::Restart
+                            },
+                        ),
                     };
                     if lifecycle_last_boot != expected_previous {
                         return Err("lifecycle boot profile is out of order".into());
@@ -533,8 +558,10 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     let mut boot = options.clone();
                     match profile {
                         LifecycleBoot::Initial
-                            if runner.scenario.update_fixture
-                                == Some(crate::scenario::UpdateFixture::L6Stock) =>
+                            if runner
+                                .scenario
+                                .update_fixture
+                                .is_some_and(crate::scenario::UpdateFixture::is_l6) =>
                         {
                             boot.sd_image = None;
                             boot.no_sd = true;
@@ -548,8 +575,10 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                                 .ok_or("missing frozen update package")?;
                             let card_package = sd_image::read_file(
                                 boot.sd_image.as_ref().unwrap(),
-                                if runner.scenario.update_fixture
-                                    == Some(crate::scenario::UpdateFixture::L6Stock)
+                                if runner
+                                    .scenario
+                                    .update_fixture
+                                    .is_some_and(crate::scenario::UpdateFixture::is_l6)
                                 {
                                     "L6.BIN"
                                 } else {
@@ -568,8 +597,10 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         }
                     }
                     if profile == LifecycleBoot::Installer
-                        && runner.scenario.update_fixture
-                            == Some(crate::scenario::UpdateFixture::L6Stock)
+                        && runner
+                            .scenario
+                            .update_fixture
+                            .is_some_and(crate::scenario::UpdateFixture::is_l6)
                     {
                         let frozen = pending_snapshot
                             .as_deref()
@@ -587,8 +618,10 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     boot.update_bootloader =
                         matches!(profile, LifecycleBoot::Installer | LifecycleBoot::Restart);
                     if profile == LifecycleBoot::Verify {
-                        if runner.scenario.update_fixture
-                            != Some(crate::scenario::UpdateFixture::PatchedMidi)
+                        if !runner
+                            .scenario
+                            .update_fixture
+                            .is_some_and(crate::scenario::UpdateFixture::is_patched)
                         {
                             return Err("verify boot requires patched update".into());
                         }
@@ -597,13 +630,37 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                             managed_inputs.as_ref().ok_or("missing managed identity")?,
                         )?;
                         boot.firmware_dir = options.logs.join("verify-firmware");
-                        boot.usb_cable_at_start = true;
-                        boot.usb_enabled = false;
-                        boot.midi_enabled = false;
+                        let l6_verify = runner.scenario.update_fixture
+                            == Some(crate::scenario::UpdateFixture::L6PatchedMidi);
+                        if l6_verify {
+                            // The legacy L6 probe boots the unpacked patched image in a fresh disposable session.
+                            boot.state_dir = None;
+                        } else if matches!(
+                            runner.scenario.update_fixture,
+                            Some(
+                                crate::scenario::UpdateFixture::PatchedMidi
+                                    | crate::scenario::UpdateFixture::PatchedKnobMidi
+                            )
+                        ) {
+                            boot.usb_cable_at_start = true;
+                            boot.usb_enabled = false;
+                            boot.midi_enabled = false;
+                        }
+                        if matches!(
+                            runner.scenario.update_fixture,
+                            Some(
+                                crate::scenario::UpdateFixture::PatchedKnob
+                                    | crate::scenario::UpdateFixture::PatchedKnobMidi
+                            )
+                        ) {
+                            boot.gdb_socket = Some(crate::devices::gdb_socket_path(
+                                &options.logs,
+                                "post-update-knob",
+                            ));
+                        }
                         let main = std::fs::read(boot.firmware_dir.join("main_firmware.bin"))
                             .map_err(|e| e.to_string())?;
-                        let installed = crate::devices::selected_main_image(&boot)?;
-                        if installed != main {
+                        if !l6_verify && crate::devices::selected_main_image(&boot)? != main {
                             return Err("installed MAIN differs from frozen verify firmware".into());
                         }
                         let mut verify_scenario = runner.scenario.clone();
@@ -622,9 +679,23 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         verify_scenario.step.drain(..=start);
                         crate::requirements::check_firmware(
                             &verify_scenario,
-                            l6fw::Model::L6max,
+                            if l6_verify {
+                                l6fw::Model::L6
+                            } else {
+                                l6fw::Model::L6max
+                            },
                             &crate::firmware::identify(&main, &boot.firmware_dir),
                         )?;
+                        if l6_verify {
+                            verify_scenario.update_fixture = None;
+                            verify_scenario.update_goal = None;
+                            let report_directory = boot.firmware_dir.clone();
+                            crate::devices::prepare_with_report(
+                                &verify_scenario,
+                                &mut boot,
+                                Some(&report_directory),
+                            )?;
+                        }
                     }
                     let label = match profile {
                         LifecycleBoot::Initial => "initial",
@@ -634,6 +705,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     };
                     boot.logs = options.logs.join(format!("boot-{label}"));
                     session = Some(Session::start(&boot)?);
+                    lifecycle_boot_options = Some(boot.clone());
                     installer_anchor = if profile == LifecycleBoot::Installer {
                         let started = Instant::now();
                         let current = session.as_ref().unwrap();
@@ -656,6 +728,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         .ok_or("lifecycle stop requires an active guest")?;
                     current.engine.shutdown_checked()?;
                     drop(current);
+                    lifecycle_boot_options = None;
                     runner.device_finished(json!({"stopped":true,"clean_shutdown":true}));
                 }
                 Progress::Device(devices::Operation::ExpectUpdateMarkerAbsent) => {
@@ -692,8 +765,10 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                 }
                 Progress::Device(devices::Operation::MarkL6UpdatePending) => {
                     if session.is_some()
-                        || runner.scenario.update_fixture
-                            != Some(crate::scenario::UpdateFixture::L6Stock)
+                        || !runner
+                            .scenario
+                            .update_fixture
+                            .is_some_and(crate::scenario::UpdateFixture::is_l6)
                     {
                         return Err(
                             "L6 marker mutation requires the stopped L6 stock lifecycle".into()
@@ -747,8 +822,10 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                 }
                 Progress::Device(devices::Operation::ExpectL6UpdateComparison { field }) => {
                     if session.is_some()
-                        || runner.scenario.update_fixture
-                            != Some(crate::scenario::UpdateFixture::L6Stock)
+                        || !runner
+                            .scenario
+                            .update_fixture
+                            .is_some_and(crate::scenario::UpdateFixture::is_l6)
                     {
                         return Err("L6 comparison requires a stopped L6 stock lifecycle".into());
                     }
@@ -801,8 +878,10 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     let nor = l6nor::MainNor::read(&state.join("main-nor.bin"))?;
                     let marker = nor.update_marker();
                     if marker == l6nor::nor::UpdateMarker::None
-                        || (runner.scenario.update_fixture
-                            == Some(crate::scenario::UpdateFixture::L6Stock)
+                        || (runner
+                            .scenario
+                            .update_fixture
+                            .is_some_and(crate::scenario::UpdateFixture::is_l6)
                             && marker != l6nor::nor::UpdateMarker::Pending)
                     {
                         return Err("power handoff did not save a valid update marker".into());
@@ -1099,10 +1178,16 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         devices::Operation::SdCard { inserted } => Some(*inserted),
                         _ => None,
                     };
+                    device_state
+                        .set_paced_progress(case_progress.clone(), runner.current_display_index());
                     let step = &runner.scenario.step[runner.current_step()];
+                    device_state.set_adaptive_progress(
+                        case_progress.clone(),
+                        runner.current_progress_index(),
+                    );
                     let evidence = device_state.execute(
                         session.as_ref().unwrap(),
-                        &options,
+                        device_options(managed, &options, lifecycle_boot_options.as_ref())?,
                         operation,
                         step.guest_timeout_ms,
                         step.wall_timeout_s,
@@ -1125,6 +1210,12 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
     }
     if result.is_ok() && device_state.has_midi_sync() {
         result = Err("MIDI sync transaction ended before completion".into());
+    }
+    if let Err(cleanup) = device_state.abort_auxiliary_scopes() {
+        result = Err(match result {
+            Ok(()) => format!("device scope cleanup failed: {cleanup}"),
+            Err(error) => format!("{error}; device scope cleanup failed: {cleanup}"),
+        });
     }
     device_state.abort_midi_sync();
     device_state.abort_midi_probe();
@@ -1160,6 +1251,27 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
 #[cfg(test)]
 mod lifecycle_clock_tests {
     use super::*;
+    #[test]
+    fn lifecycle_device_actions_use_active_boot_card_and_firmware() {
+        let mut case = Options::parse_args(std::iter::empty::<std::ffi::OsString>()).unwrap();
+        case.sd_image = Some("update-card.img".into());
+        case.firmware_dir = "stock".into();
+        let mut verify = case.clone();
+        verify.sd_image = None;
+        verify.no_sd = true;
+        verify.firmware_dir = "verify-firmware".into();
+        let selected = device_options(true, &case, Some(&verify)).unwrap();
+        assert!(selected.sd_image.is_none());
+        assert_eq!(
+            selected.firmware_dir,
+            std::path::Path::new("verify-firmware")
+        );
+        assert!(device_options(true, &case, None).is_err());
+        assert_eq!(
+            device_options(false, &case, None).unwrap().sd_image,
+            case.sd_image
+        );
+    }
     #[test]
     fn main_progress_keeps_a_held_panel_alive_but_two_stopped_clocks_fail() {
         let start = Instant::now();

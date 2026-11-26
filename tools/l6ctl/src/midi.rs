@@ -7,6 +7,8 @@ use std::sync::Arc;
 use l6max_host::{host_midi::consumer, usb::UsbHost};
 
 pub use l6max_host::host_midi::consumer::ControlChange;
+/// Exclusive in-process USB MIDI receiver. Socket clients cannot access USB packets.
+pub use l6max_host::usb_midi::RawReceiver as RawUsbReceiver;
 
 /// An active consumer with its own subscription and pending receive queue.
 pub struct MidiSession {

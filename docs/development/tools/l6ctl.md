@@ -16,6 +16,7 @@ cargo l6ctl --socket /tmp/l6-control.sock info
 cargo l6ctl --socket /tmp/l6-control.sock input status panel
 cargo l6ctl --socket /tmp/l6-control.sock heap-counters
 cargo l6ctl --socket /tmp/l6-control.sock midi-config
+cargo l6ctl --socket /tmp/l6-control.sock mixer-level
 cargo l6ctl --socket /tmp/l6-control.sock usb attach
 cargo l6ctl --socket /tmp/l6-control.sock usb release
 cargo l6ctl --socket /tmp/l6-control.sock usb controller
@@ -34,6 +35,14 @@ cargo l6ctl --socket /tmp/l6-control.sock rtos tasks --pretty
 `--socket PATH` can be omitted when `L6_CONTROL_SOCKET` is set. The socket is
 created with current-user-only permissions and is removed when the emulator
 exits. `info` reports model, guest time, power state, and indicator snapshots.
+
+`sd-loader status` reads the model-scoped L6/L6max 1.10 loader root and,
+when allocated, its stage, claim, latest module and site count. `sd-loader
+site INDEX` inspects one indexed dispatch chain, including its links. The
+site index comes from the loader build's dynamic-dispatch report. These reads
+are bounded and revision-guarded, but non-atomic: a concurrent loader update
+can make a snapshot inconsistent or cause an inspection to fail. Retry only
+when a caller's own readiness condition and deadline allow it.
 
 `input status main|panel` returns a compact JSON observation of one input
 channel: its `source`, `connected` state, `guest_ms`, `sent`, `applied`,
@@ -257,6 +266,7 @@ paused guest. The CLI does not offer an atomic version: `knob-popup` and
 `l6ctl --socket PATH midi-config` reads the L6 1.10 MIDI channel and its 54
 raw CC mappings. Entries retain their order and duplicates; `255` means
 unmapped. The channel and map are separate live reads and are not atomic.
+
 The host checks the stock MIDI channel and mapped-CC sender routines before
 reading; other models and revisions are rejected, as are patches that alter
 either guard routine. The command requires a running guest with its MAIN
@@ -272,6 +282,12 @@ CC replies. The first static check used the wrong image base and was corrected
 after a live L6 observation exposed the error. To repeat the static check with an unpacked
 MAIN, set `L6_MIDI_TEST_MAIN` to its path and run
 `cargo test --offline --locked -p l6max-host compatible_firmware_passes_production_guards -- --ignored`.
+
+`l6ctl --socket PATH mixer-level` samples channel 1 on L6 or L6max. It checks
+the complete model-specific 1.10 mixer getter before reading its level byte.
+The getter match is not a whole-image identity, and the live snapshot is not
+atomic with its guard read.
+
 
 `l6ctl --socket PATH knob-parameter-state` reads the L6max 1.10 parameter
 selector and callback slots 0, 2 and 5. The sample is non-atomic.
@@ -391,3 +407,11 @@ Rust callers use `OwnedControl::debug_session()` for an owned engine or
 `ControlClient::debug_session()` for the persistent socket. Both accept
 `DebugCommand` and return `DebugObservation`. A caller should explicitly send
 `Close` and check its result; dropping a session also attempts cleanup.
+
+`l6ctl effect-editor REPORT MODULE` inspects a running L6max effect editor using a composed SD build report and its matching module file. The response reports a non-atomic mailbox/counter snapshot and the supplied fixture module hash; it checks the loaded module's bounds and a hash of immutable module code with relocation and continuation words masked; writable state is not hashed. This read-only operation is also available to owned guests through `EffectEditorBinding` and `effect_editor_reader_before`.
+
+The in-process `OwnedControl` API offers USB SysEx send and poll against an already enumerated endpoint. The caller owns its connection, receive queue and deadlines. These operations are not exposed through the control socket or CLI.
+
+`l6ctl panel-key CODE` reads the L6max 1.10 sound-pad key lookup and six state words for codes 25–28. The revision guard is checked before reading. The table and state reads are non-atomic; the returned input state is not evidence of an OLED rendering.
+
+`l6ctl midi send-bytes ENDPOINT HEX_BYTE...` sends raw MIDI to a native endpoint; bytes are two hexadecimal digits. In-process callers can also reserve USB with `l6ctl::midi::RawUsbReceiver`, enumerate it with their own timeout policy, and poll complete USB transfers with cable and packet boundaries preserved. The raw USB receiver is unavailable through the control socket.

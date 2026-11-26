@@ -4,14 +4,26 @@
 //! particular its input replies confirm enqueueing, not guest acknowledgement.
 pub use l6max_host::control::Info;
 pub use l6max_host::debug::{Command as DebugCommand, Observation as DebugObservation};
+pub use l6max_host::effect_editor::{
+    Binding as EffectEditorBinding, Snapshot as EffectEditorSnapshot,
+};
 pub use l6max_host::heap::Counters as HeapCounters;
+pub use l6max_host::indicators::rings as decode_indicator_rings;
 pub use l6max_host::input::button_source;
 pub use l6max_host::input::{InputAck, InputAckState, InputCounters, InputSource};
-pub use l6max_host::knob_popup::{ParameterState, RecorderState, Snapshot as KnobPopupSnapshot};
+pub use l6max_host::knob_popup::{
+    NavigationSnapshot, OverlayDescriptors, ParameterState, RecorderState, RestorationPointers,
+    RestorationSnapshot, Snapshot as KnobPopupSnapshot,
+};
 pub use l6max_host::memory::MemoryRead;
 pub use l6max_host::midi_config::Config as MidiConfig;
+pub use l6max_host::sd_loader::{Site as SdLoaderSite, Snapshot as SdLoaderSnapshot};
+
+pub use l6max_host::mixer_level::MixerLevel;
+pub use l6max_host::panel_keys::Snapshot as PanelKeySnapshot;
 pub use l6max_host::update_bootloader::Outcome as InstallerOutcome;
 pub use l6max_host::update_state::{UpdateGuiState, UpdateState};
+pub use l6max_host::usb_midi::SysexDecoder as UsbSysexDecoder;
 use l6max_host::{control, engine::Engine, freertos, qmp};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -41,9 +53,15 @@ pub enum Request {
     Info,
     InputStatus { source: InputSource },
     InputAck { source: InputSource, sequence: u32 },
+    SdLoaderStatus,
+    SdLoaderSite { index: u32 },
     HeapCounters,
     MemoryRead { address: u32, length: usize },
     MidiConfig,
+    EffectEditor { binding: EffectEditorBinding },
+
+    MixerLevel,
+    PanelKey { code: u32 },
     UpdateState,
     UpdateGuiState,
     InstallerOutcome,
@@ -237,6 +255,12 @@ impl ControlClient {
     pub fn input_ack(&self, source: InputSource, sequence: u32) -> Result<InputAck, ControlError> {
         self.request_as(&Request::InputAck { source, sequence })
     }
+    pub fn sd_loader_status(&self) -> Result<SdLoaderSnapshot, ControlError> {
+        self.request_as(&Request::SdLoaderStatus)
+    }
+    pub fn sd_loader_site(&self, index: u32) -> Result<SdLoaderSite, ControlError> {
+        self.request_as(&Request::SdLoaderSite { index })
+    }
 
     /// Send one typed request. RTOS response bodies are currently the host's
     /// versioned schema-1 JSON; their typed shared interpretation remains in
@@ -247,12 +271,22 @@ impl ControlClient {
                 path: self.socket.clone(),
                 source,
             })?;
+        // SD inspection itself owns a 30-second deadline; leave room to
+        // serialize and return its bounded error to this client.
         let timeout = if matches!(
+            request,
+            Request::SdLoaderStatus | Request::SdLoaderSite { .. }
+        ) {
+            35
+        } else if matches!(
             request,
             Request::Rtos { .. }
                 | Request::HeapCounters
                 | Request::MemoryRead { .. }
                 | Request::MidiConfig
+                | Request::EffectEditor { .. }
+                | Request::MixerLevel
+                | Request::PanelKey { .. }
                 | Request::UpdateState
                 | Request::UpdateGuiState
                 | Request::KnobPopup { .. }
@@ -302,8 +336,23 @@ impl ControlClient {
         self.request_as(&Request::MemoryRead { address, length })
     }
 
+    pub fn effect_editor(
+        &self,
+        binding: EffectEditorBinding,
+    ) -> Result<EffectEditorSnapshot, ControlError> {
+        self.request_as(&Request::EffectEditor { binding })
+    }
+
+    pub fn panel_key(&self, code: u32) -> Result<PanelKeySnapshot, ControlError> {
+        self.request_as(&Request::PanelKey { code })
+    }
+
     pub fn midi_config(&self) -> Result<MidiConfig, ControlError> {
         self.request_as(&Request::MidiConfig)
+    }
+
+    pub fn mixer_level(&self) -> Result<MixerLevel, ControlError> {
+        self.request_as(&Request::MixerLevel)
     }
 
     pub fn installer_outcome(&self) -> Result<InstallerOutcome, ControlError> {
@@ -394,6 +443,40 @@ impl<'a> OwnedControl<'a> {
         Self { engine }
     }
 
+    /// Enable the in-process guest's DIN/TRS MIDI bridge.
+    pub fn connect_din(&self) -> Result<(), ControlError> {
+        if self.engine.din_midi.is_none() {
+            return Err(ControlError::Unavailable("DIN MIDI unavailable"));
+        }
+        self.engine.connect_midi();
+        Ok(())
+    }
+    /// Reserve the owned guest's USB controller for raw USB-MIDI observation.
+    pub fn raw_usb_midi(&self) -> Result<l6max_host::usb_midi::RawReceiver, ControlError> {
+        let usb = self
+            .engine
+            .usb
+            .as_ref()
+            .ok_or(ControlError::Unavailable("USB host unavailable"))?
+            .clone();
+        l6max_host::usb_midi::RawReceiver::attach(usb).map_err(ControlError::Rejected)
+    }
+
+    /// Claim endpoints from an existing enumeration without losing queued packets.
+    pub fn raw_usb_midi_enumerated(
+        &self,
+        endpoints: l6max_host::usb::Endpoints,
+    ) -> Result<l6max_host::usb_midi::RawReceiver, ControlError> {
+        let usb = self
+            .engine
+            .usb
+            .as_ref()
+            .ok_or(ControlError::Unavailable("USB host unavailable"))?
+            .clone();
+        l6max_host::usb_midi::RawReceiver::claim_enumerated(usb, endpoints)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+
     pub fn debug_session(&self) -> Result<l6max_host::debug::Session, ControlError> {
         self.engine
             .debugger()
@@ -430,12 +513,26 @@ impl<'a> OwnedControl<'a> {
             .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
         Ok(inputs.acknowledgement(source, sequence))
     }
-
     fn main_qmp(&self) -> Result<&qmp::QmpClient, ControlError> {
         self.engine
             .management
             .first()
             .ok_or(ControlError::Unavailable("QEMU management unavailable"))
+    }
+    pub fn sd_loader_reader(
+        &self,
+        deadline: std::time::Instant,
+    ) -> Result<l6max_host::sd_loader::Reader<'_>, ControlError> {
+        l6max_host::sd_loader::Reader::new(self.main_qmp()?, self.engine.model(), deadline)
+            .map_err(ControlError::Rejected)
+    }
+    pub fn sd_loader_status(&self) -> Result<SdLoaderSnapshot, ControlError> {
+        l6max_host::sd_loader::snapshot(self.main_qmp()?, self.engine.model())
+            .map_err(ControlError::Rejected)
+    }
+    pub fn sd_loader_site(&self, index: u32) -> Result<SdLoaderSite, ControlError> {
+        l6max_host::sd_loader::site(self.main_qmp()?, self.engine.model(), index)
+            .map_err(ControlError::Rejected)
     }
 
     /// Validate the allocator once for a bounded set of live counter reads.
@@ -454,9 +551,156 @@ impl<'a> OwnedControl<'a> {
             .map_err(ControlError::Rejected)
     }
 
+    pub fn read_main_memory_before(
+        &self,
+        address: u32,
+        length: usize,
+        deadline: std::time::Instant,
+    ) -> Result<MemoryRead, ControlError> {
+        l6max_host::memory::read_main_before(self.main_qmp()?, address, length, deadline)
+            .map_err(ControlError::Rejected)
+    }
+
+    /// Send through an already-enumerated USB endpoint owned by the caller.
+    pub fn usb_sysex_send(
+        &self,
+        endpoints: l6max_host::usb::Endpoints,
+        cable: u8,
+        bytes: &[u8],
+    ) -> Result<(), ControlError> {
+        let usb = self
+            .engine
+            .usb
+            .as_ref()
+            .ok_or_else(|| ControlError::Rejected("USB backend unavailable".into()))?;
+        l6max_host::usb_midi::send_sysex(usb, endpoints.output, cable, bytes)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+    /// Poll the same endpoint without reconnecting or taking ownership of it.
+    pub fn usb_sysex_poll(
+        &self,
+        endpoints: l6max_host::usb::Endpoints,
+        cable: u8,
+        decoder: &mut UsbSysexDecoder,
+    ) -> Result<(), ControlError> {
+        let usb = self
+            .engine
+            .usb
+            .as_ref()
+            .ok_or_else(|| ControlError::Rejected("USB backend unavailable".into()))?;
+        l6max_host::usb_midi::poll_sysex(usb, endpoints.input, cable, decoder)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+
+    pub fn effect_editor_reader_before(
+        &self,
+        binding: EffectEditorBinding,
+        deadline: std::time::Instant,
+    ) -> Result<l6max_host::effect_editor::Reader, ControlError> {
+        l6max_host::effect_editor::Reader::new_before(
+            self.main_qmp()?,
+            self.engine.model(),
+            binding,
+            deadline,
+        )
+        .map_err(ControlError::Rejected)
+    }
+
+    pub fn effect_editor_reader_before_checked(
+        &self,
+        binding: EffectEditorBinding,
+        deadline: std::time::Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<l6max_host::effect_editor::Reader, ControlError> {
+        l6max_host::effect_editor::Reader::new_before_checked(
+            self.main_qmp()?,
+            self.engine.model(),
+            binding,
+            deadline,
+            check,
+        )
+        .map_err(ControlError::Rejected)
+    }
+
+    pub fn effect_editor_reader(
+        &self,
+        binding: EffectEditorBinding,
+    ) -> Result<l6max_host::effect_editor::Reader, ControlError> {
+        l6max_host::effect_editor::Reader::new(self.main_qmp()?, self.engine.model(), binding)
+            .map_err(ControlError::Rejected)
+    }
+
+    /// Enqueue a held button without waiting for guest acknowledgement.
+    pub fn down(&self, target: u32, duration_ms: u32) -> Result<ButtonReceipt, ControlError> {
+        if target >= l6max_host::controls::INPUT_COUNT as u32 || duration_ms > 60_000 {
+            return Err(ControlError::Rejected("invalid held button".into()));
+        }
+        self.engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .down(target, duration_ms)
+            .map_err(|e| ControlError::Rejected(e.to_string()))?;
+        Ok(ButtonReceipt {
+            target,
+            command: "down".into(),
+        })
+    }
+    pub fn up(&self, target: u32) -> Result<ButtonReceipt, ControlError> {
+        if target >= l6max_host::controls::INPUT_COUNT as u32 {
+            return Err(ControlError::Rejected("invalid held button".into()));
+        }
+        self.engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .up(target)
+            .map_err(|e| ControlError::Rejected(e.to_string()))?;
+        Ok(ButtonReceipt {
+            target,
+            command: "up".into(),
+        })
+    }
+
+    pub fn panel_key(&self, code: u32) -> Result<PanelKeySnapshot, ControlError> {
+        l6max_host::panel_keys::snapshot(self.main_qmp()?, self.engine.model(), code)
+            .map_err(ControlError::Rejected)
+    }
+
     pub fn midi_config(&self) -> Result<MidiConfig, ControlError> {
         l6max_host::midi_config::config(self.main_qmp()?, self.engine.model())
             .map_err(ControlError::Rejected)
+    }
+
+    pub fn mixer_level(&self) -> Result<MixerLevel, ControlError> {
+        l6max_host::mixer_level::first_channel(self.main_qmp()?, self.engine.model())
+            .map_err(ControlError::Rejected)
+    }
+
+    pub fn mixer_level_before(
+        &self,
+        deadline: std::time::Instant,
+    ) -> Result<MixerLevel, ControlError> {
+        l6max_host::mixer_level::first_channel_before(
+            self.main_qmp()?,
+            self.engine.model(),
+            deadline,
+        )
+        .map_err(ControlError::Rejected)
+    }
+
+    pub fn mixer_level_cancellable(
+        &self,
+        deadline: std::time::Instant,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<MixerLevel, ControlError> {
+        l6max_host::mixer_level::first_channel_before_cancellable(
+            self.main_qmp()?,
+            self.engine.model(),
+            deadline,
+            cancelled,
+        )
+        .map_err(ControlError::Rejected)
     }
 
     pub fn update_state(&self) -> Result<UpdateState, ControlError> {
@@ -542,6 +786,15 @@ impl<'a> OwnedControl<'a> {
             .map_err(ControlError::Rejected)
     }
 
+    /// Verify the GUI revision once for a bounded overlay transaction.
+    /// Recreate this reader after a guest restart or firmware change.
+    pub fn knob_overlay_reader(
+        &self,
+    ) -> Result<l6max_host::knob_popup::OverlayReader, ControlError> {
+        l6max_host::knob_popup::overlay_reader(self.main_qmp()?, self.engine.model())
+            .map_err(ControlError::Rejected)
+    }
+
     /// Verify the GUI revision once for a bounded in-process observation step.
     pub fn knob_popup_reader(&self) -> Result<l6max_host::knob_popup::Reader<'_>, ControlError> {
         l6max_host::knob_popup::reader(self.main_qmp()?, self.engine.model())
@@ -550,6 +803,13 @@ impl<'a> OwnedControl<'a> {
 
     pub fn knob_popup(&self, with_text: bool) -> Result<KnobPopupSnapshot, ControlError> {
         l6max_host::knob_popup::snapshot(self.main_qmp()?, self.engine.model(), with_text)
+            .map_err(ControlError::Rejected)
+    }
+
+    /// Guard the kernel revision once for a bounded current-task observation.
+    /// Recreate this reader after guest restart or a firmware change.
+    pub fn current_task_reader(&self) -> Result<freertos::CurrentTaskReader, ControlError> {
+        freertos::current_task_reader(self.main_qmp()?, self.engine.model())
             .map_err(ControlError::Rejected)
     }
 

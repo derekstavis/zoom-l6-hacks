@@ -80,10 +80,18 @@ pub fn of(action: &Action) -> Requirement {
             first: true,
             ..stock_on(L6)
         },
-        Action::L6DinUsbForwarding | Action::L6InputSweep => on(L6),
+        Action::DinUsbBegin
+        | Action::DinUsbAttach
+        | Action::DinUsbSend { .. }
+        | Action::DinUsbExpect { .. }
+        | Action::DinUsbEnd
+        | Action::L6InputSweep => on(L6),
         Action::L6maxRecorderPlayback { .. }
         | Action::L6maxInputTiming
-        | Action::L6maxPanelKeyMap
+        | Action::L6maxPanelKeyBegin
+        | Action::L6maxPanelKeyCheck { .. }
+        | Action::L6maxPanelKeyInput { .. }
+        | Action::L6maxPanelKeyEnd
         | Action::MidiProbeBegin
         | Action::MidiProbeSendCc { .. }
         | Action::MidiProbeExpectRing { .. }
@@ -95,24 +103,103 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobDialogGuard
         | Action::KnobDialogBaseline
         | Action::KnobDialogPreflightBegin
-        | Action::KnobDialogPreflightDescriptor
-        | Action::KnobDialogPreflightTextAlias
-        | Action::KnobDialogPreflightLayerCollision
-        | Action::KnobDialogPreflightWidgetLayer
-        | Action::KnobDialogPreflightBackgroundLayer
-        | Action::KnobDialogCallbackRace
+        | Action::KnobProbePrepare { .. }
+        | Action::KnobProbeInject
+        | Action::KnobProbeTrigger { .. }
+        | Action::KnobProbeSample
+        | Action::KnobProbeRestore
+        | Action::KnobProbeAssert
+        | Action::KnobRaceBegin
+        | Action::KnobRaceWaitRegistration
+        | Action::KnobRaceArmCallback
+        | Action::KnobRaceWaitCallback
+        | Action::KnobRaceSample
+        | Action::KnobRaceRestore
+        | Action::KnobRaceAssert
+        | Action::KnobRaceCapture { .. }
         | Action::KnobDialogFirstActivation
-        | Action::KnobDialogActiveDisplay
-        | Action::KnobDialogLevelDemo
-        | Action::KnobDialogTaskContexts
-        | Action::KnobDialogOverlayInvariants
-        | Action::KnobDialogBitmapZero
-        | Action::KnobDialogActiveOverlay
-        | Action::KnobDialogLockedUpdate
+        | Action::KnobActiveBegin
+        | Action::KnobActiveSampleCallbacks
+        | Action::KnobActiveCheckCallbacks
+        | Action::KnobActiveCheckFrame
+        | Action::KnobActiveFinish
+        | Action::KnobLevelBegin
+        | Action::KnobLevelStart { .. }
+        | Action::KnobLevelSweep { .. }
+        | Action::KnobLevelExpectZero
+        | Action::KnobLevelFinish
+        | Action::KnobTaskBegin
+        | Action::KnobTaskArmHook
+        | Action::KnobTaskWaitHook
+        | Action::KnobTaskArmCallback
+        | Action::KnobTaskWaitCallback
+        | Action::KnobTaskAssertDistinct
+        | Action::KnobTaskRelease
+        | Action::KnobTaskFinish
+        | Action::KnobOverlayBegin
+        | Action::KnobOverlayCheckWindow
+        | Action::KnobOverlaySnapshotDescriptors
+        | Action::KnobOverlayCheckDescriptor { .. }
+        | Action::KnobOverlayFinishDescriptors
+        | Action::KnobOverlayCheckResource
+        | Action::KnobOverlayCheckCorners
+        | Action::KnobOverlayCheckSignature
+        | Action::KnobOverlayCheckBitmap
+        | Action::KnobOverlayCheckHeap
+        | Action::KnobOverlayFinish
+        | Action::KnobBitmapBegin
+        | Action::KnobBitmapCheckBackground { .. }
+        | Action::KnobBitmapStoreBefore
+        | Action::KnobBitmapArm
+        | Action::KnobBitmapWait
+        | Action::KnobBitmapInvoke { .. }
+        | Action::KnobBitmapCheckFrame
+        | Action::KnobBitmapCheckSignature
+        | Action::KnobBitmapCheckDescriptor
+        | Action::KnobBitmapFinish
+        | Action::KnobOverlayReactivate { .. }
+        | Action::KnobOverlayWaitActive
+        | Action::KnobOverlayRefreshBegin
+        | Action::KnobOverlayRefreshValue
+        | Action::KnobOverlayRefreshPixels
+        | Action::KnobOverlayRefreshFinish
+        | Action::KnobLockAcquire
+        | Action::KnobLockTrigger { .. }
+        | Action::KnobLockWait
+        | Action::KnobLockSample
+        | Action::KnobLockRestore
+        | Action::KnobLockAssert
+        | Action::KnobLockFinish
         | Action::KnobDialogModeBegin { .. }
         | Action::WaitKnobParameterMode { .. }
         | Action::KnobDialogExpectHeap
         | Action::KnobDialogModeEnd
+        | Action::KnobDialogAdaptive { .. }
+        | Action::KnobDialogInjectInvalidTag { .. }
+        | Action::KnobDialogWaitInvalidTag
+        | Action::KnobDialogConfirmInvalidTag
+        | Action::KnobDialogSettleLevel { .. }
+        | Action::KnobDialogInjectInvalidSignature
+        | Action::KnobDialogObserveInvalidSignature { .. }
+        | Action::KnobDialogSampleInvalidSignature
+        | Action::KnobDialogRestoreInvalidSignature
+        | Action::KnobDialogPrepareNotification
+        | Action::KnobDialogArmNotificationCallback
+        | Action::KnobDialogWaitNotificationCallback
+        | Action::KnobDialogInvokeNotification { .. }
+        | Action::KnobDialogWaitNotificationFrame { .. }
+        | Action::KnobDialogExpectNotificationInvariants { .. }
+        | Action::KnobDialogWaitExpiry { .. }
+        | Action::KnobDialogExpectExpiryFrame { .. }
+        | Action::KnobDialogSnapshotRestoration
+        | Action::KnobDialogCheckRestoration { .. }
+        | Action::KnobDialogFinishRestoration
+        | Action::KnobDialogExpectRestoredHeap
+        | Action::EnqueueEncoderNoAck { .. }
+        | Action::EnqueueTapNoAck { .. }
+        | Action::ReleaseCapturedDisplay
+        | Action::KnobDialogSnapshotNavigation
+        | Action::KnobDialogCheckNavigation { .. }
         | Action::CaptureDisplay { .. }
         | Action::ExpectCapturedDisplayImage { .. }
         | Action::KnobDialog
@@ -149,11 +236,22 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6MidiProbeExpectReplies
         | Action::MarkL6UpdatePending
         | Action::ExpectL6UpdateResetVector
-        | Action::ExpectL6UpdateComparison { .. } => on(L6),
+        | Action::ExpectL6UpdateComparison { .. }
+        | Action::L6IndicatorBegin
+        | Action::L6RingSample { .. }
+        | Action::L6RingCoverage { .. }
+        | Action::L6MuteSample { .. }
+        | Action::L6IndicatorEnd => on(L6),
         Action::SdCard { .. }
         | Action::UsbDescriptors
         | Action::UsbStorage
-        | Action::UsbMidi { .. }
+        | Action::UsbMidiOpen
+        | Action::UsbMidiBegin
+        | Action::UsbMidiExpectEncoder
+        | Action::UsbMidiPrepareLevel { .. }
+        | Action::UsbMidiSetAlternate
+        | Action::UsbMidiSetTarget
+        | Action::UsbMidiEnd
         | Action::HostMidiRoundTrip
         | Action::HostMidiConnect
         | Action::HostMidiBegin
@@ -170,16 +268,18 @@ pub fn of(action: &Action) -> Requirement {
         | Action::HostMidiSendCc { .. }
         | Action::ExpectRingChanged { .. }
         | Action::DirectUsbMidiRoundTrip { .. }
-        | Action::L6MidiRingPinSweep { .. }
-        | Action::L6MidiMuteIndicators
-        | Action::UsbSysex { .. }
+        | Action::UsbSysexBegin
+        | Action::UsbSysexExchange { .. }
+        | Action::UsbSysexEnd
         | Action::EditorPadAssignments
         | Action::EditorPadPlayback { .. }
         | Action::L6maxUiPadVerify { .. }
         | Action::SoundPadPlayback { .. }
         | Action::ExpectMemory { .. }
         | Action::WaitMemory { .. }
-        | Action::ExpectSdPatch { .. }
+        | Action::ExpectSdLoader
+        | Action::ExpectSdModule { .. }
+        | Action::EffectPacedTurn { .. }
         | Action::EffectParameterEdit { .. }
         | Action::EffectReplacementState { .. }
         | Action::ExpectHeap { .. }

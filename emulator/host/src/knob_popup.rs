@@ -31,6 +31,63 @@ pub struct Snapshot {
     pub text: Option<String>,
 }
 
+/// Addresses captured during the same L6max 1.10 GUI transaction.
+#[derive(Clone, Debug)]
+pub struct RestorationPointers {
+    pub bitmap_descriptor: u32,
+    pub text_table: u32,
+    pub shared_resource: u32,
+    pub lengths_table: u32,
+    pub widget7: u32,
+    pub widget33: u32,
+    pub backgrounds: [u32; 3],
+}
+
+/// Ordered QMP reads while the guest runs; values are not atomic.
+#[derive(Clone, Debug)]
+pub struct RestorationSnapshot {
+    pub window: Vec<u8>,
+    pub signature: Vec<u8>,
+    pub bitmap: Vec<u8>,
+    pub bitmap_descriptor: Vec<u8>,
+    pub notification_semaphore: Vec<u8>,
+    pub text_resources: Vec<u8>,
+    pub shared_pointer: Vec<u8>,
+    pub shared_contents: Vec<u8>,
+    pub text_lengths: Vec<u8>,
+    pub widget7: Vec<u8>,
+    pub widget33: Vec<u8>,
+    pub background10: Vec<u8>,
+    pub background37: Vec<u8>,
+    pub background48: Vec<u8>,
+    pub callback: Vec<u8>,
+}
+
+/// Ordered navigation checks, sampled while the guest runs (not atomic).
+#[derive(Clone, Debug, Default)]
+pub struct NavigationSnapshot {
+    pub window: Vec<u8>,
+    pub signature: Vec<u8>,
+    pub bitmap: Vec<u8>,
+    pub bitmap_descriptor: Vec<u8>,
+    pub notification_semaphore: Vec<u8>,
+    pub shared_contents: Vec<u8>,
+    pub widget7: Vec<u8>,
+    pub widget33: Vec<u8>,
+    pub background10: Vec<u8>,
+    pub background37: Vec<u8>,
+    pub background48: Vec<u8>,
+    pub callback: Vec<u8>,
+}
+
+/// Ordered widget and layer reads; the guest remains running.
+#[derive(Clone, Debug)]
+pub struct OverlayDescriptors {
+    pub widget7: Vec<u8>,
+    pub widget33: Vec<u8>,
+    pub backgrounds: [Vec<u8>; 3],
+}
+
 /// Non-atomic GUI state; display pixels are sampled separately by PanelFeed.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct RecorderState {
@@ -94,6 +151,33 @@ fn verify(
     Ok(())
 }
 
+fn read_text(
+    read: &mut impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
+) -> Result<String, String> {
+    let table = read_word(read, l6max::gui_text_pointers_by_language)?;
+    read_text_at_table(read, table)
+}
+
+fn read_text_at_table(
+    read: &mut impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
+    table: u32,
+) -> Result<String, String> {
+    let entry = table
+        .checked_add(TEXT_ID * 4)
+        .ok_or("GUI text table overflow")?;
+    let pointer = read_word(read, checked_sdram(entry, 4)?)?;
+    let bytes = read(checked_sdram(pointer, 48)?, 48)?;
+    if bytes.len() != 48 {
+        return Err("short GUI text".into());
+    }
+    let units = bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .take_while(|unit| *unit != 0)
+        .collect::<Vec<_>>();
+    String::from_utf16(&units).map_err(|error| error.to_string())
+}
+
 fn read_snapshot(
     with_text: bool,
     read: &mut impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
@@ -107,21 +191,7 @@ fn read_snapshot(
         .first()
         .ok_or("short mixer level")?;
     let text = if with_text {
-        let table = read_word(read, l6max::gui_text_pointers_by_language)?;
-        let entry = table
-            .checked_add(TEXT_ID * 4)
-            .ok_or("GUI text table overflow")?;
-        let pointer = read_word(read, checked_sdram(entry, 4)?)?;
-        let bytes = read(checked_sdram(pointer, 48)?, 48)?;
-        if bytes.len() != 48 {
-            return Err("short GUI text".into());
-        }
-        let units = bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .take_while(|unit| *unit != 0)
-            .collect::<Vec<_>>();
-        Some(String::from_utf16(&units).map_err(|error| error.to_string())?)
+        Some(read_text(read)?)
     } else {
         None
     };
@@ -134,6 +204,99 @@ fn read_snapshot(
         level,
         text,
     })
+}
+
+fn read_background_bitmap_id(
+    index: u32,
+    read: &mut impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
+) -> Result<u16, String> {
+    if index != 47 {
+        return Err(format!(
+            "unsupported background index {index}; only 47 is validated"
+        ));
+    }
+    let address = l6max::gui_background_table
+        .checked_add(index.checked_mul(4).ok_or("background index overflow")?)
+        .ok_or("background table overflow")?;
+    let pointer = u32::from_le_bytes(
+        read(address, 4)?
+            .try_into()
+            .map_err(|_| "short background pointer")?,
+    );
+    let field = pointer
+        .checked_add(2)
+        .ok_or("background pointer overflow")?;
+    let end = field.checked_add(2).ok_or("background pointer overflow")?;
+    if pointer < SDRAM_START || end > SDRAM_END {
+        return Err(format!("background pointer {pointer:#010x} outside SDRAM"));
+    }
+    let raw = read(field, 2)?;
+    Ok(u16::from_le_bytes(
+        raw.try_into().map_err(|_| "short background bitmap id")?,
+    ))
+}
+
+fn read_preflight_state(
+    read: &mut impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
+) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let state = read(l6max::gui_bitmap_table_entry_0, 4)?;
+    let callback = read(l6max::gui_display_callback_table + 20, 4)?;
+    Ok((state, callback))
+}
+
+fn read_restoration(
+    pointers: &RestorationPointers,
+    read: &mut impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
+) -> Result<RestorationSnapshot, String> {
+    Ok(RestorationSnapshot {
+        window: read(l6max::current_window, 4)?,
+        signature: read(l6max::gui_bitmap_table_entry_0, 2)?,
+        bitmap: read(l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)?,
+        bitmap_descriptor: read(pointers.bitmap_descriptor, 8)?,
+        notification_semaphore: read(l6max::notification_slot, 4)?,
+        text_resources: read(pointers.text_table + 229 * 4, 8)?,
+        shared_pointer: read(pointers.text_table + 179 * 4, 4)?,
+        shared_contents: read(pointers.shared_resource, 512)?,
+        text_lengths: read(pointers.lengths_table + 229 * 2, 4)?,
+        widget7: read(pointers.widget7, 16)?,
+        widget33: read(pointers.widget33, 16)?,
+        background10: read(pointers.backgrounds[0], 1)?,
+        background37: read(pointers.backgrounds[1], 1)?,
+        background48: read(pointers.backgrounds[2], 1)?,
+        callback: read(l6max::gui_display_callback_table + 20, 4)?,
+    })
+}
+
+fn read_navigation(
+    p: &RestorationPointers,
+    expected: &NavigationSnapshot,
+    read: &mut impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
+) -> Result<NavigationSnapshot, String> {
+    let mut out = NavigationSnapshot::default();
+    out.window = read(l6max::current_window, 4)?;
+    if out.window == expected.window {
+        return Ok(out);
+    }
+    macro_rules! field {
+        ($field:ident, $address:expr, $length:expr) => {{
+            out.$field = read($address, $length)?;
+            if out.$field != expected.$field {
+                return Ok(out);
+            }
+        }};
+    }
+    field!(signature, l6max::gui_bitmap_table_entry_0, 2);
+    field!(bitmap, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4);
+    field!(bitmap_descriptor, p.bitmap_descriptor, 8);
+    field!(notification_semaphore, l6max::notification_slot, 4);
+    field!(shared_contents, p.shared_resource, 512);
+    field!(widget7, p.widget7, 16);
+    field!(widget33, p.widget33, 16);
+    field!(background10, p.backgrounds[0], 1);
+    field!(background37, p.backgrounds[1], 1);
+    field!(background48, p.backgrounds[2], 1);
+    field!(callback, l6max::gui_display_callback_table + 20, 4);
+    Ok(out)
 }
 
 /// A revision-checked reader for one uninterrupted observation step.
@@ -175,6 +338,175 @@ impl Reader<'_> {
         })
     }
 
+    /// Channel-one raw level, sampled independently.
+    pub fn level(&self) -> Result<u8, String> {
+        self.qmp
+            .read_memory(0, l6max::mixer_channel_levels, 1)
+            .map_err(|error| error.to_string())?
+            .first()
+            .copied()
+            .ok_or("short mixer level".into())
+    }
+
+    /// Capture restoration fields in firmware check order; the guest is not paused.
+    pub fn restoration(
+        &self,
+        pointers: &RestorationPointers,
+    ) -> Result<RestorationSnapshot, String> {
+        read_restoration(pointers, &mut |address, len| {
+            self.qmp
+                .read_memory(0, address, len)
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    /// Capture navigation fields in firmware check order while the guest runs.
+    pub fn navigation(
+        &self,
+        pointers: &RestorationPointers,
+        expected: &NavigationSnapshot,
+    ) -> Result<NavigationSnapshot, String> {
+        read_navigation(pointers, expected, &mut |address, len| {
+            self.qmp
+                .read_memory(0, address, len)
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    /// Channel-one pan byte for the guarded L6max mixer layout.
+    pub fn pan(&self) -> Result<u8, String> {
+        self.qmp
+            .read_memory(0, l6max::mixer_first_channel_pan, 1)
+            .map_err(|error| error.to_string())?
+            .first()
+            .copied()
+            .ok_or("short pan value".into())
+    }
+
+    /// Mixer level for a one-based L6max channel.
+    pub fn channel_level(&self, channel: u32) -> Result<u8, String> {
+        if !(1..=8).contains(&channel) {
+            return Err("channel must be 1..8".into());
+        }
+        self.qmp
+            .read_memory(0, l6max::mixer_channel_levels + channel - 1, 1)
+            .map_err(|error| error.to_string())?
+            .first()
+            .copied()
+            .ok_or("short mixer level".into())
+    }
+
+    /// Read the bitmap identifier from a background table entry.
+    pub fn background_bitmap_id(&self, index: u32) -> Result<u16, String> {
+        read_background_bitmap_id(index, &mut |address, len| {
+            self.qmp
+                .read_memory(0, address, len)
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    /// Read the in-place popup state then callback slot five, in that order.
+    pub fn preflight_state(&self) -> Result<(Vec<u8>, Vec<u8>), String> {
+        read_preflight_state(&mut |address, len| {
+            self.qmp
+                .read_memory(0, address, len)
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    /// Sample the six callback slots in one non-atomic guest read.
+    pub fn callback_slots(&self) -> Result<[u32; 6], String> {
+        let bytes = self
+            .qmp
+            .read_memory(0, l6max::gui_display_callback_table, 24)
+            .map_err(|e| e.to_string())?;
+        if bytes.len() != 24 {
+            return Err("short callback table".into());
+        }
+        Ok(std::array::from_fn(|i| {
+            u32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap())
+        }))
+    }
+
+    /// Current recorder window as its raw word.
+    pub fn window(&self) -> Result<Vec<u8>, String> {
+        self.qmp
+            .read_memory(0, l6max::current_window, 4)
+            .map_err(|e| e.to_string())
+    }
+    /// Widget and background descriptors in original firmware-check order.
+    pub fn overlay_descriptors(
+        &self,
+        widget7: u32,
+        widget33: u32,
+        backgrounds: [u32; 3],
+    ) -> Result<OverlayDescriptors, String> {
+        let read = |address, len| {
+            self.qmp
+                .read_memory(0, address, len)
+                .map_err(|e| e.to_string())
+        };
+        Ok(OverlayDescriptors {
+            widget7: read(widget7, 16)?,
+            widget33: read(widget33, 16)?,
+            backgrounds: [
+                read(backgrounds[0], 1)?,
+                read(backgrounds[1], 1)?,
+                read(backgrounds[2], 1)?,
+            ],
+        })
+    }
+    /// Resource 179 pointer from a previously captured text table.
+    pub fn shared_resource_pointer(&self, table: u32) -> Result<Vec<u8>, String> {
+        self.qmp
+            .read_memory(0, table + 179 * 4, 4)
+            .map_err(|e| e.to_string())
+    }
+    /// Current dialog signature bytes.
+    pub fn state_signature(&self) -> Result<Vec<u8>, String> {
+        self.qmp
+            .read_memory(0, l6max::gui_bitmap_table_entry_0, 2)
+            .map_err(|e| e.to_string())
+    }
+    /// Current pointer for bitmap 36.
+    pub fn bitmap36(&self) -> Result<Vec<u8>, String> {
+        self.qmp
+            .read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Dialog inactivity countdown byte, sampled independently.
+    pub fn countdown_ticks(&self) -> Result<u8, String> {
+        self.qmp
+            .read_memory(0, l6max::gui_bitmap_table_entry_0 + 2, 1)
+            .map_err(|error| error.to_string())?
+            .first()
+            .copied()
+            .ok_or("short dialog state".into())
+    }
+
+    /// Dialog callback mailbox byte, sampled independently.
+    pub fn mailbox(&self) -> Result<u8, String> {
+        self.qmp
+            .read_memory(0, l6max::gui_bitmap_table_entry_0 + 3, 1)
+            .map_err(|error| error.to_string())?
+            .first()
+            .copied()
+            .ok_or("short dialog state".into())
+    }
+
+    /// Decode current dialog text using a previously captured table pointer.
+    pub fn text_at_table(&self, table: u32) -> Result<String, String> {
+        read_text_at_table(
+            &mut |address, size| {
+                self.qmp
+                    .read_memory(0, address, size)
+                    .map_err(|error| error.to_string())
+            },
+            table,
+        )
+    }
+
     /// Values can change between QMP reads; this is not an atomic snapshot.
     pub fn snapshot(&self, with_text: bool) -> Result<Snapshot, String> {
         read_snapshot(with_text, &mut |address, size| {
@@ -183,6 +515,69 @@ impl Reader<'_> {
                 .map_err(|error| error.to_string())
         })
     }
+}
+
+/// Revision-checked reader for one bounded overlay transaction.
+/// Recreate after guest restart or firmware changes.
+pub struct OverlayReader {
+    qmp: QmpClient,
+}
+impl OverlayReader {
+    fn borrowed(&self) -> Reader<'_> {
+        Reader { qmp: &self.qmp }
+    }
+    pub fn background_bitmap_id(&self, index: u32) -> Result<u16, String> {
+        self.borrowed().background_bitmap_id(index)
+    }
+    pub fn preflight_state(&self) -> Result<(Vec<u8>, Vec<u8>), String> {
+        self.borrowed().preflight_state()
+    }
+    pub fn window(&self) -> Result<Vec<u8>, String> {
+        self.borrowed().window()
+    }
+    pub fn overlay_descriptors(
+        &self,
+        widget7: u32,
+        widget33: u32,
+        backgrounds: [u32; 3],
+    ) -> Result<OverlayDescriptors, String> {
+        self.borrowed()
+            .overlay_descriptors(widget7, widget33, backgrounds)
+    }
+    pub fn shared_resource_pointer(&self, table: u32) -> Result<Vec<u8>, String> {
+        self.borrowed().shared_resource_pointer(table)
+    }
+    pub fn state_signature(&self) -> Result<Vec<u8>, String> {
+        self.borrowed().state_signature()
+    }
+    pub fn bitmap36(&self) -> Result<Vec<u8>, String> {
+        self.borrowed().bitmap36()
+    }
+    /// Samples the notification semaphore count at a previously verified address.
+    pub fn notification_count(&self, semaphore: u32) -> Result<Vec<u8>, String> {
+        self.qmp
+            .read_memory(0, semaphore + 56, 4)
+            .map_err(|e| e.to_string())
+    }
+    pub fn countdown_ticks(&self) -> Result<u8, String> {
+        self.borrowed().countdown_ticks()
+    }
+    pub fn level(&self) -> Result<u8, String> {
+        self.borrowed().level()
+    }
+    pub fn mailbox(&self) -> Result<u8, String> {
+        self.borrowed().mailbox()
+    }
+    pub fn text_at_table(&self, table: u32) -> Result<String, String> {
+        self.borrowed().text_at_table(table)
+    }
+}
+
+pub fn overlay_reader(qmp: &QmpClient, model: Model) -> Result<OverlayReader, String> {
+    verify(model, &mut |address, size| {
+        qmp.read_memory(0, address, size).map_err(|e| e.to_string())
+    })?;
+    Ok(OverlayReader { qmp: qmp.clone() })
 }
 
 /// GUI reader additionally guarded by the parameter-mode getter code.
@@ -328,5 +723,201 @@ mod tests {
                 .contains("outside SDRAM")
         );
         assert_eq!(read_snapshot(false, &mut read(true)).unwrap().text, None);
+    }
+}
+
+#[cfg(test)]
+mod restoration_tests {
+    use super::*;
+    #[test]
+    fn reads_navigation_fields_in_original_order() {
+        let p = RestorationPointers {
+            bitmap_descriptor: 0x100,
+            text_table: 0x200,
+            shared_resource: 0x300,
+            lengths_table: 0x400,
+            widget7: 0x500,
+            widget33: 0x600,
+            backgrounds: [0x700, 0x800, 0x900],
+        };
+        let expected = NavigationSnapshot {
+            window: vec![1; 4],
+            signature: vec![0; 2],
+            bitmap: vec![0; 4],
+            bitmap_descriptor: vec![0; 8],
+            notification_semaphore: vec![0; 4],
+            shared_contents: vec![0; 512],
+            widget7: vec![0; 16],
+            widget33: vec![0; 16],
+            background10: vec![0; 1],
+            background37: vec![0; 1],
+            background48: vec![0; 1],
+            callback: vec![0; 4],
+        };
+        let mut calls = Vec::new();
+        let snapshot = read_navigation(&p, &expected, &mut |address, len| {
+            calls.push((address, len));
+            Ok(vec![0; len])
+        })
+        .unwrap();
+        assert_eq!(
+            calls,
+            vec![
+                (l6max::current_window, 4),
+                (l6max::gui_bitmap_table_entry_0, 2),
+                (l6max::gui_bitmap_table_entry_0 + 36 * 4, 4),
+                (0x100, 8),
+                (l6max::notification_slot, 4),
+                (0x300, 512),
+                (0x500, 16),
+                (0x600, 16),
+                (0x700, 1),
+                (0x800, 1),
+                (0x900, 1),
+                (l6max::gui_display_callback_table + 20, 4)
+            ]
+        );
+        assert_eq!(snapshot.window, vec![0; 4]);
+        assert_eq!(snapshot.shared_contents, vec![0; 512]);
+        assert_eq!(snapshot.callback, vec![0; 4]);
+    }
+    #[test]
+    fn navigation_stops_reading_at_first_failed_check() {
+        let p = RestorationPointers {
+            bitmap_descriptor: 1,
+            text_table: 2,
+            shared_resource: 3,
+            lengths_table: 4,
+            widget7: 5,
+            widget33: 6,
+            backgrounds: [7, 8, 9],
+        };
+        let expected = NavigationSnapshot {
+            window: vec![0; 4],
+            ..Default::default()
+        };
+        let mut calls = Vec::new();
+        let _ = read_navigation(&p, &expected, &mut |address, len| {
+            calls.push((address, len));
+            Ok(vec![0; len])
+        })
+        .unwrap();
+        assert_eq!(calls, [(l6max::current_window, 4)]);
+    }
+    #[test]
+    fn reads_all_baselines_in_original_order() {
+        let p = RestorationPointers {
+            bitmap_descriptor: 0x100,
+            text_table: 0x200,
+            shared_resource: 0x300,
+            lengths_table: 0x400,
+            widget7: 0x500,
+            widget33: 0x600,
+            backgrounds: [0x700, 0x800, 0x900],
+        };
+        let mut calls = Vec::new();
+        let snapshot = read_restoration(&p, &mut |address, len| {
+            calls.push((address, len));
+            Ok(vec![calls.len() as u8; len])
+        })
+        .unwrap();
+        assert_eq!(
+            calls,
+            vec![
+                (l6max::current_window, 4),
+                (l6max::gui_bitmap_table_entry_0, 2),
+                (l6max::gui_bitmap_table_entry_0 + 36 * 4, 4),
+                (0x100, 8),
+                (l6max::notification_slot, 4),
+                (0x200 + 229 * 4, 8),
+                (0x200 + 179 * 4, 4),
+                (0x300, 512),
+                (0x400 + 229 * 2, 4),
+                (0x500, 16),
+                (0x600, 16),
+                (0x700, 1),
+                (0x800, 1),
+                (0x900, 1),
+                (l6max::gui_display_callback_table + 20, 4)
+            ]
+        );
+        assert_eq!(snapshot.window, vec![1; 4]);
+        assert_eq!(snapshot.shared_contents, vec![8; 512]);
+        assert_eq!(snapshot.callback, vec![15; 4]);
+    }
+}
+
+#[cfg(test)]
+mod preflight_order_tests {
+    use super::*;
+    #[test]
+    fn reads_state_before_callback_and_stops_on_error() {
+        let mut reads = Vec::new();
+        let result = read_preflight_state(&mut |address, len| {
+            reads.push((address, len));
+            Ok(vec![0; len])
+        })
+        .unwrap();
+        assert_eq!(
+            reads,
+            [
+                (l6max::gui_bitmap_table_entry_0, 4),
+                (l6max::gui_display_callback_table + 20, 4)
+            ]
+        );
+        assert_eq!(result, (vec![0; 4], vec![0; 4]));
+        let mut calls = 0;
+        assert!(
+            read_preflight_state(&mut |_, _| {
+                calls += 1;
+                Err("unavailable".into())
+            })
+            .is_err()
+        );
+        assert_eq!(calls, 1);
+    }
+}
+
+#[cfg(test)]
+mod background_bitmap_tests {
+    use super::*;
+    #[test]
+    fn reads_table_then_bitmap_id_and_rejects_short_pointer() {
+        let mut reads = Vec::new();
+        let id = read_background_bitmap_id(47, &mut |address, len| {
+            reads.push((address, len));
+            if len == 4 {
+                Ok(0x8020_0100u32.to_le_bytes().to_vec())
+            } else {
+                Ok(0u16.to_le_bytes().to_vec())
+            }
+        })
+        .unwrap();
+        assert_eq!(id, 0);
+        assert_eq!(
+            reads,
+            [(l6max::gui_background_table + 47 * 4, 4), (0x8020_0102, 2)]
+        );
+        let mut calls = 0;
+        assert!(
+            read_background_bitmap_id(47, &mut |_, _| {
+                calls += 1;
+                Ok(vec![0; 3])
+            })
+            .is_err()
+        );
+        assert_eq!(calls, 1);
+        assert!(read_background_bitmap_id(48, &mut |_, _| panic!("invalid index read")).is_err());
+        for pointer in [0u32, SDRAM_END - 3, u32::MAX] {
+            let mut calls = 0;
+            assert!(
+                read_background_bitmap_id(47, &mut |_, _| {
+                    calls += 1;
+                    Ok(pointer.to_le_bytes().to_vec())
+                })
+                .is_err()
+            );
+            assert_eq!(calls, 1);
+        }
     }
 }

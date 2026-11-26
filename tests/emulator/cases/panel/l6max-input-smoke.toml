@@ -21,9 +21,147 @@ guest_timeout_ms = 60000
 wall_timeout_s = 120
 
 [[step]]
-action = "l6max-panel-key-map"
-guest_timeout_ms = 10000
+action = "l6max-panel-key-begin"
 wall_timeout_s = 120
+
+[[step]]
+action = "l6max-panel-key-check"
+code = 25
+bit = 1
+word_index = 4
+active = false
+wait = false
+
+[[step]]
+action = "l6max-panel-key-input"
+target = 15
+pressed = true
+
+[[step]]
+action = "l6max-panel-key-check"
+code = 25
+bit = 1
+word_index = 4
+active = true
+wait = true
+
+[[step]]
+action = "l6max-panel-key-input"
+target = 15
+pressed = false
+
+[[step]]
+action = "l6max-panel-key-check"
+code = 25
+bit = 1
+word_index = 4
+active = false
+wait = true
+
+[[step]]
+action = "l6max-panel-key-check"
+code = 26
+bit = 2
+word_index = 4
+active = false
+wait = false
+
+[[step]]
+action = "l6max-panel-key-input"
+target = 20
+pressed = true
+
+[[step]]
+action = "l6max-panel-key-check"
+code = 26
+bit = 2
+word_index = 4
+active = true
+wait = true
+
+[[step]]
+action = "l6max-panel-key-input"
+target = 20
+pressed = false
+
+[[step]]
+action = "l6max-panel-key-check"
+code = 26
+bit = 2
+word_index = 4
+active = false
+wait = true
+
+[[step]]
+action = "l6max-panel-key-check"
+code = 27
+bit = 3
+word_index = 4
+active = false
+wait = false
+
+[[step]]
+action = "l6max-panel-key-input"
+target = 25
+pressed = true
+
+[[step]]
+action = "l6max-panel-key-check"
+code = 27
+bit = 3
+word_index = 4
+active = true
+wait = true
+
+[[step]]
+action = "l6max-panel-key-input"
+target = 25
+pressed = false
+
+[[step]]
+action = "l6max-panel-key-check"
+code = 27
+bit = 3
+word_index = 4
+active = false
+wait = true
+
+[[step]]
+action = "l6max-panel-key-check"
+code = 28
+bit = 4
+word_index = 4
+active = false
+wait = false
+
+[[step]]
+action = "l6max-panel-key-input"
+target = 30
+pressed = true
+
+[[step]]
+action = "l6max-panel-key-check"
+code = 28
+bit = 4
+word_index = 4
+active = true
+wait = true
+
+[[step]]
+action = "l6max-panel-key-input"
+target = 30
+pressed = false
+
+[[step]]
+action = "l6max-panel-key-check"
+code = 28
+bit = 4
+word_index = 4
+active = false
+wait = true
+
+[[step]]
+action = "l6max-panel-key-end"
 
 [[step]]
 action = "press"

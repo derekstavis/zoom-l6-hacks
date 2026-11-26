@@ -1,0 +1,628 @@
+# Each campaign observes 6,000 guest ms of MIDI effects. The larger shared
+# ceiling accounts for runner work between steps and slow parallel guests;
+# it does not change any observation window or indicator assertion.
+[[step]]
+action = "l6-indicator-begin"
+guest_timeout_ms = 10000
+wall_timeout_s = 90
+
+[[step]]
+action = "l6-ring-sample"
+cc = 83
+value = 0
+guest_ms = 1000
+
+[[step]]
+action = "l6-ring-sample"
+cc = 83
+value = 16
+guest_ms = 500
+ring = 1
+
+[[step]]
+action = "l6-ring-sample"
+cc = 83
+value = 32
+guest_ms = 500
+ring = 1
+
+[[step]]
+action = "l6-ring-sample"
+cc = 83
+value = 48
+guest_ms = 500
+ring = 1
+
+[[step]]
+action = "l6-ring-sample"
+cc = 83
+value = 64
+guest_ms = 500
+ring = 1
+
+[[step]]
+action = "l6-ring-sample"
+cc = 83
+value = 80
+guest_ms = 500
+ring = 1
+
+[[step]]
+action = "l6-ring-sample"
+cc = 83
+value = 96
+guest_ms = 500
+ring = 1
+
+[[step]]
+action = "l6-ring-sample"
+cc = 83
+value = 100
+guest_ms = 500
+ring = 1
+
+[[step]]
+action = "l6-ring-sample"
+cc = 83
+value = 112
+guest_ms = 500
+ring = 1
+
+[[step]]
+action = "l6-ring-sample"
+cc = 83
+value = 127
+guest_ms = 500
+ring = 1
+
+[[step]]
+action = "l6-ring-sample"
+cc = 83
+value = 0
+guest_ms = 500
+ring = 1
+
+[[step]]
+action = "l6-ring-coverage"
+mask = 510
+
+[[step]]
+action = "l6-indicator-end"
+
+[[step]]
+action = "l6-indicator-begin"
+guest_timeout_ms = 10000
+wall_timeout_s = 90
+
+[[step]]
+action = "l6-ring-sample"
+cc = 84
+value = 0
+guest_ms = 1000
+
+[[step]]
+action = "l6-ring-sample"
+cc = 84
+value = 16
+guest_ms = 500
+ring = 2
+
+[[step]]
+action = "l6-ring-sample"
+cc = 84
+value = 32
+guest_ms = 500
+ring = 2
+
+[[step]]
+action = "l6-ring-sample"
+cc = 84
+value = 48
+guest_ms = 500
+ring = 2
+
+[[step]]
+action = "l6-ring-sample"
+cc = 84
+value = 64
+guest_ms = 500
+ring = 2
+
+[[step]]
+action = "l6-ring-sample"
+cc = 84
+value = 80
+guest_ms = 500
+ring = 2
+
+[[step]]
+action = "l6-ring-sample"
+cc = 84
+value = 96
+guest_ms = 500
+ring = 2
+
+[[step]]
+action = "l6-ring-sample"
+cc = 84
+value = 100
+guest_ms = 500
+ring = 2
+
+[[step]]
+action = "l6-ring-sample"
+cc = 84
+value = 112
+guest_ms = 500
+ring = 2
+
+[[step]]
+action = "l6-ring-sample"
+cc = 84
+value = 127
+guest_ms = 500
+ring = 2
+
+[[step]]
+action = "l6-ring-sample"
+cc = 84
+value = 0
+guest_ms = 500
+ring = 2
+
+[[step]]
+action = "l6-ring-coverage"
+mask = 510
+
+[[step]]
+action = "l6-indicator-end"
+
+[[step]]
+action = "l6-indicator-begin"
+guest_timeout_ms = 10000
+wall_timeout_s = 90
+
+[[step]]
+action = "l6-ring-sample"
+cc = 85
+value = 0
+guest_ms = 1000
+
+[[step]]
+action = "l6-ring-sample"
+cc = 85
+value = 16
+guest_ms = 500
+ring = 3
+
+[[step]]
+action = "l6-ring-sample"
+cc = 85
+value = 32
+guest_ms = 500
+ring = 3
+
+[[step]]
+action = "l6-ring-sample"
+cc = 85
+value = 48
+guest_ms = 500
+ring = 3
+
+[[step]]
+action = "l6-ring-sample"
+cc = 85
+value = 64
+guest_ms = 500
+ring = 3
+
+[[step]]
+action = "l6-ring-sample"
+cc = 85
+value = 80
+guest_ms = 500
+ring = 3
+
+[[step]]
+action = "l6-ring-sample"
+cc = 85
+value = 96
+guest_ms = 500
+ring = 3
+
+[[step]]
+action = "l6-ring-sample"
+cc = 85
+value = 100
+guest_ms = 500
+ring = 3
+
+[[step]]
+action = "l6-ring-sample"
+cc = 85
+value = 112
+guest_ms = 500
+ring = 3
+
+[[step]]
+action = "l6-ring-sample"
+cc = 85
+value = 127
+guest_ms = 500
+ring = 3
+
+[[step]]
+action = "l6-ring-sample"
+cc = 85
+value = 0
+guest_ms = 500
+ring = 3
+
+[[step]]
+action = "l6-ring-coverage"
+mask = 510
+
+[[step]]
+action = "l6-indicator-end"
+
+[[step]]
+action = "l6-indicator-begin"
+guest_timeout_ms = 10000
+wall_timeout_s = 90
+
+[[step]]
+action = "l6-ring-sample"
+cc = 86
+value = 0
+guest_ms = 1000
+
+[[step]]
+action = "l6-ring-sample"
+cc = 86
+value = 16
+guest_ms = 500
+ring = 4
+
+[[step]]
+action = "l6-ring-sample"
+cc = 86
+value = 32
+guest_ms = 500
+ring = 4
+
+[[step]]
+action = "l6-ring-sample"
+cc = 86
+value = 48
+guest_ms = 500
+ring = 4
+
+[[step]]
+action = "l6-ring-sample"
+cc = 86
+value = 64
+guest_ms = 500
+ring = 4
+
+[[step]]
+action = "l6-ring-sample"
+cc = 86
+value = 80
+guest_ms = 500
+ring = 4
+
+[[step]]
+action = "l6-ring-sample"
+cc = 86
+value = 96
+guest_ms = 500
+ring = 4
+
+[[step]]
+action = "l6-ring-sample"
+cc = 86
+value = 100
+guest_ms = 500
+ring = 4
+
+[[step]]
+action = "l6-ring-sample"
+cc = 86
+value = 112
+guest_ms = 500
+ring = 4
+
+[[step]]
+action = "l6-ring-sample"
+cc = 86
+value = 127
+guest_ms = 500
+ring = 4
+
+[[step]]
+action = "l6-ring-sample"
+cc = 86
+value = 0
+guest_ms = 500
+ring = 4
+
+[[step]]
+action = "l6-ring-coverage"
+mask = 510
+
+[[step]]
+action = "l6-indicator-end"
+
+[[step]]
+action = "l6-indicator-begin"
+guest_timeout_ms = 10000
+wall_timeout_s = 90
+
+[[step]]
+action = "l6-ring-sample"
+cc = 87
+value = 0
+guest_ms = 1000
+
+[[step]]
+action = "l6-ring-sample"
+cc = 87
+value = 16
+guest_ms = 500
+ring = 5
+
+[[step]]
+action = "l6-ring-sample"
+cc = 87
+value = 32
+guest_ms = 500
+ring = 5
+
+[[step]]
+action = "l6-ring-sample"
+cc = 87
+value = 48
+guest_ms = 500
+ring = 5
+
+[[step]]
+action = "l6-ring-sample"
+cc = 87
+value = 64
+guest_ms = 500
+ring = 5
+
+[[step]]
+action = "l6-ring-sample"
+cc = 87
+value = 80
+guest_ms = 500
+ring = 5
+
+[[step]]
+action = "l6-ring-sample"
+cc = 87
+value = 96
+guest_ms = 500
+ring = 5
+
+[[step]]
+action = "l6-ring-sample"
+cc = 87
+value = 100
+guest_ms = 500
+ring = 5
+
+[[step]]
+action = "l6-ring-sample"
+cc = 87
+value = 112
+guest_ms = 500
+ring = 5
+
+[[step]]
+action = "l6-ring-sample"
+cc = 87
+value = 127
+guest_ms = 500
+ring = 5
+
+[[step]]
+action = "l6-ring-sample"
+cc = 87
+value = 0
+guest_ms = 500
+ring = 5
+
+[[step]]
+action = "l6-ring-coverage"
+mask = 510
+
+[[step]]
+action = "l6-indicator-end"
+
+[[step]]
+action = "l6-indicator-begin"
+guest_timeout_ms = 10000
+wall_timeout_s = 90
+
+[[step]]
+action = "l6-ring-sample"
+cc = 88
+value = 0
+guest_ms = 1000
+
+[[step]]
+action = "l6-ring-sample"
+cc = 88
+value = 16
+guest_ms = 500
+ring = 6
+
+[[step]]
+action = "l6-ring-sample"
+cc = 88
+value = 32
+guest_ms = 500
+ring = 6
+
+[[step]]
+action = "l6-ring-sample"
+cc = 88
+value = 48
+guest_ms = 500
+ring = 6
+
+[[step]]
+action = "l6-ring-sample"
+cc = 88
+value = 64
+guest_ms = 500
+ring = 6
+
+[[step]]
+action = "l6-ring-sample"
+cc = 88
+value = 80
+guest_ms = 500
+ring = 6
+
+[[step]]
+action = "l6-ring-sample"
+cc = 88
+value = 96
+guest_ms = 500
+ring = 6
+
+[[step]]
+action = "l6-ring-sample"
+cc = 88
+value = 100
+guest_ms = 500
+ring = 6
+
+[[step]]
+action = "l6-ring-sample"
+cc = 88
+value = 112
+guest_ms = 500
+ring = 6
+
+[[step]]
+action = "l6-ring-sample"
+cc = 88
+value = 127
+guest_ms = 500
+ring = 6
+
+[[step]]
+action = "l6-ring-sample"
+cc = 88
+value = 0
+guest_ms = 500
+ring = 6
+
+[[step]]
+action = "l6-ring-coverage"
+mask = 510
+
+[[step]]
+action = "l6-indicator-end"
+
+[[step]]
+action = "l6-indicator-begin"
+guest_timeout_ms = 10000
+wall_timeout_s = 90
+
+[[step]]
+action = "l6-mute-sample"
+cc = 93
+value = 127
+guest_ms = 500
+expected = [0, 0, 0, 0, 2048, 0, 0, 0]
+
+[[step]]
+action = "l6-mute-sample"
+cc = 93
+value = 0
+reuse_previous = true
+guest_ms = 500
+expected = [0, 0, 0, 0, 2048, 0, 0, 0]
+
+[[step]]
+action = "l6-mute-sample"
+cc = 94
+value = 127
+guest_ms = 500
+expected = [0, 0, 0, 0, 1024, 0, 0, 0]
+
+[[step]]
+action = "l6-mute-sample"
+cc = 94
+value = 0
+reuse_previous = true
+guest_ms = 500
+expected = [0, 0, 0, 0, 1024, 0, 0, 0]
+
+[[step]]
+action = "l6-mute-sample"
+cc = 95
+value = 127
+guest_ms = 500
+expected = [0, 0, 0, 0, 0, 2048, 0, 0]
+
+[[step]]
+action = "l6-mute-sample"
+cc = 95
+value = 0
+reuse_previous = true
+guest_ms = 500
+expected = [0, 0, 0, 0, 0, 2048, 0, 0]
+
+[[step]]
+action = "l6-mute-sample"
+cc = 102
+value = 127
+guest_ms = 500
+expected = [0, 0, 0, 0, 0, 1024, 0, 0]
+
+[[step]]
+action = "l6-mute-sample"
+cc = 102
+value = 0
+reuse_previous = true
+guest_ms = 500
+expected = [0, 0, 0, 0, 0, 1024, 0, 0]
+
+[[step]]
+action = "l6-mute-sample"
+cc = 103
+value = 127
+guest_ms = 500
+expected = [0, 0, 0, 0, 0, 0, 2048, 0]
+
+[[step]]
+action = "l6-mute-sample"
+cc = 103
+value = 0
+reuse_previous = true
+guest_ms = 500
+expected = [0, 0, 0, 0, 0, 0, 2048, 0]
+
+[[step]]
+action = "l6-mute-sample"
+cc = 104
+value = 127
+guest_ms = 500
+expected = [0, 0, 0, 0, 0, 0, 1024, 0]
+
+[[step]]
+action = "l6-mute-sample"
+cc = 104
+value = 0
+reuse_previous = true
+guest_ms = 500
+expected = [0, 0, 0, 0, 0, 0, 1024, 0]
+
+[[step]]
+action = "l6-indicator-end"

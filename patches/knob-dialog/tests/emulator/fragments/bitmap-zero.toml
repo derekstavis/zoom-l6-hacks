@@ -1,0 +1,66 @@
+[[step]]
+action = "knob-bitmap-begin"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-bitmap-check-background"
+background = 47
+expected = 0
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "capture-display"
+guest_ms = 50
+artifact = "window-scene-before-null-bitmap-probe"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-bitmap-store-before"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-bitmap-arm"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-bitmap-wait"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-bitmap-invoke"
+background = 47
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "capture-display"
+guest_ms = 100
+artifact = "window-scene-after-null-bitmap-probe"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-bitmap-check-frame"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-bitmap-check-signature"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-bitmap-check-descriptor"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-bitmap-finish"
+guest_timeout_ms = 180000
+wall_timeout_s = 600

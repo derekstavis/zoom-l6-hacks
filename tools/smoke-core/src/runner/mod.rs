@@ -483,9 +483,27 @@ impl Runner {
                 Action::UsbDescriptors => {
                     return Ok(Progress::Device(devices::Operation::UsbDescriptors));
                 }
-                Action::UsbMidi { value } => {
-                    return Ok(Progress::Device(devices::Operation::UsbMidi { value }));
+                Action::UsbMidiOpen => {
+                    return Ok(Progress::Device(devices::Operation::UsbMidiOpen));
                 }
+                Action::UsbMidiBegin => {
+                    return Ok(Progress::Device(devices::Operation::UsbMidiBegin));
+                }
+                Action::UsbMidiExpectEncoder => {
+                    return Ok(Progress::Device(devices::Operation::UsbMidiExpectEncoder));
+                }
+                Action::UsbMidiPrepareLevel { value } => {
+                    return Ok(Progress::Device(devices::Operation::UsbMidiPrepareLevel {
+                        value,
+                    }));
+                }
+                Action::UsbMidiSetAlternate => {
+                    return Ok(Progress::Device(devices::Operation::UsbMidiSetAlternate));
+                }
+                Action::UsbMidiSetTarget => {
+                    return Ok(Progress::Device(devices::Operation::UsbMidiSetTarget));
+                }
+                Action::UsbMidiEnd => return Ok(Progress::Device(devices::Operation::UsbMidiEnd)),
                 Action::HostMidiConnect => {
                     return Ok(Progress::Device(devices::Operation::HostMidiConnect));
                 }
@@ -635,9 +653,22 @@ impl Runner {
                         },
                     ));
                 }
-                Action::L6DinUsbForwarding => {
-                    return Ok(Progress::Device(devices::Operation::L6DinUsbForwarding));
+                Action::DinUsbBegin => {
+                    return Ok(Progress::Device(devices::Operation::DinUsbBegin));
                 }
+                Action::DinUsbAttach => {
+                    return Ok(Progress::Device(devices::Operation::DinUsbAttach));
+                }
+                Action::DinUsbSend { bytes } => {
+                    return Ok(Progress::Device(devices::Operation::DinUsbSend { bytes }));
+                }
+                Action::DinUsbExpect { bytes, cable } => {
+                    return Ok(Progress::Device(devices::Operation::DinUsbExpect {
+                        bytes,
+                        cable,
+                    }));
+                }
+                Action::DinUsbEnd => return Ok(Progress::Device(devices::Operation::DinUsbEnd)),
                 Action::HostMidiSyncBegin => {
                     return Ok(Progress::Device(devices::Operation::HostMidiSyncBegin));
                 }
@@ -658,22 +689,59 @@ impl Runner {
                         devices::Operation::L6MidiProbeExpectReplies,
                     ));
                 }
-                Action::L6MidiRingPinSweep { cc } => {
-                    return Ok(Progress::Device(devices::Operation::L6MidiRingPinSweep {
+                Action::L6IndicatorBegin => {
+                    return Ok(Progress::Device(devices::Operation::L6IndicatorBegin));
+                }
+                Action::L6RingSample {
+                    cc,
+                    value,
+                    guest_ms,
+                    ring,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::L6RingSample {
                         cc,
+                        value,
+                        guest_ms,
+                        ring,
                     }));
                 }
-                Action::L6MidiMuteIndicators => {
-                    return Ok(Progress::Device(devices::Operation::L6MidiMuteIndicators));
+                Action::L6RingCoverage { mask } => {
+                    return Ok(Progress::Device(devices::Operation::L6RingCoverage {
+                        mask,
+                    }));
                 }
-                Action::UsbSysex {
-                    requests,
+                Action::L6MuteSample {
+                    cc,
+                    value,
+                    guest_ms,
+                    expected,
+                    reuse_previous,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::L6MuteSample {
+                        cc,
+                        value,
+                        guest_ms,
+                        expected,
+                        reuse_previous,
+                    }));
+                }
+                Action::L6IndicatorEnd => {
+                    return Ok(Progress::Device(devices::Operation::L6IndicatorEnd));
+                }
+                Action::UsbSysexBegin => {
+                    return Ok(Progress::Device(devices::Operation::UsbSysexBegin));
+                }
+                Action::UsbSysexExchange {
+                    request,
                     complete_on_match,
                 } => {
-                    return Ok(Progress::Device(devices::Operation::UsbSysex {
-                        requests,
+                    return Ok(Progress::Device(devices::Operation::UsbSysexExchange {
+                        request,
                         complete_on_match,
                     }));
+                }
+                Action::UsbSysexEnd => {
+                    return Ok(Progress::Device(devices::Operation::UsbSysexEnd));
                 }
                 Action::EditorPadAssignments => {
                     return Ok(Progress::Device(devices::Operation::EditorPadAssignments));
@@ -742,13 +810,28 @@ impl Runner {
                         bytes,
                     }));
                 }
-                Action::ExpectSdPatch {
+                Action::ExpectSdLoader => {
+                    return Ok(Progress::Device(devices::Operation::ExpectSdLoader));
+                }
+                Action::ExpectSdModule {
                     loaded,
                     chain_count,
                 } => {
-                    return Ok(Progress::Device(devices::Operation::ExpectSdPatch {
+                    return Ok(Progress::Device(devices::Operation::ExpectSdModule {
                         loaded,
                         chain_count,
+                    }));
+                }
+                Action::EffectPacedTurn { channel, steps } => {
+                    self.baseline = Some(obs.clone());
+                    self.last_command = Some(Command::Encoder {
+                        channel,
+                        steps,
+                        gesture: crate::scenario::Gesture::Scroll,
+                    });
+                    return Ok(Progress::Device(devices::Operation::EffectPacedTurn {
+                        channel,
+                        steps,
                     }));
                 }
                 Action::EffectParameterEdit { encoder, steps } => {
@@ -852,65 +935,264 @@ impl Runner {
                         devices::Operation::KnobDialogPreflightBegin,
                     ));
                 }
-                Action::KnobDialogPreflightDescriptor => {
+                Action::KnobProbePrepare { probe } => {
+                    return Ok(Progress::Device(devices::Operation::KnobProbePrepare {
+                        probe,
+                    }));
+                }
+                Action::KnobProbeInject => {
+                    return Ok(Progress::Device(devices::Operation::KnobProbeInject));
+                }
+                Action::KnobProbeTrigger { delta } => {
+                    return Ok(Progress::Device(devices::Operation::KnobProbeTrigger {
+                        delta,
+                    }));
+                }
+                Action::KnobProbeSample => {
+                    return Ok(Progress::Device(devices::Operation::KnobProbeSample));
+                }
+                Action::KnobProbeRestore => {
+                    return Ok(Progress::Device(devices::Operation::KnobProbeRestore));
+                }
+                Action::KnobProbeAssert => {
+                    return Ok(Progress::Device(devices::Operation::KnobProbeAssert));
+                }
+                Action::KnobRaceBegin => {
+                    return Ok(Progress::Device(devices::Operation::KnobRaceBegin));
+                }
+                Action::KnobRaceWaitRegistration => {
                     return Ok(Progress::Device(
-                        devices::Operation::KnobDialogPreflightDescriptor,
+                        devices::Operation::KnobRaceWaitRegistration,
                     ));
                 }
-                Action::KnobDialogPreflightTextAlias => {
-                    return Ok(Progress::Device(
-                        devices::Operation::KnobDialogPreflightTextAlias,
-                    ));
+                Action::KnobRaceArmCallback => {
+                    return Ok(Progress::Device(devices::Operation::KnobRaceArmCallback));
                 }
-                Action::KnobDialogPreflightLayerCollision => {
-                    return Ok(Progress::Device(
-                        devices::Operation::KnobDialogPreflightLayerCollision,
-                    ));
+                Action::KnobRaceWaitCallback => {
+                    return Ok(Progress::Device(devices::Operation::KnobRaceWaitCallback));
                 }
-                Action::KnobDialogPreflightWidgetLayer => {
-                    return Ok(Progress::Device(
-                        devices::Operation::KnobDialogPreflightWidgetLayer,
-                    ));
+                Action::KnobRaceSample => {
+                    return Ok(Progress::Device(devices::Operation::KnobRaceSample));
                 }
-                Action::KnobDialogPreflightBackgroundLayer => {
-                    return Ok(Progress::Device(
-                        devices::Operation::KnobDialogPreflightBackgroundLayer,
-                    ));
+                Action::KnobRaceRestore => {
+                    return Ok(Progress::Device(devices::Operation::KnobRaceRestore));
                 }
-                Action::KnobDialogCallbackRace => {
-                    return Ok(Progress::Device(devices::Operation::KnobDialogCallbackRace));
+                Action::KnobRaceAssert => {
+                    return Ok(Progress::Device(devices::Operation::KnobRaceAssert));
+                }
+                Action::KnobRaceCapture { guest_ms, artifact } => {
+                    return Ok(Progress::Device(devices::Operation::KnobRaceCapture {
+                        guest_ms,
+                        artifact: artifact.clone(),
+                    }));
                 }
                 Action::KnobDialogFirstActivation => {
                     return Ok(Progress::Device(
                         devices::Operation::KnobDialogFirstActivation,
                     ));
                 }
-                Action::KnobDialogActiveDisplay => {
+                Action::KnobActiveBegin => {
+                    return Ok(Progress::Device(devices::Operation::KnobActiveBegin));
+                }
+                Action::KnobActiveSampleCallbacks => {
                     return Ok(Progress::Device(
-                        devices::Operation::KnobDialogActiveDisplay,
+                        devices::Operation::KnobActiveSampleCallbacks,
                     ));
                 }
-                Action::KnobDialogLevelDemo => {
-                    return Ok(Progress::Device(devices::Operation::KnobDialogLevelDemo));
-                }
-                Action::KnobDialogTaskContexts => {
-                    return Ok(Progress::Device(devices::Operation::KnobDialogTaskContexts));
-                }
-                Action::KnobDialogOverlayInvariants => {
+                Action::KnobActiveCheckCallbacks => {
                     return Ok(Progress::Device(
-                        devices::Operation::KnobDialogOverlayInvariants,
+                        devices::Operation::KnobActiveCheckCallbacks,
                     ));
                 }
-                Action::KnobDialogBitmapZero => {
-                    return Ok(Progress::Device(devices::Operation::KnobDialogBitmapZero));
+                Action::KnobActiveCheckFrame => {
+                    return Ok(Progress::Device(devices::Operation::KnobActiveCheckFrame));
                 }
-                Action::KnobDialogActiveOverlay => {
+                Action::KnobActiveFinish => {
+                    return Ok(Progress::Device(devices::Operation::KnobActiveFinish));
+                }
+                Action::KnobLevelBegin => {
+                    return Ok(Progress::Device(devices::Operation::KnobLevelBegin));
+                }
+                Action::KnobLevelStart { demo, artifact } => {
+                    return Ok(Progress::Device(devices::Operation::KnobLevelStart {
+                        demo: demo.clone(),
+                        artifact: artifact.clone(),
+                    }));
+                }
+                Action::KnobLevelSweep { sweep } => {
+                    return Ok(Progress::Device(devices::Operation::KnobLevelSweep {
+                        sweep: sweep.clone(),
+                    }));
+                }
+                Action::KnobLevelExpectZero => {
+                    return Ok(Progress::Device(devices::Operation::KnobLevelExpectZero));
+                }
+                Action::KnobLevelFinish => {
+                    return Ok(Progress::Device(devices::Operation::KnobLevelFinish));
+                }
+                Action::KnobTaskBegin => {
+                    return Ok(Progress::Device(devices::Operation::KnobTaskBegin));
+                }
+                Action::KnobTaskArmHook => {
+                    return Ok(Progress::Device(devices::Operation::KnobTaskArmHook));
+                }
+                Action::KnobTaskWaitHook => {
+                    return Ok(Progress::Device(devices::Operation::KnobTaskWaitHook));
+                }
+                Action::KnobTaskArmCallback => {
+                    return Ok(Progress::Device(devices::Operation::KnobTaskArmCallback));
+                }
+                Action::KnobTaskWaitCallback => {
+                    return Ok(Progress::Device(devices::Operation::KnobTaskWaitCallback));
+                }
+                Action::KnobTaskAssertDistinct => {
+                    return Ok(Progress::Device(devices::Operation::KnobTaskAssertDistinct));
+                }
+                Action::KnobTaskRelease => {
+                    return Ok(Progress::Device(devices::Operation::KnobTaskRelease));
+                }
+                Action::KnobTaskFinish => {
+                    return Ok(Progress::Device(devices::Operation::KnobTaskFinish));
+                }
+                Action::KnobOverlayBegin => {
+                    return Ok(Progress::Device(devices::Operation::KnobOverlayBegin));
+                }
+                Action::KnobOverlayCheckWindow => {
+                    return Ok(Progress::Device(devices::Operation::KnobOverlayCheckWindow));
+                }
+                Action::KnobOverlaySnapshotDescriptors => {
                     return Ok(Progress::Device(
-                        devices::Operation::KnobDialogActiveOverlay,
+                        devices::Operation::KnobOverlaySnapshotDescriptors,
                     ));
                 }
-                Action::KnobDialogLockedUpdate => {
-                    return Ok(Progress::Device(devices::Operation::KnobDialogLockedUpdate));
+                Action::KnobOverlayCheckDescriptor { field } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobOverlayCheckDescriptor { field },
+                    ));
+                }
+                Action::KnobOverlayFinishDescriptors => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobOverlayFinishDescriptors,
+                    ));
+                }
+                Action::KnobOverlayCheckResource => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobOverlayCheckResource,
+                    ));
+                }
+                Action::KnobOverlayCheckCorners => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobOverlayCheckCorners,
+                    ));
+                }
+                Action::KnobOverlayCheckSignature => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobOverlayCheckSignature,
+                    ));
+                }
+                Action::KnobOverlayCheckBitmap => {
+                    return Ok(Progress::Device(devices::Operation::KnobOverlayCheckBitmap));
+                }
+                Action::KnobOverlayCheckHeap => {
+                    return Ok(Progress::Device(devices::Operation::KnobOverlayCheckHeap));
+                }
+                Action::KnobOverlayFinish => {
+                    return Ok(Progress::Device(devices::Operation::KnobOverlayFinish));
+                }
+                Action::KnobBitmapBegin => {
+                    return Ok(Progress::Device(devices::Operation::KnobBitmapBegin));
+                }
+                Action::KnobBitmapCheckBackground {
+                    background,
+                    expected,
+                } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobBitmapCheckBackground {
+                            background,
+                            expected,
+                        },
+                    ));
+                }
+                Action::KnobBitmapStoreBefore => {
+                    return Ok(Progress::Device(devices::Operation::KnobBitmapStoreBefore));
+                }
+                Action::KnobBitmapArm => {
+                    return Ok(Progress::Device(devices::Operation::KnobBitmapArm));
+                }
+                Action::KnobBitmapWait => {
+                    return Ok(Progress::Device(devices::Operation::KnobBitmapWait));
+                }
+                Action::KnobBitmapInvoke { background } => {
+                    return Ok(Progress::Device(devices::Operation::KnobBitmapInvoke {
+                        background,
+                    }));
+                }
+                Action::KnobBitmapCheckFrame => {
+                    return Ok(Progress::Device(devices::Operation::KnobBitmapCheckFrame));
+                }
+                Action::KnobBitmapCheckSignature => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobBitmapCheckSignature,
+                    ));
+                }
+                Action::KnobBitmapCheckDescriptor => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobBitmapCheckDescriptor,
+                    ));
+                }
+                Action::KnobBitmapFinish => {
+                    return Ok(Progress::Device(devices::Operation::KnobBitmapFinish));
+                }
+                Action::KnobOverlayReactivate { delta } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobOverlayReactivate { delta },
+                    ));
+                }
+                Action::KnobOverlayWaitActive => {
+                    return Ok(Progress::Device(devices::Operation::KnobOverlayWaitActive));
+                }
+                Action::KnobOverlayRefreshBegin => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobOverlayRefreshBegin,
+                    ));
+                }
+                Action::KnobOverlayRefreshValue => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobOverlayRefreshValue,
+                    ));
+                }
+                Action::KnobOverlayRefreshPixels => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobOverlayRefreshPixels,
+                    ));
+                }
+                Action::KnobOverlayRefreshFinish => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobOverlayRefreshFinish,
+                    ));
+                }
+                Action::KnobLockAcquire => {
+                    return Ok(Progress::Device(devices::Operation::KnobLockAcquire));
+                }
+                Action::KnobLockTrigger { delta } => {
+                    return Ok(Progress::Device(devices::Operation::KnobLockTrigger {
+                        delta,
+                    }));
+                }
+                Action::KnobLockWait => {
+                    return Ok(Progress::Device(devices::Operation::KnobLockWait));
+                }
+                Action::KnobLockSample => {
+                    return Ok(Progress::Device(devices::Operation::KnobLockSample));
+                }
+                Action::KnobLockRestore => {
+                    return Ok(Progress::Device(devices::Operation::KnobLockRestore));
+                }
+                Action::KnobLockAssert => {
+                    return Ok(Progress::Device(devices::Operation::KnobLockAssert));
+                }
+                Action::KnobLockFinish => {
+                    return Ok(Progress::Device(devices::Operation::KnobLockFinish));
                 }
                 Action::KnobDialogModeBegin { scene } => {
                     return Ok(Progress::Device(devices::Operation::KnobDialogModeBegin {
@@ -949,6 +1231,152 @@ impl Runner {
                 }
                 Action::KnobDialogModeEnd => {
                     return Ok(Progress::Device(devices::Operation::KnobDialogModeEnd));
+                }
+                Action::KnobDialogAdaptive { ref plan } => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogAdaptive {
+                        plan: plan.clone(),
+                    }));
+                }
+                Action::KnobDialogInjectInvalidTag { tag } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogInjectInvalidTag { tag },
+                    ));
+                }
+                Action::KnobDialogWaitInvalidTag => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogWaitInvalidTag,
+                    ));
+                }
+                Action::KnobDialogConfirmInvalidTag => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogConfirmInvalidTag,
+                    ));
+                }
+                Action::KnobDialogSettleLevel { artifact } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogSettleLevel {
+                            artifact: artifact.clone(),
+                        },
+                    ));
+                }
+                Action::KnobDialogInjectInvalidSignature => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogInjectInvalidSignature,
+                    ));
+                }
+                Action::KnobDialogObserveInvalidSignature { guest_ms } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogObserveInvalidSignature { guest_ms },
+                    ));
+                }
+                Action::KnobDialogSampleInvalidSignature => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogSampleInvalidSignature,
+                    ));
+                }
+                Action::KnobDialogRestoreInvalidSignature => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogRestoreInvalidSignature,
+                    ));
+                }
+                Action::KnobDialogPrepareNotification => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogPrepareNotification,
+                    ));
+                }
+                Action::KnobDialogArmNotificationCallback => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogArmNotificationCallback,
+                    ));
+                }
+                Action::KnobDialogWaitNotificationCallback => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogWaitNotificationCallback,
+                    ));
+                }
+                Action::KnobDialogInvokeNotification { message } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogInvokeNotification { message },
+                    ));
+                }
+                Action::KnobDialogWaitNotificationFrame {
+                    clear,
+                    artifact,
+                    guest_ms,
+                    limit_ms,
+                } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogWaitNotificationFrame {
+                            clear,
+                            artifact: artifact.clone(),
+                            guest_ms,
+                            limit_ms,
+                        },
+                    ));
+                }
+                Action::KnobDialogExpectNotificationInvariants { clear } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogExpectNotificationInvariants { clear },
+                    ));
+                }
+                Action::KnobDialogWaitExpiry {
+                    interval_ms,
+                    limit_ms,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::KnobDialogWaitExpiry {
+                        interval_ms,
+                        limit_ms,
+                    }));
+                }
+                Action::KnobDialogExpectExpiryFrame { after } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogExpectExpiryFrame { after },
+                    ));
+                }
+                Action::KnobDialogSnapshotRestoration => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogSnapshotRestoration,
+                    ));
+                }
+                Action::KnobDialogCheckRestoration { field } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogCheckRestoration { field },
+                    ));
+                }
+                Action::KnobDialogFinishRestoration => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogFinishRestoration,
+                    ));
+                }
+                Action::KnobDialogExpectRestoredHeap => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogExpectRestoredHeap,
+                    ));
+                }
+                Action::EnqueueEncoderNoAck { channel, steps } => {
+                    return Ok(Progress::Device(devices::Operation::EnqueueEncoderNoAck {
+                        channel,
+                        steps,
+                    }));
+                }
+                Action::EnqueueTapNoAck { target, hold_ms } => {
+                    return Ok(Progress::Device(devices::Operation::EnqueueTapNoAck {
+                        target,
+                        hold_ms,
+                    }));
+                }
+                Action::ReleaseCapturedDisplay => {
+                    return Ok(Progress::Device(devices::Operation::ReleaseCapturedDisplay));
+                }
+                Action::KnobDialogSnapshotNavigation => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogSnapshotNavigation,
+                    ));
+                }
+                Action::KnobDialogCheckNavigation { field } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::KnobDialogCheckNavigation { field },
+                    ));
                 }
                 Action::KnobDialog => {
                     return Ok(Progress::Device(devices::Operation::KnobDialog));
@@ -1212,8 +1640,32 @@ impl Runner {
                 Action::L6maxInputTiming => {
                     return Ok(Progress::Device(devices::Operation::L6maxInputTiming));
                 }
-                Action::L6maxPanelKeyMap => {
-                    return Ok(Progress::Device(devices::Operation::L6maxPanelKeyMap));
+                Action::L6maxPanelKeyBegin => {
+                    return Ok(Progress::Device(devices::Operation::L6maxPanelKeyBegin));
+                }
+                Action::L6maxPanelKeyCheck {
+                    code,
+                    bit,
+                    word_index,
+                    active,
+                    wait,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::L6maxPanelKeyCheck {
+                        code,
+                        bit,
+                        word_index,
+                        active,
+                        wait,
+                    }));
+                }
+                Action::L6maxPanelKeyInput { target, pressed } => {
+                    return Ok(Progress::Device(devices::Operation::L6maxPanelKeyInput {
+                        target,
+                        pressed,
+                    }));
+                }
+                Action::L6maxPanelKeyEnd => {
+                    return Ok(Progress::Device(devices::Operation::L6maxPanelKeyEnd));
                 }
                 Action::L6maxChannelSignalPwm => {
                     return Ok(Progress::Device(devices::Operation::L6maxChannelSignalPwm));
@@ -1700,6 +2152,18 @@ impl Runner {
         self.last_report_guest = 0;
         self.last = None;
         self.allowed_rejections = [0, 0];
+    }
+    pub fn current_display_index(&self) -> usize {
+        self.scenario.step[..=self.step]
+            .iter()
+            .filter(|step| step.applies_to(self.model))
+            .count()
+    }
+    pub fn current_progress_index(&self) -> usize {
+        self.scenario.step[..=self.step]
+            .iter()
+            .filter(|step| step.applies_to(self.model))
+            .count()
     }
     pub fn current_step(&self) -> usize {
         self.step

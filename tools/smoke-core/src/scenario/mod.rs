@@ -8,6 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub mod adaptive;
 mod validate;
 /// How a case drives the emulator.
 #[derive(
@@ -29,6 +30,77 @@ pub enum Backend {
     Headless,
     /// The scenario runs through the GUI.
     Gui,
+}
+
+/// Named fields in the ordered, non-atomic dialog restoration snapshot.
+#[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RestorationField {
+    Window,
+    Signature,
+    Bitmap,
+    BitmapDescriptor,
+    NotificationSemaphore,
+    TextResources,
+    SharedPointer,
+    SharedContents,
+    TextLengths,
+    Widget7,
+    Widget33,
+    Background10,
+    Background37,
+    Background48,
+    Callback,
+}
+
+/// Individual navigation restoration fields in original check order.
+#[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum NavigationField {
+    Window,
+    Signature,
+    Bitmap,
+    BitmapDescriptor,
+    NotificationSemaphore,
+    SharedContents,
+    Widget7,
+    Widget33,
+    Background10,
+    Background37,
+    Background48,
+    Callback,
+}
+
+/// Ordered fields in the retained overlay descriptor snapshot.
+#[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum PreflightProbe {
+    Descriptor,
+    TextAlias,
+    LayerCollision,
+    WidgetLayer,
+    BackgroundLayer,
+}
+impl PreflightProbe {
+    pub(crate) fn index(self) -> usize {
+        match self {
+            Self::Descriptor => 0,
+            Self::TextAlias => 1,
+            Self::LayerCollision => 2,
+            Self::WidgetLayer => 3,
+            Self::BackgroundLayer => 4,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum OverlayDescriptorField {
+    Widget7,
+    Widget33,
+    Background10,
+    Background37,
+    Background48,
 }
 
 /// A condition that ends a held chord.
@@ -60,9 +132,26 @@ pub enum MidiProbePort {
 #[serde(rename_all = "kebab-case")]
 pub enum UpdateFixture {
     BadChecksum,
+    BadChecksumStock,
     L6Stock,
+    L6PatchedMidi,
     SyntheticValid,
     PatchedMidi,
+    PatchedKnob,
+    PatchedKnobMidi,
+}
+
+impl UpdateFixture {
+    pub fn is_l6(self) -> bool {
+        matches!(self, Self::L6Stock | Self::L6PatchedMidi)
+    }
+
+    pub fn is_patched(self) -> bool {
+        matches!(
+            self,
+            Self::PatchedMidi | Self::L6PatchedMidi | Self::PatchedKnob | Self::PatchedKnobMidi
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, schemars::JsonSchema, Serialize)]
@@ -373,9 +462,15 @@ pub enum Action {
     },
     UsbDescriptors,
     UsbStorage,
-    UsbMidi {
+    UsbMidiOpen,
+    UsbMidiBegin,
+    UsbMidiExpectEncoder,
+    UsbMidiPrepareLevel {
         value: u8,
     },
+    UsbMidiSetAlternate,
+    UsbMidiSetTarget,
+    UsbMidiEnd,
     HostMidiRoundTrip,
     MidiProbeBegin,
     MidiProbeSendCc {
@@ -448,21 +543,47 @@ pub enum Action {
         #[serde(default = "default_true")]
         expect_ring_change: bool,
     },
-    L6DinUsbForwarding,
     L6MidiProbeBegin,
     L6MidiProbeInject,
     L6MidiProbeExpectHook,
     L6MidiProbeExpectReplies,
-    L6MidiRingPinSweep {
-        cc: u8,
+    DinUsbBegin,
+    DinUsbAttach,
+    DinUsbSend {
+        bytes: Vec<u8>,
     },
-    L6MidiMuteIndicators,
-    UsbSysex {
-        requests: Vec<UsbSysexRequest>,
-        /// Complete positive requests on a matching complete reply.
+    DinUsbExpect {
+        bytes: Vec<u8>,
+        cable: u8,
+    },
+    DinUsbEnd,
+    L6IndicatorBegin,
+    L6RingSample {
+        cc: u8,
+        value: u8,
+        guest_ms: u32,
+        ring: Option<usize>,
+    },
+    L6RingCoverage {
+        mask: u32,
+    },
+    L6MuteSample {
+        cc: u8,
+        value: u8,
+        guest_ms: u32,
+        expected: [u32; 8],
+        #[serde(default)]
+        reuse_previous: bool,
+    },
+    L6IndicatorEnd,
+    UsbSysexBegin,
+    UsbSysexExchange {
+        #[serde(flatten)]
+        request: UsbSysexRequest,
         #[serde(default)]
         complete_on_match: bool,
     },
+    UsbSysexEnd,
     EditorPadAssignments,
     EditorPadPlayback {
         pad: u8,
@@ -508,10 +629,15 @@ pub enum Action {
         symbol: String,
         bytes: Vec<u8>,
     },
-    ExpectSdPatch {
+    ExpectSdLoader,
+    ExpectSdModule {
         loaded: bool,
         #[serde(default)]
         chain_count: Option<u8>,
+    },
+    EffectPacedTurn {
+        channel: usize,
+        steps: i32,
     },
     EffectParameterEdit {
         encoder: usize,
@@ -567,20 +693,96 @@ pub enum Action {
     KnobDialogGuard,
     KnobDialogBaseline,
     KnobDialogPreflightBegin,
-    KnobDialogPreflightDescriptor,
-    KnobDialogPreflightTextAlias,
-    KnobDialogPreflightLayerCollision,
-    KnobDialogPreflightWidgetLayer,
-    KnobDialogPreflightBackgroundLayer,
-    KnobDialogCallbackRace,
+    KnobProbePrepare {
+        probe: PreflightProbe,
+    },
+    KnobProbeInject,
+    KnobProbeTrigger {
+        delta: i32,
+    },
+    KnobProbeSample,
+    KnobProbeRestore,
+    KnobProbeAssert,
+    KnobRaceBegin,
+    KnobRaceWaitRegistration,
+    KnobRaceArmCallback,
+    KnobRaceWaitCallback,
+    KnobRaceCapture {
+        guest_ms: u32,
+        artifact: String,
+    },
+    KnobRaceSample,
+    KnobRaceRestore,
+    KnobRaceAssert,
     KnobDialogFirstActivation,
-    KnobDialogActiveDisplay,
-    KnobDialogLevelDemo,
-    KnobDialogTaskContexts,
-    KnobDialogOverlayInvariants,
-    KnobDialogBitmapZero,
-    KnobDialogActiveOverlay,
-    KnobDialogLockedUpdate,
+    KnobActiveBegin,
+    KnobActiveSampleCallbacks,
+    KnobActiveCheckCallbacks,
+    KnobActiveCheckFrame,
+    KnobActiveFinish,
+    KnobLevelBegin,
+    KnobLevelStart {
+        demo: crate::scenario::adaptive::DemoCapture,
+        artifact: String,
+    },
+    KnobLevelSweep {
+        sweep: crate::scenario::adaptive::LevelSweep,
+    },
+    KnobLevelExpectZero,
+    KnobLevelFinish,
+    KnobTaskBegin,
+    KnobTaskArmHook,
+    KnobTaskWaitHook,
+    KnobTaskArmCallback,
+    KnobTaskWaitCallback,
+    KnobTaskAssertDistinct,
+    KnobTaskRelease,
+    KnobTaskFinish,
+    KnobOverlayBegin,
+    KnobOverlayCheckWindow,
+    KnobOverlaySnapshotDescriptors,
+    KnobOverlayCheckDescriptor {
+        field: OverlayDescriptorField,
+    },
+    KnobOverlayFinishDescriptors,
+    KnobOverlayCheckResource,
+    KnobOverlayCheckCorners,
+    KnobOverlayCheckSignature,
+    KnobOverlayCheckBitmap,
+    KnobOverlayCheckHeap,
+    KnobOverlayFinish,
+    KnobBitmapBegin,
+    KnobBitmapCheckBackground {
+        background: u32,
+        expected: u16,
+    },
+    KnobBitmapStoreBefore,
+    KnobBitmapArm,
+    KnobBitmapWait,
+    KnobBitmapInvoke {
+        background: u32,
+    },
+    KnobBitmapCheckFrame,
+    KnobBitmapCheckSignature,
+    KnobBitmapCheckDescriptor,
+    KnobBitmapFinish,
+    KnobOverlayReactivate {
+        delta: i32,
+    },
+    KnobOverlayWaitActive,
+    KnobOverlayRefreshBegin,
+    KnobOverlayRefreshValue,
+    KnobOverlayRefreshPixels,
+    KnobOverlayRefreshFinish,
+    KnobLockAcquire,
+    KnobLockTrigger {
+        delta: i32,
+    },
+    KnobLockWait,
+    KnobLockSample,
+    KnobLockRestore,
+    KnobLockAssert,
+    KnobLockFinish,
     KnobDialogModeBegin {
         scene: String,
     },
@@ -601,6 +803,64 @@ pub enum Action {
     },
     KnobDialogExpectHeap,
     KnobDialogModeEnd,
+    KnobDialogAdaptive {
+        plan: adaptive::Plan,
+    },
+    KnobDialogInjectInvalidTag {
+        tag: u8,
+    },
+    KnobDialogWaitInvalidTag,
+    KnobDialogConfirmInvalidTag,
+    KnobDialogSettleLevel {
+        artifact: String,
+    },
+    KnobDialogInjectInvalidSignature,
+    KnobDialogObserveInvalidSignature {
+        guest_ms: u32,
+    },
+    KnobDialogSampleInvalidSignature,
+    KnobDialogRestoreInvalidSignature,
+    KnobDialogPrepareNotification,
+    KnobDialogArmNotificationCallback,
+    KnobDialogWaitNotificationCallback,
+    KnobDialogInvokeNotification {
+        message: u32,
+    },
+    KnobDialogWaitNotificationFrame {
+        clear: bool,
+        artifact: String,
+        guest_ms: u32,
+        limit_ms: u32,
+    },
+    KnobDialogExpectNotificationInvariants {
+        clear: bool,
+    },
+    KnobDialogWaitExpiry {
+        interval_ms: u32,
+        limit_ms: u32,
+    },
+    KnobDialogExpectExpiryFrame {
+        after: bool,
+    },
+    KnobDialogSnapshotRestoration,
+    KnobDialogCheckRestoration {
+        field: crate::scenario::RestorationField,
+    },
+    KnobDialogFinishRestoration,
+    KnobDialogExpectRestoredHeap,
+    EnqueueEncoderNoAck {
+        channel: u32,
+        steps: i32,
+    },
+    EnqueueTapNoAck {
+        target: u32,
+        hold_ms: u32,
+    },
+    ReleaseCapturedDisplay,
+    KnobDialogSnapshotNavigation,
+    KnobDialogCheckNavigation {
+        field: crate::scenario::NavigationField,
+    },
     KnobDialog,
     /// Turn the channel 1 level knob once on the recorder screen and check
     /// that Knob Dialog shows the new value.
@@ -773,7 +1033,19 @@ pub enum Action {
     L6InputSweep,
     L6DinSweep,
     L6maxInputTiming,
-    L6maxPanelKeyMap,
+    L6maxPanelKeyBegin,
+    L6maxPanelKeyCheck {
+        code: u32,
+        bit: u32,
+        word_index: u32,
+        active: bool,
+        wait: bool,
+    },
+    L6maxPanelKeyInput {
+        target: u32,
+        pressed: bool,
+    },
+    L6maxPanelKeyEnd,
     L6maxChannelSignalPwm,
     L6LevelMeterPwm,
     ExpectEncoderReports,
@@ -943,6 +1215,120 @@ pub(crate) fn valid_knob_mode_steps(steps: &[&Step]) -> bool {
         )
 }
 
+pub(crate) fn valid_invalid_tag_steps(steps: &[&Step]) -> bool {
+    matches!(steps, [begin, inject1, wait1, confirm1, inject2, wait2, confirm2]
+        if matches!(&begin.action, Action::KnobDialogAdaptive { plan } if plan.validate().is_ok())
+        && matches!(inject1.action, Action::KnobDialogInjectInvalidTag { tag } if tag & 0x0f >= 10 && tag >> 4 < 8)
+        && matches!(wait1.action, Action::KnobDialogWaitInvalidTag)
+        && matches!(confirm1.action, Action::KnobDialogConfirmInvalidTag)
+        && matches!(inject2.action, Action::KnobDialogInjectInvalidTag { tag } if tag >> 4 >= 8 && tag & 0x0f <= 9)
+        && matches!(wait2.action, Action::KnobDialogWaitInvalidTag)
+        && matches!(confirm2.action, Action::KnobDialogConfirmInvalidTag))
+}
+
+pub(crate) fn valid_invalid_signature_steps(steps: &[&Step]) -> bool {
+    let valid_artifact = |name: &str| {
+        !name.is_empty()
+            && name.len() <= 64
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    };
+    matches!(steps, [before, inject, observe, sample, restore, after]
+        if matches!(&before.action, Action::KnobDialogSettleLevel { artifact } if valid_artifact(artifact))
+        && matches!(inject.action, Action::KnobDialogInjectInvalidSignature)
+        && matches!(observe.action, Action::KnobDialogObserveInvalidSignature { guest_ms } if guest_ms > 0 && guest_ms <= observe.guest_timeout_ms)
+        && matches!(sample.action, Action::KnobDialogSampleInvalidSignature)
+        && matches!(restore.action, Action::KnobDialogRestoreInvalidSignature)
+        && matches!(&after.action, Action::KnobDialogSettleLevel { artifact } if valid_artifact(artifact)))
+}
+
+pub(crate) fn valid_knob_notification_steps(steps: &[&Step]) -> bool {
+    let valid_artifact = |name: &str| {
+        !name.is_empty()
+            && name.len() <= 64
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    };
+    matches!(steps, [prepare, arm, wait, invoke, frame, check, clear, check_clear]
+        if matches!(prepare.action, Action::KnobDialogPrepareNotification)
+        && matches!(arm.action, Action::KnobDialogArmNotificationCallback)
+        && matches!(wait.action, Action::KnobDialogWaitNotificationCallback)
+        && matches!(invoke.action, Action::KnobDialogInvokeNotification { message: 4 })
+        && matches!(&frame.action, Action::KnobDialogWaitNotificationFrame { clear: false, artifact, guest_ms, limit_ms } if valid_artifact(artifact) && *guest_ms > 0 && *limit_ms >= *guest_ms && *limit_ms <= frame.guest_timeout_ms)
+        && matches!(check.action, Action::KnobDialogExpectNotificationInvariants { clear: false })
+        && matches!(&clear.action, Action::KnobDialogWaitNotificationFrame { clear: true, artifact, guest_ms, limit_ms } if valid_artifact(artifact) && *guest_ms > 0 && *limit_ms >= *guest_ms && *limit_ms <= clear.guest_timeout_ms)
+        && matches!(check_clear.action, Action::KnobDialogExpectNotificationInvariants { clear: true }))
+}
+
+pub(crate) fn valid_knob_expiry_steps(steps: &[&Step]) -> bool {
+    matches!(steps, [wait, capture, scene, notification]
+        if matches!(wait.action, Action::KnobDialogWaitExpiry { interval_ms, limit_ms } if interval_ms > 0 && limit_ms >= interval_ms && limit_ms <= wait.guest_timeout_ms)
+        && matches!(&capture.action, Action::CaptureDisplay { guest_ms, artifact } if *guest_ms > 0 && *guest_ms <= capture.guest_timeout_ms && !artifact.is_empty() && artifact.len() <= 64 && artifact.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+        && matches!(scene.action, Action::KnobDialogExpectExpiryFrame { after: true })
+        && matches!(notification.action, Action::KnobDialogExpectExpiryFrame { after: false }))
+}
+
+pub(crate) fn valid_knob_restoration_steps(steps: &[&Step]) -> bool {
+    use RestorationField as F;
+    const FIELDS: [F; 15] = [
+        F::Window,
+        F::Signature,
+        F::Bitmap,
+        F::BitmapDescriptor,
+        F::NotificationSemaphore,
+        F::TextResources,
+        F::SharedPointer,
+        F::SharedContents,
+        F::TextLengths,
+        F::Widget7,
+        F::Widget33,
+        F::Background10,
+        F::Background37,
+        F::Background48,
+        F::Callback,
+    ];
+    steps.len() == 18 && matches!(steps[0].action, Action::KnobDialogSnapshotRestoration)
+        && steps[1..16].iter().zip(FIELDS).all(|(step, expected)| matches!(step.action, Action::KnobDialogCheckRestoration { field } if field == expected))
+        && matches!(steps[16].action, Action::KnobDialogFinishRestoration)
+        && matches!(steps[17].action, Action::KnobDialogExpectRestoredHeap)
+}
+
+pub(crate) fn valid_knob_navigation_steps(steps: &[&Step]) -> bool {
+    use NavigationField as F;
+    const FIELDS: [F; 12] = [
+        F::Window,
+        F::Signature,
+        F::Bitmap,
+        F::BitmapDescriptor,
+        F::NotificationSemaphore,
+        F::SharedContents,
+        F::Widget7,
+        F::Widget33,
+        F::Background10,
+        F::Background37,
+        F::Background48,
+        F::Callback,
+    ];
+    let artifact = |name: &str| {
+        !name.is_empty()
+            && name.len() <= 64
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    };
+    steps.len() == 19
+        && matches!(steps[0].action, Action::EnqueueEncoderNoAck { channel: 1, steps: 3 })
+        && matches!(&steps[1].action, Action::CaptureDisplay { guest_ms, artifact: name } if *guest_ms > 0 && *guest_ms <= steps[1].guest_timeout_ms && artifact(name))
+        && matches!(steps[2].action, Action::ReleaseCapturedDisplay)
+        && matches!(steps[3].action, Action::EnqueueTapNoAck { target: 0, hold_ms } if (1..=60_000).contains(&hold_ms))
+        && matches!(&steps[4].action, Action::CaptureDisplay { guest_ms, artifact: name } if *guest_ms > 0 && *guest_ms <= steps[4].guest_timeout_ms && artifact(name))
+        && matches!(steps[5].action, Action::ReleaseCapturedDisplay)
+        && matches!(steps[6].action, Action::KnobDialogSnapshotNavigation)
+        && steps[7..].iter().zip(FIELDS).all(|(step, expected)| matches!(step.action, Action::KnobDialogCheckNavigation { field } if field == expected))
+}
+
 /// Expand includes. A fragment is shared, so its steps scoped only to models
 /// the scenario does not run (`scope`) are left out.
 fn expand_steps(
@@ -1066,5 +1452,416 @@ pub fn l6_button_led_index(model: Model, control: &str) -> Result<usize, String>
         12 => Ok(10),
         7 => Ok(11),
         _ => Err(format!("{control} has no L6 button LED")),
+    }
+}
+
+pub(crate) fn valid_overlay_invariant_steps(steps: &[&Step]) -> bool {
+    steps.len() == 15
+        && matches!(steps[0].action, Action::KnobOverlayBegin)
+        && matches!(steps[1].action, Action::KnobOverlayCheckWindow)
+        && matches!(steps[2].action, Action::KnobOverlaySnapshotDescriptors)
+        && matches!(
+            steps[3].action,
+            Action::KnobOverlayCheckDescriptor {
+                field: OverlayDescriptorField::Widget7
+            }
+        )
+        && matches!(
+            steps[4].action,
+            Action::KnobOverlayCheckDescriptor {
+                field: OverlayDescriptorField::Widget33
+            }
+        )
+        && matches!(
+            steps[5].action,
+            Action::KnobOverlayCheckDescriptor {
+                field: OverlayDescriptorField::Background10
+            }
+        )
+        && matches!(
+            steps[6].action,
+            Action::KnobOverlayCheckDescriptor {
+                field: OverlayDescriptorField::Background37
+            }
+        )
+        && matches!(
+            steps[7].action,
+            Action::KnobOverlayCheckDescriptor {
+                field: OverlayDescriptorField::Background48
+            }
+        )
+        && matches!(steps[8].action, Action::KnobOverlayFinishDescriptors)
+        && matches!(steps[9].action, Action::KnobOverlayCheckResource)
+        && matches!(steps[10].action, Action::KnobOverlayCheckCorners)
+        && matches!(steps[11].action, Action::KnobOverlayCheckSignature)
+        && matches!(steps[12].action, Action::KnobOverlayCheckBitmap)
+        && matches!(steps[13].action, Action::KnobOverlayCheckHeap)
+        && matches!(steps[14].action, Action::KnobOverlayFinish)
+}
+
+#[cfg(test)]
+mod overlay_fragment_tests {
+    use super::*;
+    #[test]
+    fn descriptor_order_and_completeness_are_enforced() {
+        let mut fragment: crate::Fragment = toml::from_str(include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/overlay-invariants.toml"
+        ))
+        .unwrap();
+        assert!(valid_overlay_invariant_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(3, 4);
+        assert!(!valid_overlay_invariant_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(3, 4);
+        fragment.step.pop();
+        assert!(!valid_overlay_invariant_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+    }
+}
+
+pub(crate) fn valid_refreshed_overlay_steps(steps: &[&Step]) -> bool {
+    matches!(steps, [reactivate, wait, begin, value, capture, pixels, finish]
+        if matches!(reactivate.action, Action::KnobOverlayReactivate { delta: -1 })
+        && matches!(wait.action, Action::KnobOverlayWaitActive)
+        && matches!(begin.action, Action::KnobOverlayRefreshBegin)
+        && matches!(value.action, Action::KnobOverlayRefreshValue)
+        && matches!(&capture.action, Action::CaptureDisplay { guest_ms: 500, artifact } if artifact == "window-scene-refreshed")
+        && matches!(pixels.action, Action::KnobOverlayRefreshPixels)
+        && matches!(finish.action, Action::KnobOverlayRefreshFinish))
+}
+
+#[cfg(test)]
+mod refreshed_overlay_fragment_tests {
+    use super::*;
+    #[test]
+    fn rejects_altered_duration_and_missing_pixel_check() {
+        let mut fragment: crate::Fragment = toml::from_str(include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/refreshed-overlay.toml"
+        ))
+        .unwrap();
+        assert!(valid_refreshed_overlay_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        if let Action::CaptureDisplay { guest_ms, .. } = &mut fragment.step[4].action {
+            *guest_ms = 499;
+        } else {
+            panic!("expected capture");
+        }
+        assert!(!valid_refreshed_overlay_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.remove(5);
+        assert!(!valid_refreshed_overlay_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+    }
+}
+
+pub(crate) fn valid_locked_update_steps(steps: &[&Step]) -> bool {
+    matches!(steps, [acquire, trigger, wait, sample, restore, check, capture, finish]
+        if matches!(acquire.action, Action::KnobLockAcquire)
+        && matches!(trigger.action, Action::KnobLockTrigger { delta: -1 })
+        && matches!(wait.action, Action::KnobLockWait)
+        && matches!(sample.action, Action::KnobLockSample)
+        && matches!(restore.action, Action::KnobLockRestore)
+        && matches!(check.action, Action::KnobLockAssert)
+        && matches!(&capture.action, Action::CaptureDisplay { guest_ms: 500, artifact } if artifact == "window-scene-after-callback-contention")
+        && matches!(finish.action, Action::KnobLockFinish))
+}
+
+#[cfg(test)]
+mod locked_update_fragment_tests {
+    use super::*;
+    #[test]
+    fn requires_restore_before_assert_and_original_capture() {
+        let mut fragment: crate::Fragment = toml::from_str(include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/locked-update.toml"
+        ))
+        .unwrap();
+        assert!(valid_locked_update_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(4, 5);
+        assert!(!valid_locked_update_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(4, 5);
+        if let Action::CaptureDisplay { guest_ms, .. } = &mut fragment.step[6].action {
+            *guest_ms = 1;
+        } else {
+            panic!("expected capture");
+        }
+        assert!(!valid_locked_update_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+    }
+}
+
+pub(crate) fn valid_active_display_steps(steps: &[&Step]) -> bool {
+    matches!(steps, [begin, input, capture, sample, callbacks, frame, finish]
+        if matches!(begin.action, Action::KnobActiveBegin)
+        && matches!(input.action, Action::EnqueueEncoderNoAck { channel: 1, steps: 3 })
+        && matches!(&capture.action, Action::CaptureDisplay { guest_ms: 500, artifact } if artifact == "knob-dialog-active")
+        && matches!(sample.action, Action::KnobActiveSampleCallbacks)
+        && matches!(callbacks.action, Action::KnobActiveCheckCallbacks)
+        && matches!(frame.action, Action::KnobActiveCheckFrame)
+        && matches!(finish.action, Action::KnobActiveFinish))
+}
+
+#[cfg(test)]
+mod active_display_fragment_tests {
+    use super::*;
+    #[test]
+    fn preserves_encoder_direction_capture_and_assertion_order() {
+        let mut fragment: crate::Fragment = toml::from_str(include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/active-display.toml"
+        ))
+        .unwrap();
+        assert!(valid_active_display_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        if let Action::EnqueueEncoderNoAck { steps, .. } = &mut fragment.step[1].action {
+            *steps = -3;
+        } else {
+            panic!("expected encoder");
+        }
+        assert!(!valid_active_display_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(3, 4);
+        assert!(!valid_active_display_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+    }
+}
+
+pub(crate) fn valid_callback_race_steps(steps: &[&Step]) -> bool {
+    let [
+        begin,
+        registration,
+        arm,
+        callback,
+        capture,
+        sample,
+        restore,
+        assertion,
+    ] = steps
+    else {
+        return false;
+    };
+    matches!(begin.action, Action::KnobRaceBegin)
+        && matches!(registration.action, Action::KnobRaceWaitRegistration)
+        && matches!(arm.action, Action::KnobRaceArmCallback)
+        && matches!(callback.action, Action::KnobRaceWaitCallback)
+        && matches!(&capture.action, Action::KnobRaceCapture { guest_ms: 150, artifact } if artifact == "window-scene-callback-preflight-race")
+        && matches!(sample.action, Action::KnobRaceSample)
+        && matches!(restore.action, Action::KnobRaceRestore)
+        && matches!(assertion.action, Action::KnobRaceAssert)
+}
+
+pub(crate) fn valid_preflight_probe_steps(steps: &[&Step]) -> bool {
+    use PreflightProbe as P;
+    const PROBES: [P; 5] = [
+        P::Descriptor,
+        P::TextAlias,
+        P::LayerCollision,
+        P::WidgetLayer,
+        P::BackgroundLayer,
+    ];
+    steps.len() == 30
+        && steps.chunks_exact(6).zip(PROBES).all(|(chunk, expected)| {
+            matches!(chunk[0].action, Action::KnobProbePrepare { probe } if probe == expected)
+                && matches!(chunk[1].action, Action::KnobProbeInject)
+                && matches!(chunk[2].action, Action::KnobProbeTrigger { delta: -1 })
+                && matches!(chunk[3].action, Action::KnobProbeSample)
+                && matches!(chunk[4].action, Action::KnobProbeRestore)
+                && matches!(chunk[5].action, Action::KnobProbeAssert)
+        })
+}
+
+#[cfg(test)]
+mod preflight_fragment_tests {
+    use super::*;
+    #[test]
+    fn preserves_probe_order_alias_dependency_and_restoration() {
+        let mut fragment: crate::Fragment = toml::from_str(include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/preflight-probes.toml"
+        ))
+        .unwrap();
+        assert!(valid_preflight_probe_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(6, 12);
+        assert!(!valid_preflight_probe_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(6, 12);
+        fragment.step.swap(4, 5);
+        assert!(!valid_preflight_probe_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+    }
+}
+
+pub(crate) fn valid_task_context_steps(steps: &[&Step]) -> bool {
+    matches!(steps, [begin, arm, input, hook, arm_cb, cb, distinct, release, capture, finish]
+        if matches!(begin.action, Action::KnobTaskBegin)
+        && matches!(arm.action, Action::KnobTaskArmHook)
+        && matches!(input.action, Action::EnqueueEncoderNoAck { channel: 1, steps: 1 })
+        && matches!(hook.action, Action::KnobTaskWaitHook)
+        && matches!(arm_cb.action, Action::KnobTaskArmCallback)
+        && matches!(cb.action, Action::KnobTaskWaitCallback)
+        && matches!(distinct.action, Action::KnobTaskAssertDistinct)
+        && matches!(release.action, Action::KnobTaskRelease)
+        && matches!(&capture.action, Action::CaptureDisplay { guest_ms: 150, artifact } if artifact == "window-scene-task-context-probe")
+        && matches!(finish.action, Action::KnobTaskFinish))
+}
+
+#[cfg(test)]
+mod task_context_fragment_tests {
+    use super::*;
+    #[test]
+    fn requires_correct_input_capture_and_order() {
+        let mut fragment: crate::Fragment = toml::from_str(include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/task-contexts.toml"
+        ))
+        .unwrap();
+        assert!(valid_task_context_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        if let Action::EnqueueEncoderNoAck { steps, .. } = &mut fragment.step[2].action {
+            *steps = -1;
+        } else {
+            panic!("expected encoder");
+        }
+        assert!(!valid_task_context_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(6, 7);
+        assert!(!valid_task_context_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+    }
+}
+
+pub(crate) fn valid_level_demo_steps(steps: &[&Step]) -> bool {
+    use adaptive::LevelDirection as D;
+    matches!(steps, [begin, start, up, peak, down, zero_check, zero, finish]
+        if matches!(begin.action, Action::KnobLevelBegin)
+        && matches!(&start.action, Action::KnobLevelStart { demo, artifact } if adaptive::demo(demo) && artifact == "knob-dialog-demo-level-start")
+        && matches!(&up.action, Action::KnobLevelSweep { sweep } if sweep.direction == D::Up && sweep.validate().is_ok())
+        && matches!(&peak.action, Action::CaptureDisplay { guest_ms: 500, artifact } if artifact == "knob-dialog-demo-level-peak")
+        && matches!(&down.action, Action::KnobLevelSweep { sweep } if sweep.direction == D::Down && sweep.validate().is_ok())
+        && matches!(zero_check.action, Action::KnobLevelExpectZero)
+        && matches!(&zero.action, Action::CaptureDisplay { guest_ms: 500, artifact } if artifact == "knob-dialog-demo-level-zero")
+        && matches!(finish.action, Action::KnobLevelFinish))
+}
+
+#[cfg(test)]
+mod level_demo_fragment_tests {
+    use super::*;
+    #[test]
+    fn requires_bounded_ordered_sweeps_and_final_zero_assertion() {
+        let mut fragment: crate::Fragment = toml::from_str(include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/level-demo.toml"
+        ))
+        .unwrap();
+        assert!(valid_level_demo_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        if let Action::KnobLevelSweep { sweep } = &mut fragment.step[2].action {
+            sweep.max_attempts = 129;
+        } else {
+            panic!("expected sweep");
+        }
+        assert!(!valid_level_demo_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        if let Action::KnobLevelSweep { sweep } = &mut fragment.step[2].action {
+            sweep.max_attempts = 128;
+            sweep.children.swap(1, 2);
+        }
+        assert!(!valid_level_demo_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.remove(5);
+        assert!(!valid_level_demo_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+    }
+}
+
+pub(crate) fn valid_bitmap_probe_steps(steps: &[&Step]) -> bool {
+    matches!(steps, [begin, background, before, store, arm, wait, invoke, after, frame, sig, descriptor, finish]
+        if matches!(begin.action, Action::KnobBitmapBegin)
+        && matches!(background.action, Action::KnobBitmapCheckBackground { background: 47, expected: 0 })
+        && matches!(&before.action, Action::CaptureDisplay { guest_ms: 50, artifact } if artifact == "window-scene-before-null-bitmap-probe")
+        && matches!(store.action, Action::KnobBitmapStoreBefore)
+        && matches!(arm.action, Action::KnobBitmapArm)
+        && matches!(wait.action, Action::KnobBitmapWait)
+        && matches!(invoke.action, Action::KnobBitmapInvoke { background: 47 })
+        && matches!(&after.action, Action::CaptureDisplay { guest_ms: 100, artifact } if artifact == "window-scene-after-null-bitmap-probe")
+        && matches!(frame.action, Action::KnobBitmapCheckFrame)
+        && matches!(sig.action, Action::KnobBitmapCheckSignature)
+        && matches!(descriptor.action, Action::KnobBitmapCheckDescriptor)
+        && matches!(finish.action, Action::KnobBitmapFinish))
+}
+
+#[cfg(test)]
+mod bitmap_probe_fragment_tests {
+    use super::*;
+    #[test]
+    fn requires_capture_order_and_short_circuit_assertions() {
+        let mut fragment: crate::Fragment = toml::from_str(include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/bitmap-zero.toml"
+        ))
+        .unwrap();
+        assert!(valid_bitmap_probe_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(8, 9);
+        assert!(!valid_bitmap_probe_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(8, 9);
+        if let Action::KnobBitmapInvoke { background } = &mut fragment.step[6].action {
+            *background = 48;
+        } else {
+            panic!("expected bitmap invocation");
+        }
+        assert!(!valid_bitmap_probe_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+    }
+}
+
+#[cfg(test)]
+mod callback_race_fragment_tests {
+    use super::*;
+
+    #[test]
+    fn requires_ordered_race_steps_and_reviewed_capture() {
+        let mut fragment: Fragment = toml::from_str(include_str!(
+            "../../../../patches/knob-dialog/tests/emulator/fragments/callback-race.toml"
+        ))
+        .unwrap();
+        assert!(valid_callback_race_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(5, 6);
+        assert!(!valid_callback_race_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
+        fragment.step.swap(5, 6);
+        if let Action::KnobRaceCapture { guest_ms, .. } = &mut fragment.step[4].action {
+            *guest_ms = 149;
+        }
+        assert!(!valid_callback_race_steps(
+            &fragment.step.iter().collect::<Vec<_>>()
+        ));
     }
 }

@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const VERSION: u32 = 4;
+pub const VERSION: u32 = 7;
 pub const PATH_ENV: &str = "L6_TEST_PROGRESS";
 pub const RUN_ENV: &str = "L6_TEST_PROGRESS_RUN";
 pub const ATTEMPT_ENV: &str = "L6_TEST_PROGRESS_ATTEMPT";
@@ -105,6 +105,42 @@ pub enum CaseEvent {
         label: String,
         started_unix_ms: u64,
     },
+    StepProgress {
+        index: usize,
+        completed: u32,
+        total: u32,
+    },
+    AdaptiveScopeStarted {
+        index: usize,
+        block: String,
+        attempt: Option<u32>,
+        max_attempts: u32,
+        started_unix_ms: u64,
+    },
+    AdaptiveScopeFinished {
+        index: usize,
+        block: String,
+        attempt: Option<u32>,
+        outcome: Outcome,
+        matched: Option<bool>,
+        finished_unix_ms: u64,
+    },
+    AdaptiveChildStarted {
+        index: usize,
+        block: String,
+        attempt: u32,
+        max_attempts: u32,
+        child: String,
+        started_unix_ms: u64,
+    },
+    AdaptiveChildFinished {
+        index: usize,
+        block: String,
+        attempt: u32,
+        child: String,
+        outcome: Outcome,
+        finished_unix_ms: u64,
+    },
     ScenarioFinished {
         outcome: Outcome,
         finished_unix_ms: u64,
@@ -182,7 +218,38 @@ impl CaseProgress {
 pub fn step_label(action: &crate::Action) -> String {
     use crate::Action;
     match action {
+        Action::L6IndicatorBegin => "Begin L6 indicator campaign".into(),
+        Action::L6RingSample {
+            cc, value, ring, ..
+        } => match ring {
+            Some(ring) => format!("Observe L6 ring {ring} CC {cc} value {value}"),
+            None => format!("Initialize L6 ring CC {cc} value {value}"),
+        },
+        Action::L6RingCoverage { mask } => format!("Check L6 ring segment coverage {mask:#05x}"),
+        Action::L6MuteSample { cc, value, .. } => format!("Observe L6 mute CC {cc} value {value}"),
+        Action::L6IndicatorEnd => "End L6 indicator campaign".into(),
+        Action::EffectPacedTurn { channel, steps } => {
+            format!("Apply {steps} paced effect edits on channel {channel}")
+        }
+        Action::UsbSysexBegin => "Begin USB SysEx campaign".into(),
+        Action::UsbSysexExchange { request, .. } => format!(
+            "USB SysEx request {}",
+            request
+                .bytes
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+        Action::UsbSysexEnd => "End USB SysEx campaign".into(),
         Action::Wait { until } => format!("Wait for {}", until.replace('-', " ")),
+        Action::DinUsbBegin => "Connect DIN MIDI endpoint".into(),
+        Action::DinUsbAttach => "Attach and enumerate USB MIDI".into(),
+        Action::DinUsbSend { bytes } => format!("Send DIN MIDI {bytes:02x?}"),
+        Action::DinUsbExpect { bytes, cable } => {
+            format!("Wait for USB cable {cable} MIDI {bytes:02x?}")
+        }
+        Action::DinUsbEnd => "Close DIN and USB MIDI sessions".into(),
         Action::MidiProbeBegin => "Connect MIDI probe sessions".into(),
         Action::MidiProbeSendCc {
             port,
@@ -230,6 +297,26 @@ pub fn step_label(action: &crate::Action) -> String {
             duration_ms: Some(ms),
             ..
         } => format!("Hold chord for {ms} ms guest time"),
+        Action::KnobRaceBegin => "Hold notification lock and trigger first-use registration".into(),
+        Action::KnobRaceWaitRegistration => "Wait for first-use callback registration".into(),
+        Action::KnobRaceArmCallback => "Mutate descriptor and arm callback".into(),
+        Action::KnobRaceWaitCallback => "Wait for first display callback".into(),
+        Action::KnobRaceCapture { guest_ms, .. } => {
+            format!("Capture rejected callback frame ({guest_ms} ms guest time)")
+        }
+        Action::KnobRaceSample => "Sample callback rejection state".into(),
+        Action::KnobRaceRestore => "Restore raced descriptor".into(),
+        Action::KnobRaceAssert => "Check callback rejection and retry readiness".into(),
+        Action::KnobLevelStart { .. } => "Capture initial level demo".into(),
+        Action::KnobLevelSweep { sweep } => format!("Sweep level {:?}", sweep.direction),
+        Action::KnobOverlayReactivate { delta } => {
+            format!("Reactivate zero-level overlay (delta {delta})")
+        }
+        Action::KnobOverlayWaitActive => "Wait for zero-level overlay callback".into(),
+        Action::KnobProbePrepare { probe } => format!("Prepare {probe:?} preflight probe"),
+        Action::KnobOverlayCheckDescriptor { field } => {
+            format!("Check overlay {field:?} descriptor")
+        }
         Action::KnobDialogModeBegin { scene } => {
             format!("Check knob dialog {} scene", scene.replace('-', " "))
         }
@@ -250,6 +337,70 @@ pub fn step_label(action: &crate::Action) -> String {
         ),
         Action::KnobDialogExpectHeap => "Check persistent heap counters".into(),
         Action::KnobDialogModeEnd => "Finish knob dialog mode".into(),
+        Action::KnobDialogAdaptive { .. } => "Run adaptive Pan and channel-2 plan".into(),
+        Action::KnobDialogInjectInvalidTag { tag } => {
+            if tag & 0x0f >= 10 {
+                format!("Inject invalid mode {}", tag & 0x0f)
+            } else {
+                format!("Inject invalid channel {}", tag >> 4)
+            }
+        }
+        Action::KnobDialogWaitInvalidTag => "Wait for invalid tag discard".into(),
+        Action::KnobDialogConfirmInvalidTag => "Confirm invalid tag discard".into(),
+        Action::KnobDialogSettleLevel { artifact } => {
+            format!("Settle channel 1 level ({artifact})")
+        }
+        Action::KnobDialogInjectInvalidSignature => "Inject invalid state signature".into(),
+        Action::KnobDialogObserveInvalidSignature { guest_ms } => {
+            format!("Observe invalid signature for {guest_ms} ms guest time")
+        }
+        Action::KnobDialogSampleInvalidSignature => "Sample invalid signature rejection".into(),
+        Action::EnqueueEncoderNoAck { channel, steps } => {
+            format!("Enqueue encoder {channel} turn {steps}")
+        }
+        Action::EnqueueTapNoAck { target, hold_ms } => {
+            format!("Enqueue button {target} tap ({hold_ms} ms)")
+        }
+        Action::ReleaseCapturedDisplay => "Release captured display".into(),
+        Action::KnobDialogSnapshotNavigation => "Capture navigation restoration state".into(),
+        Action::KnobDialogCheckNavigation { field } => format!("Check navigation {field:?}"),
+        Action::KnobDialogSnapshotRestoration => "Capture restored dialog resources".into(),
+        Action::KnobDialogCheckRestoration { field } => format!("Check restored {field:?}"),
+        Action::KnobDialogFinishRestoration => "Assert dialog resources restored".into(),
+        Action::KnobDialogExpectRestoredHeap => "Check restored dialog heap".into(),
+        Action::KnobDialogWaitExpiry { .. } => "Wait for dialog inactivity expiry".into(),
+        Action::KnobDialogExpectExpiryFrame { after } => {
+            if *after {
+                "Check expired frame differs from dialog".into()
+            } else {
+                "Check expired frame differs from notification".into()
+            }
+        }
+        Action::KnobDialogPrepareNotification => {
+            "Check dialog text and save notification baseline".into()
+        }
+        Action::KnobDialogArmNotificationCallback => "Arm notification callback breakpoint".into(),
+        Action::KnobDialogWaitNotificationCallback => "Wait for notification callback".into(),
+        Action::KnobDialogInvokeNotification { message } => {
+            format!("Invoke stock notification {message}")
+        }
+        Action::KnobDialogWaitNotificationFrame { clear, .. } => {
+            if *clear {
+                "Wait for notification to clear".into()
+            } else {
+                "Wait for notification frame".into()
+            }
+        }
+        Action::KnobDialogExpectNotificationInvariants { clear } => {
+            if *clear {
+                "Check scene after notification expiry".into()
+            } else {
+                "Check scene during notification".into()
+            }
+        }
+        Action::KnobDialogRestoreInvalidSignature => {
+            "Restore state and check signature rejection".into()
+        }
         Action::SelectMode { mode } => format!("Select {} mode", mode.replace('-', " ")),
         Action::ExpectMode { mode } => format!("Check {} mode", mode.replace('-', " ")),
         Action::ExpectRing { channel, .. } => format!("Check channel {channel} ring"),
@@ -263,6 +414,13 @@ pub fn step_label(action: &crate::Action) -> String {
             if *playing { "playing" } else { "paused" }
         ),
         Action::WaitMemory { symbol, .. } => format!("Wait for {symbol}"),
+        Action::UsbMidiOpen => "Retain enumerated USB MIDI".into(),
+        Action::UsbMidiBegin => "Start USB MIDI transaction".into(),
+        Action::UsbMidiExpectEncoder => "Wait for encoder USB MIDI".into(),
+        Action::UsbMidiPrepareLevel { value } => format!("Read mixer level before setting {value}"),
+        Action::UsbMidiSetAlternate => "Set alternate mixer level if needed".into(),
+        Action::UsbMidiSetTarget => "Set target mixer level".into(),
+        Action::UsbMidiEnd => "Release USB MIDI session".into(),
         Action::WaitL6SoundPadFile { path } => format!("Wait for sound-pad file {path}"),
         Action::ExpectDisplayImage { image, .. } => format!(
             "Wait for {} screen",

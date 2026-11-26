@@ -1,0 +1,114 @@
+[[step]]
+action = "enqueue-encoder-no-ack"
+channel = 1
+steps = 3
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "capture-display"
+guest_ms = 400
+artifact = "window-scene-before-navigation"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "release-captured-display"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-tap-no-ack"
+target = 0
+hold_ms = 120
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "capture-display"
+guest_ms = 500
+artifact = "window-scene-navigation-returned"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "release-captured-display"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-snapshot-navigation"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-check-navigation"
+field = "window"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-check-navigation"
+field = "signature"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-check-navigation"
+field = "bitmap"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-check-navigation"
+field = "bitmap-descriptor"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-check-navigation"
+field = "notification-semaphore"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-check-navigation"
+field = "shared-contents"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-check-navigation"
+field = "widget7"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-check-navigation"
+field = "widget33"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-check-navigation"
+field = "background10"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-check-navigation"
+field = "background37"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-check-navigation"
+field = "background48"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-dialog-check-navigation"
+field = "callback"
+guest_timeout_ms = 180000
+wall_timeout_s = 600

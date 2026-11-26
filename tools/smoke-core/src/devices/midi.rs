@@ -1,4 +1,5 @@
 //! L6 DIN MIDI: sweeps and event dispatch into the mixer.
+use super::execute::deadline_exceeded;
 use super::*;
 
 /// Retries connecting to a just-enabled native MIDI endpoint. The host MIDI
@@ -638,7 +639,7 @@ impl State {
             session.poll()?;
             let after = inputs.panel.snapshot().indicators;
             let changed =
-                l6max_host::indicators::rings(after)[0] != l6max_host::indicators::rings(before)[0];
+                l6ctl::decode_indicator_rings(after)[0] != l6ctl::decode_indicator_rings(before)[0];
             if changed {
                 if expect_ring_change {
                     break after;
@@ -671,282 +672,185 @@ impl State {
         )
     }
 
-    pub(super) fn run_l6_din_usb_forwarding(
-        &mut self,
-        session: &Session,
-        wall_timeout_s: u64,
-    ) -> Result<Value, Box<dyn std::error::Error>> {
-        use l6max_host::host_midi::endpoint_name;
-
-        if session.engine.model() != l6fw::Model::L6 {
-            return Err("l6-din-usb-forwarding requires L6 firmware".into());
-        }
-        let inputs = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("L6 DIN forwarding needs panel inputs")?;
-        session.engine.connect_midi();
-        let endpoint = endpoint_name(
-            &l6max_host::host_midi::din_port_name_for_model_with_namespace(
-                l6fw::Model::L6,
-                midi_namespace().as_deref(),
-            ),
-        );
-        let endpoint_deadline = Instant::now() + Duration::from_secs(10);
-        let mut din = loop {
-            match crate::host_midi::connect(&endpoint) {
-                Ok(client) => break client,
-                Err(error)
-                    if error.contains("missing native MIDI")
-                        && Instant::now() < endpoint_deadline =>
-                {
-                    session.poll()?;
-                    thread::sleep(Duration::from_millis(25));
-                }
-                Err(error) => return Err(error.into()),
-            }
-        };
-        wait_guest_duration(
-            session,
-            300,
-            Instant::now() + Duration::from_secs(wall_timeout_s),
-        )?;
-        let usb = session
-            .engine
-            .usb
-            .as_ref()
-            .ok_or("L6 USB MIDI host is unavailable")?;
-        usb.connect(true)
-            .map_err(|error| format!("cannot connect L6 USB device: {error}"))?;
-        let usb_deadline = Instant::now() + Duration::from_secs(15);
-        let endpoints = loop {
-            match usb.enumerate() {
-                Ok(configuration) => {
-                    break configuration
-                        .midi
-                        .ok_or("L6 USB device has no MIDI endpoints")?;
-                }
-                Err(error)
-                    if (error.raw_os_error() == Some(libc::ENODEV)
-                        || error.raw_os_error() == Some(libc::EAGAIN)
-                        || error.kind() == std::io::ErrorKind::InvalidData)
-                        && Instant::now() < usb_deadline =>
-                {
-                    session.poll()?;
-                    thread::sleep(Duration::from_millis(250));
-                }
-                Err(error) => {
-                    return Err(format!("cannot enumerate L6 USB MIDI: {error}").into());
-                }
-            }
-        };
-        let _ = usb.try_receive(endpoints.input, 16_384);
-        let probes: [&[u8]; 4] = [
-            &[0xb3, 0x10, 0x20],
-            &[0x93, 0x45, 0x64],
-            &[0xf8],
-            &[0xf0, 0x7d, 0x01, 0xf7],
-        ];
-        let start_guest_ms = inputs.panel.snapshot().guest_ms;
-        for probe in probes {
-            din.send_bytes(probe).map_err(std::io::Error::other)?;
-            let deadline = Instant::now() + Duration::from_secs(3);
-            let mut forwarded_bytes = Vec::new();
-            let mut forwarded = false;
-            while Instant::now() < deadline {
-                session.poll()?;
-                match usb.try_receive(endpoints.input, 16_384) {
-                    Ok(bytes) => {
-                        let messages = l6max_host::usb_midi::decode(&bytes)
-                            .map_err(|error| format!("cannot decode USB MIDI: {error}"))?;
-                        for (cable, data) in messages {
-                            if cable != 0
-                                || (forwarded_bytes.is_empty() && data.first() != probe.first())
-                            {
-                                continue;
-                            }
-                            forwarded_bytes.extend(data);
-                            if forwarded_bytes == probe {
-                                forwarded = true;
-                                break;
-                            }
-                            if !probe.starts_with(&forwarded_bytes) {
-                                forwarded_bytes.clear();
-                            }
-                        }
-                        if forwarded {
-                            break;
-                        }
-                    }
-                    Err(error) if error.raw_os_error() == Some(libc::EAGAIN) => {}
-                    Err(error) => return Err(format!("USB MIDI receive failed: {error}").into()),
-                }
-                thread::sleep(Duration::from_millis(5));
-            }
-            if !forwarded {
-                return Err(format!(
-                    "L6 DIN-to-USB forwarding mismatch: no USB cable-0 message matched {probe:02x?} (received {forwarded_bytes:02x?})"
-                )
-                .into());
-            }
-            tracing::info!(
-                event = "l6_din_usb_forwarded",
-                bytes = ?probe,
-                guest_ms = inputs.panel.snapshot().guest_ms,
-                "L6 DIN message reached USB MIDI IN unchanged"
-            );
-        }
-        let guest_elapsed = inputs
-            .panel
-            .snapshot()
-            .guest_ms
-            .wrapping_sub(start_guest_ms);
-        din.release();
-        Ok(
-            json!({"probes":probes.iter().map(|probe| probe.to_vec()).collect::<Vec<_>>(),"forwarded_count":probes.len(),"guest_elapsed_ms":guest_elapsed,"din_endpoint":endpoint,"usb_cable":0}),
-        )
-    }
-
-    pub(super) fn run_l6_midi_ring_pin_sweep(
+    pub(super) fn run_l6_indicator_sample(
         &mut self,
         session: &Session,
         cc: u8,
-        wall_timeout_s: u64,
-    ) -> Result<Value, Box<dyn std::error::Error>> {
-        if session.engine.model() != l6fw::Model::L6 || !(0x53..=0x58).contains(&cc) {
-            return Err(std::io::Error::other(
-                "L6 ring-pin sweep requires L6 firmware and CC 83 through 88",
-            )
-            .into());
-        }
-        let client = self
-            .host_midi_client()
-            .ok_or("L6 ring-pin sweep requires a preceding direct USB MIDI operation")?;
-        let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
-        client.send(&[0xb0, cc, 0]).map_err(std::io::Error::other)?;
-        wait_guest_duration(session, 1000, deadline).map_err(std::io::Error::other)?;
-        let expected_ring = usize::from(cc - 0x53);
-        let mut changed_segments = 0u32;
-        let mut observations = Vec::new();
-        for value in [16, 32, 48, 64, 80, 96, 100, 112, 127, 0] {
-            let before = session
-                .engine
-                .inputs
-                .as_ref()
-                .ok_or("L6 ring-pin sweep needs panel inputs")?
-                .panel
-                .snapshot()
-                .indicators;
-            client
-                .send(&[0xb0, cc, value])
-                .map_err(std::io::Error::other)?;
-            wait_guest_duration(session, 500, deadline).map_err(std::io::Error::other)?;
-            let after = session
-                .engine
-                .inputs
-                .as_ref()
-                .unwrap()
-                .panel
-                .snapshot()
-                .indicators;
-            let before_rings = l6max_host::indicators::rings(before);
-            let after_rings = l6max_host::indicators::rings(after);
-            let changes =
-                std::array::from_fn::<_, 8, _>(|ring| before_rings[ring] ^ after_rings[ring]);
-            if changes
-                .iter()
-                .enumerate()
-                .any(|(ring, changed)| ring != expected_ring && *changed != 0)
-            {
-                return Err(std::io::Error::other(format!(
-                    "L6 CC {cc} unexpectedly changed decoded ring masks {changes:03x?}"
-                ))
-                .into());
+        value: u8,
+        guest_ms: u32,
+        ring: Option<usize>,
+        expected: Option<[u32; 8]>,
+        reuse_previous: bool,
+    ) -> Result<Value, String> {
+        let scope = self
+            .l6_indicator
+            .as_ref()
+            .ok_or("L6 indicator campaign is not active")?;
+        let (started, guest_start, guest_budget, wall_budget) = (
+            scope.start,
+            scope.guest_start,
+            scope.guest_budget,
+            scope.wall_budget,
+        );
+        let check = || -> Result<(), String> {
+            if indicator_deadline_expired(
+                started.elapsed(),
+                guest_start,
+                guest_now(session),
+                guest_budget,
+                wall_budget,
+            ) {
+                Err("L6 indicator campaign exceeded its shared deadline".into())
+            } else {
+                Ok(())
             }
-            changed_segments |= changes[expected_ring];
-            observations.push(
-                json!({"value":value,"before":before_rings,"after":after_rings,"changed":changes}),
-            );
+        };
+        check()?;
+        let control = l6ctl::OwnedControl::new(&session.engine);
+        let before = if reuse_previous {
+            let (previous_cc, rows) = self
+                .l6_indicator
+                .as_ref()
+                .and_then(|scope| scope.last_mute)
+                .ok_or("missing previous L6 mute observation")?;
+            if previous_cc != cc {
+                return Err("L6 mute observation changed controller".into());
+            }
+            rows
+        } else {
+            control.info().map_err(|e| e.to_string())?.panel_indicators
+        };
+        check()?;
+        self.host_midi_client()
+            .ok_or("L6 indicator campaign requires a retained direct USB MIDI session")?
+            .send(&[0xb0, cc, value])?;
+        check()?;
+        let start = guest_now(session);
+        while guest_now(session).wrapping_sub(start) < guest_ms {
+            check()?;
+            session.poll()?;
+            check()?;
+            thread::sleep(Duration::from_millis(5));
         }
-        if changed_segments != 0x1fe {
-            return Err(std::io::Error::other(format!(
-                "L6 CC {cc} changed ring {} segments {changed_segments:#05x}, expected 0x1fe",
-                expected_ring + 1
-            ))
-            .into());
+        check()?;
+        let after = control.info().map_err(|e| e.to_string())?.panel_indicators;
+        check()?;
+        if expected.is_some() {
+            self.l6_indicator.as_mut().unwrap().last_mute = Some((cc, after));
+        }
+        let rows = std::array::from_fn::<_, 8, _>(|i| before[i] ^ after[i]);
+        if let Some(expected) = expected {
+            if rows != expected {
+                return Err(format!(
+                    "L6 mute CC {cc:#04x} value {value} indicator mismatch: got {rows:?}, expected {expected:?}"
+                ));
+            }
+        }
+        let before_rings = l6ctl::decode_indicator_rings(before);
+        let after_rings = l6ctl::decode_indicator_rings(after);
+        let changes = std::array::from_fn::<_, 8, _>(|i| before_rings[i] ^ after_rings[i]);
+        if let Some(ring) = ring {
+            let (_, changed) = checked_ring_change(before, after, ring)
+                .map_err(|error| format!("L6 CC {cc}: {error}"))?;
+            self.l6_indicator.as_mut().unwrap().changed_segments |= changed;
         }
         Ok(
-            json!({"cc":cc,"ring":expected_ring + 1,"changed_segments":changed_segments,"observations":observations}),
+            json!({"cc":cc,"value":value,"before":before,"after":after,"changed_rows":rows,"changed_rings":changes}),
         )
     }
+}
 
-    pub(super) fn run_l6_midi_mute_indicators(
-        &mut self,
-        session: &Session,
-        wall_timeout_s: u64,
-    ) -> Result<Value, Box<dyn std::error::Error>> {
-        if session.engine.model() != l6fw::Model::L6 {
-            return Err(
-                std::io::Error::other("L6 mute-indicator probe requires L6 firmware").into(),
-            );
-        }
-        let client = self
-            .host_midi_client()
-            .ok_or("L6 mute-indicator probe requires a preceding direct USB MIDI operation")?;
-        let expected = [
-            [0, 0, 0, 0, 1 << 11, 0, 0, 0],
-            [0, 0, 0, 0, 1 << 10, 0, 0, 0],
-            [0, 0, 0, 0, 0, 1 << 11, 0, 0],
-            [0, 0, 0, 0, 0, 1 << 10, 0, 0],
-            [0, 0, 0, 0, 0, 0, 1 << 11, 0],
-            [0, 0, 0, 0, 0, 0, 1 << 10, 0],
-        ];
-        let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
-        let mut observations = Vec::new();
-        for (channel, cc) in [0x5d, 0x5e, 0x5f, 0x66, 0x67, 0x68].into_iter().enumerate() {
-            let before = session
-                .engine
-                .inputs
-                .as_ref()
-                .ok_or("L6 mute-indicator probe needs panel inputs")?
-                .panel
-                .snapshot()
-                .indicators;
-            client
-                .send(&[0xb0, cc, 127])
-                .map_err(std::io::Error::other)?;
-            wait_guest_duration(session, 500, deadline).map_err(std::io::Error::other)?;
-            let active = session
-                .engine
-                .inputs
-                .as_ref()
-                .unwrap()
-                .panel
-                .snapshot()
-                .indicators;
-            client.send(&[0xb0, cc, 0]).map_err(std::io::Error::other)?;
-            wait_guest_duration(session, 500, deadline).map_err(std::io::Error::other)?;
-            let released = session
-                .engine
-                .inputs
-                .as_ref()
-                .unwrap()
-                .panel
-                .snapshot()
-                .indicators;
-            let on = std::array::from_fn::<_, 8, _>(|row| before[row] ^ active[row]);
-            let off = std::array::from_fn::<_, 8, _>(|row| active[row] ^ released[row]);
-            if on != expected[channel] || off != expected[channel] {
-                return Err(std::io::Error::other(format!(
-                    "L6 channel-{} mute CC {cc:#04x} indicator mismatch: on={on:?}, off={off:?}",
-                    channel + 1
-                ))
-                .into());
-            }
-            observations.push(json!({"channel":channel + 1,"cc":cc,"on":on,"off":off}));
-        }
-        Ok(json!({"channels":observations}))
+pub(super) fn indicator_deadline_expired(
+    elapsed: Duration,
+    start: u32,
+    now: u32,
+    guest_budget: u32,
+    wall_budget: u64,
+) -> bool {
+    elapsed > Duration::from_secs(wall_budget) || now.wrapping_sub(start) > guest_budget
+}
+
+fn checked_ring_change(
+    before: [u32; 8],
+    after: [u32; 8],
+    ring: usize,
+) -> Result<([u32; 8], u32), String> {
+    if !(1..=6).contains(&ring) {
+        return Err("L6 ring must be in 1..=6".into());
+    }
+    let previous = l6ctl::decode_indicator_rings(before);
+    let current = l6ctl::decode_indicator_rings(after);
+    let changes = std::array::from_fn(|i| previous[i] ^ current[i]);
+    if changes
+        .iter()
+        .enumerate()
+        .any(|(i, value)| i != ring - 1 && *value != 0)
+    {
+        return Err(format!("unexpected decoded ring changes {changes:03x?}"));
+    }
+    Ok((changes, changes[ring - 1]))
+}
+
+#[cfg(test)]
+mod l6_indicator_tests {
+    use super::*;
+    #[test]
+    fn deadline_carries_guest_wrap_and_wall_budget() {
+        assert!(!indicator_deadline_expired(
+            Duration::from_secs(1),
+            u32::MAX - 2,
+            2,
+            5,
+            2
+        ));
+        assert!(indicator_deadline_expired(
+            Duration::from_secs(1),
+            u32::MAX - 2,
+            3,
+            5,
+            2
+        ));
+        assert!(indicator_deadline_expired(
+            Duration::from_millis(2001),
+            0,
+            1,
+            5,
+            2
+        ));
+        // The campaign may spend time between its 6,000 ms of observations,
+        // but neither the guest nor wall ceiling may be exceeded.
+        assert!(!indicator_deadline_expired(
+            Duration::from_secs(89),
+            0,
+            9_999,
+            10_000,
+            90
+        ));
+        assert!(indicator_deadline_expired(
+            Duration::from_secs(1),
+            0,
+            10_001,
+            10_000,
+            90
+        ));
+        assert!(indicator_deadline_expired(
+            Duration::from_millis(90_001),
+            0,
+            1,
+            10_000,
+            90
+        ));
+    }
+    #[test]
+    fn ring_sample_rejects_other_ring_changes_and_invalid_ring() {
+        let before = [0; 8];
+        let mut after = before;
+        let (row, bit) = l6max_host::indicators::RING_PINS[0][0];
+        after[row] |= 1 << (bit ^ 7);
+        assert_eq!(checked_ring_change(before, after, 1).unwrap().1, 1);
+        assert!(checked_ring_change(before, after, 2).is_err());
+        assert!(checked_ring_change(before, after, 0).is_err());
+        assert!(checked_ring_change(before, after, 7).is_err());
     }
 }
 
@@ -1197,8 +1101,8 @@ fn ring_observation(
 ) -> RingObservation {
     if now >= deadline {
         RingObservation::Expired
-    } else if l6max_host::indicators::rings(after)[index]
-        != l6max_host::indicators::rings(before)[index]
+    } else if l6ctl::decode_indicator_rings(after)[index]
+        != l6ctl::decode_indicator_rings(before)[index]
     {
         RingObservation::Changed
     } else {
@@ -2470,5 +2374,444 @@ mod l6_hook_probe_tests {
         assert!(l6_accept_ordered_cc(&expected, &mut index, 8));
         assert!(l6_midi_expected_ccs(&[0xff; 54]).is_err());
         assert!(l6_midi_expected_ccs(&[0; 53]).is_err());
+    }
+}
+
+fn match_usb_forward(
+    expected: &[u8],
+    cable: u8,
+    accumulated: &mut Vec<u8>,
+    packets: Vec<(u8, Vec<u8>)>,
+) -> bool {
+    for (received_cable, data) in packets {
+        if received_cable != cable || (accumulated.is_empty() && data.first() != expected.first()) {
+            continue;
+        }
+        accumulated.extend(data);
+        if accumulated == expected {
+            return true;
+        }
+        if !expected.starts_with(accumulated) {
+            accumulated.clear();
+        }
+    }
+    false
+}
+
+/// DIN and direct USB are held together for the entire forwarding transaction.
+pub(super) struct DinUsbScope {
+    din: l6ctl::midi::MidiSession,
+    usb: Option<l6ctl::midi::RawUsbReceiver>,
+    pending: Option<(Vec<u8>, Instant)>,
+}
+impl Drop for DinUsbScope {
+    fn drop(&mut self) {
+        self.din.release();
+    }
+}
+
+impl State {
+    pub(super) fn run_din_usb(
+        &mut self,
+        session: &Session,
+        operation: Operation,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        if matches!(operation, Operation::DinUsbBegin) {
+            if self.din_usb.is_some() || session.engine.model() != l6fw::Model::L6 {
+                return Err("DIN USB forwarding requires a fresh L6 scope".into());
+            }
+            l6ctl::OwnedControl::new(&session.engine).connect_din()?;
+            let endpoint = l6max_host::host_midi::endpoint_name(
+                &l6max_host::host_midi::din_port_name_for_model_with_namespace(
+                    l6fw::Model::L6,
+                    midi_namespace().as_deref(),
+                ),
+            );
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let din = loop {
+                match l6ctl::midi::MidiSession::connect_native(&endpoint) {
+                    Ok(value) => break value,
+                    Err(error)
+                        if error.contains("missing native MIDI") && Instant::now() < deadline =>
+                    {
+                        session.poll()?;
+                        thread::sleep(Duration::from_millis(25));
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            };
+            self.din_usb = Some(DinUsbScope {
+                din,
+                usb: None,
+                pending: None,
+            });
+            return Ok(json!({"endpoint":endpoint}));
+        }
+        let scope = self.din_usb.as_mut().ok_or("missing DIN USB scope")?;
+        match operation {
+            Operation::DinUsbAttach if scope.usb.is_none() => {
+                let mut usb = l6ctl::OwnedControl::new(&session.engine).raw_usb_midi()?;
+                let deadline = Instant::now() + Duration::from_secs(15);
+                loop {
+                    match usb.enumerate() {
+                        Ok(()) => break,
+                        Err(error)
+                            if (error.raw_os_error() == Some(libc::ENODEV)
+                                || error.raw_os_error() == Some(libc::EAGAIN)
+                                || error.kind() == std::io::ErrorKind::InvalidData)
+                                && Instant::now() < deadline =>
+                        {
+                            session.poll()?;
+                            thread::sleep(Duration::from_millis(250));
+                        }
+                        Err(error) => {
+                            return Err(format!("cannot enumerate L6 USB MIDI: {error}").into());
+                        }
+                    }
+                }
+                let _ = usb.poll();
+                scope.usb = Some(usb);
+                Ok(json!({"enumerated":true}))
+            }
+            Operation::DinUsbSend { bytes } if scope.usb.is_some() && scope.pending.is_none() => {
+                if bytes.is_empty() || bytes.len() > 256 {
+                    return Err("MIDI bytes must have length 1..256".into());
+                }
+                scope
+                    .din
+                    .send_bytes(&bytes)
+                    .map_err(std::io::Error::other)?;
+                scope.pending = Some((bytes.clone(), Instant::now() + Duration::from_secs(3)));
+                Ok(json!({"sent":bytes}))
+            }
+            Operation::DinUsbExpect { bytes, cable } if scope.usb.is_some() => {
+                let (expected, deadline) = scope
+                    .pending
+                    .as_ref()
+                    .ok_or("missing pending MIDI message")?;
+                if *expected != bytes || cable > 15 {
+                    return Err("MIDI expectation does not match pending message".into());
+                }
+                let mut forwarded = Vec::new();
+                while Instant::now() < *deadline {
+                    session.poll()?;
+                    if let Some(packets) = scope.usb.as_mut().unwrap().poll()? {
+                        if match_usb_forward(&bytes, cable, &mut forwarded, packets) {
+                            scope.pending = None;
+                            return Ok(json!({"cable":cable,"bytes":bytes}));
+                        }
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(format!(
+                    "DIN to USB forwarding mismatch for {bytes:02x?}: received {forwarded:02x?}"
+                )
+                .into())
+            }
+            Operation::DinUsbEnd if scope.usb.is_some() && scope.pending.is_none() => {
+                self.din_usb.take();
+                Ok(json!({"released":true}))
+            }
+            _ => Err("DIN USB forwarding actions are out of order".into()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod din_usb_forward_tests {
+    use super::match_usb_forward;
+    #[test]
+    fn preserves_cable_and_fragment_matching() {
+        let mut seen = Vec::new();
+        let expected = [0xf0, 0x7d, 1, 0xf7];
+        assert!(!match_usb_forward(
+            &expected,
+            0,
+            &mut seen,
+            vec![
+                (1, expected.to_vec()),
+                (0, vec![0x90, 1, 2]),
+                (0, vec![0xf0, 0x7d])
+            ]
+        ));
+        assert_eq!(seen, [0xf0, 0x7d]);
+        assert!(match_usb_forward(
+            &expected,
+            0,
+            &mut seen,
+            vec![(0, vec![1, 0xf7])]
+        ));
+        seen.clear();
+        assert!(!match_usb_forward(
+            &expected,
+            0,
+            &mut seen,
+            vec![(0, vec![0xf0, 0x7d]), (0, vec![9])]
+        ));
+        assert!(seen.is_empty());
+        assert!(match_usb_forward(
+            &[0xf8],
+            0,
+            &mut seen,
+            vec![(0, vec![0xf8])]
+        ));
+    }
+}
+
+/// One exclusive USB MIDI session; the budget begins only after the encoder
+/// action, matching the original receive-and-send operation.
+pub(super) struct UsbMidiScope {
+    receiver: l6ctl::midi::RawUsbReceiver,
+    started: Option<(Instant, u32, u32, u64)>,
+    phase: u8,
+    target: Option<u8>,
+    alternate: Option<u8>,
+}
+
+fn usb_encoder_cc(messages: &[(u8, Vec<u8>)], controller: u8) -> bool {
+    messages
+        .iter()
+        .any(|(_, message)| message.starts_with(&[0xb0, controller]))
+}
+
+fn usb_alternate_level(current: u8, target: u8) -> Option<u8> {
+    (current == target).then_some(if target == 0 { 127 } else { 0 })
+}
+
+fn usb_receive_after_poll<T>(
+    poll: impl FnOnce() -> Result<(), String>,
+    check: impl FnOnce() -> Result<(), String>,
+    receive: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    poll()?;
+    check()?;
+    receive()
+}
+
+impl UsbMidiScope {
+    fn check(&self, session: &Session) -> Result<(), String> {
+        let (started, guest_start, guest_budget, wall_budget) =
+            self.started.ok_or("USB MIDI transaction not started")?;
+        if deadline_exceeded(
+            started.elapsed(),
+            guest_start,
+            guest_now(session),
+            guest_budget,
+            wall_budget,
+        ) {
+            return Err("USB MIDI transaction exceeded its shared deadline".into());
+        }
+        Ok(())
+    }
+    fn wall_deadline(&self) -> Result<Instant, String> {
+        let (started, _, _, wall) = self.started.ok_or("USB MIDI transaction not started")?;
+        started
+            .checked_add(Duration::from_secs(wall))
+            .ok_or_else(|| "USB MIDI deadline overflow".into())
+    }
+}
+
+impl State {
+    pub(super) fn run_usb_midi_steps(
+        &mut self,
+        session: &Session,
+        options: &Options,
+        operation: Operation,
+        guest_timeout_ms: u32,
+        wall_timeout_s: u64,
+        operation_start: (Instant, u32),
+    ) -> Result<Value, String> {
+        use Operation::*;
+        if matches!(operation, UsbMidiOpen) {
+            if self.usb_midi.is_some() {
+                return Err("USB MIDI session already open".into());
+            }
+            let endpoints = self
+                .midi
+                .ok_or("USB MIDI needs prior descriptor enumeration")?;
+            let receiver = l6ctl::OwnedControl::new(&session.engine)
+                .raw_usb_midi_enumerated(endpoints)
+                .map_err(|e| e.to_string())?;
+            self.usb_midi = Some(UsbMidiScope {
+                receiver,
+                started: None,
+                phase: 0,
+                target: None,
+                alternate: None,
+            });
+            return Ok(json!({"connected":true}));
+        }
+        let scope = self.usb_midi.as_mut().ok_or("USB MIDI session not open")?;
+        if matches!(operation, UsbMidiBegin) && scope.phase == 0 {
+            scope.started = Some((
+                operation_start.0,
+                operation_start.1,
+                guest_timeout_ms,
+                wall_timeout_s,
+            ));
+            scope.phase = 1;
+            return Ok(json!({"started":true}));
+        }
+        scope.check(session)?;
+        let cc = if session.engine.model() == l6fw::Model::L6 {
+            0x53
+        } else {
+            0x51
+        };
+        match operation {
+            UsbMidiExpectEncoder if scope.phase == 1 => {
+                let mut captured = Vec::new();
+                loop {
+                    scope.check(session)?;
+                    let (started, guest_start, guest_budget, wall_budget) = scope.started.unwrap();
+                    let transfer = usb_receive_after_poll(
+                        || session.poll().map(|_| ()).map_err(|e| e.to_string()),
+                        || {
+                            if deadline_exceeded(
+                                started.elapsed(),
+                                guest_start,
+                                guest_now(session),
+                                guest_budget,
+                                wall_budget,
+                            ) {
+                                Err("USB MIDI transaction exceeded its shared deadline".into())
+                            } else {
+                                Ok(())
+                            }
+                        },
+                        || scope.receiver.poll_transfer().map_err(|e| e.to_string()),
+                    )?;
+                    if let Some((raw, messages)) = transfer {
+                        scope.check(session)?;
+                        captured.extend_from_slice(&raw);
+                        fs::write(options.logs.join("usb-midi.bin"), &captured)
+                            .map_err(|e| e.to_string())?;
+                        scope.check(session)?;
+                        if usb_encoder_cc(&messages, cc) {
+                            break;
+                        }
+                    }
+                    scope.check(session)?;
+                    thread::sleep(Duration::from_millis(5));
+                }
+                scope.phase = 2;
+                Ok(json!({"received":captured, "controller":cc, "cable":"any"}))
+            }
+            UsbMidiPrepareLevel { value } if scope.phase == 2 && value <= 127 => {
+                let sample = l6ctl::OwnedControl::new(&session.engine)
+                    .mixer_level_cancellable(scope.wall_deadline()?, || {
+                        scope.check(session).is_err()
+                    })
+                    .map_err(|e| e.to_string())?;
+                scope.check(session)?;
+                scope.target = Some(value);
+                scope.alternate = usb_alternate_level(sample.value, value);
+                scope.phase = 3;
+                Ok(json!({"baseline":sample, "alternate":scope.alternate, "target":value}))
+            }
+            UsbMidiSetAlternate | UsbMidiSetTarget
+                if (matches!(operation, UsbMidiSetAlternate) && scope.phase == 3)
+                    || (matches!(operation, UsbMidiSetTarget) && scope.phase == 4) =>
+            {
+                let alternate = matches!(operation, UsbMidiSetAlternate);
+                let level = if alternate {
+                    scope.alternate
+                } else {
+                    scope.target
+                };
+                if let Some(level) = level {
+                    let control = l6ctl::OwnedControl::new(&session.engine);
+                    let local_start = guest_now(session);
+                    let (_, _, outer_guest, outer_wall) = scope.started.unwrap();
+                    let local_guest = outer_guest.min(10_000);
+                    let local_deadline = Instant::now()
+                        .checked_add(Duration::from_secs(outer_wall.min(180)))
+                        .ok_or("USB MIDI deadline overflow")?
+                        .min(scope.wall_deadline()?);
+                    scope.check(session)?;
+                    scope
+                        .receiver
+                        .send_control_change(1, 0, cc, level)
+                        .map_err(|e| e.to_string())?;
+                    loop {
+                        scope.check(session)?;
+                        if Instant::now() >= local_deadline
+                            || guest_now(session).wrapping_sub(local_start) >= local_guest
+                        {
+                            return Err(format!("USB MIDI channel level did not become {level}"));
+                        }
+                        session.poll().map_err(|e| e.to_string())?;
+                        let sample = control
+                            .mixer_level_cancellable(local_deadline, || {
+                                scope.check(session).is_err()
+                                    || guest_now(session).wrapping_sub(local_start) >= local_guest
+                            })
+                            .map_err(|e| e.to_string())?;
+                        scope.check(session)?;
+                        if Instant::now() >= local_deadline
+                            || guest_now(session).wrapping_sub(local_start) >= local_guest
+                        {
+                            return Err(format!("USB MIDI channel level did not become {level}"));
+                        }
+                        if sample.value == level {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                }
+                scope.phase = if alternate { 4 } else { 5 };
+                Ok(json!({"level":level,"skipped":level.is_none(),"cable":1}))
+            }
+            UsbMidiEnd if scope.phase == 5 => {
+                self.usb_midi.take();
+                Ok(json!({"released":true}))
+            }
+            _ => Err("USB MIDI actions are out of order".into()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod usb_midi_transaction_tests {
+    use super::*;
+    #[test]
+    fn delayed_guest_poll_cannot_consume_or_write_after_expiry() {
+        use std::cell::Cell;
+        let expired = Cell::new(false);
+        let received = Cell::new(false);
+        let result = usb_receive_after_poll(
+            || {
+                expired.set(true);
+                Ok(())
+            },
+            || {
+                if expired.get() {
+                    Err("expired".into())
+                } else {
+                    Ok(())
+                }
+            },
+            || {
+                received.set(true);
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert!(!received.get());
+    }
+    #[test]
+    fn receives_encoder_cc_on_any_cable_but_not_wrong_message() {
+        assert!(usb_encoder_cc(&[(0, vec![0xb0, 0x53, 42])], 0x53));
+        assert!(usb_encoder_cc(&[(7, vec![0xb0, 0x51, 42])], 0x51));
+        assert!(!usb_encoder_cc(
+            &[(1, vec![0xb1, 0x51, 42]), (0, vec![0xb0, 0x53, 42])],
+            0x51
+        ));
+    }
+    #[test]
+    fn alternate_forces_a_fresh_target_transition() {
+        assert_eq!(usb_alternate_level(32, 32), Some(0));
+        assert_eq!(usb_alternate_level(0, 0), Some(127));
+        assert_eq!(usb_alternate_level(31, 32), None);
     }
 }

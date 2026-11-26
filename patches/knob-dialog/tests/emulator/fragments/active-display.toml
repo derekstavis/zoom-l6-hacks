@@ -1,0 +1,38 @@
+[[step]]
+action = "knob-active-begin"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "enqueue-encoder-no-ack"
+channel = 1
+steps = 3
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "capture-display"
+guest_ms = 500
+artifact = "knob-dialog-active"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-active-sample-callbacks"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-active-check-callbacks"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-active-check-frame"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "knob-active-finish"
+guest_timeout_ms = 180000
+wall_timeout_s = 600

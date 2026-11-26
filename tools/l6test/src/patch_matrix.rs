@@ -412,6 +412,7 @@ fn include(text: &mut String, path: &str) {
 fn checks(text: &mut String, combination: &Combination, all: &Checks) -> Result<(), String> {
     if !combination.sd.is_empty() {
         step(text, "action = \"expect-sd-loader\"");
+        step(text, "action = \"capture-sd-module\"\nloaded = true");
         step(text, "action = \"expect-sd-module\"\nloaded = true");
     }
     for (name, patch) in &all.order {
@@ -1347,7 +1348,7 @@ wall_timeout_s = 120
                 assert!(
                     matches!(
                         scenario.step[mixer + 2].action,
-                        Action::ExpectSdModule { loaded: true, .. }
+                        Action::CaptureSdModule { loaded: true, .. }
                     ),
                     "{}",
                     case.id
@@ -1395,7 +1396,20 @@ wall_timeout_s = 120
                 .collect();
             assert_eq!(loaders.len(), usize::from(has_sd), "{}", case.id);
             if let Some((index, _)) = loaders.first() {
-                let module = &steps[index + 1];
+                let capture = &steps[index + 1];
+                assert_eq!(
+                    capture.get("action").and_then(toml::Value::as_str),
+                    Some("capture-sd-module"),
+                    "{}",
+                    case.id
+                );
+                assert_eq!(
+                    capture.get("loaded").and_then(toml::Value::as_bool),
+                    Some(true),
+                    "{}",
+                    case.id
+                );
+                let module = &steps[index + 2];
                 assert_eq!(
                     module.get("action").and_then(toml::Value::as_str),
                     Some("expect-sd-module"),

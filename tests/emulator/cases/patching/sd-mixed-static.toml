@@ -33,6 +33,10 @@ path = "RECORDER"
 action = "expect-sd-loader"
 
 [[step]]
+action = "capture-sd-module"
+loaded = true
+
+[[step]]
 action = "expect-sd-module"
 loaded = true
 

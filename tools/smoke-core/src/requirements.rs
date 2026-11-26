@@ -460,6 +460,7 @@ pub fn of(action: &Action) -> Requirement {
         | Action::ExpectMemory { .. }
         | Action::WaitMemory { .. }
         | Action::ExpectSdLoader
+        | Action::CaptureSdModule { .. }
         | Action::ExpectSdModule { .. }
         | Action::EffectPacedTurn { .. }
         | Action::WaitEffectSlot { .. }

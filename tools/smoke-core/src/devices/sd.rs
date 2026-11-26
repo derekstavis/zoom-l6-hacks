@@ -18,6 +18,7 @@ pub(super) type SdEdits = (
 
 pub(super) struct SdInspectionContext {
     pub fixture: FrozenSdFixture,
+    pub snapshot: Option<(bool, l6ctl::SdLoaderSnapshot)>,
     pub wall_deadline: Instant,
     pub guest_start: u32,
     pub guest_timeout_ms: u32,

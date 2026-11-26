@@ -7964,11 +7964,12 @@
           "additionalProperties": false,
           "properties": {
             "action": {
-              "const": "effect-parameter-edit",
+              "const": "capture-effect-ring",
               "type": "string"
             },
             "encoder": {
-              "format": "uint",
+              "format": "uint8",
+              "maximum": 255,
               "minimum": 0,
               "type": "integer"
             },
@@ -7990,9 +7991,49 @@
               "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
               "type": "boolean"
             },
-            "steps": {
-              "format": "int32",
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
               "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "encoder"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "expect-effect-ring-changed",
+              "type": "string"
+            },
+            "encoder": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
             },
             "wall_timeout_s": {
               "default": 180,
@@ -8003,8 +8044,7 @@
           },
           "required": [
             "action",
-            "encoder",
-            "steps"
+            "encoder"
           ],
           "type": "object"
         },
@@ -19664,7 +19704,8 @@
             "expect-sd-loader",
             "expect-sd-module",
             "effect-paced-turn",
-            "effect-parameter-edit",
+            "capture-effect-ring",
+            "expect-effect-ring-changed",
             "wait-effect-mode",
             "wait-effect-slot",
             "effect-replacement-state",

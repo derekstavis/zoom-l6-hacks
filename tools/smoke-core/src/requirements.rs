@@ -327,7 +327,9 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobPopupExpectValue
         | Action::CaptureMenu { .. }
         | Action::ExpectMenuItems { .. }
-        | Action::WaitEffectMode { .. } => on(L6MAX),
+        | Action::WaitEffectMode { .. }
+        | Action::CaptureEffectRing { .. }
+        | Action::ExpectEffectRingChanged { .. } => on(L6MAX),
         Action::ExpectDisplayAfterPress => Requirement {
             models: L6MAX,
             ..ANY
@@ -450,7 +452,6 @@ pub fn of(action: &Action) -> Requirement {
         | Action::ExpectSdLoader
         | Action::ExpectSdModule { .. }
         | Action::EffectPacedTurn { .. }
-        | Action::EffectParameterEdit { .. }
         | Action::WaitEffectSlot { .. }
         | Action::EffectReplacementState { .. }
         | Action::ExpectHeap { .. }
@@ -656,7 +657,10 @@ mod tests {
             "version=1\nname='t'\nmodels=['l6max']\nbackends=['headless','gui']\n[[step]]\naction='usb-controller-ready'\n[[step]]\naction='usb-enumerate'\n",
         )
         .unwrap_err();
-        assert!(gui.contains("usb-controller-ready requires backends"), "{gui}");
+        assert!(
+            gui.contains("usb-controller-ready requires backends"),
+            "{gui}"
+        );
         let undeclared = Scenario::from_text(
             "version=1\nname='t'\nmodels=['l6','l6max']\nbackends=['headless']\n[[step]]\naction='expect-memory'\nsymbol='system_mode'\nbytes=[0]\n",
         )

@@ -546,6 +546,7 @@ pub struct SlotBinding {
     pub spring_output: Option<u32>,
     pub parameters: Option<u32>,
     pub dialog_active: Option<u32>,
+    pub ring_positions: Option<u32>,
 }
 
 /// Select only the optional fields a caller needs; all observations are non-atomic.
@@ -559,6 +560,8 @@ pub struct SlotFields {
     pub output_processor: Option<u8>,
     pub parameter_id: Option<u8>,
     pub dialog_active: bool,
+    /// Zero-based encoder index (0–7).
+    pub ring_index: Option<u8>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -577,6 +580,7 @@ pub struct SlotSnapshot {
     pub output_blocks: Option<u32>,
     pub parameter_bits: Option<u32>,
     pub dialog_active: Option<u8>,
+    pub ring_position: Option<u32>,
 }
 
 impl SlotBinding {
@@ -613,6 +617,7 @@ impl SlotBinding {
             spring_output: optional("DUAL_EFFECT_SPRING_OUTPUT_NONZERO")?,
             parameters: optional("PARAMETER_HANDOFF")?,
             dialog_active: optional("KNOB_DIALOG_EXTERNAL_TEXT_ACTIVE")?,
+            ring_positions: optional("PARAMETER_RING_POSITIONS")?,
         };
         result.validate()?;
         Ok(result)
@@ -642,6 +647,9 @@ impl SlotBinding {
                 .parameters
                 .is_some_and(|o| o % 4 != 0 || !validate(o, 64))
             || self.dialog_active.is_some_and(|o| !validate(o, 1))
+            || self
+                .ring_positions
+                .is_some_and(|o| o % 4 != 0 || !validate(o, 32))
         {
             return Err("effect slot export lies outside the bound module".into());
         }
@@ -809,6 +817,16 @@ impl SlotReader {
         } else {
             None
         };
+        let ring_position = if let Some(index) = fields.ring_index {
+            if index >= 8 {
+                return Err("effect ring index must be 0..7".into());
+            }
+            Some(word(
+                required(self.binding.ring_positions, "ring positions")? + u32::from(index) * 4,
+            )?)
+        } else {
+            None
+        };
         let active_effect_bytes = if fields.active_effect {
             let pointer = word(required(
                 self.binding.active_pointer,
@@ -870,6 +888,7 @@ impl SlotReader {
             output_blocks,
             parameter_bits,
             dialog_active,
+            ring_position,
         })
     }
 }

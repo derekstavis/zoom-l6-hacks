@@ -6,7 +6,6 @@ state = "effects-room"
 sd_patches = []
 sd_bundle_mode = "composed-module"
 effect_replacements = { room = "velvet" }
-gdb = true
 
 [case]
 suites = ["sd-matrix", "effect-replacement-matrix"]
@@ -51,9 +50,17 @@ expected_processor_type = 1
 expected_edit_mode = true
 
 [[step]]
-action = "effect-parameter-edit"
+action = "capture-effect-ring"
 encoder = 2
+
+[[step]]
+action = "effect-paced-turn"
+channel = 2
 steps = 1
+
+[[step]]
+action = "expect-effect-ring-changed"
+encoder = 2
 
 [[step]]
 action = "expect-display-image"

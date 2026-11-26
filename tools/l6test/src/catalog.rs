@@ -625,7 +625,7 @@ mod tests {
             let usb = previous
                 .step
                 .iter()
-                .position(|step| matches!(step.action, Action::UsbEnumerate))
+                .position(|step| matches!(step.action, Action::UsbControllerReady))
                 .unwrap();
             assert!(
                 matches!(&previous.step[usb-1].action, Action::Wait { until } if until == "boot-ready"),

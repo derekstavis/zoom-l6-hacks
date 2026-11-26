@@ -1,6 +1,6 @@
 use l6ctl::{ControlClient, ControlError, InputSource, Request, RtosKind};
 use l6fw::Model;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     io::{BufRead, BufReader, Write},
     os::unix::net::UnixListener,
@@ -827,9 +827,11 @@ fn debugger_uses_one_persistent_typed_connection_for_api_and_cli() {
         session.execute(DebugCommand::Close).unwrap(),
         DebugObservation::Closed
     ));
-    assert!(session
-        .execute(DebugCommand::Register { index: 15 })
-        .is_err());
+    assert!(
+        session
+            .execute(DebugCommand::Register { index: 15 })
+            .is_err()
+    );
     let mut child = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
         .arg("--socket")
         .arg(&path)
@@ -918,14 +920,16 @@ fn effect_slot_client_uses_typed_non_atomic_wire_contract() {
         spring_output: None,
         parameters: Some(280),
         dialog_active: None,
+        ring_positions: Some(344),
     };
     let fields = l6ctl::EffectSlotFields {
         parameter_id: Some(2),
+        ring_index: Some(1),
         ..Default::default()
     };
     let response = json!({"revision_guard":"l6max_1_10_fixture_hook","fixture_module_sha256":"a".repeat(64),"atomic":false,
         "effect_type":1,"processor_type":1,"panel_mode":2,"edit_mode":1,"applied":null,"exit_refreshes":null,
-        "active_effect":null,"active_effect_bytes":null,"output_blocks":null,"parameter_bits":2143289344u32,"dialog_active":null});
+        "active_effect":null,"active_effect_bytes":null,"output_blocks":null,"parameter_bits":2143289344u32,"dialog_active":null,"ring_position":65536});
     let server = server(
         &path,
         vec![(
@@ -937,6 +941,7 @@ fn effect_slot_client_uses_typed_non_atomic_wire_contract() {
         .effect_slot(binding, fields)
         .unwrap();
     assert!(!sample.atomic);
+    assert_eq!(sample.ring_position, Some(65536));
     assert!(f32::from_bits(sample.parameter_bits.unwrap()).is_nan());
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();
@@ -1067,9 +1072,11 @@ fn meter_finish_closes_typed_client_and_cli_session() {
             requires_restart: true
         }
     ));
-    assert!(session
-        .execute(DebugCommand::Register { index: 15 })
-        .is_err());
+    assert!(
+        session
+            .execute(DebugCommand::Register { index: 15 })
+            .is_err()
+    );
     let mut child = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
         .arg("--socket")
         .arg(&path)
@@ -1090,9 +1097,11 @@ fn meter_finish_closes_typed_client_and_cli_session() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(String::from_utf8(output.stdout)
-        .unwrap()
-        .contains("\"requires_restart\":true"));
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("\"requires_restart\":true")
+    );
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();
 }

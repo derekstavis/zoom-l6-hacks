@@ -2871,16 +2871,11 @@ impl Scenario {
                         "MIDI settle duration must be positive and within the guest timeout".into(),
                     );
                 }
-                Action::EffectParameterEdit { encoder, steps }
-                    if *encoder == 0
-                        || *encoder > 8
-                        || *steps == 0
-                        || steps.unsigned_abs() > 120 =>
+                Action::CaptureEffectRing { encoder }
+                | Action::ExpectEffectRingChanged { encoder }
+                    if !(1..=8).contains(encoder) =>
                 {
-                    return Err(
-                        "effect-parameter-edit needs encoder 1..8 and nonzero steps up to 120"
-                            .into(),
-                    );
+                    return Err("effect ring encoder must be 1..8".into());
                 }
                 Action::EffectReplacementState { .. } => {}
                 Action::ExpectRingLevel {

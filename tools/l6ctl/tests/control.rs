@@ -1205,3 +1205,41 @@ fn sound_pad_assignment_client_and_cli_use_typed_wire_contract() {
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn symbol_read_client_and_cli_use_model_scoped_wire_request() {
+    let path = socket_path();
+    let request = json!({"command":"symbol-read","symbol":"dsp_eq_coefficients","length":4});
+    let sample = json!({"address":0x20016510u32,"bytes":[1,2,3,4],"atomic":false});
+    let server = server(
+        &path,
+        vec![
+            (request.clone(), json!({"ok":true,"result":sample})),
+            (request, json!({"ok":true,"result":sample})),
+        ],
+    );
+    assert_eq!(
+        ControlClient::new(&path)
+            .read_symbol("dsp_eq_coefficients", 4)
+            .unwrap()
+            .address,
+        0x20016510
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["symbol-read", "dsp_eq_coefficients", "4"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        sample
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}

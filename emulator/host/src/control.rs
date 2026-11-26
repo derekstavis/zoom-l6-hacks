@@ -354,6 +354,19 @@ fn execute(
             serde_json::to_value(crate::memory::read_main(qmp, address, length)?)
                 .map_err(|e| e.to_string())
         }
+        "symbol-read" => {
+            let symbol = request
+                .get("symbol")
+                .and_then(Value::as_str)
+                .ok_or("symbol-read needs a symbol")?;
+            let length = request
+                .get("length")
+                .and_then(Value::as_u64)
+                .and_then(|v| usize::try_from(v).ok())
+                .ok_or("symbol-read needs a length")?;
+            serde_json::to_value(crate::memory::read_symbol(qmp, model, symbol, length)?)
+                .map_err(|e| e.to_string())
+        }
         "update-gui-state" => {
             serde_json::to_value(crate::update_state::update_gui_state(qmp, model)?)
                 .map_err(|error| error.to_string())

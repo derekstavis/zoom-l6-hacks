@@ -98,6 +98,10 @@ pub enum Request {
         address: u32,
         length: usize,
     },
+    SymbolRead {
+        symbol: String,
+        length: usize,
+    },
     MidiConfig,
     L6DinState,
     EffectEditor {
@@ -368,6 +372,7 @@ impl ControlClient {
             Request::Rtos { .. }
                 | Request::HeapCounters
                 | Request::MemoryRead { .. }
+                | Request::SymbolRead { .. }
                 | Request::MidiConfig
                 | Request::L6DinState
                 | Request::EffectEditor { .. }
@@ -427,6 +432,13 @@ impl ControlClient {
         length: usize,
     ) -> Result<MemoryRead, ControlError> {
         self.request_as(&Request::MemoryRead { address, length })
+    }
+
+    pub fn read_symbol(&self, symbol: &str, length: usize) -> Result<MemoryRead, ControlError> {
+        self.request_as(&Request::SymbolRead {
+            symbol: symbol.into(),
+            length,
+        })
     }
 
     pub fn effect_editor(
@@ -848,6 +860,26 @@ impl<'a> OwnedControl<'a> {
     pub fn heap_counter_reader(&self) -> Result<l6max_host::heap::CounterReader, ControlError> {
         l6max_host::heap::counter_reader(self.main_qmp()?, self.engine.model())
             .map_err(ControlError::Rejected)
+    }
+
+    pub fn read_symbol(&self, symbol: &str, length: usize) -> Result<MemoryRead, ControlError> {
+        l6max_host::memory::read_symbol(self.main_qmp()?, self.engine.model(), symbol, length)
+            .map_err(ControlError::Rejected)
+    }
+    pub fn read_symbol_before(
+        &self,
+        symbol: &str,
+        length: usize,
+        deadline: std::time::Instant,
+    ) -> Result<MemoryRead, ControlError> {
+        l6max_host::memory::read_symbol_before(
+            self.main_qmp()?,
+            self.engine.model(),
+            symbol,
+            length,
+            deadline,
+        )
+        .map_err(ControlError::Rejected)
     }
 
     pub fn read_main_memory(

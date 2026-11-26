@@ -1210,7 +1210,9 @@ impl State {
                 address,
                 bytes,
             } => {
-                let actual = session.engine.management[0].read_memory(0, address, bytes.len())?;
+                let actual = l6ctl::OwnedControl::new(&session.engine)
+                    .read_symbol(&symbol, bytes.len())?
+                    .bytes;
                 if actual != bytes {
                     return Err(format!(
                         "{symbol} ({address:#010x}) is {actual:02x?}, expected {bytes:02x?}"
@@ -1232,8 +1234,9 @@ impl State {
                     Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
                 loop {
                     session.poll()?;
-                    let actual =
-                        session.engine.management[0].read_memory(0, address, bytes.len())?;
+                    let actual = l6ctl::OwnedControl::new(&session.engine)
+                        .read_symbol_before(&symbol, bytes.len(), deadline)?
+                        .bytes;
                     if actual == bytes {
                         break Ok(
                             json!({"symbol":symbol,"address":format!("{address:#010x}"),"bytes":actual}),

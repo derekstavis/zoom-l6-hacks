@@ -739,6 +739,25 @@ impl Scenario {
                 return Err("menu capture missing ordered-items assertion".into());
             }
         }
+        // A mode snapshot is checked without further guest reads. Keep its
+        // assertions adjacent and under the capture's original deadline.
+        for model in &value.models {
+            let mut scope: Option<(u32, u64, bool, bool)> = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                match (&step.action, &mut scope) {
+                    (Action::CaptureEffectModes, None) => scope = Some((step.guest_timeout_ms, step.wall_timeout_s, false, false)),
+                    (Action::ExpectEffectPanelMode { .. }, Some((guest, wall, panel, _))) if !*panel && (*guest,*wall)==(step.guest_timeout_ms,step.wall_timeout_s) => *panel = true,
+                    (Action::ExpectEffectEditMode { .. }, Some((guest, wall, _, edit))) if !*edit && (*guest,*wall)==(step.guest_timeout_ms,step.wall_timeout_s) => *edit = true,
+                    (Action::EffectModesEnd, Some((guest, wall, panel, edit))) if (*panel || *edit) && (*guest,*wall)==(step.guest_timeout_ms,step.wall_timeout_s) => scope = None,
+                    (Action::CaptureEffectModes | Action::ExpectEffectPanelMode { .. } | Action::ExpectEffectEditMode { .. } | Action::EffectModesEnd, _) => return Err("effect mode checks need one snapshot, unique assertions and matching deadlines".into()),
+                    (_, Some(_)) => return Err("effect mode snapshot must be followed by its assertions".into()),
+                    _ => (),
+                }
+            }
+            if scope.is_some() {
+                return Err("effect mode snapshot is unfinished".into());
+            }
+        }
         // A baseline belongs to one guest generation and one encoder. Avoid
         // silently comparing a later edit against a stale or replaced capture.
         for model in &value.models {
@@ -3444,6 +3463,35 @@ mod menu_scope_tests {
                 &format!("{capture}[[step]]\naction='wait'\nguest_ms=1\n{assertion}"),
                 "l6max"
             )
+            .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod effect_modes_scope_tests {
+    fn parse(steps: &str) -> Result<super::super::Scenario, String> {
+        super::super::Scenario::from_text(&format!(
+            "version=1\nname='modes'\nmodels=['l6max']\nbackends=['headless']\n{steps}"
+        ))
+    }
+    #[test]
+    fn snapshot_requires_unique_adjacent_assertions_and_shared_deadlines() {
+        let capture = "[[step]]\naction='capture-effect-modes'\n";
+        let panel = "[[step]]\naction='expect-effect-panel-mode'\nvalue=6\n";
+        let edit = "[[step]]\naction='expect-effect-edit-mode'\nenabled=true\n";
+        let end = "[[step]]\naction='effect-modes-end'\n";
+        assert!(parse(&format!("{capture}{panel}{edit}{end}")).is_ok());
+        assert!(parse(&format!("{capture}{edit}{end}")).is_ok());
+        assert!(parse(&format!("{capture}{panel}{panel}{end}")).is_err());
+        assert!(parse(&format!("{capture}{end}")).is_err());
+        assert!(parse(&format!("{capture}{panel}")).is_err());
+        assert!(
+            parse(&format!(
+                "{capture}{}{}",
+                panel.replace("value=6", "value=6\nwall_timeout_s=1"),
+                end
+            ))
             .is_err()
         );
     }

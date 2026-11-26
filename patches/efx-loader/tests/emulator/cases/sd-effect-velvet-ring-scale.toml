@@ -35,9 +35,18 @@ panel_mode = 6
 edit_mode = true
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 6
-expected_edit_mode = true
+action = "capture-effect-modes"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 6
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = true
+
+[[step]]
+action = "effect-modes-end"
 
 [[step]]
 action = "expect-button-led"
@@ -127,8 +136,14 @@ action = "wait-effect-mode"
 edit_mode = false
 
 [[step]]
-action = "effect-replacement-state"
-expected_edit_mode = false
+action = "capture-effect-modes"
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = false
+
+[[step]]
+action = "effect-modes-end"
 
 [[step]]
 action = "expect-button-led"
@@ -169,9 +184,18 @@ panel_mode = 6
 edit_mode = true
 
 [[step]]
-action = "effect-replacement-state"
-expected_panel_mode = 6
-expected_edit_mode = true
+action = "capture-effect-modes"
+
+[[step]]
+action = "expect-effect-panel-mode"
+value = 6
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = true
+
+[[step]]
+action = "effect-modes-end"
 
 [[step]]
 action = "expect-button-led"
@@ -211,8 +235,14 @@ action = "wait-effect-mode"
 edit_mode = false
 
 [[step]]
-action = "effect-replacement-state"
-expected_edit_mode = false
+action = "capture-effect-modes"
+
+[[step]]
+action = "expect-effect-edit-mode"
+enabled = false
+
+[[step]]
+action = "effect-modes-end"
 
 [[step]]
 action = "expect-button-led"

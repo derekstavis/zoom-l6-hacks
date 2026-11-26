@@ -824,6 +824,12 @@ impl<'a> OwnedControl<'a> {
             .map_err(ControlError::Rejected)
     }
 
+    /// Read allocator counters with the host's plausibility checks.
+    pub fn checked_heap(&self) -> Result<l6max_host::heap::Heap, ControlError> {
+        l6max_host::heap::read(self.main_qmp()?, self.engine.model())
+            .map_err(ControlError::Rejected)
+    }
+
     /// Validate the allocator once for a bounded set of live counter reads.
     /// Recreate this reader after a guest restart or firmware change.
     pub fn heap_counter_reader(&self) -> Result<l6max_host::heap::CounterReader, ControlError> {

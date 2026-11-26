@@ -567,6 +567,21 @@ impl<'a> OwnedControl<'a> {
         self.engine.connect_midi();
         Ok(())
     }
+    /// Connect a direct MIDI consumer without exposing the engine's USB transport.
+    pub fn direct_midi_before(
+        &self,
+        cable: u8,
+        budget: &l6max_host::usb::Budget,
+    ) -> Result<midi::MidiSession, ControlError> {
+        let usb = self
+            .engine
+            .usb
+            .as_ref()
+            .ok_or(ControlError::Unavailable("USB host unavailable"))?
+            .clone();
+        midi::MidiSession::connect_direct_before(usb, cable, budget).map_err(ControlError::Rejected)
+    }
+
     /// Reserve the owned guest's USB controller for raw USB-MIDI observation.
     pub fn raw_usb_midi(&self) -> Result<l6max_host::usb_midi::RawReceiver, ControlError> {
         let usb = self

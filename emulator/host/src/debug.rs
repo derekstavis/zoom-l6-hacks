@@ -2695,6 +2695,7 @@ mod tests {
             let mut state = self.0.lock().unwrap();
             state.operations.push("resume-before".into());
             state.running_after_cont = true;
+            state.idle_snapshot = false;
             if matches!(state.fail, Some("resume-before" | "resume-and-stop")) {
                 Err("timeout".into())
             } else {
@@ -2705,10 +2706,13 @@ mod tests {
             let mut state = self.0.lock().unwrap();
             state.operations.push("stop".into());
             state.running_after_cont = false;
+            state.idle_snapshot = true;
             Ok(())
         }
         fn resume(&self) -> Result<(), String> {
-            self.0.lock().unwrap().operations.push("resume".into());
+            let mut state = self.0.lock().unwrap();
+            state.operations.push("resume".into());
+            state.idle_snapshot = false;
             Ok(())
         }
         fn stop_before(&self, deadline: Instant) -> Result<(), String> {
@@ -2937,6 +2941,7 @@ mod tests {
             scratch: vec![9; SCRATCH_LEN],
             registers: [42; 26],
             guarded,
+            idle_snapshot: true,
             ..Default::default()
         }));
         let guest = Arc::new(FakeGuest(state.clone()));
@@ -3285,6 +3290,7 @@ mod tests {
     #[test]
     fn idle_evidence_rejects_running_guest_before_register_reads() {
         let (mut session, state) = fake(true, true);
+        state.lock().unwrap().idle_snapshot = false;
         let error = session
             .execute(Command::L6DinIdleEvidence { timeout_ms: 1000 })
             .unwrap_err();

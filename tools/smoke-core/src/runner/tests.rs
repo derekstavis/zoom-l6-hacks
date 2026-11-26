@@ -1858,6 +1858,25 @@ fn synthetic_install_requires_all_boot_and_storage_checks() {
 }
 
 #[test]
+fn audio_callbacks_require_complete_model_scoped_sequence_and_shared_budget() {
+    let source = include_str!("../../../../tests/emulator/cases/audio/audio-path.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    let next = "[[step]]\nmodels = \"l6\"";
+    assert!(!source.contains(next));
+    let l6 = "[[step]]\nmodels = [\"l6\"]\naction = \"audio-callbacks-next\"\nguest_timeout_ms = 60000\nwall_timeout_s = 300\n\n";
+    assert!(source.contains(l6));
+    assert!(Scenario::from_text(&source.replacen(l6, "", 1)).is_err());
+    assert!(
+        Scenario::from_text(&source.replacen("wall_timeout_s = 300", "wall_timeout_s = 299", 1))
+            .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replace("audio-callbacks-assert", "audio-callbacks-end"))
+            .is_err()
+    );
+}
+
+#[test]
 fn patched_update_requires_complete_four_boot_verification() {
     let source =
         include_str!("../../../../tests/emulator/cases/boot/l6max-update-patched-midi.toml");

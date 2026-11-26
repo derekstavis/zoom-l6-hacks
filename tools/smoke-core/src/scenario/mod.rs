@@ -785,7 +785,11 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         until: Option<ChordCondition>,
     },
-    AudioCallbacks,
+    AudioCallbacksBegin,
+    AudioCallbacksNext,
+    AudioCallbacksCapture,
+    AudioCallbacksAssert,
+    AudioCallbacksEnd,
     KnobDialogReady,
     KnobDialogGuard,
     KnobDialogBaseline,

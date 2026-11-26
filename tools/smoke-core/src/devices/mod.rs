@@ -420,7 +420,11 @@ pub enum Operation {
         duration_ms: Option<u32>,
         until: Option<crate::scenario::ChordCondition>,
     },
-    AudioCallbacks,
+    AudioCallbacksBegin,
+    AudioCallbacksNext,
+    AudioCallbacksCapture,
+    AudioCallbacksAssert,
+    AudioCallbacksEnd,
     KnobDialogReady,
     KnobDialogGuard,
     KnobDialogBaseline,
@@ -890,7 +894,7 @@ pub(crate) fn prepare_with_report(
     if scenario.step.iter().any(|s| {
         matches!(
             s.action,
-            crate::Action::AudioCallbacks
+            crate::Action::AudioCallbacksBegin
                 | crate::Action::ExpectSettings { .. }
                 | crate::Action::ExpectRecorder
         )
@@ -913,7 +917,7 @@ pub(crate) fn prepare_with_report(
     if scenario
         .step
         .iter()
-        .any(|s| matches!(s.action, crate::Action::AudioCallbacks))
+        .any(|s| matches!(s.action, crate::Action::AudioCallbacksBegin))
     {
         options.start_paused = true;
         options.gdb_socket = Some(gdb_socket_path(&options.logs, "audio"));
@@ -1097,6 +1101,7 @@ pub struct State {
     sound_pad: Option<audio::sound_pad::SoundPadContext>,
     l6_recorder: Option<audio::recorder::Scope>,
     l6max_recorder: Option<audio::max_recorder::Scope>,
+    audio_callbacks: Option<audio::callbacks::Scope>,
     l6max_timing: Option<timing::Scope>,
     usb_storage_scope: Option<usb_storage_steps::Scope>,
     native_midi: Option<l6ctl::midi::MidiSession>,

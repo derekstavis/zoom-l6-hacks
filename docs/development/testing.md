@@ -138,7 +138,8 @@ no_sd = true
 environment = { L6_AUDIO_TRACE = "1" }
 
 [[step]]
-action = "audio-callbacks"
+action = "wait"
+until = "boot-ready"
 ```
 
 A file with only a `[case]` table either runs another case's scenario

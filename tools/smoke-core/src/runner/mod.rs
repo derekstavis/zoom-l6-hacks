@@ -1391,10 +1391,20 @@ impl Runner {
                         artifact: artifact.clone(),
                     }));
                 }
-                Action::KnobDialogFirstActivation => {
-                    return Ok(Progress::Device(
-                        devices::Operation::KnobDialogFirstActivation,
-                    ));
+                Action::KnobActivationTrigger => {
+                    return Ok(Progress::Device(devices::Operation::KnobActivationTrigger));
+                }
+                Action::KnobActivationWait => {
+                    return Ok(Progress::Device(devices::Operation::KnobActivationWait));
+                }
+                Action::KnobActivationSample => {
+                    return Ok(Progress::Device(devices::Operation::KnobActivationSample));
+                }
+                Action::KnobActivationRestore => {
+                    return Ok(Progress::Device(devices::Operation::KnobActivationRestore));
+                }
+                Action::KnobActivationAssert => {
+                    return Ok(Progress::Device(devices::Operation::KnobActivationAssert));
                 }
                 Action::KnobActiveBegin => {
                     return Ok(Progress::Device(devices::Operation::KnobActiveBegin));

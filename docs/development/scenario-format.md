@@ -271,7 +271,7 @@ message delivered just after the interval.
 | `knob-probe-*` | probe for prepare, delta for trigger | Inject a guarded descriptor conflict, sample rejection, restore it and assert the saved state and heap |
 | `knob-dialog-preflight-begin` | — | Capture the original descriptors, resources and heap, and open the debugger for the following five probes |
 | `knob-race-*` | capture duration and artifact | Observe registration and callback breakpoints, capture and sample rejected descriptor drift, then restore the descriptor before asserting while retaining the notification semaphore for first activation |
-| `knob-dialog-first-activation` | — | Wait for the display callback to return, then verify first activation and restore the notification semaphore |
+| `knob-activation-trigger`, `knob-activation-wait`, `knob-activation-sample`, `knob-activation-restore`, `knob-activation-assert` | — | Check the stopped baseline, trigger with the notification semaphore held, wait atomically for callback return, freeze the stopped evidence, restore the semaphore and assert the snapshot. |
 | `knob-active-*` | — | Turn the knob, capture the active display and preserve its frame and callback pointer |
 | `knob-level-*` | — | Capture the bounded level sweep to at least 69% and back to 0% |
 | `knob-task-*` | — | Verify the input hook and display callback run in different FreeRTOS tasks, retaining their task IDs as evidence |
@@ -347,6 +347,13 @@ message delivered just after the interval.
 | `l6-sweep-*` | `target`, `index` on selected steps | Exercise all L6 panel targets and encoders, compare UART reports, and check unsupported inputs are rejected. The contiguous L6-only scope shares a deadline. |
 | `l6-din-sweep` | — | Sweep supported L6 DIN values and record dispatch behavior |
 | `l6max-timing-*` | `wall_ms`, `guest_ms`, `target`, `hold_ms`, `pairs`, `index` and `steps` on selected steps | L6max: an ordered, shared-deadline scope pauses MAIN and panel, verifies queued input and clock behavior, resumes, checks UART reports and display change, then checks one encoder report. Wall observations and guest-time observations are separate. |
+
+First activation shares the existing knob preflight debugger and its mutation
+journal. Its semaphore restoration and pause/resume ownership still live in the
+test harness; migrating that existing ownership to the host is separate work.
+The observation uses bounded `l6ctl` memory reads, also available through
+`l6ctl memory-read`, but there is no standalone CLI for the full transaction.
+
 
 The shared indicator fragment budgets 10,000 guest ms and 90 wall seconds per
 campaign. Its fixed 6,000 guest ms of observations remain unchanged; the

@@ -338,6 +338,32 @@ fn execute(
         }
         "update-state" => serde_json::to_value(crate::update_state::update_state(qmp, model)?)
             .map_err(|error| error.to_string()),
+        "effect-slot" => {
+            let binding: crate::effect_editor::SlotBinding = serde_json::from_value(
+                request
+                    .get("binding")
+                    .cloned()
+                    .ok_or("effect-slot needs binding")?,
+            )
+            .map_err(|e| e.to_string())?;
+            let fields: crate::effect_editor::SlotFields = serde_json::from_value(
+                request
+                    .get("fields")
+                    .cloned()
+                    .ok_or("effect-slot needs fields")?,
+            )
+            .map_err(|e| e.to_string())?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            let reader = crate::effect_editor::SlotReader::new_before_checked(
+                qmp,
+                model,
+                binding,
+                deadline,
+                &|| Ok(()),
+            )?;
+            serde_json::to_value(reader.snapshot_before_checked(&fields, deadline, &|| Ok(()))?)
+                .map_err(|e| e.to_string())
+        }
         "effect-editor" => {
             let binding: crate::effect_editor::Binding = serde_json::from_value(
                 request

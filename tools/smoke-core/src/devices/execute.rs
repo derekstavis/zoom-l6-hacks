@@ -383,6 +383,7 @@ impl State {
             .transpose();
         self.din_usb = None;
         self.sd_inspection = None;
+        self.effect_slot_deadline = None;
         self.usb_midi = None;
         self.l6_indicator = None;
         self.ui_pad = None;
@@ -513,6 +514,12 @@ impl State {
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
     ) -> Result<Value, String> {
+        if self.effect_slot_deadline.is_some()
+            && !matches!(operation, Operation::EffectReplacementState { .. })
+        {
+            self.effect_slot_deadline = None;
+            return Err("effect slot readiness must be followed by its state assertion".into());
+        }
         if let Some(scope) = self.signal_pwm.as_ref() {
             let valid = match operation {
                 Operation::SignalPwmWarmup {
@@ -1205,6 +1212,38 @@ impl State {
                 .map_err(std::io::Error::other)?;
                 Ok(json!({"panel_mode": panel_mode, "edit_mode": edit_mode}))
             }
+            Operation::WaitEffectSlot {
+                expected_effect_type,
+                expected_processor_type,
+                expected_effect,
+                require_output,
+            } => {
+                if self.effect_slot_deadline.is_some() {
+                    return Err("effect slot wait already active".into());
+                }
+                let reader = wait_effect_slot(
+                    options,
+                    session,
+                    Some(expected_effect_type),
+                    Some(expected_processor_type),
+                    expected_effect.as_deref(),
+                    require_output,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                    operation_start,
+                )
+                .map_err(std::io::Error::other)?;
+                self.effect_slot_deadline = Some(sd::EffectSlotScope {
+                    reader,
+                    start: operation_start.0,
+                    guest_start: operation_start.1,
+                    guest_budget: guest_timeout_ms,
+                    wall_budget: wall_timeout_s,
+                });
+                Ok(
+                    json!({"effect_type":expected_effect_type,"processor_type":expected_processor_type,"effect":expected_effect,"fresh_output":require_output}),
+                )
+            }
             Operation::EffectReplacementState {
                 expected_effect_type,
                 expected_processor_type,
@@ -1217,21 +1256,38 @@ impl State {
                 minimum_exit_ring_refreshes,
                 expected_effect,
                 require_output,
-                wait_for_slot,
             } => {
-                if wait_for_slot {
-                    wait_effect_slot(
-                        options,
-                        session,
-                        expected_effect_type,
-                        expected_processor_type,
-                        expected_effect.as_deref(),
-                        require_output,
+                let prior = self.effect_slot_deadline.take();
+                let (start, guest_start, guest, wall) = prior
+                    .as_ref()
+                    .map(|scope| {
+                        (
+                            scope.start,
+                            scope.guest_start,
+                            scope.guest_budget,
+                            scope.wall_budget,
+                        )
+                    })
+                    .unwrap_or((
+                        operation_start.0,
+                        operation_start.1,
                         guest_timeout_ms,
                         wall_timeout_s,
-                    )
-                    .map_err(std::io::Error::other)?;
+                    ));
+                if (guest, wall) != (guest_timeout_ms, wall_timeout_s) {
+                    return Err("effect slot assertion changed its shared budget".into());
                 }
+                let deadline = start + Duration::from_secs(wall);
+                let check = || -> Result<(), String> {
+                    if Instant::now() >= deadline
+                        || guest_now(session).wrapping_sub(guest_start) > guest
+                    {
+                        Err("effect slot assertion exceeded its shared deadline".into())
+                    } else {
+                        Ok(())
+                    }
+                };
+                check()?;
                 Ok(effect_replacement_state(
                     options,
                     session,
@@ -1246,6 +1302,9 @@ impl State {
                     minimum_exit_ring_refreshes,
                     expected_effect.as_deref(),
                     require_output,
+                    deadline,
+                    &check,
+                    prior.map(|scope| scope.reader),
                 )
                 .map_err(std::io::Error::other)?)
             }

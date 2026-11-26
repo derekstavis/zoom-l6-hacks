@@ -328,6 +328,33 @@ pub(super) fn effect_parameter_edit(
     }
 }
 
+pub(super) struct EffectSlotScope {
+    pub reader: l6max_host::effect_editor::SlotReader,
+    pub start: Instant,
+    pub guest_start: u32,
+    pub guest_budget: u32,
+    pub wall_budget: u64,
+}
+
+fn effect_slot_ready(
+    snapshot: &l6ctl::EffectSlotSnapshot,
+    selected: u8,
+    processor: u8,
+    expected_effect: Option<&str>,
+    baseline: Option<u32>,
+    require_output: bool,
+) -> bool {
+    snapshot.effect_type == selected
+        && snapshot.processor_type == u32::from(processor)
+        && expected_effect.is_none_or(|expected| {
+            snapshot.active_effect_bytes.as_deref() == Some(expected.as_bytes())
+        })
+        && (!require_output
+            || snapshot
+                .output_blocks
+                .is_some_and(|value| value != 0 && Some(value) != baseline))
+}
+
 pub(super) fn wait_effect_slot(
     options: &Options,
     session: &Session,
@@ -337,7 +364,8 @@ pub(super) fn wait_effect_slot(
     require_output: bool,
     guest_timeout_ms: u32,
     wall_timeout_s: u64,
-) -> Result<(), String> {
+    outer_start: (Instant, u32),
+) -> Result<l6max_host::effect_editor::SlotReader, String> {
     const GUEST_TIMEOUT_MS: u32 = 10_000;
     const WALL_TIMEOUT_S: u64 = 180;
     const POLL_INTERVAL_MS: u64 = 10;
@@ -348,103 +376,71 @@ pub(super) fn wait_effect_slot(
         expected_effect_type.ok_or("effect slot readiness needs expected_effect_type")?;
     let processor =
         expected_processor_type.ok_or("effect slot readiness needs expected_processor_type")?;
-    let root = sd_fixture_root(options)?;
-    let report: Value = serde_json::from_slice(
-        &fs::read(
-            root.join(crate::fixture_layout::SD_BUNDLE_BUILD)
-                .join(crate::fixture_layout::PATCH_REPORT),
-        )
-        .map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
-    let symbols = composed_module_report(&report)
-        .and_then(|patch| patch["exports"].as_object())
-        .ok_or("effect replacement debug symbols are missing")?;
-    let offset = |name: &str| -> Result<u32, String> {
-        symbols
-            .get(name)
-            .and_then(Value::as_u64)
-            .and_then(|v| u32::try_from(v).ok())
-            .ok_or_else(|| format!("effect replacement symbol {name} is missing"))
-    };
-    let qmp = &session.engine.management[0];
-    let read_u32 = |address: u32| -> Result<u32, String> {
-        Ok(u32::from_le_bytes(
-            qmp.read_memory(0, address, 4)
-                .map_err(|e| e.to_string())?
-                .try_into()
-                .unwrap(),
-        ))
-    };
-    let registry = sd_registry(qmp, session.engine.model()).map_err(|e| e.to_string())?;
-    let base = read_u32(registry + patch_abi::registry::MODULE_PTR_OFFSET)?;
-    if base == 0 {
-        return Err("effect replacement module is not loaded".into());
+    if require_output && !matches!(processor, 1 | 2) {
+        return Err("output requires a replacement processor".into());
     }
-    let processor_address = base + offset("DUAL_EFFECT_PROCESSOR_TYPE")?;
-    let active = if expected_effect.is_some() {
-        Some((
-            base + offset("DUAL_EFFECT_ACTIVE_EFFECT")?,
-            base + offset("DUAL_EFFECT_ACTIVE_EFFECT_LEN")?,
-        ))
+    let outer_deadline = outer_start.0 + Duration::from_secs(wall_timeout_s);
+    let outer_check = || {
+        if Instant::now() >= outer_deadline
+            || guest_now(session).wrapping_sub(outer_start.1) > guest_timeout_ms
+        {
+            Err("effect slot exceeded its shared deadline".to_owned())
+        } else {
+            Ok(())
+        }
+    };
+    let reader = effect_slot_reader(options, session, outer_deadline, &outer_check)?;
+    let output_fields = l6ctl::EffectSlotFields {
+        output: require_output,
+        output_processor: Some(processor),
+        ..Default::default()
+    };
+    let baseline = if require_output {
+        reader
+            .snapshot_before_checked(&output_fields, outer_deadline, &outer_check)?
+            .output_blocks
     } else {
         None
     };
-    let counter = if require_output {
-        Some(
-            base + offset(match processor {
-                1 => "DUAL_EFFECT_ROOM_OUTPUT_NONZERO",
-                2 => "DUAL_EFFECT_SPRING_OUTPUT_NONZERO",
-                _ => return Err("output requires a replacement processor".into()),
-            })?,
-        )
-    } else {
-        None
-    };
-    let baseline = counter.map(read_u32).transpose()?;
     let start = guest_now(session);
-    let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
+    let deadline = (Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S)))
+        .min(outer_deadline);
+    let check = || {
+        outer_check()?;
+        if Instant::now() >= deadline
+            || guest_now(session).wrapping_sub(start) >= guest_timeout_ms.min(GUEST_TIMEOUT_MS)
+        {
+            Err("effect slot readiness deadline exceeded".to_owned())
+        } else {
+            Ok(())
+        }
+    };
+    let fields = l6ctl::EffectSlotFields {
+        active_effect: expected_effect.is_some(),
+        ..output_fields
+    };
     loop {
+        check()?;
         session.poll()?;
-        let current = qmp
-            .read_memory(0, l6max::mixer_efx_type, 1)
-            .map_err(|e| e.to_string())?[0];
-        let current_processor = read_u32(processor_address)?;
-        let active_matches = if let Some((pointer_address, length_address)) = active {
-            let pointer = read_u32(pointer_address)?;
-            let length = read_u32(length_address)?;
-            if length > 64 {
-                return Err(format!("effect replacement ID claims {length} bytes"));
-            }
-            pointer != 0
-                && length != 0
-                && qmp
-                    .read_memory(0, pointer, length as usize)
-                    .map_err(|e| e.to_string())?
-                    == expected_effect.unwrap().as_bytes()
-        } else {
-            true
-        };
-        let output_ready = if let Some(address) = counter {
-            let value = read_u32(address)?;
-            value != 0 && Some(value) != baseline
-        } else {
-            true
-        };
-        if current == selected
-            && current_processor == u32::from(processor)
-            && active_matches
-            && output_ready
-        {
-            return Ok(());
+        let snapshot = reader.snapshot_before_checked(&fields, deadline, &check)?;
+        let active_matches = expected_effect.is_none_or(|expected| {
+            snapshot.active_effect_bytes.as_deref() == Some(expected.as_bytes())
+        });
+        let output_ready = !require_output
+            || snapshot
+                .output_blocks
+                .is_some_and(|value| value != 0 && Some(value) != baseline);
+        if effect_slot_ready(
+            &snapshot,
+            selected,
+            processor,
+            expected_effect,
+            baseline,
+            require_output,
+        ) {
+            return Ok(reader);
         }
-        if guest_now(session).wrapping_sub(start) >= guest_timeout_ms.min(GUEST_TIMEOUT_MS)
-            || Instant::now() >= deadline
-        {
-            return Err(format!(
-                "effect slot did not become ready: selected={current}, processor={current_processor}, active_matches={active_matches}, output_ready={output_ready}"
-            ));
-        }
+        check().map_err(|error| format!("{error}: selected={}, processor={}, active_matches={active_matches}, output_ready={output_ready}", snapshot.effect_type, snapshot.processor_type))?;
         thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
     }
 }
@@ -532,134 +528,43 @@ pub(super) fn effect_replacement_state(
     minimum_exit_ring_refreshes: Option<u32>,
     expected_effect: Option<&str>,
     require_output: bool,
+    deadline: Instant,
+    check: &dyn Fn() -> Result<(), String>,
+    bound_reader: Option<l6max_host::effect_editor::SlotReader>,
 ) -> Result<Value, String> {
     if session.engine.model() != l6fw::Model::L6max {
         return Err("effect replacement state checks require L6max".into());
     }
-    let root = sd_fixture_root(options)?;
-    let report: Value = serde_json::from_slice(
-        &fs::read(
-            root.join(crate::fixture_layout::SD_BUNDLE_BUILD)
-                .join(crate::fixture_layout::PATCH_REPORT),
-        )
-        .map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-    let symbols = composed_module_report(&report)
-        .and_then(|patch| patch["exports"].as_object())
-        .ok_or("effect replacement debug symbols are missing from its module report")?;
-    let offset = |name: &str| -> Result<u32, String> {
-        symbols
-            .get(name)
-            .ok_or_else(|| format!("effect replacement symbol {name} is missing"))?
-            .as_u64()
-            .and_then(|value| u32::try_from(value).ok())
-            .ok_or_else(|| format!("effect replacement symbol {name} is missing"))
-    };
-    let qmp = &session.engine.management[0];
-    let registry = u32::from_le_bytes(
-        qmp.read_memory(0, patch_abi::registry::L6MAX_POINTER as u32, 4)
-            .map_err(|error| error.to_string())?
-            .try_into()
-            .unwrap(),
-    );
-    let module_base = u32::from_le_bytes(
-        qmp.read_memory(0, registry + patch_abi::registry::MODULE_PTR_OFFSET, 4)
-            .map_err(|error| error.to_string())?
-            .try_into()
-            .unwrap(),
-    );
-    if module_base == 0 {
-        return Err("effect replacement module is not loaded".into());
-    }
-    let effect_type = qmp
-        .read_memory(0, l6max::mixer_efx_type, 1)
-        .map_err(|error| error.to_string())?
-        .first()
-        .copied();
-    let edit_mode = u32::from_le_bytes(
-        qmp.read_memory(
-            0,
-            module_base + offset("DUAL_EFFECT_PARAMETER_EDIT_MODE")?,
-            4,
-        )
-        .map_err(|error| error.to_string())?
-        .try_into()
-        .unwrap(),
-    );
-    let processor_type = u32::from_le_bytes(
-        qmp.read_memory(0, module_base + offset("DUAL_EFFECT_PROCESSOR_TYPE")?, 4)
-            .map_err(|error| error.to_string())?
-            .try_into()
-            .unwrap(),
-    );
-    let panel_mode = u32::from_le_bytes(
-        qmp.read_memory(0, module_base + offset("DUAL_EFFECT_PANEL_MODE")?, 4)
-            .map_err(|error| error.to_string())?
-            .try_into()
-            .unwrap(),
-    );
-    let exit_ring_refreshes = if minimum_exit_ring_refreshes.is_some() {
-        u32::from_le_bytes(
-            qmp.read_memory(
-                0,
-                module_base + offset("DUAL_EFFECT_EXIT_RING_REFRESH_HITS")?,
-                4,
-            )
-            .map_err(|error| error.to_string())?
-            .try_into()
-            .unwrap(),
-        )
-    } else {
-        0
-    };
-    let applied = if minimum_parameter_edits.is_some() {
-        u32::from_le_bytes(
-            qmp.read_memory(0, module_base + offset("DUAL_EFFECT_EDIT_APPLIED")?, 4)
-                .map_err(|error| error.to_string())?
-                .try_into()
-                .unwrap(),
-        )
-    } else {
-        0
+    let reader = match bound_reader {
+        Some(reader) => reader,
+        None => effect_slot_reader(options, session, deadline, check)?,
     };
     let check_dialog = expected_dialog_active.is_some()
         || (expected_edit_mode == Some(true) && minimum_parameter_edits.is_some());
-    let dialog_active = if check_dialog {
-        if let Some(dialog_active_offset) =
-            composed_export_offset(&report, "KNOB_DIALOG_EXTERNAL_TEXT_ACTIVE")
-        {
-            qmp.read_memory(0, module_base + dialog_active_offset, 1)
-                .map_err(|error| error.to_string())?
-                .first()
-                .copied()
-                .ok_or("Knob Dialog active-state byte is missing")?
-        } else if expected_dialog_active == Some(false) {
-            0
-        } else {
+    let fields = l6ctl::EffectSlotFields {
+        applied: minimum_parameter_edits.is_some(),
+        exit_refreshes: minimum_exit_ring_refreshes.is_some(),
+        parameter_id: expected_parameter_id,
+        dialog_active: check_dialog,
+        ..Default::default()
+    };
+    let snapshot = reader.snapshot_before_checked(&fields, deadline, check)?;
+    let effect_type = Some(snapshot.effect_type);
+    let processor_type = snapshot.processor_type;
+    let panel_mode = snapshot.panel_mode;
+    let edit_mode = snapshot.edit_mode;
+    let exit_ring_refreshes = snapshot.exit_refreshes.unwrap_or(0);
+    let applied = snapshot.applied.unwrap_or(0);
+    let dialog_active = match (snapshot.dialog_active, check_dialog, expected_dialog_active) {
+        (Some(value), _, _) => value,
+        (None, true, Some(false)) | (None, false, _) => 0,
+        (None, true, _) => {
             return Err(
                 "Knob Dialog active-state symbol is missing from the composed module report".into(),
             );
         }
-    } else {
-        0
     };
-    let parameter = if let Some(parameter_id) = expected_parameter_id {
-        if parameter_id >= 16 {
-            return Err(format!(
-                "effect replacement parameter id {parameter_id} is out of range"
-            ));
-        }
-        let handoff_offset = offset("PARAMETER_HANDOFF")? + u32::from(parameter_id) * 4;
-        Some(f32::from_bits(u32::from_le_bytes(
-            qmp.read_memory(0, module_base + handoff_offset, 4)
-                .map_err(|error| error.to_string())?
-                .try_into()
-                .unwrap(),
-        )))
-    } else {
-        None
-    };
+    let parameter = snapshot.parameter_bits.map(f32::from_bits);
     if expected_effect_type.is_some_and(|expected| effect_type != Some(expected)) {
         return Err(format!(
             "effect replacement selected effect is {effect_type:?}, expected {expected_effect_type:?}"
@@ -700,59 +605,48 @@ pub(super) fn effect_replacement_state(
             "effect replacement has applied {applied} parameter edits but Knob Dialog is not active ({dialog_active})"
         ));
     }
-    let read_u32 = |address: u32| -> Result<u32, String> {
-        Ok(u32::from_le_bytes(
-            qmp.read_memory(0, address, 4)
-                .map_err(|error| error.to_string())?
-                .try_into()
-                .unwrap(),
-        ))
-    };
-    let active_effect = if expected_effect.is_some() {
-        let pointer = read_u32(module_base + offset("DUAL_EFFECT_ACTIVE_EFFECT")?)?;
-        let length = read_u32(module_base + offset("DUAL_EFFECT_ACTIVE_EFFECT_LEN")?)?;
-        if pointer == 0 || length == 0 {
-            String::new()
-        } else if length > 64 {
+    let active_effect = if let Some(expected) = expected_effect {
+        let later = reader.snapshot_before_checked(
+            &l6ctl::EffectSlotFields {
+                active_effect: true,
+                ..Default::default()
+            },
+            deadline,
+            check,
+        )?;
+        let actual = later.active_effect.unwrap_or_default();
+        if actual != expected {
             return Err(format!(
-                "effect replacement active effect ID claims {length} bytes"
+                "effect replacement runs {actual:?} in the selected slot, expected {expected_effect:?}"
             ));
-        } else {
-            String::from_utf8_lossy(
-                &qmp.read_memory(0, pointer, length as usize)
-                    .map_err(|error| error.to_string())?,
-            )
-            .into_owned()
         }
+        actual
     } else {
         String::new()
     };
-    if let Some(expected) = expected_effect
-        && active_effect != expected
-    {
-        return Err(format!(
-            "effect replacement runs {active_effect:?} in the selected slot, expected {expected:?}"
-        ));
-    }
-    let output_counter = match processor_type {
-        1 => Some("DUAL_EFFECT_ROOM_OUTPUT_NONZERO"),
-        2 => Some("DUAL_EFFECT_SPRING_OUTPUT_NONZERO"),
-        _ => None,
-    };
-    let output_blocks = match output_counter {
-        Some(name) if require_output => read_u32(module_base + offset(name)?)?,
-        _ => 0,
-    };
-    if require_output {
-        if output_counter.is_none() {
+    let output_blocks = if require_output {
+        if !matches!(processor_type, 1 | 2) {
             return Err("effect replacement output check needs a replaced slot selected".into());
         }
-        if output_blocks == 0 {
+        let later = reader.snapshot_before_checked(
+            &l6ctl::EffectSlotFields {
+                output: true,
+                output_processor: Some(processor_type as u8),
+                ..Default::default()
+            },
+            deadline,
+            check,
+        )?;
+        let value = later.output_blocks.unwrap_or(0);
+        if value == 0 {
             return Err(format!(
                 "effect replacement {active_effect:?} has produced no nonzero output in slot {processor_type}"
             ));
         }
-    }
+        value
+    } else {
+        0
+    };
     if expected_parameter_value.is_some() && parameter.is_none() {
         return Err("effect replacement parameter value requires expected_parameter_id".into());
     }
@@ -764,8 +658,9 @@ pub(super) fn effect_replacement_state(
             ));
         }
     }
+    check()?;
     Ok(
-        json!({"effect_type":effect_type,"processor_type":processor_type,"active_effect":active_effect,"nonzero_output_blocks":output_blocks,"panel_mode":panel_mode,"edit_mode":edit_mode,"parameter_edits_applied":applied,"parameter_id":expected_parameter_id,"parameter_value":parameter,"knob_dialog_active":dialog_active,"exit_ring_refreshes":exit_ring_refreshes}),
+        json!({"effect_type":effect_type,"processor_type":processor_type,"active_effect":active_effect,"nonzero_output_blocks":output_blocks,"panel_mode":panel_mode,"edit_mode":edit_mode,"parameter_edits_applied":applied,"parameter_id":expected_parameter_id,"parameter_value":parameter,"knob_dialog_active":dialog_active,"exit_ring_refreshes":exit_ring_refreshes,"atomic":false,"fixture_module_sha256":snapshot.fixture_module_sha256}),
     )
 }
 
@@ -1123,6 +1018,36 @@ pub(super) fn sd_typed_site_chain(
     Ok((chain, links))
 }
 
+/// Bind effect-slot observations to the frozen composed module and loader fixture.
+pub(super) fn effect_slot_reader(
+    options: &Options,
+    session: &Session,
+    deadline: Instant,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<l6max_host::effect_editor::SlotReader, String> {
+    check()?;
+    let main = selected_main_image(options)?;
+    sd_fixture_edits(options, &main, session.engine.model())?;
+    check()?;
+    let output = sd_fixture_root(options)?.join(crate::fixture_layout::SD_BUNDLE_BUILD);
+    let report_bytes =
+        fs::read(output.join(crate::fixture_layout::PATCH_REPORT)).map_err(|e| e.to_string())?;
+    let report: Value = serde_json::from_slice(&report_bytes).map_err(|e| e.to_string())?;
+    let filename = report["patches"]
+        .as_array()
+        .and_then(|patches| (patches.len() == 1).then_some(&patches[0]))
+        .and_then(|patch| patch["file"].as_str())
+        .and_then(|name| Path::new(name).file_name())
+        .ok_or("effect module file missing")?;
+    let bytes = fs::read(output.join("PATCHES").join(filename)).map_err(|e| e.to_string())?;
+    check()?;
+    let binding = l6ctl::EffectSlotBinding::from_fixture(&report_bytes, &bytes)?;
+    check()?;
+    l6ctl::OwnedControl::new(&session.engine)
+        .effect_slot_reader_before_checked(binding, deadline, check)
+        .map_err(|e| e.to_string())
+}
+
 /// Fixture-scoped control of the effect editor's single-slot mailbox.
 pub(super) fn effect_editor_reader(
     options: &Options,
@@ -1301,5 +1226,78 @@ mod paced_effect_tests {
         assert!(paced_effect_state(&before, &sample(0, 9, 0)).unwrap());
         assert!(paced_effect_state(&before, &sample(1, 9, 0)).is_err());
         assert!(paced_effect_state(&before, &sample(0, 10, 0)).is_err());
+    }
+}
+
+#[cfg(test)]
+mod effect_slot_readiness_tests {
+    use super::*;
+    #[test]
+    fn output_must_be_nonzero_and_different_from_baseline() {
+        let mut sample = l6ctl::EffectSlotSnapshot {
+            revision_guard: String::new(),
+            fixture_module_sha256: String::new(),
+            atomic: false,
+            effect_type: 1,
+            processor_type: 1,
+            panel_mode: 0,
+            edit_mode: 0,
+            applied: None,
+            exit_refreshes: None,
+            active_effect: Some("velvet".into()),
+            active_effect_bytes: Some(b"velvet".to_vec()),
+            output_blocks: Some(0),
+            parameter_bits: None,
+            dialog_active: None,
+        };
+        assert!(!effect_slot_ready(
+            &sample,
+            1,
+            1,
+            Some("velvet"),
+            Some(0),
+            true
+        ));
+        sample.output_blocks = Some(42);
+        assert!(!effect_slot_ready(
+            &sample,
+            1,
+            1,
+            Some("velvet"),
+            Some(42),
+            true
+        ));
+        assert!(effect_slot_ready(
+            &sample,
+            1,
+            1,
+            Some("velvet"),
+            Some(u32::MAX),
+            true
+        ));
+        assert!(!effect_slot_ready(
+            &sample,
+            2,
+            1,
+            Some("velvet"),
+            Some(0),
+            true
+        ));
+        assert!(!effect_slot_ready(
+            &sample,
+            1,
+            1,
+            Some("plateau"),
+            Some(0),
+            true
+        ));
+        assert!(effect_slot_ready(
+            &sample,
+            1,
+            1,
+            Some("velvet"),
+            None,
+            false
+        ));
     }
 }

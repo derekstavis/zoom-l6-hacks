@@ -895,6 +895,56 @@ fn effect_editor_client_uses_bounded_typed_wire_contract() {
 }
 
 #[test]
+fn effect_slot_client_uses_typed_non_atomic_wire_contract() {
+    let path = socket_path();
+    let identity = l6max_host::effect_editor::SlotIdentity {
+        module_len: 512,
+        code_len: 256,
+        state_offset: 128,
+        guard_offset: 0,
+        guard: [3; 32],
+        immutable_sha256: "b".repeat(64),
+        masked_words: vec![],
+        fixture_module_sha256: "a".repeat(64),
+    };
+    let binding = l6ctl::EffectSlotBinding {
+        identity,
+        processor: 268,
+        panel_mode: 272,
+        edit_mode: 276,
+        applied: Some(256),
+        exit_refreshes: None,
+        active_pointer: None,
+        active_length: None,
+        room_output: None,
+        spring_output: None,
+        parameters: Some(280),
+        dialog_active: None,
+    };
+    let fields = l6ctl::EffectSlotFields {
+        parameter_id: Some(2),
+        ..Default::default()
+    };
+    let response = json!({"revision_guard":"l6max_1_10_fixture_hook","fixture_module_sha256":"a".repeat(64),"atomic":false,
+        "effect_type":1,"processor_type":1,"panel_mode":2,"edit_mode":1,"applied":null,"exit_refreshes":null,
+        "active_effect":null,"active_effect_bytes":null,"output_blocks":null,"parameter_bits":2143289344u32,"dialog_active":null});
+    let server = server(
+        &path,
+        vec![(
+            json!({"command":"effect-slot","binding":binding,"fields":fields}),
+            json!({"ok":true,"result":response}),
+        )],
+    );
+    let sample = ControlClient::new(&path)
+        .effect_slot(binding, fields)
+        .unwrap();
+    assert!(!sample.atomic);
+    assert!(f32::from_bits(sample.parameter_bits.unwrap()).is_nan());
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn panel_key_client_and_cli_use_typed_wire_contract() {
     let path = socket_path();
     let result = json!({"revision_guard":"l6max_1_10_panel_handler_and_gui","atomic":false,"key_code":25,"bit":1,"word_index":4,"words":[0,0,0,0,2,0]});

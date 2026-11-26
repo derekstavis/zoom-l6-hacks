@@ -21,10 +21,15 @@ action = "include"
 path = "patches/efx-loader/tests/emulator/fragments/effect-replacement-load.toml"
 
 [[step]]
+action = "wait-effect-slot"
+expected_effect_type = 1
+expected_processor_type = 1
+require_output = true
+
+[[step]]
 action = "effect-replacement-state"
 expected_effect_type = 1
 expected_processor_type = 1
-wait_for_slot = true
 require_output = true
 
 [[step]]
@@ -77,7 +82,11 @@ action = "press"
 control = "efx-select"
 
 [[step]]
+action = "wait-effect-slot"
+expected_effect_type = 2
+expected_processor_type = 0
+
+[[step]]
 action = "effect-replacement-state"
 expected_effect_type = 2
 expected_processor_type = 0
-wait_for_slot = true

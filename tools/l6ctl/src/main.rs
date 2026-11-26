@@ -41,7 +41,7 @@ fn run() -> Result<(), String> {
     let command = args.first().map(String::as_str).unwrap_or("help");
     if matches!(command, "help" | "--help" | "-h") {
         println!(
-            "Usage: l6ctl [--socket PATH] info\n       l6ctl [--socket PATH] debug-session\n       l6ctl [--socket PATH] sd-loader status|site INDEX\n       l6ctl [--socket PATH] qmp-status\n       l6ctl [--socket PATH] input status main|panel\n       l6ctl [--socket PATH] input ack main|panel SEQUENCE\n       l6ctl [--socket PATH] heap-counters\n       l6ctl [--socket PATH] memory-read ADDRESS LENGTH\n       l6ctl [--socket PATH] midi-config\n       l6ctl [--socket PATH] mixer-level\n       l6ctl [--socket PATH] panel-key CODE\n       l6ctl [--socket PATH] effect-editor REPORT MODULE\n       l6ctl [--socket PATH] update-state\n       l6ctl [--socket PATH] installer-outcome\n       l6ctl [--socket PATH] usb attach|release|controller\n       l6ctl [--socket PATH] update-gui-state\n       l6ctl [--socket PATH] knob-popup [--text]\n       l6ctl [--socket PATH] recorder-state\n       l6ctl [--socket PATH] knob-parameter-state\n       l6ctl [--socket PATH] rtos heap|tasks|scheduler|objects|all [--pretty]\n       l6ctl [--socket PATH] button NAME|TARGET [--hold-ms MS]\n       l6ctl [--socket PATH] down NAME|TARGET DURATION_MS\n       l6ctl [--socket PATH] up NAME|TARGET\n       l6ctl [--socket PATH] encoder CHANNEL STEPS\n       l6ctl [--socket PATH] analog CHANNEL STEPS\n       l6ctl [--socket PATH] set-analog CHANNEL VALUE\n       l6ctl midi listen ENDPOINT [--timeout-ms MS]\n       l6ctl midi observe ENDPOINT --wall-ms MS\n       l6ctl midi send ENDPOINT CHANNEL CONTROLLER VALUE\n       l6ctl midi send-bytes ENDPOINT HEX_BYTE...\n       l6ctl midi sync ENDPOINT --count N [--quiet-ms MS] [--timeout-ms MS]\n\nConnects to a running emulator started with --control-socket PATH. Button names use the semantic names documented by l6test; numeric targets 0..53 are also accepted. Encoder channels are one-based. Analog channels are 1..5."
+            "Usage: l6ctl [--socket PATH] info\n       l6ctl [--socket PATH] debug-session\n       l6ctl [--socket PATH] sd-loader status|site INDEX\n       l6ctl [--socket PATH] qmp-status\n       l6ctl [--socket PATH] input status main|panel\n       l6ctl [--socket PATH] input ack main|panel SEQUENCE\n       l6ctl [--socket PATH] heap-counters\n       l6ctl [--socket PATH] memory-read ADDRESS LENGTH\n       l6ctl [--socket PATH] midi-config\n       l6ctl [--socket PATH] mixer-level\n       l6ctl [--socket PATH] panel-key CODE\n       l6ctl [--socket PATH] effect-editor REPORT MODULE\n       l6ctl [--socket PATH] effect-slot REPORT MODULE [OPTIONS]\n       l6ctl [--socket PATH] update-state\n       l6ctl [--socket PATH] installer-outcome\n       l6ctl [--socket PATH] usb attach|release|controller\n       l6ctl [--socket PATH] update-gui-state\n       l6ctl [--socket PATH] knob-popup [--text]\n       l6ctl [--socket PATH] recorder-state\n       l6ctl [--socket PATH] knob-parameter-state\n       l6ctl [--socket PATH] rtos heap|tasks|scheduler|objects|all [--pretty]\n       l6ctl [--socket PATH] button NAME|TARGET [--hold-ms MS]\n       l6ctl [--socket PATH] down NAME|TARGET DURATION_MS\n       l6ctl [--socket PATH] up NAME|TARGET\n       l6ctl [--socket PATH] encoder CHANNEL STEPS\n       l6ctl [--socket PATH] analog CHANNEL STEPS\n       l6ctl [--socket PATH] set-analog CHANNEL VALUE\n       l6ctl midi listen ENDPOINT [--timeout-ms MS]\n       l6ctl midi observe ENDPOINT --wall-ms MS\n       l6ctl midi send ENDPOINT CHANNEL CONTROLLER VALUE\n       l6ctl midi send-bytes ENDPOINT HEX_BYTE...\n       l6ctl midi sync ENDPOINT --count N [--quiet-ms MS] [--timeout-ms MS]\n\nConnects to a running emulator started with --control-socket PATH. Button names use the semantic names documented by l6test; numeric targets 0..53 are also accepted. Encoder channels are one-based. Analog channels are 1..5."
         );
         return Ok(());
     }
@@ -146,6 +146,44 @@ fn run() -> Result<(), String> {
         let length: usize = args[2].parse().map_err(|_| "invalid length")?;
         let sample = client
             .read_main_memory(address, length)
+            .map_err(|e| e.to_string())?;
+        println!(
+            "{}",
+            serde_json::to_string(&sample).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    if command == "effect-slot" {
+        if args.len() < 3 {
+            return Err("Usage: l6ctl effect-slot REPORT MODULE [--active] [--output] [--applied] [--refresh] [--dialog] [--parameter ID]".into());
+        }
+        let report = std::fs::read(&args[1]).map_err(|e| e.to_string())?;
+        let module = std::fs::read(&args[2]).map_err(|e| e.to_string())?;
+        let binding = l6ctl::EffectSlotBinding::from_fixture(&report, &module)?;
+        let mut fields = l6ctl::EffectSlotFields::default();
+        let mut index = 3;
+        while index < args.len() {
+            match args[index].as_str() {
+                "--active" => fields.active_effect = true,
+                "--output" => fields.output = true,
+                "--applied" => fields.applied = true,
+                "--refresh" => fields.exit_refreshes = true,
+                "--dialog" => fields.dialog_active = true,
+                "--parameter" => {
+                    index += 1;
+                    fields.parameter_id = Some(
+                        args.get(index)
+                            .ok_or("--parameter needs ID")?
+                            .parse()
+                            .map_err(|_| "invalid parameter ID")?,
+                    );
+                }
+                _ => return Err(format!("unknown effect-slot option {}", args[index])),
+            }
+            index += 1;
+        }
+        let sample = client
+            .effect_slot(binding, fields)
             .map_err(|e| e.to_string())?;
         println!(
             "{}",
@@ -439,6 +477,7 @@ fn run() -> Result<(), String> {
         | Request::MemoryRead { .. }
         | Request::MidiConfig
         | Request::EffectEditor { .. }
+        | Request::EffectSlot { .. }
         | Request::MixerLevel
         | Request::PanelKey { .. }
         | Request::UpdateState

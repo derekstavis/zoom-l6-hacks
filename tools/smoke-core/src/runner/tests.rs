@@ -1858,6 +1858,34 @@ fn synthetic_install_requires_all_boot_and_storage_checks() {
 }
 
 #[test]
+fn effect_slot_wait_requires_matching_adjacent_assertion_and_budget() {
+    let source = "version=1\nname='slot'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='wait-effect-slot'\nexpected_effect_type=1\nexpected_processor_type=1\nrequire_output=true\n[[step]]\naction='effect-replacement-state'\nexpected_effect_type=1\nexpected_processor_type=1\nrequire_output=true\n";
+    assert!(Scenario::from_text(source).is_ok());
+    let empty = source.replace(
+        "require_output=true",
+        "require_output=true\nexpected_effect=''",
+    );
+    assert!(Scenario::from_text(&empty).is_err());
+    assert!(
+        Scenario::from_text(&source.replacen(
+            "expected_processor_type=1",
+            "expected_processor_type=2",
+            1
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replacen(
+            "action='effect-replacement-state'",
+            "wall_timeout_s=1\n[[step]]\naction='effect-replacement-state'",
+            1
+        ))
+        .is_err()
+    );
+    assert!(Scenario::from_text(&source.replace("[[step]]\naction='effect-replacement-state'\nexpected_effect_type=1\nexpected_processor_type=1\nrequire_output=true\n", "")).is_err());
+}
+
+#[test]
 fn audio_callbacks_require_complete_model_scoped_sequence_and_shared_budget() {
     let source = include_str!("../../../../tests/emulator/cases/audio/audio-path.toml");
     assert!(Scenario::from_text(source).is_ok());

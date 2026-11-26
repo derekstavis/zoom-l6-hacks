@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const VERSION: u32 = 9;
+pub const VERSION: u32 = 10;
 pub const PATH_ENV: &str = "L6_TEST_PROGRESS";
 pub const RUN_ENV: &str = "L6_TEST_PROGRESS_RUN";
 pub const ATTEMPT_ENV: &str = "L6_TEST_PROGRESS_ATTEMPT";
@@ -119,6 +119,10 @@ pub enum CaseEvent {
         index: usize,
         label: String,
         started_unix_ms: u64,
+    },
+    /// An assertion failed, but the scenario continues to collect evidence.
+    DeferredAssertionFailed {
+        failure: StepFailure,
     },
     StepProgress {
         index: usize,

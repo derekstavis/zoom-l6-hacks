@@ -104,6 +104,8 @@ pub struct Runner {
     trace_path: PathBuf,
     history: VecDeque<Value>,
     completed: Vec<Value>,
+    deferred_failures: Vec<(usize, crate::progress::StepFailure)>,
+    deferred_terminal: bool,
     last: Option<Observation>,
     started: Instant,
     last_progress: Instant,
@@ -192,6 +194,8 @@ impl Runner {
             trace,
             history: Default::default(),
             completed: vec![],
+            deferred_failures: vec![],
+            deferred_terminal: false,
             last: None,
             started: Instant::now(),
             last_progress: Instant::now(),
@@ -2997,6 +3001,32 @@ impl Runner {
     }
 
     /// Complete a typed engine operation; its assertion evidence joins the same report.
+    /// Retain an assertion failure while later steps collect evidence.
+    pub fn defer_assertion_failure(&mut self, error: String) {
+        let failure = crate::progress::StepFailure {
+            index: self.current_display_index(),
+            label: crate::progress::step_label(&self.scenario.step[self.step].action),
+            error,
+        };
+        self.progress
+            .emit(crate::progress::CaseEvent::DeferredAssertionFailed {
+                failure: failure.clone(),
+            });
+        self.deferred_failures.push((self.step + 1, failure));
+    }
+    pub fn mark_deferred_terminal(&mut self) {
+        self.deferred_terminal = true;
+    }
+    pub fn deferred_assertion_error(&self) -> Option<String> {
+        (!self.deferred_failures.is_empty()).then(|| {
+            self.deferred_failures
+                .iter()
+                .map(|(_, f)| f.error.as_str())
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
+    }
+
     pub fn device_finished(&mut self, evidence: Value) {
         // The L6 sweep verifies these exact counts before completing each
         // scoped action. Device evidence is data, not runner policy.
@@ -3075,21 +3105,28 @@ impl Runner {
         self.history.push_back(event);
     }
     pub fn finish(&self, outcome: &str, error: Option<&str>) -> Result<(), String> {
-        let failure = error.map(|error| crate::progress::StepFailure {
-            index: self
-                .scenario
-                .step
-                .iter()
-                .take(self.step.saturating_add(1))
-                .filter(|step| step.applies_to(self.model))
-                .count(),
-            label: self
-                .scenario
-                .step
-                .get(self.step)
-                .map(|step| crate::progress::step_label(&step.action))
-                .unwrap_or_else(|| "Scenario cleanup".into()),
-            error: error.to_owned(),
+        let deferred = if error.is_some() && self.deferred_terminal {
+            self.deferred_failures.first()
+        } else {
+            None
+        };
+        let failure = deferred.map(|(_, failure)| failure.clone()).or_else(|| {
+            error.map(|error| crate::progress::StepFailure {
+                index: self
+                    .scenario
+                    .step
+                    .iter()
+                    .take(self.step.saturating_add(1))
+                    .filter(|step| step.applies_to(self.model))
+                    .count(),
+                label: self
+                    .scenario
+                    .step
+                    .get(self.step)
+                    .map(|step| crate::progress::step_label(&step.action))
+                    .unwrap_or_else(|| "Scenario cleanup".into()),
+                error: error.to_owned(),
+            })
         });
         self.progress
             .emit(crate::progress::CaseEvent::ScenarioFinished {
@@ -3107,7 +3144,7 @@ impl Runner {
             tracing::info!(event="scenario_finished",scenario=%self.scenario.name,model=self.model.name(),outcome,"scenario completed");
         }
         let report = json!({"schema":1,"scenario":self.scenario.name,"model":self.model.name(),"outcome":outcome,
-            "failed_step": if error.is_some(){Some(self.step+1)}else{None}, "failed_step_label":failure.as_ref().map(|f| &f.label), "error":error,"wall_seconds":self.started.elapsed().as_secs_f64(),
+            "failed_step": if error.is_some(){Some(deferred.map_or(self.step + 1, |(step, _)| *step))}else{None}, "failed_step_label":failure.as_ref().map(|f| &f.label), "error":error,"deferred_failures":self.deferred_failures.iter().map(|(_, failure)| failure).collect::<Vec<_>>(),"wall_seconds":self.started.elapsed().as_secs_f64(),
             "trace_file":self.trace_path,"completed_steps":self.completed,"last_observation":self.last.as_ref().map(Observation::summary),"events":self.history});
         fs::write(
             self.logs.join("scenario.json"),

@@ -1205,6 +1205,7 @@ pub struct State {
     editor_assignment: Option<editor::EditorAssignmentScope>,
     l6_input_sweep: Option<l6_input_sweep::Scope>,
     signal_pwm: Option<signal_pwm::Scope>,
+    deferred_terminal_failure: bool,
     l6_meter_pwm: Option<l6_meter_pwm::Scope>,
     l6_indicator: Option<L6IndicatorScope>,
     panel_event: Option<panel_event::Scope>,

@@ -248,7 +248,8 @@ The printed artifact directory contains:
   does not stop the run; the report remains the authoritative result. The watcher shows
   wall time since the current step or runner startup phase started, including on late
   attachment. Failed steps show their names and error details, including after a late
-  attachment. The summary lists completed runner phases and steps for each case
+  attachment. Deferred assertion failures remain visible while later steps collect
+  evidence and are attributed to their original steps. The summary lists completed runner phases and steps for each case
   and attempt; steps are sorted by wall time.
   An interrupted step has no completed duration. These wall-clock measurements
   may be affected by host load or system clock changes; they are not guest time. File

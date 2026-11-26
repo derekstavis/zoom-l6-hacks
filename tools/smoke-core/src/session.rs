@@ -467,6 +467,10 @@ fn run_with_context(
                     if shared_wall_budget.is_some() {
                         return Err("shared wall deadline was not ended".into());
                     }
+                    if let Some(error) = runner.deferred_assertion_error() {
+                        runner.mark_deferred_terminal();
+                        return Err(error);
+                    }
                     return Ok(());
                 }
                 Progress::Device(devices::Operation::BeginWallDeadline { duration_s }) => {
@@ -1180,13 +1184,24 @@ fn run_with_context(
                         case_progress.clone(),
                         runner.current_progress_index(),
                     );
-                    let evidence = device_state.execute(
+                    let evidence = match device_state.execute(
                         session.as_ref().unwrap(),
                         device_options(managed, &options, lifecycle_boot_options.as_ref())?,
                         operation,
                         step.guest_timeout_ms,
                         step.wall_timeout_s,
-                    )?;
+                    ) {
+                        Ok(evidence) => evidence,
+                        Err(error) => {
+                            if device_state.take_deferred_terminal_failure() {
+                                runner.mark_deferred_terminal();
+                            }
+                            return Err(error);
+                        }
+                    };
+                    if let Some(error) = device_state.take_deferred_assertion() {
+                        runner.defer_assertion_failure(error);
+                    }
                     if let Some(inserted) = card_change {
                         card_inserted = inserted;
                     }

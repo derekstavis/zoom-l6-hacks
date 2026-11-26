@@ -13,6 +13,7 @@ pub(super) struct Scope {
     samples: [Vec<Value>; 2],
     means: [Vec<[f64; 8]>; 2],
     failures: Vec<String>,
+    pending_failure: Option<String>,
 }
 impl Scope {
     pub(super) fn begin(
@@ -39,6 +40,7 @@ impl Scope {
             samples: [vec![], vec![]],
             means: [vec![], vec![]],
             failures: vec![],
+            pending_failure: None,
         })
     }
     fn guest(session: &Session) -> Result<u32, String> {
@@ -214,21 +216,23 @@ impl Scope {
             }
         }
         let failures = &self.failures[failure_start..];
+        self.pending_failure = (!failures.is_empty()).then(|| failures.join("; "));
         Ok(
             json!({"channel":channel+1,"means":details,"passed":failures.is_empty(),"failures":failures}),
         )
     }
-    pub(super) fn finish(&self, options: &Options) -> Result<Value, String> {
+    pub(super) fn take_pending_failure(&mut self) -> Option<String> {
+        self.pending_failure.take()
+    }
+    pub(super) fn finish(&self, options: &Options) -> Result<(Value, Option<String>), String> {
         let evidence = json!({"stimulus":"firmware_shared_channel_level_accumulators","sweeps":[{"group":"signal-1-to-4","accumulator_indices":{"start":0,"end":4},"output_channels":{"start":0,"end":4},"levels":self.samples[0]},{"group":"signal-5-to-8","accumulator_indices":{"start":4,"end":12},"output_channels":{"start":4,"end":8},"levels":self.samples[1]}]});
         fs::write(
             options.logs.join("channel-signal-pwm.json"),
             serde_json::to_vec_pretty(&evidence).map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
-        if !self.failures.is_empty() {
-            return Err(self.failures.join("; "));
-        }
-        Ok(evidence)
+        let failure = (!self.failures.is_empty()).then(|| self.failures.join("; "));
+        Ok((evidence, failure))
     }
 }
 
@@ -249,6 +253,7 @@ mod tests {
             samples: [vec![], vec![]],
             means: [vec![], vec![]],
             failures: vec![],
+            pending_failure: None,
         }
     }
 

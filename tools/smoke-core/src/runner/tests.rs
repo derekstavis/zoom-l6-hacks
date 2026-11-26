@@ -1878,6 +1878,41 @@ fn captured_display_primitives_reject_screenless_l6() {
 }
 
 #[test]
+fn deferred_assertions_keep_original_step_and_do_not_hide_later_errors() {
+    let mut runner =
+        test_runner("[[step]]\naction='delay'\nguest_ms=1\n[[step]]\naction='delay'\nguest_ms=2\n");
+    runner.defer_assertion_failure("first channel mismatch".into());
+    runner.device_finished(json!({"passed":false}));
+    runner.defer_assertion_failure("second channel mismatch".into());
+    runner.device_finished(json!({"passed":false}));
+    let errors = runner.deferred_assertion_error().unwrap();
+    assert!(errors.contains("first channel mismatch"));
+    assert!(errors.contains("second channel mismatch"));
+    runner.mark_deferred_terminal();
+    runner.finish("FAIL", Some(&errors)).unwrap();
+    let report: Value =
+        serde_json::from_slice(&fs::read(runner.logs.join("scenario.json")).unwrap()).unwrap();
+    assert_eq!(report["failed_step"], 1);
+    assert_eq!(report["deferred_failures"].as_array().unwrap().len(), 2);
+    assert_eq!(report["deferred_failures"][1]["index"], 2);
+    fs::remove_dir_all(&runner.logs).unwrap();
+
+    let mut runner =
+        test_runner("[[step]]\naction='delay'\nguest_ms=1\n[[step]]\naction='delay'\nguest_ms=2\n");
+    runner.defer_assertion_failure("prior deferred mismatch".into());
+    runner.device_finished(json!({}));
+    runner
+        .finish("FAIL", Some("later transport failure"))
+        .unwrap();
+    let report: Value =
+        serde_json::from_slice(&fs::read(runner.logs.join("scenario.json")).unwrap()).unwrap();
+    assert_eq!(report["failed_step"], 2);
+    assert_eq!(report["error"], "later transport failure");
+    assert_eq!(report["deferred_failures"].as_array().unwrap().len(), 1);
+    fs::remove_dir_all(&runner.logs).unwrap();
+}
+
+#[test]
 fn completion_does_not_publish_pass_before_adapter_cleanup() {
     let mut runner = test_runner("[[step]]\naction='delay'\nguest_ms=1\n");
     let mut skipped = runner.scenario.step[0].clone();

@@ -27,6 +27,8 @@ cargo l6test cache clean --persistent-cache target/l6test-fixtures
 - `watch RUN` shows live progress for a run in another terminal. It replays and tails
   the run and attempt `progress.jsonl` streams and shows startup phases,
   current steps, and failed step names and errors, including after late attachment.
+  Deferred assertions are shown while evidence collection continues and are
+  attributed to their original steps when the case finishes.
   Ctrl+C closes the view without stopping the suite. Non-terminal output is a
   single plain-text snapshot. Only runs started by a version that writes
   `progress.jsonl` can be watched; a different progress format version is rejected.

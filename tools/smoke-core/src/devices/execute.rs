@@ -444,6 +444,14 @@ impl State {
             Err(errors.join("; "))
         }
     }
+    pub fn take_deferred_assertion(&mut self) -> Option<String> {
+        self.signal_pwm
+            .as_mut()
+            .and_then(|scope| scope.take_pending_failure())
+    }
+    pub fn take_deferred_terminal_failure(&mut self) -> bool {
+        std::mem::take(&mut self.deferred_terminal_failure)
+    }
     pub fn has_signal_pwm(&self) -> bool {
         self.signal_pwm.is_some()
     }
@@ -2930,7 +2938,14 @@ impl State {
                     Operation::SignalPwmAssert { band, channel } => {
                         scope.assert_channel(band, channel)?
                     }
-                    Operation::SignalPwmEnd => scope.finish(options)?,
+                    Operation::SignalPwmEnd => {
+                        let (evidence, failure) = scope.finish(options)?;
+                        if let Some(failure) = failure {
+                            self.deferred_terminal_failure = true;
+                            return Err(failure.into());
+                        }
+                        evidence
+                    }
                     _ => unreachable!(),
                 };
                 scope.check(session, guest_timeout_ms, wall_timeout_s)?;

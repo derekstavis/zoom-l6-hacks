@@ -3574,6 +3574,7 @@ impl State {
                 self.knob_dialog_preflight
                     .as_mut()
                     .ok_or("missing knob-dialog preflight")?,
+                shared.ok_or("missing shared deadline")?,
             ),
             Operation::KnobProbeTrigger { delta } => trigger_preflight_probe(
                 session,

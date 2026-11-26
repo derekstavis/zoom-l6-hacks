@@ -474,43 +474,22 @@ fn effect_slot_checks(text: &mut String, combination: &Combination) {
         if slot.slot_index > 0 {
             press(text, "efx-select", 1);
         }
-        let mut body = format!(
-            "expected_effect_type = {}\nexpected_processor_type = {}",
-            slot.expected_effect_type, slot.expected_processor_type
-        );
-        if let Some(effect) = slot.effect {
-            let _ = write!(
-                body,
-                "\nexpected_effect = {effect:?}\nrequire_output = {}",
-                slot.require_output
-            );
-        }
-        step(text, &format!("action = \"wait-effect-slot\"\n{body}"));
-        step(text, "action = \"capture-effect-state\"");
+        let fragment = if slot.effect.is_some() {
+            "tests/emulator/fragments/patch-matrix-effect-replacement.toml"
+        } else {
+            "tests/emulator/fragments/patch-matrix-effect-stock.toml"
+        };
+        let effect = slot
+            .effect
+            .map(|name| format!(", effect = {name:?}"))
+            .unwrap_or_default();
         step(
             text,
             &format!(
-                "action = \"expect-effect-type\"\nvalue = {}",
-                slot.expected_effect_type
+                "action = \"include\"\npath = {fragment:?}\neffect_slot = {{ effect_type = {}, processor_type = {}{effect} }}",
+                slot.expected_effect_type, slot.expected_processor_type
             ),
         );
-        step(
-            text,
-            &format!(
-                "action = \"expect-effect-processor\"\nvalue = {}",
-                slot.expected_processor_type
-            ),
-        );
-        if let Some(effect) = slot.effect {
-            step(
-                text,
-                &format!("action = \"expect-effect-name\"\nname = {effect:?}"),
-            );
-            if slot.require_output {
-                step(text, "action = \"expect-effect-output\"");
-            }
-        }
-        step(text, "action = \"effect-state-end\"");
     }
     step(text, "action = \"select-mode\"\nmode = \"level\"");
 }
@@ -1373,6 +1352,102 @@ wall_timeout_s = 120
             smoke_core::Scenario::from_text(&case.scenario)
                 .unwrap_or_else(|error| panic!("{}: {error}\n{}", case.id, case.scenario));
         }
+    }
+
+    #[test]
+    fn generated_effect_combinations_preserve_expanded_checks() {
+        fn previous_checks(combination: &Combination) -> String {
+            let mut text = String::new();
+            step(&mut text, "action = \"select-mode\"\nmode = \"efx\"");
+            for slot in effect_slot_plan(combination) {
+                if slot.slot_index > 0 {
+                    press(&mut text, "efx-select", 1);
+                }
+                let mut body = format!(
+                    "expected_effect_type = {}\nexpected_processor_type = {}",
+                    slot.expected_effect_type, slot.expected_processor_type
+                );
+                if let Some(effect) = slot.effect {
+                    let _ = write!(
+                        body,
+                        "\nexpected_effect = {effect:?}\nrequire_output = {}",
+                        slot.require_output
+                    );
+                }
+                step(&mut text, &format!("action = \"wait-effect-slot\"\n{body}"));
+                step(&mut text, "action = \"capture-effect-state\"");
+                step(
+                    &mut text,
+                    &format!(
+                        "action = \"expect-effect-type\"\nvalue = {}",
+                        slot.expected_effect_type
+                    ),
+                );
+                step(
+                    &mut text,
+                    &format!(
+                        "action = \"expect-effect-processor\"\nvalue = {}",
+                        slot.expected_processor_type
+                    ),
+                );
+                if let Some(effect) = slot.effect {
+                    step(
+                        &mut text,
+                        &format!("action = \"expect-effect-name\"\nname = {effect:?}"),
+                    );
+                    if slot.require_output {
+                        step(&mut text, "action = \"expect-effect-output\"");
+                    }
+                }
+                step(&mut text, "action = \"effect-state-end\"");
+            }
+            step(&mut text, "action = \"select-mode\"\nmode = \"level\"");
+            text
+        }
+        let checks = Checks::load().unwrap();
+        let mut count = 0;
+        for model in [Model::L6, Model::L6max] {
+            for combination in combinations(model)
+                .unwrap()
+                .iter()
+                .filter(|c| !c.effects.is_empty())
+            {
+                let case = combination_case(model, combination, &checks).unwrap();
+                let mut current = String::new();
+                effect_slot_checks(&mut current, combination);
+                assert_eq!(case.scenario.matches(&current).count(), 1, "{}", case.id);
+                let previous_text =
+                    case.scenario
+                        .replacen(&current, &previous_checks(combination), 1);
+                let previous = smoke_core::Scenario::from_text(&previous_text).unwrap();
+                let expanded = smoke_core::Scenario::from_text(&case.scenario).unwrap();
+                assert_eq!(
+                    serde_json::to_value(previous.step).unwrap(),
+                    serde_json::to_value(expanded.step).unwrap(),
+                    "{}",
+                    case.id
+                );
+                count += 1;
+            }
+        }
+        assert!(count > 0);
+    }
+
+    #[test]
+    fn effect_slot_binding_rejects_unrelated_fragments() {
+        let scenario = r#"version = 1
+name = "bad-binding"
+models = ["l6max"]
+[[step]]
+action = "include"
+path = "tests/emulator/fragments/sd-module-loaded.toml"
+effect_slot = { effect_type = 1, processor_type = 0 }
+"#;
+        assert!(
+            smoke_core::Scenario::from_text(scenario)
+                .unwrap_err()
+                .contains("effect slot binding requires")
+        );
     }
 
     #[test]

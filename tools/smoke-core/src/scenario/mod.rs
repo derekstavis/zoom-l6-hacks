@@ -443,6 +443,8 @@ pub enum Action {
         include_guest_timeout_ms: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         include_wall_timeout_s: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effect_slot: Option<EffectSlotBinding>,
     },
     Checkpoint {
         name: String,
@@ -1512,6 +1514,15 @@ const NONE: &str = "none";
 /// Environment variable the driver sets to `1` for cases whose persistent
 /// state was built from a state spec.
 pub const STATE_SPEC_ENV: &str = "SMOKE_STATE_SPEC";
+/// Expected observations for the reusable patch-matrix effect-slot fragment.
+#[derive(Clone, Debug, Deserialize, schemars::JsonSchema, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EffectSlotBinding {
+    pub effect_type: u8,
+    pub processor_type: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<String>,
+}
 /// A file of steps that scenarios include.
 #[derive(Deserialize, schemars::JsonSchema, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -1659,6 +1670,63 @@ pub(crate) fn valid_knob_navigation_steps(steps: &[&Step]) -> bool {
         && steps[7..].iter().zip(FIELDS).all(|(step, expected)| matches!(step.action, Action::KnobDialogCheckNavigation { field } if field == expected))
 }
 
+/// Bind only the reviewed effect-slot fragment shape. Refuse a changed or
+/// incomplete fragment rather than silently omitting an assertion.
+fn bind_effect_slot(steps: &mut [Step], binding: &EffectSlotBinding) -> Result<(), String> {
+    if binding.effect_type == 0 || binding.effect.as_ref().is_some_and(String::is_empty) {
+        return Err("effect slot binding needs a nonzero type and nonempty effect ID".into());
+    }
+    let replacement = binding.effect.is_some();
+    let expected_len = if replacement { 7 } else { 5 };
+    let valid = steps.len() == expected_len
+        && matches!(
+            &steps[0].action,
+            Action::WaitEffectSlot {
+                expected_effect_type: 0,
+                expected_processor_type: 0,
+                expected_effect: None,
+                require_output: false
+            }
+        )
+        && matches!(
+            &steps[1].action,
+            Action::CaptureEffectState {
+                edits: false,
+                dialog: false
+            }
+        )
+        && matches!(&steps[2].action, Action::ExpectEffectType { value: 0 })
+        && matches!(&steps[3].action, Action::ExpectEffectProcessor { value: 0 })
+        && matches!(
+            steps.last().map(|s| &s.action),
+            Some(Action::EffectStateEnd)
+        )
+        && (!replacement
+            || (matches!(&steps[4].action, Action::ExpectEffectName { name } if name == "__effect_slot__")
+                && matches!(&steps[5].action, Action::ExpectEffectOutput)));
+    if !valid {
+        return Err(
+            "effect slot binding requires the complete stock or replacement fragment".into(),
+        );
+    }
+    steps[0].action = Action::WaitEffectSlot {
+        expected_effect_type: binding.effect_type,
+        expected_processor_type: binding.processor_type,
+        expected_effect: binding.effect.clone(),
+        require_output: replacement,
+    };
+    steps[2].action = Action::ExpectEffectType {
+        value: binding.effect_type,
+    };
+    steps[3].action = Action::ExpectEffectProcessor {
+        value: binding.processor_type,
+    };
+    if let Some(name) = &binding.effect {
+        steps[4].action = Action::ExpectEffectName { name: name.clone() };
+    }
+    Ok(())
+}
+
 /// Expand includes. A fragment is shared, so its steps scoped only to models
 /// the scenario does not run (`scope`) are left out.
 fn expand_steps(
@@ -1673,6 +1741,7 @@ fn expand_steps(
             path,
             include_guest_timeout_ms,
             include_wall_timeout_s,
+            effect_slot,
         } = &step.action
         {
             if stack.len() >= 8 {
@@ -1693,6 +1762,9 @@ fn expand_steps(
             }
             let mut nested = expand_steps(fragment.step, scope, stack, sources)?;
             stack.pop();
+            if let Some(binding) = effect_slot {
+                bind_effect_slot(&mut nested, binding)?;
+            }
             for child in &mut nested {
                 child.setup_input |= step.setup_input;
                 if !step.models.is_empty() {

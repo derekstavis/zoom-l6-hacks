@@ -82,6 +82,13 @@ mixed deadlines are rejected so a shorter intentional budget is not silently
 extended. Nested includes expand inside out. These overrides do not change
 observation durations or other timing parameters inside an action.
 
+The generated patch matrix binds the stock and replacement effect-slot fragments
+with `effect_slot = { effect_type = 1, processor_type = 1, effect = "plateau" }`
+on an `include`. Omit `effect` for a stock slot. This typed binding supplies the
+expected observations, and expansion rejects a fragment that does not contain
+the complete corresponding assertion sequence. It is specific to those fragments,
+not general string interpolation. The fragment remains a recorded scenario source.
+
 Mark only input whose result a state spec reproduces with `setup_input`. Input
 that is the behavior under test, or that sets runtime-only state (for example
 card-reader mode), stays unmarked.

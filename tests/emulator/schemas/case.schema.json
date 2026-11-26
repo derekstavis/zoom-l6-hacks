@@ -517,6 +517,35 @@
       ],
       "type": "string"
     },
+    "EffectSlotBinding": {
+      "additionalProperties": false,
+      "description": "Expected observations for the reusable patch-matrix effect-slot fragment.",
+      "properties": {
+        "effect": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "effect_type": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "processor_type": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "effect_type",
+        "processor_type"
+      ],
+      "type": "object"
+    },
     "Exhaustion": {
       "enum": [
         "fail",
@@ -1763,6 +1792,16 @@
             "action": {
               "const": "include",
               "type": "string"
+            },
+            "effect_slot": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/EffectSlotBinding"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "guest_timeout_ms": {
               "default": 10000,

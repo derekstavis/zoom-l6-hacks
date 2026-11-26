@@ -1,0 +1,19 @@
+# Bound by include.effect_slot before validation.
+[[step]]
+action = "wait-effect-slot"
+expected_effect_type = 0
+expected_processor_type = 0
+
+[[step]]
+action = "capture-effect-state"
+
+[[step]]
+action = "expect-effect-type"
+value = 0
+
+[[step]]
+action = "expect-effect-processor"
+value = 0
+
+[[step]]
+action = "effect-state-end"

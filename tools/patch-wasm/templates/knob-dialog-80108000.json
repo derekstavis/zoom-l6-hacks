@@ -11,6 +11,7 @@
       "target": "0x801080ac"
     }
   ],
+  "knob_callback_offset": 1436,
   "model": "L6max",
   "name": "knob-dialog",
   "patch_info_offset": 3248,

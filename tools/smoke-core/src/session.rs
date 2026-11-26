@@ -1137,6 +1137,10 @@ fn run_with_context(
                     }
                     device_state.restarted()?;
                     drop(session.take());
+                    if options.fixture_firmware_report.is_none() {
+                        options.fixture_firmware_report =
+                            Some(options.logs.join(crate::fixture_layout::FIRMWARE_REPORT));
+                    }
                     options.logs = options.logs.join("restart");
                     let mut restart_options = options.clone();
                     if !card_inserted {

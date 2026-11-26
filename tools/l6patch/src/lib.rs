@@ -694,7 +694,12 @@ pub fn build(options: BuildRequest) -> Result<(), Box<dyn std::error::Error>> {
             hooks: unit_hooks,
             identity: symbol(&symbols, patch_compile::PATCH_INFO_SYMBOL)?,
         });
-        compiled.push((registrations, hooks));
+        let knob_callback = if name == "knob-dialog" {
+            Some(symbol(&symbols, "knob_dialog_display_tick")?)
+        } else {
+            None
+        };
+        compiled.push((registrations, hooks, knob_callback));
         base = next;
     }
     let image = Image {
@@ -705,7 +710,9 @@ pub fn build(options: BuildRequest) -> Result<(), Box<dyn std::error::Error>> {
         slot_end,
     };
     let placed = compose(image, loader.as_ref(), units)?;
-    for ((name, placed), (registrations, hooks)) in patches.iter().zip(placed).zip(compiled) {
+    for ((name, placed), (registrations, hooks, knob_callback)) in
+        patches.iter().zip(placed).zip(compiled)
+    {
         let applied_hooks = placed
             .installed
             .iter()
@@ -722,7 +729,22 @@ pub fn build(options: BuildRequest) -> Result<(), Box<dyn std::error::Error>> {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        applied.push(serde_json::json!({"name":name,"payload_address":format!("{:#x}", placed.base),"payload_length":placed.payload_len,"hooks":applied_hooks,"call_site_hooks":call_site_hooks}));
+        if let Some(callback) = knob_callback {
+            let payload_end = placed
+                .base
+                .checked_add(u32::try_from(placed.payload_len)?)
+                .ok_or("knob payload range overflow")?;
+            if callback < placed.base
+                || callback.checked_add(32).is_none_or(|end| end > payload_end)
+            {
+                return Err("knob callback outside placed payload".into());
+            }
+        }
+        let mut entry = serde_json::json!({"name":name,"payload_address":format!("{:#x}", placed.base),"payload_length":placed.payload_len,"hooks":applied_hooks,"call_site_hooks":call_site_hooks});
+        if let Some(callback) = knob_callback {
+            entry["knob_callback"] = serde_json::json!(callback);
+        }
+        applied.push(entry);
     }
     // The output holds the unpacked patched package and the package itself.
     let (mut manifest, mut segments) = l6fw::read_unpacked(&source)?;

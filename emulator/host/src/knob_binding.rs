@@ -10,6 +10,119 @@ use sha2::{Digest, Sha256};
 use std::time::Instant;
 
 const GUARD_LEN: usize = 32;
+/// Exact callback and hook bytes derived from a report-identical firmware image.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FirmwareBinding {
+    pub image_sha256: String,
+    pub payload_address: u32,
+    pub payload_length: u32,
+    pub callback: u32,
+    pub callback_guard: [u8; GUARD_LEN],
+    pub hook_guard: [u8; GUARD_LEN],
+}
+impl FirmwareBinding {
+    pub fn from_fixture(report: &[u8], image: &[u8]) -> Result<Self, String> {
+        let value: serde_json::Value = serde_json::from_slice(report).map_err(|e| e.to_string())?;
+        let hash = format!("{:x}", Sha256::digest(image));
+        if value["model"].as_str() != Some("L6max")
+            || value["image_length"].as_u64() != Some(image.len() as u64)
+            || value["patched_sha256"].as_str() != Some(hash.as_str())
+        {
+            return Err("firmware report does not identify the selected L6max MAIN image".into());
+        }
+        let patches = value["patches"]
+            .as_array()
+            .ok_or("firmware report missing patches")?;
+        let mut knob = patches
+            .iter()
+            .filter(|patch| patch["name"].as_str() == Some("knob-dialog"));
+        let patch = knob.next().ok_or("firmware report missing knob-dialog")?;
+        if knob.next().is_some() {
+            return Err("ambiguous knob firmware report".into());
+        }
+        let address = patch["payload_address"]
+            .as_str()
+            .and_then(|s| u32::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+            .ok_or("invalid knob payload address")?;
+        let length = patch["payload_length"]
+            .as_u64()
+            .and_then(|v| u32::try_from(v).ok())
+            .ok_or("invalid knob payload length")?;
+        let callback = patch["knob_callback"]
+            .as_u64()
+            .and_then(|v| u32::try_from(v).ok())
+            .ok_or("firmware report missing knob callback export")?;
+        let end = address.checked_add(length).ok_or("knob payload overflow")?;
+        if address < l6fw::Model::L6max.main_base()
+            || end > l6fw::Model::L6max.slot_end()
+            || callback & 1 != 0
+            || callback < address
+            || callback
+                .checked_add(GUARD_LEN as u32)
+                .is_none_or(|v| v > end)
+        {
+            return Err("knob callback outside firmware payload".into());
+        }
+        let read = |a: u32| -> Result<[u8; GUARD_LEN], String> {
+            let offset = a
+                .checked_sub(l6fw::Model::L6max.main_base())
+                .ok_or("firmware address precedes image")? as usize;
+            image
+                .get(
+                    offset
+                        ..offset
+                            .checked_add(GUARD_LEN)
+                            .ok_or("firmware guard overflow")?,
+                )
+                .ok_or("firmware guard outside image")?
+                .try_into()
+                .map_err(|_| "short firmware guard".into())
+        };
+        Ok(Self {
+            image_sha256: hash,
+            payload_address: address,
+            payload_length: length,
+            callback: callback | 1,
+            callback_guard: read(callback)?,
+            hook_guard: read(firmware_api::l6max::mixer_apply_channel_parameter)?,
+        })
+    }
+    pub fn validate_live(
+        &self,
+        registered: u32,
+        mut read: impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
+    ) -> Result<(), String> {
+        let address = self.callback & !1;
+        if self.image_sha256.len() != 64
+            || !self.image_sha256.bytes().all(|b| b.is_ascii_hexdigit())
+            || self.payload_address < l6fw::Model::L6max.main_base()
+            || self
+                .payload_address
+                .checked_add(self.payload_length)
+                .is_none_or(|end| end > l6fw::Model::L6max.slot_end())
+            || self.callback & 1 == 0
+            || registered != self.callback
+            || address < self.payload_address
+            || address.checked_add(GUARD_LEN as u32).is_none_or(|end| {
+                self.payload_address
+                    .checked_add(self.payload_length)
+                    .is_none_or(|payload_end| end > payload_end)
+            })
+        {
+            return Err("registered callback does not match firmware binding".into());
+        }
+        if read(
+            firmware_api::l6max::mixer_apply_channel_parameter,
+            GUARD_LEN,
+        )? != self.hook_guard
+            || read(address, GUARD_LEN)? != self.callback_guard
+        {
+            return Err("live knob firmware code does not match selected image".into());
+        }
+        Ok(())
+    }
+}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SdBinding {
@@ -163,6 +276,45 @@ impl SdBinding {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn firmware_binding_requires_exact_export_image_and_live_bytes() {
+        let base = l6fw::Model::L6max.main_base();
+        let mut image = vec![0u8; 0x100000];
+        let payload = base + 0xe0000;
+        let callback = payload + 0x100;
+        image[(callback - base) as usize] = 0x42;
+        let report = serde_json::json!({"model":"L6max","image_length":image.len(),"patched_sha256":format!("{:x}",Sha256::digest(&image)),"patches":[{"name":"knob-dialog","payload_address":format!("{payload:#x}"),"payload_length":1024,"knob_callback":callback}]});
+        let binding =
+            FirmwareBinding::from_fixture(&serde_json::to_vec(&report).unwrap(), &image).unwrap();
+        let read = |address: u32, length: usize| -> Result<Vec<u8>, String> {
+            let offset = (address - base) as usize;
+            Ok(image[offset..offset + length].to_vec())
+        };
+        assert!(binding.validate_live(callback | 1, read).is_ok());
+        assert!(binding.validate_live((callback + 2) | 1, read).is_err());
+        assert!(
+            binding
+                .validate_live(callback | 1, |_, n| Ok(vec![0xff; n]))
+                .is_err()
+        );
+        let mut missing = report.clone();
+        missing["patches"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("knob_callback");
+        assert!(
+            FirmwareBinding::from_fixture(&serde_json::to_vec(&missing).unwrap(), &image).is_err()
+        );
+        let mut outside = report.clone();
+        outside["patches"][0]["knob_callback"] = serde_json::json!(payload + 1024);
+        assert!(
+            FirmwareBinding::from_fixture(&serde_json::to_vec(&outside).unwrap(), &image).is_err()
+        );
+        image[0] ^= 1;
+        assert!(
+            FirmwareBinding::from_fixture(&serde_json::to_vec(&report).unwrap(), &image).is_err()
+        );
+    }
     #[test]
     #[ignore = "requires L6_KNOB_SD_REPORT and L6_KNOB_SD_MODULE"]
     fn real_sd_fixture_binds_hook_and_callback_and_rejects_mutation() {

@@ -35,6 +35,7 @@ struct Unit {
     continuation_slots: Vec<Option<ContinuationSlot>>,
     /// Offset of the payload's identity record from `base`.
     patch_info_offset: u32,
+    knob_callback_offset: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -77,6 +78,21 @@ fn parse_unit(payload: &[u8], metadata_json: &str) -> Result<Unit, String> {
     let model = Model::from_label(model_name)
         .ok_or_else(|| format!("unknown firmware model in template: {model_name}"))?;
     let base = parse_hex(&meta["base"])?;
+    let knob_callback_offset = match meta["knob_callback_offset"].as_u64() {
+        Some(value) => Some(u32::try_from(value).map_err(|_| "invalid knob callback offset")?),
+        None if meta["name"].as_str() == Some("knob-dialog") => {
+            return Err("knob template missing callback offset".into());
+        }
+        None => None,
+    };
+    if knob_callback_offset.is_some_and(|offset| {
+        offset & 1 != 0
+            || offset
+                .checked_add(32)
+                .is_none_or(|end| end as usize > payload.len())
+    }) {
+        return Err("knob callback offset outside template".into());
+    }
     let windows = meta["windows"]
         .as_array()
         .ok_or("metadata missing windows")?
@@ -141,6 +157,7 @@ fn parse_unit(payload: &[u8], metadata_json: &str) -> Result<Unit, String> {
         hook_symbols,
         continuation_slots,
         patch_info_offset: patch_info_offset(&meta)?,
+        knob_callback_offset,
     })
 }
 
@@ -392,8 +409,10 @@ pub fn apply_patches_with_loader(
         });
     }
     let mut units = Vec::new();
+    let mut knob_callbacks = Vec::new();
     for &name in &ordered {
         let unit = find_unit(name, model, base)?;
+        knob_callbacks.push(unit.knob_callback_offset.map(|offset| unit.base + offset));
         diagnostic_hooks.extend(unit.hooks.iter().zip(&unit.hook_symbols).map(|(hook, symbol)| {
             serde_json::json!({"address": hook.address, "target": hook.target, "symbol": symbol, "displaced_length": hook.length})
         }));
@@ -434,12 +453,20 @@ pub fn apply_patches_with_loader(
         firmware_base,
         slot_end,
     };
-    for (name, placed) in ordered.iter().zip(compose(image, loader.as_ref(), units)?) {
-        applied_report.push(serde_json::json!({
+    for ((name, placed), callback) in ordered
+        .iter()
+        .zip(compose(image, loader.as_ref(), units)?)
+        .zip(knob_callbacks)
+    {
+        let mut entry = serde_json::json!({
             "name": name,
             "payload_address": format!("{:#x}", placed.base),
             "payload_length": placed.payload_len,
-        }));
+        });
+        if let Some(callback) = callback {
+            entry["knob_callback"] = serde_json::json!(callback);
+        }
+        applied_report.push(entry);
     }
 
     let patched_sha256 = format!("{:x}", Sha256::digest(&firmware));
@@ -548,6 +575,17 @@ mod tests {
         let unit = find_unit("knob-dialog", Model::L6max, Model::L6max.first_payload(0)).unwrap();
         assert_eq!(unit.hooks.len(), unit.hook_symbols.len());
         assert!(unit.hooks.iter().all(|hook| hook.length >= 4));
+        assert!(unit.knob_callback_offset.is_some());
+    }
+
+    #[test]
+    fn knob_template_requires_bounded_even_callback() {
+        let missing = r#"{"name":"knob-dialog","model":"L6max","base":"0x80108000","windows":[],"hooks":[],"patch_info_offset":0}"#;
+        assert!(parse_unit(&[0; 64], missing).is_err());
+        let outside = r#"{"name":"knob-dialog","model":"L6max","base":"0x80108000","windows":[],"hooks":[],"patch_info_offset":0,"knob_callback_offset":40}"#;
+        assert!(parse_unit(&[0; 64], outside).is_err());
+        let odd = r#"{"name":"knob-dialog","model":"L6max","base":"0x80108000","windows":[],"hooks":[],"patch_info_offset":0,"knob_callback_offset":1}"#;
+        assert!(parse_unit(&[0; 64], odd).is_err());
     }
 
     #[test]

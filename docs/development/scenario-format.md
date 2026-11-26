@@ -352,6 +352,14 @@ First activation shares the existing knob preflight debugger. Journal state
 and cleanup ordering live in `l6max-host`; the debugger lease, semaphore
 restoration and pause/resume ownership still live in the test harness.
 Migrating that existing ownership to the host is separate work.
+During preflight, an in-process host check stops MAIN and compares the widget 7,
+background 10 and notification semaphore pointers with their live table slots
+and mapped writable spans. Before each widget/background probe write, it
+rechecks those slots; the widget 60 alias probes also check that widget's slot
+and span. These observations do not establish allocation ownership or grant a
+complete write capability. Later semaphore and bitmap mutations and the
+debugger lease remain in the existing harness transaction; the target checks
+have no standalone socket or CLI counterpart.
 The observation uses bounded `l6ctl` memory reads, also available through
 `l6ctl memory-read`, but there is no standalone CLI for the full transaction.
 

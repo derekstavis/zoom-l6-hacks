@@ -10,6 +10,72 @@ use sha2::{Digest, Sha256};
 use std::time::Instant;
 
 const GUARD_LEN: usize = 32;
+
+/// Dynamic objects used by the knob preflight. This binds the observed table
+/// entries to bounded writable MAIN RAM; it does not acquire a debug lease or
+/// authorize arbitrary writes. It does not establish allocation ownership or
+/// cover widget 60 or other backgrounds. Call while MAIN is stopped; callers
+/// must revalidate targets when authorizing later mutations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PreflightTargets {
+    pub widget7: u32,
+    pub background10: u32,
+    pub notification_semaphore: u32,
+}
+impl PreflightTargets {
+    pub fn verify(
+        self,
+        mut read_word: impl FnMut(u32) -> Result<u32, String>,
+    ) -> Result<Self, String> {
+        fn writable(address: u32, length: u32) -> bool {
+            address.checked_add(length).is_some_and(|end| {
+                (address >= 0x2000_0000 && end <= 0x2030_0000)
+                    || (address >= 0x8020_0000 && end <= 0x8420_0000)
+            })
+        }
+        if !writable(self.widget7, 16)
+            || !writable(self.background10, 1)
+            || self.notification_semaphore & 3 != 0
+            || !writable(self.notification_semaphore, 60)
+        {
+            return Err("knob preflight target outside writable MAIN RAM".into());
+        }
+        for (address, expected) in [
+            (firmware_api::l6max::gui_widget_table + 7 * 4, self.widget7),
+            (
+                firmware_api::l6max::gui_background_table + 10 * 4,
+                self.background10,
+            ),
+            (
+                firmware_api::l6max::notification_slot,
+                self.notification_semaphore,
+            ),
+        ] {
+            if read_word(address)? != expected {
+                return Err(format!("knob preflight target changed at {address:#010x}"));
+            }
+        }
+        Ok(self)
+    }
+}
+
+/// Verify the optional recorder widget used for the alias/collision probes.
+/// This is a stopped-guest observation, not a persistent write capability.
+pub fn verify_preflight_widget60(
+    widget: u32,
+    read_word: impl FnOnce(u32) -> Result<u32, String>,
+) -> Result<(), String> {
+    let end = widget.checked_add(16).ok_or("widget 60 range overflow")?;
+    if !((widget >= 0x2000_0000 && end <= 0x2030_0000)
+        || (widget >= 0x8020_0000 && end <= 0x8420_0000))
+    {
+        return Err("widget 60 outside writable MAIN RAM".into());
+    }
+    if read_word(firmware_api::l6max::gui_widget_table + 60 * 4)? != widget {
+        return Err("widget 60 changed before preflight probe".into());
+    }
+    Ok(())
+}
 /// Exact callback and hook bytes derived from a report-identical firmware image.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -276,6 +342,43 @@ impl SdBinding {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn preflight_targets_require_live_identity_and_bounded_writable_spans() {
+        let targets = PreflightTargets {
+            widget7: 0x8020_1000,
+            background10: 0x8020_2000,
+            notification_semaphore: 0x8020_3000,
+        };
+        let read = |address| match address {
+            a if a == firmware_api::l6max::gui_widget_table + 28 => Ok(targets.widget7),
+            a if a == firmware_api::l6max::gui_background_table + 40 => Ok(targets.background10),
+            a if a == firmware_api::l6max::notification_slot => Ok(targets.notification_semaphore),
+            _ => Err("unexpected address".into()),
+        };
+        assert_eq!(targets.verify(read).unwrap(), targets);
+        assert!(targets.verify(|_| Ok(0)).is_err());
+        assert!(
+            PreflightTargets {
+                widget7: 0x841f_fff8,
+                ..targets
+            }
+            .verify(read)
+            .is_err()
+        );
+        assert!(
+            PreflightTargets {
+                notification_semaphore: 0x8020_3001,
+                ..targets
+            }
+            .verify(read)
+            .is_err()
+        );
+        assert!(targets.verify(|_| Err("deadline".into())).is_err());
+        let alias = 0x8020_4000;
+        assert!(verify_preflight_widget60(alias, |_| Ok(alias)).is_ok());
+        assert!(verify_preflight_widget60(alias, |_| Ok(alias + 4)).is_err());
+        assert!(verify_preflight_widget60(0x841f_fff8, |_| Ok(0)).is_err());
+    }
     #[test]
     fn firmware_binding_requires_exact_export_image_and_live_bytes() {
         let base = l6fw::Model::L6max.main_base();

@@ -991,6 +991,45 @@ pub(super) fn begin_preflight(
     let mut debugger = KnobDebugSession::connect(qmp, socket)?;
     let sd_expected_callback =
         verify_sd_knob_fixture(session, options, &mut debugger, sd_knob, shared)?;
+    // Freeze the dynamic targets while retaining the existing debugger lease.
+    // The host check binds these to the live tables and writable RAM; the
+    // legacy debugger transaction remains responsible for all mutations.
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    let deadline = shared.0 + Duration::from_secs(shared.3);
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    qmp.stop_before(deadline)?;
+    let targets = l6ctl::KnobPreflightTargets {
+        widget7,
+        background10,
+        notification_semaphore,
+    };
+    let verified = targets.verify(|address| {
+        remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)
+            .map_err(|e| e.to_string())?;
+        let bytes = qmp
+            .read_memory_before(0, address, 4, deadline)
+            .map_err(|e| e.to_string())?;
+        remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)
+            .map_err(|e| e.to_string())?;
+        Ok(u32::from_le_bytes(
+            bytes.try_into().map_err(|_| "short target pointer")?,
+        ))
+    });
+    let resume = remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)
+        .map_err(|e| std::io::Error::other(e.to_string()))
+        .and_then(|_| debugger.resume_guest_before(deadline));
+    match (verified, resume) {
+        (Ok(_), Ok(())) => (),
+        (Err(error), Ok(())) => return Err(error.into()),
+        (Ok(_), Err(error)) => {
+            return Err(format!("knob target verification resume failed: {error}").into());
+        }
+        (Err(error), Err(resume)) => {
+            return Err(
+                format!("{error}; knob target verification resume failed: {resume}").into(),
+            );
+        }
+    }
     Ok(PreflightContext {
         original_window,
         original_bitmap,
@@ -1065,6 +1104,7 @@ fn preflight_rejected(state: &[u8], callback: &[u8], heap: &[u32], baseline_heap
 }
 
 struct PendingPreflightProbe {
+    kind: crate::scenario::PreflightProbe,
     address: u32,
     original: Vec<u8>,
     replacement: Vec<u8>,
@@ -1077,7 +1117,7 @@ pub(super) fn preflight_probe_index(context: &PreflightContext) -> usize {
 }
 
 pub(super) fn prepare_preflight_probe(
-    session: &Session,
+    _session: &Session,
     context: &mut PreflightContext,
     probe: crate::scenario::PreflightProbe,
 ) -> Result<Value, Box<dyn std::error::Error>> {
@@ -1085,7 +1125,6 @@ pub(super) fn prepare_preflight_probe(
     if context.next != probe.index() || context.pending_preflight_probe.is_some() {
         return Err("knob-dialog preflight probes are out of order".into());
     }
-    let qmp = &session.engine.management[0];
     let (address, original, replacement, description) = match probe {
         P::Descriptor => (
             context.widget7 + 6,
@@ -1093,37 +1132,19 @@ pub(super) fn prepare_preflight_probe(
             vec![2, 0],
             "descriptor drift",
         ),
-        P::TextAlias => {
-            let alias = u32::from_le_bytes(
-                qmp.read_memory(0, l6max::gui_widget_table + 60 * 4, 4)?
-                    .try_into()
-                    .unwrap(),
-            );
-            context.alias_widget = Some(alias);
-            (
-                alias + 4,
-                qmp.read_memory(0, alias + 4, 2)?,
-                179u16.to_le_bytes().to_vec(),
-                "shared text resource alias",
-            )
-        }
-        P::LayerCollision => {
-            let alias = context.alias_widget.ok_or("missing alias widget")?;
-            let original = qmp.read_memory(0, alias, 2)?;
-            context.alias_layer = Some(original.clone());
-            (
-                alias,
-                original,
-                4u16.to_le_bytes().to_vec(),
-                "scene layer collision",
-            )
-        }
-        P::WidgetLayer => (
-            context.widget7,
-            qmp.read_memory(0, context.widget7, 1)?,
-            vec![0],
-            "changed widget layer",
+        P::TextAlias => (
+            0,
+            vec![],
+            179u16.to_le_bytes().to_vec(),
+            "shared text resource alias",
         ),
+        P::LayerCollision => (
+            0,
+            vec![],
+            4u16.to_le_bytes().to_vec(),
+            "scene layer collision",
+        ),
+        P::WidgetLayer => (context.widget7, vec![], vec![0], "changed widget layer"),
         P::BackgroundLayer => (
             context.background10,
             context.original_background_layers[0].clone(),
@@ -1132,6 +1153,7 @@ pub(super) fn prepare_preflight_probe(
         ),
     };
     context.pending_preflight_probe = Some(PendingPreflightProbe {
+        kind: probe,
         address,
         original,
         replacement,
@@ -1144,18 +1166,70 @@ pub(super) fn prepare_preflight_probe(
 pub(super) fn inject_preflight_probe(
     session: &Session,
     context: &mut PreflightContext,
+    shared: (Instant, u32, u32, u64, u16),
 ) -> Result<Value, Box<dyn std::error::Error>> {
     let probe = context
         .pending_preflight_probe
-        .as_ref()
+        .as_mut()
         .ok_or("missing preflight probe")?;
     let debugger = context
         .debugger
         .as_mut()
         .ok_or("missing knob-dialog debugger")?;
-    session.engine.management[0].stop()?;
-    debugger.write(probe.address, &probe.replacement)?;
-    debugger.resume_guest()?;
+    let qmp = &session.engine.management[0];
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    let deadline = shared.0 + Duration::from_secs(shared.3);
+    let check = || {
+        remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)
+            .map(|_| ())
+            .map_err(|e| std::io::Error::other(e.to_string()))
+    };
+    check()?;
+    qmp.stop_before(deadline)?;
+    let read_word = |address| -> Result<u32, String> {
+        check().map_err(|e| e.to_string())?;
+        let bytes = qmp
+            .read_memory_before(0, address, 4, deadline)
+            .map_err(|e| e.to_string())?;
+        check().map_err(|e| e.to_string())?;
+        Ok(u32::from_le_bytes(
+            bytes.try_into().map_err(|_| "short target pointer")?,
+        ))
+    };
+    l6ctl::KnobPreflightTargets {
+        widget7: context.widget7,
+        background10: context.background10,
+        notification_semaphore: context.notification_semaphore,
+    }
+    .verify(read_word)?;
+    if matches!(context.next, 1 | 2) {
+        let alias = if context.next == 1 {
+            read_word(l6max::gui_widget_table + 60 * 4)?
+        } else {
+            context.alias_widget.ok_or("missing alias widget")?
+        };
+        l6ctl::verify_preflight_widget60(alias, read_word)?;
+        context.alias_widget = Some(alias);
+        probe.address = if context.next == 1 {
+            alias.checked_add(4).ok_or("widget 60 address overflow")?
+        } else {
+            alias
+        };
+        check()?;
+        probe.original = qmp.read_memory_before(0, probe.address, 2, deadline)?;
+        check()?;
+        if context.next == 2 {
+            context.alias_layer = Some(probe.original.clone());
+        }
+    }
+    if matches!(probe.kind, crate::scenario::PreflightProbe::WidgetLayer) {
+        check()?;
+        probe.original = qmp.read_memory_before(0, probe.address, 1, deadline)?;
+        check()?;
+    }
+    debugger.write_before(probe.address, &probe.replacement, deadline, check)?;
+    check()?;
+    debugger.resume_guest_before(deadline)?;
     Ok(json!({"injected":probe.description}))
 }
 

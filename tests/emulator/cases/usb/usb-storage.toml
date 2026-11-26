@@ -59,5 +59,89 @@ action = "expect-display-image"
 image = "tests/smoke/images/l6max-usb-transfer-ready.png"
 
 [[step]]
-action = "usb-storage"
+action = "usb-storage-begin"
 guest_timeout_ms = 30000
+wall_timeout_s = 180
+
+[[step]]
+action = "usb-storage-inquiry"
+guest_timeout_ms = 30000
+wall_timeout_s = 180
+
+[[step]]
+action = "usb-storage-ready"
+guest_timeout_ms = 30000
+wall_timeout_s = 180
+
+[[step]]
+action = "usb-storage-capacity"
+guest_timeout_ms = 30000
+wall_timeout_s = 180
+
+[[step]]
+action = "usb-storage-read-boot"
+guest_timeout_ms = 30000
+wall_timeout_s = 180
+
+[[step]]
+action = "usb-storage-assert-boot"
+guest_timeout_ms = 30000
+wall_timeout_s = 180
+
+[[step]]
+action = "usb-storage-last-read"
+guest_timeout_ms = 30000
+wall_timeout_s = 180
+
+[[step]]
+action = "usb-storage-last-write"
+guest_timeout_ms = 30000
+wall_timeout_s = 180
+
+[[step]]
+action = "usb-storage-last-assert"
+guest_timeout_ms = 30000
+wall_timeout_s = 180
+
+[[step]]
+action = "usb-storage-fat-open"
+guest_timeout_ms = 30000
+wall_timeout_s = 180
+
+[[step]]
+action = "usb-storage-create"
+length = 1537
+multiplier = 37
+increment = 11
+guest_timeout_ms = 30000
+wall_timeout_s = 180
+
+[[step]]
+action = "usb-storage-flush-created"
+guest_timeout_ms = 30000
+wall_timeout_s = 180
+
+[[step]]
+action = "usb-storage-read-file"
+guest_timeout_ms = 30000
+wall_timeout_s = 180
+
+[[step]]
+action = "usb-storage-remove-file"
+guest_timeout_ms = 30000
+wall_timeout_s = 180
+
+[[step]]
+action = "usb-storage-assert-file"
+guest_timeout_ms = 30000
+wall_timeout_s = 180
+
+[[step]]
+action = "usb-storage-flush-removed"
+guest_timeout_ms = 30000
+wall_timeout_s = 180
+
+[[step]]
+action = "usb-storage-end"
+guest_timeout_ms = 30000
+wall_timeout_s = 180

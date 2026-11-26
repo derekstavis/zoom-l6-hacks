@@ -297,7 +297,23 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6IndicatorEnd => on(L6),
         Action::SdCard { .. }
         | Action::UsbDescriptors
-        | Action::UsbStorage
+        | Action::UsbStorageBegin
+        | Action::UsbStorageInquiry
+        | Action::UsbStorageReady
+        | Action::UsbStorageCapacity
+        | Action::UsbStorageReadBoot
+        | Action::UsbStorageAssertBoot
+        | Action::UsbStorageLastRead
+        | Action::UsbStorageLastWrite
+        | Action::UsbStorageLastAssert
+        | Action::UsbStorageFatOpen
+        | Action::UsbStorageCreate { .. }
+        | Action::UsbStorageFlushCreated
+        | Action::UsbStorageReadFile
+        | Action::UsbStorageRemoveFile
+        | Action::UsbStorageAssertFile
+        | Action::UsbStorageFlushRemoved
+        | Action::UsbStorageEnd
         | Action::UsbMidiOpen
         | Action::UsbMidiBegin
         | Action::UsbMidiExpectEncoder

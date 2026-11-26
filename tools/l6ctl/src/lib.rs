@@ -538,6 +538,31 @@ impl<'a> OwnedControl<'a> {
             cancelled,
         )
     }
+    /// Own the guest USB mass-storage session for one bounded transaction.
+    pub fn usb_storage_before(
+        &self,
+        deadline: std::time::Instant,
+        guest_start: u32,
+        guest_budget: u32,
+    ) -> Result<l6max_host::usb_storage::Session, String> {
+        let usb = self
+            .engine
+            .usb
+            .as_ref()
+            .ok_or("USB backend unavailable")?
+            .clone();
+        let panel = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or("panel input unavailable")?
+            .panel
+            .clone();
+        let budget = l6max_host::usb::Budget::new(deadline, move || {
+            panel.snapshot().guest_ms.wrapping_sub(guest_start) > guest_budget
+        });
+        l6max_host::usb_storage::Session::open(usb, budget).map_err(|e| e.to_string())
+    }
     /// Pause both emulated processors, restoring their prior run states on close.
     pub fn pause_all_before(
         &self,

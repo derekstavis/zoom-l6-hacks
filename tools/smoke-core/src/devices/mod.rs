@@ -26,6 +26,7 @@ mod sd;
 mod signal_pwm;
 mod timing;
 mod usb;
+mod usb_storage_steps;
 
 use audio::*;
 pub use display::*;
@@ -129,7 +130,27 @@ pub enum Operation {
         inserted: bool,
     },
     UsbDescriptors,
-    UsbStorage,
+    UsbStorageBegin,
+    UsbStorageInquiry,
+    UsbStorageReady,
+    UsbStorageCapacity,
+    UsbStorageReadBoot,
+    UsbStorageAssertBoot,
+    UsbStorageLastRead,
+    UsbStorageLastWrite,
+    UsbStorageLastAssert,
+    UsbStorageFatOpen,
+    UsbStorageCreate {
+        length: u32,
+        multiplier: u32,
+        increment: u32,
+    },
+    UsbStorageFlushCreated,
+    UsbStorageReadFile,
+    UsbStorageRemoveFile,
+    UsbStorageAssertFile,
+    UsbStorageFlushRemoved,
+    UsbStorageEnd,
     UsbMidiOpen,
     UsbMidiBegin,
     UsbMidiExpectEncoder,
@@ -770,7 +791,7 @@ fn validate_native_midi_capabilities(
                     | crate::Action::DinUsbBegin
                     | crate::Action::HostMidiRoundTrip
                     | crate::Action::UsbDescriptors
-                    | crate::Action::UsbStorage
+                    | crate::Action::UsbStorageBegin
                     | crate::Action::UsbMidiOpen
                     | crate::Action::UsbSysexBegin
                     | crate::Action::UsbSysexExchange { .. }
@@ -955,7 +976,7 @@ pub(crate) fn prepare_with_report(
             && matches!(
                 s.action,
                 crate::Action::UsbDescriptors
-                    | crate::Action::UsbStorage
+                    | crate::Action::UsbStorageBegin
                     | crate::Action::UsbMidiOpen
                     | crate::Action::UsbSysexBegin
                     | crate::Action::UsbSysexExchange { .. }
@@ -1058,6 +1079,7 @@ pub struct State {
     l6_recorder: Option<audio::recorder::Scope>,
     l6max_recorder: Option<audio::max_recorder::Scope>,
     l6max_timing: Option<timing::Scope>,
+    usb_storage_scope: Option<usb_storage_steps::Scope>,
     native_midi: Option<l6ctl::midi::MidiSession>,
     midi_probe: Option<MidiProbeContext>,
 }
@@ -1502,7 +1524,7 @@ mod native_midi_capability_tests {
         for action in [
             crate::Action::HostMidiRoundTrip,
             crate::Action::UsbDescriptors,
-            crate::Action::UsbStorage,
+            crate::Action::UsbStorageBegin,
             crate::Action::UsbMidiOpen,
             crate::Action::UsbSysexBegin,
             crate::Action::DirectUsbMidiRoundTrip {

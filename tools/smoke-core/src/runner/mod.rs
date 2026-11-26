@@ -1096,7 +1096,66 @@ impl Runner {
                         until,
                     }));
                 }
-                Action::UsbStorage => return Ok(Progress::Device(devices::Operation::UsbStorage)),
+                Action::UsbStorageBegin => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageBegin));
+                }
+                Action::UsbStorageInquiry => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageInquiry));
+                }
+                Action::UsbStorageReady => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageReady));
+                }
+                Action::UsbStorageCapacity => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageCapacity));
+                }
+                Action::UsbStorageReadBoot => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageReadBoot));
+                }
+                Action::UsbStorageAssertBoot => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageAssertBoot));
+                }
+                Action::UsbStorageLastRead => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageLastRead));
+                }
+                Action::UsbStorageLastWrite => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageLastWrite));
+                }
+                Action::UsbStorageLastAssert => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageLastAssert));
+                }
+                Action::UsbStorageFatOpen => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageFatOpen));
+                }
+                Action::UsbStorageCreate {
+                    length,
+                    multiplier,
+                    increment,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageCreate {
+                        length,
+                        multiplier,
+                        increment,
+                    }));
+                }
+                Action::UsbStorageFlushCreated => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageFlushCreated));
+                }
+                Action::UsbStorageReadFile => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageReadFile));
+                }
+                Action::UsbStorageRemoveFile => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageRemoveFile));
+                }
+                Action::UsbStorageAssertFile => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageAssertFile));
+                }
+                Action::UsbStorageFlushRemoved => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageFlushRemoved));
+                }
+                Action::UsbStorageEnd => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageEnd));
+                }
+
                 Action::ExpectRecorder => {
                     return Ok(Progress::Device(devices::Operation::ExpectRecorder));
                 }

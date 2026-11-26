@@ -392,6 +392,13 @@ close it to restore their previous run states and inspect errors. A failed
 restore is reported as an uncertain state requiring a guest restart; dropping
 the scope makes a bounded best-effort restore. It is not exposed on the CLI.
 
+`OwnedControl::usb_storage_before` acquires exclusive in-process USB ownership
+and creates a mass-storage session with an absolute wall deadline and panel
+guest-time budget. Enumeration, BOT commands and FAT sector I/O use the same
+budget; failed partial wire transfers close the transport. Call `abort` for
+bounded best-effort file cleanup after failure. This session is not exposed on
+the control socket or CLI.
+
 The L6 scratch operations verify the supported L6 1.10 MIDI code before using
 the legacy emulator probe page at `0x841ff000`. This is a scoped diagnostic
 buffer, not evidence that physical firmware reserves that address.

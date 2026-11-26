@@ -656,6 +656,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         || device_state.has_l6_recorder()
                         || device_state.has_l6max_recorder()
                         || device_state.has_l6max_timing()
+                        || device_state.has_usb_storage()
                         || device_state.has_ui_pad()
                         || device_state.has_editor_playback()
                         || device_state.has_editor_assignment()
@@ -1102,6 +1103,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         || device_state.has_l6_recorder()
                         || device_state.has_l6max_recorder()
                         || device_state.has_l6max_timing()
+                        || device_state.has_usb_storage()
                         || device_state.has_ui_pad()
                         || device_state.has_editor_playback()
                         || device_state.has_editor_assignment()
@@ -1191,6 +1193,17 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
     }
     if result.is_ok() && device_state.has_ui_pad() {
         result = Err("UI pad verification ended before completion".into());
+    }
+    if result.is_ok() && device_state.has_usb_storage() {
+        result = Err("USB storage ended before completion".into());
+    }
+    if device_state.has_usb_storage() {
+        if let Err(cleanup) = device_state.abort_usb_storage() {
+            result = Err(match result {
+                Ok(()) => format!("USB storage cleanup failed: {cleanup}"),
+                Err(e) => format!("{e}; USB storage cleanup failed: {cleanup}"),
+            })
+        }
     }
     if result.is_ok() && device_state.has_l6max_timing() {
         result = Err("L6max timing ended before completion".into());

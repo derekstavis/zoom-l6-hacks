@@ -13,6 +13,48 @@ use std::{
 };
 const MAGIC: u32 = 0x4c365553;
 const MAX: usize = 16384;
+/// Shared deadline and cancellation for an owned USB transaction.
+#[derive(Clone)]
+pub struct Budget {
+    state: Arc<Mutex<(Instant, Arc<dyn Fn() -> bool + Send + Sync>)>>,
+}
+impl Budget {
+    pub fn new(deadline: Instant, cancelled: impl Fn() -> bool + Send + Sync + 'static) -> Self {
+        Self {
+            state: Arc::new(Mutex::new((deadline, Arc::new(cancelled)))),
+        }
+    }
+    fn child(&self, deadline: Instant) -> Self {
+        let parent = self.clone();
+        Self::new(deadline, move || parent.check().is_err())
+    }
+    /// Reserve a separate emergency window for explicitly requested cleanup.
+    pub fn cleanup_before(&self, deadline: Instant) {
+        *self.state.lock().unwrap() = (deadline, Arc::new(|| false));
+    }
+    pub fn check(&self) -> io::Result<()> {
+        let (deadline, cancelled) = {
+            let state = self.state.lock().unwrap();
+            (state.0, state.1.clone())
+        };
+        if Instant::now() >= deadline || cancelled() {
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "USB transaction deadline exceeded or cancelled",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+    fn slice(&self) -> io::Result<Duration> {
+        self.check()?;
+        let deadline = self.state.lock().unwrap().0;
+        Ok(deadline
+            .saturating_duration_since(Instant::now())
+            .min(Duration::from_millis(50))
+            .max(Duration::from_millis(1)))
+    }
+}
 
 /// Adds a description, except for the transient errors callers retry on
 /// (ENODEV while the guest's USB controller is still coming up, EAGAIN on a
@@ -119,6 +161,17 @@ pub(crate) struct DirectLease {
     owner: Arc<Mutex<UsbOwner>>,
 }
 impl DirectLease {
+    /// Roll back failed setup without detaching a pre-existing raw owner.
+    pub(crate) fn rollback_before(&self, host: &UsbHost, budget: &Budget) -> Result<(), String> {
+        let owner = self
+            .owner
+            .lock()
+            .map_err(|_| "USB ownership lock poisoned")?;
+        if *owner == UsbOwner::Direct {
+            host.disconnect_before(budget).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
     /// On failed direct setup, detach only if this session attached an unowned cable.
     pub(crate) fn rollback(&self, host: &UsbHost) -> Result<(), String> {
         let owner = self
@@ -243,6 +296,114 @@ impl Wire {
         }
     }
 }
+impl Wire {
+    fn request_before(
+        &self,
+        kind: u32,
+        endpoint: u32,
+        length: usize,
+        data: &[u8],
+        budget: &Budget,
+    ) -> io::Result<Vec<u8>> {
+        if length > MAX {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "USB transfer exceeds 16 KiB",
+            ));
+        }
+        let mut socket = loop {
+            budget.check()?;
+            match self.socket.try_lock() {
+                Ok(v) => break v,
+                Err(std::sync::TryLockError::WouldBlock) => thread::sleep(Duration::from_millis(1)),
+                Err(_) => return Err(io::Error::other("USB wire lock poisoned")),
+            }
+        };
+        budget.check()?;
+        let mut seq = self
+            .sequence
+            .lock()
+            .map_err(|_| io::Error::other("USB sequence lock poisoned"))?;
+        *seq = seq.wrapping_add(1).max(1);
+        let mut packet = Vec::with_capacity(20 + data.len());
+        for w in [MAGIC, kind, *seq, endpoint, length as u32] {
+            packet.extend_from_slice(&w.to_le_bytes());
+        }
+        packet.extend_from_slice(data);
+        fn transfer(
+            socket: &mut UnixStream,
+            bytes: &mut [u8],
+            write: bool,
+            budget: &Budget,
+        ) -> io::Result<()> {
+            let mut done = 0;
+            while done < bytes.len() {
+                let wait = budget.slice()?;
+                if write {
+                    socket.set_write_timeout(Some(wait))?;
+                } else {
+                    socket.set_read_timeout(Some(wait))?;
+                }
+                let result = if write {
+                    socket.write(&bytes[done..])
+                } else {
+                    socket.read(&mut bytes[done..])
+                };
+                match result {
+                    Ok(0) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "USB wire closed",
+                        ));
+                    }
+                    Ok(n) => done += n,
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            io::ErrorKind::WouldBlock
+                                | io::ErrorKind::TimedOut
+                                | io::ErrorKind::Interrupted
+                        ) =>
+                    {
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            budget.check()
+        }
+        let result = (|| {
+            transfer(&mut socket, &mut packet, true, budget)?;
+            let mut header = [0u8; 20];
+            transfer(&mut socket, &mut header, false, budget)?;
+            let word = |i: usize| u32::from_le_bytes(header[i * 4..i * 4 + 4].try_into().unwrap());
+            if word(0) != MAGIC
+                || word(1) != 0x80000000
+                || word(2) != *seq
+                || word(4) as usize > MAX
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid USB reply",
+                ));
+            }
+            let mut bytes = vec![0; word(4) as usize];
+            transfer(&mut socket, &mut bytes, false, budget)?;
+            let status = word(3) as i32;
+            Ok((status, bytes))
+        })();
+        let _ = socket.set_read_timeout(Some(Duration::from_secs(3)));
+        let _ = socket.set_write_timeout(Some(Duration::from_secs(3)));
+        match result {
+            Ok((0, bytes)) => Ok(bytes),
+            Ok((status, _)) => Err(io::Error::from_raw_os_error(-status)),
+            Err(e) => {
+                let _ = socket.shutdown(Shutdown::Both);
+                Err(e)
+            }
+        }
+    }
+}
 impl UsbHost {
     /// Attach or detach the cable. Detaching stops host polling; the next
     /// enumeration restarts it.
@@ -262,6 +423,146 @@ impl UsbHost {
                 result => return result,
             }
         }
+    }
+    fn token_before(
+        &self,
+        kind: u32,
+        endpoint: u8,
+        length: usize,
+        data: &[u8],
+        budget: &Budget,
+    ) -> io::Result<Vec<u8>> {
+        let local = Instant::now() + Duration::from_secs(5);
+        let local_budget = budget.child(local);
+        loop {
+            local_budget.check()?;
+            match self
+                .wire
+                .request_before(kind, endpoint as u32, length, data, &local_budget)
+            {
+                Err(e) if e.raw_os_error() == Some(libc::EAGAIN) && Instant::now() < local => {
+                    thread::sleep(Duration::from_millis(2))
+                }
+                other => return other,
+            }
+        }
+    }
+    pub fn receive_before(
+        &self,
+        endpoint: u8,
+        length: usize,
+        budget: &Budget,
+    ) -> io::Result<Vec<u8>> {
+        self.token_before(3, endpoint | 0x80, length, &[], budget)
+    }
+    pub fn send_before(&self, endpoint: u8, data: &[u8], budget: &Budget) -> io::Result<()> {
+        self.token_before(4, endpoint & 15, data.len(), data, budget)
+            .map(|_| ())
+    }
+    fn control_token_before(
+        &self,
+        kind: u32,
+        endpoint: u8,
+        length: usize,
+        data: &[u8],
+        budget: &Budget,
+    ) -> io::Result<Vec<u8>> {
+        loop {
+            budget.check()?;
+            match self
+                .wire
+                .request_before(kind, endpoint as u32, length, data, budget)
+            {
+                Err(e) if e.raw_os_error() == Some(libc::EAGAIN) => {
+                    thread::sleep(Duration::from_millis(2))
+                }
+                result => return result,
+            }
+        }
+    }
+    /// Enumerate under a caller-owned deadline, retaining the production retry rules.
+    pub fn enumerate_before(&self, budget: &Budget) -> io::Result<Configuration> {
+        budget.check()?;
+        self.wire.request_before(1, 1, 0, &[], budget)?;
+        let _guard = loop {
+            budget.check()?;
+            match self.control_lock.try_lock() {
+                Ok(v) => break v,
+                Err(std::sync::TryLockError::WouldBlock) => thread::sleep(Duration::from_millis(1)),
+                Err(_) => return Err(io::Error::other("USB control lock poisoned")),
+            }
+        };
+        let control = |setup: [u8; 8], expected: Option<usize>| -> io::Result<Vec<u8>> {
+            let local = Instant::now() + Duration::from_secs(30);
+            let local_budget = budget.child(local);
+            let budget = &local_budget;
+            loop {
+                budget.check()?;
+                if Instant::now() >= local {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "USB control deadline",
+                    ));
+                }
+                let request = (|| {
+                    self.wire.request_before(2, 0, 8, &setup, budget)?;
+                    let data = self.control_token_before(3, 0x80, MAX, &[], budget)?;
+                    if setup[0] & 0x80 != 0 {
+                        if data.len() > u16::from_le_bytes([setup[6], setup[7]]) as usize {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "control response exceeds wLength",
+                            ));
+                        }
+                        self.control_token_before(4, 0, 0, &[], budget)?;
+                    }
+                    Ok(data)
+                })();
+                match request {
+                    Ok(data) if expected.is_none_or(|n| data.len() == n) => return Ok(data),
+                    Ok(_) => thread::sleep(Duration::from_millis(25)),
+                    Err(e) if retry_transfer(&e) => thread::sleep(Duration::from_millis(25)),
+                    Err(e) => return Err(e),
+                }
+            }
+        };
+        let device = control([0x80, 6, 0, 1, 0, 0, 18, 0], Some(18))?;
+        if device[..2] != [18, 1] {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid USB device descriptor",
+            ));
+        }
+        let bytes = control([0x80, 6, 0, 2, 0, 0, 0xff, 0x3f], None)?;
+        let config = Configuration::parse(&bytes)?;
+        control([0, 9, config.value, 0, 0, 0, 0, 0], None)?;
+        if let Some(midi) = config.midi {
+            self.start_in_pump(midi.input)?;
+        }
+        budget.check()?;
+        Ok(config)
+    }
+    fn disconnect_before(&self, budget: &Budget) -> io::Result<()> {
+        let mut guard = loop {
+            budget.check()?;
+            match self.pumps.try_lock() {
+                Ok(v) => break v,
+                Err(std::sync::TryLockError::WouldBlock) => thread::sleep(Duration::from_millis(1)),
+                Err(_) => return Err(io::Error::other("USB pump lock poisoned")),
+            }
+        };
+        let pumps = std::mem::take(&mut *guard);
+        drop(guard);
+        let mut error = None;
+        for (_, mut pump) in pumps {
+            if let Err(e) = pump.stop_before(budget) {
+                error.get_or_insert(e);
+            }
+        }
+        if let Some(error) = error {
+            return Err(error);
+        }
+        self.wire.request_before(1, 0, 0, &[], budget).map(|_| ())
     }
     /// Whether the device answers tokens: attached, with firmware's
     /// controller running. Probes an endpoint the device does not implement,
@@ -525,6 +826,22 @@ impl InPump {
             worker: Some(worker),
         })
     }
+    fn stop_before(&mut self, budget: &Budget) -> io::Result<()> {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(worker) = self.worker.take() {
+            while !worker.is_finished() {
+                if let Err(error) = budget.check() {
+                    drop(worker);
+                    return Err(error);
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+            worker
+                .join()
+                .map_err(|_| io::Error::other("USB input pump panicked"))?;
+        }
+        Ok(())
+    }
     /// The oldest queued IN transaction. EAGAIN means none is waiting, like an
     /// unprimed endpoint; a failure that stopped the pump is returned once
     /// the queue is drained.
@@ -645,6 +962,54 @@ impl Configuration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bounded_wire_stops_on_stalled_partial_reply_and_closes_connection() {
+        let (socket, mut peer) = UnixStream::pair().unwrap();
+        let host = UsbHost::new(socket).unwrap();
+        let worker = thread::spawn(move || {
+            let mut request = [0; 20];
+            peer.read_exact(&mut request).unwrap();
+            peer.write_all(&[0, 1, 2]).unwrap();
+            let mut byte = [0; 1];
+            assert_eq!(peer.read(&mut byte).unwrap(), 0);
+        });
+        let budget = Budget::new(Instant::now() + Duration::from_millis(40), || false);
+        assert_eq!(
+            host.wire
+                .request_before(3, 0x81, 8, &[], &budget)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::TimedOut
+        );
+        worker.join().unwrap();
+    }
+    #[test]
+    fn bounded_wire_checks_deadline_while_waiting_for_lock() {
+        let (socket, _peer) = UnixStream::pair().unwrap();
+        let host = UsbHost::new(socket).unwrap();
+        let _guard = host.wire.socket.lock().unwrap();
+        let budget = Budget::new(Instant::now() + Duration::from_millis(20), || false);
+        assert_eq!(
+            host.wire
+                .request_before(3, 0x81, 8, &[], &budget)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::TimedOut
+        );
+    }
+    #[test]
+    fn child_budget_cannot_outlive_or_ignore_parent_cancellation() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let other = flag.clone();
+        let parent = Budget::new(Instant::now() + Duration::from_secs(5), move || {
+            other.load(Ordering::Relaxed)
+        });
+        let child = parent.child(Instant::now() + Duration::from_secs(30));
+        assert!(child.check().is_ok());
+        flag.store(true, Ordering::Relaxed);
+        assert!(child.check().is_err());
+    }
+
     #[test]
     fn controller_attaches_only_without_bridge_and_reports_guest_readiness() {
         let (socket, mut peer) = UnixStream::pair().unwrap();

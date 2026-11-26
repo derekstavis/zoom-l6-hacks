@@ -11,7 +11,7 @@ use std::{
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Status {
     pub running: bool,
     pub status: String,
@@ -159,6 +159,27 @@ impl QmpClient {
         })
     }
 
+    /// Query the named run state within a caller-owned deadline.
+    pub fn status_before(&self, deadline: Instant) -> io::Result<Status> {
+        let result = self.execute_before(&qmp::query_status {}, deadline)?;
+        let status = serde_json::to_value(result.status)?;
+        Ok(Status {
+            running: result.running,
+            status: status
+                .as_str()
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "QMP status is not a name")
+                })?
+                .to_owned(),
+        })
+    }
+
+    /// Query run state within a caller-owned deadline.
+    pub fn running_before(&self, deadline: Instant) -> io::Result<bool> {
+        self.execute_before(&qmp::query_status {}, deadline)
+            .map(|status| status.running)
+    }
+
     pub fn stop(&self) -> io::Result<()> {
         self.execute(&qmp::stop {}).map(|_| ())
     }
@@ -175,6 +196,11 @@ impl QmpClient {
 
     pub fn resume(&self) -> io::Result<()> {
         self.execute(&qmp::cont {}).map(|_| ())
+    }
+
+    /// Resume with a caller-owned deadline, including QMP connection contention.
+    pub fn resume_before(&self, deadline: Instant) -> io::Result<()> {
+        self.execute_before(&qmp::cont {}, deadline).map(|_| ())
     }
 
     /// Reset the guest in place. RAM devices retain contents unless their
@@ -345,6 +371,53 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert!(started.elapsed() < Duration::from_secs(1));
+        drop(lock);
+        drop(client);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn notification_and_scheduler_observations_respect_a_busy_qmp_deadline() {
+        let (socket, mut peer) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || {
+            let mut reader = BufReader::new(peer.try_clone().unwrap());
+            greeting(&mut peer);
+            expect_command(&mut reader, "qmp_capabilities");
+            peer.write_all(b"{\"return\":{}}\r\n").unwrap();
+            let mut line = String::new();
+            assert_eq!(reader.read_line(&mut line).unwrap(), 0);
+        });
+        let client = QmpClient::connect(socket).unwrap();
+        let lock = client.management.lock().unwrap();
+        let deadline = Instant::now() + Duration::from_millis(20);
+        let error = crate::freertos::ticks_before_checked(
+            &client,
+            l6fw::Model::L6max,
+            deadline,
+            &|| Ok(()),
+        )
+        .unwrap_err();
+        assert!(error.contains("deadline"), "{error}");
+        let deadline = Instant::now() + Duration::from_millis(20);
+        let error = crate::knob_popup::notification_state_before_checked(
+            &client,
+            l6fw::Model::L6max,
+            deadline,
+            &|| Ok(()),
+        )
+        .unwrap_err();
+        assert!(error.contains("deadline"), "{error}");
+        let deadline = Instant::now() + Duration::from_millis(20);
+        let error = match crate::knob_popup::overlay_reader_before_checked(
+            &client,
+            l6fw::Model::L6max,
+            deadline,
+            &|| Ok(()),
+        ) {
+            Ok(_) => panic!("busy QMP unexpectedly returned overlay reader"),
+            Err(error) => error,
+        };
+        assert!(error.contains("deadline"), "{error}");
         drop(lock);
         drop(client);
         server.join().unwrap();

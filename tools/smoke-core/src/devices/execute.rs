@@ -16,6 +16,11 @@ fn knob_dialog_phase(
     level_phase: Option<u8>,
     bitmap_capture: Option<u8>,
 ) -> Option<u16> {
+    match operation {
+        Operation::KnobBitmapReactivate { .. } => return Some(82),
+        Operation::KnobBitmapWaitActive => return Some(83),
+        _ => {}
+    }
     let fixed = match operation {
         Operation::KnobDialogGuard => Some(0),
         Operation::KnobDialogBaseline => Some(1),
@@ -111,7 +116,7 @@ fn knob_dialog_phase(
             },
         ),
         Operation::KnobDialogModeBegin { .. } => {
-            next_mode.and_then(|index| u16::try_from(109 + index * 10).ok())
+            next_mode.and_then(|index| u16::try_from(109 + index * 11).ok())
         }
         Operation::KnobDialogAdaptive { .. }
         | Operation::KnobDialogInjectInvalidTag { .. }
@@ -140,17 +145,17 @@ fn knob_dialog_phase(
         | Operation::KnobDialogSnapshotNavigation
         | Operation::KnobDialogCheckNavigation { .. }
         | Operation::KnobDialog => next_mode
-            .and_then(|index| u16::try_from(109 + index * 10 + usize::from(final_phase?)).ok()),
+            .and_then(|index| u16::try_from(109 + index * 11 + usize::from(final_phase?)).ok()),
         Operation::CaptureDisplay { .. }
             if scope.is_none() && matches!(final_phase, Some(22 | 44 | 47)) =>
         {
             next_mode
-                .and_then(|index| u16::try_from(109 + index * 10 + usize::from(final_phase?)).ok())
+                .and_then(|index| u16::try_from(109 + index * 11 + usize::from(final_phase?)).ok())
         }
         _ => None,
     };
-    if fixed.is_some() {
-        return fixed;
+    if let Some(phase) = fixed {
+        return Some(phase + u16::from(phase >= 82) * 2);
     }
     let scope = scope?;
     let offset = match operation {
@@ -164,13 +169,14 @@ fn knob_dialog_phase(
             midi_transaction: false,
             ..
         } => 4,
-        Operation::CaptureDisplay { .. } => 6,
-        Operation::ExpectCapturedDisplayImage { .. } => 7,
-        Operation::KnobDialogExpectHeap => 8,
-        Operation::KnobDialogModeEnd => 9,
+        Operation::WaitKnobDisplayImage { .. } => 6,
+        Operation::CaptureDisplay { .. } => 7,
+        Operation::ExpectCapturedDisplayImage { .. } => 8,
+        Operation::KnobDialogExpectHeap => 9,
+        Operation::KnobDialogModeEnd => 10,
         _ => return None,
     };
-    Some(109 + scope.index as u16 * 10 + offset)
+    Some(111 + scope.index as u16 * 11 + offset)
 }
 
 type KnobDeadline = (Instant, u32, u32, u64, u16);
@@ -333,6 +339,7 @@ impl State {
 
     pub fn restarted(&mut self) -> Result<(), String> {
         let auxiliary_cleanup = self.abort_auxiliary_scopes();
+        self.ui_pad = None;
         self.abort_midi_probe();
         if let Some(mut client) = self.native_midi.take() {
             client.release();
@@ -358,6 +365,11 @@ impl State {
     }
     /// Release held inputs and owned transport scopes before the guest exits.
     pub fn abort_auxiliary_scopes(&mut self) -> Result<(), String> {
+        let power = self
+            .power
+            .take()
+            .map(|mut scope| scope.release())
+            .transpose();
         let panel = self
             .panel_keys
             .take()
@@ -367,7 +379,83 @@ impl State {
         self.sd_inspection = None;
         self.usb_midi = None;
         self.l6_indicator = None;
-        panel.map(|_| ())
+        self.ui_pad = None;
+        self.editor_playback = None;
+        self.editor_assignment = None;
+        self.signal_pwm = None;
+        match (power, panel) {
+            (Ok(_), Ok(_)) => Ok(()),
+            (Err(error), Ok(_)) | (Ok(_), Err(error)) => Err(error),
+            (Err(a), Err(b)) => Err(format!("{a}; {b}")),
+        }
+    }
+    pub fn has_signal_pwm(&self) -> bool {
+        self.signal_pwm.is_some()
+    }
+    pub fn has_l6_sweep(&self) -> bool {
+        self.l6_input_sweep.is_some()
+    }
+    pub fn abort_l6_sweep(&mut self, session: &Session) -> Result<(), String> {
+        if let Some(mut scope) = self.l6_input_sweep.take() {
+            scope.abort(session)?;
+        }
+        Ok(())
+    }
+    pub fn has_editor_assignment(&self) -> bool {
+        self.editor_assignment.is_some()
+    }
+    pub fn has_editor_playback(&self) -> bool {
+        self.editor_playback.is_some()
+    }
+    pub fn has_ui_pad(&self) -> bool {
+        self.ui_pad.is_some()
+    }
+    pub fn has_usb_storage(&self) -> bool {
+        self.usb_storage_scope.is_some()
+    }
+    pub fn abort_usb_storage(&mut self) -> Result<(), String> {
+        match self.usb_storage_scope.take() {
+            Some(mut context) => context.abort(),
+            None => Ok(()),
+        }
+    }
+    pub fn has_l6max_timing(&self) -> bool {
+        self.l6max_timing.is_some()
+    }
+    pub fn abort_l6max_timing(&mut self, session: &Session) -> Result<(), String> {
+        match self.l6max_timing.take() {
+            Some(mut context) => context.abort(session),
+            None => Ok(()),
+        }
+    }
+    pub fn has_l6max_recorder(&self) -> bool {
+        self.l6max_recorder.is_some()
+    }
+    pub fn abort_l6max_recorder(&mut self, session: &Session) -> Result<(), String> {
+        match self.l6max_recorder.take() {
+            Some(mut context) => context.abort(session),
+            None => Ok(()),
+        }
+    }
+    pub fn has_l6_recorder(&self) -> bool {
+        self.l6_recorder.is_some()
+    }
+    pub fn abort_l6_recorder(&mut self, session: &Session) -> Result<(), String> {
+        match self.l6_recorder.take() {
+            Some(mut context) => context.abort(session),
+            None => Ok(()),
+        }
+    }
+    pub fn has_sound_pad(&self) -> bool {
+        self.sound_pad.is_some()
+    }
+    pub fn abort_sound_pad(&mut self, session: &Session) -> Result<(), String> {
+        match self.sound_pad.take() {
+            Some(mut context) => {
+                audio::sound_pad::abort(&mut context, session).map_err(|e| e.to_string())
+            }
+            None => Ok(()),
+        }
     }
     pub fn has_knob_preflight(&self) -> bool {
         self.knob_dialog_preflight.is_some()
@@ -409,6 +497,131 @@ impl State {
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
     ) -> Result<Value, String> {
+        if let Some(scope) = self.signal_pwm.as_ref() {
+            let valid = match operation {
+                Operation::SignalPwmWarmup {
+                    start: 0,
+                    end: 4,
+                    value,
+                } => scope.phase == 0 && value.is_finite() && value > 0.0 && value <= 40_000_000.0,
+                Operation::SignalPwmDrain { band } => scope.phase == 1 && band == scope.band,
+                Operation::SignalPwmStage {
+                    band,
+                    start,
+                    end,
+                    value,
+                } => {
+                    scope.phase == 2
+                        && band == scope.band
+                        && (start, end) == if band == 0 { (0, 4) } else { (4, 12) }
+                        && value.is_finite()
+                        && value > 0.0
+                        && value <= 40_000_000.0
+                }
+                Operation::SignalPwmAssert { band, channel } => {
+                    scope.phase == 3
+                        && band == scope.band
+                        && channel == band * 4 + scope.assertions as u8
+                }
+                Operation::SignalPwmEnd => scope.phase == 4,
+                _ => false,
+            };
+            if !valid {
+                self.signal_pwm = None;
+                return Err("SIGNAL PWM interrupted or out of order".into());
+            }
+            if let Err(error) = scope.check(session, guest_timeout_ms, wall_timeout_s) {
+                self.signal_pwm = None;
+                return Err(error);
+            }
+        }
+        if let Some(scope) = self.l6_input_sweep.as_ref() {
+            let expected = match operation {
+                Operation::L6SweepRejectMain { target: 0 } => Some(0),
+                Operation::L6SweepRejectMain { target: 5 } => Some(1),
+                Operation::L6SweepPanelBaseline { .. } | Operation::L6SweepEncoderBaseline => {
+                    Some(2)
+                }
+                Operation::L6SweepPanelTap => Some(3),
+                Operation::L6SweepPanelWait => Some(4),
+                Operation::L6SweepPanelTrace => Some(5),
+                Operation::L6SweepPanelAssert => Some(6),
+                Operation::L6SweepEncoderSend { .. } | Operation::L6SweepEncoderTrace => Some(7),
+                Operation::L6SweepEncoderWait => Some(8),
+                Operation::L6SweepEncoderAssert => Some(9),
+                Operation::L6SweepRejectPanel => Some(10),
+                Operation::L6SweepRejectEncoder => Some(11),
+                Operation::L6SweepEnd => Some(12),
+                _ => None,
+            };
+            if expected != Some(scope.phase) {
+                return Err("L6 input sweep interrupted or out of order".into());
+            }
+            scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+        }
+        if let Some(scope) = self.editor_assignment.as_ref() {
+            let expected = match operation {
+                Operation::EditorAssignIdentity => Some((0, None)),
+                Operation::EditorAssignGlobal => Some((1, None)),
+                Operation::EditorAssignVersion => Some((2, None)),
+                Operation::EditorAssignSdInfo => Some((3, None)),
+                Operation::EditorAssignRefresh => Some((4, None)),
+                Operation::EditorAssignCount { pad } => Some((5, Some(pad))),
+                Operation::EditorAssignFilename { pad } => Some((6, Some(pad))),
+                Operation::EditorAssignSend { pad } => Some((7, Some(pad))),
+                Operation::EditorAssignState { pad } => Some((8, Some(pad))),
+                Operation::EditorAssignEnd => Some((9, None)),
+                _ => None,
+            };
+            if !expected.is_some_and(|(phase, pad)| {
+                phase == scope.phase && pad.is_none_or(|pad| pad == scope.pad)
+            }) {
+                self.editor_assignment = None;
+                return Err("Editor assignment interrupted or wrong pad".into());
+            }
+            if let Err(error) = scope.check(session, guest_timeout_ms, wall_timeout_s) {
+                self.editor_assignment = None;
+                return Err(error.to_string());
+            }
+        }
+        if let Some(scope) = self.editor_playback.as_ref() {
+            let expected = match operation {
+                Operation::EditorPlaybackPlay => Some(0),
+                Operation::EditorPlaybackWait => Some(1),
+                Operation::EditorPlaybackObserve => Some(2),
+                Operation::EditorPlaybackSample => Some(3),
+                Operation::EditorPlaybackAssert => Some(4),
+                Operation::EditorPlaybackEnd => Some(5),
+                _ => None,
+            };
+            if expected != Some(scope.phase) {
+                self.editor_playback = None;
+                return Err("Editor playback interrupted by another operation".into());
+            }
+            if let Err(error) = scope.check(session, guest_timeout_ms, wall_timeout_s) {
+                self.editor_playback = None;
+                return Err(error.to_string());
+            }
+        }
+        if let Some(scope) = self.ui_pad.as_ref() {
+            let expected = match operation {
+                Operation::UiPadIdentity => Some(0),
+                Operation::UiPadGlobal => Some(1),
+                Operation::UiPadKeepAlive => Some(2),
+                Operation::UiPadQuery => Some(3),
+                Operation::UiPadAssert => Some(4),
+                Operation::UiPadEnd => Some(5),
+                _ => None,
+            };
+            if expected != Some(scope.phase) {
+                self.ui_pad = None;
+                return Err("UI pad verification interrupted by another operation".into());
+            }
+            if let Err(error) = scope.check(session, guest_timeout_ms, wall_timeout_s) {
+                self.ui_pad = None;
+                return Err(error.to_string());
+            }
+        }
         if self.l6_indicator.is_some()
             && !matches!(
                 operation,
@@ -431,6 +644,158 @@ impl State {
             ) {
                 self.l6_indicator = None;
                 return Err("L6 indicator campaign exceeded its shared deadline".into());
+            }
+        }
+        if let Some(context) = self.usb_storage_scope.as_ref() {
+            let expected = match operation {
+                Operation::UsbStorageInquiry => Some(0),
+                Operation::UsbStorageReady => Some(1),
+                Operation::UsbStorageCapacity => Some(2),
+                Operation::UsbStorageReadBoot => Some(3),
+                Operation::UsbStorageAssertBoot => Some(4),
+                Operation::UsbStorageLastRead => Some(5),
+                Operation::UsbStorageLastWrite => Some(6),
+                Operation::UsbStorageLastAssert => Some(7),
+                Operation::UsbStorageFatOpen => Some(8),
+                Operation::UsbStorageCreate { .. } => Some(9),
+                Operation::UsbStorageFlushCreated => Some(10),
+                Operation::UsbStorageReadFile => Some(11),
+                Operation::UsbStorageRemoveFile => Some(12),
+                Operation::UsbStorageAssertFile => Some(13),
+                Operation::UsbStorageFlushRemoved => Some(14),
+                Operation::UsbStorageEnd => Some(15),
+                _ => None,
+            };
+            if expected != Some(context.phase)
+                || context
+                    .check(session, guest_timeout_ms, wall_timeout_s)
+                    .is_err()
+            {
+                let error = "USB storage interrupted or exceeded shared deadline";
+                return match self.abort_usb_storage() {
+                    Ok(()) => Err(error.into()),
+                    Err(cleanup) => Err(format!("{error}; cleanup failed: {cleanup}")),
+                };
+            }
+        }
+        if let Some(context) = self.l6max_timing.as_ref() {
+            let expected = match operation {
+                Operation::L6maxTimingSettle { .. } => Some(0),
+                Operation::L6maxTimingBaseline => Some(1),
+                Operation::L6maxTimingEnqueue { .. } => Some(2),
+                Operation::L6maxTimingWaitFirst => Some(3),
+                Operation::L6maxTimingObservePaused { .. } => Some(4),
+                Operation::L6maxTimingAssertPaused => Some(5),
+                Operation::L6maxTimingResume => Some(6),
+                Operation::L6maxTimingWaitQueued => Some(7),
+                Operation::L6maxTimingWaitReports => Some(8),
+                Operation::L6maxTimingAssertReports => Some(9),
+                Operation::L6maxTimingObserveDisplay { .. } => Some(10),
+                Operation::L6maxTimingAssertDisplay => Some(11),
+                Operation::L6maxTimingEncoder { .. } => Some(12),
+                Operation::L6maxTimingWaitEncoder => Some(13),
+                Operation::L6maxTimingWaitEncoderReport => Some(14),
+                Operation::L6maxTimingAssertEncoder => Some(15),
+                Operation::L6maxTimingEnd => Some(16),
+                _ => None,
+            };
+            if expected != Some(context.phase)
+                || context
+                    .check(session, guest_timeout_ms, wall_timeout_s)
+                    .is_err()
+            {
+                let error = "L6max timing interrupted or exceeded shared deadline";
+                return match self.abort_l6max_timing(session) {
+                    Ok(()) => Err(error.into()),
+                    Err(cleanup) => Err(format!("{error}; cleanup failed: {cleanup}")),
+                };
+            }
+        }
+        if let Some(context) = self.l6max_recorder.as_ref() {
+            let expected = match operation {
+                Operation::L6maxRecorderPress => Some(0),
+                Operation::L6maxRecorderSubmit => Some(1),
+                Operation::L6maxRecorderQueue => Some(2),
+                Operation::L6maxRecorderDispatch => Some(3),
+                Operation::L6maxRecorderScheduler => Some(4),
+                Operation::L6maxRecorderCallback => Some(5),
+                Operation::L6maxRecorderAction => Some(6),
+                Operation::L6maxRecorderStream => Some(7),
+                Operation::L6maxRecorderObserve => Some(8),
+                Operation::L6maxRecorderSample => Some(9),
+                Operation::L6maxRecorderEvidence => Some(10),
+                Operation::L6maxRecorderAssertAudio => Some(11),
+                Operation::L6maxRecorderEnd => Some(12),
+                _ => None,
+            };
+            if expected != Some(context.phase)
+                || context
+                    .check(session, guest_timeout_ms, wall_timeout_s)
+                    .is_err()
+            {
+                let error = "L6max recorder interrupted or exceeded its shared deadline";
+                return match self.abort_l6max_recorder(session) {
+                    Ok(()) => Err(error.into()),
+                    Err(cleanup) => Err(format!("{error}; cleanup failed: {cleanup}")),
+                };
+            }
+        }
+        if let Some(context) = self.l6_recorder.as_ref() {
+            let expected = match operation {
+                Operation::L6RecorderPress => Some(0),
+                Operation::L6RecorderDispatcher => Some(1),
+                Operation::L6RecorderAssertEvent => Some(2),
+                Operation::L6RecorderHandler => Some(3),
+                Operation::L6RecorderAssertSelection => Some(4),
+                Operation::L6RecorderCallback => Some(5),
+                Operation::L6RecorderAssertCallback => Some(6),
+                Operation::L6RecorderObserve => Some(7),
+                Operation::L6RecorderRelease => Some(8),
+                Operation::L6RecorderSample => Some(9),
+                Operation::L6RecorderEvidence => Some(10),
+                Operation::L6RecorderAssertTrace => Some(11),
+                Operation::L6RecorderAssertDma => Some(12),
+                Operation::L6RecorderEnd => Some(13),
+                _ => None,
+            };
+            if expected != Some(context.phase)
+                || context
+                    .check(session, guest_timeout_ms, wall_timeout_s)
+                    .is_err()
+            {
+                let error = "recorder transaction interrupted or exceeded its shared deadline";
+                return match self.abort_l6_recorder(session) {
+                    Ok(()) => Err(error.into()),
+                    Err(cleanup) => Err(format!("{error}; cleanup failed: {cleanup}")),
+                };
+            }
+        }
+        if self.sound_pad.is_some() {
+            let expected = match operation {
+                Operation::SoundPadPress => Some(0),
+                Operation::SoundPadHold => Some(1),
+                Operation::SoundPadRelease => Some(2),
+                Operation::SoundPadObserve => Some(3),
+                Operation::SoundPadSample => Some(4),
+                Operation::SoundPadAssertWaveform => Some(5),
+                Operation::SoundPadAssertAudio => Some(6),
+                Operation::SoundPadAssertLed => Some(7),
+                Operation::SoundPadAssertMeter => Some(8),
+                Operation::SoundPadFinish => Some(9),
+                _ => None,
+            };
+            let context = self.sound_pad.as_ref().unwrap();
+            if expected != Some(context.phase)
+                || (guest_timeout_ms, wall_timeout_s) != (context.guest_budget, context.wall_budget)
+            {
+                let mut context = self.sound_pad.take().unwrap();
+                let cleanup = audio::sound_pad::abort(&mut context, session);
+                return Err(match cleanup {
+                    Ok(()) => "sound-pad transaction interrupted or changed budget".into(),
+                    Err(error) => format!(
+                        "sound-pad transaction interrupted or changed budget; release failed: {error}"
+                    ),
+                });
             }
         }
         if self.sd_inspection.is_some() && !matches!(operation, Operation::ExpectSdModule { .. }) {
@@ -608,6 +973,15 @@ impl State {
             self.knob_dialog_deadline = None;
             self.knob_dialog_baseline = None;
         }
+        if let Some(context) = self.sound_pad.as_ref() {
+            if let Err(error) = audio::sound_pad::check(context, session) {
+                let mut context = self.sound_pad.take().unwrap();
+                return match audio::sound_pad::abort(&mut context, session) {
+                    Ok(()) => Err(error.to_string()),
+                    Err(cleanup) => Err(format!("{error}; sound-pad release failed: {cleanup}")),
+                };
+            }
+        }
         let result = self.execute_inner(
             session,
             options,
@@ -620,7 +994,12 @@ impl State {
         let result = match result {
             Ok(value) => value,
             Err(error) => {
-                let primary = error.to_string();
+                let mut primary = error.to_string();
+                if let Some(mut context) = self.sound_pad.take() {
+                    if let Err(cleanup) = audio::sound_pad::abort(&mut context, session) {
+                        primary = format!("{primary}; sound-pad release failed: {cleanup}");
+                    }
+                }
                 self.l6_indicator = None;
                 self.sysex_deadline = None;
                 self.abort_usb_midi();
@@ -630,6 +1009,15 @@ impl State {
                 };
             }
         };
+        if let Some(context) = self.sound_pad.as_ref() {
+            if let Err(error) = audio::sound_pad::check(context, session) {
+                let mut context = self.sound_pad.take().unwrap();
+                return match audio::sound_pad::abort(&mut context, session) {
+                    Ok(()) => Err(error.to_string()),
+                    Err(cleanup) => Err(format!("{error}; sound-pad release failed: {cleanup}")),
+                };
+            }
+        }
         if let Some((wall_deadline, guest_start, guest_budget)) = sd_shared {
             if Instant::now() >= wall_deadline
                 || guest_now(session).wrapping_sub(guest_start) >= guest_budget
@@ -637,15 +1025,29 @@ impl State {
                 return Err("SD inspection exceeded its shared deadline".into());
             }
         }
-        let elapsed = control
-            .input_status(l6ctl::InputSource::Panel)
-            .map_err(|e| e.to_string())?
-            .guest_ms
-            .wrapping_sub(guest_start);
+        let elapsed = match control.input_status(l6ctl::InputSource::Panel) {
+            Ok(status) => status.guest_ms.wrapping_sub(guest_start),
+            Err(error) => {
+                if let Some(mut context) = self.sound_pad.take() {
+                    return match audio::sound_pad::abort(&mut context, session) {
+                        Ok(()) => Err(error.to_string()),
+                        Err(cleanup) => {
+                            Err(format!("{error}; sound-pad release failed: {cleanup}"))
+                        }
+                    };
+                }
+                return Err(error.to_string());
+            }
+        };
         if started.elapsed() > Duration::from_secs(wall_timeout_s) || elapsed > guest_timeout_ms {
-            let error = "device operation exceeded its step deadline";
+            let mut error = "device operation exceeded its step deadline".to_owned();
+            if let Some(mut context) = self.sound_pad.take() {
+                if let Err(cleanup) = audio::sound_pad::abort(&mut context, session) {
+                    error = format!("{error}; sound-pad release failed: {cleanup}");
+                }
+            }
             return match self.abort_knob_preflight() {
-                Ok(()) => Err(error.into()),
+                Ok(()) => Err(error),
                 Err(cleanup) => Err(format!("{error}; debugger cleanup failed: {cleanup}")),
             };
         }
@@ -1883,20 +2285,141 @@ impl State {
             Operation::L6DinEventDispatch { group, cc, value } => {
                 run_l6_din_event_dispatch(session, options, group, cc, value)
             }
-            Operation::L6InputSweep => {
-                Ok(run_l6_input_sweep(session, options).map_err(std::io::Error::other)?)
+            Operation::L6SweepBegin => {
+                self.l6_input_sweep = Some(l6_input_sweep::Scope::begin(
+                    session,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            operation @ (Operation::L6SweepRejectMain { .. }
+            | Operation::L6SweepPanelBaseline { .. }
+            | Operation::L6SweepPanelTap
+            | Operation::L6SweepPanelWait
+            | Operation::L6SweepPanelTrace
+            | Operation::L6SweepPanelAssert
+            | Operation::L6SweepEncoderBaseline
+            | Operation::L6SweepEncoderSend { .. }
+            | Operation::L6SweepEncoderWait
+            | Operation::L6SweepEncoderTrace
+            | Operation::L6SweepEncoderAssert
+            | Operation::L6SweepRejectPanel
+            | Operation::L6SweepRejectEncoder
+            | Operation::L6SweepEnd) => {
+                let scope = self
+                    .l6_input_sweep
+                    .as_mut()
+                    .ok_or("L6 sweep is not active")?;
+                let value = match operation {
+                    Operation::L6SweepRejectMain { target } => {
+                        scope.reject_main(session, target)?
+                    }
+                    Operation::L6SweepPanelBaseline { target } => {
+                        scope.panel_baseline(session, options, target)?
+                    }
+                    Operation::L6SweepPanelTap => scope.panel_tap(session)?,
+                    Operation::L6SweepPanelWait => scope.panel_wait(session)?,
+                    Operation::L6SweepPanelTrace => scope.panel_trace(session, options)?,
+                    Operation::L6SweepPanelAssert => scope.panel_assert(options)?,
+                    Operation::L6SweepEncoderBaseline => scope.encoder_baseline(options)?,
+                    Operation::L6SweepEncoderSend { index } => {
+                        scope.encoder_send(session, index)?
+                    }
+                    Operation::L6SweepEncoderWait => scope.encoder_wait(session)?,
+                    Operation::L6SweepEncoderTrace => scope.encoder_trace(session, options)?,
+                    Operation::L6SweepEncoderAssert => scope.encoder_assert(options)?,
+                    Operation::L6SweepRejectPanel => scope.reject_panel(session)?,
+                    Operation::L6SweepRejectEncoder => scope.reject_encoder(session)?,
+                    Operation::L6SweepEnd => scope.end(session)?,
+                    _ => unreachable!(),
+                };
+                scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+                scope.phase = match operation {
+                    Operation::L6SweepPanelAssert => 2,
+                    Operation::L6SweepEncoderBaseline => 7,
+                    Operation::L6SweepEncoderWait => 7,
+                    Operation::L6SweepEncoderTrace => 9,
+                    _ => scope.phase + 1,
+                };
+                if matches!(operation, Operation::L6SweepEnd) {
+                    self.l6_input_sweep = None;
+                }
+                Ok(value)
             }
             Operation::L6DinSweep => {
                 Ok(run_l6_din_sweep(session, options).map_err(std::io::Error::other)?)
             }
-            Operation::L6maxInputTiming => Ok(run_l6max_input_timing(
-                session,
-                options,
-                operation_start,
-                guest_timeout_ms,
-                wall_timeout_s,
-            )
-            .map_err(std::io::Error::other)?),
+            Operation::L6maxTimingBegin => {
+                if self.l6max_timing.is_some() {
+                    return Err("L6max timing already active".into());
+                }
+                self.l6max_timing = Some(timing::Scope::begin(
+                    session,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            operation @ (Operation::L6maxTimingSettle { .. }
+            | Operation::L6maxTimingBaseline
+            | Operation::L6maxTimingEnqueue { .. }
+            | Operation::L6maxTimingWaitFirst
+            | Operation::L6maxTimingObservePaused { .. }
+            | Operation::L6maxTimingAssertPaused
+            | Operation::L6maxTimingResume
+            | Operation::L6maxTimingWaitQueued
+            | Operation::L6maxTimingWaitReports
+            | Operation::L6maxTimingAssertReports
+            | Operation::L6maxTimingObserveDisplay { .. }
+            | Operation::L6maxTimingAssertDisplay
+            | Operation::L6maxTimingEncoder { .. }
+            | Operation::L6maxTimingWaitEncoder
+            | Operation::L6maxTimingWaitEncoderReport
+            | Operation::L6maxTimingAssertEncoder
+            | Operation::L6maxTimingEnd) => {
+                let context = self
+                    .l6max_timing
+                    .as_mut()
+                    .ok_or("missing L6max timing scope")?;
+                let value = match operation {
+                    Operation::L6maxTimingSettle { wall_ms } => context.settle(session, wall_ms),
+                    Operation::L6maxTimingBaseline => context.baseline(session, options),
+                    Operation::L6maxTimingEnqueue {
+                        target,
+                        hold_ms,
+                        pairs,
+                    } => context.enqueue(session, target, hold_ms, pairs),
+                    Operation::L6maxTimingWaitFirst => context.wait_first(session),
+                    Operation::L6maxTimingObservePaused { wall_ms } => {
+                        context.observe_paused(session, wall_ms)
+                    }
+                    Operation::L6maxTimingAssertPaused => context.assert_paused(session),
+                    Operation::L6maxTimingResume => context.resume(session),
+                    Operation::L6maxTimingWaitQueued => context.wait_queued(session),
+                    Operation::L6maxTimingWaitReports => context.wait_reports(session, options),
+                    Operation::L6maxTimingAssertReports => context.assert_reports(session, options),
+                    Operation::L6maxTimingObserveDisplay { guest_ms } => {
+                        context.observe_display(session, guest_ms)
+                    }
+                    Operation::L6maxTimingAssertDisplay => context.assert_display(session),
+                    Operation::L6maxTimingEncoder { index, steps } => {
+                        context.encoder(session, options, index, steps)
+                    }
+                    Operation::L6maxTimingWaitEncoder => context.wait_encoder(session),
+                    Operation::L6maxTimingWaitEncoderReport => {
+                        context.wait_encoder_report(session, options)
+                    }
+                    Operation::L6maxTimingAssertEncoder => context.assert_encoder(options),
+                    Operation::L6maxTimingEnd => Ok(json!({"finished":true})),
+                    _ => unreachable!(),
+                }?;
+                context.phase += 1;
+                if matches!(operation, Operation::L6maxTimingEnd) {
+                    self.l6max_timing = None;
+                }
+                Ok(value)
+            }
             Operation::L6maxPanelKeyBegin => {
                 if session.engine.model() != l6fw::Model::L6max || self.panel_keys.is_some() {
                     return Err("panel key scope requires a fresh L6max".into());
@@ -1991,13 +2514,70 @@ impl State {
                 self.panel_keys.take();
                 Ok(json!({"complete":true}))
             }
-            Operation::L6maxChannelSignalPwm => Ok(run_l6max_channel_signal_pwm(
-                session,
-                options,
-                guest_timeout_ms,
-                wall_timeout_s,
-            )
-            .map_err(std::io::Error::other)?),
+            Operation::SignalPwmBegin => {
+                self.signal_pwm = Some(signal_pwm::Scope::begin(
+                    session,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            operation @ (Operation::SignalPwmWarmup { .. }
+            | Operation::SignalPwmDrain { .. }
+            | Operation::SignalPwmStage { .. }
+            | Operation::SignalPwmAssert { .. }
+            | Operation::SignalPwmEnd) => {
+                let scope = self
+                    .signal_pwm
+                    .as_mut()
+                    .ok_or("SIGNAL PWM scope is not active")?;
+                let value = match operation {
+                    Operation::SignalPwmWarmup { start, end, value } => {
+                        scope.warmup(session, start, end, value)?
+                    }
+                    Operation::SignalPwmDrain { .. } => scope.drain(session)?,
+                    Operation::SignalPwmStage {
+                        band,
+                        start,
+                        end,
+                        value,
+                    } => scope.stage(session, band, start, end, value)?,
+                    Operation::SignalPwmAssert { band, channel } => {
+                        scope.assert_channel(band, channel)?
+                    }
+                    Operation::SignalPwmEnd => scope.finish(options)?,
+                    _ => unreachable!(),
+                };
+                scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+                match operation {
+                    Operation::SignalPwmWarmup { .. } => scope.phase = 1,
+                    Operation::SignalPwmDrain { .. } => {
+                        scope.phase = 2;
+                        scope.stages = 0;
+                    }
+                    Operation::SignalPwmStage { .. } => {
+                        scope.stages += 1;
+                        if scope.stages == 5 {
+                            scope.phase = 3;
+                            scope.assertions = 0;
+                        }
+                    }
+                    Operation::SignalPwmAssert { .. } => {
+                        scope.assertions += 1;
+                        if scope.assertions == 4 {
+                            if scope.band == 0 {
+                                scope.band = 1;
+                                scope.phase = 1;
+                            } else {
+                                scope.phase = 4;
+                            }
+                        }
+                    }
+                    Operation::SignalPwmEnd => self.signal_pwm = None,
+                    _ => unreachable!(),
+                };
+                Ok(value)
+            }
             Operation::L6LevelMeterPwm => {
                 Ok(
                     run_l6_level_meter_pwm(session, options, guest_timeout_ms, wall_timeout_s)
@@ -2009,83 +2589,13 @@ impl State {
                 session.engine.management[0].system_reset()?;
                 Ok(json!({"reset":"qmp-system-reset"}))
             }
-            Operation::PowerPress { hold_ms, powered } => {
-                let inputs = session.engine.inputs.as_ref().unwrap();
-                // Power-button events are routed to MAIN even when sent as a
-                // tap. Its acknowledgement gives the exact guest timestamp
-                // at which the press was applied. The panel publishes the
-                // continuing guest clock used to bound short presses.
-                let input = &inputs.main;
-                let sequence = if powered {
-                    inputs.tap(53, hold_ms)?
-                } else {
-                    inputs.main.down(53, hold_ms)?
-                };
-                let mut started_guest_ms = None;
-                let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
-                loop {
-                    session.poll()?;
-                    let input_status = input.snapshot();
-                    if let Some(ack) = input_status.last_ack.filter(|ack| ack.sequence == sequence)
-                    {
-                        if !matches!(
-                            ack.kind,
-                            l6max_host::protocol::APPLIED | l6max_host::protocol::RELEASED
-                        ) {
-                            return Err("power press was rejected by the emulator".into());
-                        }
-                        started_guest_ms.get_or_insert(ack.duration_ms);
-                    }
-                    let main_status = inputs.main.snapshot();
-                    let off = main_status.powered_off;
-                    let elapsed = started_guest_ms
-                        .zip(main_status.powered_off_guest_ms)
-                        .map(|(started, stopped)| stopped.wrapping_sub(started));
-                    let guest_now = if powered {
-                        inputs.panel.snapshot().guest_ms
-                    } else {
-                        input_status.guest_ms
-                    };
-                    let guest_elapsed =
-                        started_guest_ms.map(|started| guest_now.wrapping_sub(started));
-                    if powered && off {
-                        return Err("short power press cut power".into());
-                    }
-                    if !powered && off {
-                        if session.engine.management[0].query_status()?.status != "shutdown" {
-                            return Err("power-off did not shut down QEMU".into());
-                        }
-                        // The input and panel guest clocks can differ by one
-                        // update interval while the main core shuts down.
-                        let elapsed = elapsed.ok_or(
-                            "power-off occurred before its input timestamps were observed",
-                        )?;
-                        if session.engine.model() == l6fw::Model::L6
-                            && !(300..=800).contains(&elapsed)
-                        {
-                            return Err(format!("L6 cutoff took {elapsed} guest ms").into());
-                        }
-                        thread::sleep(Duration::from_millis(100));
-                        let stopped = inputs.panel.snapshot().guest_ms;
-                        thread::sleep(Duration::from_millis(200));
-                        if inputs.panel.snapshot().guest_ms != stopped {
-                            return Err("guest clock advanced while powered off".into());
-                        }
-                        return Ok(
-                            json!({"powered":false,"held_guest_ms":elapsed,"clock_stopped":true}),
-                        );
-                    }
-                    if powered && guest_elapsed.is_some_and(|elapsed| elapsed >= hold_ms + 1000) {
-                        return Ok(json!({"powered":true,"held_guest_ms":hold_ms}));
-                    }
-                    if Instant::now() > deadline
-                        || powered
-                            && guest_elapsed.is_some_and(|elapsed| elapsed > guest_timeout_ms)
-                    {
-                        return Err("power transition timed out".into());
-                    }
-                    thread::sleep(Duration::from_millis(5));
-                }
+            operation @ (Operation::PowerBegin { .. }
+            | Operation::PowerWaitAck
+            | Operation::PowerObserveOn { .. }
+            | Operation::PowerWaitOff { .. }
+            | Operation::PowerObserveStopped { .. }
+            | Operation::PowerEnd) => {
+                self.run_power(session, operation, guest_timeout_ms, wall_timeout_s)
             }
             Operation::ExpectSettings { restored } => {
                 let state = options
@@ -2493,48 +3003,166 @@ impl State {
                 }
                 Ok(json!({"sent":request.bytes,"replies":replies}))
             }
-            Operation::EditorPadAssignments => {
+            Operation::EditorAssignBegin => {
                 let endpoints = self
                     .midi
-                    .ok_or("editor-pad-assignments needs a preceding USB MIDI enumeration")?;
-                run_editor_pad_assignments(
+                    .ok_or("Editor assignments require USB enumeration")?;
+                self.editor_assignment = Some(editor::EditorAssignmentScope::begin(
                     session,
-                    options,
                     endpoints,
                     guest_timeout_ms,
                     wall_timeout_s,
-                )
+                )?);
+                Ok(json!({"started":true}))
             }
-            Operation::EditorPadPlayback { pad } => {
+            operation @ (Operation::EditorAssignIdentity
+            | Operation::EditorAssignGlobal
+            | Operation::EditorAssignVersion
+            | Operation::EditorAssignSdInfo
+            | Operation::EditorAssignRefresh
+            | Operation::EditorAssignCount { .. }
+            | Operation::EditorAssignFilename { .. }
+            | Operation::EditorAssignSend { .. }
+            | Operation::EditorAssignState { .. }
+            | Operation::EditorAssignEnd) => {
+                let scope = self
+                    .editor_assignment
+                    .as_mut()
+                    .ok_or("Editor assignment is not active")?;
+                let value = match operation {
+                    Operation::EditorAssignIdentity => scope.identity(session)?,
+                    Operation::EditorAssignGlobal => scope.expected(
+                        session,
+                        &[0xf0, 0x52, 0, 0, 0x2b, 0xf7],
+                        &[0xf0, 0x52, 0, 0, 0x2a],
+                        "global settings",
+                    )?,
+                    Operation::EditorAssignVersion => scope.expected(
+                        session,
+                        &[
+                            0xf0, 0x52, 0, 0, 0x45, 0x05, 0x02, 0, 0, 0, 0, 0, 0x27, 0, 0xf7,
+                        ],
+                        &[0xf0, 0x52, 0, 0, 0, 0x11],
+                        "application version",
+                    )?,
+                    Operation::EditorAssignSdInfo => scope.expected(
+                        session,
+                        &[0xf0, 0x52, 0, 0, 0x67, 0x01, 0xf7],
+                        &[0xf0, 0x52, 0, 0, 0x67, 0x00],
+                        "SD card information",
+                    )?,
+                    Operation::EditorAssignRefresh => scope.initial_refresh(session)?,
+                    Operation::EditorAssignCount { pad } => scope.count(session, pad)?,
+                    Operation::EditorAssignFilename { pad } => scope.filename(session, pad)?,
+                    Operation::EditorAssignSend { pad } => scope.assign(session, pad)?,
+                    Operation::EditorAssignState { pad } => scope.state(session, pad)?,
+                    Operation::EditorAssignEnd => scope.finish(options)?,
+                    _ => unreachable!(),
+                };
+                scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+                if matches!(operation, Operation::EditorAssignState { .. }) {
+                    scope.pad += 1;
+                    scope.phase = if scope.pad == 4 { 9 } else { 5 };
+                } else {
+                    scope.phase += 1;
+                }
+                if matches!(operation, Operation::EditorAssignEnd) {
+                    self.editor_assignment = None;
+                }
+                Ok(value)
+            }
+            Operation::EditorPlaybackBegin { pad } => {
                 let endpoints = self
                     .midi
-                    .ok_or("editor-pad-playback needs preceding USB MIDI enumeration")?;
-                run_editor_pad_playback(
+                    .ok_or("Editor playback requires USB enumeration")?;
+                self.editor_playback = Some(editor::EditorPlaybackScope::begin(
                     session,
-                    options,
                     endpoints,
                     pad,
                     guest_timeout_ms,
                     wall_timeout_s,
-                )
+                )?);
+                Ok(json!({"pad":pad + 1}))
             }
-            Operation::L6maxUiPadVerify { pad } => {
+            operation @ (Operation::EditorPlaybackPlay
+            | Operation::EditorPlaybackWait
+            | Operation::EditorPlaybackObserve
+            | Operation::EditorPlaybackSample
+            | Operation::EditorPlaybackAssert
+            | Operation::EditorPlaybackEnd) => {
+                let scope = self
+                    .editor_playback
+                    .as_mut()
+                    .ok_or("Editor playback is not active")?;
+                let value = match operation {
+                    Operation::EditorPlaybackPlay => scope.play(session, options)?,
+                    Operation::EditorPlaybackWait => scope.wait_playing(session)?,
+                    Operation::EditorPlaybackObserve => scope.observe(session, options)?,
+                    Operation::EditorPlaybackSample => scope.sample(session, options)?,
+                    Operation::EditorPlaybackAssert => scope.assert_audio()?,
+                    Operation::EditorPlaybackEnd => json!({"finished":true}),
+                    _ => unreachable!(),
+                };
+                scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+                scope.phase += 1;
+                if matches!(operation, Operation::EditorPlaybackEnd) {
+                    self.editor_playback = None;
+                }
+                Ok(value)
+            }
+            Operation::UiPadBegin { pad } => {
                 let endpoints = self
                     .midi
-                    .ok_or("l6max-ui-pad-verify needs preceding USB MIDI enumeration")?;
-                run_l6max_ui_pad_verify(
+                    .ok_or("UI pad verification requires USB enumeration")?;
+                self.ui_pad = Some(editor::UiPadScope::begin(
                     session,
-                    options,
                     endpoints,
                     pad,
                     guest_timeout_ms,
                     wall_timeout_s,
-                )
+                )?);
+                Ok(json!({"pad":pad + 1}))
+            }
+            operation @ (Operation::UiPadIdentity
+            | Operation::UiPadGlobal
+            | Operation::UiPadKeepAlive
+            | Operation::UiPadQuery
+            | Operation::UiPadAssert
+            | Operation::UiPadEnd) => {
+                let scope = self
+                    .ui_pad
+                    .as_mut()
+                    .ok_or("UI pad verification is not active")?;
+                let value = match operation {
+                    Operation::UiPadIdentity => scope.identity(session)?,
+                    Operation::UiPadGlobal => scope.expected(
+                        session,
+                        &[0xf0, 0x52, 0, 0, 0x2b, 0xf7],
+                        &[0xf0, 0x52, 0, 0, 0x2a],
+                        "global settings",
+                    )?,
+                    Operation::UiPadKeepAlive => scope.expected(
+                        session,
+                        &[0xf0, 0x52, 0, 0, 0x31, 0x0b, 0xf7],
+                        &[0xf0, 0x52, 0, 0, 0, 0x0b],
+                        "keep-alive",
+                    )?,
+                    Operation::UiPadQuery => scope.query(session)?,
+                    Operation::UiPadAssert => scope.assert_assignment(session, options)?,
+                    Operation::UiPadEnd => json!({"finished":true}),
+                    _ => unreachable!(),
+                };
+                scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+                scope.phase += 1;
+                if matches!(operation, Operation::UiPadEnd) {
+                    self.ui_pad = None;
+                }
+                Ok(value)
             }
             Operation::WaitL6SoundPadFile { path } => {
                 wait_l6_sound_pad_file(session, &path, guest_timeout_ms, wall_timeout_s)
             }
-            Operation::SoundPadPlayback {
+            Operation::SoundPadBegin {
                 pad,
                 target,
                 assignment,
@@ -2543,92 +3171,229 @@ impl State {
                 require_stereo_meter,
                 expect_source,
                 max_residual_db,
-            } => run_sound_pad_playback(
-                session,
-                options,
-                pad,
-                target,
-                assignment,
-                require_pad_led_change,
-                playback_window_ms,
-                require_stereo_meter,
-                expect_source.as_deref(),
-                max_residual_db,
-                guest_timeout_ms,
-                wall_timeout_s,
-            ),
-            Operation::L6RecorderPlayback { target } => {
-                run_l6_recorder_playback(session, options, target, guest_timeout_ms, wall_timeout_s)
+            } => {
+                if self.sound_pad.is_some() {
+                    return Err("sound-pad transaction already active".into());
+                }
+                self.sound_pad = Some(audio::sound_pad::begin(
+                    session,
+                    options,
+                    pad,
+                    target,
+                    assignment,
+                    require_pad_led_change,
+                    playback_window_ms,
+                    require_stereo_meter,
+                    expect_source,
+                    max_residual_db,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                    operation_start,
+                )?);
+                Ok(json!({"pad":pad,"target":target}))
             }
-            Operation::L6maxRecorderPlayback { target } => self.run_l6max_recorder_playback(
-                session,
-                options,
-                target,
-                guest_timeout_ms,
-                wall_timeout_s,
-            ),
-            Operation::UsbStorage => {
-                let usb = session
-                    .engine
-                    .usb
-                    .as_ref()
-                    .ok_or("USB backend unavailable")?;
-                let configuration = usb.enumerate()?;
-                let mut disk = l6max_host::usb_storage::MassStorage::new(
-                    usb,
-                    configuration
-                        .storage
-                        .ok_or("firmware did not expose mass storage")?,
-                );
-                let inquiry = disk.inquiry()?;
-                disk.ready()?;
-                let (blocks, size) = disk.capacity()?;
-                if size != 512 || blocks == 0 {
-                    return Err("invalid sector geometry".into());
+            operation @ (Operation::SoundPadPress
+            | Operation::SoundPadHold
+            | Operation::SoundPadRelease
+            | Operation::SoundPadObserve
+            | Operation::SoundPadSample
+            | Operation::SoundPadAssertWaveform
+            | Operation::SoundPadAssertAudio
+            | Operation::SoundPadAssertLed
+            | Operation::SoundPadAssertMeter
+            | Operation::SoundPadFinish) => {
+                let context = self
+                    .sound_pad
+                    .as_mut()
+                    .ok_or("missing sound-pad transaction")?;
+                let result = match operation {
+                    Operation::SoundPadPress => audio::sound_pad::press(context, session, options),
+                    Operation::SoundPadHold => audio::sound_pad::hold(context, session),
+                    Operation::SoundPadRelease => audio::sound_pad::release(context, session),
+                    Operation::SoundPadObserve => {
+                        audio::sound_pad::observe(context, session, options)
+                    }
+                    Operation::SoundPadSample => {
+                        audio::sound_pad::collect(context, session, options)
+                    }
+                    Operation::SoundPadAssertWaveform => audio::sound_pad::assert_waveform(context),
+                    Operation::SoundPadAssertAudio => audio::sound_pad::assert_audio(context),
+                    Operation::SoundPadAssertLed => audio::sound_pad::assert_led(context),
+                    Operation::SoundPadAssertMeter => audio::sound_pad::assert_meter(context),
+                    Operation::SoundPadFinish => Ok(json!({"finished":true})),
+                    _ => unreachable!(),
+                }?;
+                context.phase += 1;
+                if matches!(operation, Operation::SoundPadFinish) {
+                    self.sound_pad = None;
                 }
-                let boot = disk.read_sector(0)?;
-                use std::io::Read;
-                let mut expected = [0; 512];
-                fs::File::open(
-                    options
-                        .sd_image
-                        .as_ref()
-                        .ok_or("USB storage requires an SD card")?,
-                )?
-                .read_exact(&mut expected)?;
-                if boot != expected {
-                    return Err("USB sector did not match attached SD image".into());
+                Ok(result)
+            }
+            Operation::L6RecorderBegin { target } => {
+                if self.l6_recorder.is_some() {
+                    return Err("recorder transaction already active".into());
                 }
-                let original = disk.read_sector((blocks - 1) as u32)?;
-                disk.write_sector((blocks - 1) as u32, &original)?;
-                if disk.read_sector((blocks - 1) as u32)? != original {
-                    return Err("USB sector write/read mismatch".into());
+                self.l6_recorder = Some(audio::recorder::Scope::begin(
+                    session,
+                    options,
+                    target,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started": true}))
+            }
+            operation @ (Operation::L6RecorderPress
+            | Operation::L6RecorderDispatcher
+            | Operation::L6RecorderAssertEvent
+            | Operation::L6RecorderHandler
+            | Operation::L6RecorderAssertSelection
+            | Operation::L6RecorderCallback
+            | Operation::L6RecorderAssertCallback
+            | Operation::L6RecorderObserve
+            | Operation::L6RecorderRelease
+            | Operation::L6RecorderSample
+            | Operation::L6RecorderEvidence
+            | Operation::L6RecorderAssertTrace
+            | Operation::L6RecorderAssertDma
+            | Operation::L6RecorderEnd) => {
+                let context = self
+                    .l6_recorder
+                    .as_mut()
+                    .ok_or("missing recorder transaction")?;
+                let result = match operation {
+                    Operation::L6RecorderPress => context.press(session),
+                    Operation::L6RecorderDispatcher => context.dispatcher(session),
+                    Operation::L6RecorderAssertEvent => context.assert_event(),
+                    Operation::L6RecorderHandler => context.handler(session),
+                    Operation::L6RecorderAssertSelection => context.assert_selection(),
+                    Operation::L6RecorderCallback => context.callback(session),
+                    Operation::L6RecorderAssertCallback => context.assert_callback(),
+                    Operation::L6RecorderObserve => context.observe(session),
+                    Operation::L6RecorderRelease => context.release(session),
+                    Operation::L6RecorderSample => context.sample(session, options),
+                    Operation::L6RecorderEvidence => context.save(options),
+                    Operation::L6RecorderAssertTrace => context.assert_trace(),
+                    Operation::L6RecorderAssertDma => context.assert_dma(),
+                    Operation::L6RecorderEnd => Ok(json!({"finished": true})),
+                    _ => unreachable!(),
+                }?;
+                context.phase += 1;
+                if matches!(operation, Operation::L6RecorderEnd) {
+                    self.l6_recorder = None;
                 }
-                let disk = l6max_host::usb_storage::UsbDisk::new(disk)?;
-                let mut volume = sd_image::Volume::open(disk)?;
-                let filename = format!("L6T{:05X}.TXT", std::process::id() & 0xfffff);
-                let expected = (0..1537)
-                    .map(|index| ((index * 37 + 11) % 256) as u8)
-                    .collect::<Vec<_>>();
-                if volume.exists(&filename) {
-                    return Err("USB FAT roundtrip filename already exists".into());
+                Ok(result)
+            }
+            Operation::L6maxRecorderBegin { target } => {
+                if self.l6max_recorder.is_some() {
+                    return Err("L6max recorder already active".into());
                 }
-                volume.write(&filename, &expected)?;
-                volume.flush()?;
-                let actual = volume.read(&filename)?;
-                volume.remove(&filename)?;
-                if expected != actual {
-                    return Err(format!(
-                        "USB FAT file roundtrip mismatch: wrote {} bytes, read {} bytes",
-                        expected.len(),
-                        actual.len()
-                    )
-                    .into());
+                self.l6max_recorder = Some(audio::max_recorder::Scope::begin(
+                    session,
+                    options,
+                    target,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            operation @ (Operation::L6maxRecorderPress
+            | Operation::L6maxRecorderSubmit
+            | Operation::L6maxRecorderQueue
+            | Operation::L6maxRecorderDispatch
+            | Operation::L6maxRecorderScheduler
+            | Operation::L6maxRecorderCallback
+            | Operation::L6maxRecorderAction
+            | Operation::L6maxRecorderStream
+            | Operation::L6maxRecorderObserve
+            | Operation::L6maxRecorderSample
+            | Operation::L6maxRecorderEvidence
+            | Operation::L6maxRecorderAssertAudio
+            | Operation::L6maxRecorderEnd) => {
+                let context = self
+                    .l6max_recorder
+                    .as_mut()
+                    .ok_or("missing L6max recorder")?;
+                let result = match operation {
+                    Operation::L6maxRecorderPress => context.press(session),
+                    Operation::L6maxRecorderSubmit => context.submit(session),
+                    Operation::L6maxRecorderQueue => context.queue(session),
+                    Operation::L6maxRecorderDispatch => context.dispatch(session),
+                    Operation::L6maxRecorderScheduler => context.scheduler(session),
+                    Operation::L6maxRecorderCallback => context.callback(session),
+                    Operation::L6maxRecorderAction => context.action(session),
+                    Operation::L6maxRecorderStream => context.stream(session),
+                    Operation::L6maxRecorderObserve => context.observe(session),
+                    Operation::L6maxRecorderSample => context.sample(session, options),
+                    Operation::L6maxRecorderEvidence => context.save(options),
+                    Operation::L6maxRecorderAssertAudio => context.assert_audio(),
+                    Operation::L6maxRecorderEnd => Ok(json!({"finished":true})),
+                    _ => unreachable!(),
+                }?;
+                context.phase += 1;
+                if matches!(operation, Operation::L6maxRecorderEnd) {
+                    self.l6max_recorder = None;
                 }
-                volume.flush()?;
-                Ok(
-                    json!({"inquiry":String::from_utf8_lossy(&inquiry[8..36]),"blocks":blocks,"sector_size":size,"sector_round_trip":true,"fat_file_round_trip_bytes":expected.len()}),
-                )
+                Ok(result)
+            }
+            Operation::UsbStorageBegin => {
+                if self.usb_storage_scope.is_some() {
+                    return Err("USB storage already active".into());
+                }
+                self.usb_storage_scope = Some(usb_storage_steps::Scope::begin(
+                    session,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            operation @ (Operation::UsbStorageInquiry
+            | Operation::UsbStorageReady
+            | Operation::UsbStorageCapacity
+            | Operation::UsbStorageReadBoot
+            | Operation::UsbStorageAssertBoot
+            | Operation::UsbStorageLastRead
+            | Operation::UsbStorageLastWrite
+            | Operation::UsbStorageLastAssert
+            | Operation::UsbStorageFatOpen
+            | Operation::UsbStorageCreate { .. }
+            | Operation::UsbStorageFlushCreated
+            | Operation::UsbStorageReadFile
+            | Operation::UsbStorageRemoveFile
+            | Operation::UsbStorageAssertFile
+            | Operation::UsbStorageFlushRemoved
+            | Operation::UsbStorageEnd) => {
+                let context = self
+                    .usb_storage_scope
+                    .as_mut()
+                    .ok_or("missing USB storage scope")?;
+                let value = match operation {
+                    Operation::UsbStorageInquiry => context.inquiry(),
+                    Operation::UsbStorageReady => context.ready(),
+                    Operation::UsbStorageCapacity => context.capacity(),
+                    Operation::UsbStorageReadBoot => context.read_boot(),
+                    Operation::UsbStorageAssertBoot => context.assert_boot(options),
+                    Operation::UsbStorageLastRead => context.last_read(),
+                    Operation::UsbStorageLastWrite => context.last_write(),
+                    Operation::UsbStorageLastAssert => context.last_assert(),
+                    Operation::UsbStorageFatOpen => context.fat_open(),
+                    Operation::UsbStorageCreate {
+                        length,
+                        multiplier,
+                        increment,
+                    } => context.create(length, multiplier, increment),
+                    Operation::UsbStorageFlushCreated => context.flush(),
+                    Operation::UsbStorageReadFile => context.read(),
+                    Operation::UsbStorageRemoveFile => context.remove(),
+                    Operation::UsbStorageAssertFile => context.assert_file(),
+                    Operation::UsbStorageFlushRemoved => context.flush(),
+                    Operation::UsbStorageEnd => context.finish(),
+                    _ => unreachable!(),
+                }?;
+                context.phase += 1;
+                if matches!(operation, Operation::UsbStorageEnd) {
+                    self.usb_storage_scope = None;
+                }
+                Ok(value)
             }
             Operation::AudioCallbacks => {
                 let points = callbacks(session.engine.model());
@@ -3109,6 +3874,43 @@ impl State {
                 self.overlay_reader = None;
                 Ok(value)
             }
+            Operation::KnobBitmapReactivate { delta } => {
+                let budget = shared.ok_or("missing shared deadline")?;
+                let check = || notification_observation_check(session, budget, budget.3);
+                self.overlay_reader = Some(l6max_host::knob_popup::overlay_reader_before_checked(
+                    &session.engine.management[0],
+                    l6fw::Model::L6max,
+                    budget.0 + Duration::from_secs(budget.3),
+                    &check,
+                )?);
+                reactivate_zero_overlay(
+                    session,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob preflight")?,
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing bitmap overlay reader")?,
+                    delta,
+                    shared.ok_or("missing shared deadline")?,
+                    11,
+                )
+            }
+            Operation::KnobBitmapWaitActive => {
+                let value = wait_zero_overlay_active(
+                    session,
+                    self.knob_dialog_preflight
+                        .as_mut()
+                        .ok_or("missing knob preflight")?,
+                    self.overlay_reader
+                        .as_ref()
+                        .ok_or("missing bitmap overlay reader")?,
+                    shared.ok_or("missing shared deadline")?,
+                    15,
+                )?;
+                self.overlay_reader = None;
+                Ok(value)
+            }
             Operation::KnobBitmapBegin => {
                 let value = begin_bitmap_probe(
                     session,
@@ -3117,14 +3919,21 @@ impl State {
                         .as_mut()
                         .ok_or("missing knob-dialog preflight")?,
                 )?;
-                self.overlay_reader =
-                    Some(l6ctl::OwnedControl::new(&session.engine).knob_overlay_reader()?);
+                let budget = shared.ok_or("missing shared deadline")?;
+                let check = || notification_observation_check(session, budget, budget.3);
+                self.overlay_reader = Some(l6max_host::knob_popup::overlay_reader_before_checked(
+                    &session.engine.management[0],
+                    l6fw::Model::L6max,
+                    budget.0 + Duration::from_secs(budget.3),
+                    &check,
+                )?);
                 Ok(value)
             }
             Operation::KnobBitmapCheckBackground {
                 background,
                 expected,
             } => check_bitmap_background(
+                session,
                 self.knob_dialog_preflight
                     .as_mut()
                     .ok_or("missing knob-dialog preflight")?,
@@ -3133,6 +3942,7 @@ impl State {
                     .ok_or("missing bitmap reader")?,
                 background,
                 expected,
+                shared.ok_or("missing shared deadline")?,
             ),
             Operation::KnobBitmapStoreBefore => {
                 let frame = self
@@ -3217,6 +4027,7 @@ impl State {
                         .ok_or("missing overlay reactivation reader")?,
                     delta,
                     shared.ok_or("missing shared deadline")?,
+                    12,
                 )
             }
             Operation::KnobOverlayWaitActive => {
@@ -3229,6 +4040,7 @@ impl State {
                         .as_ref()
                         .ok_or("missing overlay reactivation reader")?,
                     shared.ok_or("missing shared deadline")?,
+                    1,
                 )?;
                 self.overlay_reader = None;
                 Ok(value)
@@ -3343,6 +4155,7 @@ impl State {
             | Operation::EnqueueTap { .. }
             | Operation::WaitInputApplied
             | Operation::WaitKnobParameterMode { .. }
+            | Operation::WaitKnobDisplayImage { .. }
             | Operation::CaptureDisplay { .. }
             | Operation::ExpectCapturedDisplayImage { .. }
             | Operation::KnobDialogExpectHeap
@@ -3452,6 +4265,8 @@ impl State {
                     .as_mut()
                     .ok_or("missing knob preflight")?,
                 message,
+                shared.ok_or("missing knob-dialog shared deadline")?,
+                wall_timeout_s,
             ),
             Operation::KnobDialogWaitNotificationFrame {
                 clear,
@@ -3470,6 +4285,7 @@ impl State {
                 limit_ms,
                 guest_timeout_ms,
                 wall_timeout_s,
+                shared.ok_or("missing knob-dialog shared deadline")?,
             ),
             Operation::KnobDialogExpectNotificationInvariants { clear } => {
                 expect_notification_invariants(
@@ -3584,11 +4400,8 @@ impl State {
             Operation::ExpectMenu { menu, path, items } => {
                 Ok(expect_menu(session, &menu, &path, &items).map_err(std::io::Error::other)?)
             }
-            Operation::FirmwareUpdate => {
-                Err("firmware-update scenario must run at the host lifecycle boundary".into())
-            }
-            Operation::WasmPatch => {
-                Err("wasm-patch scenario must run at the host lifecycle boundary".into())
+            Operation::PatchParityHostOnly => {
+                Err("patch parity must run in the host-only test runner".into())
             }
         }
     }
@@ -3815,6 +4628,8 @@ mod knob_phase_tests {
             Operation::KnobOverlayCheckBitmap,
             Operation::KnobOverlayCheckHeap,
             Operation::KnobOverlayFinish,
+            Operation::KnobBitmapReactivate { delta: -1 },
+            Operation::KnobBitmapWaitActive,
             Operation::KnobBitmapBegin,
             Operation::KnobBitmapCheckBackground {
                 background: 47,
@@ -3873,8 +4688,8 @@ mod knob_phase_tests {
                     pending,
                     next_mode,
                     Some(0),
-                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 98,
-                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 107,
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 100,
+                    matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 109,
                     (matches!(operation, Operation::EnqueueEncoderNoAck { .. }) && before.4 == 43)
                         || (matches!(operation, Operation::CaptureDisplay { .. })
                             && before.4 == 44),
@@ -3894,10 +4709,10 @@ mod knob_phase_tests {
                     } else {
                         None
                     },
-                    if matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 84 {
+                    if matches!(operation, Operation::CaptureDisplay { .. }) && before.4 == 86 {
                         Some(1)
                     } else if matches!(operation, Operation::CaptureDisplay { .. })
-                        && before.4 == 89
+                        && before.4 == 91
                     {
                         Some(6)
                     } else {
@@ -3952,6 +4767,13 @@ mod knob_phase_tests {
                     None,
                 ),
                 (Operation::WaitInputApplied, Some(&encoder)),
+                (
+                    Operation::WaitKnobDisplayImage {
+                        image: Path::new(KNOB_DIALOG_REFERENCES).join("pan.png"),
+                        main_timeout_ms: 5000,
+                    },
+                    None,
+                ),
                 (
                     Operation::CaptureDisplay {
                         guest_ms: 400,

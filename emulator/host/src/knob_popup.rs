@@ -517,6 +517,16 @@ impl Reader<'_> {
     }
 }
 
+fn checked_overlay_read<T>(
+    check: &dyn Fn() -> Result<(), String>,
+    read: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    check()?;
+    let value = read()?;
+    check()?;
+    Ok(value)
+}
+
 /// Revision-checked reader for one bounded overlay transaction.
 /// Recreate after guest restart or firmware changes.
 pub struct OverlayReader {
@@ -562,6 +572,57 @@ impl OverlayReader {
     pub fn countdown_ticks(&self) -> Result<u8, String> {
         self.borrowed().countdown_ticks()
     }
+    pub fn background_bitmap_id_before_checked(
+        &self,
+        index: u32,
+        deadline: std::time::Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<u16, String> {
+        read_background_bitmap_id(index, &mut |address, size| {
+            check()?;
+            let bytes = self
+                .qmp
+                .read_memory_before(0, address, size, deadline)
+                .map_err(|e| e.to_string())?;
+            check()?;
+            Ok(bytes)
+        })
+    }
+    fn byte_before_checked(
+        &self,
+        address: u32,
+        deadline: std::time::Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<u8, String> {
+        let bytes = checked_overlay_read(check, || {
+            self.qmp
+                .read_memory_before(0, address, 1, deadline)
+                .map_err(|e| e.to_string())
+        })?;
+        bytes.first().copied().ok_or("short overlay byte".into())
+    }
+    pub fn countdown_ticks_before_checked(
+        &self,
+        deadline: std::time::Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<u8, String> {
+        self.byte_before_checked(l6max::gui_bitmap_table_entry_0 + 2, deadline, check)
+    }
+    pub fn mailbox_before_checked(
+        &self,
+        deadline: std::time::Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<u8, String> {
+        self.byte_before_checked(l6max::gui_bitmap_table_entry_0 + 3, deadline, check)
+    }
+    pub fn level_before_checked(
+        &self,
+        deadline: std::time::Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<u8, String> {
+        self.byte_before_checked(l6max::mixer_channel_levels, deadline, check)
+    }
+
     pub fn level(&self) -> Result<u8, String> {
         self.borrowed().level()
     }
@@ -576,6 +637,24 @@ impl OverlayReader {
 pub fn overlay_reader(qmp: &QmpClient, model: Model) -> Result<OverlayReader, String> {
     verify(model, &mut |address, size| {
         qmp.read_memory(0, address, size).map_err(|e| e.to_string())
+    })?;
+    Ok(OverlayReader { qmp: qmp.clone() })
+}
+
+/// Construct an overlay reader using a shared QMP deadline and cancellation check.
+pub fn overlay_reader_before_checked(
+    qmp: &QmpClient,
+    model: Model,
+    deadline: std::time::Instant,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<OverlayReader, String> {
+    verify(model, &mut |address, size| {
+        check()?;
+        let bytes = qmp
+            .read_memory_before(0, address, size, deadline)
+            .map_err(|e| e.to_string())?;
+        check()?;
+        Ok(bytes)
     })?;
     Ok(OverlayReader { qmp: qmp.clone() })
 }
@@ -642,6 +721,46 @@ pub fn parameter_reader(qmp: &QmpClient, model: Model) -> Result<ParameterReader
 }
 
 /// Verify the GUI layout before observing it during a single guest step.
+/// Guard and sample notification active/timer state within a shared deadline.
+/// The guest runs during reads, so the result is not atomic.
+pub fn notification_state_before_checked(
+    qmp: &QmpClient,
+    model: Model,
+    deadline: std::time::Instant,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<(u8, u16), String> {
+    if model != Model::L6max {
+        return Err("notification state requires L6max 1.10".into());
+    }
+    let read = |address, size| {
+        check()?;
+        let bytes = qmp
+            .read_memory_before(0, address, size, deadline)
+            .map_err(|e| e.to_string())?;
+        check()?;
+        Ok::<_, String>(bytes)
+    };
+    for (address, expected) in [
+        (
+            0x8000_64c0,
+            "c548c9e75ca74bac0b93736a67e5fef8045ba54f50f1b82b6d2da3b561f3eab5",
+        ),
+        (
+            0x8000_6660,
+            "dc6b83b74e0c81e2d6c9dd2ceda85e7d2a907c7f0c3a6bb3742e81cb746ce139",
+        ),
+    ] {
+        if format!("{:x}", Sha256::digest(read(address, 64)?)) != expected {
+            return Err("unsupported notification routines".into());
+        }
+    }
+    let bytes = read(0x8020_a2c0, 6)?;
+    if bytes.len() != 6 {
+        return Err("short notification state".into());
+    }
+    Ok((bytes[0], u16::from_le_bytes([bytes[4], bytes[5]])))
+}
+
 pub fn reader(qmp: &QmpClient, model: Model) -> Result<Reader<'_>, String> {
     verify(model, &mut |address, size| {
         qmp.read_memory(0, address, size)
@@ -658,6 +777,26 @@ pub fn snapshot(qmp: &QmpClient, model: Model, with_text: bool) -> Result<Snapsh
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn overlay_read_rechecks_deadline_after_delayed_final_read() {
+        let expired = std::cell::Cell::new(false);
+        let read_started = std::cell::Cell::new(false);
+        let check = || {
+            if expired.get() {
+                Err("local deadline".to_owned())
+            } else {
+                Ok(())
+            }
+        };
+        let error = checked_overlay_read(&check, || {
+            read_started.set(true);
+            expired.set(true);
+            Ok(0u8)
+        })
+        .unwrap_err();
+        assert!(read_started.get());
+        assert_eq!(error, "local deadline");
+    }
     #[test]
     fn parameter_getter_rejects_a_mismatched_revision() {
         let error = verify_parameter_getter(&mut |address, size| {

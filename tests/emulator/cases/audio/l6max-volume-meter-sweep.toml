@@ -95,12 +95,62 @@ wall_timeout_s = 120
 # image. Wait for mixer readiness before pressing, so the sampler is ready. The WAV holds each isolated stereo
 # level long enough for the 33 ms meter scan; a 20-second capture covers it.
 [[step]]
-action = "sound-pad-playback"
+action = "sound-pad-begin"
 pad = 3
 target = 52
 assignment = "saved-state"
 require_pad_led_change = false
 require_stereo_meter = true
 playback_window_ms = 20000
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-press"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-hold"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-release"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-observe"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-sample"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-waveform"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-audio"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-led"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-meter"
+guest_timeout_ms = 30000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-finish"
 guest_timeout_ms = 30000
 wall_timeout_s = 300

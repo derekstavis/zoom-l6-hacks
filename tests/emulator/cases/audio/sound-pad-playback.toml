@@ -24,7 +24,7 @@ wall_timeout_s = 180
 # Exercise every mapped physical pad. Each action takes a fresh audio-trace
 # baseline, so playback from the preceding pad cannot satisfy the next check.
 [[step]]
-action = "sound-pad-playback"
+action = "sound-pad-begin"
 assignment = "saved-state"
 pad = 0
 target = 49
@@ -32,7 +32,57 @@ guest_timeout_ms = 15000
 wall_timeout_s = 300
 
 [[step]]
-action = "sound-pad-playback"
+action = "sound-pad-press"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-hold"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-release"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-observe"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-sample"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-waveform"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-audio"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-led"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-meter"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-finish"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-begin"
 assignment = "saved-state"
 pad = 1
 target = 50
@@ -40,7 +90,57 @@ guest_timeout_ms = 15000
 wall_timeout_s = 300
 
 [[step]]
-action = "sound-pad-playback"
+action = "sound-pad-press"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-hold"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-release"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-observe"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-sample"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-waveform"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-audio"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-led"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-meter"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-finish"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-begin"
 assignment = "saved-state"
 pad = 2
 target = 51
@@ -48,9 +148,109 @@ guest_timeout_ms = 15000
 wall_timeout_s = 300
 
 [[step]]
-action = "sound-pad-playback"
+action = "sound-pad-press"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-hold"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-release"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-observe"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-sample"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-waveform"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-audio"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-led"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-meter"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-finish"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-begin"
 assignment = "saved-state"
 pad = 3
 target = 52
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-press"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-hold"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-release"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-observe"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-sample"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-waveform"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-audio"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-led"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-assert-meter"
+guest_timeout_ms = 15000
+wall_timeout_s = 300
+
+[[step]]
+action = "sound-pad-finish"
 guest_timeout_ms = 15000
 wall_timeout_s = 300

@@ -8,6 +8,7 @@ use std::{
 
 /// What the driver runs with: the configuration's firmware packages, and the QEMU
 /// and packaged app chosen for this run.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Config {
     pub(crate) firmware: BTreeMap<l6fw::Model, PathBuf>,
     pub(crate) qemu: PathBuf,
@@ -15,6 +16,7 @@ pub(crate) struct Config {
     pub(crate) app: Option<App>,
 }
 /// A packaged application, for the cases that test one.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct App {
     pub(crate) executable: PathBuf,
     pub(crate) qemu_sha256: String,

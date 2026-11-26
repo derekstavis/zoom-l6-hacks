@@ -2,6 +2,11 @@
 //!
 //! The socket interface is deliberately narrower than direct access. In
 //! particular its input replies confirm enqueueing, not guest acknowledgement.
+pub use l6max_host::audio_trace::{
+    L6RecorderBaseline, L6RecorderSample, SAI1_TX_PREFIX, TxSample as Sai1TxSample,
+    l6_recorder_baseline, l6_recorder_samples, l6_recorder_signature_changed, sai1_tx_nonzero,
+    sai1_tx_nonzero_counts, sai1_tx_samples,
+};
 pub use l6max_host::control::Info;
 pub use l6max_host::debug::{Command as DebugCommand, Observation as DebugObservation};
 pub use l6max_host::effect_editor::{
@@ -17,8 +22,18 @@ pub use l6max_host::knob_popup::{
 };
 pub use l6max_host::memory::MemoryRead;
 pub use l6max_host::midi_config::Config as MidiConfig;
+pub use l6max_host::qmp::Status as QmpStatus;
 pub use l6max_host::sd_loader::{Site as SdLoaderSite, Snapshot as SdLoaderSnapshot};
 
+pub use l6max_host::editor::pad_assignment_present as editor_pad_assignment_present;
+pub use l6max_host::editor::{
+    pad_assignment_matches as editor_pad_assignment_matches,
+    pad_file_count as editor_pad_file_count, pad_filename_valid as editor_pad_filename_valid,
+};
+pub use l6max_host::input_trace::panel_uart_count;
+pub use l6max_host::l6_recorder::{
+    Dma as L6RecorderDma, Event as L6RecorderEvent, Selection as L6RecorderSelection,
+};
 pub use l6max_host::mixer_level::MixerLevel;
 pub use l6max_host::panel_keys::Snapshot as PanelKeySnapshot;
 pub use l6max_host::update_bootloader::Outcome as InstallerOutcome;
@@ -51,6 +66,7 @@ pub enum RtosKind {
 #[serde(tag = "command", rename_all = "kebab-case")]
 pub enum Request {
     Info,
+    QmpStatus,
     InputStatus { source: InputSource },
     InputAck { source: InputSource, sequence: u32 },
     SdLoaderStatus,
@@ -96,6 +112,7 @@ pub struct UsbControllerStatus {
 pub struct ButtonReceipt {
     pub target: u32,
     pub command: String,
+    pub sequence: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -249,6 +266,9 @@ impl ControlClient {
     }
 
     /// Sample aggregate counters for one running emulator input channel.
+    pub fn qmp_status(&self) -> Result<QmpStatus, ControlError> {
+        self.request_as(&Request::QmpStatus)
+    }
     pub fn input_status(&self, source: InputSource) -> Result<InputCounters, ControlError> {
         self.request_as(&Request::InputStatus { source })
     }
@@ -487,6 +507,20 @@ impl<'a> OwnedControl<'a> {
             .map_err(ControlError::Rejected)
     }
 
+    /// Begin a bounded in-process debugger session.
+    pub fn debug_session_before(
+        &self,
+        deadline: std::time::Instant,
+    ) -> Result<l6max_host::debug::Session, ControlError> {
+        self.engine
+            .debugger()
+            .ok_or(ControlError::Unavailable(
+                "debugger unavailable; launch with --gdb-socket",
+            ))?
+            .begin_before(deadline)
+            .map_err(ControlError::Rejected)
+    }
+
     pub fn info(&self) -> Result<Info, ControlError> {
         let inputs = self
             .engine
@@ -496,7 +530,81 @@ impl<'a> OwnedControl<'a> {
         Ok(control::info(inputs, self.engine.model()))
     }
 
+    /// Create a revision-guarded L6 recorder reader for a bounded transaction.
+    /// Create a guarded reader for one stopped L6max guest transaction.
+    pub fn l6max_recorder_reader_before(
+        &self,
+        deadline: std::time::Instant,
+        cancelled: impl FnMut() -> bool,
+    ) -> Result<l6max_host::l6max_recorder::Reader, String> {
+        l6max_host::l6max_recorder::Reader::new(
+            &self.engine.management[0],
+            self.engine.model(),
+            deadline,
+            cancelled,
+        )
+    }
+    /// Own the guest USB mass-storage session for one bounded transaction.
+    pub fn usb_storage_before(
+        &self,
+        deadline: std::time::Instant,
+        guest_start: u32,
+        guest_budget: u32,
+    ) -> Result<l6max_host::usb_storage::Session, String> {
+        let usb = self
+            .engine
+            .usb
+            .as_ref()
+            .ok_or("USB backend unavailable")?
+            .clone();
+        let panel = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or("panel input unavailable")?
+            .panel
+            .clone();
+        let budget = l6max_host::usb::Budget::new(deadline, move || {
+            panel.snapshot().guest_ms.wrapping_sub(guest_start) > guest_budget
+        });
+        l6max_host::usb_storage::Session::open(usb, budget).map_err(|e| e.to_string())
+    }
+    /// Pause both emulated processors, restoring their prior run states on close.
+    pub fn pause_all_before(
+        &self,
+        deadline: std::time::Instant,
+        cancelled: impl FnMut() -> bool,
+    ) -> Result<l6max_host::pause_scope::PauseScope, String> {
+        l6max_host::pause_scope::PauseScope::acquire(&self.engine.management, deadline, cancelled)
+    }
+    pub fn l6_recorder_reader_before(
+        &self,
+        deadline: std::time::Instant,
+        cancelled: impl FnMut() -> bool,
+    ) -> Result<l6max_host::l6_recorder::Reader, ControlError> {
+        l6max_host::l6_recorder::Reader::new(
+            self.main_qmp()?,
+            self.engine.model(),
+            deadline,
+            cancelled,
+        )
+        .map_err(ControlError::Rejected)
+    }
+
     /// Sample the host's channel counters without opening a control socket.
+    pub fn qmp_status_before(
+        &self,
+        deadline: std::time::Instant,
+    ) -> Result<QmpStatus, ControlError> {
+        self.main_qmp()?
+            .status_before(deadline)
+            .map_err(|e| ControlError::Rejected(e.to_string()))
+    }
+    pub fn qmp_status(&self) -> Result<QmpStatus, ControlError> {
+        self.main_qmp()?
+            .query_status()
+            .map_err(|e| ControlError::Rejected(e.to_string()))
+    }
     pub fn input_status(&self, source: InputSource) -> Result<InputCounters, ControlError> {
         let inputs = self
             .engine
@@ -630,12 +738,83 @@ impl<'a> OwnedControl<'a> {
             .map_err(ControlError::Rejected)
     }
 
+    /// Enqueue an input on a specific emulated channel, including unsupported
+    /// targets used by protocol rejection diagnostics. Returns its sequence.
+    pub fn raw_tap(
+        &self,
+        source: InputSource,
+        target: u32,
+        hold_ms: u32,
+    ) -> Result<u32, ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
+        let input = match source {
+            InputSource::Main => &inputs.main,
+            InputSource::Panel => &inputs.panel,
+        };
+        input
+            .tap(target, hold_ms)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+    /// Enqueue a raw down on the explicitly selected channel.
+    pub fn raw_down(
+        &self,
+        source: InputSource,
+        target: u32,
+        duration_ms: u32,
+    ) -> Result<u32, ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
+        let input = match source {
+            InputSource::Main => &inputs.main,
+            InputSource::Panel => &inputs.panel,
+        };
+        input
+            .down(target, duration_ms)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+    /// Enqueue a raw release on the explicitly selected channel.
+    pub fn raw_up(&self, source: InputSource, target: u32) -> Result<u32, ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
+        let input = match source {
+            InputSource::Main => &inputs.main,
+            InputSource::Panel => &inputs.panel,
+        };
+        input
+            .up(target)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+    /// Enqueue a zero-based encoder index on the panel channel, including
+    /// unsupported indices for protocol rejection diagnostics.
+    pub fn raw_panel_encoder(&self, index: u32, steps: i32) -> Result<u32, ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
+        inputs
+            .panel
+            .encoder(index, steps)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+
     /// Enqueue a held button without waiting for guest acknowledgement.
     pub fn down(&self, target: u32, duration_ms: u32) -> Result<ButtonReceipt, ControlError> {
         if target >= l6max_host::controls::INPUT_COUNT as u32 || duration_ms > 60_000 {
             return Err(ControlError::Rejected("invalid held button".into()));
         }
-        self.engine
+        let sequence = self
+            .engine
             .inputs
             .as_ref()
             .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
@@ -644,13 +823,15 @@ impl<'a> OwnedControl<'a> {
         Ok(ButtonReceipt {
             target,
             command: "down".into(),
+            sequence,
         })
     }
     pub fn up(&self, target: u32) -> Result<ButtonReceipt, ControlError> {
         if target >= l6max_host::controls::INPUT_COUNT as u32 {
             return Err(ControlError::Rejected("invalid held button".into()));
         }
-        self.engine
+        let sequence = self
+            .engine
             .inputs
             .as_ref()
             .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
@@ -659,6 +840,7 @@ impl<'a> OwnedControl<'a> {
         Ok(ButtonReceipt {
             target,
             command: "up".into(),
+            sequence,
         })
     }
 
@@ -771,11 +953,46 @@ impl<'a> OwnedControl<'a> {
             .inputs
             .as_ref()
             .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
-        control::enqueue_tap(inputs, target, hold_ms).map_err(ControlError::Rejected)?;
+        let sequence =
+            control::enqueue_tap(inputs, target, hold_ms).map_err(ControlError::Rejected)?;
         Ok(ButtonReceipt {
             target,
             command: "tap".into(),
+            sequence,
         })
+    }
+
+    /// Enqueue a button down and return its input sequence for acknowledgement.
+    pub fn down_with_sequence(&self, target: u32, duration_ms: u32) -> Result<u32, ControlError> {
+        if l6max_host::input::button_source(target).is_none()
+            || duration_ms == 0
+            || duration_ms > 60_000
+        {
+            return Err(ControlError::Rejected(
+                "invalid button down target or duration".into(),
+            ));
+        }
+        self.engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .down(target, duration_ms)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+
+    /// Enqueue a button release and return its input sequence for acknowledgement.
+    pub fn up_with_sequence(&self, target: u32) -> Result<u32, ControlError> {
+        if l6max_host::input::button_source(target).is_none() {
+            return Err(ControlError::Rejected(
+                "invalid button release target".into(),
+            ));
+        }
+        self.engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .up(target)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
     }
 
     /// Verify the GUI and parameter getter revisions for one bounded observation.

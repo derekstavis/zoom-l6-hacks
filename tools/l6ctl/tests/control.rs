@@ -41,9 +41,9 @@ fn info() -> Value {
 #[test]
 fn input_status_client_and_cli_use_the_same_typed_wire_contract() {
     let path = socket_path();
-    let panel = json!({"source":"panel", "connected":true, "guest_ms":42,
+    let panel = json!({"source":"panel", "connected":true, "guest_ms":42, "clock_updates":2, "powered_off":false, "powered_off_guest_ms":null,
         "sent":7, "applied":6, "released":3, "rejected":1, "error":null});
-    let main = json!({"source":"main", "connected":false, "guest_ms":0,
+    let main = json!({"source":"main", "connected":false, "guest_ms":0, "clock_updates":0, "powered_off":false, "powered_off_guest_ms":null,
         "sent":2, "applied":1, "released":0, "rejected":0, "error":"disconnected"});
     let server = server(
         &path,
@@ -133,7 +133,8 @@ fn sd_loader_status_and_site_use_typed_socket_and_cli() {
 #[test]
 fn input_ack_client_and_cli_preserve_sequence_and_state() {
     let path = socket_path();
-    let response = json!({"source":"panel", "sequence":17, "state":"applied"});
+    let response =
+        json!({"source":"panel", "sequence":17, "state":"applied", "applied_guest_ms":73});
     let exchange = (
         json!({"command":"input-ack", "source":"panel", "sequence":17}),
         json!({"ok":true,"result":response}),
@@ -143,6 +144,7 @@ fn input_ack_client_and_cli_preserve_sequence_and_state() {
         .input_ack(InputSource::Panel, 17)
         .unwrap();
     assert_eq!(ack.state, l6ctl::InputAckState::Applied);
+    assert_eq!(ack.applied_guest_ms, Some(73));
     let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
         .arg("--socket")
         .arg(&path)
@@ -933,6 +935,45 @@ fn panel_key_client_and_cli_use_typed_wire_contract() {
     assert_eq!(
         serde_json::from_slice::<Value>(&output.stdout).unwrap(),
         result
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn power_receipt_and_qmp_status_are_available_to_socket_and_cli() {
+    let path = socket_path();
+    let receipt = json!({"target":53,"command":"tap","sequence":41});
+    let status = json!({"running":false,"status":"shutdown"});
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"tap","target":53,"hold_ms":100}),
+                json!({"ok":true,"result":receipt}),
+            ),
+            (
+                json!({"command":"qmp-status"}),
+                json!({"ok":true,"result":status}),
+            ),
+        ],
+    );
+    let result = ControlClient::new(&path).tap(53, 100).unwrap();
+    assert_eq!(result.sequence, 41);
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .arg("qmp-status")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        status
     );
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();

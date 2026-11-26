@@ -9,6 +9,7 @@ mod gui_probe;
 mod hashing;
 mod identity;
 mod patch_matrix;
+mod patch_parity;
 mod progress;
 mod report;
 mod schedule;
@@ -200,7 +201,16 @@ fn child_scenario() -> Result<(), String> {
     let mut args = env::args_os().skip(2);
     let path = PathBuf::from(args.next().ok_or("missing scenario")?);
     let options = Options::parse_args(args)?;
-    smoke_core::run(Scenario::load_for_case(&path)?, options)
+    let scenario = Scenario::load_for_case(&path)?;
+    if scenario
+        .step
+        .iter()
+        .any(|step| matches!(step.action, smoke_core::Action::PatchParityPrepare))
+    {
+        patch_parity::run(scenario, options)
+    } else {
+        smoke_core::run(scenario, options)
+    }
 }
 struct RunJournal(PathBuf);
 impl Drop for RunJournal {
@@ -264,7 +274,7 @@ fn execute() -> Result<i32, String> {
                     .collect::<Vec<_>>()
                     .join(","),
                 case.suites.join(","),
-                if case.scenario.is_none() {
+                if case.scenario.is_none() && case.campaign.is_empty() {
                     " [packaged app required]"
                 } else {
                     ""
@@ -443,12 +453,22 @@ fn execute() -> Result<i32, String> {
     let mut needs_patch_macros = false;
     for job in &jobs {
         let case = job.case;
-        if case.blocked.is_some() || case.scenario.is_none() && config.app.is_none() {
+        if case.blocked.is_some()
+            || case.scenario.is_none() && case.campaign.is_empty() && config.app.is_none()
+        {
             continue;
         }
         if job.backend == Backend::Gui && case.scenario.is_some() {
             packages.insert("l6max-gui");
         }
+        needs_patch_macros |= case
+            .campaign
+            .iter()
+            .filter(|member| member.model == job.model)
+            .any(|member| {
+                Scenario::load(&catalog::scenario_file(&member.scenario))
+                    .is_ok_and(|scenario| scenario.needs_patch_builder())
+            });
         needs_patch_macros |= case
             .scenario
             .as_ref()
@@ -586,6 +606,7 @@ fn execute() -> Result<i32, String> {
                     &namespace,
                     &id,
                     &progress,
+                    None,
                 );
                 progress.attempt_finished(id, result.outcome);
                 result
@@ -683,6 +704,20 @@ fn main() {
     }
     let context = l6max_host::logging::context("driver");
     let _entered = context.enter();
+    if cli_args
+        .first()
+        .is_some_and(|arg| arg == "__campaign-member")
+    {
+        let result = cli_args
+            .get(1)
+            .ok_or_else(|| "missing campaign request".to_string())
+            .and_then(|path| case::campaign_member_entry(std::path::Path::new(path)));
+        if let Err(error) = result {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if cli_args.first().is_some_and(|arg| arg == "__scenario") {
         if let Err(error) = child_scenario() {
             tracing::error!(event="scenario_failed",%error,"scenario failed");

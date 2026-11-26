@@ -1,12 +1,11 @@
 //! Typed peripheral operations. Sequencing, timing and artifacts stay in the runner.
 use crate::{Scenario, Session, scenario::PadAssignmentSource, waveform};
 use firmware_api::{l6, l6max};
-use l6max_host::{engine::Options, headless::Headless};
+use l6max_host::engine::Options;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
-    io::{Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
@@ -17,31 +16,26 @@ mod display;
 mod editor;
 mod execute;
 mod knob_dialog;
+mod l6_input_sweep;
 mod lifecycle;
 mod midi;
 mod midi_probe;
 mod mode_primitives;
 mod panel;
+mod power;
 mod sd;
+mod signal_pwm;
+mod timing;
 mod usb;
+mod usb_storage_steps;
 
 use audio::*;
 pub use display::*;
-use editor::*;
 pub use knob_dialog::*;
-pub use lifecycle::*;
+use lifecycle::*;
 use midi::*;
 use midi_probe::*;
-use mode_primitives::{
-    embedded_active_display_operations, embedded_bitmap_probe_operations,
-    embedded_callback_race_operations, embedded_expiry_operations,
-    embedded_invalid_signature_operations, embedded_invalid_tag_operations,
-    embedded_level_demo_operations, embedded_locked_update_operations,
-    embedded_midi_sync_operations, embedded_mode_operations, embedded_navigation_operations,
-    embedded_notification_operations, embedded_overlay_operations,
-    embedded_preflight_probe_operations, embedded_refreshed_overlay_operations,
-    embedded_restoration_operations, embedded_task_context_operations, wait_parameter_mode_checked,
-};
+use mode_primitives::wait_parameter_mode_checked;
 use panel::*;
 use sd::*;
 use usb::*;
@@ -137,7 +131,27 @@ pub enum Operation {
         inserted: bool,
     },
     UsbDescriptors,
-    UsbStorage,
+    UsbStorageBegin,
+    UsbStorageInquiry,
+    UsbStorageReady,
+    UsbStorageCapacity,
+    UsbStorageReadBoot,
+    UsbStorageAssertBoot,
+    UsbStorageLastRead,
+    UsbStorageLastWrite,
+    UsbStorageLastAssert,
+    UsbStorageFatOpen,
+    UsbStorageCreate {
+        length: u32,
+        multiplier: u32,
+        increment: u32,
+    },
+    UsbStorageFlushCreated,
+    UsbStorageReadFile,
+    UsbStorageRemoveFile,
+    UsbStorageAssertFile,
+    UsbStorageFlushRemoved,
+    UsbStorageEnd,
     UsbMidiOpen,
     UsbMidiBegin,
     UsbMidiExpectEncoder,
@@ -253,14 +267,44 @@ pub enum Operation {
         complete_on_match: bool,
     },
     UsbSysexEnd,
-    EditorPadAssignments,
-    EditorPadPlayback {
+    EditorAssignBegin,
+    EditorAssignIdentity,
+    EditorAssignGlobal,
+    EditorAssignVersion,
+    EditorAssignSdInfo,
+    EditorAssignRefresh,
+    EditorAssignCount {
         pad: u8,
     },
-    L6maxUiPadVerify {
+    EditorAssignFilename {
         pad: u8,
     },
-    SoundPadPlayback {
+    EditorAssignSend {
+        pad: u8,
+    },
+    EditorAssignState {
+        pad: u8,
+    },
+    EditorAssignEnd,
+    EditorPlaybackBegin {
+        pad: u8,
+    },
+    EditorPlaybackPlay,
+    EditorPlaybackWait,
+    EditorPlaybackObserve,
+    EditorPlaybackSample,
+    EditorPlaybackAssert,
+    EditorPlaybackEnd,
+    UiPadBegin {
+        pad: u8,
+    },
+    UiPadIdentity,
+    UiPadGlobal,
+    UiPadKeepAlive,
+    UiPadQuery,
+    UiPadAssert,
+    UiPadEnd,
+    SoundPadBegin {
         pad: u8,
         target: u32,
         assignment: PadAssignmentSource,
@@ -273,12 +317,49 @@ pub enum Operation {
     WaitL6SoundPadFile {
         path: String,
     },
-    L6RecorderPlayback {
+    SoundPadPress,
+    SoundPadHold,
+    SoundPadRelease,
+    SoundPadObserve,
+    SoundPadSample,
+    SoundPadAssertWaveform,
+    SoundPadAssertAudio,
+    SoundPadAssertLed,
+    SoundPadAssertMeter,
+    SoundPadFinish,
+    L6RecorderBegin {
         target: u32,
     },
-    L6maxRecorderPlayback {
+    L6RecorderPress,
+    L6RecorderDispatcher,
+    L6RecorderAssertEvent,
+    L6RecorderHandler,
+    L6RecorderAssertSelection,
+    L6RecorderCallback,
+    L6RecorderAssertCallback,
+    L6RecorderObserve,
+    L6RecorderRelease,
+    L6RecorderSample,
+    L6RecorderEvidence,
+    L6RecorderAssertTrace,
+    L6RecorderAssertDma,
+    L6RecorderEnd,
+    L6maxRecorderBegin {
         target: u32,
     },
+    L6maxRecorderPress,
+    L6maxRecorderSubmit,
+    L6maxRecorderQueue,
+    L6maxRecorderDispatch,
+    L6maxRecorderScheduler,
+    L6maxRecorderCallback,
+    L6maxRecorderAction,
+    L6maxRecorderStream,
+    L6maxRecorderObserve,
+    L6maxRecorderSample,
+    L6maxRecorderEvidence,
+    L6maxRecorderAssertAudio,
+    L6maxRecorderEnd,
     ExpectMemory {
         symbol: String,
         address: u32,
@@ -393,6 +474,10 @@ pub enum Operation {
     KnobOverlayCheckBitmap,
     KnobOverlayCheckHeap,
     KnobOverlayFinish,
+    KnobBitmapReactivate {
+        delta: i32,
+    },
+    KnobBitmapWaitActive,
     KnobBitmapBegin,
     KnobBitmapCheckBackground {
         background: u32,
@@ -435,6 +520,10 @@ pub enum Operation {
     WaitInputApplied,
     WaitKnobParameterMode {
         mode: u8,
+    },
+    WaitKnobDisplayImage {
+        image: PathBuf,
+        main_timeout_ms: u32,
     },
     CaptureDisplay {
         guest_ms: u32,
@@ -516,15 +605,27 @@ pub enum Operation {
         path: Vec<String>,
         items: Vec<String>,
     },
-    FirmwareUpdate,
-    WasmPatch,
+    PatchParityHostOnly,
     WarmReset,
     Restart,
     ExpectRecorder,
-    PowerPress {
+    PowerBegin {
         hold_ms: u32,
         powered: bool,
     },
+    PowerWaitAck,
+    PowerObserveOn {
+        guest_ms: u32,
+    },
+    PowerWaitOff {
+        min_cutoff_ms: Option<u32>,
+        max_cutoff_ms: Option<u32>,
+    },
+    PowerObserveStopped {
+        settle_wall_ms: u64,
+        observe_wall_ms: u64,
+    },
+    PowerEnd,
     ExpectSettings {
         restored: bool,
     },
@@ -577,9 +678,59 @@ pub enum Operation {
         size: Option<u64>,
         matches_state: Option<String>,
     },
-    L6InputSweep,
+    L6SweepBegin,
+    L6SweepRejectMain {
+        target: u32,
+    },
+    L6SweepPanelBaseline {
+        target: u32,
+    },
+    L6SweepPanelTap,
+    L6SweepPanelWait,
+    L6SweepPanelTrace,
+    L6SweepPanelAssert,
+    L6SweepEncoderBaseline,
+    L6SweepEncoderSend {
+        index: u32,
+    },
+    L6SweepEncoderWait,
+    L6SweepEncoderTrace,
+    L6SweepEncoderAssert,
+    L6SweepRejectPanel,
+    L6SweepRejectEncoder,
+    L6SweepEnd,
     L6DinSweep,
-    L6maxInputTiming,
+    L6maxTimingBegin,
+    L6maxTimingSettle {
+        wall_ms: u32,
+    },
+    L6maxTimingBaseline,
+    L6maxTimingEnqueue {
+        target: u32,
+        hold_ms: u32,
+        pairs: u32,
+    },
+    L6maxTimingWaitFirst,
+    L6maxTimingObservePaused {
+        wall_ms: u32,
+    },
+    L6maxTimingAssertPaused,
+    L6maxTimingResume,
+    L6maxTimingWaitQueued,
+    L6maxTimingWaitReports,
+    L6maxTimingAssertReports,
+    L6maxTimingObserveDisplay {
+        guest_ms: u32,
+    },
+    L6maxTimingAssertDisplay,
+    L6maxTimingEncoder {
+        index: u32,
+        steps: i32,
+    },
+    L6maxTimingWaitEncoder,
+    L6maxTimingWaitEncoderReport,
+    L6maxTimingAssertEncoder,
+    L6maxTimingEnd,
     L6maxPanelKeyBegin,
     L6maxPanelKeyCheck {
         code: u32,
@@ -593,7 +744,26 @@ pub enum Operation {
         pressed: bool,
     },
     L6maxPanelKeyEnd,
-    L6maxChannelSignalPwm,
+    SignalPwmBegin,
+    SignalPwmWarmup {
+        start: u8,
+        end: u8,
+        value: f32,
+    },
+    SignalPwmDrain {
+        band: u8,
+    },
+    SignalPwmStage {
+        band: u8,
+        start: u8,
+        end: u8,
+        value: f32,
+    },
+    SignalPwmAssert {
+        band: u8,
+        channel: u8,
+    },
+    SignalPwmEnd,
     L6LevelMeterPwm,
 }
 
@@ -635,19 +805,19 @@ fn validate_native_midi_capabilities(
                     | crate::Action::DinUsbBegin
                     | crate::Action::HostMidiRoundTrip
                     | crate::Action::UsbDescriptors
-                    | crate::Action::UsbStorage
+                    | crate::Action::UsbStorageBegin
                     | crate::Action::UsbMidiOpen
                     | crate::Action::UsbSysexBegin
                     | crate::Action::UsbSysexExchange { .. }
                     | crate::Action::UsbSysexEnd
-                    | crate::Action::EditorPadAssignments
-                    | crate::Action::EditorPadPlayback { .. }
-                    | crate::Action::L6maxUiPadVerify { .. }
+                    | crate::Action::EditorAssignBegin
+                    | crate::Action::EditorPlaybackBegin { .. }
+                    | crate::Action::UiPadBegin { .. }
                     | crate::Action::L6DinSweep
                     | crate::Action::L6MidiProbeBegin
                     | crate::Action::L6UsbStartup
                     | crate::Action::L6DinEventDispatch { .. }
-                    | crate::Action::L6maxChannelSignalPwm
+                    | crate::Action::SignalPwmBegin
                     | crate::Action::L6LevelMeterPwm
             )
     });
@@ -695,7 +865,7 @@ pub(crate) fn prepare_with_report(
     if scenario.step.iter().any(|step| {
         matches!(
             step.action,
-            crate::Action::L6maxChannelSignalPwm | crate::Action::L6LevelMeterPwm
+            crate::Action::SignalPwmBegin | crate::Action::L6LevelMeterPwm
         )
     }) {
         options.usb_enabled = false;
@@ -820,14 +990,14 @@ pub(crate) fn prepare_with_report(
             && matches!(
                 s.action,
                 crate::Action::UsbDescriptors
-                    | crate::Action::UsbStorage
+                    | crate::Action::UsbStorageBegin
                     | crate::Action::UsbMidiOpen
                     | crate::Action::UsbSysexBegin
                     | crate::Action::UsbSysexExchange { .. }
                     | crate::Action::UsbSysexEnd
-                    | crate::Action::EditorPadAssignments
-                    | crate::Action::EditorPadPlayback { .. }
-                    | crate::Action::L6maxUiPadVerify { .. }
+                    | crate::Action::EditorAssignBegin
+                    | crate::Action::EditorPlaybackBegin { .. }
+                    | crate::Action::UiPadBegin { .. }
             )
     }) {
         options.usb_enabled = false;
@@ -896,6 +1066,11 @@ pub struct State {
     saved: Option<(Vec<u8>, usize)>,
     midi: Option<l6max_host::usb::Endpoints>,
     sysex_deadline: Option<(Instant, u32, u32, u64)>,
+    ui_pad: Option<editor::UiPadScope>,
+    editor_playback: Option<editor::EditorPlaybackScope>,
+    editor_assignment: Option<editor::EditorAssignmentScope>,
+    l6_input_sweep: Option<l6_input_sweep::Scope>,
+    signal_pwm: Option<signal_pwm::Scope>,
     l6_indicator: Option<L6IndicatorScope>,
     gdb: Option<l6max_diagnostics::gdb::Gdb>,
     host_midi: Option<Box<dyn crate::host_midi::Client>>,
@@ -909,11 +1084,17 @@ pub struct State {
     knob_mode: Option<KnobModeScope>,
     knob_heap_reader: Option<l6max_host::heap::CounterReader>,
     pending_input: Option<PendingInput>,
+    power: Option<power::Scope>,
     captured_display: Option<CapturedDisplay>,
     midi_round_trip: Option<MidiRoundTrip>,
     midi_sync: Option<midi::MidiSync>,
     l6_midi_probe: Option<midi::L6MidiProbe>,
     sd_inspection: Option<sd::SdInspectionContext>,
+    sound_pad: Option<audio::sound_pad::SoundPadContext>,
+    l6_recorder: Option<audio::recorder::Scope>,
+    l6max_recorder: Option<audio::max_recorder::Scope>,
+    l6max_timing: Option<timing::Scope>,
+    usb_storage_scope: Option<usb_storage_steps::Scope>,
     native_midi: Option<l6ctl::midi::MidiSession>,
     midi_probe: Option<MidiProbeContext>,
 }
@@ -1204,10 +1385,10 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     use super::{
-        create_factory_card, display_difference_count, editor_pad_assignment_matches,
-        editor_pad_file_count, editor_pad_filename_valid, knob_display_matches, sound_pad_led,
+        create_factory_card, display_difference_count, knob_display_matches, sound_pad_led,
         verify_sai_edma_trace,
     };
+    use l6ctl::{editor_pad_assignment_matches, editor_pad_file_count, editor_pad_filename_valid};
     use l6fw::Model;
     use std::{
         fs,
@@ -1358,16 +1539,16 @@ mod native_midi_capability_tests {
         for action in [
             crate::Action::HostMidiRoundTrip,
             crate::Action::UsbDescriptors,
-            crate::Action::UsbStorage,
+            crate::Action::UsbStorageBegin,
             crate::Action::UsbMidiOpen,
             crate::Action::UsbSysexBegin,
             crate::Action::DirectUsbMidiRoundTrip {
                 cable: 1,
                 expect_ring_change: true,
             },
-            crate::Action::EditorPadAssignments,
-            crate::Action::EditorPadPlayback { pad: 1 },
-            crate::Action::L6maxUiPadVerify { pad: 1 },
+            crate::Action::EditorAssignBegin,
+            crate::Action::EditorPlaybackBegin { pad: 1 },
+            crate::Action::UiPadBegin { pad: 1 },
             crate::Action::L6DinSweep,
             crate::Action::L6MidiProbeBegin,
             crate::Action::DinUsbBegin,
@@ -1377,7 +1558,7 @@ mod native_midi_capability_tests {
                 cc: 1,
                 value: 1,
             },
-            crate::Action::L6maxChannelSignalPwm,
+            crate::Action::SignalPwmBegin,
             crate::Action::L6LevelMeterPwm,
         ] {
             let mut step = scenario.step[0].clone();

@@ -1,0 +1,212 @@
+//! Decode QEMU's bounded sound-pad SAI sample observations.
+use serde::{Deserialize, Serialize};
+
+pub const SAI1_TX_PREFIX: &str = "l6 audio TX samples sai=00384000";
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TxSample {
+    pub words: u64,
+    pub nonzero: u64,
+    pub underruns: u64,
+    pub first: String,
+    pub last: String,
+    pub at_ms: u64,
+}
+
+/// Preserve trace line ordering and skip malformed observations, as the sound-pad probe does.
+pub fn sai1_tx_samples(trace: &str, skip: usize) -> Vec<TxSample> {
+    trace
+        .lines()
+        .filter(|line| line.starts_with(SAI1_TX_PREFIX))
+        .skip(skip)
+        .filter_map(|line| {
+            let field = |name: &str| {
+                line.split_whitespace()
+                    .find_map(|part| part.strip_prefix(&format!("{name}=")))
+            };
+            Some(TxSample {
+                words: field("words")?.parse().ok()?,
+                nonzero: field("nonzero")?.parse().ok()?,
+                underruns: field("underruns")?.parse().ok()?,
+                first: field("first")?.to_owned(),
+                last: field("last")?.to_owned(),
+                at_ms: field("at")?.strip_suffix("ms")?.parse().ok()?,
+            })
+        })
+        .collect()
+}
+
+pub fn sai1_tx_nonzero(samples: &[TxSample]) -> bool {
+    samples.iter().any(|sample| {
+        sample.nonzero > 0
+            && sample.words > 0
+            && sample.first != "ffffffff"
+            && sample.last != "ffffffff"
+    })
+}
+
+/// Parse only `nonzero` counts after the specified SAI trace baseline.
+/// Other fields may be missing or malformed, matching the Editor playback probe.
+pub fn sai1_tx_nonzero_counts(trace: &str, skip: usize) -> Vec<u64> {
+    trace
+        .lines()
+        .filter(|line| line.starts_with(SAI1_TX_PREFIX))
+        .skip(skip)
+        .filter_map(|line| {
+            line.split_whitespace()
+                .find_map(|field| field.strip_prefix("nonzero="))
+                .and_then(|value| value.parse().ok())
+        })
+        .collect()
+}
+
+/// Baseline used by the L6 recorder probe. The last line may have no signature.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct L6RecorderBaseline {
+    pub count: usize,
+    pub signature: Option<(String, String)>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct L6RecorderSample {
+    pub at_ms: u64,
+    pub first: String,
+    pub last: String,
+}
+fn field<'a>(line: &'a str, name: &str) -> Option<&'a str> {
+    line.split_whitespace()
+        .find_map(|part| part.strip_prefix(&format!("{name}=")))
+}
+fn signature(line: &str) -> Option<(String, String)> {
+    Some((
+        field(line, "first")?.to_ascii_lowercase(),
+        field(line, "last")?.to_ascii_lowercase(),
+    ))
+}
+pub fn l6_recorder_baseline(trace: &str) -> L6RecorderBaseline {
+    let lines = trace
+        .lines()
+        .filter(|line| line.starts_with(SAI1_TX_PREFIX))
+        .collect::<Vec<_>>();
+    L6RecorderBaseline {
+        count: lines.len(),
+        signature: lines.last().and_then(|line| signature(line)),
+    }
+}
+pub fn l6_recorder_samples(trace: &str, baseline: &L6RecorderBaseline) -> Vec<L6RecorderSample> {
+    trace
+        .lines()
+        .filter(|line| line.starts_with(SAI1_TX_PREFIX))
+        .skip(baseline.count)
+        .filter_map(|line| {
+            let at = field(line, "at")?;
+            let at_ms = at.strip_suffix("ms").unwrap_or(at).parse().ok()?;
+            let (first, last) = signature(line)?;
+            Some(L6RecorderSample { at_ms, first, last })
+        })
+        .collect()
+}
+pub fn l6_recorder_signature_changed(
+    baseline: &L6RecorderBaseline,
+    samples: &[L6RecorderSample],
+) -> bool {
+    baseline.signature.as_ref().is_some_and(|(first, last)| {
+        samples
+            .iter()
+            .any(|sample| sample.first != *first || sample.last != *last)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn l6_recorder_trace_preserves_partial_fields_case_and_baseline_rules() {
+        let baseline =
+            l6_recorder_baseline("l6 audio TX samples sai=00384000 first=ABCD last=FFFF\n");
+        assert_eq!(baseline.signature, Some(("abcd".into(), "ffff".into())));
+        let trace = "l6 audio TX samples sai=00384000 first=ABCD last=FFFF\nl6 audio TX samples sai=00384000 at=17ms first=ABCD last=ffff\nl6 audio TX samples sai=00384000 at=18 first=1234 last=ffff\nl6 audio TX samples sai=00384000 first=9999 last=ffff\n";
+        let samples = l6_recorder_samples(trace, &baseline);
+        assert_eq!(samples.len(), 2);
+        assert_eq!(samples[0].at_ms, 17);
+        assert!(l6_recorder_signature_changed(&baseline, &samples));
+        assert!(!l6_recorder_signature_changed(
+            &L6RecorderBaseline {
+                count: 0,
+                signature: None
+            },
+            &samples
+        ));
+    }
+    #[test]
+    fn counts_accept_missing_other_fields_and_skip_baseline() {
+        let trace = "l6 audio TX samples sai=00384000 nonzero=9\nl6 audio TX samples sai=00384000 nonzero=broken\nl6 audio TX samples sai=00384000 nonzero=2\n";
+        assert_eq!(sai1_tx_nonzero_counts(trace, 1), vec![2]);
+        assert_eq!(sai1_tx_nonzero_counts(trace, 0), vec![9, 2]);
+    }
+    #[test]
+    fn skips_baseline_and_malformed_records_and_rejects_sentinel_samples() {
+        let trace = "l6 audio TX samples sai=00384000 words=9 nonzero=3 underruns=0 first=00000001 last=00000002 at=4ms\nl6 audio TX samples sai=00384000 words=9 nonzero=3 underruns=0 first=ffffffff last=00000002 at=5ms\nl6 audio TX samples sai=00384000 words=broken\n";
+        let samples = sai1_tx_samples(trace, 1);
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].at_ms, 5);
+        assert!(!sai1_tx_nonzero(&samples));
+        assert!(sai1_tx_nonzero(&sai1_tx_samples(trace, 0)));
+    }
+}
+
+/// L6max recorder counts every TX window, including partially parsed lines.
+#[derive(Clone, Debug)]
+pub struct L6maxRecorderSummary {
+    pub windows: usize,
+    pub nonzero_windows: usize,
+    pub signature_changed: bool,
+}
+pub fn l6max_recorder_summary(trace: &str, baseline: &L6RecorderBaseline) -> L6maxRecorderSummary {
+    let lines: Vec<_> = trace
+        .lines()
+        .filter(|line| line.starts_with("l6 audio TX samples sai=00384000"))
+        .skip(baseline.count)
+        .collect();
+    let nonzero_windows = lines
+        .iter()
+        .filter(|line| {
+            field(line, "nonzero")
+                .and_then(|value| {
+                    value
+                        .strip_suffix("ms")
+                        .unwrap_or(value)
+                        .parse::<u64>()
+                        .ok()
+                })
+                .unwrap_or(0)
+                > 0
+        })
+        .count();
+    let signature_changed = lines.iter().any(|line| {
+        let current = signature(line);
+        current.is_some() && current != baseline.signature
+    });
+    L6maxRecorderSummary {
+        windows: lines.len(),
+        nonzero_windows,
+        signature_changed,
+    }
+}
+
+#[cfg(test)]
+mod max_recorder_tests {
+    use super::*;
+    #[test]
+    fn partial_windows_and_absent_baseline_signature_preserve_legacy_rules() {
+        let base = l6_recorder_baseline("l6 audio TX samples sai=00384000 missing=true\n");
+        let s = l6max_recorder_summary(
+            "l6 audio TX samples sai=00384000 missing=true\nl6 audio TX samples sai=00384000 nonzero=2ms first=AB last=CD\nl6 audio TX samples sai=00384000 nonzero=bad first=x\n",
+            &base,
+        );
+        assert_eq!(s.windows, 2);
+        assert_eq!(s.nonzero_windows, 1);
+        assert!(s.signature_changed);
+        let base = l6_recorder_baseline("l6 audio TX samples sai=00384000 first=AB last=CD\n");
+        assert!(!l6max_recorder_summary("l6 audio TX samples sai=00384000 first=AB last=CD\nl6 audio TX samples sai=00384000 nonzero=1 first=ab last=cd\n",&base).signature_changed);
+    }
+}

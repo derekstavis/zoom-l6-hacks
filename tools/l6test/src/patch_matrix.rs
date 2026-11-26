@@ -148,6 +148,7 @@ pub struct GeneratedCase {
     pub id: String,
     pub model: &'static str,
     pub scenario: String,
+    pub campaign: Vec<crate::catalog::CampaignMember>,
     /// The generated suites that run it; every case is in [`SUITE`].
     pub suites: Vec<&'static str>,
 }
@@ -664,6 +665,7 @@ fn combination_case(
         id,
         model: name,
         scenario: text,
+        campaign: Vec::new(),
         suites: vec![SUITE],
     })
 }
@@ -710,6 +712,7 @@ fn delivery_cases(model: Model, all: &Checks) -> Result<Vec<GeneratedCase>, Stri
                 id,
                 model: name,
                 scenario: text,
+                campaign: Vec::new(),
                 suites: vec![SUITE, PAIRWISE_SUITE, SINGLE_SUITE],
             });
             // Installed by a firmware update built with the browser patcher.
@@ -721,7 +724,51 @@ fn delivery_cases(model: Model, all: &Checks) -> Result<Vec<GeneratedCase>, Stri
                 "version = 1\nname = {id:?}\nmodels = [{name:?}]\nbackends = [\"headless\"]\nstate = \"none\"\ncard = \"none\"\nupdate_patches = {{ {name} = {} }}",
                 quoted_list(&closure)
             );
-            if model == Model::L6 && patch == "midi-sync" {
+            let mut campaign = Vec::new();
+            if model == Model::L6max
+                && matches!(patch, "midi-sync" | "knob-dialog" | "din-mixer-control")
+            {
+                let (scenario, name, path) = match patch {
+                    "midi-sync" => (
+                        include_str!(
+                            "../../../tests/emulator/cases/boot/l6max-update-patched-midi.toml"
+                        ),
+                        "patched-midi-install",
+                        "tests/emulator/cases/boot/l6max-update-patched-midi.toml",
+                    ),
+                    "knob-dialog" => (
+                        include_str!(
+                            "../../../tests/emulator/cases/boot/l6max-update-patched-knob.toml"
+                        ),
+                        "patched-knob-install",
+                        "tests/emulator/cases/boot/l6max-update-patched-knob.toml",
+                    ),
+                    "din-mixer-control" => (
+                        include_str!(
+                            "../../../tests/emulator/scenarios/l6max-update-patched-din.toml"
+                        ),
+                        "patched-din-install",
+                        "tests/emulator/scenarios/l6max-update-patched-din.toml",
+                    ),
+                    _ => unreachable!(),
+                };
+                text = scenario.to_owned();
+                campaign = vec![
+                    crate::catalog::CampaignMember {
+                        name: "stock-checksum-rejection".into(),
+                        model,
+                        scenario: "tests/emulator/cases/boot/l6max-update-stock-bad-checksum.toml"
+                            .into(),
+                        fingerprint: String::new(),
+                    },
+                    crate::catalog::CampaignMember {
+                        name: name.into(),
+                        model,
+                        scenario: path.into(),
+                        fingerprint: String::new(),
+                    },
+                ];
+            } else if model == Model::L6 && patch == "midi-sync" {
                 text.push_str("update_fixture = \"l6-patched-midi\"\nupdate_goal = \"install\"\n");
                 include(&mut text, "tests/emulator/fragments/l6-update-install.toml");
                 step(
@@ -738,15 +785,15 @@ fn delivery_cases(model: Model, all: &Checks) -> Result<Vec<GeneratedCase>, Stri
                 );
                 step(&mut text, "action = \"lifecycle-stop\"");
             } else {
-                step(
-                    &mut text,
-                    "action = \"firmware-update\"\nguest_timeout_ms = 300000\nwall_timeout_s = 1200",
-                );
+                return Err(format!(
+                    "no managed update campaign for {name} patch {patch}"
+                ));
             }
             cases.push(GeneratedCase {
                 id,
                 model: name,
                 scenario: text,
+                campaign,
                 suites: vec![SUITE, PAIRWISE_SUITE, SINGLE_SUITE],
             });
         }
@@ -787,6 +834,7 @@ fn delivery_cases(model: Model, all: &Checks) -> Result<Vec<GeneratedCase>, Stri
                 id,
                 model: name,
                 scenario: text,
+                campaign: Vec::new(),
                 suites: vec![SUITE, PAIRWISE_SUITE, SINGLE_SUITE],
             });
         }
@@ -964,6 +1012,62 @@ mod tests {
                 assert!(pairwise.len() * 5 < values.len());
             }
         }
+    }
+
+    #[test]
+    fn midi_update_campaign_keeps_rejection_then_install() {
+        let cases = generate().unwrap();
+        let case = cases
+            .iter()
+            .find(|case| case.id == "patches-l6max_update_midi-sync")
+            .unwrap();
+        assert_eq!(
+            case.campaign
+                .iter()
+                .map(|member| member.name.as_str())
+                .collect::<Vec<_>>(),
+            ["stock-checksum-rejection", "patched-midi-install"]
+        );
+        let first =
+            smoke_core::Scenario::load(&crate::catalog::scenario_file(&case.campaign[0].scenario))
+                .unwrap();
+        let second =
+            smoke_core::Scenario::load(&crate::catalog::scenario_file(&case.campaign[1].scenario))
+                .unwrap();
+        assert_eq!(
+            first.update_fixture,
+            Some(smoke_core::UpdateFixture::BadChecksumStock)
+        );
+        assert_eq!(
+            second.update_fixture,
+            Some(smoke_core::UpdateFixture::PatchedMidi)
+        );
+        for (id, expected) in [
+            (
+                "patches-l6max_update_knob-dialog",
+                smoke_core::UpdateFixture::PatchedKnob,
+            ),
+            (
+                "patches-l6max_update_din-mixer-control",
+                smoke_core::UpdateFixture::PatchedDin,
+            ),
+        ] {
+            let other = cases.iter().find(|case| case.id == id).unwrap();
+            assert_eq!(other.campaign.len(), 2);
+            assert_eq!(other.campaign[0].name, "stock-checksum-rejection");
+            let second = smoke_core::Scenario::load(&crate::catalog::scenario_file(
+                &other.campaign[1].scenario,
+            ))
+            .unwrap();
+            assert_eq!(second.update_fixture, Some(expected));
+        }
+        assert_eq!(
+            cases
+                .iter()
+                .filter(|case| !case.campaign.is_empty())
+                .count(),
+            3
+        );
     }
 
     #[test]

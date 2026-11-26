@@ -177,7 +177,7 @@
     "suites": [
       "full"
     ],
-    "definition": "8348bb0f622be56fe7f9279dc817cfdc824762c542840b95bc1b1bbc543ee9cd"
+    "definition": "f818f5777ad221729674d95fce71a9ef36d918465832abc13983645985044dcd"
   },
   {
     "case": "editor-pad-assignments",
@@ -186,7 +186,7 @@
     "suites": [
       "full"
     ],
-    "definition": "d0334d11b902e3ec6875c22323f834787f61f2865f5910b9cf1d516926ecda80"
+    "definition": "eb8b07fd40da2e4ded86a1e9240a1163b5f7cde755e0005349ec17ce19b99f7d"
   },
   {
     "case": "editor-pad-assignments-fresh",
@@ -195,7 +195,7 @@
     "suites": [
       "full"
     ],
-    "definition": "1b5ee39edd6da369cebbf2e8fa3d0f248801e1ad4a00af22d56c7426f3eaab14"
+    "definition": "d21c80f83882190619cf11f219706e70df5a9e381fa2116d5252ccc440e839fb"
   },
   {
     "case": "editor-pad-assignments-fresh",
@@ -204,7 +204,7 @@
     "suites": [
       "full"
     ],
-    "definition": "8b76195ad11c8cd36f2a3e815626348c4ad5808cef7b0d2bf259b469f1939e3c"
+    "definition": "d4e641a1a2b3a65e7c355cfc07bae46f3d008542674cac51e94a8d50e8fedf77"
   },
   {
     "case": "encoder",
@@ -250,7 +250,7 @@
     "suites": [
       "full"
     ],
-    "definition": "c82ad5d4f12b8b3f335b554f6039c07aac4e67b85d70fdaac5dca62db8727682"
+    "definition": "771255cd166bb1c853d86c0e80e7121769e4e1c6711889d082d3a64d8020602d"
   },
   {
     "case": "firmware-update",
@@ -259,7 +259,7 @@
     "suites": [
       "full"
     ],
-    "definition": "3c55a89b09bd8898e4b134fd571b5dda9e8309b357036ec403bb14dd3ccfc89b"
+    "definition": "4425b751f8b606d6eb5ee2111153286cea6d2ae58f69cb7d08d60d8d6acae666"
   },
   {
     "case": "gestures",
@@ -421,7 +421,7 @@
     "suites": [
       "full"
     ],
-    "definition": "9fd52c96ce44a7703f1081e2470451368eb51333cfc9a89e74a430fefb514025"
+    "definition": "4644071015d9c13539c12fc615e603eda2fde2f70b4897719ae316c05d08ba89"
   },
   {
     "case": "knob-dialog-menu",
@@ -500,7 +500,7 @@
     "suites": [
       "full"
     ],
-    "definition": "b3b5afd6ed552b6f6e3ac50f68ef656c794d03a84ce1b5cf4abb79406cc8f025"
+    "definition": "accece9e76199ed9504937f7b2b1b2b41a5fdb7d24365a857950f3a7eafa44c6"
   },
   {
     "case": "l6-eq-audio-update",
@@ -529,7 +529,7 @@
       "regression",
       "full"
     ],
-    "definition": "71ac82b667aadf3d064cd8910779fc6e811111116e50de747962dabe21275314"
+    "definition": "88cd290ad07c110ec8f5bcf47ec408ad18e66431fcc5327e51a416a266b76693"
   },
   {
     "case": "l6-installed-patch",
@@ -588,7 +588,7 @@
     "suites": [
       "full"
     ],
-    "definition": "ab454ace3c6096ae1369d96c840cc1f33f0ec95452750573191282b6f0681fb8"
+    "definition": "aefa641e5b02c8ca72e716bade4555d27387d2766b254f3658d046ecfe01ea28"
   },
   {
     "case": "l6-recorder-record-stop",
@@ -602,14 +602,14 @@
     "model": "l6",
     "backend": "headless",
     "suites": [],
-    "definition": "49e18b116eff1bb665547e08ebed507b6e5b0140c8ea48cc25fa990c64c01c6c"
+    "definition": "90e95a2b93f59fbe232cc982dc132100d365427a789ed6f76423368c2996b454"
   },
   {
     "case": "l6-sound-pad-waveform",
     "model": "l6",
     "backend": "headless",
     "suites": [],
-    "definition": "a57dd505c8f76a618648a81e08b7a8ef1cdf604eaa75ffd7479d9f98056e528b"
+    "definition": "063a886047825e51dd807b748e0111e56f5aa2263a6ddb01d503423ac64f51bb"
   },
   {
     "case": "l6-update-patched-midi",
@@ -641,7 +641,7 @@
     "model": "l6",
     "backend": "headless",
     "suites": [],
-    "definition": "3f4b2a16307cf550b76ab44c48a33579936852da4bc003dfc23b373a0cc75a53"
+    "definition": "c854a94ad16ff5f49290e049fcd9f61b8993154286718c1768da2811a2e7d5bd"
   },
   {
     "case": "l6max-audio-input",
@@ -678,7 +678,7 @@
       "full",
       "panel"
     ],
-    "definition": "388f50ee98b01b5e85288ad7eb475b6505f7eba80be34fb2c2a89bfb74594aba"
+    "definition": "0998052c52c02c20025aa9e37946e6780dc43ba3b8398b58df3d093a1173b73c"
   },
   {
     "case": "l6max-din-mixer-control",
@@ -748,7 +748,7 @@
       "regression",
       "full"
     ],
-    "definition": "a7676765bfbcd048ca5823ab5c21a16fb364519c9cb5d4737b0c3f7996b8108c"
+    "definition": "1fe9e9a5069107d976ace62b23e7a2fd513dc34c3db07fdf21c1b35986c58cdd"
   },
   {
     "case": "l6max-installed-patch",
@@ -775,21 +775,21 @@
     "suites": [
       "full"
     ],
-    "definition": "1481e7db5c75f6638089a4f8db18213ab0ba540bea85537383f364623a990c9f"
+    "definition": "25f24b838ab97547440a753c054d3069f043624124807e9cf1a260ab7f318615"
   },
   {
     "case": "l6max-sound-pad-coreaudio",
     "model": "l6max",
     "backend": "headless",
     "suites": [],
-    "definition": "9bfb4f2e095c8076aa6ecf6fd26f342386579e9aab37a348359c89bc29723162"
+    "definition": "4c919d8382d4edf141bb48335bfb23f7265c95e97b675954b0ce247327fcc9a2"
   },
   {
     "case": "l6max-sound-pad-waveform",
     "model": "l6max",
     "backend": "headless",
     "suites": [],
-    "definition": "06117d85aadb9be7682b4d268aa32f6f8f0ae66a225812e672d7e2ec59b1212f"
+    "definition": "d3ff087d13181e0189149b42c6bcdc8688403f3428461407ee20f76b03ad2dc8"
   },
   {
     "case": "l6max-switches-during-playback",
@@ -815,7 +815,7 @@
     "suites": [
       "full"
     ],
-    "definition": "4747738e8b97d1cbaab4180165fa59fd288e15768b28458899c27a8c9a5d49dd"
+    "definition": "4e7959b3988168b682b41b094aec170933425a70adf71bb8082af14f9188b82d"
   },
   {
     "case": "l6max-update-bad-checksum",
@@ -833,7 +833,7 @@
     "suites": [
       "full"
     ],
-    "definition": "c7de3bb2fa63ff47a007b3d3eb9f7936024c81e6dc2c10f92c2025eab175a5e9"
+    "definition": "4c8deb8acc271404df5459373d5f1d832bbeea19a1131e56421d136a5b13693f"
   },
   {
     "case": "l6max-update-patched-knob-midi",
@@ -842,7 +842,7 @@
     "suites": [
       "full"
     ],
-    "definition": "22ea205c6bf2f612975609742550d16b8b89e5cbd8991712d298e88aa7d402e6"
+    "definition": "5c10d08f31a8685e52a8ed0cc0e8eec05c4568abf54d7eacdfe4e547d58270c1"
   },
   {
     "case": "l6max-update-patched-midi",
@@ -885,7 +885,7 @@
     "model": "l6max",
     "backend": "headless",
     "suites": [],
-    "definition": "d84494d886e16eee4595c16b040e2375405ab919c2acb9d52a1910f18aaea4cc"
+    "definition": "95ad4d64f70eb29d84fe730f5f55fc37a747a6b8a7ba506800823b9159a73336"
   },
   {
     "case": "mute",
@@ -975,7 +975,7 @@
     "suites": [
       "full"
     ],
-    "definition": "7f2bc5f0fbd1be97d52d1f49a38acb4d98e62c34a48eafeef9106eb51b0798da"
+    "definition": "ee5f5547f05b1db3e6607bb6d98ecb8d1409cbf37a77144d978b07516a637ade"
   },
   {
     "case": "patched-update",
@@ -984,7 +984,7 @@
     "suites": [
       "full"
     ],
-    "definition": "7f2bc5f0fbd1be97d52d1f49a38acb4d98e62c34a48eafeef9106eb51b0798da"
+    "definition": "85e8999a4ac5fc6b4e274fcbeb2136d6ea6d7d577fe9c170f1c9e8f11c6b84e0"
   },
   {
     "case": "patched-update-knob-midi",
@@ -993,7 +993,7 @@
     "suites": [
       "full"
     ],
-    "definition": "926e3755ea7840e316a5888f56691762b794f0d989237154e2a41d80682b1992"
+    "definition": "14784facbefac37a7a29f2b78f3835cf3a2a657b317cd86fe85a6057dda9811a"
   },
   {
     "case": "patches-l6_hosted-sd_midi-sync",
@@ -2915,7 +2915,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "9551ca5d72019a2917ad993ae9206a40d130ee803e16346cf15996d8f573cace"
+    "definition": "b3f27c1964bac3105117d1f926c21f2a9e01618fe782643e45f845f318a5d4fd"
   },
   {
     "case": "patches-l6max_update_knob-dialog",
@@ -2926,7 +2926,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "f5f1ea6019d3fd140280c71898d33a72ae8b6efdef97ebf54c1db6d1c8677548"
+    "definition": "238e599b184b5990f74d60363345c0691d86a641b481132cde2346779e8bc6af"
   },
   {
     "case": "patches-l6max_update_midi-sync",
@@ -2937,7 +2937,7 @@
       "patches-pairwise",
       "patches-single"
     ],
-    "definition": "ed9ba339ba87c499c914eebad3dcc4ab9496c848028390a85d4e82fd48410fff"
+    "definition": "d9457c25a45fb22804d186228a9686f0a09adf00e6fdebbd270cbe3b7411e4fd"
   },
   {
     "case": "persistence",
@@ -2957,7 +2957,7 @@
       "lifecycle",
       "full"
     ],
-    "definition": "4e606aad66a97edb51592fdd7f4f032c72631909225963f72d82d1e5aa0b5376"
+    "definition": "15ee5159db198d2f5c4decb2ecf19a235cd672f853667d5944e503660bddc2f5"
   },
   {
     "case": "power",
@@ -2967,7 +2967,7 @@
       "lifecycle",
       "full"
     ],
-    "definition": "763781c481ffc56147b706e620f0c061f06124d087566bc94e85501dc9754966"
+    "definition": "f970a4b92b7f650054e913b22807278bd5d8dc6b7743bf898e23b15e59a6ee5d"
   },
   {
     "case": "ring-pwm",
@@ -3020,7 +3020,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "aa804feb27b59f16479bac3eb6d09d548d591bcd5d4e2793fa196f08a803d352"
+    "definition": "2bac6b5507a4fdb393ac1b6f6cb3017ece66e8afbb8fa1886e782fabc4a38062"
   },
   {
     "case": "sd-din-mixer-control",
@@ -3105,7 +3105,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "29a48ed02e04473579261f60b6fded0ada3e22286b7d59c7f3d2fda034af09d6"
+    "definition": "7b5181fba337711e2258f4cd99bf22e5cbd5ec15937c18970db400f52aeeb87a"
   },
   {
     "case": "sd-knob-dialog-dynamic",
@@ -3114,7 +3114,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "9436be6b556e48dc1d106d33928e5b2e564c2ca29ce18288f47bc359bacf72c6"
+    "definition": "2106bc7c26ddbafb378996acb7835d088240399178d7f230994b6fa829e10085"
   },
   {
     "case": "sd-knob-midi",
@@ -3123,7 +3123,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "e4cf83de9160b345dc769cea3a9068d10b8198d32aeaff476c4d82fc196f6966"
+    "definition": "9b5a3ea7a635a30b46ce7affce8d96699177923f2537f822833c2527dcf7ba3e"
   },
   {
     "case": "sd-knob-midi-sync-dynamic",
@@ -3244,7 +3244,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "dc4e49186ec60e13d382dce361edb49440ab695b93bbc8badb7c7e206e4d6e95"
+    "definition": "993f1382d102a7a397d89ca4d2f8ff99c412d47d2b5f39f473eb25f85511d360"
   },
   {
     "case": "sd-warm-reset",
@@ -3267,7 +3267,7 @@
     "suites": [
       "full"
     ],
-    "definition": "22c33c93c0d9982e8b1eebc6da85072e0c0a8d5da7d611dfd71d97a361647c77"
+    "definition": "25bd602771d74c0bdc01542c48d9a38f237b70f2e1c4e2c92cb1ecfcfc71bbbb"
   },
   {
     "case": "sound-pad-playback",
@@ -3276,7 +3276,7 @@
     "suites": [
       "full"
     ],
-    "definition": "d948809ed4e35db6716a7ca7834db3f093d1b203e2273e9a870be77032878b8a"
+    "definition": "9e0b9c48fe4e088f4b26f1dba46b405d17841610a15f3166d0eb4627909ddaf4"
   },
   {
     "case": "state-spec",
@@ -3406,7 +3406,7 @@
       "devices",
       "full"
     ],
-    "definition": "4e826813e5a0a225f52955f6898e1616f2409429824bb5aa049a2e0ee4efcc04"
+    "definition": "852ef1344e72ab0eaef85a84e086144d9665c3d17555dca3b1edfe87bce7e996"
   },
   {
     "case": "wasm-patch",
@@ -3415,7 +3415,7 @@
     "suites": [
       "full"
     ],
-    "definition": "63f67d99fe5f0821ab28d834275450042f6622ec81e7cdac36a1edcd4c0bce6a"
+    "definition": "a4e732f73f57ad2a7605a6508c6536b800290ffaa8ea6656fb20d3abca28a3a6"
   },
   {
     "case": "wasm-patch",
@@ -3424,6 +3424,6 @@
     "suites": [
       "full"
     ],
-    "definition": "5b9561b1a83b792240b4cc8cc614a1a8bb524f164ba1c4575a7d4557cebe9e98"
+    "definition": "de81b4be3fbfc97937928187b3de40f188f8e5b7078154371f576f75b588c92f"
   }
 ]

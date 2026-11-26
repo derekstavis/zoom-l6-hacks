@@ -338,84 +338,14 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
     if !scenario.backends.contains(&crate::Backend::Headless) {
         return Err("scenario does not support headless execution".into());
     }
-    let progress = crate::progress::CaseProgress::from_env();
-    if scenario.step.len() == 1 && matches!(scenario.step[0].action, crate::Action::FirmwareUpdate)
+    if scenario
+        .step
+        .iter()
+        .any(|step| matches!(step.action, crate::Action::PatchParityPrepare))
     {
-        progress.emit(crate::progress::CaseEvent::ScenarioStarted { total_steps: 1 });
-        progress.emit(crate::progress::CaseEvent::StepStarted {
-            index: 1,
-            label: crate::progress::step_label(&scenario.step[0].action),
-            started_unix_ms: crate::progress::unix_ms(),
-        });
-        devices::prepare(&scenario, &mut options)?;
-        let started = std::time::Instant::now();
-        let result = devices::run_firmware_update(&options, progress.clone());
-        let model = std::fs::read(options.firmware_dir.join("main_firmware.bin"))
-            .map_err(|error| error.to_string())
-            .and_then(|main| l6fw::model_from_main(&main).map_err(|error| error.to_string()))?;
-        let report = json!({
-            "schema": 1,
-            "scenario": scenario.name,
-            "model": model.name(),
-            "outcome": if result.is_ok() { "PASS" } else { "FAIL" },
-            "failed_step": if result.is_err() { Some(1) } else { None },
-            "error": result.as_ref().err(),
-            "wall_seconds": started.elapsed().as_secs_f64(),
-            "completed_steps": if result.is_ok() { vec![json!({"step":1,"device":true})] } else { vec![] }
-        });
-        std::fs::write(
-            options.logs.join("scenario.json"),
-            serde_json::to_vec_pretty(&report).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?;
-        progress.emit(crate::progress::CaseEvent::ScenarioFinished {
-            finished_unix_ms: crate::progress::unix_ms(),
-            outcome: if result.is_ok() {
-                crate::progress::Outcome::Pass
-            } else {
-                crate::progress::Outcome::Fail
-            },
-        });
-        return result;
+        return Err("patch parity is a host-only l6test scenario".into());
     }
-    if scenario.step.len() == 1 && matches!(scenario.step[0].action, crate::Action::WasmPatch) {
-        progress.emit(crate::progress::CaseEvent::ScenarioStarted { total_steps: 1 });
-        progress.emit(crate::progress::CaseEvent::StepStarted {
-            index: 1,
-            label: crate::progress::step_label(&scenario.step[0].action),
-            started_unix_ms: crate::progress::unix_ms(),
-        });
-        devices::prepare(&scenario, &mut options)?;
-        let started = std::time::Instant::now();
-        let result = devices::run_wasm_patch(&options);
-        let model = std::fs::read(options.firmware_dir.join("main_firmware.bin"))
-            .map_err(|error| error.to_string())
-            .and_then(|main| l6fw::model_from_main(&main).map_err(|error| error.to_string()))?;
-        let report = json!({
-            "schema": 1,
-            "scenario": scenario.name,
-            "model": model.name(),
-            "outcome": if result.is_ok() { "PASS" } else { "FAIL" },
-            "failed_step": if result.is_err() { Some(1) } else { None },
-            "error": result.as_ref().err(),
-            "wall_seconds": started.elapsed().as_secs_f64(),
-            "completed_steps": if result.is_ok() { vec![json!({"step":1,"device":true})] } else { vec![] }
-        });
-        std::fs::write(
-            options.logs.join("scenario.json"),
-            serde_json::to_vec_pretty(&report).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?;
-        progress.emit(crate::progress::CaseEvent::ScenarioFinished {
-            finished_unix_ms: crate::progress::unix_ms(),
-            outcome: if result.is_ok() {
-                crate::progress::Outcome::Pass
-            } else {
-                crate::progress::Outcome::Fail
-            },
-        });
-        return result;
-    }
+    let progress = crate::progress::CaseProgress::from_env();
     progress.emit(crate::progress::CaseEvent::PhaseChanged {
         phase: crate::progress::CasePhase::PreparingScenario,
         started_unix_ms: crate::progress::unix_ms(),
@@ -722,6 +652,19 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     runner.device_finished(json!({"started":true,"profile":label,"card": !boot.no_sd && boot.sd_image.is_some(),"replacement_installer":boot.update_bootloader}));
                 }
                 Progress::Device(devices::Operation::LifecycleStop) => {
+                    if device_state.has_sound_pad()
+                        || device_state.has_l6_recorder()
+                        || device_state.has_l6max_recorder()
+                        || device_state.has_l6max_timing()
+                        || device_state.has_usb_storage()
+                        || device_state.has_ui_pad()
+                        || device_state.has_editor_playback()
+                        || device_state.has_editor_assignment()
+                        || device_state.has_l6_sweep()
+                        || device_state.has_signal_pwm()
+                    {
+                        return Err("device transaction interrupted by guest shutdown".into());
+                    }
                     device_state.restarted()?;
                     let mut current = session
                         .take()
@@ -1156,6 +1099,19 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     if options.state_dir.is_none() {
                         return Err("restart requires isolated persistent state".into());
                     }
+                    if device_state.has_sound_pad()
+                        || device_state.has_l6_recorder()
+                        || device_state.has_l6max_recorder()
+                        || device_state.has_l6max_timing()
+                        || device_state.has_usb_storage()
+                        || device_state.has_ui_pad()
+                        || device_state.has_editor_playback()
+                        || device_state.has_editor_assignment()
+                        || device_state.has_l6_sweep()
+                        || device_state.has_signal_pwm()
+                    {
+                        return Err("device transaction interrupted by guest shutdown".into());
+                    }
                     device_state.restarted()?;
                     drop(session.take());
                     options.logs = options.logs.join("restart");
@@ -1210,6 +1166,104 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
     }
     if result.is_ok() && device_state.has_midi_sync() {
         result = Err("MIDI sync transaction ended before completion".into());
+    }
+    if result.is_ok() && device_state.has_signal_pwm() {
+        result = Err("SIGNAL PWM ended before completion".into());
+    }
+    if result.is_ok() && device_state.has_l6_sweep() {
+        result = Err("L6 input sweep ended before completion".into());
+    }
+    if device_state.has_l6_sweep() {
+        let cleanup = match session.as_ref() {
+            Some(current) => device_state.abort_l6_sweep(current),
+            None => Err("no active guest to release L6 panel input".to_owned()),
+        };
+        if let Err(cleanup) = cleanup {
+            result = Err(match result {
+                Ok(()) => format!("L6 sweep cleanup failed: {cleanup}"),
+                Err(error) => format!("{error}; L6 sweep cleanup failed: {cleanup}"),
+            });
+        }
+    }
+    if result.is_ok() && device_state.has_editor_assignment() {
+        result = Err("Editor assignment ended before completion".into());
+    }
+    if result.is_ok() && device_state.has_editor_playback() {
+        result = Err("Editor playback ended before completion".into());
+    }
+    if result.is_ok() && device_state.has_ui_pad() {
+        result = Err("UI pad verification ended before completion".into());
+    }
+    if result.is_ok() && device_state.has_usb_storage() {
+        result = Err("USB storage ended before completion".into());
+    }
+    if device_state.has_usb_storage() {
+        if let Err(cleanup) = device_state.abort_usb_storage() {
+            result = Err(match result {
+                Ok(()) => format!("USB storage cleanup failed: {cleanup}"),
+                Err(e) => format!("{e}; USB storage cleanup failed: {cleanup}"),
+            })
+        }
+    }
+    if result.is_ok() && device_state.has_l6max_timing() {
+        result = Err("L6max timing ended before completion".into());
+    }
+    if device_state.has_l6max_timing() {
+        let timing_cleanup = match session.as_ref() {
+            Some(current) => device_state.abort_l6max_timing(current),
+            None => Err("no active guest for timing cleanup".into()),
+        };
+        if let Err(cleanup) = timing_cleanup {
+            result = Err(match result {
+                Ok(()) => format!("timing cleanup failed: {cleanup}"),
+                Err(e) => format!("{e}; timing cleanup failed: {cleanup}"),
+            })
+        }
+    }
+    if result.is_ok() && device_state.has_l6max_recorder() {
+        result = Err("L6max recorder transaction ended before completion".into());
+    }
+    if device_state.has_l6max_recorder() {
+        let cleanup = match session.as_ref() {
+            Some(current) => device_state.abort_l6max_recorder(current),
+            None => Err("no active guest for recorder cleanup".into()),
+        };
+        if let Err(cleanup) = cleanup {
+            result = Err(match result {
+                Ok(()) => format!("L6max recorder cleanup failed: {cleanup}"),
+                Err(e) => format!("{e}; L6max recorder cleanup failed: {cleanup}"),
+            })
+        }
+    }
+    if result.is_ok() && device_state.has_l6_recorder() {
+        result = Err("recorder transaction ended before completion".into());
+    }
+    if device_state.has_l6_recorder() {
+        let cleanup = match session.as_ref() {
+            Some(current) => device_state.abort_l6_recorder(current),
+            None => Err("no active guest for recorder cleanup".into()),
+        };
+        if let Err(cleanup) = cleanup {
+            result = Err(match result {
+                Ok(()) => format!("recorder cleanup failed: {cleanup}"),
+                Err(error) => format!("{error}; recorder cleanup failed: {cleanup}"),
+            });
+        }
+    }
+    if result.is_ok() && device_state.has_sound_pad() {
+        result = Err("sound-pad transaction ended before completion".into());
+    }
+    if device_state.has_sound_pad() {
+        let cleanup = match session.as_ref() {
+            Some(current) => device_state.abort_sound_pad(current),
+            None => Err("no active guest to release sound pad".to_owned()),
+        };
+        if let Err(cleanup) = cleanup {
+            result = Err(match result {
+                Ok(()) => format!("sound-pad cleanup failed: {cleanup}"),
+                Err(error) => format!("{error}; sound-pad cleanup failed: {cleanup}"),
+            });
+        }
     }
     if let Err(cleanup) = device_state.abort_auxiliary_scopes() {
         result = Err(match result {

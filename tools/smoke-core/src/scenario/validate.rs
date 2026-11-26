@@ -9,6 +9,19 @@ impl Scenario {
         }
         validate_models(&value.models)?;
         crate::requirements::check_scope(value)?;
+        validate_power_steps(value)?;
+        if value.step.iter().any(|step| {
+            matches!(
+                step.action,
+                Action::PatchParityPrepare
+                    | Action::PatchParityFirmware { .. }
+                    | Action::PatchParityLoader { .. }
+                    | Action::PatchParityUnsupported { .. }
+                    | Action::PatchParityFinish
+            )
+        }) {
+            validate_patch_parity(value)?;
+        }
         if let Some(fixture) = value.update_fixture {
             let fixture_model = if fixture.is_l6() {
                 Model::L6
@@ -17,6 +30,7 @@ impl Scenario {
             };
             let expected_patches = match fixture {
                 UpdateFixture::PatchedKnob => vec!["knob-dialog".to_string()],
+                UpdateFixture::PatchedDin => vec!["din-mixer-control".to_string()],
                 UpdateFixture::PatchedKnobMidi => {
                     vec!["knob-dialog".to_string(), "midi-sync".to_string()]
                 }
@@ -39,6 +53,7 @@ impl Scenario {
                 || (!matches!(
                     fixture,
                     UpdateFixture::PatchedMidi
+                        | UpdateFixture::PatchedDin
                         | UpdateFixture::PatchedKnob
                         | UpdateFixture::PatchedKnobMidi
                 ) && value
@@ -56,7 +71,9 @@ impl Scenario {
                 .map(|step| &step.action)
                 .collect::<Vec<_>>();
             match fixture {
-                UpdateFixture::L6Stock | UpdateFixture::L6PatchedMidi => {
+                UpdateFixture::L6Stock
+                | UpdateFixture::L6Matching
+                | UpdateFixture::L6PatchedMidi => {
                     if value.update_goal != Some(UpdateGoal::Install) {
                         return Err("L6 update requires the full install goal".into());
                     }
@@ -149,6 +166,7 @@ impl Scenario {
                     }
                 }
                 UpdateFixture::PatchedMidi
+                | UpdateFixture::PatchedDin
                 | UpdateFixture::PatchedKnob
                 | UpdateFixture::PatchedKnobMidi => {
                     if value.update_goal != Some(UpdateGoal::Install) {
@@ -218,7 +236,9 @@ impl Scenario {
                     {
                         return Err("patched update needs complete ordered handoff, installer, restart and MIDI verification checks".into());
                     }
-                    let tail_valid = if fixture == UpdateFixture::PatchedMidi {
+                    let tail_valid = if fixture == UpdateFixture::PatchedDin {
+                        matches!(tail, [Action::LifecycleStop])
+                    } else if fixture == UpdateFixture::PatchedMidi {
                         matches!(
                             tail,
                             [
@@ -439,6 +459,7 @@ impl Scenario {
                 if matches!(
                     fixture,
                     UpdateFixture::PatchedMidi
+                        | UpdateFixture::PatchedDin
                         | UpdateFixture::PatchedKnob
                         | UpdateFixture::PatchedKnobMidi
                 ) {
@@ -543,13 +564,14 @@ impl Scenario {
             }
             let expected_end = match fixture {
                 UpdateFixture::PatchedMidi
+                | UpdateFixture::PatchedDin
                 | UpdateFixture::PatchedKnob
                 | UpdateFixture::PatchedKnobMidi
                 | UpdateFixture::L6PatchedMidi => matches!(
                     value.step.last().map(|s| &s.action),
                     Some(Action::LifecycleStop)
                 ),
-                UpdateFixture::L6Stock => matches!(
+                UpdateFixture::L6Stock | UpdateFixture::L6Matching => matches!(
                     value.step.last().map(|s| &s.action),
                     Some(Action::ExpectUpdateMarkerAbsent)
                 ),
@@ -709,6 +731,11 @@ impl Scenario {
         }
         let mut checkpoints = std::collections::BTreeSet::new();
         for model in &value.models {
+            let mut sound_pad: Option<(u8, u32, u64)> = None;
+            let mut recorder: Option<(u8, u32, u64)> = None;
+            let mut max_recorder: Option<(u8, u32, u64)> = None;
+            let mut input_timing: Option<(u8, u32, u64)> = None;
+            let mut usb_storage: Option<(u8, u32, u64)> = None;
             let mut sd_inspection: Option<(u32, u64)> = None;
 
             let panel_steps: Vec<_> = value
@@ -828,6 +855,198 @@ impl Scenario {
             let mut probe_ring = None;
             let mut probe_tap = None;
             for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                let storage_phase = match &step.action {
+                    Action::UsbStorageInquiry => Some(0),
+                    Action::UsbStorageReady => Some(1),
+                    Action::UsbStorageCapacity => Some(2),
+                    Action::UsbStorageReadBoot => Some(3),
+                    Action::UsbStorageAssertBoot => Some(4),
+                    Action::UsbStorageLastRead => Some(5),
+                    Action::UsbStorageLastWrite => Some(6),
+                    Action::UsbStorageLastAssert => Some(7),
+                    Action::UsbStorageFatOpen => Some(8),
+                    Action::UsbStorageCreate { .. } => Some(9),
+                    Action::UsbStorageFlushCreated => Some(10),
+                    Action::UsbStorageReadFile => Some(11),
+                    Action::UsbStorageRemoveFile => Some(12),
+                    Action::UsbStorageAssertFile => Some(13),
+                    Action::UsbStorageFlushRemoved => Some(14),
+                    Action::UsbStorageEnd => Some(15),
+                    _ => None,
+                };
+                match (&step.action, usb_storage, storage_phase) {
+                    (Action::UsbStorageBegin, None, None) => {
+                        usb_storage = Some((0, step.guest_timeout_ms, step.wall_timeout_s))
+                    }
+                    (_, Some((phase, guest, wall)), Some(actual))
+                        if phase == actual
+                            && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        usb_storage = if phase == 15 {
+                            None
+                        } else {
+                            Some((phase + 1, guest, wall))
+                        }
+                    }
+                    (_, Some(_), _) | (_, None, Some(_)) => {
+                        return Err(
+                            "USB storage requires ordered steps with matching budgets".into()
+                        );
+                    }
+                    _ => {}
+                }
+                let timing_phase = match &step.action {
+                    Action::L6maxTimingSettle { .. } => Some(0),
+                    Action::L6maxTimingBaseline => Some(1),
+                    Action::L6maxTimingEnqueue { .. } => Some(2),
+                    Action::L6maxTimingWaitFirst => Some(3),
+                    Action::L6maxTimingObservePaused { .. } => Some(4),
+                    Action::L6maxTimingAssertPaused => Some(5),
+                    Action::L6maxTimingResume => Some(6),
+                    Action::L6maxTimingWaitQueued => Some(7),
+                    Action::L6maxTimingWaitReports => Some(8),
+                    Action::L6maxTimingAssertReports => Some(9),
+                    Action::L6maxTimingObserveDisplay { .. } => Some(10),
+                    Action::L6maxTimingAssertDisplay => Some(11),
+                    Action::L6maxTimingEncoder { .. } => Some(12),
+                    Action::L6maxTimingWaitEncoder => Some(13),
+                    Action::L6maxTimingWaitEncoderReport => Some(14),
+                    Action::L6maxTimingAssertEncoder => Some(15),
+                    Action::L6maxTimingEnd => Some(16),
+                    _ => None,
+                };
+                match (&step.action, input_timing, timing_phase) {
+                    (Action::L6maxTimingBegin, None, None) => {
+                        input_timing = Some((0, step.guest_timeout_ms, step.wall_timeout_s))
+                    }
+                    (_, Some((phase, guest, wall)), Some(actual))
+                        if phase == actual
+                            && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        input_timing = if phase == 16 {
+                            None
+                        } else {
+                            Some((phase + 1, guest, wall))
+                        }
+                    }
+                    (_, Some(_), _) | (_, None, Some(_)) => {
+                        return Err(
+                            "L6max timing requires ordered steps with matching budgets".into()
+                        );
+                    }
+                    _ => {}
+                }
+                let max_recorder_phase = match &step.action {
+                    Action::L6maxRecorderPress => Some(0),
+                    Action::L6maxRecorderSubmit => Some(1),
+                    Action::L6maxRecorderQueue => Some(2),
+                    Action::L6maxRecorderDispatch => Some(3),
+                    Action::L6maxRecorderScheduler => Some(4),
+                    Action::L6maxRecorderCallback => Some(5),
+                    Action::L6maxRecorderAction => Some(6),
+                    Action::L6maxRecorderStream => Some(7),
+                    Action::L6maxRecorderObserve => Some(8),
+                    Action::L6maxRecorderSample => Some(9),
+                    Action::L6maxRecorderEvidence => Some(10),
+                    Action::L6maxRecorderAssertAudio => Some(11),
+                    Action::L6maxRecorderEnd => Some(12),
+                    _ => None,
+                };
+                match (&step.action, max_recorder, max_recorder_phase) {
+                    (Action::L6maxRecorderBegin { .. }, None, None) => {
+                        max_recorder = Some((0, step.guest_timeout_ms, step.wall_timeout_s))
+                    }
+                    (_, Some((phase, guest, wall)), Some(actual))
+                        if phase == actual
+                            && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        max_recorder = if phase == 12 {
+                            None
+                        } else {
+                            Some((phase + 1, guest, wall))
+                        }
+                    }
+                    (_, Some(_), _) | (_, None, Some(_)) => {
+                        return Err(
+                            "L6max recorder requires ordered steps with matching budgets".into(),
+                        );
+                    }
+                    _ => {}
+                }
+                let recorder_phase = match &step.action {
+                    Action::L6RecorderPress => Some(0),
+                    Action::L6RecorderDispatcher => Some(1),
+                    Action::L6RecorderAssertEvent => Some(2),
+                    Action::L6RecorderHandler => Some(3),
+                    Action::L6RecorderAssertSelection => Some(4),
+                    Action::L6RecorderCallback => Some(5),
+                    Action::L6RecorderAssertCallback => Some(6),
+                    Action::L6RecorderObserve => Some(7),
+                    Action::L6RecorderRelease => Some(8),
+                    Action::L6RecorderSample => Some(9),
+                    Action::L6RecorderEvidence => Some(10),
+                    Action::L6RecorderAssertTrace => Some(11),
+                    Action::L6RecorderAssertDma => Some(12),
+                    Action::L6RecorderEnd => Some(13),
+                    _ => None,
+                };
+                match (&step.action, recorder, recorder_phase) {
+                    (Action::L6RecorderBegin { .. }, None, None) => {
+                        recorder = Some((0, step.guest_timeout_ms, step.wall_timeout_s))
+                    }
+                    (_, Some((phase, guest, wall)), Some(actual))
+                        if phase == actual
+                            && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        recorder = if phase == 13 {
+                            None
+                        } else {
+                            Some((phase + 1, guest, wall))
+                        }
+                    }
+                    (_, Some(_), _) | (_, None, Some(_)) => {
+                        return Err(
+                            "recorder transaction requires ordered steps with matching budgets"
+                                .into(),
+                        );
+                    }
+                    _ => {}
+                }
+                let sound_phase = match &step.action {
+                    Action::SoundPadPress => Some(0),
+                    Action::SoundPadHold => Some(1),
+                    Action::SoundPadRelease => Some(2),
+                    Action::SoundPadObserve => Some(3),
+                    Action::SoundPadSample => Some(4),
+                    Action::SoundPadAssertWaveform => Some(5),
+                    Action::SoundPadAssertAudio => Some(6),
+                    Action::SoundPadAssertLed => Some(7),
+                    Action::SoundPadAssertMeter => Some(8),
+                    Action::SoundPadFinish => Some(9),
+                    _ => None,
+                };
+                match (&step.action, sound_pad, sound_phase) {
+                    (Action::SoundPadBegin { .. }, None, None) => {
+                        sound_pad = Some((0, step.guest_timeout_ms, step.wall_timeout_s))
+                    }
+                    (_, Some((phase, guest, wall)), Some(actual))
+                        if phase == actual
+                            && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        sound_pad = if phase == 9 {
+                            None
+                        } else {
+                            Some((phase + 1, guest, wall))
+                        };
+                    }
+                    (_, Some(_), _) | (_, None, Some(_)) => {
+                        return Err(
+                            "sound-pad transaction requires ordered steps with matching budgets"
+                                .into(),
+                        );
+                    }
+                    _ => {}
+                }
                 match (&step.action, sd_inspection) {
                     (Action::ExpectSdLoader, None) => sd_inspection = Some((step.guest_timeout_ms, step.wall_timeout_s)),
                     (Action::ExpectSdModule { .. }, Some((guest, wall))) if (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) => sd_inspection = None,
@@ -971,6 +1190,21 @@ impl Scenario {
                     _ => {}
                 }
             }
+            if usb_storage.is_some() {
+                return Err("USB storage transaction incomplete".into());
+            }
+            if input_timing.is_some() {
+                return Err("L6max timing transaction incomplete".into());
+            }
+            if max_recorder.is_some() {
+                return Err("L6max recorder transaction is incomplete".into());
+            }
+            if recorder.is_some() {
+                return Err("recorder transaction is incomplete".into());
+            }
+            if sound_pad.is_some() {
+                return Err("sound-pad transaction is incomplete".into());
+            }
             if sd_inspection.is_some() {
                 return Err("SD inspection is incomplete".into());
             }
@@ -1017,7 +1251,8 @@ impl Scenario {
                 Action::KnobLevelBegin => "knob-active-finish",
                 Action::KnobTaskBegin => "knob-level-finish",
                 Action::KnobOverlayBegin => "knob-task-finish",
-                Action::KnobBitmapBegin => "knob-overlay-finish",
+                Action::KnobBitmapReactivate { .. } => "knob-overlay-finish",
+                Action::KnobBitmapBegin => "knob-bitmap-wait-active",
                 Action::KnobOverlayReactivate { .. } => "knob-bitmap-finish",
                 Action::KnobOverlayRefreshBegin => "knob-overlay-wait-active",
                 Action::KnobLockAcquire => "knob-overlay-refresh-finish",
@@ -1061,6 +1296,9 @@ impl Scenario {
                         }
                         "knob-overlay-finish" => {
                             matches!(previous.action, Action::KnobOverlayFinish)
+                        }
+                        "knob-bitmap-wait-active" => {
+                            matches!(previous.action, Action::KnobBitmapWaitActive)
                         }
                         "knob-bitmap-finish" => {
                             matches!(previous.action, Action::KnobBitmapFinish)
@@ -1129,7 +1367,7 @@ impl Scenario {
                     return Err("knob-dialog preflight must end with the diagnostic".into());
                 };
                 let subsequent = &applicable[..=end];
-                if subsequent.len() < 179
+                if subsequent.len() < 182
                     || !super::valid_preflight_probe_steps(&subsequent[0..30])
                     || !super::valid_callback_race_steps(&subsequent[30..38])
                     || !matches!(subsequent[38].action, Action::KnobDialogFirstActivation)
@@ -1137,10 +1375,10 @@ impl Scenario {
                     || !super::valid_level_demo_steps(&subsequent[46..54])
                     || !super::valid_task_context_steps(&subsequent[54..64])
                     || !super::valid_overlay_invariant_steps(&subsequent[64..79])
-                    || !super::valid_bitmap_probe_steps(&subsequent[79..91])
-                    || !super::valid_refreshed_overlay_steps(&subsequent[91..98])
-                    || !super::valid_locked_update_steps(&subsequent[98..106])
-                    || !valid_knob_mode_steps(&subsequent[106..subsequent.len().saturating_sub(63)])
+                    || !super::valid_bitmap_probe_steps(&subsequent[79..93])
+                    || !super::valid_refreshed_overlay_steps(&subsequent[93..100])
+                    || !super::valid_locked_update_steps(&subsequent[100..108])
+                    || !valid_knob_mode_steps(&subsequent[108..subsequent.len().saturating_sub(63)])
                     || !valid_invalid_tag_steps(
                         &subsequent[subsequent.len().saturating_sub(63)
                             ..subsequent.len().saturating_sub(56)],
@@ -1290,11 +1528,294 @@ impl Scenario {
                 return Err("unterminated USB SysEx campaign".into());
             }
         }
+        for model in &value.models {
+            let mut scope: Option<(u8, u32, u64)> = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                let phase = match &step.action {
+                    Action::UiPadBegin { pad } => {
+                        if *model != Model::L6max || *pad > 3 || scope.is_some() {
+                            return Err(
+                                "UI pad verification requires L6max, pad 0..3, and no active scope"
+                                    .into(),
+                            );
+                        }
+                        scope = Some((0, step.guest_timeout_ms, step.wall_timeout_s));
+                        continue;
+                    }
+                    Action::UiPadIdentity => Some(0),
+                    Action::UiPadGlobal => Some(1),
+                    Action::UiPadKeepAlive => Some(2),
+                    Action::UiPadQuery => Some(3),
+                    Action::UiPadAssert => Some(4),
+                    Action::UiPadEnd => Some(5),
+                    _ => None,
+                };
+                match (scope, phase) {
+                    (Some((want, guest, wall)), Some(actual))
+                        if want == actual
+                            && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        scope = if actual == 5 {
+                            None
+                        } else {
+                            Some((want + 1, guest, wall))
+                        };
+                    }
+                    (Some(_), _) | (None, Some(_)) => {
+                        return Err("invalid UI pad verification sequence or shared budget".into());
+                    }
+                    _ => {}
+                }
+            }
+            if scope.is_some() {
+                return Err("unterminated UI pad verification".into());
+            }
+        }
+        for model in &value.models {
+            let mut scope: Option<(u8, u32, u64)> = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                let phase = match &step.action {
+                    Action::EditorPlaybackBegin { pad } => {
+                        if *model != Model::L6 || *pad > 3 || scope.is_some() {
+                            return Err(
+                                "Editor playback requires L6, pad 0..3, and no active scope".into(),
+                            );
+                        }
+                        scope = Some((0, step.guest_timeout_ms, step.wall_timeout_s));
+                        continue;
+                    }
+                    Action::EditorPlaybackPlay => Some(0),
+                    Action::EditorPlaybackWait => Some(1),
+                    Action::EditorPlaybackObserve => Some(2),
+                    Action::EditorPlaybackSample => Some(3),
+                    Action::EditorPlaybackAssert => Some(4),
+                    Action::EditorPlaybackEnd => Some(5),
+                    _ => None,
+                };
+                match (scope, phase) {
+                    (Some((want, guest, wall)), Some(actual))
+                        if want == actual
+                            && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        scope = if actual == 5 {
+                            None
+                        } else {
+                            Some((want + 1, guest, wall))
+                        };
+                    }
+                    (Some(_), _) | (None, Some(_)) => {
+                        return Err("invalid Editor playback sequence or shared budget".into());
+                    }
+                    _ => {}
+                }
+            }
+            if scope.is_some() {
+                return Err("unterminated Editor playback".into());
+            }
+        }
+        for model in &value.models {
+            let mut scope: Option<(u8, u8, u32, u64)> = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                let phase = match &step.action {
+                    Action::EditorAssignBegin => {
+                        if scope.is_some() {
+                            return Err("nested Editor assignment".into());
+                        }
+                        scope = Some((0, 0, step.guest_timeout_ms, step.wall_timeout_s));
+                        continue;
+                    }
+                    Action::EditorAssignIdentity => Some((0, None)),
+                    Action::EditorAssignGlobal => Some((1, None)),
+                    Action::EditorAssignVersion => Some((2, None)),
+                    Action::EditorAssignSdInfo => Some((3, None)),
+                    Action::EditorAssignRefresh => Some((4, None)),
+                    Action::EditorAssignCount { pad } => Some((5, Some(*pad))),
+                    Action::EditorAssignFilename { pad } => Some((6, Some(*pad))),
+                    Action::EditorAssignSend { pad } => Some((7, Some(*pad))),
+                    Action::EditorAssignState { pad } => Some((8, Some(*pad))),
+                    Action::EditorAssignEnd => Some((9, None)),
+                    _ => None,
+                };
+                match (scope, phase) {
+                    (Some((want, pad, guest, wall)), Some((actual, actual_pad)))
+                        if want == actual
+                            && actual_pad.is_none_or(|v| v == pad)
+                            && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        scope = if actual == 9 {
+                            None
+                        } else if actual == 8 {
+                            Some((if pad == 3 { 9 } else { 5 }, pad + 1, guest, wall))
+                        } else {
+                            Some((want + 1, pad, guest, wall))
+                        };
+                    }
+                    (Some(_), _) | (None, Some(_)) => {
+                        return Err(
+                            "invalid Editor assignment sequence, pad or shared budget".into()
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            if scope.is_some() {
+                return Err("unterminated Editor assignment".into());
+            }
+        }
+        for model in &value.models {
+            let mut phase: Option<u8> = None;
+            let mut budget: Option<(u32, u64)> = None;
+            let mut targets = std::collections::BTreeSet::new();
+            let mut encoders = std::collections::BTreeSet::new();
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                let next = match &step.action {
+                    Action::L6SweepBegin if phase.is_none() && *model == Model::L6 => {
+                        phase = Some(0);
+                        budget = Some((step.guest_timeout_ms, step.wall_timeout_s));
+                        continue;
+                    }
+                    Action::L6SweepRejectMain { target: 0 } => Some((0, 1)),
+                    Action::L6SweepRejectMain { target: 5 } => Some((1, 2)),
+                    Action::L6SweepPanelBaseline { target }
+                        if ((7..31).contains(target) || matches!(*target, 1 | 2 | 3 | 6 | 47))
+                            && targets.insert(*target) =>
+                    {
+                        Some((2, 3))
+                    }
+                    Action::L6SweepPanelTap => Some((3, 4)),
+                    Action::L6SweepPanelWait => Some((4, 5)),
+                    Action::L6SweepPanelTrace => Some((5, 6)),
+                    Action::L6SweepPanelAssert => Some((6, 2)),
+                    Action::L6SweepEncoderBaseline if targets.len() == 29 => Some((2, 7)),
+                    Action::L6SweepEncoderSend { index }
+                        if *index < 6 && encoders.insert(*index) =>
+                    {
+                        Some((7, 8))
+                    }
+                    Action::L6SweepEncoderWait => Some((8, 7)),
+                    Action::L6SweepEncoderTrace if encoders.len() == 6 => Some((7, 9)),
+                    Action::L6SweepEncoderAssert => Some((9, 10)),
+                    Action::L6SweepRejectPanel => Some((10, 11)),
+                    Action::L6SweepRejectEncoder => Some((11, 12)),
+                    Action::L6SweepEnd => Some((12, 13)),
+                    Action::L6SweepBegin
+                    | Action::L6SweepRejectMain { .. }
+                    | Action::L6SweepPanelBaseline { .. }
+                    | Action::L6SweepEncoderBaseline
+                    | Action::L6SweepEncoderSend { .. }
+                    | Action::L6SweepEncoderTrace => {
+                        return Err("invalid L6 sweep target or model".into());
+                    }
+                    _ => None,
+                };
+                match (phase, next) {
+                    (Some(want), Some((actual, next)))
+                        if want == actual
+                            && budget == Some((step.guest_timeout_ms, step.wall_timeout_s)) =>
+                    {
+                        phase = if next == 13 { None } else { Some(next) };
+                    }
+                    (Some(_), _) | (None, Some(_)) => {
+                        return Err("invalid L6 input sweep sequence or shared budget".into());
+                    }
+                    _ => {}
+                }
+            }
+            if phase.is_some() {
+                return Err("unterminated L6 input sweep".into());
+            }
+        }
+        for model in &value.models {
+            let mut scope: Option<(u8, u8, usize, usize, f32, u32, u64)> = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                if matches!(step.action, Action::SignalPwmBegin) {
+                    if *model != Model::L6max || scope.is_some() {
+                        return Err("SIGNAL PWM requires a fresh L6max scope".into());
+                    }
+                    scope = Some((0, 0, 0, 0, 0.0, step.guest_timeout_ms, step.wall_timeout_s));
+                    continue;
+                }
+                let is_signal = matches!(
+                    step.action,
+                    Action::SignalPwmWarmup { .. }
+                        | Action::SignalPwmDrain { .. }
+                        | Action::SignalPwmStage { .. }
+                        | Action::SignalPwmAssert { .. }
+                        | Action::SignalPwmEnd
+                );
+                if let Some((phase, band, stages, assertions, last, guest, wall)) = scope.as_mut() {
+                    if (*guest, *wall) != (step.guest_timeout_ms, step.wall_timeout_s) {
+                        return Err("SIGNAL PWM changed shared budget".into());
+                    }
+                    match step.action {
+                        Action::SignalPwmWarmup {
+                            start: 0,
+                            end: 4,
+                            value,
+                        } if *phase == 0
+                            && value.is_finite()
+                            && value > 0.0
+                            && value <= 40_000_000.0 =>
+                        {
+                            *phase = 1
+                        }
+                        Action::SignalPwmDrain { band: b } if *phase == 1 && b == *band => {
+                            *phase = 2;
+                            *stages = 0;
+                            *last = 0.0;
+                        }
+                        Action::SignalPwmStage {
+                            band: b,
+                            start,
+                            end,
+                            value,
+                        } if *phase == 2
+                            && b == *band
+                            && (start, end) == if b == 0 { (0, 4) } else { (4, 12) }
+                            && value.is_finite()
+                            && value > *last
+                            && value <= 40_000_000.0 =>
+                        {
+                            *stages += 1;
+                            *last = value;
+                            if *stages == 5 {
+                                *phase = 3;
+                                *assertions = 0;
+                            }
+                        }
+                        Action::SignalPwmAssert { band: b, channel }
+                            if *phase == 3
+                                && b == *band
+                                && channel == b * 4 + *assertions as u8 =>
+                        {
+                            *assertions += 1;
+                            if *assertions == 4 {
+                                if *band == 0 {
+                                    *band = 1;
+                                    *phase = 1;
+                                } else {
+                                    *phase = 4;
+                                }
+                            }
+                        }
+                        Action::SignalPwmEnd if *phase == 4 => {
+                            scope = None;
+                        }
+                        _ => return Err("invalid SIGNAL PWM sequence or stimulus".into()),
+                    }
+                } else if is_signal {
+                    return Err("SIGNAL PWM step outside scope".into());
+                }
+            }
+            if scope.is_some() {
+                return Err("unterminated SIGNAL PWM scope".into());
+            }
+        }
         for step in &value.step {
             if let Action::KnobDialogAdaptive { plan } = &step.action {
                 plan.validate()?;
             }
-            if matches!(step.action, Action::EditorPadAssignments) && !usb_descriptors_seen {
+            if matches!(step.action, Action::EditorAssignBegin) && !usb_descriptors_seen {
                 return Err(
                     "editor-pad-assignments requires a preceding usb-descriptors step".into(),
                 );
@@ -1303,8 +1824,8 @@ impl Scenario {
                 usb_descriptors_seen = true;
             }
             match &step.action {
-                Action::EditorPadAssignments => pad_assignments_seen = true,
-                Action::L6maxUiPadVerify { pad } => {
+                Action::EditorAssignEnd => pad_assignments_seen = true,
+                Action::UiPadBegin { pad } => {
                     if !usb_descriptors_seen {
                         return Err(
                             "l6max-ui-pad-verify requires a preceding usb-descriptors step".into(),
@@ -1319,7 +1840,7 @@ impl Scenario {
                         return Err("l6max-ui-pad-verify scenarios must be scoped to L6max".into());
                     }
                 }
-                Action::EditorPadPlayback { pad } => {
+                Action::EditorPlaybackBegin { pad } => {
                     if !pad_assignments_seen {
                         return Err(
                             "editor-pad-playback requires a preceding editor-pad-assignments step"
@@ -1336,7 +1857,7 @@ impl Scenario {
                         return Err("editor-pad-playback scenarios must be scoped to L6".into());
                     }
                 }
-                Action::SoundPadPlayback {
+                Action::SoundPadBegin {
                     pad,
                     target,
                     assignment,
@@ -1360,7 +1881,28 @@ impl Scenario {
                         );
                     }
                 }
-                Action::L6RecorderPlayback { target } => {
+                Action::L6RecorderPress
+                | Action::L6RecorderDispatcher
+                | Action::L6RecorderAssertEvent
+                | Action::L6RecorderHandler
+                | Action::L6RecorderAssertSelection
+                | Action::L6RecorderCallback
+                | Action::L6RecorderAssertCallback
+                | Action::L6RecorderObserve
+                | Action::L6RecorderRelease
+                | Action::L6RecorderSample
+                | Action::L6RecorderEvidence
+                | Action::L6RecorderAssertTrace
+                | Action::L6RecorderAssertDma
+                | Action::L6RecorderEnd => {
+                    if step.models.iter().any(|model| *model != Model::L6)
+                        || (step.models.is_empty()
+                            && value.models.iter().any(|model| *model != Model::L6))
+                    {
+                        return Err("l6-recorder scenarios must be scoped to L6".into());
+                    }
+                }
+                Action::L6RecorderBegin { target } => {
                     if *target != 4 {
                         return Err("l6-recorder-playback requires MAIN target 4".into());
                     }
@@ -1423,7 +1965,7 @@ impl Scenario {
                     }
                 }
             }
-            if let Action::PowerPress { hold_ms, .. } = &step.action {
+            if let Action::PowerBegin { hold_ms, .. } = &step.action {
                 if *hold_ms == 0 || *hold_ms > step.guest_timeout_ms {
                     return Err("power hold must fit the guest deadline".into());
                 }
@@ -1454,7 +1996,7 @@ impl Scenario {
                     return Err("l6-din-event-dispatch requires a group from 0 to 15".into());
                 }
             }
-            if let Action::L6maxRecorderPlayback { target } = step.action {
+            if let Action::L6maxRecorderBegin { target } = step.action {
                 if target != 4 {
                     return Err("l6max-recorder-playback requires MAIN target 4".into());
                 }
@@ -1476,16 +2018,6 @@ impl Scenario {
                 && !["main", "project", "sound-pad", "mixer", "system"].contains(&menu.as_str())
             {
                 return Err(format!("expect-menu names an unknown menu {menu:?}"));
-            }
-            if matches!(step.action, Action::FirmwareUpdate)
-                && (value.models.is_empty() || value.step.len() != 1)
-            {
-                return Err("firmware-update is a standalone L6/L6max scenario operation".into());
-            }
-            if matches!(step.action, Action::WasmPatch)
-                && (value.models.is_empty() || value.step.len() != 1)
-            {
-                return Err("wasm-patch is a standalone L6/L6max scenario operation".into());
             }
             if let Action::UsbSysexExchange { request, .. } = &step.action {
                 if request.bytes.len() < 2
@@ -1643,6 +2175,20 @@ impl Scenario {
                             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
                     {
                         return Err("capture-display requires a positive duration within its deadline and a simple artifact name".into());
+                    }
+                }
+                Action::WaitKnobDisplayImage {
+                    image,
+                    main_timeout_ms,
+                } => {
+                    spec_path(image)?;
+                    if image.extension().is_none_or(|extension| extension != "png")
+                        || *main_timeout_ms == 0
+                    {
+                        return Err(
+                            "wait-knob-display-image requires a PNG and a positive MAIN timeout"
+                                .into(),
+                        );
                     }
                 }
                 Action::ExpectCapturedDisplayImage { image } => {
@@ -2115,4 +2661,138 @@ mod din_usb_scope_tests {
             crate::Scenario::parse(&text.replace("models=['l6']", "models=['l6max']")).is_err()
         );
     }
+}
+
+fn validate_patch_parity(scenario: &Scenario) -> Result<(), String> {
+    if scenario.models != [Model::L6, Model::L6max]
+        || scenario.backends != [Backend::Headless]
+        || scenario.step.iter().any(|step| step.setup_input)
+    {
+        return Err("patch parity requires both models and host-only headless steps".into());
+    }
+    for model in [Model::L6, Model::L6max] {
+        let actual = scenario
+            .step
+            .iter()
+            .filter(|step| step.applies_to(model))
+            .map(|step| match &step.action {
+                Action::PatchParityPrepare => Ok(("prepare", Vec::new())),
+                Action::PatchParityFirmware { patches } => Ok(("firmware", patches.clone())),
+                Action::PatchParityLoader { patches } => Ok(("loader", patches.clone())),
+                Action::PatchParityUnsupported { patch } => {
+                    Ok(("unsupported", vec![patch.clone()]))
+                }
+                Action::PatchParityFinish => Ok(("finish", Vec::new())),
+                _ => Err("patch parity cannot include other actions"),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut expected = vec![("prepare", Vec::new())];
+        if model == Model::L6 {
+            expected.push(("firmware", vec!["midi-sync".into()]));
+            expected.push(("unsupported", vec!["knob-dialog".into()]));
+            expected.push(("unsupported", vec!["din-mixer-control".into()]));
+        } else {
+            let patches = &patch_core::WASM_PATCHES;
+            for mask in 1..(1usize << patches.len()) {
+                expected.push((
+                    "firmware",
+                    patches
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| mask & (1 << i) != 0)
+                        .map(|(_, p)| p.to_string())
+                        .collect(),
+                ));
+            }
+            for mask in 0..(1usize << patches.len()) {
+                expected.push((
+                    "loader",
+                    patches
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| mask & (1 << i) != 0)
+                        .map(|(_, p)| p.to_string())
+                        .collect(),
+                ));
+            }
+        }
+        expected.push(("finish", Vec::new()));
+        if actual != expected {
+            return Err(format!(
+                "patch parity profiles for {model} are incomplete or out of order"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_power_steps(scenario: &Scenario) -> Result<(), String> {
+    for model in &scenario.models {
+        let steps: Vec<_> = scenario
+            .step
+            .iter()
+            .filter(|step| step.applies_to(*model))
+            .collect();
+        let mut i = 0;
+        while i < steps.len() {
+            if let Action::PowerBegin { hold_ms, powered } = steps[i].action {
+                let length = if powered { 4 } else { 5 };
+                let group = steps
+                    .get(i..i + length)
+                    .ok_or("incomplete power transaction")?;
+                if hold_ms == 0
+                    || hold_ms > 60_000
+                    || group.iter().any(|step| {
+                        step.wall_timeout_s != group[0].wall_timeout_s
+                            || step.guest_timeout_ms != group[0].guest_timeout_ms
+                    })
+                    || !matches!(group[1].action, Action::PowerWaitAck)
+                    || !matches!(group[length - 1].action, Action::PowerEnd)
+                {
+                    return Err("invalid power transaction sequence or budgets".into());
+                }
+                if powered {
+                    if !matches!(group[2].action, Action::PowerObserveOn { guest_ms } if guest_ms == hold_ms + 1000 && guest_ms <= group[0].guest_timeout_ms)
+                    {
+                        return Err(
+                            "powered observation must cover the hold plus 1000 panel guest ms"
+                                .into(),
+                        );
+                    }
+                } else {
+                    let expected = if *model == Model::L6 {
+                        (Some(300), Some(800))
+                    } else {
+                        (None, None)
+                    };
+                    if !matches!(group[2].action, Action::PowerWaitOff { min_cutoff_ms, max_cutoff_ms } if (min_cutoff_ms, max_cutoff_ms) == expected)
+                        || !matches!(
+                            group[3].action,
+                            Action::PowerObserveStopped {
+                                settle_wall_ms: 100,
+                                observe_wall_ms: 200
+                            }
+                        )
+                    {
+                        return Err(
+                            "power-off requires model cutoff and stopped-clock observations".into(),
+                        );
+                    }
+                }
+                i += length;
+            } else if matches!(
+                steps[i].action,
+                Action::PowerWaitAck
+                    | Action::PowerObserveOn { .. }
+                    | Action::PowerWaitOff { .. }
+                    | Action::PowerObserveStopped { .. }
+                    | Action::PowerEnd
+            ) {
+                return Err("power step outside a complete transaction".into());
+            } else {
+                i += 1;
+            }
+        }
+    }
+    Ok(())
 }

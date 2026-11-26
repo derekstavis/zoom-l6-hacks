@@ -134,22 +134,28 @@ pub enum UpdateFixture {
     BadChecksum,
     BadChecksumStock,
     L6Stock,
+    L6Matching,
     L6PatchedMidi,
     SyntheticValid,
     PatchedMidi,
+    PatchedDin,
     PatchedKnob,
     PatchedKnobMidi,
 }
 
 impl UpdateFixture {
     pub fn is_l6(self) -> bool {
-        matches!(self, Self::L6Stock | Self::L6PatchedMidi)
+        matches!(self, Self::L6Stock | Self::L6Matching | Self::L6PatchedMidi)
     }
 
     pub fn is_patched(self) -> bool {
         matches!(
             self,
-            Self::PatchedMidi | Self::L6PatchedMidi | Self::PatchedKnob | Self::PatchedKnobMidi
+            Self::PatchedMidi
+                | Self::PatchedDin
+                | Self::L6PatchedMidi
+                | Self::PatchedKnob
+                | Self::PatchedKnobMidi
         )
     }
 }
@@ -461,7 +467,27 @@ pub enum Action {
         inserted: bool,
     },
     UsbDescriptors,
-    UsbStorage,
+    UsbStorageBegin,
+    UsbStorageInquiry,
+    UsbStorageReady,
+    UsbStorageCapacity,
+    UsbStorageReadBoot,
+    UsbStorageAssertBoot,
+    UsbStorageLastRead,
+    UsbStorageLastWrite,
+    UsbStorageLastAssert,
+    UsbStorageFatOpen,
+    UsbStorageCreate {
+        length: u32,
+        multiplier: u32,
+        increment: u32,
+    },
+    UsbStorageFlushCreated,
+    UsbStorageReadFile,
+    UsbStorageRemoveFile,
+    UsbStorageAssertFile,
+    UsbStorageFlushRemoved,
+    UsbStorageEnd,
     UsbMidiOpen,
     UsbMidiBegin,
     UsbMidiExpectEncoder,
@@ -584,14 +610,44 @@ pub enum Action {
         complete_on_match: bool,
     },
     UsbSysexEnd,
-    EditorPadAssignments,
-    EditorPadPlayback {
+    EditorAssignBegin,
+    EditorAssignIdentity,
+    EditorAssignGlobal,
+    EditorAssignVersion,
+    EditorAssignSdInfo,
+    EditorAssignRefresh,
+    EditorAssignCount {
         pad: u8,
     },
-    L6maxUiPadVerify {
+    EditorAssignFilename {
         pad: u8,
     },
-    SoundPadPlayback {
+    EditorAssignSend {
+        pad: u8,
+    },
+    EditorAssignState {
+        pad: u8,
+    },
+    EditorAssignEnd,
+    EditorPlaybackBegin {
+        pad: u8,
+    },
+    EditorPlaybackPlay,
+    EditorPlaybackWait,
+    EditorPlaybackObserve,
+    EditorPlaybackSample,
+    EditorPlaybackAssert,
+    EditorPlaybackEnd,
+    UiPadBegin {
+        pad: u8,
+    },
+    UiPadIdentity,
+    UiPadGlobal,
+    UiPadKeepAlive,
+    UiPadQuery,
+    UiPadAssert,
+    UiPadEnd,
+    SoundPadBegin {
         pad: u8,
         target: u32,
         #[serde(default)]
@@ -611,12 +667,49 @@ pub enum Action {
     WaitL6SoundPadFile {
         path: String,
     },
-    L6RecorderPlayback {
+    SoundPadPress,
+    SoundPadHold,
+    SoundPadRelease,
+    SoundPadObserve,
+    SoundPadSample,
+    SoundPadAssertWaveform,
+    SoundPadAssertAudio,
+    SoundPadAssertLed,
+    SoundPadAssertMeter,
+    SoundPadFinish,
+    L6RecorderBegin {
         target: u32,
     },
-    L6maxRecorderPlayback {
+    L6RecorderPress,
+    L6RecorderDispatcher,
+    L6RecorderAssertEvent,
+    L6RecorderHandler,
+    L6RecorderAssertSelection,
+    L6RecorderCallback,
+    L6RecorderAssertCallback,
+    L6RecorderObserve,
+    L6RecorderRelease,
+    L6RecorderSample,
+    L6RecorderEvidence,
+    L6RecorderAssertTrace,
+    L6RecorderAssertDma,
+    L6RecorderEnd,
+    L6maxRecorderBegin {
         target: u32,
     },
+    L6maxRecorderPress,
+    L6maxRecorderSubmit,
+    L6maxRecorderQueue,
+    L6maxRecorderDispatch,
+    L6maxRecorderScheduler,
+    L6maxRecorderCallback,
+    L6maxRecorderAction,
+    L6maxRecorderStream,
+    L6maxRecorderObserve,
+    L6maxRecorderSample,
+    L6maxRecorderEvidence,
+    L6maxRecorderAssertAudio,
+    L6maxRecorderEnd,
     ExpectMemory {
         /// A name declared in `patches/api` for the model the step runs on.
         #[schemars(schema_with = "crate::firmware::symbol_schema")]
@@ -751,6 +844,10 @@ pub enum Action {
     KnobOverlayCheckBitmap,
     KnobOverlayCheckHeap,
     KnobOverlayFinish,
+    KnobBitmapReactivate {
+        delta: i32,
+    },
+    KnobBitmapWaitActive,
     KnobBitmapBegin,
     KnobBitmapCheckBackground {
         background: u32,
@@ -793,6 +890,10 @@ pub enum Action {
     WaitInputApplied,
     WaitKnobParameterMode {
         mode: u8,
+    },
+    WaitKnobDisplayImage {
+        image: PathBuf,
+        main_timeout_ms: u32,
     },
     CaptureDisplay {
         guest_ms: u32,
@@ -880,15 +981,37 @@ pub enum Action {
         path: Vec<String>,
         items: Vec<String>,
     },
-    FirmwareUpdate,
-    WasmPatch,
+    PatchParityPrepare,
+    PatchParityFirmware {
+        patches: Vec<String>,
+    },
+    PatchParityLoader {
+        patches: Vec<String>,
+    },
+    PatchParityUnsupported {
+        patch: String,
+    },
+    PatchParityFinish,
     WarmReset,
     Restart,
     ExpectRecorder,
-    PowerPress {
+    PowerBegin {
         hold_ms: u32,
         powered: bool,
     },
+    PowerWaitAck,
+    PowerObserveOn {
+        guest_ms: u32,
+    },
+    PowerWaitOff {
+        min_cutoff_ms: Option<u32>,
+        max_cutoff_ms: Option<u32>,
+    },
+    PowerObserveStopped {
+        settle_wall_ms: u64,
+        observe_wall_ms: u64,
+    },
+    PowerEnd,
     ExpectPowered {
         powered: bool,
     },
@@ -1030,9 +1153,59 @@ pub enum Action {
         cc: u8,
         value: u8,
     },
-    L6InputSweep,
+    L6SweepBegin,
+    L6SweepRejectMain {
+        target: u32,
+    },
+    L6SweepPanelBaseline {
+        target: u32,
+    },
+    L6SweepPanelTap,
+    L6SweepPanelWait,
+    L6SweepPanelTrace,
+    L6SweepPanelAssert,
+    L6SweepEncoderBaseline,
+    L6SweepEncoderSend {
+        index: u32,
+    },
+    L6SweepEncoderWait,
+    L6SweepEncoderTrace,
+    L6SweepEncoderAssert,
+    L6SweepRejectPanel,
+    L6SweepRejectEncoder,
+    L6SweepEnd,
     L6DinSweep,
-    L6maxInputTiming,
+    L6maxTimingBegin,
+    L6maxTimingSettle {
+        wall_ms: u32,
+    },
+    L6maxTimingBaseline,
+    L6maxTimingEnqueue {
+        target: u32,
+        hold_ms: u32,
+        pairs: u32,
+    },
+    L6maxTimingWaitFirst,
+    L6maxTimingObservePaused {
+        wall_ms: u32,
+    },
+    L6maxTimingAssertPaused,
+    L6maxTimingResume,
+    L6maxTimingWaitQueued,
+    L6maxTimingWaitReports,
+    L6maxTimingAssertReports,
+    L6maxTimingObserveDisplay {
+        guest_ms: u32,
+    },
+    L6maxTimingAssertDisplay,
+    L6maxTimingEncoder {
+        index: u32,
+        steps: i32,
+    },
+    L6maxTimingWaitEncoder,
+    L6maxTimingWaitEncoderReport,
+    L6maxTimingAssertEncoder,
+    L6maxTimingEnd,
     L6maxPanelKeyBegin,
     L6maxPanelKeyCheck {
         code: u32,
@@ -1046,7 +1219,26 @@ pub enum Action {
         pressed: bool,
     },
     L6maxPanelKeyEnd,
-    L6maxChannelSignalPwm,
+    SignalPwmBegin,
+    SignalPwmWarmup {
+        start: u8,
+        end: u8,
+        value: f32,
+    },
+    SignalPwmDrain {
+        band: u8,
+    },
+    SignalPwmStage {
+        band: u8,
+        start: u8,
+        end: u8,
+        value: f32,
+    },
+    SignalPwmAssert {
+        band: u8,
+        channel: u8,
+    },
+    SignalPwmEnd,
     L6LevelMeterPwm,
     ExpectEncoderReports,
     ExpectRing {
@@ -1156,7 +1348,7 @@ impl Scenario {
             || self
                 .step
                 .iter()
-                .any(|step| matches!(step.action, Action::WasmPatch))
+                .any(|step| matches!(step.action, Action::PatchParityPrepare))
     }
 }
 /// Resolve a path written in a scenario or fragment (an include or a
@@ -1193,24 +1385,26 @@ pub struct Fragment {
 /// Validate a bounded mode transaction without embedding scene test data in Rust.
 /// The final Pan selector is required by the diagnostic's subsequent Pan sweep.
 pub(crate) fn valid_knob_mode_steps(steps: &[&Step]) -> bool {
-    if steps.is_empty() || steps.len() % 10 != 0 || steps.len() / 10 > 23 {
+    if steps.is_empty() || steps.len() % 11 != 0 || steps.len() / 11 > 23 {
         return false;
     }
-    let valid = steps.chunks_exact(10).all(|group| {
+    let valid = steps.chunks_exact(11).all(|group| {
         matches!(&group[0].action, Action::KnobDialogModeBegin { scene } if !scene.is_empty() && scene.len() <= 64 && scene.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
         && matches!(group[1].action, Action::EnqueueTap { target, hold_ms } if l6ctl::button_source(target).is_some() && (1..=60_000).contains(&hold_ms))
         && matches!(group[2].action, Action::WaitInputApplied)
         && matches!(group[3].action, Action::WaitKnobParameterMode { mode } if mode <= 9)
         && matches!(group[4].action, Action::EnqueueEncoder { channel, steps, midi_transaction: false } if (1..=8).contains(&channel) && steps != 0 && steps.unsigned_abs() <= 1000)
         && matches!(group[5].action, Action::WaitInputApplied)
-        && matches!(&group[6].action, Action::CaptureDisplay { guest_ms, artifact } if *guest_ms > 0 && *guest_ms <= group[6].guest_timeout_ms && !artifact.is_empty() && artifact.len() <= 64 && artifact.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
-        && matches!(&group[7].action, Action::ExpectCapturedDisplayImage { image } if spec_path(image).is_ok() && image.extension().is_some_and(|extension| extension == "png"))
-        && matches!(group[8].action, Action::KnobDialogExpectHeap)
-        && matches!(group[9].action, Action::KnobDialogModeEnd)
+        && matches!(&group[6].action, Action::WaitKnobDisplayImage { image, main_timeout_ms } if spec_path(image).is_ok() && image.extension().is_some_and(|extension| extension == "png") && *main_timeout_ms > 0)
+        && matches!(&group[7].action, Action::CaptureDisplay { guest_ms, artifact } if *guest_ms > 0 && *guest_ms <= group[7].guest_timeout_ms && !artifact.is_empty() && artifact.len() <= 64 && artifact.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+        && matches!(&group[8].action, Action::ExpectCapturedDisplayImage { image } if spec_path(image).is_ok() && image.extension().is_some_and(|extension| extension == "png"))
+        && matches!((&group[6].action, &group[8].action), (Action::WaitKnobDisplayImage { image: a, .. }, Action::ExpectCapturedDisplayImage { image: b }) if a == b)
+        && matches!(group[9].action, Action::KnobDialogExpectHeap)
+        && matches!(group[10].action, Action::KnobDialogModeEnd)
     });
     valid
         && matches!(
-            steps[steps.len() - 7].action,
+            steps[steps.len() - 8].action,
             Action::WaitKnobParameterMode { mode: 8 }
         )
 }
@@ -1796,8 +1990,10 @@ mod level_demo_fragment_tests {
 }
 
 pub(crate) fn valid_bitmap_probe_steps(steps: &[&Step]) -> bool {
-    matches!(steps, [begin, background, before, store, arm, wait, invoke, after, frame, sig, descriptor, finish]
-        if matches!(begin.action, Action::KnobBitmapBegin)
+    matches!(steps, [reactivate, active, begin, background, before, store, arm, wait, invoke, after, frame, sig, descriptor, finish]
+        if matches!(reactivate.action, Action::KnobBitmapReactivate { delta: -1 })
+        && matches!(active.action, Action::KnobBitmapWaitActive)
+        && matches!(begin.action, Action::KnobBitmapBegin)
         && matches!(background.action, Action::KnobBitmapCheckBackground { background: 47, expected: 0 })
         && matches!(&before.action, Action::CaptureDisplay { guest_ms: 50, artifact } if artifact == "window-scene-before-null-bitmap-probe")
         && matches!(store.action, Action::KnobBitmapStoreBefore)
@@ -1823,12 +2019,12 @@ mod bitmap_probe_fragment_tests {
         assert!(valid_bitmap_probe_steps(
             &fragment.step.iter().collect::<Vec<_>>()
         ));
-        fragment.step.swap(8, 9);
+        fragment.step.swap(10, 11);
         assert!(!valid_bitmap_probe_steps(
             &fragment.step.iter().collect::<Vec<_>>()
         ));
-        fragment.step.swap(8, 9);
-        if let Action::KnobBitmapInvoke { background } = &mut fragment.step[6].action {
+        fragment.step.swap(10, 11);
+        if let Action::KnobBitmapInvoke { background } = &mut fragment.step[8].action {
             *background = 48;
         } else {
             panic!("expected bitmap invocation");

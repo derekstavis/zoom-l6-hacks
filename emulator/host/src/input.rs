@@ -26,6 +26,8 @@ pub struct InputStatus {
     pub rejected: u64,
     pub frame_ready: u64,
     pub frame_guest_ms: u32,
+    /// CLOCK generation at the last MAIN frame, to reject stale clock samples.
+    pub frame_clock_updates: u64,
     pub indicator_updates: u64,
     pub indicators: [u32; 8],
     pub indicator_levels: [[u8; 24]; 8],
@@ -33,6 +35,7 @@ pub struct InputStatus {
     pub adc_samples: [u16; 5],
     pub adc_updates: u64,
     pub guest_ms: u32,
+    pub clock_updates: u64,
     pub audio_input_position_ms: u32,
     pub audio_input_playing: bool,
     pub last_ack: Option<Message>,
@@ -55,13 +58,15 @@ pub struct InputAck {
     pub source: InputSource,
     pub sequence: u32,
     pub state: InputAckState,
+    /// MAIN or panel virtual milliseconds at the applied acknowledgement.
+    pub applied_guest_ms: Option<u32>,
 }
 
 const RECEIPT_LIMIT: usize = 256;
 
 fn retire_input(
     status: &Mutex<InputStatus>,
-    receipts: &Mutex<VecDeque<(u32, InputAckState)>>,
+    receipts: &Mutex<VecDeque<(u32, InputAckState, Option<u32>)>>,
     error: String,
 ) {
     // The same status -> receipts order is used while registering a command.
@@ -69,7 +74,7 @@ fn retire_input(
     state.connected = false;
     state.error = Some(error);
     let mut receipts = receipts.lock().unwrap_or_else(|e| e.into_inner());
-    for (_, receipt) in receipts.iter_mut() {
+    for (_, receipt, _) in receipts.iter_mut() {
         if *receipt == InputAckState::Pending {
             *receipt = InputAckState::Unknown;
         }
@@ -105,6 +110,9 @@ pub struct InputCounters {
     pub source: InputSource,
     pub connected: bool,
     pub guest_ms: u32,
+    pub clock_updates: u64,
+    pub powered_off: bool,
+    pub powered_off_guest_ms: Option<u32>,
     pub sent: u64,
     pub applied: u64,
     pub released: u64,
@@ -117,7 +125,7 @@ struct Inner {
     sequence: AtomicU32,
     status: Arc<Mutex<InputStatus>>,
     frames: Arc<Mutex<FrameQueue>>,
-    receipts: Arc<Mutex<VecDeque<(u32, InputAckState)>>>,
+    receipts: Arc<Mutex<VecDeque<(u32, InputAckState, Option<u32>)>>>,
 }
 #[derive(Default)]
 struct FrameQueue {
@@ -151,7 +159,9 @@ impl EngineInput {
         let reader_status = status.clone();
         let frames = Arc::new(Mutex::new(FrameQueue::default()));
         let reader_frames = frames.clone();
-        let receipts = Arc::new(Mutex::new(VecDeque::<(u32, InputAckState)>::new()));
+        let receipts = Arc::new(Mutex::new(
+            VecDeque::<(u32, InputAckState, Option<u32>)>::new(),
+        ));
         let reader_receipts = receipts.clone();
         thread::Builder::new()
             .name("qemu-input-replies".into())
@@ -166,10 +176,11 @@ impl EngineInput {
                             state.powered_off_guest_ms = Some(message.duration_ms);
                         }
                         Ok(message) if message.kind == protocol::CLOCK => {
-                            reader_status
+                            let mut state = reader_status
                                 .lock()
-                                .unwrap_or_else(|error| error.into_inner())
-                                .guest_ms = message.duration_ms;
+                                .unwrap_or_else(|error| error.into_inner());
+                            state.guest_ms = message.duration_ms;
+                            state.clock_updates += 1;
                         }
                         Ok(message) if message.kind == protocol::ADC_SAMPLE => {
                             let mut state = reader_status
@@ -250,6 +261,7 @@ impl EngineInput {
                                 .unwrap_or_else(|error| error.into_inner());
                             state.frame_ready += 1;
                             state.frame_guest_ms = message.duration_ms;
+                            state.frame_clock_updates = state.clock_updates;
                         }
                         Ok(message)
                             if matches!(
@@ -269,11 +281,12 @@ impl EngineInput {
                                 let mut receipts = reader_receipts
                                     .lock()
                                     .unwrap_or_else(|error| error.into_inner());
-                                if let Some((_, receipt)) = receipts
+                                if let Some((_, receipt, timestamp)) = receipts
                                     .iter_mut()
-                                    .find(|(sequence, _)| *sequence == message.sequence)
+                                    .find(|(sequence, _, _)| *sequence == message.sequence)
                                 {
                                     *receipt = if message.kind == protocol::APPLIED {
+                                        *timestamp = Some(message.duration_ms);
                                         InputAckState::Applied
                                     } else {
                                         InputAckState::Rejected
@@ -412,7 +425,7 @@ impl EngineInput {
             if receipts.len() == RECEIPT_LIMIT {
                 receipts.pop_front();
             }
-            receipts.push_back((sequence, InputAckState::Pending));
+            receipts.push_back((sequence, InputAckState::Pending, None));
             drop(receipts);
             drop(state);
         }
@@ -469,14 +482,17 @@ impl InputHub {
             .receipts
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        let receipt = receipts
+        let (state, applied_guest_ms) = receipts
             .iter()
-            .find(|(s, _)| *s == sequence)
-            .map_or(InputAckState::Unknown, |(_, status)| *status);
+            .find(|(s, _, _)| *s == sequence)
+            .map_or((InputAckState::Unknown, None), |(_, state, time)| {
+                (*state, *time)
+            });
         InputAck {
             source,
             sequence,
-            state: receipt,
+            state,
+            applied_guest_ms,
         }
     }
     /// Observe one channel without consuming its acknowledgements.
@@ -489,6 +505,9 @@ impl InputHub {
             source,
             connected: status.connected,
             guest_ms: status.guest_ms,
+            clock_updates: status.clock_updates,
+            powered_off: status.powered_off,
+            powered_off_guest_ms: status.powered_off_guest_ms,
             sent: status.sent,
             applied: status.applied,
             released: status.released,
@@ -588,6 +607,7 @@ mod tests {
         );
         Message {
             kind: protocol::APPLIED,
+            duration_ms: 77,
             ..two
         }
         .write(&mut wire)
@@ -597,6 +617,27 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             thread::sleep(Duration::from_millis(1));
         }
+        assert_eq!(
+            hub.acknowledgement(InputSource::Panel, second)
+                .applied_guest_ms,
+            Some(77)
+        );
+        Message {
+            kind: protocol::RELEASED,
+            duration_ms: 99,
+            ..two
+        }
+        .write(&mut wire)
+        .unwrap();
+        while hub.counters(InputSource::Panel).released == 0 {
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            hub.acknowledgement(InputSource::Panel, second)
+                .applied_guest_ms,
+            Some(77)
+        );
         assert_eq!(
             hub.acknowledgement(InputSource::Panel, first).state,
             InputAckState::Pending
@@ -691,6 +732,80 @@ mod tests {
         hub.down(53, 50).unwrap();
         let power = Message::read(&mut wire).unwrap();
         assert_eq!((power.kind, power.target), (protocol::DOWN, 53));
+    }
+
+    #[test]
+    fn frame_records_clock_generation_and_freshness() {
+        let (host, mut wire) = EngineInput::pair().unwrap();
+        for (kind, seq, target, ms) in [
+            (protocol::CLOCK, 1, 0, 100),
+            (protocol::FRAME_READY, 2, 0, 110),
+            (protocol::CLOCK, 3, 0, 200),
+        ] {
+            Message {
+                kind,
+                sequence: seq,
+                target,
+                value: 0,
+                duration_ms: ms,
+            }
+            .write(&mut wire)
+            .unwrap();
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while host.snapshot().clock_updates < 2 {
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(1));
+        }
+        let state = host.snapshot();
+        assert_eq!(
+            (
+                state.frame_ready,
+                state.frame_guest_ms,
+                state.frame_clock_updates
+            ),
+            (1, 110, 1)
+        );
+        assert_eq!((state.clock_updates, state.guest_ms), (2, 200));
+    }
+
+    #[test]
+    fn main_clock_wrap_and_new_connection_are_independent() {
+        fn send_clock(wire: &mut UnixStream, sequence: u32, millis: u32) {
+            Message {
+                kind: protocol::CLOCK,
+                sequence,
+                target: 0,
+                value: 0,
+                duration_ms: millis,
+            }
+            .write(wire)
+            .unwrap();
+        }
+        fn await_clock(host: &EngineInput, expected: u32) {
+            let deadline = std::time::Instant::now() + Duration::from_secs(1);
+            while host.snapshot().guest_ms != expected {
+                assert!(std::time::Instant::now() < deadline);
+                thread::sleep(Duration::from_millis(1));
+            }
+        }
+        let (host, mut wire) = EngineInput::pair().unwrap();
+        send_clock(&mut wire, 1, u32::MAX - 10);
+        await_clock(&host, u32::MAX - 10);
+        send_clock(&mut wire, 2, 0);
+        await_clock(&host, 0);
+        assert_eq!(host.snapshot().clock_updates, 2);
+        send_clock(&mut wire, 3, 20);
+        await_clock(&host, 20);
+        assert_eq!(20u32.wrapping_sub(u32::MAX - 10), 31);
+        drop(wire);
+        drop(host);
+        let (next, mut wire) = EngineInput::pair().unwrap();
+        assert_eq!(next.snapshot().guest_ms, 0);
+        assert_eq!(next.snapshot().clock_updates, 0);
+        send_clock(&mut wire, 1, 100);
+        await_clock(&next, 100);
+        assert_eq!(next.snapshot().clock_updates, 1);
     }
 
     #[test]

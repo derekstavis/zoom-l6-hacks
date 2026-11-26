@@ -812,51 +812,134 @@ fn usb_sysex_scenario_requires_scoped_complete_messages() {
 }
 #[test]
 fn editor_pad_assignment_requires_prior_usb_midi_enumeration() {
+    let assignment_steps =
+        include_str!("../../../../tests/emulator/fragments/editor-pad-assignments.toml");
     let prefix = "version=1\nname='pads'\nmodels=['l6max']\nbackends=['headless']\n";
-    let without_usb = Scenario::parse(&format!(
-        "{prefix}[[step]]\naction='editor-pad-assignments'\n"
-    ));
+    let without_usb = Scenario::parse(&format!("{prefix}{assignment_steps}"));
     assert!(
         without_usb
             .unwrap_err()
             .contains("requires a preceding usb-descriptors step")
     );
+    let reordered = assignment_steps.replacen(
+        "action = \"editor-assign-count\"\npad = 0",
+        "action = \"editor-assign-count\"\npad = 1",
+        1,
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}[[step]]\naction='usb-descriptors'\n{reordered}"
+        ))
+        .is_err()
+    );
+    let shortened = assignment_steps.replace(
+        "action = \"editor-assign-end\"",
+        "action = \"editor-assign-identity\"",
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}[[step]]\naction='usb-descriptors'\n{shortened}"
+        ))
+        .is_err()
+    );
     let with_usb = Scenario::parse(&format!(
-        "{prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n"
+        "{prefix}[[step]]\naction='usb-descriptors'\n{assignment_steps}"
     ));
     assert!(with_usb.is_ok());
-    let playback = Scenario::parse(&format!(
-        "{prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n[[step]]\naction='editor-pad-playback'\npad=3\n"
-    ));
-    assert!(playback.is_err(), "Editor SysEx playback is L6-only");
+    let playback_steps = "[[step]]\naction='editor-playback-begin'\npad=3\n[[step]]\naction='editor-playback-play'\n[[step]]\naction='editor-playback-wait'\n[[step]]\naction='editor-playback-observe'\n[[step]]\naction='editor-playback-sample'\n[[step]]\naction='editor-playback-assert'\n[[step]]\naction='editor-playback-end'\n";
+    let prefix_steps = format!("[[step]]\naction='usb-descriptors'\n{assignment_steps}");
+    assert!(Scenario::parse(&format!("{prefix}{prefix_steps}{playback_steps}")).is_err());
     let l6_prefix = prefix.replace("l6max", "l6");
-    let playback = Scenario::parse(&format!(
-        "{l6_prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n[[step]]\naction='editor-pad-playback'\npad=3\n"
-    ));
-    assert!(playback.is_ok());
-    let invalid_pad = Scenario::parse(&format!(
-        "{l6_prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n[[step]]\naction='editor-pad-playback'\npad=4\n"
-    ));
-    assert!(invalid_pad.unwrap_err().contains("pad must be 0..3"));
+    assert!(Scenario::parse(&format!("{l6_prefix}{prefix_steps}{playback_steps}")).is_ok());
+    assert!(
+        Scenario::parse(&format!(
+            "{l6_prefix}{prefix_steps}{}",
+            playback_steps.replace("pad=3", "pad=4")
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{l6_prefix}{prefix_steps}{}",
+            playback_steps.replace("editor-playback-wait", "editor-playback-play")
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{l6_prefix}{prefix_steps}{}",
+            playback_steps.replace(
+                "action='editor-playback-end'",
+                "action='editor-playback-end'\nguest_timeout_ms=10"
+            )
+        ))
+        .is_err()
+    );
+    let ui_steps = "[[step]]\naction='ui-pad-begin'\npad=2\n[[step]]\naction='ui-pad-identity'\n[[step]]\naction='ui-pad-global'\n[[step]]\naction='ui-pad-keep-alive'\n[[step]]\naction='ui-pad-query'\n[[step]]\naction='ui-pad-assert'\n[[step]]\naction='ui-pad-end'\n";
     let ui_playback = Scenario::parse(&format!(
-        "{prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='l6max-ui-pad-verify'\npad=2\n"
+        "{prefix}[[step]]\naction='usb-descriptors'\n{ui_steps}"
     ));
-    assert!(ui_playback.is_ok());
+    assert!(ui_playback.is_ok(), "{ui_playback:?}");
     let wrong_model = prefix.replace("l6max", "l6");
-    let wrong_model = Scenario::parse(&format!(
-        "{wrong_model}[[step]]\naction='usb-descriptors'\n[[step]]\naction='l6max-ui-pad-verify'\npad=2\n"
-    ));
-    assert!(wrong_model.unwrap_err().contains("scoped to L6max"));
+    assert!(
+        Scenario::parse(&format!(
+            "{wrong_model}[[step]]\naction='usb-descriptors'\n{ui_steps}"
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}[[step]]\naction='usb-descriptors'\n{}",
+            ui_steps.replace("action='ui-pad-query'", "action='ui-pad-identity'")
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}[[step]]\naction='usb-descriptors'\n{}",
+            ui_steps.replace("pad=2", "pad=4")
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}[[step]]\naction='usb-descriptors'\n{}",
+            ui_steps.replace(
+                "action='ui-pad-end'",
+                "action='ui-pad-end'\nguest_timeout_ms=10"
+            )
+        ))
+        .is_err()
+    );
 }
 #[test]
 fn sound_pad_playback_supports_editor_or_saved_assignment() {
+    let assignment_steps =
+        include_str!("../../../../tests/emulator/fragments/editor-pad-assignments.toml");
     let prefix = "version=1\nname='pad-playback'\nmodels=['l6']\nbackends=['headless']\n";
-    let action = "[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n[[step]]\naction='sound-pad-playback'\npad=0\ntarget=49\n";
-    assert!(Scenario::parse(&format!("{prefix}{action}")).is_ok());
+    let suffix = [
+        "press",
+        "hold",
+        "release",
+        "observe",
+        "sample",
+        "assert-waveform",
+        "assert-audio",
+        "assert-led",
+        "assert-meter",
+        "finish",
+    ]
+    .iter()
+    .map(|part| format!("[[step]]\naction='sound-pad-{part}'\n"))
+    .collect::<String>();
+    let action = format!(
+        "[[step]]\naction='usb-descriptors'\n{assignment_steps}[[step]]\naction='sound-pad-begin'\npad=0\ntarget=49\n"
+    );
+    assert!(Scenario::parse(&format!("{prefix}{action}{suffix}")).is_ok());
     let l6max = prefix.replace("models=['l6']", "models=['l6max']");
-    assert!(Scenario::parse(&format!("{l6max}{action}")).is_ok());
+    assert!(Scenario::parse(&format!("{l6max}{action}{suffix}")).is_ok());
     let without_assignment = Scenario::parse(&format!(
-        "{prefix}[[step]]\naction='sound-pad-playback'\npad=0\ntarget=49\n"
+        "{prefix}[[step]]\naction='sound-pad-begin'\npad=0\ntarget=49\n{suffix}"
     ));
     assert!(
         without_assignment
@@ -864,11 +947,20 @@ fn sound_pad_playback_supports_editor_or_saved_assignment() {
             .contains("preceding editor-pad-assignments")
     );
     let saved_state = Scenario::parse(&format!(
-        "{prefix}[[step]]\naction='sound-pad-playback'\npad=0\ntarget=49\nassignment='saved-state'\nplayback_window_ms=30000\nrequire_pad_led_change=false\n"
+        "{prefix}[[step]]\naction='sound-pad-begin'\npad=0\ntarget=49\nassignment='saved-state'\nplayback_window_ms=30000\nrequire_pad_led_change=false\n{suffix}"
     ));
     assert!(saved_state.is_ok());
+    assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='sound-pad-begin'\npad=0\ntarget=49\nassignment='saved-state'\n")).is_err());
+    let wrong_order = suffix.replace("action='sound-pad-release'", "action='sound-pad-press'");
+    assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='sound-pad-begin'\npad=0\ntarget=49\nassignment='saved-state'\n{wrong_order}")).is_err());
+    let wrong_budget = suffix.replace(
+        "action='sound-pad-hold'",
+        "action='sound-pad-hold'\nwall_timeout_s=30",
+    );
+    assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='sound-pad-begin'\npad=0\ntarget=49\nassignment='saved-state'\n{wrong_budget}")).is_err());
+
     let invalid_target = Scenario::parse(&format!(
-        "{prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n[[step]]\naction='sound-pad-playback'\npad=0\ntarget=53\n"
+        "{prefix}[[step]]\naction='usb-descriptors'\n{assignment_steps}[[step]]\naction='sound-pad-begin'\npad=0\ntarget=53\n{suffix}"
     ));
     assert!(
         invalid_target
@@ -876,7 +968,7 @@ fn sound_pad_playback_supports_editor_or_saved_assignment() {
             .contains("target must match pad")
     );
     let mismatched_target = Scenario::parse(&format!(
-        "{prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n[[step]]\naction='sound-pad-playback'\npad=1\ntarget=49\n"
+        "{prefix}[[step]]\naction='usb-descriptors'\n{assignment_steps}[[step]]\naction='sound-pad-begin'\npad=1\ntarget=49\n{suffix}"
     ));
     assert!(
         mismatched_target
@@ -888,8 +980,45 @@ fn sound_pad_playback_supports_editor_or_saved_assignment() {
 #[test]
 fn l6_recorder_playback_is_scoped_to_the_verified_play_gpio() {
     let prefix = "version=1\nname='recorder-playback'\nmodels=['l6']\nbackends=['headless']\n";
-    let scenario = format!("{prefix}[[step]]\naction='l6-recorder-playback'\ntarget=4\n");
+    let mut scenario = format!("{prefix}[[step]]\naction='l6-recorder-begin'\ntarget=4\n");
+    for action in [
+        "press",
+        "dispatcher",
+        "assert-event",
+        "handler",
+        "assert-selection",
+        "callback",
+        "assert-callback",
+        "observe",
+        "release",
+        "sample",
+        "evidence",
+        "assert-trace",
+        "assert-dma",
+        "end",
+    ] {
+        scenario.push_str(&format!("[[step]]\naction='l6-recorder-{action}'\n"));
+    }
     assert!(Scenario::parse(&scenario).is_ok());
+    assert!(
+        Scenario::parse(&scenario.replace("l6-recorder-assert-event", "l6-recorder-assert-dma"))
+            .unwrap_err()
+            .contains("ordered steps")
+    );
+    assert!(
+        Scenario::parse(&scenario.replace(
+            "action='l6-recorder-press'",
+            "action='l6-recorder-press'\nwall_timeout_s=1"
+        ))
+        .unwrap_err()
+        .contains("matching budgets")
+    );
+    assert!(
+        Scenario::parse(&scenario.replace("[[step]]\naction='l6-recorder-end'\n", ""))
+            .unwrap_err()
+            .contains("incomplete")
+    );
+
     assert!(
         Scenario::parse(&scenario.replace("target=4", "target=5"))
             .unwrap_err()
@@ -908,13 +1037,38 @@ name='recorder-playback'
 models=['l6max']
 backends=['headless']
 ";
-    let scenario = format!(
-        "{prefix}[[step]]
-action='l6max-recorder-playback'
-target=4
-"
-    );
+    let mut scenario = format!("{prefix}[[step]]\naction='l6max-recorder-begin'\ntarget=4\n");
+    for action in [
+        "press",
+        "submit",
+        "queue",
+        "dispatch",
+        "scheduler",
+        "callback",
+        "action",
+        "stream",
+        "observe",
+        "sample",
+        "evidence",
+        "assert-audio",
+        "end",
+    ] {
+        scenario.push_str(&format!("[[step]]\naction='l6max-recorder-{action}'\n"));
+    }
     assert!(Scenario::parse(&scenario).is_ok());
+    assert!(
+        Scenario::parse(&scenario.replace("l6max-recorder-queue", "l6max-recorder-stream"))
+            .unwrap_err()
+            .contains("ordered steps")
+    );
+    assert!(
+        Scenario::parse(&scenario.replace(
+            "action='l6max-recorder-press'",
+            "action='l6max-recorder-press'\nwall_timeout_s=1"
+        ))
+        .unwrap_err()
+        .contains("matching budgets")
+    );
     assert!(Scenario::parse(&scenario.replace("target=4", "target=5")).is_err());
     assert!(Scenario::parse(&scenario.replace("models=['l6max']", "models=['l6']")).is_err());
 }
@@ -1171,9 +1325,51 @@ fn unsupported_operations_and_switch_semantics_fail_before_boot() {
 }
 
 #[test]
+fn signal_pwm_requires_two_complete_ordered_bands_and_bounded_stimuli() {
+    let text = include_str!("../../../../tests/emulator/cases/panel/l6max-channel-signal-pwm.toml");
+    assert!(Scenario::parse(text).is_ok());
+    assert!(Scenario::parse(&text.replacen("value = 2250000.0", "value = 1600000.0", 1)).is_err());
+    assert!(Scenario::parse(&text.replacen("channel = 1", "channel = 0", 1)).is_err());
+    assert!(
+        Scenario::parse(&text.replacen(
+            "action = \"signal-pwm-end\"",
+            "action = \"signal-pwm-drain\"\nband = 1",
+            1
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&text.replacen("models = [\"l6max\"]", "models = [\"l6\"]", 1)).is_err()
+    );
+}
+
+#[test]
+fn l6_sweep_requires_complete_unique_targets_and_unchanged_budget() {
+    let text = include_str!("../../../../tests/emulator/cases/panel/l6-input-sweep.toml");
+    assert!(Scenario::parse(text).is_ok());
+    let duplicate = text.replacen("target = 8", "target = 7", 1);
+    assert!(Scenario::parse(&duplicate).is_err());
+    let missing = text.replacen(
+        "action = \"l6-sweep-encoder-send\"\nindex = 5",
+        "action = \"l6-sweep-encoder-send\"\nindex = 4",
+        1,
+    );
+    assert!(Scenario::parse(&missing).is_err());
+    let changed = text.replacen(
+        "action = \"l6-sweep-panel-tap\"\nguest_timeout_ms = 600000",
+        "action = \"l6-sweep-panel-tap\"\nguest_timeout_ms = 5",
+        1,
+    );
+    assert!(Scenario::parse(&changed).is_err());
+}
+
+#[test]
 fn typed_input_sweep_allows_only_its_verified_rejections() {
     let now = Instant::now();
-    let mut runner = test_runner("backends=['headless']\n[[step]]\naction='l6-input-sweep'\n");
+    let case = include_str!("../../../../tests/emulator/cases/panel/l6-input-sweep.toml");
+    let steps = &case[case.find("[[step]]\naction = \"l6-sweep-begin\"").unwrap()..];
+    let mut runner = test_runner(&format!("backends=['headless']\n{steps}"));
+    runner.step = runner.scenario.step.len() - 1;
     runner.device_finished(json!({"expected_rejections":{"main":2,"panel":2}}));
     let mut obs = sample(0);
     obs.main.rejected = 2;
@@ -1184,7 +1380,8 @@ fn typed_input_sweep_allows_only_its_verified_rejections() {
     ));
     fs::remove_dir_all(&runner.logs).unwrap();
 
-    let mut runner = test_runner("backends=['headless']\n[[step]]\naction='l6-input-sweep'\n");
+    let mut runner = test_runner(&format!("backends=['headless']\n{steps}"));
+    runner.step = runner.scenario.step.len() - 1;
     runner.device_finished(json!({"expected_rejections":{"main":2,"panel":2}}));
     let mut obs = sample(0);
     obs.main.rejected = 3;
@@ -1903,4 +2100,189 @@ fn l6_indicator_campaign_requires_scope_coverage_and_previous_mute_snapshot() {
     assert!(Scenario::parse(&source.replace("models=['l6']", "models=['l6max']")).is_err());
     let mute = "version=1\nname='mute'\nmodels=['l6']\nbackends=['headless']\n[[step]]\naction='l6-indicator-begin'\n[[step]]\naction='l6-mute-sample'\ncc=93\nvalue=0\nguest_ms=500\nexpected=[0,0,0,0,2048,0,0,0]\nreuse_previous=true\n[[step]]\naction='l6-indicator-end'\n";
     assert!(Scenario::parse(mute).is_err());
+}
+
+#[test]
+fn boot_ready_main_frame_quiet_uses_fresh_main_clock_across_wrap() {
+    let mut main = InputStatus {
+        connected: true,
+        frame_ready: 1,
+        frame_guest_ms: 10_000,
+        frame_clock_updates: 12,
+        clock_updates: 12,
+        guest_ms: 90_000,
+        ..Default::default()
+    };
+    // A fast panel clock and a stale MAIN heartbeat cannot establish readiness.
+    assert!(!main_display_quiet(&main));
+    main.clock_updates = 13;
+    main.guest_ms = 9_999; // heartbeat predates frame, despite its later arrival
+    assert!(!main_display_quiet(&main));
+    main.guest_ms = 10_999;
+    assert!(!main_display_quiet(&main));
+    main.guest_ms = 11_000;
+    assert!(main_display_quiet(&main));
+    main.frame_guest_ms = u32::MAX - 499;
+    main.guest_ms = 500;
+    assert!(main_display_quiet(&main));
+    main.connected = false;
+    assert!(!main_display_quiet(&main));
+    // A new guest/session must wait for both a frame and a new clock.
+    assert!(!main_display_quiet(&InputStatus::default()));
+}
+
+#[test]
+fn patched_din_update_requires_full_install_and_setup_without_din_probe() {
+    let source = include_str!("../../../../tests/emulator/scenarios/l6max-update-patched-din.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    for block in [
+        "[[step]]\naction = \"expect-installer-outcome\"\nexpected = \"installed\"\n\n",
+        "[[step]]\naction = \"expect-update-comparison\"\nfield = \"protected-region\"\n\n",
+        "[[step]]\naction = \"expect-panel-unchanged\"\n\n",
+        "[[step]]\naction = \"end-wall-deadline\"\n\n",
+    ] {
+        assert!(source.contains(block));
+        assert!(
+            Scenario::from_text(&source.replacen(block, "", 1)).is_err(),
+            "missing {block}"
+        );
+    }
+    assert!(
+        Scenario::from_text(&source.replace("[\"din-mixer-control\"]", "[\"midi-sync\"]")).is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replacen("[[step]]\naction = \"lifecycle-stop\"\n", "", 1))
+            .is_err()
+    );
+}
+
+#[test]
+fn l6max_timing_requires_ordered_scope_and_matching_budgets() {
+    let prefix = "version=1\nname='timing'\nmodels=['l6max']\nbackends=['headless']\n";
+    let mut scenario = format!("{prefix}[[step]]\naction='l6max-timing-begin'\n");
+    for (action, args) in [
+        ("settle", "wall_ms=100\n"),
+        ("baseline", ""),
+        ("enqueue", "target=1\nhold_ms=50\npairs=2\n"),
+        ("wait-first", ""),
+        ("observe-paused", "wall_ms=700\n"),
+        ("assert-paused", ""),
+        ("resume", ""),
+        ("wait-queued", ""),
+        ("wait-reports", ""),
+        ("assert-reports", ""),
+        ("observe-display", "guest_ms=1500\n"),
+        ("assert-display", ""),
+        ("encoder", "index=2\nsteps=1\n"),
+        ("wait-encoder", ""),
+        ("wait-encoder-report", ""),
+        ("assert-encoder", ""),
+        ("end", ""),
+    ] {
+        scenario.push_str(&format!("[[step]]\naction='l6max-timing-{action}'\n{args}"));
+    }
+    assert!(Scenario::parse(&scenario).is_ok());
+    assert!(
+        Scenario::parse(&scenario.replace("l6max-timing-baseline", "l6max-timing-resume")).is_err()
+    );
+    assert!(
+        Scenario::parse(&scenario.replace(
+            "action='l6max-timing-wait-first'",
+            "action='l6max-timing-wait-first'\nwall_timeout_s=1"
+        ))
+        .is_err()
+    );
+    assert!(Scenario::parse(&scenario.replace("models=['l6max']", "models=['l6']")).is_err());
+}
+
+#[test]
+fn patch_parity_rejects_missing_duplicate_or_mixed_steps() {
+    let source = include_str!("../../../../tests/emulator/cases/patching/wasm-patch.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    let profile =
+        "[[step]]\naction = \"patch-parity-loader\"\nmodels = [\"l6max\"]\npatches = []\n\n";
+    assert!(source.contains(profile));
+    assert!(Scenario::from_text(&source.replacen(profile, "", 1)).is_err());
+    assert!(Scenario::from_text(&source.replace(profile, &format!("{profile}{profile}"))).is_err());
+    assert!(
+        Scenario::from_text(&source.replace(
+            "action = \"patch-parity-finish\"",
+            "action = \"checkpoint\"\nname = \"wrong\""
+        ))
+        .is_err()
+    );
+}
+
+#[test]
+fn usb_storage_requires_ordered_scope_and_matching_budgets() {
+    let prefix = "version=1\nname='storage'\nmodels=['l6max']\nbackends=['headless']\n";
+    let mut scenario = format!("{prefix}[[step]]\naction='usb-storage-begin'\n");
+    for action in [
+        "inquiry",
+        "ready",
+        "capacity",
+        "read-boot",
+        "assert-boot",
+        "last-read",
+        "last-write",
+        "last-assert",
+        "fat-open",
+        "create",
+        "flush-created",
+        "read-file",
+        "remove-file",
+        "assert-file",
+        "flush-removed",
+        "end",
+    ] {
+        scenario.push_str(&format!("[[step]]\naction='usb-storage-{action}'\n"));
+        if action == "create" {
+            scenario.push_str("length=1537\nmultiplier=37\nincrement=11\n");
+        }
+    }
+    assert!(Scenario::parse(&scenario).is_ok());
+    assert!(
+        Scenario::parse(&scenario.replace("usb-storage-ready", "usb-storage-last-write")).is_err()
+    );
+    assert!(
+        Scenario::parse(&scenario.replace(
+            "action='usb-storage-ready'",
+            "action='usb-storage-ready'\nwall_timeout_s=1"
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&scenario.replace("[[step]]\naction='usb-storage-end'\n", "")).is_err()
+    );
+}
+
+#[test]
+fn power_transaction_requires_each_ordered_observation_and_shared_budget() {
+    let source = include_str!("../../../../tests/emulator/cases/boot/power.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    for action in [
+        "power-wait-ack",
+        "power-observe-on",
+        "power-wait-off",
+        "power-observe-stopped",
+        "power-end",
+    ] {
+        let marker = format!("action = \"{action}\"");
+        let at = source.find(&marker).unwrap();
+        let start = source[..at].rfind("[[step]]").unwrap();
+        let end = source[at..]
+            .find("[[step]]")
+            .map_or(source.len(), |offset| at + offset);
+        let changed = format!("{}{}", &source[..start], &source[end..]);
+        assert!(Scenario::from_text(&changed).is_err(), "missing {action}");
+    }
+    assert!(
+        Scenario::from_text(&source.replacen("min_cutoff_ms = 300", "min_cutoff_ms = 1", 1))
+            .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replacen("observe_wall_ms = 200", "observe_wall_ms = 1", 1))
+            .is_err()
+    );
+    assert!(Scenario::from_text(&source.replacen("guest_ms = 1100", "guest_ms = 100", 1)).is_err());
 }

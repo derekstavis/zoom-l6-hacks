@@ -393,7 +393,7 @@ does not change what cases boot.
 
 See [the version-1 format](scenario-format.md). New behavior belongs in a shared
 scenario or a typed operation in `smoke-core`, not another one-off binary.
-Each case file's `[case]` table gives its suites, environment and time limit. WASM patch parity runs as a typed host-side driver operation.
+Each case file's `[case]` table gives its suites, environment and time limit. WASM patch parity runs as typed host-side steps. It compares the browser builder's Rust library and embedded templates against native output; it does not execute WebAssembly or boot a guest.
 The focused panel cases compose reusable fragments rather
 than copying setup or asserting results separately.
 
@@ -536,7 +536,7 @@ shows every case.
 - **Delivery:** each patch the browser patcher supports is also installed by
   the engine on stock firmware (`installed_patches`, with the same checks)
   and through a firmware update (`update_patches`). After an update,
-  `firmware-update` checks the installed image and runs knob-dialog's full
+  The managed update campaign checks the installed image and runs knob-dialog's full
   check or the MIDI state request for the patches the update installs. Each
   hosted SD module is loaded as the website delivers it
   (`installed_sd_patches`).
@@ -561,7 +561,7 @@ cargo run --offline --locked -p l6test -- run --config config.toml \
 
 Patch, factory, and update cases need explicit local configuration and matching
 firmware. Use `knob-dialog`, `patched-update`,
-`firmware-update`, and `wasm-patch` as appropriate. `l6-patch-heap` and
+the managed update campaigns, and `wasm-patch` as appropriate. `l6-patch-heap` and
 `l6max-patch-heap` check heap headroom for the patch selections declared in
 each case; they do not cover every available patch or SD-loaded module.
 
@@ -623,3 +623,11 @@ internal state uncertain; an unacknowledged mailbox handoff is also uncertain. I
 these cases the diagnostic leaves the guest stopped and reports the cleanup failure. A failed QMP stop leaves guest state unknown. This
 cleanup is best effort and does not run after process termination or panic; it
 does not roll back firmware activity that ran while the guest was resumed.
+
+Each generated `patches-l6max_update_midi-sync`, `patches-l6max_update_knob-dialog`, and `patches-l6max_update_din-mixer-control` case is an ordered campaign: it first
+checks rejection of the stock package with one checksum byte flipped, then
+installs and verifies the corresponding browser-patched package. The DIN update case verifies installation and first-boot setup; the installed-patch case covers DIN behavior. Each member gets its
+own fixture, card, saved state and artifact directory. The case fails at the
+first failing member; `campaign.json` and the case identity retain the results
+and fixture identities of the members that ran. The watcher names the active
+member and its step. The case wall limit covers both members.

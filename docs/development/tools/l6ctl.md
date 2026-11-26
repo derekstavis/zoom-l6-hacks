@@ -34,7 +34,7 @@ cargo l6ctl --socket /tmp/l6-control.sock rtos tasks --pretty
 
 `--socket PATH` can be omitted when `L6_CONTROL_SOCKET` is set. The socket is
 created with current-user-only permissions and is removed when the emulator
-exits. `info` reports model, guest time, power state, and indicator snapshots.
+exits. `info` reports model, guest time, power state, and indicator snapshots. `qmp-status` reports MAIN's QMP run state. Button receipts include a sequence number, and `input ack` includes the applied virtual timestamp when available.
 
 `sd-loader status` reads the model-scoped L6/L6max 1.10 loader root and,
 when allocated, its stage, claim, latest module and site count. `sd-loader
@@ -45,7 +45,7 @@ can make a snapshot inconsistent or cause an inspection to fail. Retry only
 when a caller's own readiness condition and deadline allow it.
 
 `input status main|panel` returns a compact JSON observation of one input
-channel: its `source`, `connected` state, `guest_ms`, `sent`, `applied`,
+channel: its `source`, `connected` state, `guest_ms`, `clock_updates`, `powered_off`, `powered_off_guest_ms`, `sent`, `applied`,
 `released`, `rejected`, and optional `error`. The counters aggregate all
 clients on that channel and live for that host connection. They are not a
 per-command acknowledgement: another input can advance them, and a socket
@@ -91,6 +91,12 @@ Code that already owns an `l6max_host::engine::Engine` can borrow it with
 existing snapshots directly; it does not create a second guest or open a
 control socket. RTOS decoding and model/revision guards remain in
 `l6max-host`, and the two transports do not yet expose identical capabilities.
+
+The in-process `OwnedControl::raw_tap`, `raw_down`, `raw_up`, and
+`raw_panel_encoder` methods target a specified input channel without the
+normal model or target routing checks. They support protocol rejection tests;
+they are not exposed by the control socket or CLI. `panel_uart_count` counts
+exact L6 panel trace markers in supplied text.
 
 `ControlClient::heap_counters()` returns one guarded, non-atomic sample of the
 four allocator counters. In-process callers can create
@@ -355,6 +361,44 @@ the panel continues independently. Commands are `register` (indices 0–15),
 `add-breakpoint` and `remove-breakpoint` (aligned MAIN SDRAM `address`),
 `continue` (`timeout_ms` from 1 to 60000, with an owned breakpoint), `step`,
 `l6-scratch-read`, `l6-scratch-write` (exactly eight `bytes`), and `close`.
+`l6max-signal-write` accepts twelve finite `values` between 0 and
+40,000,000 and `timeout_ms`; it checks the L6max 1.10 SIGNAL snapshot
+routine before writing the channel accumulators. These values are transient
+firmware state and are not restored. In-process callers can use
+`OwnedControl::debug_session_before` and `signal_write_before` with one
+absolute deadline, then `close_signal_before`. If bounded cleanup cannot
+verify MAIN is stopped, it reports that uncertainty, retains the lease and
+requires a guest restart. A failed cleanup may spend up to three additional
+seconds attempting an emergency stop.
+
+For in-process L6 recorder diagnostics, `l6_recorder_reader_before` checks
+three immutable L6 1.10 code spans and provides typed event, selection and
+SAI DMA observations. The caller must keep MAIN stopped, supply an absolute
+deadline and cancellation check, and recreate the reader after guest restart
+or firmware changes. Pointer reads require an entire non-wrapping span in a
+mapped MAIN RAM region; observations are separate reads and are not atomic.
+The reader and bounded recorder breakpoint methods are not socket or CLI APIs.
+
+`l6max_recorder_reader_before` likewise guards six L6max 1.10 code spans
+and reads the event, current-window callback target and recorder DMA source
+while MAIN is stopped. It checks entire pointer spans and rejects wrapping or
+unmapped reads; these reads are non-atomic. The caller owns the deadline and
+cancellation and must recreate the reader after restarting or changing firmware.
+This reader and bounded single-step/optional-stop helpers are in-process APIs.
+
+`OwnedControl::pause_all_before` creates an in-process scope that pauses both
+QEMU processors under one wall deadline and cancellation check. Explicitly
+close it to restore their previous run states and inspect errors. A failed
+restore is reported as an uncertain state requiring a guest restart; dropping
+the scope makes a bounded best-effort restore. It is not exposed on the CLI.
+
+`OwnedControl::usb_storage_before` acquires exclusive in-process USB ownership
+and creates a mass-storage session with an absolute wall deadline and panel
+guest-time budget. Enumeration, BOT commands and FAT sector I/O use the same
+budget; failed partial wire transfers close the transport. Call `abort` for
+bounded best-effort file cleanup after failure. This session is not exposed on
+the control socket or CLI.
+
 The L6 scratch operations verify the supported L6 1.10 MIDI code before using
 the legacy emulator probe page at `0x841ff000`. This is a scoped diagnostic
 buffer, not evidence that physical firmware reserves that address.

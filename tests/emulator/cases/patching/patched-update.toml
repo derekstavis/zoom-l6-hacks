@@ -1,17 +1,18 @@
-version = 1
-name = "patched-update"
-models = ["l6", "l6max"]
-state = "none"
-card = "none"
-backends = ["headless"]
-update_patches = { l6 = ["midi-sync"], l6max = ["knob-dialog"] }
-
 [case]
+models = ["l6", "l6max"]
 suites = ["full"]
-volatile = true
-no_sd = true
 
-[[step]]
-action = "firmware-update"
-guest_timeout_ms = 300000
-wall_timeout_s = 1200
+[[case.campaign]]
+name = "patched-midi-install"
+model = "l6"
+scenario = "tests/emulator/cases/boot/l6-update-patched-midi.toml"
+
+[[case.campaign]]
+name = "stock-checksum-rejection"
+model = "l6max"
+scenario = "tests/emulator/cases/boot/l6max-update-stock-bad-checksum.toml"
+
+[[case.campaign]]
+name = "patched-knob-install"
+model = "l6max"
+scenario = "tests/emulator/cases/boot/l6max-update-patched-knob.toml"

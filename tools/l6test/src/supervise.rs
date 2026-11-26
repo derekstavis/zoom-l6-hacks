@@ -16,13 +16,17 @@ pub(crate) extern "C" fn interrupt(_: libc::c_int) {
 pub(crate) fn cancelled() -> bool {
     CANCELLED.load(std::sync::atomic::Ordering::Relaxed)
 }
-pub(crate) struct ChildGroup(Child);
+pub(crate) struct ChildGroup(Child, bool);
 impl Drop for ChildGroup {
     fn drop(&mut self) {
         // The driver creates this group. Always retire descendants, even after
         // an unexpectedly successful parent exits without reaping QEMU.
-        unsafe {
-            libc::kill(-(self.0.id() as i32), libc::SIGTERM);
+        if self.1 {
+            unsafe {
+                libc::kill(-(self.0.id() as i32), libc::SIGTERM);
+            }
+        } else {
+            let _ = self.0.kill();
         }
         if matches!(self.0.try_wait(), Ok(None)) {
             let end = Instant::now() + Duration::from_secs(3);
@@ -30,8 +34,10 @@ impl Drop for ChildGroup {
                 thread::sleep(Duration::from_millis(20));
             }
         }
-        unsafe {
-            libc::kill(-(self.0.id() as i32), libc::SIGKILL);
+        if self.1 {
+            unsafe {
+                libc::kill(-(self.0.id() as i32), libc::SIGKILL);
+            }
         }
         let _ = self.0.wait();
     }
@@ -39,12 +45,12 @@ impl Drop for ChildGroup {
 pub(crate) fn supervise(mut command: Command, dir: &Path, timeout: u64) -> Result<bool, String> {
     let stdout = fs::File::create(dir.join("stdout.log")).map_err(|e| e.to_string())?;
     let stderr = fs::File::create(dir.join("stderr.log")).map_err(|e| e.to_string())?;
-    command
-        .stdin(Stdio::null())
-        .stdout(stdout)
-        .stderr(stderr)
-        .process_group(0);
-    let mut child = ChildGroup(command.spawn().map_err(|e| e.to_string())?);
+    command.stdin(Stdio::null()).stdout(stdout).stderr(stderr);
+    let own_group = std::env::var_os("L6TEST_CAMPAIGN_MEMBER").is_none();
+    if own_group {
+        command.process_group(0);
+    }
+    let mut child = ChildGroup(command.spawn().map_err(|e| e.to_string())?, own_group);
     let started = Instant::now();
     let mut next = Instant::now() + Duration::from_secs(15);
     loop {
@@ -86,6 +92,42 @@ mod tests {
         ));
         fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn campaign_preparation_timeout_stops_nested_guest_group() {
+        if let Some(marker) = env::var_os("L6TEST_FAULT_MARKER") {
+            let dir = std::path::PathBuf::from(&marker)
+                .parent()
+                .unwrap()
+                .join("inner");
+            fs::create_dir_all(&dir).unwrap();
+            let mut guest = Command::new("sh");
+            guest
+                .args(["-c", "(sleep 3; printf leaked > \"$1\") & wait", "sh"])
+                .arg(marker);
+            let _ = supervise(guest, &dir, 30);
+            return;
+        }
+        let dir = temp();
+        let marker = dir.join("leaked");
+        let mut command = Command::new(env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "supervise::tests::campaign_preparation_timeout_stops_nested_guest_group",
+                "--nocapture",
+            ])
+            .env("L6TEST_CAMPAIGN_MEMBER", "1")
+            .env("L6TEST_FAULT_MARKER", &marker);
+        assert!(
+            supervise(command, &dir, 1)
+                .unwrap_err()
+                .contains("wall-clock")
+        );
+        thread::sleep(Duration::from_millis(3200));
+        assert!(!marker.exists(), "nested guest survived campaign timeout");
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

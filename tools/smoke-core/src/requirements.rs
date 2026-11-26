@@ -69,7 +69,13 @@ pub fn of(action: &Action) -> Requirement {
             ..
         } => stock_on(L6MAX),
         Action::ExpectSettings { .. } | Action::ExpectRecorder => stock_on(L6MAX),
-        Action::L6maxChannelSignalPwm | Action::L6maxTapHandler => stock_on(L6MAX),
+        Action::SignalPwmBegin
+        | Action::SignalPwmWarmup { .. }
+        | Action::SignalPwmDrain { .. }
+        | Action::SignalPwmStage { .. }
+        | Action::SignalPwmAssert { .. }
+        | Action::SignalPwmEnd
+        | Action::L6maxTapHandler => stock_on(L6MAX),
         Action::WaitL6SoundPadFile { .. }
         | Action::L6LevelMeterPwm
         | Action::L6DinSweep
@@ -85,9 +91,53 @@ pub fn of(action: &Action) -> Requirement {
         | Action::DinUsbSend { .. }
         | Action::DinUsbExpect { .. }
         | Action::DinUsbEnd
-        | Action::L6InputSweep => on(L6),
-        Action::L6maxRecorderPlayback { .. }
-        | Action::L6maxInputTiming
+        | Action::L6SweepBegin
+        | Action::L6SweepRejectMain { .. }
+        | Action::L6SweepPanelBaseline { .. }
+        | Action::L6SweepPanelTap
+        | Action::L6SweepPanelWait
+        | Action::L6SweepPanelTrace
+        | Action::L6SweepPanelAssert
+        | Action::L6SweepEncoderBaseline
+        | Action::L6SweepEncoderSend { .. }
+        | Action::L6SweepEncoderWait
+        | Action::L6SweepEncoderTrace
+        | Action::L6SweepEncoderAssert
+        | Action::L6SweepRejectPanel
+        | Action::L6SweepRejectEncoder
+        | Action::L6SweepEnd => on(L6),
+        Action::L6maxRecorderBegin { .. }
+        | Action::L6maxRecorderPress
+        | Action::L6maxRecorderSubmit
+        | Action::L6maxRecorderQueue
+        | Action::L6maxRecorderDispatch
+        | Action::L6maxRecorderScheduler
+        | Action::L6maxRecorderCallback
+        | Action::L6maxRecorderAction
+        | Action::L6maxRecorderStream
+        | Action::L6maxRecorderObserve
+        | Action::L6maxRecorderSample
+        | Action::L6maxRecorderEvidence
+        | Action::L6maxRecorderAssertAudio
+        | Action::L6maxRecorderEnd
+        | Action::L6maxTimingBegin
+        | Action::L6maxTimingSettle { .. }
+        | Action::L6maxTimingBaseline
+        | Action::L6maxTimingEnqueue { .. }
+        | Action::L6maxTimingWaitFirst
+        | Action::L6maxTimingObservePaused { .. }
+        | Action::L6maxTimingAssertPaused
+        | Action::L6maxTimingResume
+        | Action::L6maxTimingWaitQueued
+        | Action::L6maxTimingWaitReports
+        | Action::L6maxTimingAssertReports
+        | Action::L6maxTimingObserveDisplay { .. }
+        | Action::L6maxTimingAssertDisplay
+        | Action::L6maxTimingEncoder { .. }
+        | Action::L6maxTimingWaitEncoder
+        | Action::L6maxTimingWaitEncoderReport
+        | Action::L6maxTimingAssertEncoder
+        | Action::L6maxTimingEnd
         | Action::L6maxPanelKeyBegin
         | Action::L6maxPanelKeyCheck { .. }
         | Action::L6maxPanelKeyInput { .. }
@@ -147,6 +197,8 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobOverlayCheckBitmap
         | Action::KnobOverlayCheckHeap
         | Action::KnobOverlayFinish
+        | Action::KnobBitmapReactivate { .. }
+        | Action::KnobBitmapWaitActive
         | Action::KnobBitmapBegin
         | Action::KnobBitmapCheckBackground { .. }
         | Action::KnobBitmapStoreBefore
@@ -172,6 +224,7 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobLockFinish
         | Action::KnobDialogModeBegin { .. }
         | Action::WaitKnobParameterMode { .. }
+        | Action::WaitKnobDisplayImage { .. }
         | Action::KnobDialogExpectHeap
         | Action::KnobDialogModeEnd
         | Action::KnobDialogAdaptive { .. }
@@ -244,7 +297,23 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6IndicatorEnd => on(L6),
         Action::SdCard { .. }
         | Action::UsbDescriptors
-        | Action::UsbStorage
+        | Action::UsbStorageBegin
+        | Action::UsbStorageInquiry
+        | Action::UsbStorageReady
+        | Action::UsbStorageCapacity
+        | Action::UsbStorageReadBoot
+        | Action::UsbStorageAssertBoot
+        | Action::UsbStorageLastRead
+        | Action::UsbStorageLastWrite
+        | Action::UsbStorageLastAssert
+        | Action::UsbStorageFatOpen
+        | Action::UsbStorageCreate { .. }
+        | Action::UsbStorageFlushCreated
+        | Action::UsbStorageReadFile
+        | Action::UsbStorageRemoveFile
+        | Action::UsbStorageAssertFile
+        | Action::UsbStorageFlushRemoved
+        | Action::UsbStorageEnd
         | Action::UsbMidiOpen
         | Action::UsbMidiBegin
         | Action::UsbMidiExpectEncoder
@@ -271,10 +340,42 @@ pub fn of(action: &Action) -> Requirement {
         | Action::UsbSysexBegin
         | Action::UsbSysexExchange { .. }
         | Action::UsbSysexEnd
-        | Action::EditorPadAssignments
-        | Action::EditorPadPlayback { .. }
-        | Action::L6maxUiPadVerify { .. }
-        | Action::SoundPadPlayback { .. }
+        | Action::EditorAssignBegin
+        | Action::EditorAssignIdentity
+        | Action::EditorAssignGlobal
+        | Action::EditorAssignVersion
+        | Action::EditorAssignSdInfo
+        | Action::EditorAssignRefresh
+        | Action::EditorAssignCount { .. }
+        | Action::EditorAssignFilename { .. }
+        | Action::EditorAssignSend { .. }
+        | Action::EditorAssignState { .. }
+        | Action::EditorAssignEnd
+        | Action::EditorPlaybackBegin { .. }
+        | Action::EditorPlaybackPlay
+        | Action::EditorPlaybackWait
+        | Action::EditorPlaybackObserve
+        | Action::EditorPlaybackSample
+        | Action::EditorPlaybackAssert
+        | Action::EditorPlaybackEnd
+        | Action::UiPadBegin { .. }
+        | Action::UiPadIdentity
+        | Action::UiPadGlobal
+        | Action::UiPadKeepAlive
+        | Action::UiPadQuery
+        | Action::UiPadAssert
+        | Action::UiPadEnd
+        | Action::SoundPadBegin { .. }
+        | Action::SoundPadPress
+        | Action::SoundPadHold
+        | Action::SoundPadRelease
+        | Action::SoundPadObserve
+        | Action::SoundPadSample
+        | Action::SoundPadAssertWaveform
+        | Action::SoundPadAssertAudio
+        | Action::SoundPadAssertLed
+        | Action::SoundPadAssertMeter
+        | Action::SoundPadFinish
         | Action::ExpectMemory { .. }
         | Action::WaitMemory { .. }
         | Action::ExpectSdLoader
@@ -284,10 +385,14 @@ pub fn of(action: &Action) -> Requirement {
         | Action::EffectReplacementState { .. }
         | Action::ExpectHeap { .. }
         | Action::HoldChord { .. }
-        | Action::FirmwareUpdate
         | Action::WarmReset
         | Action::Restart
-        | Action::PowerPress { .. }
+        | Action::PowerBegin { .. }
+        | Action::PowerWaitAck
+        | Action::PowerObserveOn { .. }
+        | Action::PowerWaitOff { .. }
+        | Action::PowerObserveStopped { .. }
+        | Action::PowerEnd
         | Action::ExpectCardEntry { .. }
         | Action::AudioInputTransport { .. }
         | Action::AudioInputLoad { .. }
@@ -305,8 +410,26 @@ pub fn of(action: &Action) -> Requirement {
         | Action::ExpectTraceCount { .. }
         | Action::ExpectButtonReport { .. }
         | Action::ExpectStartupReport { .. }
-        | Action::L6RecorderPlayback { .. }
-        | Action::WasmPatch
+        | Action::L6RecorderBegin { .. }
+        | Action::L6RecorderPress
+        | Action::L6RecorderDispatcher
+        | Action::L6RecorderAssertEvent
+        | Action::L6RecorderHandler
+        | Action::L6RecorderAssertSelection
+        | Action::L6RecorderCallback
+        | Action::L6RecorderAssertCallback
+        | Action::L6RecorderObserve
+        | Action::L6RecorderRelease
+        | Action::L6RecorderSample
+        | Action::L6RecorderEvidence
+        | Action::L6RecorderAssertTrace
+        | Action::L6RecorderAssertDma
+        | Action::L6RecorderEnd
+        | Action::PatchParityPrepare
+        | Action::PatchParityFirmware { .. }
+        | Action::PatchParityLoader { .. }
+        | Action::PatchParityUnsupported { .. }
+        | Action::PatchParityFinish
         | Action::ExpectPowered { .. }
         | Action::Wait { .. }
         | Action::Delay { .. }

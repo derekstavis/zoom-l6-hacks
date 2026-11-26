@@ -36,6 +36,17 @@ struct SceneSaveState {
     release_count: u64,
 }
 
+// MAIN and panel have independent virtual clocks. A CLOCK sampled before the
+// last frame cannot establish how long MAIN has held that frame. Half-range
+// arithmetic rejects a stale sample while permitting the u32 millisecond wrap.
+fn main_display_quiet(main: &InputStatus) -> bool {
+    let elapsed = main.guest_ms.wrapping_sub(main.frame_guest_ms);
+    main.connected
+        && main.frame_ready > 0
+        && main.clock_updates > main.frame_clock_updates
+        && (1000..=i32::MAX as u32).contains(&elapsed)
+}
+
 fn panel_led_state(model: Model, data: PanelData, index: usize) -> bool {
     if model == Model::L6 {
         return l6_button_leds(data.indicators)[index];
@@ -52,7 +63,7 @@ impl Observation {
     fn summary(&self) -> Value {
         json!({"guest_ms": self.panel.guest_ms, "rings": rings(self.data.indicators), "rows": self.data.indicators,
             "ring_levels": l6max_host::indicators::ring_levels(self.data.indicator_levels),
-            "main": {"sent":self.main.sent,"applied":self.main.applied,"released":self.main.released,"frames":self.main.frame_ready,"frame_guest_ms":self.main.frame_guest_ms},
+            "main": {"sent":self.main.sent,"applied":self.main.applied,"released":self.main.released,"frames":self.main.frame_ready,"frame_guest_ms":self.main.frame_guest_ms,"guest_ms":self.main.guest_ms,"clock_updates":self.main.clock_updates},
             "panel": {"sent":self.panel.sent,"applied":self.panel.applied,"released":self.panel.released}, "encoder_reports":self.reports,"trace_counts":self.traces})
     }
 }
@@ -262,7 +273,11 @@ impl Runner {
             .iter()
             .find(|step| step.applies_to(self.model))
             .is_some_and(|step| match &step.action {
-                Action::ExpectPowered { powered: false } => true,
+                Action::ExpectPowered { powered: false }
+                | Action::PowerWaitAck
+                | Action::PowerWaitOff { .. }
+                | Action::PowerObserveStopped { .. }
+                | Action::PowerEnd => true,
                 Action::LifecycleStop => true,
                 Action::Press { control } if control == "power" => true,
                 Action::Hold { control, .. } if control == "power" => true,
@@ -743,20 +758,88 @@ impl Runner {
                 Action::UsbSysexEnd => {
                     return Ok(Progress::Device(devices::Operation::UsbSysexEnd));
                 }
-                Action::EditorPadAssignments => {
-                    return Ok(Progress::Device(devices::Operation::EditorPadAssignments));
+                Action::EditorAssignBegin => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignBegin));
                 }
-                Action::EditorPadPlayback { pad } => {
-                    return Ok(Progress::Device(devices::Operation::EditorPadPlayback {
+                Action::EditorAssignIdentity => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignIdentity));
+                }
+                Action::EditorAssignGlobal => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignGlobal));
+                }
+                Action::EditorAssignVersion => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignVersion));
+                }
+                Action::EditorAssignSdInfo => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignSdInfo));
+                }
+                Action::EditorAssignRefresh => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignRefresh));
+                }
+                Action::EditorAssignCount { pad } => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignCount {
                         pad,
                     }));
                 }
-                Action::L6maxUiPadVerify { pad } => {
-                    return Ok(Progress::Device(devices::Operation::L6maxUiPadVerify {
+                Action::EditorAssignFilename { pad } => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignFilename {
                         pad,
                     }));
                 }
-                Action::SoundPadPlayback {
+                Action::EditorAssignSend { pad } => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignSend {
+                        pad,
+                    }));
+                }
+                Action::EditorAssignState { pad } => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignState {
+                        pad,
+                    }));
+                }
+                Action::EditorAssignEnd => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignEnd));
+                }
+                Action::EditorPlaybackBegin { pad } => {
+                    return Ok(Progress::Device(devices::Operation::EditorPlaybackBegin {
+                        pad,
+                    }));
+                }
+                Action::EditorPlaybackPlay => {
+                    return Ok(Progress::Device(devices::Operation::EditorPlaybackPlay));
+                }
+                Action::EditorPlaybackWait => {
+                    return Ok(Progress::Device(devices::Operation::EditorPlaybackWait));
+                }
+                Action::EditorPlaybackObserve => {
+                    return Ok(Progress::Device(devices::Operation::EditorPlaybackObserve));
+                }
+                Action::EditorPlaybackSample => {
+                    return Ok(Progress::Device(devices::Operation::EditorPlaybackSample));
+                }
+                Action::EditorPlaybackAssert => {
+                    return Ok(Progress::Device(devices::Operation::EditorPlaybackAssert));
+                }
+                Action::EditorPlaybackEnd => {
+                    return Ok(Progress::Device(devices::Operation::EditorPlaybackEnd));
+                }
+                Action::UiPadBegin { pad } => {
+                    return Ok(Progress::Device(devices::Operation::UiPadBegin { pad }));
+                }
+                Action::UiPadIdentity => {
+                    return Ok(Progress::Device(devices::Operation::UiPadIdentity));
+                }
+                Action::UiPadGlobal => {
+                    return Ok(Progress::Device(devices::Operation::UiPadGlobal));
+                }
+                Action::UiPadKeepAlive => {
+                    return Ok(Progress::Device(devices::Operation::UiPadKeepAlive));
+                }
+                Action::UiPadQuery => return Ok(Progress::Device(devices::Operation::UiPadQuery)),
+                Action::UiPadAssert => {
+                    return Ok(Progress::Device(devices::Operation::UiPadAssert));
+                }
+                Action::UiPadEnd => return Ok(Progress::Device(devices::Operation::UiPadEnd)),
+                Action::SoundPadBegin {
                     pad,
                     target,
                     assignment,
@@ -766,7 +849,7 @@ impl Runner {
                     expect_source,
                     max_residual_db,
                 } => {
-                    return Ok(Progress::Device(devices::Operation::SoundPadPlayback {
+                    return Ok(Progress::Device(devices::Operation::SoundPadBegin {
                         pad,
                         target,
                         assignment,
@@ -782,15 +865,132 @@ impl Runner {
                         path,
                     }));
                 }
-                Action::L6RecorderPlayback { target } => {
-                    return Ok(Progress::Device(devices::Operation::L6RecorderPlayback {
+                Action::SoundPadPress => {
+                    return Ok(Progress::Device(devices::Operation::SoundPadPress));
+                }
+                Action::SoundPadHold => {
+                    return Ok(Progress::Device(devices::Operation::SoundPadHold));
+                }
+                Action::SoundPadRelease => {
+                    return Ok(Progress::Device(devices::Operation::SoundPadRelease));
+                }
+                Action::SoundPadObserve => {
+                    return Ok(Progress::Device(devices::Operation::SoundPadObserve));
+                }
+                Action::SoundPadSample => {
+                    return Ok(Progress::Device(devices::Operation::SoundPadSample));
+                }
+                Action::SoundPadAssertWaveform => {
+                    return Ok(Progress::Device(devices::Operation::SoundPadAssertWaveform));
+                }
+                Action::SoundPadAssertAudio => {
+                    return Ok(Progress::Device(devices::Operation::SoundPadAssertAudio));
+                }
+                Action::SoundPadAssertLed => {
+                    return Ok(Progress::Device(devices::Operation::SoundPadAssertLed));
+                }
+                Action::SoundPadAssertMeter => {
+                    return Ok(Progress::Device(devices::Operation::SoundPadAssertMeter));
+                }
+                Action::SoundPadFinish => {
+                    return Ok(Progress::Device(devices::Operation::SoundPadFinish));
+                }
+                Action::L6RecorderBegin { target } => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderBegin {
                         target,
                     }));
                 }
-                Action::L6maxRecorderPlayback { target } => {
+                Action::L6RecorderPress => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderPress));
+                }
+                Action::L6RecorderDispatcher => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderDispatcher));
+                }
+                Action::L6RecorderAssertEvent => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderAssertEvent));
+                }
+                Action::L6RecorderHandler => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderHandler));
+                }
+                Action::L6RecorderAssertSelection => {
                     return Ok(Progress::Device(
-                        devices::Operation::L6maxRecorderPlayback { target },
+                        devices::Operation::L6RecorderAssertSelection,
                     ));
+                }
+                Action::L6RecorderCallback => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderCallback));
+                }
+                Action::L6RecorderAssertCallback => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6RecorderAssertCallback,
+                    ));
+                }
+                Action::L6RecorderObserve => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderObserve));
+                }
+                Action::L6RecorderRelease => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderRelease));
+                }
+                Action::L6RecorderSample => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderSample));
+                }
+                Action::L6RecorderEvidence => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderEvidence));
+                }
+                Action::L6RecorderAssertTrace => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderAssertTrace));
+                }
+                Action::L6RecorderAssertDma => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderAssertDma));
+                }
+                Action::L6RecorderEnd => {
+                    return Ok(Progress::Device(devices::Operation::L6RecorderEnd));
+                }
+                Action::L6maxRecorderBegin { target } => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderBegin {
+                        target,
+                    }));
+                }
+                Action::L6maxRecorderPress => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderPress));
+                }
+                Action::L6maxRecorderSubmit => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderSubmit));
+                }
+                Action::L6maxRecorderQueue => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderQueue));
+                }
+                Action::L6maxRecorderDispatch => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderDispatch));
+                }
+                Action::L6maxRecorderScheduler => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderScheduler));
+                }
+                Action::L6maxRecorderCallback => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderCallback));
+                }
+                Action::L6maxRecorderAction => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderAction));
+                }
+                Action::L6maxRecorderStream => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderStream));
+                }
+                Action::L6maxRecorderObserve => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderObserve));
+                }
+                Action::L6maxRecorderSample => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderSample));
+                }
+                Action::L6maxRecorderEvidence => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderEvidence));
+                }
+                Action::L6maxRecorderAssertAudio => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6maxRecorderAssertAudio,
+                    ));
+                }
+                Action::L6maxRecorderEnd => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderEnd));
                 }
                 Action::ExpectMemory { symbol, bytes } => {
                     let address = crate::firmware::symbol(self.model, &symbol)
@@ -900,18 +1100,104 @@ impl Runner {
                         until,
                     }));
                 }
-                Action::UsbStorage => return Ok(Progress::Device(devices::Operation::UsbStorage)),
+                Action::UsbStorageBegin => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageBegin));
+                }
+                Action::UsbStorageInquiry => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageInquiry));
+                }
+                Action::UsbStorageReady => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageReady));
+                }
+                Action::UsbStorageCapacity => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageCapacity));
+                }
+                Action::UsbStorageReadBoot => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageReadBoot));
+                }
+                Action::UsbStorageAssertBoot => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageAssertBoot));
+                }
+                Action::UsbStorageLastRead => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageLastRead));
+                }
+                Action::UsbStorageLastWrite => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageLastWrite));
+                }
+                Action::UsbStorageLastAssert => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageLastAssert));
+                }
+                Action::UsbStorageFatOpen => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageFatOpen));
+                }
+                Action::UsbStorageCreate {
+                    length,
+                    multiplier,
+                    increment,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageCreate {
+                        length,
+                        multiplier,
+                        increment,
+                    }));
+                }
+                Action::UsbStorageFlushCreated => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageFlushCreated));
+                }
+                Action::UsbStorageReadFile => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageReadFile));
+                }
+                Action::UsbStorageRemoveFile => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageRemoveFile));
+                }
+                Action::UsbStorageAssertFile => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageAssertFile));
+                }
+                Action::UsbStorageFlushRemoved => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageFlushRemoved));
+                }
+                Action::UsbStorageEnd => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageEnd));
+                }
+
                 Action::ExpectRecorder => {
                     return Ok(Progress::Device(devices::Operation::ExpectRecorder));
                 }
                 Action::Restart => return Ok(Progress::Device(devices::Operation::Restart)),
                 Action::WarmReset => return Ok(Progress::Device(devices::Operation::WarmReset)),
-                Action::PowerPress { hold_ms, powered } => {
-                    return Ok(Progress::Device(devices::Operation::PowerPress {
+                Action::PowerBegin { hold_ms, powered } => {
+                    return Ok(Progress::Device(devices::Operation::PowerBegin {
                         hold_ms,
                         powered,
                     }));
                 }
+                Action::PowerWaitAck => {
+                    return Ok(Progress::Device(devices::Operation::PowerWaitAck));
+                }
+                Action::PowerObserveOn { guest_ms } => {
+                    return Ok(Progress::Device(devices::Operation::PowerObserveOn {
+                        guest_ms,
+                    }));
+                }
+                Action::PowerWaitOff {
+                    min_cutoff_ms,
+                    max_cutoff_ms,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::PowerWaitOff {
+                        min_cutoff_ms,
+                        max_cutoff_ms,
+                    }));
+                }
+                Action::PowerObserveStopped {
+                    settle_wall_ms,
+                    observe_wall_ms,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::PowerObserveStopped {
+                        settle_wall_ms,
+                        observe_wall_ms,
+                    }));
+                }
+                Action::PowerEnd => return Ok(Progress::Device(devices::Operation::PowerEnd)),
                 Action::ExpectPowered { powered } => obs.data.powered == powered,
                 Action::ExpectSettings { restored } => {
                     return Ok(Progress::Device(devices::Operation::ExpectSettings {
@@ -1099,6 +1385,14 @@ impl Runner {
                 Action::KnobOverlayFinish => {
                     return Ok(Progress::Device(devices::Operation::KnobOverlayFinish));
                 }
+                Action::KnobBitmapReactivate { delta } => {
+                    return Ok(Progress::Device(devices::Operation::KnobBitmapReactivate {
+                        delta,
+                    }));
+                }
+                Action::KnobBitmapWaitActive => {
+                    return Ok(Progress::Device(devices::Operation::KnobBitmapWaitActive));
+                }
                 Action::KnobBitmapBegin => {
                     return Ok(Progress::Device(devices::Operation::KnobBitmapBegin));
                 }
@@ -1212,6 +1506,15 @@ impl Runner {
                     return Ok(Progress::Device(
                         devices::Operation::WaitKnobParameterMode { mode },
                     ));
+                }
+                Action::WaitKnobDisplayImage {
+                    image,
+                    main_timeout_ms,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::WaitKnobDisplayImage {
+                        image,
+                        main_timeout_ms,
+                    }));
                 }
                 Action::CaptureDisplay { guest_ms, artifact } => {
                     return Ok(Progress::Device(devices::Operation::CaptureDisplay {
@@ -1513,11 +1816,12 @@ impl Runner {
                         devices::Operation::ExpectUpdateMarkerAbsent,
                     ));
                 }
-                Action::FirmwareUpdate => {
-                    return Ok(Progress::Device(devices::Operation::FirmwareUpdate));
-                }
-                Action::WasmPatch => {
-                    return Ok(Progress::Device(devices::Operation::WasmPatch));
+                Action::PatchParityPrepare
+                | Action::PatchParityFirmware { .. }
+                | Action::PatchParityLoader { .. }
+                | Action::PatchParityUnsupported { .. }
+                | Action::PatchParityFinish => {
+                    return Ok(Progress::Device(devices::Operation::PatchParityHostOnly));
                 }
                 Action::PanelEvent {
                     target,
@@ -1631,14 +1935,138 @@ impl Runner {
                         value,
                     }));
                 }
-                Action::L6InputSweep => {
-                    return Ok(Progress::Device(devices::Operation::L6InputSweep));
+                Action::L6SweepBegin => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepBegin));
+                }
+                Action::L6SweepPanelTap => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepPanelTap));
+                }
+                Action::L6SweepPanelWait => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepPanelWait));
+                }
+                Action::L6SweepPanelTrace => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepPanelTrace));
+                }
+                Action::L6SweepPanelAssert => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepPanelAssert));
+                }
+                Action::L6SweepEncoderBaseline => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepEncoderBaseline));
+                }
+                Action::L6SweepEncoderWait => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepEncoderWait));
+                }
+                Action::L6SweepEncoderTrace => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepEncoderTrace));
+                }
+                Action::L6SweepEncoderAssert => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepEncoderAssert));
+                }
+                Action::L6SweepRejectPanel => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepRejectPanel));
+                }
+                Action::L6SweepRejectEncoder => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepRejectEncoder));
+                }
+                Action::L6SweepEnd => return Ok(Progress::Device(devices::Operation::L6SweepEnd)),
+                Action::L6SweepRejectMain { target } => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepRejectMain {
+                        target,
+                    }));
+                }
+                Action::L6SweepPanelBaseline { target } => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepPanelBaseline {
+                        target,
+                    }));
+                }
+                Action::L6SweepEncoderSend { index } => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepEncoderSend {
+                        index,
+                    }));
                 }
                 Action::L6DinSweep => {
                     return Ok(Progress::Device(devices::Operation::L6DinSweep));
                 }
-                Action::L6maxInputTiming => {
-                    return Ok(Progress::Device(devices::Operation::L6maxInputTiming));
+                Action::L6maxTimingBegin => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTimingBegin));
+                }
+                Action::L6maxTimingSettle { wall_ms } => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTimingSettle {
+                        wall_ms,
+                    }));
+                }
+                Action::L6maxTimingBaseline => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTimingBaseline));
+                }
+                Action::L6maxTimingEnqueue {
+                    target,
+                    hold_ms,
+                    pairs,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTimingEnqueue {
+                        target,
+                        hold_ms,
+                        pairs,
+                    }));
+                }
+                Action::L6maxTimingWaitFirst => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTimingWaitFirst));
+                }
+                Action::L6maxTimingObservePaused { wall_ms } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6maxTimingObservePaused { wall_ms },
+                    ));
+                }
+                Action::L6maxTimingAssertPaused => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6maxTimingAssertPaused,
+                    ));
+                }
+                Action::L6maxTimingResume => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTimingResume));
+                }
+                Action::L6maxTimingWaitQueued => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTimingWaitQueued));
+                }
+                Action::L6maxTimingWaitReports => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTimingWaitReports));
+                }
+                Action::L6maxTimingAssertReports => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6maxTimingAssertReports,
+                    ));
+                }
+                Action::L6maxTimingObserveDisplay { guest_ms } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6maxTimingObserveDisplay { guest_ms },
+                    ));
+                }
+                Action::L6maxTimingAssertDisplay => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6maxTimingAssertDisplay,
+                    ));
+                }
+                Action::L6maxTimingEncoder { index, steps } => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTimingEncoder {
+                        index,
+                        steps,
+                    }));
+                }
+                Action::L6maxTimingWaitEncoder => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTimingWaitEncoder));
+                }
+                Action::L6maxTimingWaitEncoderReport => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6maxTimingWaitEncoderReport,
+                    ));
+                }
+                Action::L6maxTimingAssertEncoder => {
+                    return Ok(Progress::Device(
+                        devices::Operation::L6maxTimingAssertEncoder,
+                    ));
+                }
+                Action::L6maxTimingEnd => {
+                    return Ok(Progress::Device(devices::Operation::L6maxTimingEnd));
                 }
                 Action::L6maxPanelKeyBegin => {
                     return Ok(Progress::Device(devices::Operation::L6maxPanelKeyBegin));
@@ -1667,8 +2095,42 @@ impl Runner {
                 Action::L6maxPanelKeyEnd => {
                     return Ok(Progress::Device(devices::Operation::L6maxPanelKeyEnd));
                 }
-                Action::L6maxChannelSignalPwm => {
-                    return Ok(Progress::Device(devices::Operation::L6maxChannelSignalPwm));
+                Action::SignalPwmBegin => {
+                    return Ok(Progress::Device(devices::Operation::SignalPwmBegin));
+                }
+                Action::SignalPwmWarmup { start, end, value } => {
+                    return Ok(Progress::Device(devices::Operation::SignalPwmWarmup {
+                        start,
+                        end,
+                        value,
+                    }));
+                }
+                Action::SignalPwmDrain { band } => {
+                    return Ok(Progress::Device(devices::Operation::SignalPwmDrain {
+                        band,
+                    }));
+                }
+                Action::SignalPwmStage {
+                    band,
+                    start,
+                    end,
+                    value,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::SignalPwmStage {
+                        band,
+                        start,
+                        end,
+                        value,
+                    }));
+                }
+                Action::SignalPwmAssert { band, channel } => {
+                    return Ok(Progress::Device(devices::Operation::SignalPwmAssert {
+                        band,
+                        channel,
+                    }));
+                }
+                Action::SignalPwmEnd => {
+                    return Ok(Progress::Device(devices::Operation::SignalPwmEnd));
                 }
                 Action::L6LevelMeterPwm => {
                     return Ok(Progress::Device(devices::Operation::L6LevelMeterPwm));
@@ -1683,8 +2145,8 @@ impl Runner {
                     if until == "boot-ready" {
                         // Without the setup floor, L6max also needs its screen
                         // to have held one frame for a guest second.
-                        let display_settled = !self.scenario.spec_state
-                            || obs.panel.guest_ms.wrapping_sub(obs.main.frame_guest_ms) >= 1000;
+                        let display_settled =
+                            !self.scenario.spec_state || main_display_quiet(&obs.main);
                         ready
                             && (self.model == Model::L6
                                 || (obs.data.display.iter().any(|b| *b != 0) && display_settled))

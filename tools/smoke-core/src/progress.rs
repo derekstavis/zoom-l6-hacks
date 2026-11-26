@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const VERSION: u32 = 7;
+pub const VERSION: u32 = 8;
 pub const PATH_ENV: &str = "L6_TEST_PROGRESS";
 pub const RUN_ENV: &str = "L6_TEST_PROGRESS_RUN";
 pub const ATTEMPT_ENV: &str = "L6_TEST_PROGRESS_ATTEMPT";
@@ -61,6 +61,13 @@ pub enum SuiteEvent {
     },
     AttemptStarted {
         id: AttemptId,
+        progress_path: PathBuf,
+    },
+    CampaignMemberStarted {
+        id: AttemptId,
+        name: String,
+        index: usize,
+        total: usize,
         progress_path: PathBuf,
     },
     AttemptPhaseChanged {
@@ -218,6 +225,20 @@ impl CaseProgress {
 pub fn step_label(action: &crate::Action) -> String {
     use crate::Action;
     match action {
+        Action::PatchParityPrepare => "Prepare patch parity".into(),
+        Action::PatchParityFirmware { patches } => {
+            format!("Compare firmware: {}", patches.join(", "))
+        }
+        Action::PatchParityLoader { patches } => format!(
+            "Compare loader: {}",
+            if patches.is_empty() {
+                "loader only".into()
+            } else {
+                patches.join(", ")
+            }
+        ),
+        Action::PatchParityUnsupported { patch } => format!("Reject unsupported: {patch}"),
+        Action::PatchParityFinish => "Finish patch parity".into(),
         Action::L6IndicatorBegin => "Begin L6 indicator campaign".into(),
         Action::L6RingSample {
             cc, value, ring, ..
@@ -307,8 +328,73 @@ pub fn step_label(action: &crate::Action) -> String {
         Action::KnobRaceSample => "Sample callback rejection state".into(),
         Action::KnobRaceRestore => "Restore raced descriptor".into(),
         Action::KnobRaceAssert => "Check callback rejection and retry readiness".into(),
+        Action::SignalPwmBegin => "Begin SIGNAL PWM sweep".into(),
+        Action::SignalPwmWarmup { .. } => "Warm up SIGNAL 1".into(),
+        Action::SignalPwmDrain { band } => format!("Clear SIGNAL band {}", band + 1),
+        Action::SignalPwmStage { band, value, .. } => {
+            format!("Sample SIGNAL band {} at {value}", band + 1)
+        }
+        Action::SignalPwmAssert { channel, .. } => format!("Check SIGNAL {} PWM", channel + 1),
+        Action::SignalPwmEnd => "Finish SIGNAL PWM sweep".into(),
+        Action::L6SweepBegin => "Begin L6 input sweep".into(),
+        Action::L6SweepRejectMain { target } => format!("Check MAIN rejects target {target}"),
+        Action::L6SweepPanelBaseline { target } => {
+            format!("Capture panel target {target} baseline")
+        }
+        Action::L6SweepPanelTap => "Tap panel target".into(),
+        Action::L6SweepPanelWait => "Wait for panel input and release".into(),
+        Action::L6SweepPanelTrace => "Capture panel reports".into(),
+        Action::L6SweepPanelAssert => "Check panel reports".into(),
+        Action::L6SweepEncoderBaseline => "Capture encoder report baseline".into(),
+        Action::L6SweepEncoderSend { index } => format!("Turn encoder {index}"),
+        Action::L6SweepEncoderWait => "Wait for encoder input".into(),
+        Action::L6SweepEncoderTrace => "Capture encoder reports".into(),
+        Action::L6SweepEncoderAssert => "Check encoder reports".into(),
+        Action::L6SweepRejectPanel => "Check panel rejects target 31".into(),
+        Action::L6SweepRejectEncoder => "Check panel rejects encoder 6".into(),
+        Action::L6SweepEnd => "Finish L6 input sweep".into(),
+        Action::EditorAssignBegin => "Begin Editor pad assignments".into(),
+        Action::EditorAssignIdentity => "Check Editor identity".into(),
+        Action::EditorAssignGlobal => "Check Editor global settings".into(),
+        Action::EditorAssignVersion => "Check Editor app version".into(),
+        Action::EditorAssignSdInfo => "Check Editor SD information".into(),
+        Action::EditorAssignRefresh => "Refresh Editor session".into(),
+        Action::EditorAssignCount { pad } => format!("Check pad {} file count", pad + 1),
+        Action::EditorAssignFilename { pad } => format!("Select pad {} filename", pad + 1),
+        Action::EditorAssignSend { pad } => format!("Assign pad {} file", pad + 1),
+        Action::EditorAssignState { pad } => format!("Check pad {} assignment", pad + 1),
+        Action::EditorAssignEnd => "Finish Editor pad assignments".into(),
+        Action::EditorPlaybackBegin { pad } => {
+            format!("Prepare Editor playback for pad {}", pad + 1)
+        }
+        Action::EditorPlaybackPlay => "Start Editor pad playback".into(),
+        Action::EditorPlaybackWait => "Wait for Editor playing state".into(),
+        Action::EditorPlaybackObserve => "Observe Editor audio (1200 ms guest time)".into(),
+        Action::EditorPlaybackSample => "Collect Editor playback evidence".into(),
+        Action::EditorPlaybackAssert => "Check Editor playback audio".into(),
+        Action::EditorPlaybackEnd => "Finish Editor playback".into(),
+        Action::UiPadBegin { pad } => format!("Start Editor verification for pad {}", pad + 1),
+        Action::UiPadIdentity => "Check Editor identity".into(),
+        Action::UiPadGlobal => "Check Editor global settings".into(),
+        Action::UiPadKeepAlive => "Check Editor keep-alive".into(),
+        Action::UiPadQuery => "Poll Editor pad assignment".into(),
+        Action::UiPadAssert => "Check Editor pad assignment".into(),
+        Action::UiPadEnd => "Finish Editor pad verification".into(),
+        Action::SoundPadBegin { pad, .. } => format!("Prepare sound pad {}", pad + 1),
+        Action::SoundPadPress => "Press sound pad".into(),
+        Action::SoundPadHold => "Observe sound pad hold (400 ms guest time)".into(),
+        Action::SoundPadRelease => "Release sound pad".into(),
+        Action::SoundPadObserve => "Observe sound pad playback".into(),
+        Action::SoundPadSample => "Collect sound pad evidence".into(),
+        Action::SoundPadAssertWaveform => "Check sound pad waveform".into(),
+        Action::SoundPadAssertAudio => "Check sound pad audio".into(),
+        Action::SoundPadAssertLed => "Check sound pad LED".into(),
+        Action::SoundPadAssertMeter => "Check sound pad meters".into(),
+        Action::SoundPadFinish => "Finish sound pad playback".into(),
         Action::KnobLevelStart { .. } => "Capture initial level demo".into(),
         Action::KnobLevelSweep { sweep } => format!("Sweep level {:?}", sweep.direction),
+        Action::KnobBitmapReactivate { .. } => "Reactivate overlay for bitmap probe".into(),
+        Action::KnobBitmapWaitActive => "Wait for fresh bitmap overlay".into(),
         Action::KnobOverlayReactivate { delta } => {
             format!("Reactivate zero-level overlay (delta {delta})")
         }
@@ -325,6 +411,13 @@ pub fn step_label(action: &crate::Action) -> String {
         }
         Action::WaitInputApplied => "Wait for input applied".into(),
         Action::WaitKnobParameterMode { mode } => format!("Wait for knob parameter mode {mode}"),
+        Action::WaitKnobDisplayImage { image, .. } => format!(
+            "Wait for {} screen",
+            image
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("expected")
+        ),
         Action::CaptureDisplay { guest_ms, artifact } => {
             format!("Capture {artifact} after {guest_ms} ms guest time")
         }

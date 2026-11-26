@@ -328,7 +328,9 @@ pub fn of(action: &Action) -> Requirement {
         | Action::CaptureMenu { .. }
         | Action::ExpectMenuItems { .. }
         | Action::WaitEffectMode { .. }
-        | Action::CaptureEffectState
+        | Action::CaptureEffectState { .. }
+        | Action::ExpectEffectEdits { .. }
+        | Action::ExpectEffectDialog { .. }
         | Action::ExpectEffectType { .. }
         | Action::ExpectEffectProcessor { .. }
         | Action::ExpectEffectPanelMode { .. }

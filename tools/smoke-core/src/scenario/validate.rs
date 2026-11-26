@@ -1168,7 +1168,7 @@ impl Scenario {
                     return Err("knob-dialog preflight must end with the diagnostic".into());
                 };
                 let subsequent = &applicable[..=end];
-                if subsequent.len() < 179
+                if subsequent.len() < 180
                     || !super::valid_preflight_probe_steps(&subsequent[0..30])
                     || !super::valid_callback_race_steps(&subsequent[30..38])
                     || !matches!(subsequent[38].action, Action::KnobDialogFirstActivation)
@@ -1879,6 +1879,20 @@ impl Scenario {
                             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
                     {
                         return Err("capture-display requires a positive duration within its deadline and a simple artifact name".into());
+                    }
+                }
+                Action::WaitKnobDisplayImage {
+                    image,
+                    main_timeout_ms,
+                } => {
+                    spec_path(image)?;
+                    if image.extension().is_none_or(|extension| extension != "png")
+                        || *main_timeout_ms == 0
+                    {
+                        return Err(
+                            "wait-knob-display-image requires a PNG and a positive MAIN timeout"
+                                .into(),
+                        );
                     }
                 }
                 Action::ExpectCapturedDisplayImage { image } => {

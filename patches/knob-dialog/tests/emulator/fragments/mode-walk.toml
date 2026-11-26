@@ -35,6 +35,13 @@ guest_timeout_ms = 180000
 wall_timeout_s = 600
 
 [[step]]
+action = "wait-knob-display-image"
+image = "patches/knob-dialog/tests/emulator/references/level.png"
+main_timeout_ms = 5000
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
 action = "capture-display"
 guest_ms = 400
 artifact = "window-scene-level"
@@ -90,6 +97,13 @@ wall_timeout_s = 600
 
 [[step]]
 action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-knob-display-image"
+image = "patches/knob-dialog/tests/emulator/references/high.png"
+main_timeout_ms = 5000
 guest_timeout_ms = 180000
 wall_timeout_s = 600
 
@@ -153,6 +167,13 @@ guest_timeout_ms = 180000
 wall_timeout_s = 600
 
 [[step]]
+action = "wait-knob-display-image"
+image = "patches/knob-dialog/tests/emulator/references/freq.png"
+main_timeout_ms = 5000
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
 action = "capture-display"
 guest_ms = 400
 artifact = "window-scene-freq"
@@ -208,6 +229,13 @@ wall_timeout_s = 600
 
 [[step]]
 action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-knob-display-image"
+image = "patches/knob-dialog/tests/emulator/references/mid.png"
+main_timeout_ms = 5000
 guest_timeout_ms = 180000
 wall_timeout_s = 600
 
@@ -271,6 +299,13 @@ guest_timeout_ms = 180000
 wall_timeout_s = 600
 
 [[step]]
+action = "wait-knob-display-image"
+image = "patches/knob-dialog/tests/emulator/references/low.png"
+main_timeout_ms = 5000
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
 action = "capture-display"
 guest_ms = 400
 artifact = "window-scene-low"
@@ -326,6 +361,13 @@ wall_timeout_s = 600
 
 [[step]]
 action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-knob-display-image"
+image = "patches/knob-dialog/tests/emulator/references/aux1.png"
+main_timeout_ms = 5000
 guest_timeout_ms = 180000
 wall_timeout_s = 600
 
@@ -389,6 +431,13 @@ guest_timeout_ms = 180000
 wall_timeout_s = 600
 
 [[step]]
+action = "wait-knob-display-image"
+image = "patches/knob-dialog/tests/emulator/references/aux2.png"
+main_timeout_ms = 5000
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
 action = "capture-display"
 guest_ms = 400
 artifact = "window-scene-aux2"
@@ -444,6 +493,13 @@ wall_timeout_s = 600
 
 [[step]]
 action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-knob-display-image"
+image = "patches/knob-dialog/tests/emulator/references/efx.png"
+main_timeout_ms = 5000
 guest_timeout_ms = 180000
 wall_timeout_s = 600
 
@@ -507,6 +563,13 @@ guest_timeout_ms = 180000
 wall_timeout_s = 600
 
 [[step]]
+action = "wait-knob-display-image"
+image = "patches/knob-dialog/tests/emulator/references/sub-mix.png"
+main_timeout_ms = 5000
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
 action = "capture-display"
 guest_ms = 400
 artifact = "window-scene-sub-mix"
@@ -562,6 +625,13 @@ wall_timeout_s = 600
 
 [[step]]
 action = "wait-input-applied"
+guest_timeout_ms = 180000
+wall_timeout_s = 600
+
+[[step]]
+action = "wait-knob-display-image"
+image = "patches/knob-dialog/tests/emulator/references/pan.png"
+main_timeout_ms = 5000
 guest_timeout_ms = 180000
 wall_timeout_s = 600
 

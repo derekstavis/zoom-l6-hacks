@@ -737,6 +737,13 @@ pub(super) fn mode_step_operation(action: &crate::Action) -> Option<Operation> {
             steps: *steps,
             midi_transaction: *midi_transaction,
         },
+        crate::Action::WaitKnobDisplayImage {
+            image,
+            main_timeout_ms,
+        } => Operation::WaitKnobDisplayImage {
+            image: image.clone(),
+            main_timeout_ms: *main_timeout_ms,
+        },
         crate::Action::CaptureDisplay { guest_ms, artifact } => Operation::CaptureDisplay {
             guest_ms: *guest_ms,
             artifact: artifact.clone(),
@@ -776,6 +783,30 @@ fn input_wait(applied_before: u64, applied_now: u64, expired: bool) -> InputWait
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum KnobImageWait {
+    Pending,
+    Ready,
+    Expired,
+}
+
+fn knob_image_wait(
+    different_pixels: Option<usize>,
+    fresh_clock: bool,
+    main_elapsed_ms: u32,
+    main_timeout_ms: u32,
+    shared_expired: bool,
+    wall_expired: bool,
+) -> KnobImageWait {
+    if shared_expired || wall_expired || main_elapsed_ms >= main_timeout_ms {
+        KnobImageWait::Expired
+    } else if fresh_clock && different_pixels.is_none_or(|count| count == 0) {
+        KnobImageWait::Ready
+    } else {
+        KnobImageWait::Pending
+    }
+}
+
 fn mode_operation_matches(operation: &Operation) -> bool {
     matches!(
         operation,
@@ -786,6 +817,7 @@ fn mode_operation_matches(operation: &Operation) -> bool {
                 midi_transaction: false,
                 ..
             }
+            | Operation::WaitKnobDisplayImage { .. }
             | Operation::CaptureDisplay { .. }
             | Operation::ExpectCapturedDisplayImage { .. }
             | Operation::KnobDialogExpectHeap
@@ -998,6 +1030,81 @@ impl State {
                 }
                 Ok(json!({"mode":mode}))
             }
+            Operation::WaitKnobDisplayImage {
+                image,
+                main_timeout_ms,
+            } => {
+                if self.knob_mode.is_none() || main_timeout_ms == 0 {
+                    return Err(
+                        "knob image wait requires an active mode and positive MAIN timeout".into(),
+                    );
+                }
+                let path = crate::scenario::spec_path(&image)?;
+                // Reference update mode must reach the subsequent capture even
+                // if the old image differs or is missing.
+                let reference = if super::display::updating_references() {
+                    None
+                } else {
+                    let image = image::open(&path)
+                        .map_err(|error| format!("failed to open {}: {error}", path.display()))?
+                        .to_luma8();
+                    if image.dimensions() != (128, 64) {
+                        return Err("knob display reference must be 128×64".into());
+                    }
+                    Some(image)
+                };
+                let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+                let main = inputs.main.snapshot();
+                if !main.connected || main.clock_updates == 0 {
+                    return Err("MAIN virtual clock unavailable".into());
+                }
+                let start_ms = main.guest_ms;
+                let start_updates = main.clock_updates;
+                let wall = Instant::now();
+                let shared = shared.ok_or("missing knob-dialog shared deadline")?;
+                loop {
+                    let data = session.poll()?;
+                    let panel = inputs.panel.snapshot();
+                    let main = inputs.main.snapshot();
+                    if !main.connected {
+                        return Err("MAIN virtual clock disconnected".into());
+                    }
+                    let shared_expired = super::execute::deadline_exceeded(
+                        shared.0.elapsed(),
+                        shared.1,
+                        panel.guest_ms,
+                        shared.2,
+                        shared.3,
+                    );
+                    match knob_image_wait(
+                        reference
+                            .as_ref()
+                            .map(|image| display_difference_count(&data.display, image)),
+                        main.clock_updates > start_updates,
+                        main.guest_ms.wrapping_sub(start_ms),
+                        main_timeout_ms,
+                        shared_expired,
+                        wall.elapsed() >= Duration::from_secs(wall_timeout_s),
+                    ) {
+                        KnobImageWait::Ready => {
+                            return Ok(
+                                json!({"image":image,"main_elapsed_ms":main.guest_ms.wrapping_sub(start_ms)}),
+                            );
+                        }
+                        KnobImageWait::Expired => {
+                            return Err(display_mismatch(
+                                &data.display,
+                                &path,
+                                &options.logs,
+                                "knob-display-wait",
+                            )
+                            .into());
+                        }
+                        KnobImageWait::Pending => {}
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
             Operation::CaptureDisplay { guest_ms, artifact } => {
                 if guest_ms == 0 || !valid_artifact(&artifact) {
                     return Err("invalid display capture duration or artifact name".into());
@@ -1176,15 +1283,15 @@ mod tests {
     #[test]
     fn embedded_lifecycle_modes_do_not_read_a_source_file() {
         let operations = embedded_mode_operations().unwrap();
-        assert_eq!(operations.len(), 100);
+        assert_eq!(operations.len(), 110);
         assert!(
             matches!(&operations[0].1, Operation::KnobDialogModeBegin { scene } if scene == "level")
         );
         assert!(matches!(
-            &operations[93].1,
+            &operations[102].1,
             Operation::WaitKnobParameterMode { mode: 8 }
         ));
-        assert!(matches!(&operations[99].1, Operation::KnobDialogModeEnd));
+        assert!(matches!(&operations[109].1, Operation::KnobDialogModeEnd));
     }
 
     #[test]
@@ -1204,6 +1311,63 @@ mod tests {
         }));
         assert!(!mode_operation_matches(&Operation::HostMidiConnect));
         assert!(!valid_artifact("../escape"));
+    }
+
+    #[test]
+    fn knob_image_wait_requires_fresh_exact_pixels_and_enforces_deadlines() {
+        assert_eq!(
+            knob_image_wait(Some(356), true, 100, 5000, false, false),
+            KnobImageWait::Pending
+        );
+        assert_eq!(
+            knob_image_wait(Some(150), true, 200, 5000, false, false),
+            KnobImageWait::Pending
+        );
+        assert_eq!(
+            knob_image_wait(Some(0), false, 200, 5000, false, false),
+            KnobImageWait::Pending
+        );
+        assert_eq!(
+            knob_image_wait(Some(0), true, 200, 5000, false, false),
+            KnobImageWait::Ready
+        );
+        // Updating references accepts a changed or missing image only in this mode.
+        assert_eq!(
+            knob_image_wait(None, true, 200, 5000, false, false),
+            KnobImageWait::Ready
+        );
+        assert_eq!(
+            knob_image_wait(None, false, 200, 5000, false, false),
+            KnobImageWait::Pending
+        );
+        assert_eq!(
+            knob_image_wait(Some(356), true, 5000, 5000, false, false),
+            KnobImageWait::Expired
+        );
+        assert_eq!(
+            knob_image_wait(Some(0), true, 200, 5000, true, false),
+            KnobImageWait::Expired
+        );
+        assert_eq!(
+            knob_image_wait(Some(0), true, 200, 5000, false, true),
+            KnobImageWait::Expired
+        );
+    }
+
+    #[test]
+    fn transient_readiness_does_not_skip_final_capture_assertion() {
+        let root = std::env::temp_dir().join(format!("l6-transient-image-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let reference = root.join("reference.png");
+        image::GrayImage::new(128, 64).save(&reference).unwrap();
+        assert_eq!(
+            knob_image_wait(Some(0), true, 100, 5000, false, false),
+            KnobImageWait::Ready
+        );
+        let mut later_capture = [0; 1024];
+        later_capture[0] = 1;
+        assert!(check_display_reference(&later_capture, &reference, &root, "changed").is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

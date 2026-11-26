@@ -4268,7 +4268,7 @@
           "additionalProperties": false,
           "properties": {
             "action": {
-              "const": "editor-pad-playback",
+              "const": "editor-playback-begin",
               "type": "string"
             },
             "guest_timeout_ms": {
@@ -4305,6 +4305,228 @@
           "required": [
             "action",
             "pad"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "editor-playback-play",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "editor-playback-wait",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "editor-playback-observe",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "editor-playback-sample",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "editor-playback-assert",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "editor-playback-end",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action"
           ],
           "type": "object"
         },
@@ -13039,7 +13261,13 @@
             "usb-sysex-exchange",
             "usb-sysex-end",
             "editor-pad-assignments",
-            "editor-pad-playback",
+            "editor-playback-begin",
+            "editor-playback-play",
+            "editor-playback-wait",
+            "editor-playback-observe",
+            "editor-playback-sample",
+            "editor-playback-assert",
+            "editor-playback-end",
             "ui-pad-begin",
             "ui-pad-identity",
             "ui-pad-global",

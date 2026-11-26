@@ -825,19 +825,36 @@ fn editor_pad_assignment_requires_prior_usb_midi_enumeration() {
         "{prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n"
     ));
     assert!(with_usb.is_ok());
-    let playback = Scenario::parse(&format!(
-        "{prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n[[step]]\naction='editor-pad-playback'\npad=3\n"
-    ));
-    assert!(playback.is_err(), "Editor SysEx playback is L6-only");
+    let playback_steps = "[[step]]\naction='editor-playback-begin'\npad=3\n[[step]]\naction='editor-playback-play'\n[[step]]\naction='editor-playback-wait'\n[[step]]\naction='editor-playback-observe'\n[[step]]\naction='editor-playback-sample'\n[[step]]\naction='editor-playback-assert'\n[[step]]\naction='editor-playback-end'\n";
+    let prefix_steps =
+        "[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n";
+    assert!(Scenario::parse(&format!("{prefix}{prefix_steps}{playback_steps}")).is_err());
     let l6_prefix = prefix.replace("l6max", "l6");
-    let playback = Scenario::parse(&format!(
-        "{l6_prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n[[step]]\naction='editor-pad-playback'\npad=3\n"
-    ));
-    assert!(playback.is_ok());
-    let invalid_pad = Scenario::parse(&format!(
-        "{l6_prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n[[step]]\naction='editor-pad-playback'\npad=4\n"
-    ));
-    assert!(invalid_pad.unwrap_err().contains("pad must be 0..3"));
+    assert!(Scenario::parse(&format!("{l6_prefix}{prefix_steps}{playback_steps}")).is_ok());
+    assert!(
+        Scenario::parse(&format!(
+            "{l6_prefix}{prefix_steps}{}",
+            playback_steps.replace("pad=3", "pad=4")
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{l6_prefix}{prefix_steps}{}",
+            playback_steps.replace("editor-playback-wait", "editor-playback-play")
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{l6_prefix}{prefix_steps}{}",
+            playback_steps.replace(
+                "action='editor-playback-end'",
+                "action='editor-playback-end'\nguest_timeout_ms=10"
+            )
+        ))
+        .is_err()
+    );
     let ui_steps = "[[step]]\naction='ui-pad-begin'\npad=2\n[[step]]\naction='ui-pad-identity'\n[[step]]\naction='ui-pad-global'\n[[step]]\naction='ui-pad-keep-alive'\n[[step]]\naction='ui-pad-query'\n[[step]]\naction='ui-pad-assert'\n[[step]]\naction='ui-pad-end'\n";
     let ui_playback = Scenario::parse(&format!(
         "{prefix}[[step]]\naction='usb-descriptors'\n{ui_steps}"

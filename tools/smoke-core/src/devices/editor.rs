@@ -268,130 +268,6 @@ pub(super) fn run_editor_pad_assignments(
     Ok(evidence)
 }
 
-pub(super) fn run_editor_pad_playback(
-    session: &Session,
-    options: &Options,
-    endpoints: l6max_host::usb::Endpoints,
-    pad: u8,
-    guest_timeout_ms: u32,
-    wall_timeout_s: u64,
-) -> Result<Value, Box<dyn std::error::Error>> {
-    if session.engine.model() != l6fw::Model::L6 || pad > 3 {
-        return Err(std::io::Error::other("editor-pad-playback requires L6 and pad 0..3").into());
-    }
-    if std::env::var_os("L6_AUDIO_SAMPLE_TRACE").is_none() {
-        return Err(std::io::Error::other(
-            "editor-pad-playback requires L6_AUDIO_SAMPLE_TRACE=1 in the case environment",
-        )
-        .into());
-    }
-    let usb = session
-        .engine
-        .usb
-        .as_ref()
-        .ok_or("USB backend unavailable")?
-        .clone();
-    let inputs = session
-        .engine
-        .inputs
-        .as_ref()
-        .ok_or("editor-pad-playback needs panel inputs")?;
-    let start_guest = inputs.panel.snapshot().guest_ms;
-    let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
-    let trace_path = options.logs.join("engine.trace");
-    let audio_prefix = "l6 audio TX samples sai=00384000";
-    let audio_before = fs::read_to_string(&trace_path)?
-        .lines()
-        .filter(|line| line.starts_with(audio_prefix))
-        .count();
-    let mut encoder = l6max_host::usb_midi::Encoder::default();
-    let play = editor_exchange(
-        session,
-        &usb,
-        endpoints,
-        &mut encoder,
-        &[0xf0, 0x52, 0, 0, 0x31, 0x08, pad, 1, 0xf7],
-        100,
-        start_guest,
-        guest_timeout_ms,
-        deadline,
-    )?;
-    let dialog_answered = answer_editor_pad_dialog(&usb, endpoints.output, &mut encoder, &play)?;
-    let mut state_replies = Vec::new();
-    for _ in 0..12 {
-        state_replies = editor_exchange(
-            session,
-            &usb,
-            endpoints,
-            &mut encoder,
-            &[0xf0, 0x52, 0, 0, 0x46, 0x03, pad, 0xf7],
-            250,
-            start_guest,
-            guest_timeout_ms,
-            deadline,
-        )?;
-        if state_replies
-            .iter()
-            .any(|reply| reply.get(4..8) == Some(&[0x45, 0x03, pad, 0x01]))
-        {
-            break;
-        }
-        if answer_editor_pad_dialog(&usb, endpoints.output, &mut encoder, &state_replies)? {
-            let _ = collect_editor_sysex(
-                session,
-                &usb,
-                endpoints.input,
-                300,
-                start_guest,
-                guest_timeout_ms,
-                deadline,
-            )?;
-        }
-    }
-    let playing = state_replies
-        .iter()
-        .any(|reply| reply.get(4..8) == Some(&[0x45, 0x03, pad, 0x01]));
-    if !playing {
-        return Err(format!(
-            "Editor Sound Pad {} did not enter playing state: {state_replies:02x?}",
-            pad + 1
-        )
-        .into());
-    }
-    wait_guest_duration(session, 1_200, deadline).map_err(std::io::Error::other)?;
-    let trace = fs::read_to_string(&trace_path)?;
-    let samples = trace
-        .lines()
-        .filter(|line| line.starts_with(audio_prefix))
-        .skip(audio_before)
-        .filter_map(|line| {
-            line.split_whitespace()
-                .find_map(|field| field.strip_prefix("nonzero="))
-                .and_then(|value| value.parse::<u64>().ok())
-        })
-        .collect::<Vec<_>>();
-    let nonzero_audio = samples.iter().any(|count| *count > 0);
-    let evidence = json!({
-        "pad": pad + 1,
-        "play_replies": play,
-        "state_replies": state_replies,
-        "assignment_dialog_answered": dialog_answered,
-        "playing_state": playing,
-        "nonzero_audio_samples": samples,
-        "guest_elapsed_ms": inputs.panel.snapshot().guest_ms.wrapping_sub(start_guest),
-    });
-    fs::write(
-        options
-            .logs
-            .join(format!("editor-pad-playback-{}.json", pad + 1)),
-        serde_json::to_vec_pretty(&evidence)?,
-    )?;
-    if !nonzero_audio {
-        return Err(format!("Editor Sound Pad {} entered playing state but produced no nonzero SAI1 TX samples: {evidence}", pad + 1).into());
-    }
-    Ok(evidence)
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn editor_exchange(
     session: &Session,
@@ -813,5 +689,225 @@ impl UiPadScope {
             .into());
         }
         Ok(evidence)
+    }
+}
+
+/// Editor-controlled playback retains one USB encoder, endpoint and deadline.
+pub(super) struct EditorPlaybackScope {
+    pad: u8,
+    endpoints: l6max_host::usb::Endpoints,
+    encoder: l6max_host::usb_midi::Encoder,
+    start_guest: u32,
+    deadline: Instant,
+    guest_budget: u32,
+    wall_budget: u64,
+    pub phase: u8,
+    trace_baseline: usize,
+    play: Vec<Vec<u8>>,
+    state: Vec<Vec<u8>>,
+    dialog_answered: bool,
+    samples: Vec<u64>,
+    trace_snapshot: Option<String>,
+    evidence: Option<Value>,
+}
+impl EditorPlaybackScope {
+    pub(super) fn begin(
+        session: &Session,
+        endpoints: l6max_host::usb::Endpoints,
+        pad: u8,
+        guest_budget: u32,
+        wall_budget: u64,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        if session.engine.model() != l6fw::Model::L6 || pad > 3 {
+            return Err("Editor playback requires L6 and pad 0..3".into());
+        }
+        if std::env::var_os("L6_AUDIO_SAMPLE_TRACE").is_none() {
+            return Err("Editor playback requires L6_AUDIO_SAMPLE_TRACE=1".into());
+        }
+        let start_guest = session
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or("panel input unavailable")?
+            .panel
+            .snapshot()
+            .guest_ms;
+        Ok(Self {
+            pad,
+            endpoints,
+            encoder: Default::default(),
+            start_guest,
+            deadline: Instant::now() + Duration::from_secs(wall_budget),
+            guest_budget,
+            wall_budget,
+            phase: 0,
+            trace_baseline: 0,
+            play: vec![],
+            state: vec![],
+            dialog_answered: false,
+            samples: vec![],
+            trace_snapshot: None,
+            evidence: None,
+        })
+    }
+    pub(super) fn check(
+        &self,
+        session: &Session,
+        guest_budget: u32,
+        wall_budget: u64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let now = session
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or("panel input unavailable")?
+            .panel
+            .snapshot()
+            .guest_ms;
+        if (guest_budget, wall_budget) != (self.guest_budget, self.wall_budget)
+            || Instant::now() >= self.deadline
+            || now.wrapping_sub(self.start_guest) > self.guest_budget
+        {
+            return Err("Editor playback exceeded its shared deadline or changed budget".into());
+        }
+        Ok(())
+    }
+    pub(super) fn play(
+        &mut self,
+        session: &Session,
+        options: &Options,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        let trace = fs::read_to_string(options.logs.join("engine.trace"))?;
+        self.trace_baseline = trace
+            .lines()
+            .filter(|line| line.starts_with(l6ctl::SAI1_TX_PREFIX))
+            .count();
+        self.check(session, self.guest_budget, self.wall_budget)?;
+        let usb = session
+            .engine
+            .usb
+            .as_ref()
+            .ok_or("USB backend unavailable")?;
+        self.play = editor_exchange(
+            session,
+            usb,
+            self.endpoints,
+            &mut self.encoder,
+            &[0xf0, 0x52, 0, 0, 0x31, 0x08, self.pad, 1, 0xf7],
+            100,
+            self.start_guest,
+            self.guest_budget,
+            self.deadline,
+        )?;
+        self.check(session, self.guest_budget, self.wall_budget)?;
+        self.dialog_answered =
+            answer_editor_pad_dialog(usb, self.endpoints.output, &mut self.encoder, &self.play)?;
+        Ok(json!({"play_replies":self.play,"assignment_dialog_answered":self.dialog_answered}))
+    }
+    pub(super) fn wait_playing(
+        &mut self,
+        session: &Session,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        let usb = session
+            .engine
+            .usb
+            .as_ref()
+            .ok_or("USB backend unavailable")?;
+        for _ in 0..12 {
+            self.check(session, self.guest_budget, self.wall_budget)?;
+            self.state = editor_exchange(
+                session,
+                usb,
+                self.endpoints,
+                &mut self.encoder,
+                &[0xf0, 0x52, 0, 0, 0x46, 0x03, self.pad, 0xf7],
+                250,
+                self.start_guest,
+                self.guest_budget,
+                self.deadline,
+            )?;
+            self.check(session, self.guest_budget, self.wall_budget)?;
+            if self
+                .state
+                .iter()
+                .any(|reply| reply.get(4..8) == Some(&[0x45, 0x03, self.pad, 0x01]))
+            {
+                return Ok(json!({"state_replies":self.state,"playing_state":true}));
+            }
+            if answer_editor_pad_dialog(usb, self.endpoints.output, &mut self.encoder, &self.state)?
+            {
+                let _ = collect_editor_sysex(
+                    session,
+                    usb,
+                    self.endpoints.input,
+                    300,
+                    self.start_guest,
+                    self.guest_budget,
+                    self.deadline,
+                )?;
+            }
+        }
+        Err(format!(
+            "Editor Sound Pad {} did not enter playing state: {:02x?}",
+            self.pad + 1,
+            self.state
+        )
+        .into())
+    }
+    pub(super) fn observe(
+        &mut self,
+        session: &Session,
+        options: &Options,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        let inputs = session
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or("panel input unavailable")?;
+        let start = inputs.panel.snapshot().guest_ms;
+        loop {
+            self.check(session, self.guest_budget, self.wall_budget)?;
+            let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(start);
+            if elapsed >= 1200 {
+                self.trace_snapshot = Some(fs::read_to_string(options.logs.join("engine.trace"))?);
+                return Ok(json!({"observed_guest_ms": elapsed}));
+            }
+            session.poll()?;
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+    pub(super) fn sample(
+        &mut self,
+        session: &Session,
+        options: &Options,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        let trace = self
+            .trace_snapshot
+            .as_deref()
+            .ok_or("Editor playback trace is not captured")?;
+        self.samples = l6ctl::sai1_tx_nonzero_counts(trace, self.trace_baseline);
+        let guest = session
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or("panel input unavailable")?
+            .panel
+            .snapshot()
+            .guest_ms;
+        let evidence = json!({"pad":self.pad+1,"play_replies":self.play,"state_replies":self.state,"assignment_dialog_answered":self.dialog_answered,"playing_state":true,"nonzero_audio_samples":self.samples,"guest_elapsed_ms":guest.wrapping_sub(self.start_guest)});
+        fs::write(
+            options
+                .logs
+                .join(format!("editor-pad-playback-{}.json", self.pad + 1)),
+            serde_json::to_vec_pretty(&evidence)?,
+        )?;
+        self.evidence = Some(evidence.clone());
+        Ok(evidence)
+    }
+    pub(super) fn assert_audio(&self) -> Result<Value, Box<dyn std::error::Error>> {
+        if !self.samples.iter().any(|count| *count > 0) {
+            return Err(format!("Editor Sound Pad {} entered playing state but produced no nonzero SAI1 TX samples: {}", self.pad + 1, self.evidence.as_ref().ok_or("Editor playback evidence unavailable")?).into());
+        }
+        Ok(json!({"nonzero_audio_samples":self.samples}))
     }
 }

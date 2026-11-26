@@ -746,10 +746,28 @@ impl Runner {
                 Action::EditorPadAssignments => {
                     return Ok(Progress::Device(devices::Operation::EditorPadAssignments));
                 }
-                Action::EditorPadPlayback { pad } => {
-                    return Ok(Progress::Device(devices::Operation::EditorPadPlayback {
+                Action::EditorPlaybackBegin { pad } => {
+                    return Ok(Progress::Device(devices::Operation::EditorPlaybackBegin {
                         pad,
                     }));
+                }
+                Action::EditorPlaybackPlay => {
+                    return Ok(Progress::Device(devices::Operation::EditorPlaybackPlay));
+                }
+                Action::EditorPlaybackWait => {
+                    return Ok(Progress::Device(devices::Operation::EditorPlaybackWait));
+                }
+                Action::EditorPlaybackObserve => {
+                    return Ok(Progress::Device(devices::Operation::EditorPlaybackObserve));
+                }
+                Action::EditorPlaybackSample => {
+                    return Ok(Progress::Device(devices::Operation::EditorPlaybackSample));
+                }
+                Action::EditorPlaybackAssert => {
+                    return Ok(Progress::Device(devices::Operation::EditorPlaybackAssert));
+                }
+                Action::EditorPlaybackEnd => {
+                    return Ok(Progress::Device(devices::Operation::EditorPlaybackEnd));
                 }
                 Action::UiPadBegin { pad } => {
                     return Ok(Progress::Device(devices::Operation::UiPadBegin { pad }));

@@ -45,9 +45,30 @@ pub fn sai1_tx_nonzero(samples: &[TxSample]) -> bool {
     })
 }
 
+/// Parse only `nonzero` counts after the specified SAI trace baseline.
+/// Other fields may be missing or malformed, matching the Editor playback probe.
+pub fn sai1_tx_nonzero_counts(trace: &str, skip: usize) -> Vec<u64> {
+    trace
+        .lines()
+        .filter(|line| line.starts_with(SAI1_TX_PREFIX))
+        .skip(skip)
+        .filter_map(|line| {
+            line.split_whitespace()
+                .find_map(|field| field.strip_prefix("nonzero="))
+                .and_then(|value| value.parse().ok())
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn counts_accept_missing_other_fields_and_skip_baseline() {
+        let trace = "l6 audio TX samples sai=00384000 nonzero=9\nl6 audio TX samples sai=00384000 nonzero=broken\nl6 audio TX samples sai=00384000 nonzero=2\n";
+        assert_eq!(sai1_tx_nonzero_counts(trace, 1), vec![2]);
+        assert_eq!(sai1_tx_nonzero_counts(trace, 0), vec![9, 2]);
+    }
     #[test]
     fn skips_baseline_and_malformed_records_and_rejects_sentinel_samples() {
         let trace = "l6 audio TX samples sai=00384000 words=9 nonzero=3 underruns=0 first=00000001 last=00000002 at=4ms\nl6 audio TX samples sai=00384000 words=9 nonzero=3 underruns=0 first=ffffffff last=00000002 at=5ms\nl6 audio TX samples sai=00384000 words=broken\n";

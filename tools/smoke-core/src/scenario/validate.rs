@@ -1372,6 +1372,48 @@ impl Scenario {
                 return Err("unterminated UI pad verification".into());
             }
         }
+        for model in &value.models {
+            let mut scope: Option<(u8, u32, u64)> = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                let phase = match &step.action {
+                    Action::EditorPlaybackBegin { pad } => {
+                        if *model != Model::L6 || *pad > 3 || scope.is_some() {
+                            return Err(
+                                "Editor playback requires L6, pad 0..3, and no active scope".into(),
+                            );
+                        }
+                        scope = Some((0, step.guest_timeout_ms, step.wall_timeout_s));
+                        continue;
+                    }
+                    Action::EditorPlaybackPlay => Some(0),
+                    Action::EditorPlaybackWait => Some(1),
+                    Action::EditorPlaybackObserve => Some(2),
+                    Action::EditorPlaybackSample => Some(3),
+                    Action::EditorPlaybackAssert => Some(4),
+                    Action::EditorPlaybackEnd => Some(5),
+                    _ => None,
+                };
+                match (scope, phase) {
+                    (Some((want, guest, wall)), Some(actual))
+                        if want == actual
+                            && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        scope = if actual == 5 {
+                            None
+                        } else {
+                            Some((want + 1, guest, wall))
+                        };
+                    }
+                    (Some(_), _) | (None, Some(_)) => {
+                        return Err("invalid Editor playback sequence or shared budget".into());
+                    }
+                    _ => {}
+                }
+            }
+            if scope.is_some() {
+                return Err("unterminated Editor playback".into());
+            }
+        }
         for step in &value.step {
             if let Action::KnobDialogAdaptive { plan } = &step.action {
                 plan.validate()?;
@@ -1401,7 +1443,7 @@ impl Scenario {
                         return Err("l6max-ui-pad-verify scenarios must be scoped to L6max".into());
                     }
                 }
-                Action::EditorPadPlayback { pad } => {
+                Action::EditorPlaybackBegin { pad } => {
                     if !pad_assignments_seen {
                         return Err(
                             "editor-pad-playback requires a preceding editor-pad-assignments step"

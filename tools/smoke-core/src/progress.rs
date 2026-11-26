@@ -307,6 +307,15 @@ pub fn step_label(action: &crate::Action) -> String {
         Action::KnobRaceSample => "Sample callback rejection state".into(),
         Action::KnobRaceRestore => "Restore raced descriptor".into(),
         Action::KnobRaceAssert => "Check callback rejection and retry readiness".into(),
+        Action::EditorPlaybackBegin { pad } => {
+            format!("Prepare Editor playback for pad {}", pad + 1)
+        }
+        Action::EditorPlaybackPlay => "Start Editor pad playback".into(),
+        Action::EditorPlaybackWait => "Wait for Editor playing state".into(),
+        Action::EditorPlaybackObserve => "Observe Editor audio (1200 ms guest time)".into(),
+        Action::EditorPlaybackSample => "Collect Editor playback evidence".into(),
+        Action::EditorPlaybackAssert => "Check Editor playback audio".into(),
+        Action::EditorPlaybackEnd => "Finish Editor playback".into(),
         Action::UiPadBegin { pad } => format!("Start Editor verification for pad {}", pad + 1),
         Action::UiPadIdentity => "Check Editor identity".into(),
         Action::UiPadGlobal => "Check Editor global settings".into(),

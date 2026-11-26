@@ -1122,12 +1122,19 @@ pub enum Action {
         channel: usize,
         value: u16,
     },
-    PanelEvent {
+    PanelEventBegin {
         target: u32,
         column: u8,
         row: u8,
         event: u8,
     },
+    PanelEventPress,
+    PanelEventCapture,
+    PanelEventReport,
+    PanelEventMapping,
+    PanelEventRelease,
+    PanelEventSettle,
+    PanelEventEnd,
     L6GpioBegin {
         target: u32,
         event: u8,
@@ -2184,5 +2191,84 @@ mod l6_meter_tests {
             )
             .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod panel_event_fragment_tests {
+    use super::*;
+    #[test]
+    fn all_panel_rows_expand_into_complete_scopes() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/emulator/cases/panel/l6-panel-event-map.toml");
+        let scenario = Scenario::load(&path).unwrap();
+        let starts = scenario
+            .step
+            .iter()
+            .filter(|s| matches!(s.action, Action::PanelEventBegin { .. }))
+            .count();
+        let captures = scenario
+            .step
+            .iter()
+            .filter(|s| matches!(s.action, Action::PanelEventCapture))
+            .count();
+        let ends = scenario
+            .step
+            .iter()
+            .filter(|s| matches!(s.action, Action::PanelEventEnd))
+            .count();
+        assert_eq!((starts, captures, ends), (26, 26, 26));
+        let actual: Vec<_> = scenario
+            .step
+            .iter()
+            .filter_map(|step| match step.action {
+                Action::PanelEventBegin {
+                    target,
+                    column,
+                    row,
+                    event,
+                } => Some((target, column, row, event)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            actual,
+            vec![
+                (7, 1, 0, 7),
+                (8, 2, 0, 12),
+                (9, 3, 0, 26),
+                (10, 1, 1, 0),
+                (11, 2, 1, 13),
+                (12, 3, 1, 6),
+                (13, 1, 2, 1),
+                (14, 2, 2, 14),
+                (15, 3, 2, 27),
+                (16, 1, 3, 2),
+                (17, 2, 3, 15),
+                (18, 3, 3, 28),
+                (19, 1, 4, 3),
+                (20, 2, 4, 16),
+                (21, 3, 4, 29),
+                (22, 1, 5, 4),
+                (23, 2, 5, 17),
+                (24, 3, 5, 31),
+                (25, 1, 6, 5),
+                (26, 2, 6, 18),
+                (28, 1, 7, 20),
+                (29, 2, 7, 19),
+                (2, 0, 1, 8),
+                (3, 0, 2, 9),
+                (6, 0, 3, 10),
+                (47, 0, 4, 11)
+            ]
+        );
+        let mut broken = scenario.clone();
+        let i = broken
+            .step
+            .iter()
+            .position(|s| matches!(s.action, Action::PanelEventCapture))
+            .unwrap();
+        broken.step.remove(i);
+        assert!(broken.validate().is_err());
     }
 }

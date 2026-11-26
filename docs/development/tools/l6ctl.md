@@ -371,6 +371,14 @@ verify MAIN is stopped, it reports that uncertainty, retains the lease and
 requires a guest restart. A failed cleanup may spend up to three additional
 seconds attempting an emergency stop.
 
+For L6 panel-event investigations, the existing `debug-session` breakpoint,
+continue, step and register commands can observe the dispatcher and submit
+routine while a second control connection sends `down` and `up`. The 26
+targets in `l6-panel-event-map` use the normal PANEL route. The test's
+explicit raw PANEL routing for arbitrary targets remains an in-process API;
+the CLI does not provide a source override or perform the concurrent capture
+and mapping assertion as a single command.
+
 For a disposable L6 1.10 guest, the same persistent session exposes
 `l6-meter-guard`, `l6-meter-skip-startup`, `l6-meter-activate`,
 `l6-meter-seed` and `l6-meter-finish`. Each takes `timeout_ms` (1–60000);

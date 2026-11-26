@@ -401,6 +401,11 @@ impl State {
             .take()
             .map(|mut scope| scope.release())
             .transpose();
+        let panel_event = self
+            .panel_event
+            .take()
+            .map(|mut scope| scope.abort())
+            .transpose();
         let panel = self
             .panel_keys
             .take()
@@ -441,6 +446,9 @@ impl State {
             errors.push(error);
         }
         if let Err(error) = power {
+            errors.push(error);
+        }
+        if let Err(error) = panel_event {
             errors.push(error);
         }
         if let Err(error) = panel {
@@ -1904,119 +1912,61 @@ impl State {
                     json!({"targets":targets,"held_guest_ms":inputs.panel.snapshot().guest_ms.wrapping_sub(start)}),
                 )
             }
-            Operation::PanelEvent {
+            Operation::PanelEventBegin {
                 target,
                 column,
                 row,
                 event,
             } => {
-                use firmware_api::l6::main_event_submit;
-                use firmware_api::l6::panel_event_dispatcher;
-                use firmware_api::l6::panel_report;
-                let inputs = &session.engine.inputs.as_ref().unwrap().panel;
-                let qmp = &session.engine.management[0];
-                let socket = options
-                    .gdb_socket
+                self.panel_event = Some(panel_event::Scope::begin(
+                    session,
+                    target,
+                    column,
+                    row,
+                    event,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            Operation::PanelEventPress => Ok(self
+                .panel_event
+                .as_mut()
+                .ok_or("panel event scope missing")?
+                .press(session)?),
+            Operation::PanelEventCapture => Ok(self
+                .panel_event
+                .as_mut()
+                .ok_or("panel event scope missing")?
+                .capture(session)?),
+            Operation::PanelEventReport => Ok(self
+                .panel_event
+                .as_mut()
+                .ok_or("panel event scope missing")?
+                .assert_report(session)?),
+            Operation::PanelEventMapping => Ok(self
+                .panel_event
+                .as_mut()
+                .ok_or("panel event scope missing")?
+                .assert_mapping(session, wall_timeout_s)?),
+            Operation::PanelEventRelease => Ok(self
+                .panel_event
+                .as_mut()
+                .ok_or("panel event scope missing")?
+                .release(session, wall_timeout_s)?),
+            Operation::PanelEventSettle => Ok(self
+                .panel_event
+                .as_ref()
+                .ok_or("panel event scope missing")?
+                .settle(session)?),
+            Operation::PanelEventEnd => {
+                let v = self
+                    .panel_event
                     .as_ref()
-                    .ok_or("panel-event requires a configured GDB socket")?;
-                if self.gdb.is_none() {
-                    self.gdb = Some(l6max_diagnostics::gdb::Gdb::connect(socket)?);
-                }
-                let gdb = self.gdb.as_mut().unwrap();
-                qmp.stop()?;
-                gdb.breakpoint(panel_event_dispatcher, true)?;
-                let mut dispatcher_armed = true;
-                gdb.breakpoint(main_event_submit, true)?;
-                inputs.down(target, 0)?;
-                let deadline = Instant::now() + Duration::from_secs(15);
-                let mut skipped_reports = 0u32;
-                let bytes = loop {
-                    let remaining = deadline.saturating_duration_since(Instant::now());
-                    if remaining.is_zero() {
-                        return Err(format!(
-                            "panel target {target} did not submit a button report after {skipped_reports} unrelated submissions"
-                        )
-                        .into());
-                    }
-                    gdb.continue_until_stop(remaining)?;
-                    let pc = gdb.read_register(15)? & !1;
-                    if pc == panel_event_dispatcher {
-                        gdb.breakpoint(panel_event_dispatcher, false)?;
-                        dispatcher_armed = false;
-                        continue;
-                    }
-                    if pc != main_event_submit {
-                        return Err(format!(
-                            "panel target {target} stopped at {pc:#x}, not dispatcher or event submit"
-                        )
-                        .into());
-                    }
-                    let response = gdb.request(&format!("m{panel_report:x},3"))?;
-                    if response.len() != 6 {
-                        return Err(format!("unexpected panel report bytes: {response}").into());
-                    }
-                    let bytes = (0..3)
-                        .map(|index| u8::from_str_radix(&response[index * 2..index * 2 + 2], 16))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    // Other panel activity can submit events between input
-                    // injection and the button report, especially at boot.
-                    if !matches!(bytes[0], 0x90 | 0x91) {
-                        skipped_reports += 1;
-                        // Continuing from a software breakpoint can stop on
-                        // the same instruction again. Step over the unrelated
-                        // submission before waiting for the next one.
-                        gdb.breakpoint(main_event_submit, false)?;
-                        gdb.request("s")?;
-                        gdb.breakpoint(main_event_submit, true)?;
-                        continue;
-                    }
-                    break bytes;
-                };
-                if (bytes[1], bytes[2]) != (column, row) {
-                    return Err(format!(
-                        "panel target {target} report {bytes:02x?}, expected ({column},{row})"
-                    )
-                    .into());
-                }
-                let state = gdb.read_register(1)?;
-                let observed_event = gdb.read_register(2)?;
-                if state != 0 || observed_event != u32::from(event) {
-                    return Err(format!("panel target {target} submitted state {state} event {observed_event}, expected press-state 0 event {event}").into());
-                }
-                let entry = if column == 0 {
-                    l6::PANEL_COLUMN0_EVENT_TABLE + u32::from(row) * 0x14
-                } else {
-                    l6::PANEL_EVENT_TABLE + u32::from(column) * 0xa0 + u32::from(row) * 0x14
-                };
-                let mapping = qmp.read_memory(0, entry + 8, 4)?;
-                let mapped_event = u32::from_le_bytes(mapping.try_into().unwrap());
-                if mapped_event != u32::from(event) {
-                    return Err(format!(
-                        "MAIN map ({column},{row}) is {mapped_event}, expected {event}"
-                    )
-                    .into());
-                }
-                if dispatcher_armed {
-                    gdb.breakpoint(panel_event_dispatcher, false)?;
-                }
-                gdb.breakpoint(main_event_submit, false)?;
-                qmp.resume()?;
-                inputs.up(target)?;
-                let started = inputs.snapshot().guest_ms;
-                let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
-                loop {
-                    session.poll()?;
-                    if inputs.snapshot().guest_ms.wrapping_sub(started) >= 250 {
-                        break;
-                    }
-                    if Instant::now() > deadline {
-                        return Err("panel event release timed out".into());
-                    }
-                    thread::sleep(Duration::from_millis(5));
-                }
-                Ok(
-                    json!({"target":target,"column":column,"row":row,"event":event,"report":bytes,"skipped_reports":skipped_reports}),
-                )
+                    .ok_or("panel event scope missing")?
+                    .finish(session)?;
+                self.panel_event = None;
+                Ok(v)
             }
             Operation::WaitRecordedFiles { files } => {
                 const GUEST_TIMEOUT_MS: u32 = 20_000;

@@ -570,7 +570,7 @@
     "suites": [
       "full"
     ],
-    "definition": "065612ca298caf7ec0e85d18abb5b02cd12a61467db700bd51e36acfacf83706"
+    "definition": "379106583ad188ea98364d8c25644d96faa086d07bd882e8ba856c380a1e521f"
   },
   {
     "case": "l6-patch-heap",

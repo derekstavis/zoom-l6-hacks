@@ -1,0 +1,20 @@
+[[step]]
+action = "panel-event-press"
+
+[[step]]
+action = "panel-event-capture"
+
+[[step]]
+action = "panel-event-report"
+
+[[step]]
+action = "panel-event-mapping"
+
+[[step]]
+action = "panel-event-release"
+
+[[step]]
+action = "panel-event-settle"
+
+[[step]]
+action = "panel-event-end"

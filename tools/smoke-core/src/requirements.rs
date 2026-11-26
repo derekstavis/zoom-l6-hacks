@@ -110,7 +110,14 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6DinSweepCapture
         | Action::L6DinSweepAssert { .. }
         | Action::L6DinSweepEnd
-        | Action::PanelEvent { .. }
+        | Action::PanelEventBegin { .. }
+        | Action::PanelEventPress
+        | Action::PanelEventCapture
+        | Action::PanelEventReport
+        | Action::PanelEventMapping
+        | Action::PanelEventRelease
+        | Action::PanelEventSettle
+        | Action::PanelEventEnd
         | Action::L6GpioBegin { .. }
         | Action::L6GpioPress
         | Action::L6GpioSubmit

@@ -68,6 +68,8 @@ local. See the
 
 The exploratory `probe gui` command captures the panel while pressing GPIO
 targets. It is for visual/behavioral investigation and does not qualify a test.
+The window observation resolves `current_window` for the selected model; the
+symbol lookup does not verify the running firmware revision.
 
 ```sh
 cargo run --offline --locked -p l6test -- probe gui \

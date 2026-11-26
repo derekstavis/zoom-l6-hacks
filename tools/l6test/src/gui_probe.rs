@@ -1,5 +1,4 @@
 //! Exploratory screen capture through scripted guest buttons; not qualification.
-use firmware_api::l6max;
 use l6max_host::{engine::Options, headless::Headless};
 use std::{
     ffi::OsString,
@@ -51,10 +50,11 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), Box<dyn std::error::Error>> {
         return Err("requires --volatile to preserve device state".into());
     }
     let guest = Headless::start(&options)?;
+    let control = l6ctl::OwnedControl::new(&guest.engine);
     let mut frame = None;
     pump(&guest, 40000, &mut frame)?;
     for settle in [2000, 5000] {
-        guest.engine.inputs.as_ref().unwrap().tap(3, 50)?;
+        control.tap(3, 50)?;
         pump(&guest, guest.guest_ms() + settle, &mut frame)?;
     }
     let mut rows = Vec::new();
@@ -68,7 +68,7 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), Box<dyn std::error::Error>> {
         .enumerate()
     {
         if let Some(key) = key {
-            guest.engine.inputs.as_ref().unwrap().tap(key, 50)?;
+            control.tap(key, 50)?;
         }
         pump(&guest, guest.guest_ms() + 1000, &mut frame)?;
         if let Some(raw) = frame {
@@ -87,10 +87,11 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), Box<dyn std::error::Error>> {
             .save(options.logs.join(format!("{i:02}.png")))?;
         }
         let window = u32::from_le_bytes(
-            guest.engine.management[0]
-                .read_memory(0, l6max::current_window, 4)?
+            control
+                .read_symbol("current_window", 4)?
+                .bytes
                 .try_into()
-                .unwrap(),
+                .map_err(|_| "current_window read returned the wrong size")?,
         );
         println!("{i:02} key {key:?}: window {window:08x}");
         rows.push(serde_json::json!({"step":i,"key":key,"guest_ms":guest.guest_ms(),"window":format!("{window:08x}")}));

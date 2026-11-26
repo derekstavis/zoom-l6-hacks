@@ -580,10 +580,7 @@ impl State {
         wall_timeout_s: u64,
     ) -> Result<Value, String> {
         if self.effect_slot_deadline.is_some()
-            && !matches!(
-                operation,
-                Operation::EffectReplacementState { .. } | Operation::CaptureEffectState { .. }
-            )
+            && !matches!(operation, Operation::CaptureEffectState { .. })
         {
             self.effect_slot_deadline = None;
             return Err("effect slot readiness must be followed by its state assertion".into());
@@ -1364,17 +1361,25 @@ impl State {
                     &check,
                 )?;
                 let evidence = json!({"effect_type":snapshot.effect_type,"processor_type":snapshot.processor_type,"active_effect":"","nonzero_output_blocks":0,"panel_mode":snapshot.panel_mode,"edit_mode":snapshot.edit_mode,"parameter_edits_applied":snapshot.applied.unwrap_or(0),"parameter_id":null,"parameter_value":null,"knob_dialog_active":snapshot.dialog_active.unwrap_or(0),"exit_ring_refreshes":0,"atomic":false,"fixture_module_sha256":snapshot.fixture_module_sha256});
-                self.effect_state =
-                    Some((snapshot, started, guest_start, guest_budget, wall_budget));
+                self.effect_state = Some((
+                    snapshot,
+                    reader,
+                    started,
+                    guest_start,
+                    guest_budget,
+                    wall_budget,
+                ));
                 Ok(evidence)
             }
-            Operation::ExpectEffectEdits { .. }
+            Operation::ExpectEffectName { .. }
+            | Operation::ExpectEffectOutput
+            | Operation::ExpectEffectEdits { .. }
             | Operation::ExpectEffectDialog { .. }
             | Operation::ExpectEffectType { .. }
             | Operation::ExpectEffectProcessor { .. }
             | Operation::ExpectEffectPanelMode { .. }
             | Operation::ExpectEffectEditMode { .. } => {
-                let (snapshot, started, guest_start, guest_budget, wall_budget) = self
+                let (snapshot, reader, started, guest_start, guest_budget, wall_budget) = self
                     .effect_state
                     .as_ref()
                     .ok_or("effect state snapshot missing")?;
@@ -1388,6 +1393,67 @@ impl State {
                     );
                 }
                 match operation {
+                    Operation::ExpectEffectName { ref name } => {
+                        let deadline = *started + Duration::from_secs(*wall_budget);
+                        let check = || -> Result<(), String> {
+                            if Instant::now() >= deadline
+                                || guest_now(session).wrapping_sub(*guest_start) > *guest_budget
+                            {
+                                Err("effect state assertion exceeded its shared deadline".into())
+                            } else {
+                                Ok(())
+                            }
+                        };
+                        let later = reader.snapshot_before_checked(
+                            &l6ctl::EffectSlotFields {
+                                active_effect: true,
+                                ..Default::default()
+                            },
+                            deadline,
+                            &check,
+                        )?;
+                        let actual = later.active_effect.unwrap_or_default();
+                        if &actual != name {
+                            return Err(format!(
+                                "effect replacement runs {actual:?}, expected {name:?}"
+                            )
+                            .into());
+                        }
+                        Ok(json!({"active_effect":actual}))
+                    }
+                    Operation::ExpectEffectOutput => {
+                        let processor = snapshot.processor_type;
+                        if !matches!(processor, 1 | 2) {
+                            return Err(
+                                "effect replacement output check needs a replaced slot selected"
+                                    .into(),
+                            );
+                        }
+                        let deadline = *started + Duration::from_secs(*wall_budget);
+                        let check = || -> Result<(), String> {
+                            if Instant::now() >= deadline
+                                || guest_now(session).wrapping_sub(*guest_start) > *guest_budget
+                            {
+                                Err("effect state assertion exceeded its shared deadline".into())
+                            } else {
+                                Ok(())
+                            }
+                        };
+                        let later = reader.snapshot_before_checked(
+                            &l6ctl::EffectSlotFields {
+                                output: true,
+                                output_processor: Some(processor as u8),
+                                ..Default::default()
+                            },
+                            deadline,
+                            &check,
+                        )?;
+                        let value = later.output_blocks.unwrap_or(0);
+                        if value == 0 {
+                            return Err(format!("effect replacement has produced no nonzero output in slot {processor}").into());
+                        }
+                        Ok(json!({"nonzero_output_blocks":value}))
+                    }
                     Operation::ExpectEffectEdits { minimum } => {
                         let applied = snapshot
                             .applied
@@ -1455,7 +1521,7 @@ impl State {
                 }
             }
             Operation::EffectStateEnd => {
-                let (_, started, guest_start, guest_budget, wall_budget) = self
+                let (_, _, started, guest_start, guest_budget, wall_budget) = self
                     .effect_state
                     .take()
                     .ok_or("effect state snapshot missing")?;
@@ -1516,70 +1582,6 @@ impl State {
                 Ok(
                     json!({"effect_type":expected_effect_type,"processor_type":expected_processor_type,"effect":expected_effect,"fresh_output":require_output}),
                 )
-            }
-            Operation::EffectReplacementState {
-                expected_effect_type,
-                expected_processor_type,
-                expected_panel_mode,
-                expected_edit_mode,
-                minimum_parameter_edits,
-                expected_parameter_id,
-                expected_parameter_value,
-                expected_dialog_active,
-                minimum_exit_ring_refreshes,
-                expected_effect,
-                require_output,
-            } => {
-                let prior = self.effect_slot_deadline.take();
-                let (start, guest_start, guest, wall) = prior
-                    .as_ref()
-                    .map(|scope| {
-                        (
-                            scope.start,
-                            scope.guest_start,
-                            scope.guest_budget,
-                            scope.wall_budget,
-                        )
-                    })
-                    .unwrap_or((
-                        operation_start.0,
-                        operation_start.1,
-                        guest_timeout_ms,
-                        wall_timeout_s,
-                    ));
-                if (guest, wall) != (guest_timeout_ms, wall_timeout_s) {
-                    return Err("effect slot assertion changed its shared budget".into());
-                }
-                let deadline = start + Duration::from_secs(wall);
-                let check = || -> Result<(), String> {
-                    if Instant::now() >= deadline
-                        || guest_now(session).wrapping_sub(guest_start) > guest
-                    {
-                        Err("effect slot assertion exceeded its shared deadline".into())
-                    } else {
-                        Ok(())
-                    }
-                };
-                check()?;
-                Ok(effect_replacement_state(
-                    options,
-                    session,
-                    expected_effect_type,
-                    expected_processor_type,
-                    expected_panel_mode,
-                    expected_edit_mode,
-                    minimum_parameter_edits,
-                    expected_parameter_id,
-                    expected_parameter_value,
-                    expected_dialog_active,
-                    minimum_exit_ring_refreshes,
-                    expected_effect.as_deref(),
-                    require_output,
-                    deadline,
-                    &check,
-                    prior.map(|scope| scope.reader),
-                )
-                .map_err(std::io::Error::other)?)
             }
             Operation::WaitSdPatchLoaded => {
                 let registry = wait_sd_patch_loaded(session, guest_timeout_ms, wall_timeout_s)?;

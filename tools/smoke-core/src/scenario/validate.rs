@@ -750,6 +750,8 @@ impl Scenario {
                     Action::ExpectEffectEditMode { .. } => Some((8, 0)),
                     Action::ExpectEffectEdits { .. } => Some((16, 256)),
                     Action::ExpectEffectDialog { .. } => Some((32, 512)),
+                    Action::ExpectEffectName { .. } => Some((64, 0)),
+                    Action::ExpectEffectOutput => Some((128, 0)),
                     _ => None,
                 };
                 match (&step.action, &mut scope, flag) {
@@ -2932,7 +2934,6 @@ impl Scenario {
                 {
                     return Err("effect ring encoder must be 1..8".into());
                 }
-                Action::EffectReplacementState { .. } => {}
                 Action::ExpectRingLevel {
                     channel,
                     segment,
@@ -3073,11 +3074,7 @@ impl Scenario {
                     let next = steps
                         .get(index + 1)
                         .ok_or("effect slot wait needs a following assertion")?;
-                    let legacy = matches!(&next.action, Action::EffectReplacementState { expected_effect_type: Some(effect), expected_processor_type: Some(processor), expected_effect: actual_effect, require_output: actual_output, .. }
-                            if effect == expected_effect_type && processor == expected_processor_type && actual_effect == expected_effect && actual_output == require_output);
                     let split = matches!(&next.action, Action::CaptureEffectState { .. })
-                        && expected_effect.is_none()
-                        && !*require_output
                         && {
                             let checks = steps[index + 2..]
                                 .iter()
@@ -3087,10 +3084,12 @@ impl Scenario {
                                 .collect::<Vec<_>>();
                             checks.iter().any(|candidate| matches!(candidate.action, Action::ExpectEffectType { value } if value == *expected_effect_type))
                             && checks.iter().any(|candidate| matches!(candidate.action, Action::ExpectEffectProcessor { value } if value == *expected_processor_type))
+                            && expected_effect.as_ref().is_none_or(|expected| checks.iter().any(|candidate| matches!(&candidate.action, Action::ExpectEffectName { name } if name == expected)))
+                            && (!*require_output || checks.iter().any(|candidate| matches!(candidate.action, Action::ExpectEffectOutput)))
                         };
                     if (step.guest_timeout_ms, step.wall_timeout_s)
                         != (next.guest_timeout_ms, next.wall_timeout_s)
-                        || !(legacy || split)
+                        || !split
                     {
                         return Err("effect slot wait needs a matching adjacent assertion with the same budget".into());
                     }
@@ -3519,6 +3518,25 @@ mod effect_state_scope_tests {
                     "expected_processor_type=1",
                     "expected_processor_type=1\nrequire_output=true"
                 )
+            ))
+            .is_err()
+        );
+    }
+    #[test]
+    fn wait_requires_matching_name_and_output_checks() {
+        let wait = "[[step]]\naction='wait-effect-slot'\nexpected_effect_type=1\nexpected_processor_type=1\nexpected_effect='velvet'\nrequire_output=true\n";
+        let capture = "[[step]]\naction='capture-effect-state'\n";
+        let basic = "[[step]]\naction='expect-effect-type'\nvalue=1\n[[step]]\naction='expect-effect-processor'\nvalue=1\n";
+        let name = "[[step]]\naction='expect-effect-name'\nname='velvet'\n";
+        let output = "[[step]]\naction='expect-effect-output'\n";
+        let end = "[[step]]\naction='effect-state-end'\n";
+        assert!(parse(&format!("{wait}{capture}{basic}{name}{output}{end}")).is_ok());
+        assert!(parse(&format!("{wait}{capture}{basic}{name}{end}")).is_err());
+        assert!(parse(&format!("{wait}{capture}{basic}{output}{end}")).is_err());
+        assert!(
+            parse(&format!(
+                "{wait}{capture}{basic}{}{output}{end}",
+                name.replace("velvet", "plateau")
             ))
             .is_err()
         );

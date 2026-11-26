@@ -330,6 +330,8 @@ pub fn of(action: &Action) -> Requirement {
         | Action::WaitEffectMode { .. }
         | Action::CaptureEffectState { .. }
         | Action::ExpectEffectEdits { .. }
+        | Action::ExpectEffectName { .. }
+        | Action::ExpectEffectOutput
         | Action::ExpectEffectDialog { .. }
         | Action::ExpectEffectType { .. }
         | Action::ExpectEffectProcessor { .. }
@@ -461,7 +463,6 @@ pub fn of(action: &Action) -> Requirement {
         | Action::ExpectSdModule { .. }
         | Action::EffectPacedTurn { .. }
         | Action::WaitEffectSlot { .. }
-        | Action::EffectReplacementState { .. }
         | Action::ExpectHeap { .. }
         | Action::HoldChord { .. }
         | Action::WarmReset

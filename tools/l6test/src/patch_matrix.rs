@@ -20,8 +20,8 @@
 
 use l6fw::Model;
 use patch_core::{
-    patch_catalog, patch_package, resolve_patch_dependencies, PackageKind, PatchCategory,
-    PatchPackage, EFFECT_REPLACEMENT_ROUTER_PACKAGE, STOCK_EFFECT_SLOTS,
+    EFFECT_REPLACEMENT_ROUTER_PACKAGE, PackageKind, PatchCategory, PatchPackage,
+    STOCK_EFFECT_SLOTS, patch_catalog, patch_package, resolve_patch_dependencies,
 };
 use serde::Deserialize;
 use std::collections::BTreeSet;
@@ -487,10 +487,31 @@ fn effect_slot_checks(text: &mut String, combination: &Combination) {
             );
         }
         step(text, &format!("action = \"wait-effect-slot\"\n{body}"));
+        step(text, "action = \"capture-effect-state\"");
         step(
             text,
-            &format!("action = \"effect-replacement-state\"\n{body}"),
+            &format!(
+                "action = \"expect-effect-type\"\nvalue = {}",
+                slot.expected_effect_type
+            ),
         );
+        step(
+            text,
+            &format!(
+                "action = \"expect-effect-processor\"\nvalue = {}",
+                slot.expected_processor_type
+            ),
+        );
+        if let Some(effect) = slot.effect {
+            step(
+                text,
+                &format!("action = \"expect-effect-name\"\nname = {effect:?}"),
+            );
+            if slot.require_output {
+                step(text, "action = \"expect-effect-output\"");
+            }
+        }
+        step(text, "action = \"effect-state-end\"");
     }
     step(text, "action = \"select-mode\"\nmode = \"level\"");
 }
@@ -1129,14 +1150,16 @@ wall_timeout_s = 120
         let plan = menu_plan(&combination, &checks, &menu_checks.stock_system_items).unwrap();
         assert!(plan.rows[0].starts_with("patch-loader "));
         assert_eq!(plan.items[plan.patches_index], "Patches");
-        assert!(plan
-            .rows
-            .iter()
-            .any(|row| row.starts_with("dump-rom ") && !row.ends_with(" (SD)")));
-        assert!(plan
-            .rows
-            .iter()
-            .any(|row| row.starts_with("midi-sync ") && row.ends_with(" (SD)")));
+        assert!(
+            plan.rows
+                .iter()
+                .any(|row| row.starts_with("dump-rom ") && !row.ends_with(" (SD)"))
+        );
+        assert!(
+            plan.rows
+                .iter()
+                .any(|row| row.starts_with("midi-sync ") && row.ends_with(" (SD)"))
+        );
         assert_eq!(plan.actions.len(), 2);
         let dump = &plan.actions[0];
         let midi = &plan.actions[1];
@@ -1265,13 +1288,17 @@ wall_timeout_s = 120
         // such set.
         assert_eq!(l6max.len(), (18 + 8 * 6) * 3 - 1);
         assert_eq!(combinations(Model::L6).unwrap().len(), 2);
-        assert!(l6max
-            .iter()
-            .all(|c| !(c.firmware.contains(&"dump-rom".into())
-                && !c.firmware.contains(&"menu-loader".into()))));
-        assert!(l6max
-            .iter()
-            .all(|c| c.effects.is_empty() || c.sd.contains(&"knob-dialog".into())));
+        assert!(
+            l6max
+                .iter()
+                .all(|c| !(c.firmware.contains(&"dump-rom".into())
+                    && !c.firmware.contains(&"menu-loader".into())))
+        );
+        assert!(
+            l6max
+                .iter()
+                .all(|c| c.effects.is_empty() || c.sd.contains(&"knob-dialog".into()))
+        );
     }
 
     #[test]

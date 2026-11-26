@@ -764,6 +764,10 @@ pub enum Action {
         #[serde(default)]
         dialog: bool,
     },
+    ExpectEffectName {
+        name: String,
+    },
+    ExpectEffectOutput,
     ExpectEffectEdits {
         minimum: u32,
     },
@@ -795,32 +799,6 @@ pub enum Action {
         expected_processor_type: u8,
         #[serde(default)]
         expected_effect: Option<String>,
-        #[serde(default)]
-        require_output: bool,
-    },
-    EffectReplacementState {
-        #[serde(default)]
-        expected_effect_type: Option<u8>,
-        #[serde(default)]
-        expected_processor_type: Option<u8>,
-        #[serde(default)]
-        expected_panel_mode: Option<u8>,
-        #[serde(default)]
-        expected_edit_mode: Option<bool>,
-        #[serde(default)]
-        minimum_parameter_edits: Option<u32>,
-        #[serde(default)]
-        expected_parameter_id: Option<u8>,
-        #[serde(default)]
-        expected_parameter_value: Option<f32>,
-        #[serde(default)]
-        expected_dialog_active: Option<bool>,
-        #[serde(default)]
-        minimum_exit_ring_refreshes: Option<u32>,
-        /// The effect ID the effect loader runs for the selected slot.
-        #[serde(default)]
-        expected_effect: Option<String>,
-        /// The selected slot's replacement has produced nonzero output.
         #[serde(default)]
         require_output: bool,
     },

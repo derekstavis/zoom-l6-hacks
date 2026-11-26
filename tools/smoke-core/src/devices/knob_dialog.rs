@@ -1,5 +1,6 @@
 //! The knob-dialog patch: its window and popup.
 use super::*;
+use l6max_host::debug_journal::{Cleanup as DebugCleanup, Journal, cleanup as cleanup_debugger};
 mod adaptive_demo;
 pub(super) use adaptive_demo::{
     run as run_adaptive_demo, run_level_demo_frame, run_level_expect_zero, run_level_sweep,
@@ -14,43 +15,8 @@ pub const KNOB_DIALOG_REFERENCES: &str = "patches/knob-dialog/tests/emulator/ref
 struct KnobDebugSession {
     qmp: l6max_host::qmp::QmpClient,
     gdb: l6max_diagnostics::gdb::Gdb,
-    writes: Vec<(u32, Vec<u8>)>,
-    breakpoints: Vec<u32>,
-    registers: Vec<(u32, u32)>,
-    synchronized: bool,
-    mailbox_pending: bool,
+    journal: Journal,
     finalized: bool,
-}
-
-fn begin_temporary_write(
-    writes: &mut Vec<(u32, Vec<u8>)>,
-    address: u32,
-    before: Vec<u8>,
-    data: &[u8],
-) -> std::io::Result<Option<usize>> {
-    let end = u64::from(address) + data.len() as u64;
-    let mut restoring = None;
-    for (index, (at, original)) in writes.iter().enumerate() {
-        let other_end = u64::from(*at) + original.len() as u64;
-        if u64::from(address) < other_end && u64::from(*at) < end {
-            if *at == address && original == data && restoring.is_none() {
-                restoring = Some(index);
-            } else {
-                return Err(std::io::Error::other(
-                    "overlapping temporary debugger writes",
-                ));
-            }
-        }
-    }
-    writes.push((address, before));
-    Ok(restoring)
-}
-
-fn finish_temporary_write(writes: &mut Vec<(u32, Vec<u8>)>, restoring: Option<usize>) {
-    if let Some(index) = restoring {
-        writes.pop();
-        writes.remove(index);
-    }
 }
 
 impl KnobDebugSession {
@@ -58,24 +24,20 @@ impl KnobDebugSession {
         Ok(Self {
             qmp: qmp.clone(),
             gdb: l6max_diagnostics::gdb::Gdb::connect(path)?,
-            writes: Vec::new(),
-            breakpoints: Vec::new(),
-            registers: Vec::new(),
-            synchronized: true,
-            mailbox_pending: false,
+            journal: Journal::default(),
             finalized: false,
         })
     }
     fn write(&mut self, address: u32, data: &[u8]) -> std::io::Result<()> {
         let before = self.qmp.read_memory(0, address, data.len())?;
         // Journal before sending: a failed request can still have applied.
-        let restoring = begin_temporary_write(&mut self.writes, address, before, data)?;
+        let restoring = self.journal.begin_write(address, before, data)?;
         let result = self.gdb.write(address, data);
         if result.is_err() {
-            self.synchronized = false;
+            self.journal.synchronized = false;
         }
         result?;
-        finish_temporary_write(&mut self.writes, restoring);
+        self.journal.commit_write(restoring);
         Ok(())
     }
     fn write_before(
@@ -90,83 +52,82 @@ impl KnobDebugSession {
             .qmp
             .read_memory_before(0, address, data.len(), deadline)?;
         check()?;
-        let restoring = begin_temporary_write(&mut self.writes, address, before, data)?;
+        let restoring = self.journal.begin_write(address, before, data)?;
         let result = self.gdb.write_before(address, data, deadline);
         if result.is_err() {
-            self.synchronized = false;
+            self.journal.synchronized = false;
         }
         result?;
         check()?;
-        finish_temporary_write(&mut self.writes, restoring);
+        self.journal.commit_write(restoring);
         Ok(())
     }
     fn read_register_before(&mut self, index: u32, deadline: Instant) -> std::io::Result<u32> {
         let result = self.gdb.read_register_before(index, deadline);
         if result.is_err() {
-            self.synchronized = false;
+            self.journal.synchronized = false;
         }
         result
     }
     fn handoff_mailbox(&mut self, address: u32) {
-        self.writes.retain(|(at, _)| *at != address);
-        self.mailbox_pending = true;
+        self.journal.handoff_mailbox(address);
     }
     fn acknowledge_mailbox(&mut self) {
-        self.mailbox_pending = false;
+        self.journal.acknowledge_mailbox();
     }
     fn resume_guest(&mut self) -> std::io::Result<()> {
-        if !self.synchronized {
+        if !self.journal.synchronized {
             return Err(std::io::Error::other(
                 "debugger transport not synchronized; guest left stopped",
             ));
         }
         // Even a failed request may resume, invalidating saved register values.
-        self.registers.clear();
+        self.journal.registers.clear();
         let result = self.qmp.resume();
         if result.is_err() {
-            self.synchronized = false;
+            self.journal.synchronized = false;
         }
         result
     }
     fn resume_guest_before(&mut self, deadline: Instant) -> std::io::Result<()> {
-        if !self.synchronized {
+        if !self.journal.synchronized {
             return Err(std::io::Error::other(
                 "debugger transport not synchronized; guest left stopped",
             ));
         }
-        self.registers.clear();
+        self.journal.registers.clear();
         let result = self.qmp.resume_before(deadline);
         if result.is_err() {
-            self.synchronized = false;
+            self.journal.synchronized = false;
         }
         result
     }
     fn breakpoint(&mut self, address: u32, enable: bool) -> std::io::Result<()> {
-        if enable && !self.breakpoints.contains(&address) {
-            self.breakpoints.push(address);
+        if enable && !self.journal.breakpoints.contains(&address) {
+            self.journal.breakpoints.push(address);
         }
         let result = self.gdb.breakpoint(address, enable);
         if result.is_err() {
-            self.synchronized = false;
+            self.journal.synchronized = false;
         }
         result?;
         if !enable {
-            self.breakpoints.retain(|&item| item != address);
+            self.journal.breakpoints.retain(|&item| item != address);
         }
         Ok(())
     }
     fn read_register(&mut self, index: u32) -> std::io::Result<u32> {
         let result = self.gdb.read_register(index);
         if result.is_err() {
-            self.synchronized = false;
+            self.journal.synchronized = false;
         }
         result
     }
     fn continue_until_stop(&mut self, timeout: Duration) -> std::io::Result<String> {
-        self.registers.clear();
+        self.journal.registers.clear();
         let result = self.gdb.continue_until_stop(timeout);
         if result.is_err() {
-            self.synchronized = false;
+            self.journal.synchronized = false;
         }
         result
     }
@@ -176,10 +137,10 @@ impl KnobDebugSession {
         arguments: &[u32],
         timeout: Duration,
     ) -> std::io::Result<String> {
-        self.registers.clear();
+        self.journal.registers.clear();
         let result = self.gdb.call_thumb(address, arguments, timeout);
         if result.is_err() {
-            self.synchronized = false;
+            self.journal.synchronized = false;
         }
         result
     }
@@ -188,13 +149,7 @@ impl KnobDebugSession {
         result: Result<T, Box<dyn std::error::Error>>,
     ) -> Result<T, Box<dyn std::error::Error>> {
         match result {
-            Ok(value)
-                if self.writes.is_empty()
-                    && self.breakpoints.is_empty()
-                    && self.registers.is_empty()
-                    && self.synchronized
-                    && !self.mailbox_pending =>
-            {
+            Ok(value) if self.journal.clean() => {
                 self.finalized = true;
                 Ok(value)
             }
@@ -238,52 +193,16 @@ impl Drop for KnobDebugSession {
     }
 }
 
-trait DebugCleanup {
-    fn stop(&mut self) -> Result<(), String>;
-    fn synchronized(&self) -> bool;
-    fn restore_writes(&mut self) -> Vec<String>;
-    fn clear_breakpoints(&mut self) -> Vec<String>;
-    fn restore_registers(&mut self) -> Vec<String>;
-    fn resume(&mut self) -> Result<(), String>;
-}
-
-fn cleanup_debugger(backend: &mut impl DebugCleanup) -> Vec<String> {
-    let mut failures = Vec::new();
-    if let Err(error) = backend.stop() {
-        return vec![format!("stop: {error}; guest state unknown")];
-    }
-    if !backend.synchronized() {
-        return vec![
-            "debugger transport or mailbox handoff not synchronized; guest left stopped".into(),
-        ];
-    }
-    failures.extend(backend.restore_writes());
-    if failures.is_empty() {
-        failures.extend(backend.clear_breakpoints());
-    }
-    if failures.is_empty() {
-        failures.extend(backend.restore_registers());
-    }
-    if !failures.is_empty() {
-        failures.push("guest left stopped".into());
-        return failures;
-    }
-    if let Err(error) = backend.resume() {
-        failures.push(format!("resume: {error}"));
-    }
-    failures
-}
-
 impl DebugCleanup for KnobDebugSession {
     fn stop(&mut self) -> Result<(), String> {
         self.qmp.stop().map_err(|error| error.to_string())
     }
     fn synchronized(&self) -> bool {
-        self.synchronized && !self.mailbox_pending
+        self.journal.synchronized && !self.journal.mailbox_pending
     }
     fn restore_writes(&mut self) -> Vec<String> {
         let mut failures = Vec::new();
-        for (address, before) in self.writes.drain(..).rev() {
+        for (address, before) in self.journal.writes.drain(..).rev() {
             if let Err(error) = self.gdb.write(address, &before) {
                 failures.push(format!("restore {address:#010x}: {error}"));
                 break;
@@ -293,7 +212,7 @@ impl DebugCleanup for KnobDebugSession {
     }
     fn clear_breakpoints(&mut self) -> Vec<String> {
         let mut failures = Vec::new();
-        for address in self.breakpoints.drain(..).rev() {
+        for address in self.journal.breakpoints.drain(..).rev() {
             if let Err(error) = self.gdb.breakpoint(address, false) {
                 failures.push(format!("remove breakpoint {address:#010x}: {error}"));
                 break;
@@ -303,7 +222,7 @@ impl DebugCleanup for KnobDebugSession {
     }
     fn restore_registers(&mut self) -> Vec<String> {
         let mut failures = Vec::new();
-        for (index, before) in self.registers.drain(..).rev() {
+        for (index, before) in self.journal.registers.drain(..).rev() {
             if let Err(error) = self.gdb.register(index, before) {
                 failures.push(format!("restore register {index}: {error}"));
                 break;
@@ -3978,12 +3897,12 @@ pub(super) fn invoke_notification(
             .set_request_timeout(deadline.saturating_duration_since(Instant::now()))?;
         let before = debugger.read_register(index)?;
         check()?;
-        debugger.registers.push((index, before));
+        debugger.journal.registers.push((index, before));
         debugger
             .gdb
             .set_request_timeout(deadline.saturating_duration_since(Instant::now()))?;
         if let Err(error) = debugger.gdb.register(index, value) {
-            debugger.synchronized = false;
+            debugger.journal.synchronized = false;
             return Err(error.into());
         }
     }
@@ -5159,7 +5078,8 @@ mod paused_guard_tests {
 
 #[cfg(test)]
 mod debug_cleanup_tests {
-    use super::{DebugCleanup, begin_temporary_write, cleanup_debugger, finish_temporary_write};
+    use super::{DebugCleanup, cleanup_debugger};
+    use l6max_host::debug_journal::Journal;
     #[derive(Default)]
     struct Fake {
         calls: Vec<&'static str>,
@@ -5218,30 +5138,40 @@ mod debug_cleanup_tests {
     }
     #[test]
     fn successful_restoration_retires_only_the_matching_outstanding_write() {
-        let mut journal = Vec::new();
-        let first = begin_temporary_write(&mut journal, 0x100, vec![1], &[2]).unwrap();
-        finish_temporary_write(&mut journal, first);
-        let other = begin_temporary_write(&mut journal, 0x200, vec![3], &[4]).unwrap();
-        finish_temporary_write(&mut journal, other);
-        let restore = begin_temporary_write(&mut journal, 0x100, vec![2], &[1]).unwrap();
-        finish_temporary_write(&mut journal, restore);
-        assert_eq!(journal, vec![(0x200, vec![3])]);
+        let mut journal = Journal::default();
+        let first = journal.begin_write(0x100, vec![1], &[2]).unwrap();
+        journal.commit_write(first);
+        let other = journal.begin_write(0x200, vec![3], &[4]).unwrap();
+        journal.commit_write(other);
+        let restore = journal.begin_write(0x100, vec![2], &[1]).unwrap();
+        journal.commit_write(restore);
+        assert_eq!(journal.writes, vec![(0x200, vec![3])]);
     }
     #[test]
     fn failed_restore_keeps_original_and_attempt_for_reverse_rollback() {
-        let mut journal = Vec::new();
-        begin_temporary_write(&mut journal, 0x100, vec![1], &[2]).unwrap();
-        begin_temporary_write(&mut journal, 0x100, vec![2], &[1]).unwrap();
-        assert_eq!(journal, vec![(0x100, vec![1]), (0x100, vec![2])]);
+        let mut journal = Journal::default();
+        journal.begin_write(0x100, vec![1], &[2]).unwrap();
+        journal.begin_write(0x100, vec![2], &[1]).unwrap();
+        assert_eq!(journal.writes, vec![(0x100, vec![1]), (0x100, vec![2])]);
     }
     #[test]
     fn overlapping_regions_are_rejected_except_exact_restoration() {
-        let mut journal = Vec::new();
-        begin_temporary_write(&mut journal, 0x100, vec![1, 2, 3, 4], &[9, 9, 9, 9]).unwrap();
-        assert!(begin_temporary_write(&mut journal, 0x102, vec![0], &[3]).is_err());
-        assert!(begin_temporary_write(&mut journal, 0x100, vec![0; 4], &[8, 8, 8, 8]).is_err());
-        assert_eq!(journal.len(), 1);
-        assert!(begin_temporary_write(&mut journal, 0x100, vec![9; 4], &[1, 2, 3, 4]).is_ok());
+        let mut journal = Journal::default();
+        journal
+            .begin_write(0x100, vec![1, 2, 3, 4], &[9, 9, 9, 9])
+            .unwrap();
+        assert!(journal.begin_write(0x102, vec![0], &[3]).is_err());
+        assert!(
+            journal
+                .begin_write(0x100, vec![0; 4], &[8, 8, 8, 8])
+                .is_err()
+        );
+        assert_eq!(journal.writes.len(), 1);
+        assert!(
+            journal
+                .begin_write(0x100, vec![9; 4], &[1, 2, 3, 4])
+                .is_ok()
+        );
     }
     #[test]
     fn unsynchronized_transport_stops_without_further_debugger_requests() {

@@ -348,9 +348,10 @@ message delivered just after the interval.
 | `l6-din-sweep` | — | Sweep supported L6 DIN values and record dispatch behavior |
 | `l6max-timing-*` | `wall_ms`, `guest_ms`, `target`, `hold_ms`, `pairs`, `index` and `steps` on selected steps | L6max: an ordered, shared-deadline scope pauses MAIN and panel, verifies queued input and clock behavior, resumes, checks UART reports and display change, then checks one encoder report. Wall observations and guest-time observations are separate. |
 
-First activation shares the existing knob preflight debugger and its mutation
-journal. Its semaphore restoration and pause/resume ownership still live in the
-test harness; migrating that existing ownership to the host is separate work.
+First activation shares the existing knob preflight debugger. Journal state
+and cleanup ordering live in `l6max-host`; the debugger lease, semaphore
+restoration and pause/resume ownership still live in the test harness.
+Migrating that existing ownership to the host is separate work.
 The observation uses bounded `l6ctl` memory reads, also available through
 `l6ctl memory-read`, but there is no standalone CLI for the full transaction.
 

@@ -1,4 +1,5 @@
 pub mod debug;
+pub mod debug_journal;
 pub use sd_image as demo_sd;
 pub mod audio_input;
 pub mod audio_trace;

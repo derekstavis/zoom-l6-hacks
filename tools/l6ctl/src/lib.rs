@@ -639,6 +639,31 @@ fn usb_panel_guest_expired(now: u32, start: u32, timeout_ms: u32) -> bool {
     now.wrapping_sub(start) > timeout_ms
 }
 
+/// Ownership of one accepted held input. Release is explicit so callers can
+/// report cleanup failures while retaining the handle for another attempt.
+pub struct HeldButton {
+    inputs: std::sync::Arc<l6max_host::input::InputHub>,
+    target: u32,
+    held: bool,
+}
+
+impl HeldButton {
+    /// Release if MAIN is still powered. Once MAIN has shut down, its input
+    /// channel cannot acknowledge a release and no command is necessary.
+    pub fn release_unless_main_powered_off(&mut self) -> Result<(), ControlError> {
+        if self.held && !self.inputs.main.snapshot().powered_off {
+            self.inputs
+                .up(self.target)
+                .map_err(|error| ControlError::Rejected(error.to_string()))?;
+        }
+        self.held = false;
+        Ok(())
+    }
+    pub fn is_held(&self) -> bool {
+        self.held
+    }
+}
+
 /// Access the same host-owned guest directly without opening a control socket.
 /// The engine and its QMP/input resources remain owned by the caller.
 pub struct OwnedControl<'a> {
@@ -1259,6 +1284,28 @@ impl<'a> OwnedControl<'a> {
             sequence,
         })
     }
+    /// Enqueue a held input and retain explicit ownership for cleanup.
+    pub fn hold_button(
+        &self,
+        target: u32,
+        duration_ms: u32,
+    ) -> Result<(ButtonReceipt, HeldButton), ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
+            .clone();
+        let receipt = self.down(target, duration_ms)?;
+        Ok((
+            receipt,
+            HeldButton {
+                inputs,
+                target,
+                held: true,
+            },
+        ))
+    }
     pub fn up(&self, target: u32) -> Result<ButtonReceipt, ControlError> {
         if target >= l6max_host::controls::INPUT_COUNT as u32 {
             return Err(ControlError::Rejected("invalid held button".into()));
@@ -1497,5 +1544,45 @@ mod usb_panel_budget_tests {
     fn guest_budget_retains_boundary_and_clock_wrap_behavior() {
         assert!(!super::usb_panel_guest_expired(50, u32::MAX - 49, 100));
         assert!(super::usb_panel_guest_expired(51, u32::MAX - 49, 100));
+    }
+}
+
+#[cfg(test)]
+mod held_button_tests {
+    #[test]
+    fn release_enqueues_once_and_is_idempotent() {
+        use l6max_host::input::{EngineInput, InputHub};
+        use std::sync::Arc;
+        let (main, _main_peer) = EngineInput::pair().unwrap();
+        let (panel, _panel_peer) = EngineInput::pair().unwrap();
+        let inputs = Arc::new(InputHub::new(main, panel, l6fw::Model::L6));
+        let mut held = super::HeldButton {
+            inputs: inputs.clone(),
+            target: 53,
+            held: true,
+        };
+        held.release_unless_main_powered_off().unwrap();
+        assert!(!held.is_held());
+        assert_eq!(inputs.main.snapshot().sent, 1);
+        held.release_unless_main_powered_off().unwrap();
+        assert_eq!(inputs.main.snapshot().sent, 1);
+    }
+
+    #[test]
+    fn failed_release_retains_ownership() {
+        use l6max_host::input::{EngineInput, InputHub};
+        use std::sync::Arc;
+        let (main, peer) = EngineInput::pair().unwrap();
+        let (panel, _panel_peer) = EngineInput::pair().unwrap();
+        let inputs = Arc::new(InputHub::new(main, panel, l6fw::Model::L6));
+        drop(peer);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let mut held = super::HeldButton {
+            inputs,
+            target: 53,
+            held: true,
+        };
+        assert!(held.release_unless_main_powered_off().is_err());
+        assert!(held.is_held());
     }
 }

@@ -244,7 +244,9 @@ impl SocketDebugSession {
         }
         let close = matches!(
             command,
-            DebugCommand::Close | DebugCommand::L6MidiFinish { .. }
+            DebugCommand::Close
+                | DebugCommand::L6MidiFinish { .. }
+                | DebugCommand::L6DinFinish { .. }
         );
         let result = (|| {
             serde_json::to_writer(&mut self.writer, &command).map_err(ControlError::Protocol)?;

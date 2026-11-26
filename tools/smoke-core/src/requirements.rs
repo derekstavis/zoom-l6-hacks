@@ -107,7 +107,19 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6GpioRelease
         | Action::L6GpioSettle
         | Action::L6GpioEnd
-        | Action::L6DinEventDispatch { .. } => stock_on(L6),
+        | Action::L6DispatchBegin { .. }
+        | Action::L6DispatchTask
+        | Action::L6DispatchSemaphore
+        | Action::L6DispatchIdle
+        | Action::L6DispatchInject
+        | Action::L6DispatchWake
+        | Action::L6DispatchState
+        | Action::L6DispatchReader
+        | Action::L6DispatchEvent
+        | Action::L6DispatchEq
+        | Action::L6DispatchObserve
+        | Action::L6DispatchSetter { .. }
+        | Action::L6DispatchFinish => stock_on(L6),
         Action::L6UsbStartup => Requirement {
             first: true,
             ..stock_on(L6)

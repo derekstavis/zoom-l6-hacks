@@ -690,6 +690,44 @@ impl Scenario {
         }
         for model in &value.models {
             let steps: Vec<_> = value.step.iter().filter(|s| s.applies_to(*model)).collect();
+            let is_dispatch = |a: &Action| {
+                matches!(
+                    a,
+                    Action::L6DispatchBegin { .. }
+                        | Action::L6DispatchTask
+                        | Action::L6DispatchSemaphore
+                        | Action::L6DispatchIdle
+                        | Action::L6DispatchInject
+                        | Action::L6DispatchWake
+                        | Action::L6DispatchState
+                        | Action::L6DispatchReader
+                        | Action::L6DispatchEvent
+                        | Action::L6DispatchEq
+                        | Action::L6DispatchObserve
+                        | Action::L6DispatchSetter { .. }
+                        | Action::L6DispatchFinish
+                )
+            };
+            if let Some(begin) = steps.iter().position(|s| is_dispatch(&s.action)) {
+                let scope = steps
+                    .get(begin..begin + 21)
+                    .ok_or("incomplete terminal DIN dispatch")?;
+                if *model != l6fw::Model::L6 || begin != 0 || begin+21 != steps.len()
+                    || !matches!(scope[0].action, Action::L6DispatchBegin { .. }) || !matches!(scope[1].action, Action::L6DispatchTask)
+                    || !matches!(scope[2].action, Action::L6DispatchSemaphore) || !matches!(scope[3].action, Action::L6DispatchIdle)
+                    || !matches!(scope[4].action, Action::L6DispatchInject) || !matches!(scope[5].action, Action::L6DispatchWake)
+                    || !matches!(scope[6].action, Action::L6DispatchState) || !matches!(scope[7].action, Action::L6DispatchReader)
+                    || !matches!(scope[8].action, Action::L6DispatchEvent) || !matches!(scope[9].action, Action::L6DispatchEq)
+                    || !matches!(scope[10].action, Action::L6DispatchObserve)
+                    || !(0..9).all(|index| matches!(scope[11+index].action, Action::L6DispatchSetter { index: actual, value } if usize::from(actual)==index && value<=127))
+                    || !matches!(scope[20].action, Action::L6DispatchFinish)
+                    || scope.iter().any(|s| (s.guest_timeout_ms,s.wall_timeout_s)!=(scope[0].guest_timeout_ms,scope[0].wall_timeout_s)) {
+                    return Err("terminal L6 DIN dispatch requires all ordered phases and a shared budget".into());
+                }
+            }
+        }
+        for model in &value.models {
+            let steps: Vec<_> = value.step.iter().filter(|s| s.applies_to(*model)).collect();
             let is_gpio = |a: &Action| {
                 matches!(
                     a,
@@ -2092,7 +2130,7 @@ impl Scenario {
                     return Err("panel-event requires valid target/map values".into());
                 }
             }
-            if let Action::L6DinEventDispatch { group, .. } = &step.action {
+            if let Action::L6DispatchBegin { group, .. } = &step.action {
                 if *group > 15 {
                     return Err("l6-din-event-dispatch requires a group from 0 to 15".into());
                 }

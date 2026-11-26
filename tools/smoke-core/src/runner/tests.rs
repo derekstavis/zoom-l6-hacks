@@ -1890,6 +1890,31 @@ fn effect_slot_wait_requires_matching_adjacent_assertion_and_budget() {
 }
 
 #[test]
+fn terminal_l6_dispatch_requires_all_ordered_setters_and_shared_budget() {
+    let source = include_str!("../../../../tests/emulator/cases/panel/l6-event-dispatch.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    assert!(Scenario::from_text(&source.replacen("index = 4", "index = 5", 1)).is_err());
+    assert!(
+        Scenario::from_text(&source.replacen(
+            "guest_timeout_ms = 600000\nwall_timeout_s = 1800",
+            "guest_timeout_ms = 600000\nwall_timeout_s = 1799",
+            1
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replace(
+            "action = \"l6-dispatch-finish\"",
+            "action = \"l6-dispatch-setter\""
+        ))
+        .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replace("models = [\"l6\"]", "models = [\"l6max\"]")).is_err()
+    );
+}
+
+#[test]
 fn tap_handler_requires_complete_ordered_scope_and_shared_budget() {
     let source = include_str!("../../../../tests/emulator/cases/panel/l6max-tap-handler.toml");
     assert!(Scenario::from_text(source).is_ok());

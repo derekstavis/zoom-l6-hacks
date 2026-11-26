@@ -3250,13 +3250,8 @@ impl State {
                 if self.midi.is_none() {
                     return Err("usb-sysex needs a preceding USB MIDI enumeration".into());
                 }
-                let guest = session
-                    .engine
-                    .inputs
-                    .as_ref()
-                    .ok_or("panel input unavailable")?
-                    .panel
-                    .snapshot()
+                let guest = l6ctl::OwnedControl::new(&session.engine)
+                    .input_status(l6ctl::InputSource::Panel)?
                     .guest_ms;
                 self.sysex_deadline =
                     Some((Instant::now(), guest, guest_timeout_ms, wall_timeout_s));
@@ -3270,13 +3265,8 @@ impl State {
                 if sysex_deadline_expired(
                     start.elapsed(),
                     guest,
-                    session
-                        .engine
-                        .inputs
-                        .as_ref()
-                        .ok_or("panel input unavailable")?
-                        .panel
-                        .snapshot()
+                    l6ctl::OwnedControl::new(&session.engine)
+                        .input_status(l6ctl::InputSource::Panel)?
                         .guest_ms,
                     budget,
                     wall,
@@ -3297,13 +3287,8 @@ impl State {
                     .sysex_deadline
                     .ok_or("USB SysEx campaign is not active")?;
                 let check = || -> Result<(), Box<dyn std::error::Error>> {
-                    let now = session
-                        .engine
-                        .inputs
-                        .as_ref()
-                        .ok_or("panel input unavailable")?
-                        .panel
-                        .snapshot()
+                    let now = l6ctl::OwnedControl::new(&session.engine)
+                        .input_status(l6ctl::InputSource::Panel)?
                         .guest_ms;
                     if sysex_deadline_expired(
                         started.elapsed(),
@@ -3326,13 +3311,8 @@ impl State {
                     .usb_sysex_send(endpoints, 2, &request.bytes)
                     .map_err(|error| error.to_string())?;
                 check()?;
-                let request_start = session
-                    .engine
-                    .inputs
-                    .as_ref()
-                    .unwrap()
-                    .panel
-                    .snapshot()
+                let request_start = l6ctl::OwnedControl::new(&session.engine)
+                    .input_status(l6ctl::InputSource::Panel)?
                     .guest_ms;
                 let mut decoder = l6ctl::UsbSysexDecoder::default();
                 loop {
@@ -3343,13 +3323,8 @@ impl State {
                         .usb_sysex_poll(endpoints, 2, &mut decoder)
                         .map_err(|error| error.to_string())?;
                     check()?;
-                    let elapsed = session
-                        .engine
-                        .inputs
-                        .as_ref()
-                        .unwrap()
-                        .panel
-                        .snapshot()
+                    let elapsed = l6ctl::OwnedControl::new(&session.engine)
+                        .input_status(l6ctl::InputSource::Panel)?
                         .guest_ms
                         .wrapping_sub(request_start);
                     if complete_on_match

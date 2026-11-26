@@ -1,6 +1,12 @@
 //! Editor pad assignment and playback over USB SysEx.
 use super::*;
 
+fn panel_guest(session: &Session) -> Result<u32, Box<dyn std::error::Error>> {
+    Ok(l6ctl::OwnedControl::new(&session.engine)
+        .input_status(l6ctl::InputSource::Panel)?
+        .guest_ms)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn editor_exchange(
     session: &Session,
@@ -122,14 +128,7 @@ fn collect_editor_sysex_inner(
     wall_deadline: Instant,
     expected: Option<&dyn Fn(&[u8]) -> bool>,
 ) -> Result<Vec<Vec<u8>>, Box<dyn std::error::Error>> {
-    let started = session
-        .engine
-        .inputs
-        .as_ref()
-        .unwrap()
-        .panel
-        .snapshot()
-        .guest_ms;
+    let started = panel_guest(session)?;
     let mut decoder = l6ctl::UsbSysexDecoder::default();
     loop {
         session.poll().map_err(std::io::Error::other)?;
@@ -139,14 +138,7 @@ fn collect_editor_sysex_inner(
         {
             return Ok(decoder.replies().to_vec());
         }
-        let now = session
-            .engine
-            .inputs
-            .as_ref()
-            .unwrap()
-            .panel
-            .snapshot()
-            .guest_ms;
+        let now = panel_guest(session)?;
         if now.wrapping_sub(started) >= timeout_ms {
             if !decoder.pending().is_empty() {
                 return Err(
@@ -204,14 +196,7 @@ impl UiPadScope {
         if session.engine.model() != l6fw::Model::L6max || pad > 3 {
             return Err("UI pad verification requires L6max and pad 0..3".into());
         }
-        let start_guest = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("panel input unavailable")?
-            .panel
-            .snapshot()
-            .guest_ms;
+        let start_guest = panel_guest(session)?;
         Ok(Self {
             pad,
             endpoints,
@@ -231,14 +216,7 @@ impl UiPadScope {
         guest_budget: u32,
         wall_budget: u64,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let guest = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("panel input unavailable")?
-            .panel
-            .snapshot()
-            .guest_ms;
+        let guest = panel_guest(session)?;
         if (guest_budget, wall_budget) != (self.guest_budget, self.wall_budget)
             || Instant::now() >= self.deadline
             || guest.wrapping_sub(self.start_guest) > self.guest_budget
@@ -338,14 +316,7 @@ impl UiPadScope {
             .assignments
             .iter()
             .any(|reply| l6ctl::editor_pad_assignment_present(reply, self.pad));
-        let guest = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("panel input unavailable")?
-            .panel
-            .snapshot()
-            .guest_ms;
+        let guest = panel_guest(session)?;
         let evidence = json!({"pad": self.pad + 1, "identity_replies": self.identity, "assignment_replies": self.assignments, "assigned": assigned, "guest_elapsed_ms": guest.wrapping_sub(self.start_guest)});
         fs::write(
             options
@@ -395,14 +366,7 @@ impl EditorPlaybackScope {
         if std::env::var_os("L6_AUDIO_SAMPLE_TRACE").is_none() {
             return Err("Editor playback requires L6_AUDIO_SAMPLE_TRACE=1".into());
         }
-        let start_guest = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("panel input unavailable")?
-            .panel
-            .snapshot()
-            .guest_ms;
+        let start_guest = panel_guest(session)?;
         Ok(Self {
             pad,
             endpoints,
@@ -426,14 +390,7 @@ impl EditorPlaybackScope {
         guest_budget: u32,
         wall_budget: u64,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let now = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("panel input unavailable")?
-            .panel
-            .snapshot()
-            .guest_ms;
+        let now = panel_guest(session)?;
         if (guest_budget, wall_budget) != (self.guest_budget, self.wall_budget)
             || Instant::now() >= self.deadline
             || now.wrapping_sub(self.start_guest) > self.guest_budget
@@ -515,15 +472,10 @@ impl EditorPlaybackScope {
         session: &Session,
         options: &Options,
     ) -> Result<Value, Box<dyn std::error::Error>> {
-        let inputs = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("panel input unavailable")?;
-        let start = inputs.panel.snapshot().guest_ms;
+        let start = panel_guest(session)?;
         loop {
             self.check(session, self.guest_budget, self.wall_budget)?;
-            let elapsed = inputs.panel.snapshot().guest_ms.wrapping_sub(start);
+            let elapsed = panel_guest(session)?.wrapping_sub(start);
             if elapsed >= 1200 {
                 self.trace_snapshot = Some(fs::read_to_string(options.logs.join("engine.trace"))?);
                 return Ok(json!({"observed_guest_ms": elapsed}));
@@ -542,14 +494,7 @@ impl EditorPlaybackScope {
             .as_deref()
             .ok_or("Editor playback trace is not captured")?;
         self.samples = l6ctl::sai1_tx_nonzero_counts(trace, self.trace_baseline);
-        let guest = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("panel input unavailable")?
-            .panel
-            .snapshot()
-            .guest_ms;
+        let guest = panel_guest(session)?;
         let evidence = json!({"pad":self.pad+1,"play_replies":self.play,"state_replies":self.state,"assignment_dialog_answered":self.dialog_answered,"playing_state":true,"nonzero_audio_samples":self.samples,"guest_elapsed_ms":guest.wrapping_sub(self.start_guest)});
         fs::write(
             options
@@ -592,14 +537,7 @@ impl EditorAssignmentScope {
         guest_budget: u32,
         wall_budget: u64,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let start_guest = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("editor assignments need panel inputs")?
-            .panel
-            .snapshot()
-            .guest_ms;
+        let start_guest = panel_guest(session)?;
         Ok(Self {
             endpoints,
             start_guest,
@@ -622,14 +560,7 @@ impl EditorAssignmentScope {
         guest: u32,
         wall: u64,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let now = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("panel input unavailable")?
-            .panel
-            .snapshot()
-            .guest_ms;
+        let now = panel_guest(session)?;
         if (guest, wall) != (self.guest_budget, self.wall_budget)
             || Instant::now() >= self.deadline
             || now.wrapping_sub(self.start_guest) > self.guest_budget

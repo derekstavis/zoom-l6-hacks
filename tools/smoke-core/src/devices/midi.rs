@@ -1601,6 +1601,15 @@ fn l6_accept_ordered_cc(expected: &[u8], index: &mut usize, cc: u8) -> bool {
     }
     *index == expected.len()
 }
+fn l6_reply_error(
+    attempt: usize,
+    matched: usize,
+    total: usize,
+    operation: &str,
+    error: &str,
+) -> String {
+    format!("L6 MIDI reply attempt {attempt} (matched {matched}/{total}), {operation}: {error}")
+}
 impl L6MidiProbe {
     fn remaining_ms(&self, session: &Session, cap_ms: u64) -> Result<u64, String> {
         if guest_now(session).wrapping_sub(self.guest_start) > self.guest_timeout {
@@ -1823,10 +1832,13 @@ impl State {
                 Ok(json!({"hook":pc,"event":event}))
             }
             Operation::L6MidiProbeExpectReplies if scope.phase == 3 => {
-                scope.advance(session, 10_000)?;
                 let mut index = 0;
                 let mut replies = Vec::new();
-                for _ in 0..scope.expected.len() + 64 {
+                let total = scope.expected.len();
+                scope
+                    .advance(session, 10_000)
+                    .map_err(|e| l6_reply_error(1, index, total, "advance to sender", &e))?;
+                for attempt in 1..=total + 64 {
                     let timeout_ms = scope.remaining_ms(session, 60_000)?;
                     let O::L6MidiSender {
                         length,
@@ -1834,7 +1846,9 @@ impl State {
                         return_pc,
                         bytes: Some(bytes),
                         ..
-                    } = scope.command(session, C::L6MidiSender { timeout_ms })?
+                    } = scope
+                        .command(session, C::L6MidiSender { timeout_ms })
+                        .map_err(|e| l6_reply_error(attempt, index, total, "read sender", &e))?
                     else {
                         return Err("expected a three-byte L6 sender observation".into());
                     };
@@ -1851,28 +1865,48 @@ impl State {
                     replies.push(bytes);
                     if complete {
                         let timeout_ms = scope.remaining_ms(session, 60_000)?;
-                        scope.command(
-                            session,
-                            C::L6MidiBreakpoint {
-                                address: midi_send,
-                                enabled: false,
-                                timeout_ms,
-                            },
-                        )?;
+                        scope
+                            .command(
+                                session,
+                                C::L6MidiBreakpoint {
+                                    address: midi_send,
+                                    enabled: false,
+                                    timeout_ms,
+                                },
+                            )
+                            .map_err(|e| {
+                                l6_reply_error(
+                                    attempt,
+                                    index,
+                                    total,
+                                    "remove sender breakpoint",
+                                    &e,
+                                )
+                            })?;
                         let timeout_ms = scope.remaining_ms(session, 60_000)?;
-                        scope.command(
-                            session,
-                            C::L6MidiBreakpoint {
-                                address: return_pc,
-                                enabled: true,
-                                timeout_ms,
-                            },
-                        )?;
-                        scope.advance(session, 10_000)?;
+                        scope
+                            .command(
+                                session,
+                                C::L6MidiBreakpoint {
+                                    address: return_pc,
+                                    enabled: true,
+                                    timeout_ms,
+                                },
+                            )
+                            .map_err(|e| {
+                                l6_reply_error(attempt, index, total, "arm return breakpoint", &e)
+                            })?;
+                        scope.advance(session, 10_000).map_err(|e| {
+                            l6_reply_error(attempt, index, total, "advance to return", &e)
+                        })?;
                         let timeout_ms = scope.remaining_ms(session, 60_000)?;
                         let O::L6MidiFinished {
                             requires_restart: true,
-                        } = scope.command(session, C::L6MidiFinish { timeout_ms })?
+                        } = scope
+                            .command(session, C::L6MidiFinish { timeout_ms })
+                            .map_err(|e| {
+                                l6_reply_error(attempt, index, total, "finish probe", &e)
+                            })?
                         else {
                             return Err("L6 MIDI probe did not finish stopped".into());
                         };
@@ -1880,8 +1914,14 @@ impl State {
                         return Ok(json!({"replies":replies,"requires_restart":true}));
                     }
                     let timeout_ms = scope.remaining_ms(session, 60_000)?;
-                    scope.command(session, C::L6MidiStep { timeout_ms })?;
-                    scope.advance(session, 10_000)?;
+                    scope
+                        .command(session, C::L6MidiStep { timeout_ms })
+                        .map_err(|e| {
+                            l6_reply_error(attempt, index, total, "step past sender", &e)
+                        })?;
+                    scope.advance(session, 10_000).map_err(|e| {
+                        l6_reply_error(attempt, index, total, "advance to next sender", &e)
+                    })?;
                 }
                 Err(format!(
                     "L6 MIDI sync matched {index}/{} expected CCs",
@@ -1896,6 +1936,13 @@ impl State {
 #[cfg(test)]
 mod l6_hook_probe_tests {
     use super::*;
+    #[test]
+    fn reply_error_keeps_operation_progress_and_underlying_error() {
+        assert_eq!(
+            l6_reply_error(4, 2, 54, "step past sender", "GDB packet deadline exceeded"),
+            "L6 MIDI reply attempt 4 (matched 2/54), step past sender: GDB packet deadline exceeded"
+        );
+    }
     #[test]
     fn map_is_channel_major_and_replies_are_ordered_with_duplicates() {
         let mut map = [0xff; 54];

@@ -139,12 +139,9 @@ impl Scope {
             .debug_session_before(deadline)
             .map_err(|e| e.to_string())?;
         let setup = (|| -> Result<_, String> {
-            l6max_host::l6_din_dispatch::verify_before_checked(
-                &session.engine.management[0],
-                l6fw::Model::L6,
-                deadline,
-                &check,
-            )?;
+            control
+                .verify_l6_din_dispatch_before_checked(deadline, &check)
+                .map_err(|e| e.to_string())?;
             let reader = control
                 .l6_din_reader_before_checked(deadline, &check)
                 .map_err(|e| e.to_string())?;

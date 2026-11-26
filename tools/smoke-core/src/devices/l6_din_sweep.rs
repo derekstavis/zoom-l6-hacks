@@ -15,7 +15,7 @@ pub(super) struct Scope {
     cancel: Arc<AtomicBool>,
     monitor: Option<thread::JoinHandle<Result<[u32; 4], String>>>,
     emergency: Option<l6max_host::debug::CancellationHandle>,
-    qmp: l6max_host::qmp::QmpClient,
+    main_stop: l6ctl::MainStopHandle,
     before_ring: u32,
     previous_ring: u32,
     changes: Vec<(u8, u32, u32)>,
@@ -138,7 +138,9 @@ impl Scope {
             cancel: Arc::new(AtomicBool::new(false)),
             monitor: None,
             emergency: None,
-            qmp: session.engine.management[0].clone(),
+            main_stop: l6ctl::OwnedControl::new(&session.engine)
+                .main_stop_handle()
+                .map_err(|e| e.to_string())?,
             before_ring: 0,
             previous_ring: 0,
             changes: Vec::new(),
@@ -506,7 +508,7 @@ impl Scope {
                 }
             }
             if let Err(error) = self
-                .qmp
+                .main_stop
                 .stop_before(Instant::now() + Duration::from_secs(3))
             {
                 emergency_error = Some(match emergency_error {

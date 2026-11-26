@@ -139,10 +139,10 @@ pub(in crate::devices) fn begin(
     }
     let control = l6ctl::OwnedControl::new(&session.engine);
     let assignment_ready = if model == l6fw::Model::L6 {
-        let address = l6::sound_pad_assignments + u32::from(pad);
         let start_guest = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
         let deadline = (Instant::now() + Duration::from_secs(30))
             .min(overall.0 + Duration::from_secs(wall_budget));
+        let reader = control.sound_pad_reader_before(deadline)?;
         let check_outer = || -> Result<(), Box<dyn std::error::Error>> {
             let guest = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
             if Instant::now() >= deadline || guest.wrapping_sub(overall.1) > guest_budget {
@@ -152,10 +152,10 @@ pub(in crate::devices) fn begin(
         };
         loop {
             check_outer()?;
-            let pending = control.read_main_memory_before(address, 1, deadline)?.bytes[0];
+            let pending = reader.sample_before(pad, None, deadline)?.pending;
             check_outer()?;
             if pending == 0 {
-                break json!({"address":format!("{address:#010x}"),"pending":pending});
+                break json!({"address":format!("{:#010x}", l6::sound_pad_assignments + u32::from(pad)),"pending":pending});
             }
             if control
                 .input_status(l6ctl::InputSource::Panel)?
@@ -164,7 +164,7 @@ pub(in crate::devices) fn begin(
                 >= guest_budget
                 || Instant::now() >= deadline
             {
-                return Err(format!("L6 saved pad {} assignment is still pending ({pending:#04x}) at {address:#010x}; refusing to press before the file assignment completes",pad+1).into());
+                return Err(format!("L6 saved pad {} assignment is still pending ({pending:#04x}) at {:#010x}; refusing to press before the file assignment completes",pad+1, l6::sound_pad_assignments + u32::from(pad)).into());
             }
             wait_guest_duration(session, 100, deadline).map_err(std::io::Error::other)?;
         }

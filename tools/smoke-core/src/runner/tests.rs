@@ -2255,3 +2255,34 @@ fn usb_storage_requires_ordered_scope_and_matching_budgets() {
         Scenario::parse(&scenario.replace("[[step]]\naction='usb-storage-end'\n", "")).is_err()
     );
 }
+
+#[test]
+fn power_transaction_requires_each_ordered_observation_and_shared_budget() {
+    let source = include_str!("../../../../tests/emulator/cases/boot/power.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    for action in [
+        "power-wait-ack",
+        "power-observe-on",
+        "power-wait-off",
+        "power-observe-stopped",
+        "power-end",
+    ] {
+        let marker = format!("action = \"{action}\"");
+        let at = source.find(&marker).unwrap();
+        let start = source[..at].rfind("[[step]]").unwrap();
+        let end = source[at..]
+            .find("[[step]]")
+            .map_or(source.len(), |offset| at + offset);
+        let changed = format!("{}{}", &source[..start], &source[end..]);
+        assert!(Scenario::from_text(&changed).is_err(), "missing {action}");
+    }
+    assert!(
+        Scenario::from_text(&source.replacen("min_cutoff_ms = 300", "min_cutoff_ms = 1", 1))
+            .is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replacen("observe_wall_ms = 200", "observe_wall_ms = 1", 1))
+            .is_err()
+    );
+    assert!(Scenario::from_text(&source.replacen("guest_ms = 1100", "guest_ms = 100", 1)).is_err());
+}

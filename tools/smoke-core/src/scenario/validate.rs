@@ -9,6 +9,7 @@ impl Scenario {
         }
         validate_models(&value.models)?;
         crate::requirements::check_scope(value)?;
+        validate_power_steps(value)?;
         if value.step.iter().any(|step| {
             matches!(
                 step.action,
@@ -1964,7 +1965,7 @@ impl Scenario {
                     }
                 }
             }
-            if let Action::PowerPress { hold_ms, .. } = &step.action {
+            if let Action::PowerBegin { hold_ms, .. } = &step.action {
                 if *hold_ms == 0 || *hold_ms > step.guest_timeout_ms {
                     return Err("power hold must fit the guest deadline".into());
                 }
@@ -2720,6 +2721,77 @@ fn validate_patch_parity(scenario: &Scenario) -> Result<(), String> {
             return Err(format!(
                 "patch parity profiles for {model} are incomplete or out of order"
             ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_power_steps(scenario: &Scenario) -> Result<(), String> {
+    for model in &scenario.models {
+        let steps: Vec<_> = scenario
+            .step
+            .iter()
+            .filter(|step| step.applies_to(*model))
+            .collect();
+        let mut i = 0;
+        while i < steps.len() {
+            if let Action::PowerBegin { hold_ms, powered } = steps[i].action {
+                let length = if powered { 4 } else { 5 };
+                let group = steps
+                    .get(i..i + length)
+                    .ok_or("incomplete power transaction")?;
+                if hold_ms == 0
+                    || hold_ms > 60_000
+                    || group.iter().any(|step| {
+                        step.wall_timeout_s != group[0].wall_timeout_s
+                            || step.guest_timeout_ms != group[0].guest_timeout_ms
+                    })
+                    || !matches!(group[1].action, Action::PowerWaitAck)
+                    || !matches!(group[length - 1].action, Action::PowerEnd)
+                {
+                    return Err("invalid power transaction sequence or budgets".into());
+                }
+                if powered {
+                    if !matches!(group[2].action, Action::PowerObserveOn { guest_ms } if guest_ms == hold_ms + 1000 && guest_ms <= group[0].guest_timeout_ms)
+                    {
+                        return Err(
+                            "powered observation must cover the hold plus 1000 panel guest ms"
+                                .into(),
+                        );
+                    }
+                } else {
+                    let expected = if *model == Model::L6 {
+                        (Some(300), Some(800))
+                    } else {
+                        (None, None)
+                    };
+                    if !matches!(group[2].action, Action::PowerWaitOff { min_cutoff_ms, max_cutoff_ms } if (min_cutoff_ms, max_cutoff_ms) == expected)
+                        || !matches!(
+                            group[3].action,
+                            Action::PowerObserveStopped {
+                                settle_wall_ms: 100,
+                                observe_wall_ms: 200
+                            }
+                        )
+                    {
+                        return Err(
+                            "power-off requires model cutoff and stopped-clock observations".into(),
+                        );
+                    }
+                }
+                i += length;
+            } else if matches!(
+                steps[i].action,
+                Action::PowerWaitAck
+                    | Action::PowerObserveOn { .. }
+                    | Action::PowerWaitOff { .. }
+                    | Action::PowerObserveStopped { .. }
+                    | Action::PowerEnd
+            ) {
+                return Err("power step outside a complete transaction".into());
+            } else {
+                i += 1;
+            }
         }
     }
     Ok(())

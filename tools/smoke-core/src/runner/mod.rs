@@ -273,7 +273,11 @@ impl Runner {
             .iter()
             .find(|step| step.applies_to(self.model))
             .is_some_and(|step| match &step.action {
-                Action::ExpectPowered { powered: false } => true,
+                Action::ExpectPowered { powered: false }
+                | Action::PowerWaitAck
+                | Action::PowerWaitOff { .. }
+                | Action::PowerObserveStopped { .. }
+                | Action::PowerEnd => true,
                 Action::LifecycleStop => true,
                 Action::Press { control } if control == "power" => true,
                 Action::Hold { control, .. } if control == "power" => true,
@@ -1161,12 +1165,39 @@ impl Runner {
                 }
                 Action::Restart => return Ok(Progress::Device(devices::Operation::Restart)),
                 Action::WarmReset => return Ok(Progress::Device(devices::Operation::WarmReset)),
-                Action::PowerPress { hold_ms, powered } => {
-                    return Ok(Progress::Device(devices::Operation::PowerPress {
+                Action::PowerBegin { hold_ms, powered } => {
+                    return Ok(Progress::Device(devices::Operation::PowerBegin {
                         hold_ms,
                         powered,
                     }));
                 }
+                Action::PowerWaitAck => {
+                    return Ok(Progress::Device(devices::Operation::PowerWaitAck));
+                }
+                Action::PowerObserveOn { guest_ms } => {
+                    return Ok(Progress::Device(devices::Operation::PowerObserveOn {
+                        guest_ms,
+                    }));
+                }
+                Action::PowerWaitOff {
+                    min_cutoff_ms,
+                    max_cutoff_ms,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::PowerWaitOff {
+                        min_cutoff_ms,
+                        max_cutoff_ms,
+                    }));
+                }
+                Action::PowerObserveStopped {
+                    settle_wall_ms,
+                    observe_wall_ms,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::PowerObserveStopped {
+                        settle_wall_ms,
+                        observe_wall_ms,
+                    }));
+                }
+                Action::PowerEnd => return Ok(Progress::Device(devices::Operation::PowerEnd)),
                 Action::ExpectPowered { powered } => obs.data.powered == powered,
                 Action::ExpectSettings { restored } => {
                     return Ok(Progress::Device(devices::Operation::ExpectSettings {

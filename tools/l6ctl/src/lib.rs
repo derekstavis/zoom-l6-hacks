@@ -22,6 +22,7 @@ pub use l6max_host::knob_popup::{
 };
 pub use l6max_host::memory::MemoryRead;
 pub use l6max_host::midi_config::Config as MidiConfig;
+pub use l6max_host::qmp::Status as QmpStatus;
 pub use l6max_host::sd_loader::{Site as SdLoaderSite, Snapshot as SdLoaderSnapshot};
 
 pub use l6max_host::editor::pad_assignment_present as editor_pad_assignment_present;
@@ -65,6 +66,7 @@ pub enum RtosKind {
 #[serde(tag = "command", rename_all = "kebab-case")]
 pub enum Request {
     Info,
+    QmpStatus,
     InputStatus { source: InputSource },
     InputAck { source: InputSource, sequence: u32 },
     SdLoaderStatus,
@@ -110,6 +112,7 @@ pub struct UsbControllerStatus {
 pub struct ButtonReceipt {
     pub target: u32,
     pub command: String,
+    pub sequence: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -263,6 +266,9 @@ impl ControlClient {
     }
 
     /// Sample aggregate counters for one running emulator input channel.
+    pub fn qmp_status(&self) -> Result<QmpStatus, ControlError> {
+        self.request_as(&Request::QmpStatus)
+    }
     pub fn input_status(&self, source: InputSource) -> Result<InputCounters, ControlError> {
         self.request_as(&Request::InputStatus { source })
     }
@@ -586,6 +592,19 @@ impl<'a> OwnedControl<'a> {
     }
 
     /// Sample the host's channel counters without opening a control socket.
+    pub fn qmp_status_before(
+        &self,
+        deadline: std::time::Instant,
+    ) -> Result<QmpStatus, ControlError> {
+        self.main_qmp()?
+            .status_before(deadline)
+            .map_err(|e| ControlError::Rejected(e.to_string()))
+    }
+    pub fn qmp_status(&self) -> Result<QmpStatus, ControlError> {
+        self.main_qmp()?
+            .query_status()
+            .map_err(|e| ControlError::Rejected(e.to_string()))
+    }
     pub fn input_status(&self, source: InputSource) -> Result<InputCounters, ControlError> {
         let inputs = self
             .engine
@@ -794,7 +813,8 @@ impl<'a> OwnedControl<'a> {
         if target >= l6max_host::controls::INPUT_COUNT as u32 || duration_ms > 60_000 {
             return Err(ControlError::Rejected("invalid held button".into()));
         }
-        self.engine
+        let sequence = self
+            .engine
             .inputs
             .as_ref()
             .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
@@ -803,13 +823,15 @@ impl<'a> OwnedControl<'a> {
         Ok(ButtonReceipt {
             target,
             command: "down".into(),
+            sequence,
         })
     }
     pub fn up(&self, target: u32) -> Result<ButtonReceipt, ControlError> {
         if target >= l6max_host::controls::INPUT_COUNT as u32 {
             return Err(ControlError::Rejected("invalid held button".into()));
         }
-        self.engine
+        let sequence = self
+            .engine
             .inputs
             .as_ref()
             .ok_or(ControlError::Unavailable("QEMU input unavailable"))?
@@ -818,6 +840,7 @@ impl<'a> OwnedControl<'a> {
         Ok(ButtonReceipt {
             target,
             command: "up".into(),
+            sequence,
         })
     }
 
@@ -930,10 +953,12 @@ impl<'a> OwnedControl<'a> {
             .inputs
             .as_ref()
             .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
-        control::enqueue_tap(inputs, target, hold_ms).map_err(ControlError::Rejected)?;
+        let sequence =
+            control::enqueue_tap(inputs, target, hold_ms).map_err(ControlError::Rejected)?;
         Ok(ButtonReceipt {
             target,
             command: "tap".into(),
+            sequence,
         })
     }
 

@@ -365,6 +365,11 @@ impl State {
     }
     /// Release held inputs and owned transport scopes before the guest exits.
     pub fn abort_auxiliary_scopes(&mut self) -> Result<(), String> {
+        let power = self
+            .power
+            .take()
+            .map(|mut scope| scope.release())
+            .transpose();
         let panel = self
             .panel_keys
             .take()
@@ -378,7 +383,11 @@ impl State {
         self.editor_playback = None;
         self.editor_assignment = None;
         self.signal_pwm = None;
-        panel.map(|_| ())
+        match (power, panel) {
+            (Ok(_), Ok(_)) => Ok(()),
+            (Err(error), Ok(_)) | (Ok(_), Err(error)) => Err(error),
+            (Err(a), Err(b)) => Err(format!("{a}; {b}")),
+        }
     }
     pub fn has_signal_pwm(&self) -> bool {
         self.signal_pwm.is_some()
@@ -2580,83 +2589,13 @@ impl State {
                 session.engine.management[0].system_reset()?;
                 Ok(json!({"reset":"qmp-system-reset"}))
             }
-            Operation::PowerPress { hold_ms, powered } => {
-                let inputs = session.engine.inputs.as_ref().unwrap();
-                // Power-button events are routed to MAIN even when sent as a
-                // tap. Its acknowledgement gives the exact guest timestamp
-                // at which the press was applied. The panel publishes the
-                // continuing guest clock used to bound short presses.
-                let input = &inputs.main;
-                let sequence = if powered {
-                    inputs.tap(53, hold_ms)?
-                } else {
-                    inputs.main.down(53, hold_ms)?
-                };
-                let mut started_guest_ms = None;
-                let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
-                loop {
-                    session.poll()?;
-                    let input_status = input.snapshot();
-                    if let Some(ack) = input_status.last_ack.filter(|ack| ack.sequence == sequence)
-                    {
-                        if !matches!(
-                            ack.kind,
-                            l6max_host::protocol::APPLIED | l6max_host::protocol::RELEASED
-                        ) {
-                            return Err("power press was rejected by the emulator".into());
-                        }
-                        started_guest_ms.get_or_insert(ack.duration_ms);
-                    }
-                    let main_status = inputs.main.snapshot();
-                    let off = main_status.powered_off;
-                    let elapsed = started_guest_ms
-                        .zip(main_status.powered_off_guest_ms)
-                        .map(|(started, stopped)| stopped.wrapping_sub(started));
-                    let guest_now = if powered {
-                        inputs.panel.snapshot().guest_ms
-                    } else {
-                        input_status.guest_ms
-                    };
-                    let guest_elapsed =
-                        started_guest_ms.map(|started| guest_now.wrapping_sub(started));
-                    if powered && off {
-                        return Err("short power press cut power".into());
-                    }
-                    if !powered && off {
-                        if session.engine.management[0].query_status()?.status != "shutdown" {
-                            return Err("power-off did not shut down QEMU".into());
-                        }
-                        // The input and panel guest clocks can differ by one
-                        // update interval while the main core shuts down.
-                        let elapsed = elapsed.ok_or(
-                            "power-off occurred before its input timestamps were observed",
-                        )?;
-                        if session.engine.model() == l6fw::Model::L6
-                            && !(300..=800).contains(&elapsed)
-                        {
-                            return Err(format!("L6 cutoff took {elapsed} guest ms").into());
-                        }
-                        thread::sleep(Duration::from_millis(100));
-                        let stopped = inputs.panel.snapshot().guest_ms;
-                        thread::sleep(Duration::from_millis(200));
-                        if inputs.panel.snapshot().guest_ms != stopped {
-                            return Err("guest clock advanced while powered off".into());
-                        }
-                        return Ok(
-                            json!({"powered":false,"held_guest_ms":elapsed,"clock_stopped":true}),
-                        );
-                    }
-                    if powered && guest_elapsed.is_some_and(|elapsed| elapsed >= hold_ms + 1000) {
-                        return Ok(json!({"powered":true,"held_guest_ms":hold_ms}));
-                    }
-                    if Instant::now() > deadline
-                        || powered
-                            && guest_elapsed.is_some_and(|elapsed| elapsed > guest_timeout_ms)
-                    {
-                        return Err("power transition timed out".into());
-                    }
-                    thread::sleep(Duration::from_millis(5));
-                }
+            operation @ (Operation::PowerBegin { .. }
+            | Operation::PowerWaitAck
+            | Operation::PowerObserveOn { .. }
+            | Operation::PowerWaitOff { .. }
+            | Operation::PowerObserveStopped { .. }
+            | Operation::PowerEnd) => {
+                self.run_power(session, operation, guest_timeout_ms, wall_timeout_s)
             }
             Operation::ExpectSettings { restored } => {
                 let state = options

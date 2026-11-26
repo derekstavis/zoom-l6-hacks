@@ -58,13 +58,15 @@ pub struct InputAck {
     pub source: InputSource,
     pub sequence: u32,
     pub state: InputAckState,
+    /// MAIN or panel virtual milliseconds at the applied acknowledgement.
+    pub applied_guest_ms: Option<u32>,
 }
 
 const RECEIPT_LIMIT: usize = 256;
 
 fn retire_input(
     status: &Mutex<InputStatus>,
-    receipts: &Mutex<VecDeque<(u32, InputAckState)>>,
+    receipts: &Mutex<VecDeque<(u32, InputAckState, Option<u32>)>>,
     error: String,
 ) {
     // The same status -> receipts order is used while registering a command.
@@ -72,7 +74,7 @@ fn retire_input(
     state.connected = false;
     state.error = Some(error);
     let mut receipts = receipts.lock().unwrap_or_else(|e| e.into_inner());
-    for (_, receipt) in receipts.iter_mut() {
+    for (_, receipt, _) in receipts.iter_mut() {
         if *receipt == InputAckState::Pending {
             *receipt = InputAckState::Unknown;
         }
@@ -108,6 +110,9 @@ pub struct InputCounters {
     pub source: InputSource,
     pub connected: bool,
     pub guest_ms: u32,
+    pub clock_updates: u64,
+    pub powered_off: bool,
+    pub powered_off_guest_ms: Option<u32>,
     pub sent: u64,
     pub applied: u64,
     pub released: u64,
@@ -120,7 +125,7 @@ struct Inner {
     sequence: AtomicU32,
     status: Arc<Mutex<InputStatus>>,
     frames: Arc<Mutex<FrameQueue>>,
-    receipts: Arc<Mutex<VecDeque<(u32, InputAckState)>>>,
+    receipts: Arc<Mutex<VecDeque<(u32, InputAckState, Option<u32>)>>>,
 }
 #[derive(Default)]
 struct FrameQueue {
@@ -154,7 +159,9 @@ impl EngineInput {
         let reader_status = status.clone();
         let frames = Arc::new(Mutex::new(FrameQueue::default()));
         let reader_frames = frames.clone();
-        let receipts = Arc::new(Mutex::new(VecDeque::<(u32, InputAckState)>::new()));
+        let receipts = Arc::new(Mutex::new(
+            VecDeque::<(u32, InputAckState, Option<u32>)>::new(),
+        ));
         let reader_receipts = receipts.clone();
         thread::Builder::new()
             .name("qemu-input-replies".into())
@@ -274,11 +281,12 @@ impl EngineInput {
                                 let mut receipts = reader_receipts
                                     .lock()
                                     .unwrap_or_else(|error| error.into_inner());
-                                if let Some((_, receipt)) = receipts
+                                if let Some((_, receipt, timestamp)) = receipts
                                     .iter_mut()
-                                    .find(|(sequence, _)| *sequence == message.sequence)
+                                    .find(|(sequence, _, _)| *sequence == message.sequence)
                                 {
                                     *receipt = if message.kind == protocol::APPLIED {
+                                        *timestamp = Some(message.duration_ms);
                                         InputAckState::Applied
                                     } else {
                                         InputAckState::Rejected
@@ -417,7 +425,7 @@ impl EngineInput {
             if receipts.len() == RECEIPT_LIMIT {
                 receipts.pop_front();
             }
-            receipts.push_back((sequence, InputAckState::Pending));
+            receipts.push_back((sequence, InputAckState::Pending, None));
             drop(receipts);
             drop(state);
         }
@@ -474,14 +482,17 @@ impl InputHub {
             .receipts
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        let receipt = receipts
+        let (state, applied_guest_ms) = receipts
             .iter()
-            .find(|(s, _)| *s == sequence)
-            .map_or(InputAckState::Unknown, |(_, status)| *status);
+            .find(|(s, _, _)| *s == sequence)
+            .map_or((InputAckState::Unknown, None), |(_, state, time)| {
+                (*state, *time)
+            });
         InputAck {
             source,
             sequence,
-            state: receipt,
+            state,
+            applied_guest_ms,
         }
     }
     /// Observe one channel without consuming its acknowledgements.
@@ -494,6 +505,9 @@ impl InputHub {
             source,
             connected: status.connected,
             guest_ms: status.guest_ms,
+            clock_updates: status.clock_updates,
+            powered_off: status.powered_off,
+            powered_off_guest_ms: status.powered_off_guest_ms,
             sent: status.sent,
             applied: status.applied,
             released: status.released,
@@ -593,6 +607,7 @@ mod tests {
         );
         Message {
             kind: protocol::APPLIED,
+            duration_ms: 77,
             ..two
         }
         .write(&mut wire)
@@ -602,6 +617,27 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             thread::sleep(Duration::from_millis(1));
         }
+        assert_eq!(
+            hub.acknowledgement(InputSource::Panel, second)
+                .applied_guest_ms,
+            Some(77)
+        );
+        Message {
+            kind: protocol::RELEASED,
+            duration_ms: 99,
+            ..two
+        }
+        .write(&mut wire)
+        .unwrap();
+        while hub.counters(InputSource::Panel).released == 0 {
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            hub.acknowledgement(InputSource::Panel, second)
+                .applied_guest_ms,
+            Some(77)
+        );
         assert_eq!(
             hub.acknowledgement(InputSource::Panel, first).state,
             InputAckState::Pending

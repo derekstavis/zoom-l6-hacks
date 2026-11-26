@@ -62,7 +62,7 @@ pub fn enqueue_encoder(
 }
 
 /// Enqueue a tap. This confirms enqueueing, not guest acknowledgement.
-pub fn enqueue_tap(inputs: &InputHub, target: u32, hold_ms: u32) -> Result<(), String> {
+pub fn enqueue_tap(inputs: &InputHub, target: u32, hold_ms: u32) -> Result<u32, String> {
     if target >= crate::controls::INPUT_COUNT as u32 {
         return Err(format!(
             "button target must be less than {}",
@@ -74,7 +74,6 @@ pub fn enqueue_tap(inputs: &InputHub, target: u32, hold_ms: u32) -> Result<(), S
     }
     inputs
         .tap(target, hold_ms)
-        .map(|_| ())
         .map_err(|error| error.to_string())
 }
 
@@ -294,6 +293,8 @@ fn execute(
             serde_json::to_value(crate::sd_loader::site(qmp, model, index)?)
                 .map_err(|e| e.to_string())
         }
+        "qmp-status" => serde_json::to_value(qmp.query_status().map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string()),
         "input-status" => {
             let source = match request.get("source").and_then(Value::as_str) {
                 Some("main") => InputSource::Main,
@@ -402,12 +403,12 @@ fn execute(
                 ));
             }
             let target = target as u32;
-            match command {
+            let sequence = match command {
                 "tap" => {
                     let hold = number(request, "hold_ms")?;
                     let hold =
                         u32::try_from(hold).map_err(|_| "hold_ms must be between 1 and 60000")?;
-                    enqueue_tap(inputs, target, hold)?;
+                    enqueue_tap(inputs, target, hold)?
                 }
                 "down" => {
                     let duration = number(request, "duration_ms")?;
@@ -416,14 +417,12 @@ fn execute(
                     }
                     inputs
                         .down(target, duration as u32)
-                        .map_err(|error| error.to_string())?;
+                        .map_err(|error| error.to_string())?
                 }
-                "up" => {
-                    inputs.up(target).map_err(|error| error.to_string())?;
-                }
+                "up" => inputs.up(target).map_err(|error| error.to_string())?,
                 _ => unreachable!(),
-            }
-            Ok(json!({"target":target,"command":command}))
+            };
+            Ok(json!({"target":target,"command":command,"sequence":sequence}))
         }
         "encoder" => {
             let channel = number(request, "channel")?;

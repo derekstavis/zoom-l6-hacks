@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const VERSION: u32 = 7;
+pub const VERSION: u32 = 8;
 pub const PATH_ENV: &str = "L6_TEST_PROGRESS";
 pub const RUN_ENV: &str = "L6_TEST_PROGRESS_RUN";
 pub const ATTEMPT_ENV: &str = "L6_TEST_PROGRESS_ATTEMPT";
@@ -61,6 +61,13 @@ pub enum SuiteEvent {
     },
     AttemptStarted {
         id: AttemptId,
+        progress_path: PathBuf,
+    },
+    CampaignMemberStarted {
+        id: AttemptId,
+        name: String,
+        index: usize,
+        total: usize,
         progress_path: PathBuf,
     },
     AttemptPhaseChanged {

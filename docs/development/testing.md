@@ -623,3 +623,11 @@ internal state uncertain; an unacknowledged mailbox handoff is also uncertain. I
 these cases the diagnostic leaves the guest stopped and reports the cleanup failure. A failed QMP stop leaves guest state unknown. This
 cleanup is best effort and does not run after process termination or panic; it
 does not roll back firmware activity that ran while the guest was resumed.
+
+Generated `patches-l6max_update_midi-sync` is one ordered campaign: it first
+checks rejection of the stock package with one checksum byte flipped, then
+installs and verifies the browser-patched MIDI package. Each member gets its
+own fixture, card, saved state and artifact directory. The case fails at the
+first failing member; `campaign.json` and the case identity retain the results
+and fixture identities of the members that ran. The watcher names the active
+member and its step. The case wall limit covers both members.

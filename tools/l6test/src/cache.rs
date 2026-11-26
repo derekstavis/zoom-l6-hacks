@@ -42,12 +42,36 @@ pub struct RunCache {
     clones: bool,
     builds: AtomicU64,
     entries: Mutex<HashMap<String, Entry>>,
-    stats: Mutex<BTreeMap<&'static str, Stats>>,
+    stats: Mutex<BTreeMap<String, Stats>>,
     file_hashes: Mutex<HashMap<PathBuf, String>>,
     values: Mutex<HashMap<String, String>>,
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct SharedCacheConfig {
+    root: PathBuf,
+    persistent: bool,
+    enabled: bool,
+}
+
 impl RunCache {
+    pub(crate) fn shared_config(&self) -> SharedCacheConfig {
+        SharedCacheConfig {
+            root: self.root.clone(),
+            persistent: self.persistent,
+            enabled: self.enabled,
+        }
+    }
+
+    /// The driver holds the checkout lease for this exact namespace while its
+    /// supervised members use the same lock-protected cache entries.
+    pub(crate) fn from_shared(config: SharedCacheConfig) -> Self {
+        let mut cache = Self::new(config.root);
+        cache.persistent = config.persistent;
+        cache.enabled = config.enabled;
+        cache
+    }
+
     pub fn new(root: PathBuf) -> Self {
         let clones = clones_files(&root);
         Self {
@@ -207,7 +231,10 @@ impl RunCache {
         let mut digest = format!("{:x}", Sha256::digest(cache_key.as_bytes()));
         if !self.enabled {
             let n = self.builds.fetch_add(1, Ordering::Relaxed);
-            digest = format!("{:x}", Sha256::digest(format!("{digest}\0{n}").as_bytes()));
+            digest = format!(
+                "{:x}",
+                Sha256::digest(format!("{digest}\0{}\0{n}", std::process::id()).as_bytes())
+            );
         }
         let entry = self
             .entries
@@ -228,13 +255,13 @@ impl RunCache {
             let target = directory.join(name);
             let staging = directory.join(format!("{name}.{}.building", std::process::id()));
             fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
-            let _lock = if self.persistent {
+            let _lock = if self.enabled {
                 Some(CacheLock::acquire(&directory.join(format!("{name}.lock")))?)
             } else {
                 None
             };
             let manifest = directory.join(format!("{name}.manifest.json"));
-            if self.persistent && target.is_dir() {
+            if self.enabled && target.is_dir() {
                 let expected = fs::read(&manifest)
                     .ok()
                     .and_then(|b| serde_json::from_slice::<BTreeMap<String, String>>(&b).ok());
@@ -260,7 +287,7 @@ impl RunCache {
                     .map_err(|e| format!("native patch toolchain changed: {e}"))?;
             }
             fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
-            let hashes = if self.persistent {
+            let hashes = if self.enabled {
                 Some(cache_contents(&staging)?)
             } else {
                 None
@@ -276,7 +303,7 @@ impl RunCache {
             Ok(target)
         });
         let mut stats = self.stats.lock().unwrap();
-        let stats = stats.entry(kind).or_default();
+        let stats = stats.entry(kind.to_owned()).or_default();
         if built {
             stats.builds += 1;
         } else {
@@ -314,6 +341,22 @@ impl RunCache {
             .unwrap()
             .insert(path.to_owned(), hash.clone());
         Ok(hash)
+    }
+
+    /// Incorporate counters from an isolated, supervised campaign member.
+    pub(crate) fn merge_stats(&self, value: &Value) -> Result<(), String> {
+        let entries = value.as_object().ok_or("invalid member cache statistics")?;
+        let mut stats = self.stats.lock().map_err(|e| e.to_string())?;
+        for (kind, counts) in entries {
+            let hits = counts["hits"].as_u64().ok_or("invalid member cache hits")?;
+            let builds = counts["builds"]
+                .as_u64()
+                .ok_or("invalid member cache builds")?;
+            let entry = stats.entry(kind.clone()).or_default();
+            entry.hits = entry.hits.saturating_add(hits);
+            entry.builds = entry.builds.saturating_add(builds);
+        }
+        Ok(())
     }
 
     /// Hits and builds per kind, for the report.
@@ -476,6 +519,49 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn supervised_members_share_cached_builds_across_processes() {
+        if let Some(root) = std::env::var_os("L6TEST_CACHE_PROCESS_TEST") {
+            use std::io::Write;
+            let root = PathBuf::from(root);
+            let cache = RunCache::new(root.join("cache"));
+            cache
+                .directory("card", "same-fixture", |path| {
+                    fs::create_dir_all(path).map_err(|e| e.to_string())?;
+                    let mut marker = fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(root.join("builds"))
+                        .map_err(|e| e.to_string())?;
+                    marker.write_all(b"build\n").map_err(|e| e.to_string())?;
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                    fs::write(path.join("fixture"), b"cached").map_err(|e| e.to_string())
+                })
+                .unwrap();
+            return;
+        }
+        let root = temp("process-share");
+        fs::create_dir_all(&root).unwrap();
+        let spawn = || {
+            std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "cache::tests::supervised_members_share_cached_builds_across_processes",
+                ])
+                .env("L6TEST_CACHE_PROCESS_TEST", &root)
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .unwrap()
+        };
+        let mut first = spawn();
+        let mut second = spawn();
+        assert!(first.wait().unwrap().success());
+        assert!(second.wait().unwrap().success());
+        assert!(spawn().wait().unwrap().success());
+        assert_eq!(fs::read_to_string(root.join("builds")).unwrap(), "build\n");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

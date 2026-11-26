@@ -2310,7 +2310,9 @@ fn warm_reset_requires_fresh_boot_sweep_before_mixer_ready() {
             old.data.indicators[4] |= 1 << 8;
         }
         old.panel.indicator_updates = 10;
+        runner.last_press_deadline = Some((Instant::now(), 1, 10, 2));
         runner.warm_reset(old.data.indicators, 10);
+        assert!(runner.last_press_deadline.is_none());
         let now = Instant::now();
         assert!(matches!(
             runner.advance(old.clone(), now).unwrap(),

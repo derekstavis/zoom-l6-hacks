@@ -318,6 +318,28 @@ fn execute(
             let counters = crate::heap::counters(qmp, model)?;
             serde_json::to_value(counters).map_err(|error| error.to_string())
         }
+        "menu" => {
+            let menu = request
+                .get("menu")
+                .and_then(Value::as_str)
+                .ok_or("menu needs a name")?;
+            let path = request
+                .get("path")
+                .and_then(Value::as_array)
+                .ok_or("menu needs a path")?
+                .iter()
+                .map(|v| v.as_str().map(str::to_owned).ok_or("invalid menu path"))
+                .collect::<Result<Vec<_>, _>>()?;
+            let snapshot = crate::menu::snapshot_before(
+                qmp,
+                model,
+                menu,
+                &path,
+                std::time::Instant::now() + std::time::Duration::from_secs(30),
+                || false,
+            )?;
+            serde_json::to_value(snapshot).map_err(|e| e.to_string())
+        }
         "memory-read" => {
             let address = request
                 .get("address")

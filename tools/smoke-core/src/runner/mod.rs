@@ -1832,10 +1832,14 @@ impl Runner {
                 Action::KnobPopupExpectValue => {
                     return Ok(Progress::Device(devices::Operation::KnobPopupExpectValue));
                 }
-                Action::ExpectMenu { menu, path, items } => {
-                    return Ok(Progress::Device(devices::Operation::ExpectMenu {
+                Action::CaptureMenu { menu, path } => {
+                    return Ok(Progress::Device(devices::Operation::CaptureMenu {
                         menu,
                         path,
+                    }));
+                }
+                Action::ExpectMenuItems { items } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectMenuItems {
                         items,
                     }));
                 }

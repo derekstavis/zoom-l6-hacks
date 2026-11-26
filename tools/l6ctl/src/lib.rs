@@ -28,6 +28,7 @@ pub use l6max_host::knob_popup::{
     RestorationSnapshot, Snapshot as KnobPopupSnapshot,
 };
 pub use l6max_host::memory::MemoryRead;
+pub use l6max_host::menu::Snapshot as MenuSnapshot;
 pub use l6max_host::midi_config::Config as MidiConfig;
 pub use l6max_host::qmp::Status as QmpStatus;
 pub use l6max_host::sd_loader::{Site as SdLoaderSite, Snapshot as SdLoaderSnapshot};
@@ -87,6 +88,10 @@ pub enum Request {
         index: u32,
     },
     HeapCounters,
+    Menu {
+        menu: String,
+        path: Vec<String>,
+    },
     MemoryRead {
         address: u32,
         length: usize,
@@ -346,7 +351,7 @@ impl ControlClient {
         // serialize and return its bounded error to this client.
         let timeout = if matches!(
             request,
-            Request::SdLoaderStatus | Request::SdLoaderSite { .. }
+            Request::SdLoaderStatus | Request::SdLoaderSite { .. } | Request::Menu { .. }
         ) {
             35
         } else if matches!(
@@ -399,6 +404,12 @@ impl ControlClient {
     /// One guarded, non-atomic live counter read (no heap traversal).
     pub fn heap_counters(&self) -> Result<HeapCounters, ControlError> {
         self.request_as(&Request::HeapCounters)
+    }
+    pub fn menu(&self, menu: &str, path: &[String]) -> Result<MenuSnapshot, ControlError> {
+        self.request_as(&Request::Menu {
+            menu: menu.into(),
+            path: path.into(),
+        })
     }
 
     pub fn read_main_memory(
@@ -562,6 +573,23 @@ impl<'a> OwnedControl<'a> {
             .map_err(|error| ControlError::Rejected(error.to_string()))
     }
 
+    pub fn menu_before(
+        &self,
+        menu: &str,
+        path: &[String],
+        deadline: std::time::Instant,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<MenuSnapshot, ControlError> {
+        l6max_host::menu::snapshot_before(
+            self.main_qmp()?,
+            self.engine.model(),
+            menu,
+            path,
+            deadline,
+            cancelled,
+        )
+        .map_err(ControlError::Rejected)
+    }
     pub fn debug_session(&self) -> Result<l6max_host::debug::Session, ControlError> {
         self.engine
             .debugger()

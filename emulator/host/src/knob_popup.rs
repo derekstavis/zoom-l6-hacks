@@ -135,7 +135,7 @@ fn read_word(
     ))
 }
 
-fn verify(
+pub(crate) fn verify(
     model: Model,
     read: &mut impl FnMut(u32, usize) -> Result<Vec<u8>, String>,
 ) -> Result<(), String> {

@@ -13401,7 +13401,7 @@
           "description": "Compare a menu's child titles with `items`. `menu` names a stock menu\n(`main`, `project`, `sound-pad`, `mixer` or `system`); `path` then\ndescends through child titles.",
           "properties": {
             "action": {
-              "const": "expect-menu",
+              "const": "capture-menu",
               "type": "string"
             },
             "guest_timeout_ms": {
@@ -13409,12 +13409,6 @@
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
-            },
-            "items": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
             },
             "menu": {
               "type": "string"
@@ -13447,7 +13441,50 @@
           },
           "required": [
             "action",
-            "menu",
+            "menu"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "expect-menu-items",
+              "type": "string"
+            },
+            "guest_timeout_ms": {
+              "default": 10000,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "items": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "models": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/Model"
+              },
+              "type": "array"
+            },
+            "setup_input": {
+              "default": false,
+              "description": "UI input that only brings the device to the scenario's starting\nstate. Skipped when the case state was built from a state spec.",
+              "type": "boolean"
+            },
+            "wall_timeout_s": {
+              "default": 180,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
             "items"
           ],
           "type": "object"
@@ -20081,7 +20118,8 @@
             "knob-popup-open",
             "knob-popup-expect-open",
             "knob-popup-expect-value",
-            "expect-menu",
+            "capture-menu",
+            "expect-menu-items",
             "patch-parity-prepare",
             "patch-parity-firmware",
             "patch-parity-loader",

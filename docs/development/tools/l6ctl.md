@@ -107,6 +107,11 @@ firmware report identifies the supplied MAIN image and contains an exact
 in-bounds knob callback export. The command reports fixture-derived guards;
 it does not inspect a running guest.
 
+`l6ctl menu NAME [PATH ...]` reads a bounded L6max menu snapshot, following
+child titles in order. It checks the GUI and menu submenu routine fingerprints;
+the running guest's tree is non-atomic, and the result does not verify pixels.
+The control socket limits this observation to 30 seconds.
+
 `ControlClient::heap_counters()` returns one guarded, non-atomic sample of the
 four allocator counters. In-process callers can create
 `OwnedControl::heap_counter_reader()` once for a bounded observation, then

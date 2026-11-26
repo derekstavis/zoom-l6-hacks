@@ -37,7 +37,6 @@ pub use l6max_host::qmp::Status as QmpStatus;
 pub use l6max_host::sd_loader::{Site as SdLoaderSite, Snapshot as SdLoaderSnapshot};
 pub use l6max_host::usb::Enumeration as UsbEnumeration;
 
-pub use l6max_host::audio_analysis;
 pub use l6max_host::editor::pad_assignment_present as editor_pad_assignment_present;
 pub use l6max_host::editor::{
     Request as EditorRequest, pad_dialog_pending as editor_pad_dialog_pending,
@@ -59,6 +58,7 @@ pub use l6max_host::update_bootloader::Outcome as InstallerOutcome;
 pub use l6max_host::update_state::{UpdateGuiState, UpdateState};
 pub use l6max_host::usb_midi::SysexDecoder as UsbSysexDecoder;
 pub use l6max_host::wav::Chunks as WavChunks;
+pub use l6max_host::{audio_analysis, audio_input};
 use l6max_host::{control, engine::Engine, freertos, qmp};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;

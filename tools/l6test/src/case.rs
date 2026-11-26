@@ -1010,7 +1010,7 @@ fn plan_invocation(
                 .bytes(&l6max_host::paths::repository_root())
                 .map_err(|e| e.to_string())?;
             audio_input.push((input.channel, format!("{:x}", Sha256::digest(&bytes))));
-            l6max_host::audio_input::prepare_bytes(&directory, u32::from(input.channel), &bytes)
+            l6ctl::audio_input::prepare_bytes(&directory, u32::from(input.channel), &bytes)
                 .map_err(|e| e.to_string())?;
         }
         command.env("L6_AUDIO_INPUT_DIR", directory);

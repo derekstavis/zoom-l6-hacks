@@ -1,10 +1,9 @@
-//! Offline audio measurements; no emulator or control socket is required.
+//! Offline audio preparation and measurements; no control socket is required.
 use l6ctl::audio_analysis;
 use serde_json::{Value, json};
 use std::fs;
 
-const USAGE: &str =
-    "usage: l6ctl audio compare SOURCE.wav CAPTURE.s32le | l6ctl audio tone CAPTURE.s32le HZ RATE";
+const USAGE: &str = "usage: l6ctl audio prepare SOURCE.wav DIRECTORY CHANNEL | l6ctl audio compare SOURCE.wav CAPTURE.s32le | l6ctl audio tone CAPTURE.s32le HZ RATE";
 
 fn capture(path: &str) -> Result<Vec<[f64; 2]>, String> {
     let bytes = fs::read(path).map_err(|error| format!("cannot read capture {path}: {error}"))?;
@@ -16,6 +15,18 @@ fn capture(path: &str) -> Result<Vec<[f64; 2]>, String> {
 
 pub fn run(args: &[String]) -> Result<Value, String> {
     match args {
+        [command, source, directory, channel] if command == "prepare" => {
+            let channel: u32 = channel.parse().map_err(|_| "invalid audio channel")?;
+            if !(1..=8).contains(&channel) {
+                return Err("audio channel must be 1..8".into());
+            }
+            let directory = std::path::Path::new(directory);
+            l6ctl::audio_input::prepare(directory, channel, std::path::Path::new(source))
+                .map_err(|error| error.to_string())?;
+            Ok(
+                json!({"channel": channel, "prepared_path": l6ctl::audio_input::channel_path(directory, channel)}),
+            )
+        }
         [command, source, captured] if command == "compare" => {
             let bytes = fs::read(source)
                 .map_err(|error| format!("cannot read source {source}: {error}"))?;
@@ -68,6 +79,17 @@ mod tests {
         }
         fs::write(&source, wav).unwrap();
         fs::write(&raw, captured).unwrap();
+        let prepared = run(&[
+            "prepare".into(),
+            source.to_str().unwrap().into(),
+            path.to_str().unwrap().into(),
+            "2".into(),
+        ])
+        .unwrap();
+        assert_eq!(prepared["channel"], 2);
+        let bytes = fs::read(path.join("channel-2.f32")).unwrap();
+        assert_eq!(bytes.len(), 480 * 8);
+
         let source = source.to_str().unwrap().to_owned();
         let raw = raw.to_str().unwrap().to_owned();
         let result = run(&["compare".into(), source, raw.clone()]).unwrap();

@@ -3648,6 +3648,7 @@ dependencies = [
  "firmware-api",
  "gif 0.14.2",
  "image",
+ "l6ctl",
  "l6fw",
  "l6max-host",
  "l6nor",

@@ -545,7 +545,9 @@ change the running guest's SD medium; the CLI resolves an inserted path before
 sending it to the local control socket. Rust control clients sending a path
 directly should use an absolute path.
 
-### Offline audio analysis
+### Offline audio preparation and analysis
+
+`l6ctl audio prepare SOURCE.wav DIRECTORY CHANNEL` converts a WAV into the prepared 48 kHz stereo float file for a one-based channel in the explicitly supplied audio-input directory. The command does not tell a running emulator to reload the file; follow it with `audio-input load CHANNEL true` on that emulator's control socket. The directory is the emulator's `L6_AUDIO_INPUT_DIR`, or `audio-input` within its state directory (logs directory if no state directory was supplied).
 
 `l6ctl audio compare SOURCE.wav CAPTURE.s32le` reports the best alignment, per-channel gains and residual for a WAV source against a raw stereo S32LE capture. `l6ctl audio tone CAPTURE.s32le HZ RATE` reports per-channel tone levels in dBFS. Both commands output JSON and require no emulator socket. They measure audio; callers choose their own pass/fail thresholds. The WAV analysis reader accepts 16-bit PCM or 32-bit float with one or two channels, matching the test runner's existing analysis policy.
 

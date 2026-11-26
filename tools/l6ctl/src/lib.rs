@@ -36,6 +36,10 @@ pub use l6max_host::usb::Enumeration as UsbEnumeration;
 
 pub use l6max_host::editor::pad_assignment_present as editor_pad_assignment_present;
 pub use l6max_host::editor::{
+    Request as EditorRequest, pad_dialog_pending as editor_pad_dialog_pending,
+    pad_playing as editor_pad_playing,
+};
+pub use l6max_host::editor::{
     pad_assignment_matches as editor_pad_assignment_matches,
     pad_file_count as editor_pad_file_count, pad_filename_valid as editor_pad_filename_valid,
 };

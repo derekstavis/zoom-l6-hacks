@@ -3538,21 +3538,19 @@ impl State {
                     Operation::EditorAssignIdentity => scope.identity(session)?,
                     Operation::EditorAssignGlobal => scope.expected(
                         session,
-                        &[0xf0, 0x52, 0, 0, 0x2b, 0xf7],
+                        &l6ctl::EditorRequest::GlobalSettings.encode(),
                         &[0xf0, 0x52, 0, 0, 0x2a],
                         "global settings",
                     )?,
                     Operation::EditorAssignVersion => scope.expected(
                         session,
-                        &[
-                            0xf0, 0x52, 0, 0, 0x45, 0x05, 0x02, 0, 0, 0, 0, 0, 0x27, 0, 0xf7,
-                        ],
+                        &l6ctl::EditorRequest::ApplicationVersion.encode(),
                         &[0xf0, 0x52, 0, 0, 0, 0x11],
                         "application version",
                     )?,
                     Operation::EditorAssignSdInfo => scope.expected(
                         session,
-                        &[0xf0, 0x52, 0, 0, 0x67, 0x01, 0xf7],
+                        &l6ctl::EditorRequest::SdInfo.encode(),
                         &[0xf0, 0x52, 0, 0, 0x67, 0x00],
                         "SD card information",
                     )?,
@@ -3642,13 +3640,13 @@ impl State {
                     Operation::UiPadIdentity => scope.identity(session)?,
                     Operation::UiPadGlobal => scope.expected(
                         session,
-                        &[0xf0, 0x52, 0, 0, 0x2b, 0xf7],
+                        &l6ctl::EditorRequest::GlobalSettings.encode(),
                         &[0xf0, 0x52, 0, 0, 0x2a],
                         "global settings",
                     )?,
                     Operation::UiPadKeepAlive => scope.expected(
                         session,
-                        &[0xf0, 0x52, 0, 0, 0x31, 0x0b, 0xf7],
+                        &l6ctl::EditorRequest::KeepAlive.encode(),
                         &[0xf0, 0x52, 0, 0, 0, 0x0b],
                         "keep-alive",
                     )?,

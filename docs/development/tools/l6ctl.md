@@ -525,7 +525,7 @@ Rust callers use `OwnedControl::debug_session()` for an owned engine or
 
 `l6ctl effect-slot REPORT MODULE` reads the selected effect, processor and editor modes from the same fixture-bound loaded module. Add `--active`, `--output`, `--applied`, `--refresh`, `--dialog`, `--parameter ID`, or `--ring INDEX` for optional fields. Ring indices are zero-based and return the raw Q16.16 position. The snapshot is non-atomic; parameter values are returned as raw IEEE-754 bits to preserve non-finite values. Module code and registry identity are checked before reading, and absent optional exports are reported when requested (an absent dialog export returns null).
 
-The in-process `OwnedControl` API offers USB SysEx send and poll against an already enumerated endpoint. The caller owns its connection, receive queue and deadlines. These operations are not exposed through the control socket or CLI.
+The in-process `OwnedControl` API offers USB SysEx send and poll against an already enumerated endpoint. The caller owns its connection, receive queue and deadlines. These operations are not exposed through the control socket or CLI. `EditorRequest` encodes the Editor pad and setup requests, and the `editor_pad_*` helpers interpret pad replies. Callers still select the sequence, validate model-specific arguments, and manage collection windows; these protocol helpers do not start an Editor session.
 
 `l6ctl panel-key CODE` reads the L6max 1.10 sound-pad key lookup and six state words for codes 25–28. The revision guard is checked before reading. The table and state reads are non-atomic; the returned input state is not evidence of an OLED rendering.
 

@@ -72,7 +72,7 @@ pub(super) fn refresh_editor_session(
         usb,
         endpoints,
         encoder,
-        &[0xf0, 0x52, 0, 0, 0x31, 0x0b, 0xf7],
+        &l6ctl::EditorRequest::KeepAlive.encode(),
         &[0xf0, 0x52, 0, 0, 0, 0x0b],
         start_guest,
         guest_timeout_ms,
@@ -172,9 +172,7 @@ pub(super) fn answer_editor_pad_dialog(
     encoder: &mut l6max_host::usb_midi::Encoder,
     replies: &[Vec<u8>],
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    let pending = replies.iter().any(|reply| {
-        reply.get(4..6) == Some(&[0x45, 0x06]) || reply.get(4..7) == Some(&[0x31, 0x10, 0x06])
-    });
+    let pending = l6ctl::editor_pad_dialog_pending(replies);
     if !pending {
         return Ok(false);
     }
@@ -182,7 +180,7 @@ pub(super) fn answer_editor_pad_dialog(
         output,
         encoder,
         2,
-        &[0xf0, 0x52, 0, 0, 0x31, 0x12, 0x06, 0x01, 0xf7],
+        &l6ctl::EditorRequest::AcceptPadDialog.encode(),
     )?;
     Ok(true)
 }
@@ -270,7 +268,7 @@ impl UiPadScope {
             self.endpoints.output,
             &mut self.encoder,
             2,
-            &[0xf0, 0x7e, 0, 0x06, 0x01, 0xf7],
+            &l6ctl::EditorRequest::Identity.encode(),
         )?;
         self.identity = collect_editor_sysex(
             session,
@@ -329,7 +327,7 @@ impl UiPadScope {
                 usb,
                 self.endpoints,
                 &mut self.encoder,
-                &[0xf0, 0x52, 0, 0, 0x46, 0x02, self.pad, 0xf7],
+                &l6ctl::EditorRequest::PadAssignment { pad: self.pad }.encode(),
                 300,
                 self.start_guest,
                 self.guest_budget,
@@ -479,7 +477,7 @@ impl EditorPlaybackScope {
             usb,
             self.endpoints,
             &mut self.encoder,
-            &[0xf0, 0x52, 0, 0, 0x31, 0x08, self.pad, 1, 0xf7],
+            &l6ctl::EditorRequest::PlayPad { pad: self.pad }.encode(),
             100,
             self.start_guest,
             self.guest_budget,
@@ -503,18 +501,14 @@ impl EditorPlaybackScope {
                 usb,
                 self.endpoints,
                 &mut self.encoder,
-                &[0xf0, 0x52, 0, 0, 0x46, 0x03, self.pad, 0xf7],
+                &l6ctl::EditorRequest::PadPlaybackState { pad: self.pad }.encode(),
                 250,
                 self.start_guest,
                 self.guest_budget,
                 self.deadline,
             )?;
             self.check(session, self.guest_budget, self.wall_budget)?;
-            if self
-                .state
-                .iter()
-                .any(|reply| reply.get(4..8) == Some(&[0x45, 0x03, self.pad, 0x01]))
-            {
+            if l6ctl::editor_pad_playing(&self.state, self.pad) {
                 return Ok(json!({"state_replies":self.state,"playing_state":true}));
             }
             if answer_editor_pad_dialog(usb, self.endpoints.output, &mut self.encoder, &self.state)?
@@ -675,7 +669,7 @@ impl EditorAssignmentScope {
             self.endpoints.output,
             &mut self.encoder,
             2,
-            &[0xf0, 0x7e, 0, 0x06, 0x01, 0xf7],
+            &l6ctl::EditorRequest::Identity.encode(),
         )?;
         let replies = collect_editor_sysex(
             session,
@@ -751,7 +745,7 @@ impl EditorAssignmentScope {
             self.endpoints.output,
             &mut self.encoder,
             2,
-            &[0xf0, 0x52, 0, 0, 0x46, 0, pad, 0xf7],
+            &l6ctl::EditorRequest::PadFileCount { pad }.encode(),
         )?;
         let replies = collect_editor_sysex_inner(
             session,
@@ -789,7 +783,7 @@ impl EditorAssignmentScope {
                 self.endpoints.output,
                 &mut self.encoder,
                 2,
-                &[0xf0, 0x52, 0, 0, 0x46, 1, pad, 0, 0, 0xf7],
+                &l6ctl::EditorRequest::PadFilename { pad }.encode(),
             )?;
             let replies = collect_editor_sysex_inner(
                 session,
@@ -825,9 +819,7 @@ impl EditorAssignmentScope {
             .assignment_args
             .as_ref()
             .ok_or("missing selected filename")?;
-        let mut request = vec![0xf0, 0x52, 0, 0, 0x31, 0x05];
-        request.extend_from_slice(args);
-        request.push(0xf7);
+        let request = l6ctl::EditorRequest::AssignPad { args: args.clone() }.encode();
         let control = l6ctl::OwnedControl::new(&session.engine);
         let usb = &control;
         usb.usb_midi_send(self.endpoints.output, &mut self.encoder, 2, &request)?;
@@ -878,7 +870,7 @@ impl EditorAssignmentScope {
                 self.endpoints.output,
                 &mut self.encoder,
                 2,
-                &[0xf0, 0x52, 0, 0, 0x46, 2, pad, 0xf7],
+                &l6ctl::EditorRequest::PadAssignment { pad }.encode(),
             )?;
             replies = collect_editor_sysex(
                 session,

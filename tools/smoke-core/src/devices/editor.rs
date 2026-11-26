@@ -17,7 +17,7 @@ pub(super) fn editor_exchange(
     collect_editor_sysex(
         session,
         usb,
-        endpoints.input,
+        endpoints,
         timeout_ms,
         start_guest,
         guest_timeout_ms,
@@ -46,7 +46,7 @@ fn editor_exchange_expected(
     collect_editor_sysex_inner(
         session,
         usb,
-        endpoints.input,
+        endpoints,
         RESPONSE_GUEST_TIMEOUT_MS,
         start_guest,
         guest_timeout_ms,
@@ -97,7 +97,7 @@ pub(super) fn require_editor_reply(
 pub(super) fn collect_editor_sysex(
     session: &Session,
     usb: &l6ctl::OwnedControl<'_>,
-    input: u8,
+    endpoints: l6max_host::usb::Endpoints,
     timeout_ms: u32,
     start_guest: u32,
     guest_timeout_ms: u32,
@@ -106,7 +106,7 @@ pub(super) fn collect_editor_sysex(
     collect_editor_sysex_inner(
         session,
         usb,
-        input,
+        endpoints,
         timeout_ms,
         start_guest,
         guest_timeout_ms,
@@ -119,7 +119,7 @@ pub(super) fn collect_editor_sysex(
 fn collect_editor_sysex_inner(
     session: &Session,
     usb: &l6ctl::OwnedControl<'_>,
-    input: u8,
+    endpoints: l6max_host::usb::Endpoints,
     timeout_ms: u32,
     start_guest: u32,
     guest_timeout_ms: u32,
@@ -134,35 +134,14 @@ fn collect_editor_sysex_inner(
         .panel
         .snapshot()
         .guest_ms;
-    let mut pending = Vec::new();
-    let mut replies = Vec::new();
+    let mut decoder = l6ctl::UsbSysexDecoder::default();
     loop {
         session.poll().map_err(std::io::Error::other)?;
-        match usb.usb_midi_poll(input)? {
-            Some(messages) => {
-                for (cable, fragment) in messages {
-                    if cable != 2 {
-                        continue;
-                    }
-                    for byte in fragment {
-                        if byte == 0xf0 {
-                            pending.clear();
-                        }
-                        if byte == 0xf0 || !pending.is_empty() {
-                            pending.push(byte);
-                            if byte == 0xf7 {
-                                replies.push(std::mem::take(&mut pending));
-                            }
-                        }
-                    }
-                }
-            }
-            None => {}
-        }
-        if pending.is_empty()
-            && expected.is_some_and(|matches| replies.iter().any(|reply| matches(reply)))
+        usb.usb_sysex_poll(endpoints, 2, &mut decoder)?;
+        if decoder.pending().is_empty()
+            && expected.is_some_and(|matches| decoder.replies().iter().any(|reply| matches(reply)))
         {
-            return Ok(replies);
+            return Ok(decoder.replies().to_vec());
         }
         let now = session
             .engine
@@ -173,10 +152,12 @@ fn collect_editor_sysex_inner(
             .snapshot()
             .guest_ms;
         if now.wrapping_sub(started) >= timeout_ms {
-            if !pending.is_empty() {
-                return Err(format!("truncated Editor SysEx reply: {pending:02x?}").into());
+            if !decoder.pending().is_empty() {
+                return Err(
+                    format!("truncated Editor SysEx reply: {:02x?}", decoder.pending()).into(),
+                );
             }
-            return Ok(replies);
+            return Ok(decoder.replies().to_vec());
         }
         if Instant::now() >= wall_deadline || now.wrapping_sub(start_guest) > guest_timeout_ms {
             return Err("Editor pad assignment exceeded its guest or wall deadline".into());
@@ -294,7 +275,7 @@ impl UiPadScope {
         self.identity = collect_editor_sysex(
             session,
             usb,
-            self.endpoints.input,
+            self.endpoints,
             500,
             self.start_guest,
             self.guest_budget,
@@ -541,7 +522,7 @@ impl EditorPlaybackScope {
                 let _ = collect_editor_sysex(
                     session,
                     usb,
-                    self.endpoints.input,
+                    self.endpoints,
                     300,
                     self.start_guest,
                     self.guest_budget,
@@ -699,7 +680,7 @@ impl EditorAssignmentScope {
         let replies = collect_editor_sysex(
             session,
             usb,
-            self.endpoints.input,
+            self.endpoints,
             500,
             self.start_guest,
             self.guest_budget,
@@ -775,7 +756,7 @@ impl EditorAssignmentScope {
         let replies = collect_editor_sysex_inner(
             session,
             usb,
-            self.endpoints.input,
+            self.endpoints,
             500,
             self.start_guest,
             self.guest_budget,
@@ -813,7 +794,7 @@ impl EditorAssignmentScope {
             let replies = collect_editor_sysex_inner(
                 session,
                 usb,
-                self.endpoints.input,
+                self.endpoints,
                 750,
                 self.start_guest,
                 self.guest_budget,
@@ -853,7 +834,7 @@ impl EditorAssignmentScope {
         self.assignment_replies = collect_editor_sysex(
             session,
             usb,
-            self.endpoints.input,
+            self.endpoints,
             300,
             self.start_guest,
             self.guest_budget,
@@ -869,7 +850,7 @@ impl EditorAssignmentScope {
             self.assignment_replies.extend(collect_editor_sysex(
                 session,
                 usb,
-                self.endpoints.input,
+                self.endpoints,
                 300,
                 self.start_guest,
                 self.guest_budget,
@@ -902,7 +883,7 @@ impl EditorAssignmentScope {
             replies = collect_editor_sysex(
                 session,
                 usb,
-                self.endpoints.input,
+                self.endpoints,
                 250,
                 self.start_guest,
                 self.guest_budget,
@@ -913,7 +894,7 @@ impl EditorAssignmentScope {
                 replies.extend(collect_editor_sysex(
                     session,
                     usb,
-                    self.endpoints.input,
+                    self.endpoints,
                     300,
                     self.start_guest,
                     self.guest_budget,

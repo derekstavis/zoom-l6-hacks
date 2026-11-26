@@ -1282,10 +1282,34 @@ impl Runner {
                 }
                 Action::PowerEnd => return Ok(Progress::Device(devices::Operation::PowerEnd)),
                 Action::ExpectPowered { powered } => obs.data.powered == powered,
-                Action::ExpectSettings { restored } => {
-                    return Ok(Progress::Device(devices::Operation::ExpectSettings {
+                Action::SettingsCapture { restored } => {
+                    return Ok(Progress::Device(devices::Operation::SettingsCapture {
                         restored,
                     }));
+                }
+                Action::SettingsVersions => {
+                    return Ok(Progress::Device(devices::Operation::SettingsVersions));
+                }
+                Action::SettingsRtc => {
+                    return Ok(Progress::Device(devices::Operation::SettingsRtc));
+                }
+                Action::SettingsBank => {
+                    return Ok(Progress::Device(devices::Operation::SettingsBank));
+                }
+                Action::SettingsTrace => {
+                    return Ok(Progress::Device(devices::Operation::SettingsTrace));
+                }
+                Action::SettingsPanel => {
+                    return Ok(Progress::Device(devices::Operation::SettingsPanel));
+                }
+                Action::SettingsReload => {
+                    return Ok(Progress::Device(devices::Operation::SettingsReload));
+                }
+                Action::SettingsRtcTiming => {
+                    return Ok(Progress::Device(devices::Operation::SettingsRtcTiming));
+                }
+                Action::SettingsEnd => {
+                    return Ok(Progress::Device(devices::Operation::SettingsEnd));
                 }
                 Action::AudioCallbacksBegin => {
                     return Ok(Progress::Device(devices::Operation::AudioCallbacksBegin));

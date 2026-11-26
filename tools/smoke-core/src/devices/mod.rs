@@ -27,6 +27,7 @@ mod mode_primitives;
 mod panel;
 mod power;
 mod sd;
+mod settings;
 mod signal_pwm;
 mod tap_handler;
 mod timing;
@@ -648,9 +649,18 @@ pub enum Operation {
         observe_wall_ms: u64,
     },
     PowerEnd,
-    ExpectSettings {
+    SettingsCapture {
         restored: bool,
     },
+    SettingsVersions,
+    SettingsRtc,
+    SettingsBank,
+    SettingsTrace,
+    SettingsPanel,
+    SettingsReload,
+    SettingsRtcTiming,
+    SettingsEnd,
+
     PanelEvent {
         target: u32,
         column: u8,
@@ -947,7 +957,7 @@ pub(crate) fn prepare_with_report(
         matches!(
             s.action,
             crate::Action::AudioCallbacksBegin
-                | crate::Action::ExpectSettings { .. }
+                | crate::Action::SettingsCapture { .. }
                 | crate::Action::ExpectRecorder
         )
     }) {
@@ -1126,6 +1136,7 @@ pub struct State {
     usb_midi: Option<midi::UsbMidiScope>,
     panel_keys: Option<PanelKeyScope>,
     saved: Option<(Vec<u8>, usize)>,
+    settings: Option<settings::Scope>,
     midi: Option<l6max_host::usb::Endpoints>,
     sysex_deadline: Option<(Instant, u32, u32, u64)>,
     ui_pad: Option<editor::UiPadScope>,

@@ -648,16 +648,25 @@ pub struct HeldButton {
 }
 
 impl HeldButton {
-    /// Release if MAIN is still powered. Once MAIN has shut down, its input
-    /// channel cannot acknowledge a release and no command is necessary.
-    pub fn release_unless_main_powered_off(&mut self) -> Result<(), ControlError> {
-        if self.held && !self.inputs.main.snapshot().powered_off {
+    /// Enqueue a release, retaining ownership if enqueueing fails.
+    pub fn release(&mut self) -> Result<(), ControlError> {
+        if self.held {
             self.inputs
                 .up(self.target)
                 .map_err(|error| ControlError::Rejected(error.to_string()))?;
+            self.held = false;
         }
-        self.held = false;
         Ok(())
+    }
+    /// Release if MAIN is still powered. Once MAIN has shut down, its input
+    /// channel cannot acknowledge a release and no command is necessary.
+    pub fn release_unless_main_powered_off(&mut self) -> Result<(), ControlError> {
+        if self.inputs.main.snapshot().powered_off {
+            self.held = false;
+            Ok(())
+        } else {
+            self.release()
+        }
     }
     pub fn is_held(&self) -> bool {
         self.held

@@ -1,6 +1,5 @@
 //! L6max TAP handler observation with an owned debugger and held input.
 use super::*;
-use std::sync::Arc;
 
 const TARGET: u32 = 48;
 const ADDRESS: u32 = firmware_api::l6max::l6max_tap_press_handler;
@@ -22,13 +21,13 @@ fn acknowledgement_applied(state: l6ctl::InputAckState, expired: bool) -> Result
 }
 
 pub(super) struct Scope {
-    inputs: Arc<l6max_host::input::InputHub>,
+    inputs: l6ctl::InputObserver,
     debugger: Option<l6max_host::debug::Session>,
     started: Instant,
     panel_start: u32,
     guest: u32,
     deadline: Instant,
-    held: bool,
+    held: Option<l6ctl::HeldButton>,
     pc: Option<u32>,
     asserted: bool,
     released: bool,
@@ -51,13 +50,10 @@ impl Scope {
             .checked_add(Duration::from_secs(wall))
             .ok_or("TAP deadline overflow")?;
         let panel_start = guest_now(session);
-        let inputs = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("TAP input unavailable")?
-            .clone();
         let control = l6ctl::OwnedControl::new(&session.engine);
+        let inputs = control
+            .input_observer()
+            .map_err(|_| "TAP input unavailable")?;
         let mut debugger = control
             .debug_session_before(deadline)
             .map_err(|e| e.to_string())?;
@@ -87,7 +83,7 @@ impl Scope {
             panel_start,
             guest,
             deadline,
-            held: false,
+            held: None,
             pc: None,
             asserted: false,
             released: false,
@@ -121,16 +117,16 @@ impl Scope {
     }
     pub(super) fn press(&mut self, session: &Session) -> Result<Value, String> {
         self.check(session)?;
-        let receipt = l6ctl::OwnedControl::new(&session.engine)
-            .down(TARGET, 0)
+        let (receipt, held) = l6ctl::OwnedControl::new(&session.engine)
+            .hold_button(TARGET, 0)
             .map_err(|e| e.to_string())?;
-        self.held = true;
+        self.held = Some(held);
         self.ack(session, receipt.sequence)?;
         Ok(json!({"target":TARGET,"sequence":receipt.sequence}))
     }
     pub(super) fn wait(&mut self, session: &Session) -> Result<Value, String> {
         self.check(session)?;
-        let clock = self.inputs.main.snapshot();
+        let clock = self.inputs.status(l6ctl::InputSource::Main);
         if !clock.connected || clock.clock_updates == 0 {
             return Err("MAIN clock unavailable".into());
         }
@@ -143,13 +139,17 @@ impl Scope {
             .as_mut()
             .ok_or("debugger missing")?
             .continue_before(deadline, || {
-                let main = inputs.main.snapshot();
+                let main = inputs.status(l6ctl::InputSource::Main);
                 Instant::now() >= deadline
                     || main_deadline_expired(start, main.guest_ms)
-                    || inputs.panel.snapshot().guest_ms.wrapping_sub(panel_start) > guest
+                    || inputs
+                        .status(l6ctl::InputSource::Panel)
+                        .guest_ms
+                        .wrapping_sub(panel_start)
+                        > guest
             })?;
         self.check(session)?;
-        let main = self.inputs.main.snapshot();
+        let main = self.inputs.status(l6ctl::InputSource::Main);
         if main_deadline_expired(start, main.guest_ms) {
             return Err("TAP MAIN clock exceeded deadline".into());
         }
@@ -192,7 +192,7 @@ impl Scope {
             .up(TARGET)
             .map_err(|e| e.to_string())?;
         self.ack(session, receipt.sequence)?;
-        self.held = false;
+        self.held = None;
         self.released = true;
         Ok(json!({"sequence":receipt.sequence}))
     }
@@ -204,14 +204,12 @@ impl Scope {
         Ok(json!({"target":TARGET,"handler":ADDRESS,"wall_ms":self.started.elapsed().as_millis()}))
     }
     pub(super) fn abort(&mut self) -> Result<(), String> {
-        let release = if self.held {
-            self.inputs
-                .up(TARGET)
-                .map(|_| ())
-                .map_err(|e| e.to_string())
-        } else {
-            Ok(())
-        };
+        let release = self
+            .held
+            .as_mut()
+            .map(|held| held.release().map_err(|e| e.to_string()))
+            .transpose()
+            .map(|_| ());
         let close = self
             .debugger
             .as_mut()

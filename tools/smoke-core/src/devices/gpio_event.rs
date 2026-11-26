@@ -1,6 +1,5 @@
 //! L6 MAIN GPIO event transaction, retaining the debugger and pressed input.
 use super::*;
-use std::sync::Arc;
 const SUBMIT: u32 = firmware_api::l6::main_event_submit;
 const HANDLER: u32 = firmware_api::l6::sound_pad_event_handler;
 const GUARDS: [(u32, &str); 2] = [
@@ -14,14 +13,14 @@ const GUARDS: [(u32, &str); 2] = [
     ),
 ];
 pub(super) struct Scope {
-    inputs: Arc<l6max_host::input::InputHub>,
+    inputs: l6ctl::InputObserver,
     debugger: Option<l6max_host::debug::Session>,
     target: u32,
     event: u8,
     panel_start: u32,
     guest: u32,
     deadline: Instant,
-    held: bool,
+    held: Option<l6ctl::HeldButton>,
     args: Option<[u32; 4]>,
     asserted: bool,
     dispatched: bool,
@@ -54,13 +53,8 @@ impl Scope {
             .checked_add(Duration::from_secs(wall))
             .ok_or("GPIO deadline overflow")?;
         let panel_start = guest_now(session);
-        let inputs = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("GPIO input unavailable")?
-            .clone();
         let ctl = l6ctl::OwnedControl::new(&session.engine);
+        let inputs = ctl.input_observer().map_err(|_| "GPIO input unavailable")?;
         let mut debugger = ctl
             .debug_session_before(deadline)
             .map_err(|e| e.to_string())?;
@@ -103,7 +97,7 @@ impl Scope {
             panel_start,
             guest,
             deadline,
-            held: false,
+            held: None,
             args: None,
             asserted: false,
             dispatched: false,
@@ -139,10 +133,10 @@ impl Scope {
     }
     pub(super) fn press(&mut self, session: &Session) -> Result<Value, String> {
         self.check(session)?;
-        let r = l6ctl::OwnedControl::new(&session.engine)
-            .down(self.target, 0)
+        let (r, held) = l6ctl::OwnedControl::new(&session.engine)
+            .hold_button(self.target, 0)
             .map_err(|e| e.to_string())?;
-        self.held = true;
+        self.held = Some(held);
         self.ack(session, r.sequence)?;
         Ok(json!({"sequence":r.sequence}))
     }
@@ -157,7 +151,11 @@ impl Scope {
             .ok_or("debugger missing")?
             .continue_before(deadline, || {
                 Instant::now() >= deadline
-                    || inputs.panel.snapshot().guest_ms.wrapping_sub(start) > guest
+                    || inputs
+                        .status(l6ctl::InputSource::Panel)
+                        .guest_ms
+                        .wrapping_sub(start)
+                        > guest
             })?;
         self.check(session)?;
         if Instant::now() >= deadline {
@@ -248,7 +246,7 @@ impl Scope {
             .up(self.target)
             .map_err(|e| e.to_string())?;
         self.ack(session, r.sequence)?;
-        self.held = false;
+        self.held = None;
         self.released = true;
         Ok(json!({"sequence":r.sequence}))
     }
@@ -274,14 +272,12 @@ impl Scope {
         Ok(json!({"target":self.target,"event":self.event}))
     }
     pub(super) fn abort(&mut self) -> Result<(), String> {
-        let up = if self.held {
-            self.inputs
-                .up(self.target)
-                .map(|_| ())
-                .map_err(|e| e.to_string())
-        } else {
-            Ok(())
-        };
+        let up = self
+            .held
+            .as_mut()
+            .map(|held| held.release().map_err(|e| e.to_string()))
+            .transpose()
+            .map(|_| ());
         let close = self
             .debugger
             .as_mut()

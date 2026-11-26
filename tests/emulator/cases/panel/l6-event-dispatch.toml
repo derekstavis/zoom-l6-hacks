@@ -11,9 +11,127 @@ no_sd = true
 wall_timeout_s = 1800
 
 [[step]]
-action = "l6-din-event-dispatch"
+action = "l6-dispatch-begin"
 group = 3
 cc = 92
 value = 35
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-dispatch-task"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-dispatch-semaphore"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-dispatch-idle"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-dispatch-inject"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-dispatch-wake"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-dispatch-state"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-dispatch-reader"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-dispatch-event"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-dispatch-eq"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-dispatch-observe"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-dispatch-setter"
+index = 0
+value = 32
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-dispatch-setter"
+index = 1
+value = 33
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-dispatch-setter"
+index = 2
+value = 34
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-dispatch-setter"
+index = 3
+value = 35
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-dispatch-setter"
+index = 4
+value = 36
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-dispatch-setter"
+index = 5
+value = 37
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-dispatch-setter"
+index = 6
+value = 38
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-dispatch-setter"
+index = 7
+value = 39
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-dispatch-setter"
+index = 8
+value = 40
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-dispatch-finish"
 guest_timeout_ms = 600000
 wall_timeout_s = 1800

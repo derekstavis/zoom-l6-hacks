@@ -1190,11 +1190,27 @@ pub enum Action {
         tolerance_db: f64,
     },
     L6UsbStartup,
-    L6DinEventDispatch {
+    L6DispatchBegin {
         group: u8,
         cc: u8,
         value: u8,
     },
+    L6DispatchTask,
+    L6DispatchSemaphore,
+    L6DispatchIdle,
+    L6DispatchInject,
+    L6DispatchWake,
+    L6DispatchState,
+    L6DispatchReader,
+    L6DispatchEvent,
+    L6DispatchEq,
+    L6DispatchObserve,
+    L6DispatchSetter {
+        index: u8,
+        value: u8,
+    },
+    L6DispatchFinish,
+
     L6SweepBegin,
     L6SweepRejectMain {
         target: u32,

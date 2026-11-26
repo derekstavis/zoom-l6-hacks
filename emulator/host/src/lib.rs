@@ -15,6 +15,7 @@ pub mod input;
 pub mod input_trace;
 pub mod knob_popup;
 pub mod l6_din;
+pub mod l6_din_dispatch;
 pub mod l6_recorder;
 pub mod l6max_recorder;
 pub mod memory;

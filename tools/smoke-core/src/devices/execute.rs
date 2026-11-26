@@ -366,6 +366,11 @@ impl State {
     }
     /// Release held inputs and owned transport scopes before the guest exits.
     pub fn abort_auxiliary_scopes(&mut self) -> Result<(), String> {
+        let dispatch = self
+            .l6_dispatch
+            .take()
+            .map(|mut scope| scope.abort())
+            .transpose();
         let gpio = self
             .gpio_event
             .take()
@@ -406,6 +411,9 @@ impl State {
         self.editor_assignment = None;
         self.signal_pwm = None;
         let mut errors = Vec::new();
+        if let Err(error) = dispatch {
+            errors.push(error);
+        }
         if let Err(error) = gpio {
             errors.push(error);
         }
@@ -2311,8 +2319,57 @@ impl State {
                         .map_err(std::io::Error::other)?,
                 )
             }
-            Operation::L6DinEventDispatch { group, cc, value } => {
-                run_l6_din_event_dispatch(session, options, group, cc, value)
+            Operation::L6DispatchBegin { group, cc, value } => {
+                if self.l6_dispatch.is_some() {
+                    return Err("DIN dispatch already active".into());
+                }
+                self.l6_dispatch = Some(l6_dispatch::Scope::begin(
+                    session,
+                    group,
+                    cc,
+                    value,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"group":group,"cc":cc,"value":value}))
+            }
+            operation @ (Operation::L6DispatchTask
+            | Operation::L6DispatchSemaphore
+            | Operation::L6DispatchIdle
+            | Operation::L6DispatchInject
+            | Operation::L6DispatchWake
+            | Operation::L6DispatchState
+            | Operation::L6DispatchReader
+            | Operation::L6DispatchEvent
+            | Operation::L6DispatchEq
+            | Operation::L6DispatchObserve
+            | Operation::L6DispatchSetter { .. }
+            | Operation::L6DispatchFinish) => {
+                let scope = self
+                    .l6_dispatch
+                    .as_mut()
+                    .ok_or("DIN dispatch scope missing")?;
+                let result = match operation {
+                    Operation::L6DispatchTask => scope.task(session),
+                    Operation::L6DispatchSemaphore => scope.semaphore(session),
+                    Operation::L6DispatchIdle => scope.idle(session),
+                    Operation::L6DispatchInject => scope.inject(session),
+                    Operation::L6DispatchWake => scope.wake(session),
+                    Operation::L6DispatchState => scope.state(session),
+                    Operation::L6DispatchReader => scope.reader(session),
+                    Operation::L6DispatchEvent => scope.event(session),
+                    Operation::L6DispatchEq => scope.eq(session),
+                    Operation::L6DispatchObserve => scope.observe(session),
+                    Operation::L6DispatchSetter { index, value } => {
+                        scope.setter(session, index, value)
+                    }
+                    Operation::L6DispatchFinish => scope.finish(session),
+                    _ => unreachable!(),
+                }?;
+                if matches!(operation, Operation::L6DispatchFinish) {
+                    self.l6_dispatch = None;
+                }
+                Ok(result)
             }
             Operation::L6SweepBegin => {
                 self.l6_input_sweep = Some(l6_input_sweep::Scope::begin(

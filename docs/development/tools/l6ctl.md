@@ -426,6 +426,21 @@ Injection checks the binding again before writing guest state.
 `l6-midi-breakpoint` (`address`, `enabled`, `timeout_ms`) provide bounded
 stepping and owned breakpoint changes during the injected transaction.
 
+The separate stock L6 DIN dispatch probe is available through the same JSONL
+debug session as `l6-din-idle-evidence`, `l6-din-capture-semaphore`,
+`l6-din-inject`, `l6-din-wake`, `l6-din-event`, `l6-din-setter-value`,
+`l6-din-setter`, and `l6-din-finish`. Each takes `timeout_ms`; injection also
+takes `group`, `cc`, `value` and `leave_stopped: true`, while setter takes
+`index` and `value`. The caller owns the relevant breakpoints and sequences
+the observations. The probe guards stock code, the current `Idle` task, Thumb
+thread mode and its allocated stack. Its 2048-byte SP-based headroom threshold
+is conservative relative to observed call-graph estimates, not a proven
+worst-case stack bound. The captured semaphore pointer comes from the guarded
+wait routine and is checked for aligned mapped RAM; that alone does not prove
+object identity. Synthetic calls alter CPU and scheduler context; finish
+restores the journaled stack word, stops MAIN and requires a guest restart.
+Use only a disposable emulator and retain the debugger lease until teardown.
+
 Injection changes CPU execution state that this API cannot fully restore.
 Finish restores scratch and removes breakpoints but deliberately leaves MAIN
 stopped, closes the debug session, and reserves the debugger until the engine

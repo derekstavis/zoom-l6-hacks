@@ -695,7 +695,9 @@ pub(crate) fn serve_debug(
             serde_json::from_str::<crate::debug::Command>(&line).map_err(|e| e.to_string());
         let close = matches!(
             command,
-            Ok(crate::debug::Command::Close | crate::debug::Command::L6MidiFinish { .. })
+            Ok(crate::debug::Command::Close
+                | crate::debug::Command::L6MidiFinish { .. }
+                | crate::debug::Command::L6DinFinish { .. })
         );
         let fd = stream.as_raw_fd();
         let result = command.and_then(|command| {

@@ -2031,12 +2031,51 @@ impl Runner {
                 Action::L6UsbStartup => {
                     return Ok(Progress::Device(devices::Operation::L6UsbStartup));
                 }
-                Action::L6DinEventDispatch { group, cc, value } => {
-                    return Ok(Progress::Device(devices::Operation::L6DinEventDispatch {
+                Action::L6DispatchBegin { group, cc, value } => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchBegin {
                         group,
                         cc,
                         value,
                     }));
+                }
+                Action::L6DispatchTask => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchTask));
+                }
+                Action::L6DispatchSemaphore => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchSemaphore));
+                }
+                Action::L6DispatchIdle => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchIdle));
+                }
+                Action::L6DispatchInject => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchInject));
+                }
+                Action::L6DispatchWake => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchWake));
+                }
+                Action::L6DispatchState => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchState));
+                }
+                Action::L6DispatchReader => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchReader));
+                }
+                Action::L6DispatchEvent => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchEvent));
+                }
+                Action::L6DispatchEq => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchEq));
+                }
+                Action::L6DispatchObserve => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchObserve));
+                }
+                Action::L6DispatchSetter { index, value } => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchSetter {
+                        index,
+                        value,
+                    }));
+                }
+                Action::L6DispatchFinish => {
+                    return Ok(Progress::Device(devices::Operation::L6DispatchFinish));
                 }
                 Action::L6SweepBegin => {
                     return Ok(Progress::Device(devices::Operation::L6SweepBegin));

@@ -342,7 +342,7 @@ message delivered just after the interval.
 | `expect-recorded-tone` | `file`, `hz`, optional `left_db`, `right_db`, `tolerance_db` (default 1) | Measure a tone in a file of the newest recorder project, after its first second. A side with no level must be below -70 dB |
 | `expect-card-entry` | `path`; optional `size`, `matches_state` | Wait until the firmware has created `path` on the SD card, within `wall_timeout_s`. With `size`, the file must have exactly that many bytes. With `matches_state`, its bytes must equal that file in the device state directory, for example `main-nor.bin` |
 | `l6max-tap-begin`, `l6max-tap-press`, `l6max-tap-wait`, `l6max-tap-assert`, `l6max-tap-release`, `l6max-tap-end` | none | Ordered L6max stock-firmware TAP handler check. The scope retains debugger and input ownership, uses one shared step budget, and bounds the handler wait by 5,000 MAIN guest milliseconds. |
-| `l6-din-event-dispatch` | `group`, `cc`, `value` | L6 check of DIN CC-to-event dispatch |
+| `l6-dispatch-*` | `group`, `cc`, `value` on begin; `index`, `value` for each setter | Ordered terminal L6 stock-firmware DIN event and nine setter observations. MAIN remains stopped after this synthetic-context probe. |
 | `l6-usb-startup` | — | First step only; L6 probe replays the startup USB-enable sequence, verifies three firmware entry points and controller writes |
 | `l6-sweep-*` | `target`, `index` on selected steps | Exercise all L6 panel targets and encoders, compare UART reports, and check unsupported inputs are rejected. The contiguous L6-only scope shares a deadline. |
 | `l6-din-sweep` | — | Sweep supported L6 DIN values and record dispatch behavior |

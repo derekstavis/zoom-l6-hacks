@@ -18,6 +18,7 @@ mod execute;
 mod gpio_event;
 mod knob_dialog;
 mod l6_din_sweep;
+mod l6_dispatch;
 mod l6_input_sweep;
 mod lifecycle;
 mod midi;
@@ -669,11 +670,27 @@ pub enum Operation {
     L6GpioEnd,
 
     L6UsbStartup,
-    L6DinEventDispatch {
+    L6DispatchBegin {
         group: u8,
         cc: u8,
         value: u8,
     },
+    L6DispatchTask,
+    L6DispatchSemaphore,
+    L6DispatchIdle,
+    L6DispatchInject,
+    L6DispatchWake,
+    L6DispatchState,
+    L6DispatchReader,
+    L6DispatchEvent,
+    L6DispatchEq,
+    L6DispatchObserve,
+    L6DispatchSetter {
+        index: u8,
+        value: u8,
+    },
+    L6DispatchFinish,
+
     L6maxTapBegin,
     L6maxTapPress,
     L6maxTapWait,
@@ -859,7 +876,7 @@ fn validate_native_midi_capabilities(
                     | crate::Action::L6DinSweepBegin
                     | crate::Action::L6MidiProbeBegin
                     | crate::Action::L6UsbStartup
-                    | crate::Action::L6DinEventDispatch { .. }
+                    | crate::Action::L6DispatchBegin { .. }
                     | crate::Action::SignalPwmBegin
                     | crate::Action::L6LevelMeterPwm
             )
@@ -988,9 +1005,11 @@ pub(crate) fn prepare_with_report(
         options.midi_enabled = false;
         options.gdb_socket = Some(gdb_socket_path(&options.logs, "l6-usb-startup"));
     }
-    if scenario.step.iter().any(|s| {
-        s.applies_to(model) && matches!(s.action, crate::Action::L6DinEventDispatch { .. })
-    }) {
+    if scenario
+        .step
+        .iter()
+        .any(|s| s.applies_to(model) && matches!(s.action, crate::Action::L6DispatchBegin { .. }))
+    {
         options.start_paused = true;
         options.usb_enabled = false;
         options.midi_enabled = false;
@@ -1140,6 +1159,7 @@ pub struct State {
     l6_din_sweep: Option<l6_din_sweep::Scope>,
     tap_handler: Option<tap_handler::Scope>,
     gpio_event: Option<gpio_event::Scope>,
+    l6_dispatch: Option<l6_dispatch::Scope>,
     effect_slot_deadline: Option<sd::EffectSlotScope>,
     l6max_timing: Option<timing::Scope>,
     usb_storage_scope: Option<usb_storage_steps::Scope>,
@@ -1544,7 +1564,7 @@ mod native_midi_capability_tests {
             crate::Action::L6MidiProbeBegin,
             crate::Action::DinUsbBegin,
             crate::Action::L6UsbStartup,
-            crate::Action::L6DinEventDispatch {
+            crate::Action::L6DispatchBegin {
                 group: 0,
                 cc: 1,
                 value: 1,

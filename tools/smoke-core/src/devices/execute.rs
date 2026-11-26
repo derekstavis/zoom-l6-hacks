@@ -343,6 +343,7 @@ impl State {
 
     pub fn restarted(&mut self) -> Result<(), String> {
         self.menu_snapshot = None;
+        self.effect_ring = None;
         self.usb_descriptor_budget = None;
         self.direct_midi = false;
         let auxiliary_cleanup = self.abort_auxiliary_scopes();
@@ -1258,9 +1259,44 @@ impl State {
                 self.paced_index,
             )
             .map_err(std::io::Error::other)?),
-            Operation::EffectParameterEdit { encoder, steps } => {
-                Ok(effect_parameter_edit(options, session, encoder, steps)
-                    .map_err(std::io::Error::other)?)
+            Operation::CaptureEffectRing { encoder }
+            | Operation::ExpectEffectRingChanged { encoder } => {
+                let deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
+                let reader = effect_slot_reader(options, session, deadline, &|| Ok(()))?;
+                let fields = l6ctl::EffectSlotFields {
+                    ring_index: Some(encoder - 1),
+                    ..Default::default()
+                };
+                let snapshot = reader.snapshot_before_checked(&fields, deadline, &|| Ok(()))?;
+                if !(1..=2).contains(&snapshot.effect_type) || snapshot.edit_mode == 0 {
+                    return Err(
+                        "effect ring observation requires an active Room or Spring editor".into(),
+                    );
+                }
+                if encoder > if snapshot.effect_type == 1 { 8 } else { 7 } {
+                    return Err("encoder is unavailable for the selected effect".into());
+                }
+                let value = snapshot
+                    .ring_position
+                    .ok_or("effect ring position unavailable")?;
+                if matches!(operation, Operation::CaptureEffectRing { .. }) {
+                    self.effect_ring = Some((encoder, value, snapshot.fixture_module_sha256));
+                    Ok(json!({"encoder":encoder,"position":value}))
+                } else {
+                    let (prior_encoder, before, identity) = self
+                        .effect_ring
+                        .take()
+                        .ok_or("effect ring baseline missing")?;
+                    if prior_encoder != encoder || identity != snapshot.fixture_module_sha256 {
+                        return Err(
+                            "effect ring baseline does not match current fixture or encoder".into(),
+                        );
+                    }
+                    if value == before {
+                        return Err(format!("encoder {encoder} edit left its ring unchanged at Q16.16 position {value}").into());
+                    }
+                    Ok(json!({"encoder":encoder,"before":before,"after":value}))
+                }
             }
             Operation::WaitEffectMode {
                 panel_mode,

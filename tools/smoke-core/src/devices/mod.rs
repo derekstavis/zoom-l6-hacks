@@ -396,9 +396,11 @@ pub enum Operation {
         channel: usize,
         steps: i32,
     },
-    EffectParameterEdit {
-        encoder: usize,
-        steps: i32,
+    CaptureEffectRing {
+        encoder: u8,
+    },
+    ExpectEffectRingChanged {
+        encoder: u8,
     },
     WaitEffectMode {
         panel_mode: Option<u8>,
@@ -1203,6 +1205,7 @@ pub struct State {
     l6_dispatch: Option<l6_dispatch::Scope>,
     usb_startup: Option<usb_startup::Scope>,
     effect_slot_deadline: Option<sd::EffectSlotScope>,
+    effect_ring: Option<(u8, u32, String)>,
     l6max_timing: Option<timing::Scope>,
     usb_storage_scope: Option<usb_storage_steps::Scope>,
     native_midi: Option<l6ctl::midi::MidiSession>,

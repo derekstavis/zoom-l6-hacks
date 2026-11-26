@@ -205,7 +205,7 @@ fn run() -> Result<(), String> {
     }
     if command == "effect-slot" {
         if args.len() < 3 {
-            return Err("Usage: l6ctl effect-slot REPORT MODULE [--active] [--output] [--applied] [--refresh] [--dialog] [--parameter ID]".into());
+            return Err("Usage: l6ctl effect-slot REPORT MODULE [--active] [--output] [--applied] [--refresh] [--dialog] [--parameter ID] [--ring INDEX]".into());
         }
         let report = std::fs::read(&args[1]).map_err(|e| e.to_string())?;
         let module = std::fs::read(&args[2]).map_err(|e| e.to_string())?;
@@ -219,6 +219,15 @@ fn run() -> Result<(), String> {
                 "--applied" => fields.applied = true,
                 "--refresh" => fields.exit_refreshes = true,
                 "--dialog" => fields.dialog_active = true,
+                "--ring" => {
+                    index += 1;
+                    fields.ring_index = Some(
+                        args.get(index)
+                            .ok_or("--ring needs index")?
+                            .parse()
+                            .map_err(|_| "invalid ring index")?,
+                    );
+                }
                 "--parameter" => {
                     index += 1;
                     fields.parameter_id = Some(

@@ -3067,7 +3067,7 @@
       "sd-matrix",
       "effect-replacement-matrix"
     ],
-    "definition": "1b664820463cf9ace6754ebe04e13e8a48c793fb5a20a3607f7a5ebd1eebc49b"
+    "definition": "9bc369452e4c144a2adc0a00f51f16e10908109e3235433204ff04d5a212f58f"
   },
   {
     "case": "sd-effect-replacement-plateau",
@@ -3077,7 +3077,7 @@
       "sd-matrix",
       "effect-replacement-matrix"
     ],
-    "definition": "27394b92b6e4bba25ef9484a99712313f577dd9a2bb0266020a685905409a458"
+    "definition": "353f71092ec97fe86e383338bab2c41fb4f74a20de1c74ce9faf1b9927ca4c43"
   },
   {
     "case": "sd-effect-velvet-ring-scale",

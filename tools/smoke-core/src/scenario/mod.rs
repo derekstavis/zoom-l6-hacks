@@ -752,9 +752,11 @@ pub enum Action {
         channel: usize,
         steps: i32,
     },
-    EffectParameterEdit {
-        encoder: usize,
-        steps: i32,
+    CaptureEffectRing {
+        encoder: u8,
+    },
+    ExpectEffectRingChanged {
+        encoder: u8,
     },
     /// Wait for effect editor and panel-mode state in the loaded module.
     WaitEffectMode {

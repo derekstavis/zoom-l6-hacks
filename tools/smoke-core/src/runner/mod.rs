@@ -1109,11 +1109,15 @@ impl Runner {
                         steps,
                     }));
                 }
-                Action::EffectParameterEdit { encoder, steps } => {
-                    return Ok(Progress::Device(devices::Operation::EffectParameterEdit {
+                Action::CaptureEffectRing { encoder } => {
+                    return Ok(Progress::Device(devices::Operation::CaptureEffectRing {
                         encoder,
-                        steps,
                     }));
+                }
+                Action::ExpectEffectRingChanged { encoder } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectEffectRingChanged { encoder },
+                    ));
                 }
                 Action::WaitEffectMode {
                     panel_mode,

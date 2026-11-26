@@ -875,23 +875,15 @@ fn wait_sd_patch_result(
     const GUEST_TIMEOUT_MS: u32 = 10_000;
     const WALL_TIMEOUT_S: u64 = 180;
     const POLL_INTERVAL_MS: u64 = 10;
-    let qmp = &session.engine.management[0];
     let start = guest_now(session);
     let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let reader = control.sd_loader_reader(deadline)?;
     let mut last_state = String::from("registry not allocated");
     loop {
         session.poll()?;
-        if let Some(base) = sd_registry_if_allocated(qmp, session.engine.model())? {
-            let claim = u32::from_le_bytes(
-                qmp.read_memory(0, base + patch_abi::registry::CLAIM_OFFSET, 4)?
-                    .try_into()
-                    .unwrap(),
-            );
-            let stage = u32::from_le_bytes(
-                qmp.read_memory(0, base + patch_abi::registry::DEBUG_OFFSET, 4)?
-                    .try_into()
-                    .unwrap(),
-            );
+        let state = reader.readiness_cancellable(deadline, || false)?;
+        if let (Some(base), Some(claim), Some(stage)) = (state.registry, state.claim, state.stage) {
             if (loaded && claim == 1) || (!loaded && claim == 0 && stage == 0x400) {
                 return Ok(base);
             }

@@ -625,7 +625,7 @@ mod tests {
             let usb = previous
                 .step
                 .iter()
-                .position(|step| matches!(step.action, Action::UsbDescriptors))
+                .position(|step| matches!(step.action, Action::UsbEnumerate))
                 .unwrap();
             assert!(
                 matches!(&previous.step[usb-1].action, Action::Wait { until } if until == "boot-ready"),
@@ -641,7 +641,7 @@ mod tests {
             let descriptors = actual
                 .step
                 .iter()
-                .position(|step| matches!(step.action, Action::UsbDescriptors))
+                .position(|step| matches!(step.action, Action::UsbEnumerate))
                 .unwrap();
             assert!(record < descriptors, "{path}");
             assert!(actual.step[..record].iter().any(|step| matches!(&step.action, Action::ExpectDisplayImage { image, .. } if image == "tests/emulator/references/l6max-recorder-home.png")), "{path}");

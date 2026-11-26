@@ -1137,3 +1137,33 @@ fn menu_client_and_cli_preserve_path_and_snapshot() {
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn usb_enumerate_cli_uses_reserved_controller_and_returns_endpoints() {
+    let path = socket_path();
+    let result = json!({"device":[18,1],"configuration":[9,2],"parsed":{"value":1,"midi":{"interface":2,"input":129,"output":1},"storage":null}});
+    let server = server(
+        &path,
+        vec![(
+            json!({"command":"usb-enumerate"}),
+            json!({"ok":true,"result":result}),
+        )],
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["usb", "enumerate"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        result
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}

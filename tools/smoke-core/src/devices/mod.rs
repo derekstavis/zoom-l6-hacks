@@ -33,7 +33,6 @@ mod settings;
 mod signal_pwm;
 mod tap_handler;
 mod timing;
-mod usb;
 mod usb_startup;
 mod usb_storage_steps;
 
@@ -45,7 +44,6 @@ use midi::*;
 use midi_probe::*;
 use mode_primitives::wait_parameter_mode_checked;
 use sd::*;
-use usb::*;
 
 /// Return a short, per-case GDB socket path. Darwin's QEMU GDB stub rejects
 /// UNIX socket paths longer than 104 bytes, while artifact directories can be
@@ -137,7 +135,8 @@ pub enum Operation {
     SdCard {
         inserted: bool,
     },
-    UsbDescriptors,
+    UsbControllerReady,
+    UsbEnumerate,
     UsbStorageBegin,
     UsbStorageInquiry,
     UsbStorageReady,
@@ -902,7 +901,7 @@ fn validate_native_midi_capabilities(
                 step.action,
                 crate::Action::DirectMidiConnect { .. }
                     | crate::Action::DinUsbBegin
-                    | crate::Action::UsbDescriptors
+                    | crate::Action::UsbEnumerate
                     | crate::Action::UsbStorageBegin
                     | crate::Action::UsbMidiOpen
                     | crate::Action::UsbSysexBegin
@@ -1089,7 +1088,7 @@ pub(crate) fn prepare_with_report(
         s.applies_to(model)
             && matches!(
                 s.action,
-                crate::Action::UsbDescriptors
+                crate::Action::UsbEnumerate
                     | crate::Action::UsbStorageBegin
                     | crate::Action::UsbMidiOpen
                     | crate::Action::UsbSysexBegin
@@ -1165,6 +1164,7 @@ pub struct State {
     panel_keys: Option<PanelKeyScope>,
     saved: Option<(Vec<u8>, usize)>,
     settings: Option<settings::Scope>,
+    usb_descriptor_budget: Option<l6max_host::usb::Budget>,
     menu_snapshot: Option<l6ctl::MenuSnapshot>,
     midi: Option<l6max_host::usb::Endpoints>,
     sysex_deadline: Option<(Instant, u32, u32, u64)>,
@@ -1594,7 +1594,7 @@ mod native_midi_capability_tests {
     fn native_midi_rejects_direct_usb_endpoint_conflicts() {
         let mut scenario = Scenario::from_text("version=1\nname='midi'\nmodels=['l6max']\nbackends=['headless']\n[[step]]\naction='host-midi-connect'\n").unwrap();
         for action in [
-            crate::Action::UsbDescriptors,
+            crate::Action::UsbEnumerate,
             crate::Action::UsbStorageBegin,
             crate::Action::UsbMidiOpen,
             crate::Action::UsbSysexBegin,
@@ -1621,7 +1621,7 @@ mod native_midi_capability_tests {
             scenario.step.pop();
         }
         assert!(validate_native_midi_capabilities(&scenario, l6fw::Model::L6max).is_ok());
-        let scoped = Scenario::from_text("version=1\nname='scoped'\nmodels=['l6','l6max']\nbackends=['headless']\n[[step]]\nmodels=['l6']\naction='host-midi-connect'\n[[step]]\nmodels=['l6max']\naction='usb-descriptors'\n").unwrap();
+        let scoped = Scenario::from_text("version=1\nname='scoped'\nmodels=['l6','l6max']\nbackends=['headless']\n[[step]]\nmodels=['l6']\naction='host-midi-connect'\n[[step]]\nmodels=['l6max']\naction='usb-controller-ready'\n[[step]]\nmodels=['l6max']\naction='usb-enumerate'\n").unwrap();
         assert!(validate_native_midi_capabilities(&scoped, l6fw::Model::L6).is_ok());
         assert!(validate_native_midi_capabilities(&scoped, l6fw::Model::L6max).is_ok());
         assert_eq!(

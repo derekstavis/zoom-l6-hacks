@@ -686,6 +686,34 @@ impl Scenario {
             }
         }
         for model in &value.models {
+            let steps: Vec<_> = value
+                .step
+                .iter()
+                .filter(|step| step.applies_to(*model))
+                .collect();
+            for (i, step) in steps.iter().enumerate() {
+                match step.action {
+                    Action::UsbControllerReady => {
+                        let next = steps
+                            .get(i + 1)
+                            .ok_or("USB controller readiness needs enumeration")?;
+                        if !matches!(next.action, Action::UsbEnumerate)
+                            || step.guest_timeout_ms != next.guest_timeout_ms
+                            || step.wall_timeout_s != next.wall_timeout_s
+                        {
+                            return Err("USB controller readiness needs adjacent enumeration with the same budget".into());
+                        }
+                    }
+                    Action::UsbEnumerate
+                        if i == 0 || !matches!(steps[i - 1].action, Action::UsbControllerReady) =>
+                    {
+                        return Err("USB enumeration needs preceding controller readiness".into());
+                    }
+                    _ => (),
+                }
+            }
+        }
+        for model in &value.models {
             let mut pending_menu = false;
             for step in value.step.iter().filter(|step| step.applies_to(*model)) {
                 match &step.action {
@@ -1092,7 +1120,7 @@ impl Scenario {
             while index < steps.len() {
                 if matches!(steps[index].action, Action::UsbMidiOpen) {
                     if index == 0
-                        || !matches!(steps[index - 1].action, Action::UsbDescriptors)
+                        || !matches!(steps[index - 1].action, Action::UsbEnumerate)
                         || index + 8 >= steps.len()
                     {
                         return Err(
@@ -2238,10 +2266,10 @@ impl Scenario {
             }
             if matches!(step.action, Action::EditorAssignBegin) && !usb_descriptors_seen {
                 return Err(
-                    "editor-pad-assignments requires a preceding usb-descriptors step".into(),
+                    "editor-pad-assignments requires a preceding usb-enumerate step".into(),
                 );
             }
-            if matches!(step.action, Action::UsbDescriptors) {
+            if matches!(step.action, Action::UsbEnumerate) {
                 usb_descriptors_seen = true;
             }
             match &step.action {
@@ -2249,7 +2277,7 @@ impl Scenario {
                 Action::UiPadBegin { pad } => {
                     if !usb_descriptors_seen {
                         return Err(
-                            "l6max-ui-pad-verify requires a preceding usb-descriptors step".into(),
+                            "l6max-ui-pad-verify requires a preceding usb-enumerate step".into(),
                         );
                     }
                     if *pad > 3 {
@@ -3392,6 +3420,32 @@ mod menu_scope_tests {
                 &format!("{capture}[[step]]\naction='wait'\nguest_ms=1\n{assertion}"),
                 "l6max"
             )
+            .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod usb_enumeration_scope_tests {
+    fn parse(steps: &str) -> Result<super::super::Scenario, String> {
+        super::super::Scenario::from_text(&format!(
+            "version=1\nname='usb'\nmodels=['l6max']\nbackends=['headless']\n{steps}"
+        ))
+    }
+    #[test]
+    fn readiness_and_enumeration_require_adjacency_and_identical_budgets() {
+        let ready =
+            "[[step]]\naction='usb-controller-ready'\nguest_timeout_ms=60000\nwall_timeout_s=300\n";
+        let enumerate =
+            "[[step]]\naction='usb-enumerate'\nguest_timeout_ms=60000\nwall_timeout_s=300\n";
+        assert!(parse(&format!("{ready}{enumerate}")).is_ok());
+        assert!(parse(ready).is_err());
+        assert!(parse(enumerate).is_err());
+        assert!(parse(&format!("{ready}{}", enumerate.replace("60000", "60001"))).is_err());
+        assert!(
+            parse(&format!(
+                "{ready}[[step]]\naction='wait'\nguest_ms=1\n{enumerate}"
+            ))
             .is_err()
         );
     }

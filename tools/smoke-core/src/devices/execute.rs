@@ -343,6 +343,7 @@ impl State {
 
     pub fn restarted(&mut self) -> Result<(), String> {
         self.menu_snapshot = None;
+        self.usb_descriptor_budget = None;
         self.direct_midi = false;
         let auxiliary_cleanup = self.abort_auxiliary_scopes();
         self.ui_pad = None;
@@ -2803,17 +2804,56 @@ impl State {
                 }
                 Ok(json!({"inserted":inserted}))
             }
-            Operation::UsbDescriptors => {
-                let usb = session
-                    .engine
-                    .usb
-                    .as_ref()
-                    .ok_or("USB backend unavailable")?;
-                wait_usb_controller(session, usb, guest_timeout_ms, wall_timeout_s)?;
-                let (descriptor, config, configuration) = usb.enumerate_with_descriptors()?;
+            Operation::UsbControllerReady => {
+                if self.usb_descriptor_budget.is_some() {
+                    return Err("USB descriptor transaction already active".into());
+                }
+                let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+                let panel = inputs.panel.clone();
+                let start = operation_start.1;
+                let budget = l6max_host::usb::Budget::new(
+                    operation_start.0 + Duration::from_secs(wall_timeout_s),
+                    move || panel.snapshot().guest_ms.wrapping_sub(start) > guest_timeout_ms,
+                );
+                let control = l6ctl::OwnedControl::new(&session.engine);
+                control.usb_attach_before(&budget)?;
+                // Legacy readiness starts after attach, independently of the
+                // enclosing operation's original guest and wall anchors.
+                let ready_start = inputs.panel.snapshot().guest_ms;
+                let ready_deadline = Instant::now() + Duration::from_secs(wall_timeout_s);
+                loop {
+                    budget.check()?;
+                    if control.usb_controller_before(&budget)? {
+                        break;
+                    }
+                    if Instant::now() >= ready_deadline
+                        || inputs.panel.snapshot().guest_ms.wrapping_sub(ready_start)
+                            > guest_timeout_ms
+                    {
+                        return Err("USB device controller did not start".into());
+                    }
+                    session.poll()?;
+                    budget.check()?;
+                    thread::sleep(Duration::from_millis(25));
+                }
+                self.usb_descriptor_budget = Some(budget);
+                Ok(json!({"usb_controller_running":true}))
+            }
+            Operation::UsbEnumerate => {
+                let budget = self
+                    .usb_descriptor_budget
+                    .take()
+                    .ok_or("missing USB controller readiness")?;
+                budget.check()?;
+                let (descriptor, config, configuration) =
+                    l6ctl::OwnedControl::new(&session.engine).usb_enumerate_before(&budget)?;
+                budget.check()?;
                 self.midi = configuration.midi;
+                budget.check()?;
                 fs::write(options.logs.join("usb-device.bin"), &descriptor)?;
+                budget.check()?;
                 fs::write(options.logs.join("usb-config.bin"), &config)?;
+                budget.check()?;
                 Ok(
                     json!({"vid":u16::from_le_bytes([descriptor[8],descriptor[9]]),"pid":u16::from_le_bytes([descriptor[10],descriptor[11]]),"configuration_bytes":config.len(),"interfaces":config[4]}),
                 )

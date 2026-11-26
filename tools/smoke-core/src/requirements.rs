@@ -272,7 +272,13 @@ pub fn of(action: &Action) -> Requirement {
         | Action::UsbSysexExchange { .. }
         | Action::UsbSysexEnd
         | Action::EditorPadAssignments
-        | Action::EditorPadPlayback { .. }
+        | Action::EditorPlaybackBegin { .. }
+        | Action::EditorPlaybackPlay
+        | Action::EditorPlaybackWait
+        | Action::EditorPlaybackObserve
+        | Action::EditorPlaybackSample
+        | Action::EditorPlaybackAssert
+        | Action::EditorPlaybackEnd
         | Action::UiPadBegin { .. }
         | Action::UiPadIdentity
         | Action::UiPadGlobal

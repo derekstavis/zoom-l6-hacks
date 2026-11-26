@@ -3,7 +3,8 @@
 //! The socket interface is deliberately narrower than direct access. In
 //! particular its input replies confirm enqueueing, not guest acknowledgement.
 pub use l6max_host::audio_trace::{
-    SAI1_TX_PREFIX, TxSample as Sai1TxSample, sai1_tx_nonzero, sai1_tx_samples,
+    SAI1_TX_PREFIX, TxSample as Sai1TxSample, sai1_tx_nonzero, sai1_tx_nonzero_counts,
+    sai1_tx_samples,
 };
 pub use l6max_host::control::Info;
 pub use l6max_host::debug::{Command as DebugCommand, Observation as DebugObservation};

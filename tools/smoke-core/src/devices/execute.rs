@@ -369,7 +369,11 @@ impl State {
         self.usb_midi = None;
         self.l6_indicator = None;
         self.ui_pad = None;
+        self.editor_playback = None;
         panel.map(|_| ())
+    }
+    pub fn has_editor_playback(&self) -> bool {
+        self.editor_playback.is_some()
     }
     pub fn has_ui_pad(&self) -> bool {
         self.ui_pad.is_some()
@@ -425,6 +429,25 @@ impl State {
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
     ) -> Result<Value, String> {
+        if let Some(scope) = self.editor_playback.as_ref() {
+            let expected = match operation {
+                Operation::EditorPlaybackPlay => Some(0),
+                Operation::EditorPlaybackWait => Some(1),
+                Operation::EditorPlaybackObserve => Some(2),
+                Operation::EditorPlaybackSample => Some(3),
+                Operation::EditorPlaybackAssert => Some(4),
+                Operation::EditorPlaybackEnd => Some(5),
+                _ => None,
+            };
+            if expected != Some(scope.phase) {
+                self.editor_playback = None;
+                return Err("Editor playback interrupted by another operation".into());
+            }
+            if let Err(error) = scope.check(session, guest_timeout_ms, wall_timeout_s) {
+                self.editor_playback = None;
+                return Err(error.to_string());
+            }
+        }
         if let Some(scope) = self.ui_pad.as_ref() {
             let expected = match operation {
                 Operation::UiPadIdentity => Some(0),
@@ -2605,18 +2628,44 @@ impl State {
                     wall_timeout_s,
                 )
             }
-            Operation::EditorPadPlayback { pad } => {
+            Operation::EditorPlaybackBegin { pad } => {
                 let endpoints = self
                     .midi
-                    .ok_or("editor-pad-playback needs preceding USB MIDI enumeration")?;
-                run_editor_pad_playback(
+                    .ok_or("Editor playback requires USB enumeration")?;
+                self.editor_playback = Some(editor::EditorPlaybackScope::begin(
                     session,
-                    options,
                     endpoints,
                     pad,
                     guest_timeout_ms,
                     wall_timeout_s,
-                )
+                )?);
+                Ok(json!({"pad":pad + 1}))
+            }
+            operation @ (Operation::EditorPlaybackPlay
+            | Operation::EditorPlaybackWait
+            | Operation::EditorPlaybackObserve
+            | Operation::EditorPlaybackSample
+            | Operation::EditorPlaybackAssert
+            | Operation::EditorPlaybackEnd) => {
+                let scope = self
+                    .editor_playback
+                    .as_mut()
+                    .ok_or("Editor playback is not active")?;
+                let value = match operation {
+                    Operation::EditorPlaybackPlay => scope.play(session, options)?,
+                    Operation::EditorPlaybackWait => scope.wait_playing(session)?,
+                    Operation::EditorPlaybackObserve => scope.observe(session, options)?,
+                    Operation::EditorPlaybackSample => scope.sample(session, options)?,
+                    Operation::EditorPlaybackAssert => scope.assert_audio()?,
+                    Operation::EditorPlaybackEnd => json!({"finished":true}),
+                    _ => unreachable!(),
+                };
+                scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+                scope.phase += 1;
+                if matches!(operation, Operation::EditorPlaybackEnd) {
+                    self.editor_playback = None;
+                }
+                Ok(value)
             }
             Operation::UiPadBegin { pad } => {
                 let endpoints = self

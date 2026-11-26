@@ -585,9 +585,15 @@ pub enum Action {
     },
     UsbSysexEnd,
     EditorPadAssignments,
-    EditorPadPlayback {
+    EditorPlaybackBegin {
         pad: u8,
     },
+    EditorPlaybackPlay,
+    EditorPlaybackWait,
+    EditorPlaybackObserve,
+    EditorPlaybackSample,
+    EditorPlaybackAssert,
+    EditorPlaybackEnd,
     UiPadBegin {
         pad: u8,
     },

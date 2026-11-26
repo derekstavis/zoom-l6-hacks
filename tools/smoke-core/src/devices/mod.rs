@@ -254,9 +254,15 @@ pub enum Operation {
     },
     UsbSysexEnd,
     EditorPadAssignments,
-    EditorPadPlayback {
+    EditorPlaybackBegin {
         pad: u8,
     },
+    EditorPlaybackPlay,
+    EditorPlaybackWait,
+    EditorPlaybackObserve,
+    EditorPlaybackSample,
+    EditorPlaybackAssert,
+    EditorPlaybackEnd,
     UiPadBegin {
         pad: u8,
     },
@@ -657,7 +663,7 @@ fn validate_native_midi_capabilities(
                     | crate::Action::UsbSysexExchange { .. }
                     | crate::Action::UsbSysexEnd
                     | crate::Action::EditorPadAssignments
-                    | crate::Action::EditorPadPlayback { .. }
+                    | crate::Action::EditorPlaybackBegin { .. }
                     | crate::Action::UiPadBegin { .. }
                     | crate::Action::L6DinSweep
                     | crate::Action::L6MidiProbeBegin
@@ -842,7 +848,7 @@ pub(crate) fn prepare_with_report(
                     | crate::Action::UsbSysexExchange { .. }
                     | crate::Action::UsbSysexEnd
                     | crate::Action::EditorPadAssignments
-                    | crate::Action::EditorPadPlayback { .. }
+                    | crate::Action::EditorPlaybackBegin { .. }
                     | crate::Action::UiPadBegin { .. }
             )
     }) {
@@ -913,6 +919,7 @@ pub struct State {
     midi: Option<l6max_host::usb::Endpoints>,
     sysex_deadline: Option<(Instant, u32, u32, u64)>,
     ui_pad: Option<editor::UiPadScope>,
+    editor_playback: Option<editor::EditorPlaybackScope>,
     l6_indicator: Option<L6IndicatorScope>,
     gdb: Option<l6max_diagnostics::gdb::Gdb>,
     host_midi: Option<Box<dyn crate::host_midi::Client>>,
@@ -1384,7 +1391,7 @@ mod native_midi_capability_tests {
                 expect_ring_change: true,
             },
             crate::Action::EditorPadAssignments,
-            crate::Action::EditorPadPlayback { pad: 1 },
+            crate::Action::EditorPlaybackBegin { pad: 1 },
             crate::Action::UiPadBegin { pad: 1 },
             crate::Action::L6DinSweep,
             crate::Action::L6MidiProbeBegin,

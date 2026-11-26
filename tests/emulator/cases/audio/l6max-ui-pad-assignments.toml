@@ -115,8 +115,38 @@ action = "expect-display-image"
 image = "tests/emulator/references/l6max-recorder-home.png"
 
 [[step]]
-action = "l6max-ui-pad-verify"
+action = "ui-pad-begin"
 pad = 0
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-identity"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-global"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-keep-alive"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-query"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-assert"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-end"
 guest_timeout_ms = 60000
 wall_timeout_s = 600
 
@@ -208,8 +238,38 @@ action = "expect-display-image"
 image = "tests/emulator/references/l6max-recorder-home.png"
 
 [[step]]
-action = "l6max-ui-pad-verify"
+action = "ui-pad-begin"
 pad = 1
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-identity"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-global"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-keep-alive"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-query"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-assert"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-end"
 guest_timeout_ms = 60000
 wall_timeout_s = 600
 
@@ -301,8 +361,38 @@ action = "expect-display-image"
 image = "tests/emulator/references/l6max-recorder-home.png"
 
 [[step]]
-action = "l6max-ui-pad-verify"
+action = "ui-pad-begin"
 pad = 2
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-identity"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-global"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-keep-alive"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-query"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-assert"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-end"
 guest_timeout_ms = 60000
 wall_timeout_s = 600
 
@@ -394,7 +484,37 @@ action = "expect-display-image"
 image = "tests/emulator/references/l6max-recorder-home.png"
 
 [[step]]
-action = "l6max-ui-pad-verify"
+action = "ui-pad-begin"
 pad = 3
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-identity"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-global"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-keep-alive"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-query"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-assert"
+guest_timeout_ms = 60000
+wall_timeout_s = 600
+
+[[step]]
+action = "ui-pad-end"
 guest_timeout_ms = 60000
 wall_timeout_s = 600

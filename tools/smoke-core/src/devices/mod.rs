@@ -257,9 +257,15 @@ pub enum Operation {
     EditorPadPlayback {
         pad: u8,
     },
-    L6maxUiPadVerify {
+    UiPadBegin {
         pad: u8,
     },
+    UiPadIdentity,
+    UiPadGlobal,
+    UiPadKeepAlive,
+    UiPadQuery,
+    UiPadAssert,
+    UiPadEnd,
     SoundPadBegin {
         pad: u8,
         target: u32,
@@ -652,7 +658,7 @@ fn validate_native_midi_capabilities(
                     | crate::Action::UsbSysexEnd
                     | crate::Action::EditorPadAssignments
                     | crate::Action::EditorPadPlayback { .. }
-                    | crate::Action::L6maxUiPadVerify { .. }
+                    | crate::Action::UiPadBegin { .. }
                     | crate::Action::L6DinSweep
                     | crate::Action::L6MidiProbeBegin
                     | crate::Action::L6UsbStartup
@@ -837,7 +843,7 @@ pub(crate) fn prepare_with_report(
                     | crate::Action::UsbSysexEnd
                     | crate::Action::EditorPadAssignments
                     | crate::Action::EditorPadPlayback { .. }
-                    | crate::Action::L6maxUiPadVerify { .. }
+                    | crate::Action::UiPadBegin { .. }
             )
     }) {
         options.usb_enabled = false;
@@ -906,6 +912,7 @@ pub struct State {
     saved: Option<(Vec<u8>, usize)>,
     midi: Option<l6max_host::usb::Endpoints>,
     sysex_deadline: Option<(Instant, u32, u32, u64)>,
+    ui_pad: Option<editor::UiPadScope>,
     l6_indicator: Option<L6IndicatorScope>,
     gdb: Option<l6max_diagnostics::gdb::Gdb>,
     host_midi: Option<Box<dyn crate::host_midi::Client>>,
@@ -1378,7 +1385,7 @@ mod native_midi_capability_tests {
             },
             crate::Action::EditorPadAssignments,
             crate::Action::EditorPadPlayback { pad: 1 },
-            crate::Action::L6maxUiPadVerify { pad: 1 },
+            crate::Action::UiPadBegin { pad: 1 },
             crate::Action::L6DinSweep,
             crate::Action::L6MidiProbeBegin,
             crate::Action::DinUsbBegin,

@@ -815,7 +815,7 @@
     "suites": [
       "full"
     ],
-    "definition": "4747738e8b97d1cbaab4180165fa59fd288e15768b28458899c27a8c9a5d49dd"
+    "definition": "4e7959b3988168b682b41b094aec170933425a70adf71bb8082af14f9188b82d"
   },
   {
     "case": "l6max-update-bad-checksum",

@@ -273,7 +273,13 @@ pub fn of(action: &Action) -> Requirement {
         | Action::UsbSysexEnd
         | Action::EditorPadAssignments
         | Action::EditorPadPlayback { .. }
-        | Action::L6maxUiPadVerify { .. }
+        | Action::UiPadBegin { .. }
+        | Action::UiPadIdentity
+        | Action::UiPadGlobal
+        | Action::UiPadKeepAlive
+        | Action::UiPadQuery
+        | Action::UiPadAssert
+        | Action::UiPadEnd
         | Action::SoundPadBegin { .. }
         | Action::SoundPadPress
         | Action::SoundPadHold

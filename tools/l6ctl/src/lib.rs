@@ -22,6 +22,7 @@ pub use l6max_host::memory::MemoryRead;
 pub use l6max_host::midi_config::Config as MidiConfig;
 pub use l6max_host::sd_loader::{Site as SdLoaderSite, Snapshot as SdLoaderSnapshot};
 
+pub use l6max_host::editor::pad_assignment_present as editor_pad_assignment_present;
 pub use l6max_host::mixer_level::MixerLevel;
 pub use l6max_host::panel_keys::Snapshot as PanelKeySnapshot;
 pub use l6max_host::update_bootloader::Outcome as InstallerOutcome;

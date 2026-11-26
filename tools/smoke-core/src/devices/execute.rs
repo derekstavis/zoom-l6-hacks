@@ -333,6 +333,7 @@ impl State {
 
     pub fn restarted(&mut self) -> Result<(), String> {
         let auxiliary_cleanup = self.abort_auxiliary_scopes();
+        self.ui_pad = None;
         self.abort_midi_probe();
         if let Some(mut client) = self.native_midi.take() {
             client.release();
@@ -367,7 +368,11 @@ impl State {
         self.sd_inspection = None;
         self.usb_midi = None;
         self.l6_indicator = None;
+        self.ui_pad = None;
         panel.map(|_| ())
+    }
+    pub fn has_ui_pad(&self) -> bool {
+        self.ui_pad.is_some()
     }
     pub fn has_sound_pad(&self) -> bool {
         self.sound_pad.is_some()
@@ -420,6 +425,25 @@ impl State {
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
     ) -> Result<Value, String> {
+        if let Some(scope) = self.ui_pad.as_ref() {
+            let expected = match operation {
+                Operation::UiPadIdentity => Some(0),
+                Operation::UiPadGlobal => Some(1),
+                Operation::UiPadKeepAlive => Some(2),
+                Operation::UiPadQuery => Some(3),
+                Operation::UiPadAssert => Some(4),
+                Operation::UiPadEnd => Some(5),
+                _ => None,
+            };
+            if expected != Some(scope.phase) {
+                self.ui_pad = None;
+                return Err("UI pad verification interrupted by another operation".into());
+            }
+            if let Err(error) = scope.check(session, guest_timeout_ms, wall_timeout_s) {
+                self.ui_pad = None;
+                return Err(error.to_string());
+            }
+        }
         if self.l6_indicator.is_some()
             && !matches!(
                 operation,
@@ -2594,18 +2618,54 @@ impl State {
                     wall_timeout_s,
                 )
             }
-            Operation::L6maxUiPadVerify { pad } => {
+            Operation::UiPadBegin { pad } => {
                 let endpoints = self
                     .midi
-                    .ok_or("l6max-ui-pad-verify needs preceding USB MIDI enumeration")?;
-                run_l6max_ui_pad_verify(
+                    .ok_or("UI pad verification requires USB enumeration")?;
+                self.ui_pad = Some(editor::UiPadScope::begin(
                     session,
-                    options,
                     endpoints,
                     pad,
                     guest_timeout_ms,
                     wall_timeout_s,
-                )
+                )?);
+                Ok(json!({"pad":pad + 1}))
+            }
+            operation @ (Operation::UiPadIdentity
+            | Operation::UiPadGlobal
+            | Operation::UiPadKeepAlive
+            | Operation::UiPadQuery
+            | Operation::UiPadAssert
+            | Operation::UiPadEnd) => {
+                let scope = self
+                    .ui_pad
+                    .as_mut()
+                    .ok_or("UI pad verification is not active")?;
+                let value = match operation {
+                    Operation::UiPadIdentity => scope.identity(session)?,
+                    Operation::UiPadGlobal => scope.expected(
+                        session,
+                        &[0xf0, 0x52, 0, 0, 0x2b, 0xf7],
+                        &[0xf0, 0x52, 0, 0, 0x2a],
+                        "global settings",
+                    )?,
+                    Operation::UiPadKeepAlive => scope.expected(
+                        session,
+                        &[0xf0, 0x52, 0, 0, 0x31, 0x0b, 0xf7],
+                        &[0xf0, 0x52, 0, 0, 0, 0x0b],
+                        "keep-alive",
+                    )?,
+                    Operation::UiPadQuery => scope.query(session)?,
+                    Operation::UiPadAssert => scope.assert_assignment(session, options)?,
+                    Operation::UiPadEnd => json!({"finished":true}),
+                    _ => unreachable!(),
+                };
+                scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+                scope.phase += 1;
+                if matches!(operation, Operation::UiPadEnd) {
+                    self.ui_pad = None;
+                }
+                Ok(value)
             }
             Operation::WaitL6SoundPadFile { path } => {
                 wait_l6_sound_pad_file(session, &path, guest_timeout_ms, wall_timeout_s)

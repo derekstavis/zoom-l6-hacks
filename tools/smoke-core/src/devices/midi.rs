@@ -503,17 +503,16 @@ impl State {
         wall_timeout_s: u64,
     ) -> Result<Value, Box<dyn std::error::Error>> {
         use l6ctl::midi::{ControlChange, MidiSession};
-        let inputs = session
-            .engine
-            .inputs
-            .as_ref()
-            .ok_or("MIDI test needs inputs")?;
+        let control = l6ctl::OwnedControl::new(&session.engine);
+        control
+            .input_status(l6ctl::InputSource::Panel)
+            .map_err(|_| "MIDI test needs inputs")?;
         if matches!(operation, Operation::HostMidiConnect) {
             if self.host_midi.is_some() || self.native_midi.is_some() {
                 return Err("host MIDI client already connected".into());
             }
             let started = Instant::now();
-            let guest_start = inputs.panel.snapshot().guest_ms;
+            let guest_start = guest_now(session);
             let endpoint = l6max_host::host_midi::endpoint_name(
                 &l6max_host::host_midi::port_names_for_model_with_namespace(
                     session.engine.model(),
@@ -524,7 +523,7 @@ impl State {
             let client = retry_native_midi(
                 || MidiSession::connect_native(&endpoint),
                 || session.poll().map(|_| ()),
-                || inputs.panel.snapshot().guest_ms,
+                || guest_now(session),
                 Instant::now,
                 thread::sleep,
                 ConnectBudget {
@@ -545,7 +544,7 @@ impl State {
             self.native_midi = Some(client);
             self.midi_round_trip = Some(MidiRoundTrip {
                 guest_start,
-                receive_start: inputs.panel.snapshot().guest_ms,
+                receive_start: guest_now(session),
                 deadline: Instant::now() + Duration::from_secs(wall_timeout_s.min(30)),
                 overall_deadline: started + Duration::from_secs(wall_timeout_s),
                 guest_timeout_ms,
@@ -571,7 +570,7 @@ impl State {
             }
             self.release_retained_host_midi();
             let started = Instant::now();
-            let guest_start = inputs.panel.snapshot().guest_ms;
+            let guest_start = guest_now(session);
             let control = l6ctl::OwnedControl::new(&session.engine);
             let budget = control.usb_panel_budget(
                 started + Duration::from_secs(wall_timeout_s),
@@ -585,7 +584,7 @@ impl State {
             self.direct_midi = true;
             self.midi_round_trip = Some(MidiRoundTrip {
                 guest_start,
-                receive_start: inputs.panel.snapshot().guest_ms,
+                receive_start: guest_now(session),
                 deadline: now + Duration::from_secs(wall_timeout_s.min(30)),
                 overall_deadline: started + Duration::from_secs(wall_timeout_s),
                 guest_timeout_ms,
@@ -601,7 +600,7 @@ impl State {
             if self.host_midi_client().is_none() {
                 return Err("MIDI sync requires a connected MIDI session".into());
             }
-            let guest_start = inputs.panel.snapshot().guest_ms;
+            let guest_start = guest_now(session);
             let mut remaining = Vec::new();
             let (expected_count, expected_status) = if session.engine.model() == l6fw::Model::L6 {
                 let config = l6ctl::OwnedControl::new(&session.engine).midi_config()?;
@@ -645,12 +644,7 @@ impl State {
         if self.midi_sync.is_some() {
             let scope = self.midi_sync.as_ref().unwrap();
             if Instant::now() >= scope.overall_deadline
-                || inputs
-                    .panel
-                    .snapshot()
-                    .guest_ms
-                    .wrapping_sub(scope.guest_start)
-                    > scope.guest_timeout_ms
+                || guest_now(session).wrapping_sub(scope.guest_start) > scope.guest_timeout_ms
             {
                 self.midi_sync = None;
                 return Err("MIDI sync exceeded its shared deadline".into());
@@ -683,12 +677,12 @@ impl State {
                     Instant::now,
                     || {
                         Instant::now() >= deadline
-                            || inputs.panel.snapshot().guest_ms.wrapping_sub(start) > guest_budget
+                            || guest_now(session).wrapping_sub(start) > guest_budget
                     },
                     thread::sleep,
                 )?;
                 if Instant::now() >= deadline
-                    || inputs.panel.snapshot().guest_ms.wrapping_sub(start) > guest_budget
+                    || guest_now(session).wrapping_sub(start) > guest_budget
                 {
                     return Err("MIDI sync exceeded its shared deadline".into());
                 }
@@ -713,12 +707,7 @@ impl State {
                 .map_err(std::io::Error::other)?;
                 let scope = self.midi_sync.as_ref().unwrap();
                 if Instant::now() >= scope.overall_deadline
-                    || inputs
-                        .panel
-                        .snapshot()
-                        .guest_ms
-                        .wrapping_sub(scope.guest_start)
-                        > scope.guest_timeout_ms
+                    || guest_now(session).wrapping_sub(scope.guest_start) > scope.guest_timeout_ms
                 {
                     return Err("MIDI sync exceeded its shared deadline before send".into());
                 }
@@ -744,7 +733,7 @@ impl State {
                     || client.poll(),
                     || session.poll().map(|_| ()),
                     Instant::now,
-                    || inputs.panel.snapshot().guest_ms,
+                    || guest_now(session),
                     thread::sleep,
                 )?;
                 scope.completed = true;
@@ -774,7 +763,7 @@ impl State {
                 return Err("host MIDI transaction is already active".into());
             }
             let now = Instant::now();
-            let guest = inputs.panel.snapshot().guest_ms;
+            let guest = guest_now(session);
             self.midi_round_trip = Some(MidiRoundTrip {
                 guest_start: guest,
                 receive_start: guest,
@@ -797,9 +786,7 @@ impl State {
             return Err("encoder input requires an active host MIDI transaction".into());
         }
         if let Some(context) = &self.midi_round_trip {
-            if !independent_operation
-                && context.exceeded(Instant::now(), inputs.panel.snapshot().guest_ms)
-            {
+            if !independent_operation && context.exceeded(Instant::now(), guest_now(session)) {
                 return Err("device operation exceeded its shared deadline".into());
             }
         }
@@ -808,7 +795,7 @@ impl State {
                 .midi_round_trip
                 .as_ref()
                 .ok_or("encoder input requires an active MIDI transaction")?;
-            if context.receive_expired(Instant::now(), inputs.panel.snapshot().guest_ms) {
+            if context.receive_expired(Instant::now(), guest_now(session)) {
                 return Err("host MIDI receive deadline elapsed before encoder input".into());
             }
             let steps = next_midi_encoder_steps(&mut self.encoder_turned_up);
@@ -847,7 +834,7 @@ impl State {
                     || client.poll_control_observation(),
                     || session.poll().map(|_| ()),
                     Instant::now,
-                    || context.exceeded(Instant::now(), inputs.panel.snapshot().guest_ms),
+                    || context.exceeded(Instant::now(), guest_now(session)),
                     thread::sleep,
                 )?;
                 json!({"drained": drained, "quiet_wall_ms": quiet_wall_ms})
@@ -872,7 +859,7 @@ impl State {
                     || session.poll().map(|_| ()),
                     || {
                         Instant::now() >= deadline
-                            || context.exceeded(Instant::now(), inputs.panel.snapshot().guest_ms)
+                            || context.exceeded(Instant::now(), guest_now(session))
                     },
                     thread::sleep,
                 )?;
@@ -891,16 +878,16 @@ impl State {
                     .ok_or("host MIDI client unavailable")?;
                 let mut found = None;
                 let mut observed = std::collections::VecDeque::new();
-                while !context.receive_expired(Instant::now(), inputs.panel.snapshot().guest_ms) {
+                while !context.receive_expired(Instant::now(), guest_now(session)) {
                     session.poll()?;
-                    if context.receive_expired(Instant::now(), inputs.panel.snapshot().guest_ms) {
+                    if context.receive_expired(Instant::now(), guest_now(session)) {
                         break;
                     }
                     if let Some(message) = poll_timed_control_change(
                         context,
                         || client.poll_control_change(),
                         Instant::now,
-                        || inputs.panel.snapshot().guest_ms,
+                        || guest_now(session),
                     )
                     .map_err(std::io::Error::other)?
                     {
@@ -925,10 +912,10 @@ impl State {
                 let context = self.midi_round_trip.as_ref().ok_or(
                     "host MIDI transaction is not active; run host-midi-connect or host-midi-begin",
                 )?;
-                let start = inputs.panel.snapshot().guest_ms;
-                while inputs.panel.snapshot().guest_ms.wrapping_sub(start) < guest_ms {
+                let start = guest_now(session);
+                while guest_now(session).wrapping_sub(start) < guest_ms {
                     session.poll()?;
-                    let now = inputs.panel.snapshot().guest_ms;
+                    let now = guest_now(session);
                     if Instant::now() >= context.deadline.min(context.overall_deadline)
                         || context.exceeded(Instant::now(), now)
                     {
@@ -990,7 +977,7 @@ impl State {
                 let mut negative_start = None;
                 let after = loop {
                     session.poll()?;
-                    let after = inputs.panel.snapshot().indicators;
+                    let after = control.info()?.panel_indicators;
                     let observation =
                         ring_observation(before, after, index, Instant::now(), deadline);
                     if !expected_change {
@@ -1011,7 +998,7 @@ impl State {
                         };
                         match negative_ring_observation(before, after, index, sampled_at, started + duration,
                             context.overall_deadline,
-                            inputs.panel.snapshot().guest_ms.wrapping_sub(context.guest_start) > context.guest_timeout_ms) {
+                            guest_now(session).wrapping_sub(context.guest_start) > context.guest_timeout_ms) {
                             NegativeRingObservation::Changed => return Err(format!("channel {channel} ring unexpectedly changed during negative observation").into()),
                             NegativeRingObservation::BudgetExpired => return Err("shared MIDI deadline ended before negative observation completed".into()),
                             NegativeRingObservation::Complete => break after,
@@ -1020,7 +1007,7 @@ impl State {
                     }
                     if midi_transaction
                         && self.midi_round_trip.as_ref().is_some_and(|context| {
-                            context.exceeded(Instant::now(), inputs.panel.snapshot().guest_ms)
+                            context.exceeded(Instant::now(), guest_now(session))
                         })
                     {
                         return Err("device operation exceeded its shared deadline".into());
@@ -1038,9 +1025,7 @@ impl State {
             _ => unreachable!(),
         };
         if let Some(context) = &self.midi_round_trip {
-            if !independent_operation
-                && context.exceeded(Instant::now(), inputs.panel.snapshot().guest_ms)
-            {
+            if !independent_operation && context.exceeded(Instant::now(), guest_now(session)) {
                 return Err("device operation exceeded its shared deadline".into());
             }
         }

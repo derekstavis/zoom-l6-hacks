@@ -1,6 +1,5 @@
 //! The knob-dialog patch: its window and popup.
 use super::*;
-use l6max_host::debug_journal::{Cleanup as DebugCleanup, Journal, cleanup as cleanup_debugger};
 mod adaptive_demo;
 pub(super) use adaptive_demo::{
     run as run_adaptive_demo, run_level_demo_frame, run_level_expect_zero, run_level_sweep,
@@ -10,36 +9,70 @@ pub(super) use adaptive_demo::{
 /// knob-dialog window check compares the display with these by scene name.
 pub const KNOB_DIALOG_REFERENCES: &str = "patches/knob-dialog/tests/emulator/references";
 
-/// Owns the debugger and records intrusive mutations for failure cleanup.
-/// Successful runs keep guest-side changes made deliberately by the probes.
+/// Keep raw QMP memory access out of scenario code. The host owns address
+/// validation and the l6ctl observation API owns the read operation.
+fn read_main_memory(session: &Session, address: u32, length: usize) -> std::io::Result<Vec<u8>> {
+    l6ctl::OwnedControl::new(&session.engine)
+        .read_main_memory(address, length)
+        .map(|read| read.bytes)
+        .map_err(std::io::Error::other)
+}
+
+fn read_main_memory_before(
+    session: &Session,
+    address: u32,
+    length: usize,
+    deadline: Instant,
+) -> std::io::Result<Vec<u8>> {
+    l6ctl::OwnedControl::new(&session.engine)
+        .read_main_memory_before(address, length, deadline)
+        .map(|read| read.bytes)
+        .map_err(std::io::Error::other)
+}
+
+fn main_guest_status(session: &Session) -> std::io::Result<l6ctl::QmpStatus> {
+    l6ctl::OwnedControl::new(&session.engine)
+        .main_guest_status()
+        .map_err(std::io::Error::other)
+}
+
+fn stop_main_guest(session: &Session) -> std::io::Result<()> {
+    l6ctl::OwnedControl::new(&session.engine)
+        .stop_main_guest()
+        .map_err(std::io::Error::other)
+}
+
+fn stop_main_guest_before(session: &Session, deadline: Instant) -> std::io::Result<()> {
+    l6ctl::OwnedControl::new(&session.engine)
+        .stop_main_guest_before(deadline)
+        .map_err(std::io::Error::other)
+}
+
+fn resume_main_guest(session: &Session) -> std::io::Result<()> {
+    l6ctl::OwnedControl::new(&session.engine)
+        .resume_main_guest()
+        .map_err(std::io::Error::other)
+}
+
+/// Scenario-facing adapter. The retained QMP/GDB session and rollback journal
+/// are owned by `l6max-host`; this wrapper only maps errors for the runner.
 struct KnobDebugSession {
-    qmp: l6max_host::qmp::QmpClient,
-    gdb: l6max_diagnostics::gdb::Gdb,
-    journal: Journal,
-    finalized: bool,
+    inner: l6ctl::KnobPopupProbeSession,
 }
 
 impl KnobDebugSession {
-    fn connect(qmp: &l6max_host::qmp::QmpClient, path: &std::path::Path) -> std::io::Result<Self> {
-        Ok(Self {
-            qmp: qmp.clone(),
-            gdb: l6max_diagnostics::gdb::Gdb::connect(path)?,
-            journal: Journal::default(),
-            finalized: false,
-        })
+    fn begin(session: &Session, deadline: Instant) -> std::io::Result<Self> {
+        l6ctl::OwnedControl::new(&session.engine)
+            .knob_popup_probe_before(deadline)
+            .map(|inner| Self { inner })
+            .map_err(std::io::Error::other)
     }
+
     fn write(&mut self, address: u32, data: &[u8]) -> std::io::Result<()> {
-        let before = self.qmp.read_memory(0, address, data.len())?;
-        // Journal before sending: a failed request can still have applied.
-        let restoring = self.journal.begin_write(address, before, data)?;
-        let result = self.gdb.write(address, data);
-        if result.is_err() {
-            self.journal.synchronized = false;
-        }
-        result?;
-        self.journal.commit_write(restoring);
-        Ok(())
+        let deadline = Instant::now() + Duration::from_secs(5);
+        self.write_before(address, data, deadline, || Ok(()))
     }
+
     fn write_before(
         &mut self,
         address: u32,
@@ -47,210 +80,106 @@ impl KnobDebugSession {
         deadline: Instant,
         mut check: impl FnMut() -> std::io::Result<()>,
     ) -> std::io::Result<()> {
-        check()?;
-        let before = self
-            .qmp
-            .read_memory_before(0, address, data.len(), deadline)?;
-        check()?;
-        let restoring = self.journal.begin_write(address, before, data)?;
-        let result = self.gdb.write_before(address, data, deadline);
-        if result.is_err() {
-            self.journal.synchronized = false;
-        }
-        result?;
-        check()?;
-        self.journal.commit_write(restoring);
-        Ok(())
+        self.inner
+            .write_before(address, data, deadline, || {
+                check().map_err(|error| error.to_string())
+            })
+            .map_err(std::io::Error::other)
     }
+
     fn read_register_before(&mut self, index: u32, deadline: Instant) -> std::io::Result<u32> {
-        let result = self.gdb.read_register_before(index, deadline);
-        if result.is_err() {
-            self.journal.synchronized = false;
-        }
-        result
+        self.inner
+            .register_before(index, deadline)
+            .map_err(std::io::Error::other)
     }
+
     fn handoff_mailbox(&mut self, address: u32) {
-        self.journal.handoff_mailbox(address);
+        self.inner.handoff_mailbox(address);
     }
+
     fn acknowledge_mailbox(&mut self) {
-        self.journal.acknowledge_mailbox();
+        self.inner.acknowledge_mailbox();
     }
+
+    fn restoration_guard(&mut self, result: Result<(), String>) -> std::io::Result<()> {
+        self.inner
+            .restoration_guard(result)
+            .map_err(std::io::Error::other)
+    }
+
     fn resume_guest(&mut self) -> std::io::Result<()> {
-        if !self.journal.synchronized {
-            return Err(std::io::Error::other(
-                "debugger transport not synchronized; guest left stopped",
-            ));
-        }
-        // Even a failed request may resume, invalidating saved register values.
-        self.journal.registers.clear();
-        let result = self.qmp.resume();
-        if result.is_err() {
-            self.journal.synchronized = false;
-        }
-        result
+        self.inner.resume_guest().map_err(std::io::Error::other)
     }
+
     fn resume_guest_before(&mut self, deadline: Instant) -> std::io::Result<()> {
-        if !self.journal.synchronized {
-            return Err(std::io::Error::other(
-                "debugger transport not synchronized; guest left stopped",
-            ));
-        }
-        self.journal.registers.clear();
-        let result = self.qmp.resume_before(deadline);
-        if result.is_err() {
-            self.journal.synchronized = false;
-        }
-        result
+        self.inner
+            .resume_guest_before(deadline)
+            .map_err(std::io::Error::other)
     }
+
     fn breakpoint(&mut self, address: u32, enable: bool) -> std::io::Result<()> {
-        if enable && !self.journal.breakpoints.contains(&address) {
-            self.journal.breakpoints.push(address);
-        }
-        let result = self.gdb.breakpoint(address, enable);
-        if result.is_err() {
-            self.journal.synchronized = false;
-        }
-        result?;
-        if !enable {
-            self.journal.breakpoints.retain(|&item| item != address);
-        }
-        Ok(())
+        self.inner
+            .breakpoint(address, enable)
+            .map_err(std::io::Error::other)
     }
+
     fn breakpoint_before(
         &mut self,
         address: u32,
         enable: bool,
         deadline: Instant,
     ) -> std::io::Result<()> {
-        if enable && !self.journal.breakpoints.contains(&address) {
-            self.journal.breakpoints.push(address);
-        }
-        let result = self.gdb.breakpoint_before(address, enable, deadline);
-        if result.is_err() {
-            self.journal.synchronized = false;
-        }
-        result?;
-        if !enable {
-            self.journal.breakpoints.retain(|&item| item != address);
-        }
-        Ok(())
+        self.inner
+            .breakpoint_before(address, enable, deadline)
+            .map_err(std::io::Error::other)
     }
+
     fn read_register(&mut self, index: u32) -> std::io::Result<u32> {
-        let result = self.gdb.read_register(index);
-        if result.is_err() {
-            self.journal.synchronized = false;
-        }
-        result
+        self.inner.register(index).map_err(std::io::Error::other)
     }
+
+    fn write_register_before(
+        &mut self,
+        index: u32,
+        value: u32,
+        deadline: Instant,
+    ) -> std::io::Result<()> {
+        self.inner
+            .write_register_before(index, value, deadline)
+            .map_err(std::io::Error::other)
+    }
+
     fn continue_until_stop(&mut self, timeout: Duration) -> std::io::Result<String> {
-        self.journal.registers.clear();
-        let result = self.gdb.continue_until_stop(timeout);
-        if result.is_err() {
-            self.journal.synchronized = false;
-        }
-        result
+        self.inner
+            .continue_until_stop(timeout)
+            .map_err(std::io::Error::other)
     }
+
     fn call_thumb(
         &mut self,
         address: u32,
         arguments: &[u32],
         timeout: Duration,
     ) -> std::io::Result<String> {
-        self.journal.registers.clear();
-        let result = self.gdb.call_thumb(address, arguments, timeout);
-        if result.is_err() {
-            self.journal.synchronized = false;
-        }
-        result
+        self.inner
+            .call_thumb(address, arguments, timeout)
+            .map_err(std::io::Error::other)
     }
+
     fn finish<T>(
-        mut self,
+        self,
         result: Result<T, Box<dyn std::error::Error>>,
     ) -> Result<T, Box<dyn std::error::Error>> {
-        match result {
-            Ok(value) if self.journal.clean() => {
-                self.finalized = true;
-                Ok(value)
-            }
-            Ok(_) => {
-                self.finalized = true;
-                let failures = cleanup_debugger(&mut self);
-                Err(format!(
-                    "debugger session ended with active mutations or breakpoints; cleanup: {}",
-                    if failures.is_empty() {
-                        "completed".to_owned()
-                    } else {
-                        failures.join("; ")
-                    }
-                )
-                .into())
-            }
-            Err(error) => {
-                self.finalized = true;
-                let failures = cleanup_debugger(&mut self);
-                if failures.is_empty() {
-                    Err(error)
-                } else {
-                    Err(format!("{error}; debugger cleanup failed: {}", failures.join("; ")).into())
-                }
-            }
-        }
+        self.inner
+            .finish(
+                result.map_err(|error| error.to_string()),
+                Instant::now() + Duration::from_secs(30),
+            )
+            .map_err(|error| std::io::Error::other(error).into())
     }
-}
 
-impl Drop for KnobDebugSession {
-    fn drop(&mut self) {
-        if !self.finalized {
-            let errors = cleanup_debugger(self);
-            if !errors.is_empty() {
-                tracing::error!(
-                    "abandoned knob-dialog debugger cleanup failed: {}",
-                    errors.join("; ")
-                );
-            }
-        }
-    }
-}
-
-impl DebugCleanup for KnobDebugSession {
-    fn stop(&mut self) -> Result<(), String> {
-        self.qmp.stop().map_err(|error| error.to_string())
-    }
-    fn synchronized(&self) -> bool {
-        self.journal.synchronized && !self.journal.mailbox_pending
-    }
-    fn restore_writes(&mut self) -> Vec<String> {
-        let mut failures = Vec::new();
-        for (address, before) in self.journal.writes.drain(..).rev() {
-            if let Err(error) = self.gdb.write(address, &before) {
-                failures.push(format!("restore {address:#010x}: {error}"));
-                break;
-            }
-        }
-        failures
-    }
-    fn clear_breakpoints(&mut self) -> Vec<String> {
-        let mut failures = Vec::new();
-        for address in self.journal.breakpoints.drain(..).rev() {
-            if let Err(error) = self.gdb.breakpoint(address, false) {
-                failures.push(format!("remove breakpoint {address:#010x}: {error}"));
-                break;
-            }
-        }
-        failures
-    }
-    fn restore_registers(&mut self) -> Vec<String> {
-        let mut failures = Vec::new();
-        for (index, before) in self.journal.registers.drain(..).rev() {
-            if let Err(error) = self.gdb.register(index, before) {
-                failures.push(format!("restore register {index}: {error}"));
-                break;
-            }
-        }
-        failures
-    }
-    fn resume(&mut self) -> Result<(), String> {
-        self.qmp.resume().map_err(|error| error.to_string())
+    fn abort(self) -> Result<(), String> {
+        self.inner.abort(Instant::now() + Duration::from_secs(30))
     }
 }
 
@@ -297,12 +226,11 @@ fn turn_and_wait_hook_bounded(
     expected_mailbox: Option<(&l6max_host::knob_popup::OverlayReader, u8)>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     const MIXER_HOOK_RETURN: u32 = 0x8003_6c78;
-    let qmp = &session.engine.management[0];
     let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
     if let Some(shared) = shared {
         remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, wall_timeout_s)?;
     }
-    qmp.stop()?;
+    stop_main_guest(session)?;
     if let Some((reader, _)) = expected_mailbox {
         let pending = if let Some(shared) = shared {
             let deadline = shared.0 + Duration::from_secs(shared.3);
@@ -459,7 +387,6 @@ pub(super) fn run_knob_dialog_guard(
         return Err("patched startup hook does not reserve popup RAM".into());
     }
     let inputs = session.engine.inputs.as_ref().unwrap();
-    let qmp = &session.engine.management[0];
     // The project title varies with the selected project. The recorder
     // transport controls in the middle of this reviewed image do not.
     const READY_GUEST_TIMEOUT_MS: u32 = 30_000;
@@ -493,7 +420,7 @@ pub(super) fn run_knob_dialog_guard(
     };
     let word = |address: u32| -> Result<u32, Box<dyn std::error::Error>> {
         Ok(u32::from_le_bytes(
-            qmp.read_memory(0, address, 4)?.try_into().unwrap(),
+            read_main_memory(session, address, 4)?.try_into().unwrap(),
         ))
     };
     let wait_window = |recorder: bool| -> Result<u32, Box<dyn std::error::Error>> {
@@ -519,9 +446,9 @@ pub(super) fn run_knob_dialog_guard(
         }
     };
     let text_pointers = word(l6max::gui_text_pointers_by_language)?;
-    let original_resources = qmp.read_memory(0, text_pointers + 229 * 4, 12)?;
+    let original_resources = read_main_memory(session, text_pointers + 229 * 4, 12)?;
     let lengths_table = word(l6max::gui_text_lengths_by_language)?;
-    let original_lengths = qmp.read_memory(0, lengths_table + 229 * 2, 6)?;
+    let original_lengths = read_main_memory(session, lengths_table + 229 * 2, 6)?;
     let mut original_text = Vec::new();
     for (pointer, capacity) in original_resources
         .chunks_exact(4)
@@ -529,7 +456,7 @@ pub(super) fn run_knob_dialog_guard(
     {
         let address = u32::from_le_bytes(pointer.try_into().unwrap());
         let count = (usize::from(u16::from_le_bytes(capacity.try_into()?)) + 1) * 2;
-        original_text.push((address, qmp.read_memory(0, address, count)?));
+        original_text.push((address, read_main_memory(session, address, count)?));
     }
     let capture = |duration: u32, name: &str| -> Result<[u8; 1024], Box<dyn std::error::Error>> {
         let start = inputs.panel.snapshot().guest_ms;
@@ -575,15 +502,16 @@ pub(super) fn run_knob_dialog_guard(
     // the dialog has initialized state or claimed its display callback.
     use firmware_api::l6max::GUI_RECORDER_WINDOW;
     if u32::from_le_bytes(
-        qmp.read_memory(0, l6max::current_window, 4)?
+        read_main_memory(session, l6max::current_window, 4)?
             .try_into()
             .unwrap(),
     ) != GUI_RECORDER_WINDOW
     {
         return Err("knob-dialog test did not start from the recorder screen".into());
     }
-    if qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)? != 0u32.to_le_bytes()
-        || qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)? != 0u32.to_le_bytes()
+    if read_main_memory(session, l6max::gui_bitmap_table_entry_0, 4)? != 0u32.to_le_bytes()
+        || read_main_memory(session, l6max::gui_display_callback_table + 20, 4)?
+            != 0u32.to_le_bytes()
     {
         return Err(
             "knob-dialog state or callback was already active before the guard test".into(),
@@ -604,9 +532,9 @@ pub(super) fn run_knob_dialog_guard(
     let control = l6ctl::OwnedControl::new(&session.engine);
     let reader = control.knob_popup_reader()?;
     let observed = paused_observation(
-        || qmp.stop().map_err(|error| error.to_string()),
+        || stop_main_guest(session).map_err(|error| error.to_string()),
         || reader.guard_state(),
-        || qmp.resume().map_err(|error| error.to_string()),
+        || resume_main_guest(session).map_err(|error| error.to_string()),
     )?;
     let non_recorder_no_dialog = guard_rejected(&observed, non_recorder_window);
     if !non_recorder_no_dialog {
@@ -873,8 +801,7 @@ fn verify_sd_knob_fixture(
     let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
     let deadline = shared.0 + Duration::from_secs(shared.3);
     remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
-    let qmp = &session.engine.management[0];
-    qmp.stop_before(deadline)?;
+    stop_main_guest_before(session, deadline)?;
     remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
     let result = (|| -> Result<u32, Box<dyn std::error::Error>> {
         let ctl = l6ctl::OwnedControl::new(&session.engine);
@@ -904,18 +831,16 @@ pub(super) fn begin_preflight(
     sd_knob: bool,
     shared: (Instant, u32, u32, u64, u16),
 ) -> Result<PreflightContext, Box<dyn std::error::Error>> {
-    let qmp = &session.engine.management[0];
     let heap = || -> Result<Vec<u32>, Box<dyn std::error::Error>> {
-        Ok(qmp
-            .read_memory(0, l6max::xFreeBytesRemaining, 16)?
+        Ok(read_main_memory(session, l6max::xFreeBytesRemaining, 16)?
             .chunks_exact(4)
             .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
             .collect())
     };
-    let original_window = qmp.read_memory(0, l6max::current_window, 4)?;
-    let original_bitmap = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)?;
-    let original_bitmap_descriptor = qmp.read_memory(0, l6max::GUI_BITMAP_36_DESCRIPTOR, 8)?;
-    let original_state_handle = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
+    let original_window = read_main_memory(session, l6max::current_window, 4)?;
+    let original_bitmap = read_main_memory(session, l6max::gui_bitmap_table_entry_0 + 36 * 4, 4)?;
+    let original_bitmap_descriptor = read_main_memory(session, l6max::GUI_BITMAP_36_DESCRIPTOR, 8)?;
+    let original_state_handle = read_main_memory(session, l6max::gui_bitmap_table_entry_0, 4)?;
     if u32::from_le_bytes(original_bitmap.clone().try_into().unwrap())
         != l6max::GUI_BITMAP_36_DESCRIPTOR
     {
@@ -929,7 +854,7 @@ pub(super) fn begin_preflight(
         )
         .into());
     }
-    let original_notification_semaphore = qmp.read_memory(0, l6max::notification_slot, 4)?;
+    let original_notification_semaphore = read_main_memory(session, l6max::notification_slot, 4)?;
     let notification_semaphore =
         u32::from_le_bytes(original_notification_semaphore.clone().try_into().unwrap());
     if notification_semaphore == 0 || notification_semaphore & 1 != 0 {
@@ -939,40 +864,40 @@ pub(super) fn begin_preflight(
         .into());
     }
     let text_table = u32::from_le_bytes(
-        qmp.read_memory(0, l6max::gui_text_pointers_by_language, 4)?
+        read_main_memory(session, l6max::gui_text_pointers_by_language, 4)?
             .try_into()
             .unwrap(),
     );
-    let original_resources = qmp.read_memory(0, text_table + 229 * 4, 8)?;
+    let original_resources = read_main_memory(session, text_table + 229 * 4, 8)?;
     let shared_resource_pointer = u32::from_le_bytes(
-        qmp.read_memory(0, text_table + 179 * 4, 4)?
+        read_main_memory(session, text_table + 179 * 4, 4)?
             .try_into()
             .unwrap(),
     );
-    let original_shared_resource = qmp.read_memory(0, shared_resource_pointer, 512)?;
+    let original_shared_resource = read_main_memory(session, shared_resource_pointer, 512)?;
     let original_lengths_table = u32::from_le_bytes(
-        qmp.read_memory(0, l6max::gui_text_lengths_by_language, 4)?
+        read_main_memory(session, l6max::gui_text_lengths_by_language, 4)?
             .try_into()
             .unwrap(),
     );
-    let original_lengths = qmp.read_memory(0, original_lengths_table + 229 * 2, 4)?;
+    let original_lengths = read_main_memory(session, original_lengths_table + 229 * 2, 4)?;
     let widget_pointer = |index: u32| -> Result<u32, Box<dyn std::error::Error>> {
         Ok(u32::from_le_bytes(
-            qmp.read_memory(0, l6max::gui_widget_table + index * 4, 4)?
+            read_main_memory(session, l6max::gui_widget_table + index * 4, 4)?
                 .try_into()
                 .unwrap(),
         ))
     };
     let widget7 = widget_pointer(7)?;
     let widget33 = widget_pointer(33)?;
-    let original_widget7 = qmp.read_memory(0, widget7, 16)?;
-    let original_widget33 = qmp.read_memory(0, widget33, 16)?;
+    let original_widget7 = read_main_memory(session, widget7, 16)?;
+    let original_widget33 = read_main_memory(session, widget33, 16)?;
     if original_widget7.as_slice() != [1, 0, 0, 0, 10, 0, 1, 0, 1, 0, 126, 0, 1, 0, 1, 2]
         || original_widget33.as_slice() != [1, 0, 1, 0, 40, 0, 30, 0, 33, 0, 67, 0, 1, 0, 1, 0]
     {
         return Err("recorder widgets do not match the guarded firmware defaults".into());
     }
-    let original_shared_capacity = qmp.read_memory(0, original_lengths_table + 179 * 2, 2)?;
+    let original_shared_capacity = read_main_memory(session, original_lengths_table + 179 * 2, 2)?;
     if u16::from_le_bytes(original_shared_capacity.try_into().unwrap()) != 255
         || original_shared_resource
             .chunks_exact(2)
@@ -984,7 +909,7 @@ pub(super) fn begin_preflight(
     }
     let background_pointer = |index: u32| -> Result<u32, Box<dyn std::error::Error>> {
         Ok(u32::from_le_bytes(
-            qmp.read_memory(0, l6max::gui_background_table + index * 4, 4)?
+            read_main_memory(session, l6max::gui_background_table + index * 4, 4)?
                 .try_into()
                 .unwrap(),
         ))
@@ -993,30 +918,26 @@ pub(super) fn begin_preflight(
     let background37 = background_pointer(37)?;
     let background48 = background_pointer(48)?;
     let original_background_layers = [
-        qmp.read_memory(0, background10, 1)?,
-        qmp.read_memory(0, background37, 1)?,
-        qmp.read_memory(0, background48, 1)?,
+        read_main_memory(session, background10, 1)?,
+        read_main_memory(session, background37, 1)?,
+        read_main_memory(session, background48, 1)?,
     ];
     let heap_before = heap()?;
-    let socket = options
-        .gdb_socket
-        .as_ref()
-        .ok_or("knob-dialog lock-contention check needs GDB")?;
     let firmware_callback = if sd_knob {
         None
     } else {
         Some(load_firmware_knob_fixture(options)?)
     };
-    let mut debugger = KnobDebugSession::connect(qmp, socket)?;
+    let deadline = shared.0 + Duration::from_secs(shared.3);
+    let mut debugger = KnobDebugSession::begin(session, deadline)?;
     let sd_expected_callback =
         verify_sd_knob_fixture(session, options, &mut debugger, sd_knob, shared)?;
     // Freeze the dynamic targets while retaining the existing debugger lease.
     // The host check binds these to the live tables and writable RAM; the
     // legacy debugger transaction remains responsible for all mutations.
     let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
-    let deadline = shared.0 + Duration::from_secs(shared.3);
     remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
-    qmp.stop_before(deadline)?;
+    stop_main_guest_before(session, deadline)?;
     let targets = l6ctl::KnobPreflightTargets {
         widget7,
         background10,
@@ -1025,9 +946,8 @@ pub(super) fn begin_preflight(
     let verified = targets.verify(|address| {
         remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)
             .map_err(|e| e.to_string())?;
-        let bytes = qmp
-            .read_memory_before(0, address, 4, deadline)
-            .map_err(|e| e.to_string())?;
+        let bytes =
+            read_main_memory_before(session, address, 4, deadline).map_err(|e| e.to_string())?;
         remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)
             .map_err(|e| e.to_string())?;
         Ok(u32::from_le_bytes(
@@ -1108,12 +1028,8 @@ pub(super) fn begin_preflight(
 }
 
 pub(super) fn abort_preflight(mut context: PreflightContext) -> Result<(), String> {
-    if let Some(mut debugger) = context.debugger.take() {
-        debugger.finalized = true;
-        let failures = cleanup_debugger(&mut debugger);
-        if !failures.is_empty() {
-            return Err(failures.join("; "));
-        }
+    if let Some(debugger) = context.debugger.take() {
+        debugger.abort()?;
     }
     Ok(())
 }
@@ -1195,7 +1111,6 @@ pub(super) fn inject_preflight_probe(
         .debugger
         .as_mut()
         .ok_or("missing knob-dialog debugger")?;
-    let qmp = &session.engine.management[0];
     let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
     let deadline = shared.0 + Duration::from_secs(shared.3);
     let check = || {
@@ -1204,12 +1119,11 @@ pub(super) fn inject_preflight_probe(
             .map_err(|e| std::io::Error::other(e.to_string()))
     };
     check()?;
-    qmp.stop_before(deadline)?;
+    stop_main_guest_before(session, deadline)?;
     let read_word = |address| -> Result<u32, String> {
         check().map_err(|e| e.to_string())?;
-        let bytes = qmp
-            .read_memory_before(0, address, 4, deadline)
-            .map_err(|e| e.to_string())?;
+        let bytes =
+            read_main_memory_before(session, address, 4, deadline).map_err(|e| e.to_string())?;
         check().map_err(|e| e.to_string())?;
         Ok(u32::from_le_bytes(
             bytes.try_into().map_err(|_| "short target pointer")?,
@@ -1235,7 +1149,7 @@ pub(super) fn inject_preflight_probe(
             alias
         };
         check()?;
-        probe.original = qmp.read_memory_before(0, probe.address, 2, deadline)?;
+        probe.original = read_main_memory_before(session, probe.address, 2, deadline)?;
         check()?;
         if context.next == 2 {
             context.alias_layer = Some(probe.original.clone());
@@ -1243,7 +1157,7 @@ pub(super) fn inject_preflight_probe(
     }
     if matches!(probe.kind, crate::scenario::PreflightProbe::WidgetLayer) {
         check()?;
-        probe.original = qmp.read_memory_before(0, probe.address, 1, deadline)?;
+        probe.original = read_main_memory_before(session, probe.address, 1, deadline)?;
         check()?;
     }
     debugger.write_before(probe.address, &probe.replacement, deadline, check)?;
@@ -1273,7 +1187,7 @@ pub(super) fn sample_preflight_probe(
     reader: &l6max_host::knob_popup::OverlayReader,
     heap_reader: &l6max_host::heap::CounterReader,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    session.engine.management[0].stop()?;
+    stop_main_guest(session)?;
     let (state, callback) = reader.preflight_state()?;
     let heap = heap_reader.read()?;
     let heap = vec![
@@ -1368,7 +1282,6 @@ pub(super) fn begin_callback_race(
     if context.next != 5 || context.callback_race.is_some() {
         return Err("knob-dialog race step is out of order".into());
     }
-    let qmp = &session.engine.management[0];
     let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
     let debugger = context
         .debugger
@@ -1376,7 +1289,7 @@ pub(super) fn begin_callback_race(
         .ok_or("missing knob-dialog debugger")?;
     remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
     let deadline = shared.0 + Duration::from_secs(shared.3);
-    qmp.stop_before(deadline)?;
+    stop_main_guest_before(session, deadline)?;
     verify_stopped_semaphore(session, context.notification_semaphore, shared)?;
     let semaphore_count = activation_read(session, context.notification_semaphore + 56, 4, shared)?;
     if semaphore_count != 1u32.to_le_bytes() {
@@ -1430,9 +1343,8 @@ pub(super) fn wait_race_registration(
     if race.callback.is_some() {
         return Err("callback registration already observed".into());
     }
-    let qmp = &session.engine.management[0];
     let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
-    while qmp.query_status()?.running {
+    while main_guest_status(session)?.running {
         session.poll()?;
         if race_deadline_expired(Instant::now(), race.registration_deadline) {
             return Err("first-use callback registration breakpoint timed out".into());
@@ -1516,9 +1428,8 @@ pub(super) fn wait_race_callback(
         .ok_or("missing callback race")?;
     let callback = race.callback.ok_or("missing race callback")?;
     let deadline = race.callback_deadline.ok_or("callback not armed")?;
-    let qmp = &session.engine.management[0];
     let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
-    while qmp.query_status()?.running {
+    while main_guest_status(session)?.running {
         session.poll()?;
         if race_deadline_expired(Instant::now(), deadline) {
             return Err("first DisplayCycle2 callback breakpoint timed out".into());
@@ -1594,18 +1505,21 @@ pub(super) fn sample_callback_race(
         return Err("callback race already sampled".into());
     }
     let callback = race.callback.ok_or("missing race callback")?;
-    let qmp = &session.engine.management[0];
-    qmp.stop()?;
-    let state = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0, 4)?;
-    let slot = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
+    stop_main_guest(session)?;
+    let state = read_main_memory(session, l6max::gui_bitmap_table_entry_0, 4)?;
+    let slot = read_main_memory(session, l6max::gui_display_callback_table + 20, 4)?;
     let frame_unchanged = race.frame.as_ref().ok_or("callback race frame missing")? == baseline;
     let rejected = frame_unchanged
         && u16::from_le_bytes(state[..2].try_into().unwrap()) == 0x4b4e
         && u32::from_le_bytes(slot.clone().try_into().unwrap()) == callback
-        && qmp.read_memory(0, context.alias_widget.ok_or("missing alias widget")?, 1)? == [4]
-        && qmp.read_memory(0, context.widget7, 1)? == [1]
-        && qmp.read_memory(0, context.background10, 1)? == [0]
-        && qmp.read_memory(0, context.shared_resource_pointer, 512)?
+        && read_main_memory(
+            session,
+            context.alias_widget.ok_or("missing alias widget")?,
+            1,
+        )? == [4]
+        && read_main_memory(session, context.widget7, 1)? == [1]
+        && read_main_memory(session, context.background10, 1)? == [0]
+        && read_main_memory(session, context.shared_resource_pointer, 512)?
             == context.original_shared_resource;
     race.snapshot = Some(CallbackRaceSnapshot {
         state,
@@ -1654,9 +1568,8 @@ pub(super) fn assert_callback_race(
     if snapshot.state[2] != 0 || snapshot.state[3] != u8::MAX {
         return Err(format!("knob-dialog retry requires zero ticks and empty mailbox, found ticks={} pending={:#04x}", snapshot.state[2], snapshot.state[3]).into());
     }
-    let qmp = &session.engine.management[0];
-    if !supported_display_dispatcher(&qmp.read_memory(
-        0,
+    if !supported_display_dispatcher(&read_main_memory(
+        session,
         DISPLAY_CYCLE2_DISPATCH_GUARD,
         DISPLAY_CYCLE2_RETURN_GUARD.len(),
     )?) {
@@ -1810,7 +1723,7 @@ pub(super) fn activation_trigger(
     }
     let deadline = shared.0 + Duration::from_secs(shared.3);
     remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
-    session.engine.management[0].stop_before(deadline)?;
+    stop_main_guest_before(session, deadline)?;
     let before = activation_read(session, l6max::gui_bitmap_table_entry_0, 4, shared)?;
     let slot = activation_word(session, l6max::gui_display_callback_table + 20, shared)?;
     let semaphore = activation_read(session, context.notification_semaphore + 56, 4, shared)?;
@@ -1888,7 +1801,7 @@ pub(super) fn activation_wait(
                     "knob dialog did not render while the notification lock was held".into(),
                 );
             }
-            session.engine.management[0].stop_before(deadline)?;
+            stop_main_guest_before(session, deadline)?;
             activation_local_check(session, start, guest, deadline)?;
             let stopped = activation_read_local(
                 session,
@@ -2016,7 +1929,6 @@ pub(super) fn activation_restore(
         .debugger
         .as_mut()
         .ok_or("missing knob debugger")?
-        .journal
         .restoration_guard(guard)?;
     let debugger = context
         .debugger
@@ -2089,15 +2001,12 @@ fn validate_opened_overlay(
     debugger: &mut KnobDebugSession,
     opened: &OpenedOverlay,
 ) -> Result<(), String> {
-    let qmp = &session.engine.management[0];
     paused_observation(
-        || qmp.stop().map_err(|error| error.to_string()),
+        || stop_main_guest(session).map_err(|error| error.to_string()),
         || {
-            let state = qmp
-                .read_memory(0, l6max::gui_bitmap_table_entry_0, 4)
+            let state = read_main_memory(session, l6max::gui_bitmap_table_entry_0, 4)
                 .map_err(|error| error.to_string())?;
-            let slot = qmp
-                .read_memory(0, l6max::gui_display_callback_table + 20, 4)
+            let slot = read_main_memory(session, l6max::gui_display_callback_table + 20, 4)
                 .map_err(|error| error.to_string())?;
             if !opened_overlay_matches(&state, &slot, opened.callback) {
                 return Err(format!(
@@ -2290,7 +2199,7 @@ pub(super) fn begin_task_probe(
         .ok_or("missing knob-dialog debugger")?;
     validate_opened_overlay(session, debugger, opened)?;
     const KNOB_CALL_SITE: u32 = 0x8003_6c74;
-    let call = session.engine.management[0].read_memory(0, KNOB_CALL_SITE, 4)?;
+    let call = read_main_memory(session, KNOB_CALL_SITE, 4)?;
     let hook_entry = thumb_bl_target(
         KNOB_CALL_SITE,
         call.try_into()
@@ -2321,7 +2230,7 @@ pub(super) fn arm_task_hook(
         .debugger
         .as_mut()
         .ok_or("missing knob-dialog debugger")?;
-    session.engine.management[0].stop()?;
+    stop_main_guest(session)?;
     debugger.breakpoint(entry, true)?;
     debugger.resume_guest()?;
     Ok(json!({"hook_entry":entry}))
@@ -2360,8 +2269,7 @@ fn wait_task_stop(
     shared: (Instant, u32, u32, u64, u16),
     timeout: &'static str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let qmp = &session.engine.management[0];
-    while qmp.query_status()?.running {
+    while main_guest_status(session)?.running {
         session.poll()?;
         let now = Instant::now();
         let guest = session
@@ -2836,7 +2744,7 @@ pub(super) fn arm_bitmap_callback(
         .debugger
         .as_mut()
         .ok_or("missing knob-dialog debugger")?;
-    session.engine.management[0].stop()?;
+    stop_main_guest(session)?;
     debugger.breakpoint(entry, true)?;
     debugger.resume_guest()?;
     let probe = context
@@ -2888,12 +2796,8 @@ pub(super) fn invoke_bitmap_probe(
     remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, 5)?;
     let deadline = shared.0 + Duration::from_secs(shared.3);
     let check = || notification_observation_check(session, shared, shared.3);
-    let reader = l6max_host::knob_popup::overlay_reader_before_checked(
-        &session.engine.management[0],
-        l6fw::Model::L6max,
-        deadline,
-        &check,
-    )?;
+    let reader = l6ctl::OwnedControl::new(&session.engine)
+        .knob_overlay_reader_before_checked(deadline, &check)?;
     let ticks = reader.countdown_ticks_before_checked(deadline, &check)?;
     remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, 5)?;
     require_bitmap_countdown(ticks, BITMAP_DRAW_MIN_TICKS)?;
@@ -3226,7 +3130,6 @@ pub(super) fn acquire_locked_update(
     if context.next != 13 || context.locked_update.is_some() {
         return Err("knob-dialog locked update step is out of order".into());
     }
-    let qmp = &session.engine.management[0];
     let debugger = context
         .debugger
         .as_mut()
@@ -3234,7 +3137,7 @@ pub(super) fn acquire_locked_update(
     let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
     let deadline = shared.0 + Duration::from_secs(shared.3);
     remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
-    qmp.stop_before(deadline)?;
+    stop_main_guest_before(session, deadline)?;
     verify_stopped_semaphore(session, context.notification_semaphore, shared)?;
     let count = activation_read(session, context.notification_semaphore + 56, 4, shared)?;
     if count != 1u32.to_le_bytes() {
@@ -3364,7 +3267,7 @@ pub(super) fn sample_locked_update(
     context: &mut PreflightContext,
     reader: &l6max_host::knob_popup::OverlayReader,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    session.engine.management[0].stop()?;
+    stop_main_guest(session)?;
     let pending = reader.mailbox()?;
     let lock_held =
         reader.notification_count(context.notification_semaphore)? == 0u32.to_le_bytes();
@@ -3398,7 +3301,6 @@ pub(super) fn restore_locked_update(
         .debugger
         .as_mut()
         .ok_or("missing knob debugger")?
-        .journal
         .restoration_guard(guard)?;
     let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
     let deadline = shared.0 + Duration::from_secs(shared.3);
@@ -4073,8 +3975,7 @@ pub(super) fn prepare_notification(
     if lit(0, 17) < 10 || lit(30, 48) < 5 {
         return Err("shared text resource did not render both dialog lines".into());
     }
-    let text_before =
-        session.engine.management[0].read_memory(0, context.shared_resource_pointer, 512)?;
+    let text_before = read_main_memory(session, context.shared_resource_pointer, 512)?;
     context.pending_notification = Some(PendingNotification {
         text_before,
         breakpoint_deadline: None,
@@ -4104,7 +4005,7 @@ pub(super) fn arm_notification_callback(
         .active_slot5
         & !1;
     let debugger = context.debugger.as_mut().ok_or("missing knob debugger")?;
-    session.engine.management[0].stop()?;
+    stop_main_guest(session)?;
     debugger.breakpoint(callback, true)?;
     debugger.resume_guest()?;
     context
@@ -4135,8 +4036,7 @@ pub(super) fn wait_notification_callback(
         .ok_or("missing notification context")?
         .breakpoint_deadline
         .ok_or("missing breakpoint deadline")?;
-    let qmp = &session.engine.management[0];
-    while qmp.query_status()?.running {
+    while main_guest_status(session)?.running {
         session.poll()?;
         if Instant::now() >= deadline {
             return Err("dialog callback breakpoint was not reached".into());
@@ -4183,15 +4083,9 @@ pub(super) fn invoke_notification(
     let deadline = (Instant::now() + Duration::from_secs(wall_timeout_s))
         .min(shared.0 + Duration::from_secs(shared.3));
     let check = || notification_observation_check(session, shared, wall_timeout_s);
-    let qmp = &session.engine.management[0];
-    let tick =
-        l6max_host::freertos::ticks_before_checked(qmp, l6fw::Model::L6max, deadline, &check)?;
-    l6max_host::knob_popup::notification_state_before_checked(
-        qmp,
-        l6fw::Model::L6max,
-        deadline,
-        &check,
-    )?;
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let tick = control.freertos_ticks_before_checked(deadline, &check)?;
+    control.notification_state_before_checked(deadline, &check)?;
     let main = session
         .engine
         .inputs
@@ -4205,22 +4099,8 @@ pub(super) fn invoke_notification(
     let debugger = context.debugger.as_mut().ok_or("missing knob debugger")?;
     for (index, value) in [(0, message), (15, l6max::gui_notification_show)] {
         check()?;
-        debugger
-            .gdb
-            .set_request_timeout(deadline.saturating_duration_since(Instant::now()))?;
-        let before = debugger.read_register(index)?;
-        check()?;
-        debugger.journal.registers.push((index, before));
-        debugger
-            .gdb
-            .set_request_timeout(deadline.saturating_duration_since(Instant::now()))?;
-        if let Err(error) = debugger.gdb.register(index, value) {
-            debugger.journal.synchronized = false;
-            return Err(error.into());
-        }
+        debugger.write_register_before(index, value, deadline)?;
     }
-    // Keep later debugger operations' default request budget.
-    debugger.gdb.set_request_timeout(Duration::from_secs(5))?;
     check()?;
     if Instant::now() >= deadline {
         return Err("notification invocation exceeded its wall deadline".into());
@@ -4354,14 +4234,11 @@ pub(super) fn wait_notification_frame(
     let deadline = (Instant::now() + Duration::from_secs(wall_timeout_s))
         .min(shared.0 + Duration::from_secs(shared.3));
     let check = || notification_observation_check(session, shared, wall_timeout_s);
-    let qmp = &session.engine.management[0];
     let clear_start = if clear {
-        Some(l6max_host::freertos::ticks_before_checked(
-            qmp,
-            l6fw::Model::L6max,
-            deadline,
-            &check,
-        )?)
+        Some(
+            l6ctl::OwnedControl::new(&session.engine)
+                .freertos_ticks_before_checked(deadline, &check)?,
+        )
     } else {
         None
     };
@@ -4398,12 +4275,8 @@ pub(super) fn wait_notification_frame(
                 }
             },
         )?;
-        let (active, _timer) = l6max_host::knob_popup::notification_state_before_checked(
-            qmp,
-            l6fw::Model::L6max,
-            deadline,
-            &check,
-        )?;
+        let (active, _timer) = l6ctl::OwnedControl::new(&session.engine)
+            .notification_state_before_checked(deadline, &check)?;
         remaining_debug_wait(
             shared,
             session
@@ -4417,12 +4290,8 @@ pub(super) fn wait_notification_frame(
             wall_timeout_s,
         )?;
         if clear {
-            let ticks = l6max_host::freertos::ticks_before_checked(
-                qmp,
-                l6fw::Model::L6max,
-                deadline,
-                &check,
-            )?;
+            let ticks = l6ctl::OwnedControl::new(&session.engine)
+                .freertos_ticks_before_checked(deadline, &check)?;
             let main = session
                 .engine
                 .inputs
@@ -4519,10 +4388,9 @@ pub(super) fn expect_notification_invariants(
         .as_ref()
         .ok_or("missing active snapshot")?
         .active_slot5;
-    let qmp = &session.engine.management[0];
-    let callback = qmp.read_memory(0, l6max::gui_display_callback_table + 20, 4)?;
-    let pointer = qmp.read_memory(0, context.text_table + 179 * 4, 4)?;
-    let resource = qmp.read_memory(0, context.shared_resource_pointer, 512)?;
+    let callback = read_main_memory(session, l6max::gui_display_callback_table + 20, 4)?;
+    let pointer = read_main_memory(session, context.text_table + 179 * 4, 4)?;
+    let resource = read_main_memory(session, context.shared_resource_pointer, 512)?;
     if callback != active_slot5.to_le_bytes()
         || pointer != context.shared_resource_pointer.to_le_bytes()
         || resource != pending.text_before
@@ -4548,7 +4416,7 @@ pub(super) fn expect_notification_invariants(
             .panel
             .snapshot()
             .guest_ms;
-        return Err(format!("stock notification expiry damaged or prematurely removed the custom scene: callback {callback:02x?} vs {active_slot5:08x}, resource pointer {pointer:02x?} vs {:08x}, resource {:?} vs {:?}, ticks {}, window {:02x?}, notification active {} busy {}, guest ms since notification {}", context.shared_resource_pointer, utf16(&resource), utf16(&pending.text_before), qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 2, 1)?[0], qmp.read_memory(0, l6max::current_window, 4)?, qmp.read_memory(0, l6max::notification_active, 1)?[0], qmp.read_memory(0, l6max::notification_busy, 1)?[0], now.wrapping_sub(start)).into());
+        return Err(format!("stock notification expiry damaged or prematurely removed the custom scene: callback {callback:02x?} vs {active_slot5:08x}, resource pointer {pointer:02x?} vs {:08x}, resource {:?} vs {:?}, ticks {}, window {:02x?}, notification active {} busy {}, guest ms since notification {}", context.shared_resource_pointer, utf16(&resource), utf16(&pending.text_before), read_main_memory(session, l6max::gui_bitmap_table_entry_0 + 2, 1)?[0], read_main_memory(session, l6max::current_window, 4)?, read_main_memory(session, l6max::notification_active, 1)?[0], read_main_memory(session, l6max::notification_busy, 1)?[0], now.wrapping_sub(start)).into());
     }
     if clear {
         let now = session
@@ -4765,12 +4633,11 @@ pub(super) fn inject_invalid_signature(
     if context.final_phase != 8 {
         return Err("signature injection out of order".into());
     }
-    let qmp = &session.engine.management[0];
     let debugger = context.debugger.as_mut().ok_or("missing knob debugger")?;
     let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
     let deadline = shared.0 + Duration::from_secs(shared.3);
     remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
-    qmp.stop_before(deadline)?;
+    stop_main_guest_before(session, deadline)?;
     let address = l6max::gui_bitmap_table_entry_0;
     let original = activation_read(session, address, 4, shared)?;
     l6ctl::verify_bitmap_probe_state(
@@ -4866,12 +4733,11 @@ pub(super) fn sample_invalid_signature(
         .pending_invalid_signature
         .as_mut()
         .ok_or("missing signature probe")?;
-    let qmp = &session.engine.management[0];
-    qmp.stop()?;
+    stop_main_guest(session)?;
     let state = l6max::gui_bitmap_table_entry_0;
     pending.rejected = Some(
-        qmp.read_memory(0, state, 4)? == pending.invalid.to_le_bytes()
-            && qmp.read_memory(0, state + 36 * 4, 4)? == context.original_bitmap,
+        read_main_memory(session, state, 4)? == pending.invalid.to_le_bytes()
+            && read_main_memory(session, state + 36 * 4, 4)? == context.original_bitmap,
     );
     context.final_phase += 1;
     Ok(json!({}))
@@ -4900,7 +4766,6 @@ pub(super) fn restore_invalid_signature(
         .debugger
         .as_mut()
         .ok_or("missing knob debugger")?
-        .journal
         .restoration_guard(guard)?;
     let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
     let deadline = shared.0 + Duration::from_secs(shared.3);
@@ -4976,12 +4841,11 @@ pub(super) fn inject_invalid_tag(
     if !matches!(context.final_phase, 1 | 4) {
         return Err("invalid tag injection out of order".into());
     }
-    let qmp = &session.engine.management[0];
     let debugger = context.debugger.as_mut().ok_or("missing knob debugger")?;
     let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
     let deadline = shared.0 + Duration::from_secs(shared.3);
     remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
-    qmp.stop_before(deadline)?;
+    stop_main_guest_before(session, deadline)?;
     let state = activation_read(session, l6max::gui_bitmap_table_entry_0, 4, shared)?;
     l6ctl::verify_bitmap_probe_state(state.try_into().map_err(|_| "short bitmap state")?, true)?;
     let address = l6max::gui_bitmap_table_entry_0 + 3;
@@ -5036,8 +4900,8 @@ pub(super) fn wait_invalid_tag(
             Instant::now(),
             guest_timeout_ms,
             || {
-                Ok(session.engine.management[0].read_memory_before(
-                    0,
+                Ok(read_main_memory_before(
+                    session,
                     l6max::gui_bitmap_table_entry_0 + 3,
                     1,
                     deadline,
@@ -5078,12 +4942,11 @@ pub(super) fn confirm_invalid_tag(
         .as_ref()
         .ok_or("missing pending invalid tag")?
         .description();
-    let qmp = &session.engine.management[0];
     let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
     let deadline = shared.0 + Duration::from_secs(shared.3);
     let debugger = context.debugger.as_mut().ok_or("missing knob debugger")?;
     remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
-    qmp.stop_before(deadline)?;
+    stop_main_guest_before(session, deadline)?;
     let discarded =
         activation_read(session, l6max::gui_bitmap_table_entry_0 + 3, 1, shared)? == [0xff];
     remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
@@ -5489,8 +5352,9 @@ mod paused_guard_tests {
 
 #[cfg(test)]
 mod debug_cleanup_tests {
-    use super::{DebugCleanup, cleanup_debugger};
-    use l6max_host::debug_journal::Journal;
+    use l6max_host::debug_journal::{
+        Cleanup as DebugCleanup, Journal, cleanup as cleanup_debugger,
+    };
     #[derive(Default)]
     struct Fake {
         calls: Vec<&'static str>,
@@ -5556,14 +5420,35 @@ mod debug_cleanup_tests {
         journal.commit_write(other);
         let restore = journal.begin_write(0x100, vec![2], &[1]).unwrap();
         journal.commit_write(restore);
-        assert_eq!(journal.writes, vec![(0x200, vec![3])]);
+        assert_eq!(
+            journal.writes,
+            vec![l6max_host::debug_journal::Write {
+                address: 0x200,
+                before: vec![3],
+                after: vec![4],
+            }]
+        );
     }
     #[test]
     fn failed_restore_keeps_original_and_attempt_for_reverse_rollback() {
         let mut journal = Journal::default();
         journal.begin_write(0x100, vec![1], &[2]).unwrap();
         journal.begin_write(0x100, vec![2], &[1]).unwrap();
-        assert_eq!(journal.writes, vec![(0x100, vec![1]), (0x100, vec![2])]);
+        assert_eq!(
+            journal.writes,
+            vec![
+                l6max_host::debug_journal::Write {
+                    address: 0x100,
+                    before: vec![1],
+                    after: vec![2],
+                },
+                l6max_host::debug_journal::Write {
+                    address: 0x100,
+                    before: vec![2],
+                    after: vec![1],
+                },
+            ]
+        );
     }
     #[test]
     fn overlapping_regions_are_rejected_except_exact_restoration() {

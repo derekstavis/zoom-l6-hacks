@@ -47,6 +47,7 @@ pub use l6max_host::editor::{
     pad_file_count as editor_pad_file_count, pad_filename_valid as editor_pad_filename_valid,
 };
 pub use l6max_host::input_trace::panel_uart_count;
+pub use l6max_host::knob_popup::ProbeSession as KnobPopupProbeSession;
 pub use l6max_host::l6_din::Snapshot as L6DinSnapshot;
 pub use l6max_host::l6_recorder::{
     Dma as L6RecorderDma, Event as L6RecorderEvent, Selection as L6RecorderSelection,
@@ -877,6 +878,19 @@ impl<'a> OwnedControl<'a> {
             .map_err(ControlError::Rejected)
     }
 
+    /// Begin the retained L6max knob-dialog probe through the host-owned
+    /// debugger, QMP reader, mutation journal, and cleanup scope.
+    pub fn knob_popup_probe_before(
+        &self,
+        deadline: std::time::Instant,
+    ) -> Result<KnobPopupProbeSession, ControlError> {
+        let controller = self.engine.debugger().ok_or(ControlError::Unavailable(
+            "debugger unavailable; launch with --gdb-socket",
+        ))?;
+        l6max_host::knob_popup::ProbeSession::begin_before(controller, deadline)
+            .map_err(ControlError::Rejected)
+    }
+
     /// Coordinate breakpoints while both initially paused guests and input
     /// replay are observed by the caller. This is an in-process API only.
     pub fn debug_observer_before(
@@ -1148,6 +1162,44 @@ impl<'a> OwnedControl<'a> {
     ) -> Result<MemoryRead, ControlError> {
         l6max_host::memory::read_main_before(self.main_qmp()?, address, length, deadline)
             .map_err(ControlError::Rejected)
+    }
+
+    /// Query the owned MAIN guest's QMP run state.
+    pub fn main_guest_status(&self) -> Result<QmpStatus, ControlError> {
+        self.main_qmp()?
+            .query_status()
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+
+    /// Stop the owned MAIN guest through its QMP management channel.
+    pub fn stop_main_guest(&self) -> Result<(), ControlError> {
+        self.main_qmp()?
+            .stop()
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+
+    /// Stop the owned MAIN guest under a caller-supplied wall deadline.
+    pub fn stop_main_guest_before(&self, deadline: std::time::Instant) -> Result<(), ControlError> {
+        self.main_qmp()?
+            .stop_before(deadline)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+
+    /// Resume the owned MAIN guest through its QMP management channel.
+    pub fn resume_main_guest(&self) -> Result<(), ControlError> {
+        self.main_qmp()?
+            .resume()
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+
+    /// Resume the owned MAIN guest under a caller-supplied wall deadline.
+    pub fn resume_main_guest_before(
+        &self,
+        deadline: std::time::Instant,
+    ) -> Result<(), ControlError> {
+        self.main_qmp()?
+            .resume_before(deadline)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
     }
 
     /// Send through an already-enumerated USB endpoint owned by the caller.
@@ -1590,6 +1642,54 @@ impl<'a> OwnedControl<'a> {
     ) -> Result<l6max_host::knob_popup::OverlayReader, ControlError> {
         l6max_host::knob_popup::overlay_reader(self.main_qmp()?, self.engine.model())
             .map_err(ControlError::Rejected)
+    }
+
+    /// Verify an overlay observation against the owned MAIN guest under a
+    /// caller deadline and cancellation check.
+    pub fn knob_overlay_reader_before_checked(
+        &self,
+        deadline: std::time::Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<l6max_host::knob_popup::OverlayReader, ControlError> {
+        l6max_host::knob_popup::overlay_reader_before_checked(
+            self.main_qmp()?,
+            self.engine.model(),
+            deadline,
+            check,
+        )
+        .map_err(ControlError::Rejected)
+    }
+
+    /// Read the guarded FreeRTOS tick count with shared cancellation/deadline
+    /// checks on the owned MAIN guest.
+    pub fn freertos_ticks_before_checked(
+        &self,
+        deadline: std::time::Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<u32, ControlError> {
+        l6max_host::freertos::ticks_before_checked(
+            self.main_qmp()?,
+            self.engine.model(),
+            deadline,
+            check,
+        )
+        .map_err(ControlError::Rejected)
+    }
+
+    /// Observe guarded notification state with shared cancellation/deadline
+    /// checks on the owned MAIN guest.
+    pub fn notification_state_before_checked(
+        &self,
+        deadline: std::time::Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<(u8, u16), ControlError> {
+        l6max_host::knob_popup::notification_state_before_checked(
+            self.main_qmp()?,
+            self.engine.model(),
+            deadline,
+            check,
+        )
+        .map_err(ControlError::Rejected)
     }
 
     /// Verify the GUI revision once for a bounded in-process observation step.

@@ -659,6 +659,661 @@ pub fn overlay_reader_before_checked(
     Ok(OverlayReader { qmp: qmp.clone() })
 }
 
+/// Host-owned retained debugger/QMP scope for the multi-phase knob-dialog
+/// probes. It keeps transport ownership, temporary mutations, and rollback
+/// bookkeeping together while the scenario retains ordering and assertions.
+pub struct ProbeSession {
+    debugger: crate::debug::Session,
+    journal: crate::debug_journal::Journal,
+    finalized: bool,
+}
+
+trait ProbeDebugger {
+    fn stop_before(&self, deadline: std::time::Instant) -> Result<(), String>;
+    fn verify_revision_before(&self, deadline: std::time::Instant) -> Result<(), String>;
+    fn read_memory_before(
+        &self,
+        address: u32,
+        length: usize,
+        deadline: std::time::Instant,
+    ) -> Result<Vec<u8>, String>;
+    fn write_memory_before(
+        &mut self,
+        address: u32,
+        bytes: &[u8],
+        deadline: std::time::Instant,
+    ) -> Result<(), String>;
+    fn clear_breakpoint_before(
+        &mut self,
+        address: u32,
+        deadline: std::time::Instant,
+    ) -> Result<(), String>;
+    fn write_register_before(
+        &mut self,
+        index: u32,
+        value: u32,
+        deadline: std::time::Instant,
+    ) -> Result<(), String>;
+    fn restore_state_before(
+        &self,
+        running: bool,
+        deadline: std::time::Instant,
+    ) -> Result<(), String>;
+}
+
+impl ProbeDebugger for crate::debug::Session {
+    fn stop_before(&self, deadline: std::time::Instant) -> Result<(), String> {
+        self.guest_stop_before(deadline)
+    }
+
+    fn verify_revision_before(&self, deadline: std::time::Instant) -> Result<(), String> {
+        verify(Model::L6max, &mut |address, length| {
+            self.guest_read_before(address, length, deadline)
+        })
+    }
+
+    fn read_memory_before(
+        &self,
+        address: u32,
+        length: usize,
+        deadline: std::time::Instant,
+    ) -> Result<Vec<u8>, String> {
+        self.guest_read_before(address, length, deadline)
+    }
+
+    fn write_memory_before(
+        &mut self,
+        address: u32,
+        bytes: &[u8],
+        deadline: std::time::Instant,
+    ) -> Result<(), String> {
+        crate::debug::Session::write_memory_before(self, address, bytes, deadline)
+    }
+
+    fn clear_breakpoint_before(
+        &mut self,
+        address: u32,
+        deadline: std::time::Instant,
+    ) -> Result<(), String> {
+        self.breakpoint_before(address, false, deadline)
+    }
+
+    fn write_register_before(
+        &mut self,
+        index: u32,
+        value: u32,
+        deadline: std::time::Instant,
+    ) -> Result<(), String> {
+        crate::debug::Session::write_register_before(self, index, value, deadline)
+    }
+
+    fn restore_state_before(
+        &self,
+        running: bool,
+        deadline: std::time::Instant,
+    ) -> Result<(), String> {
+        self.guest_restore_state_before(running, deadline)
+    }
+}
+
+struct ProbeCleanup<'a, D: ProbeDebugger> {
+    debugger: &'a mut D,
+    journal: &'a mut crate::debug_journal::Journal,
+    deadline: std::time::Instant,
+    was_running: bool,
+}
+
+impl<D: ProbeDebugger> crate::debug_journal::Cleanup for ProbeCleanup<'_, D> {
+    fn stop(&mut self) -> Result<(), String> {
+        self.debugger.stop_before(self.deadline)
+    }
+
+    fn synchronized(&self) -> bool {
+        self.journal.synchronized && !self.journal.mailbox_pending
+    }
+
+    fn restore_writes(&mut self) -> Vec<String> {
+        while let Some(write) = self.journal.writes.last().cloned() {
+            let current = self
+                .debugger
+                .verify_revision_before(self.deadline)
+                .and_then(|()| {
+                    self.debugger.read_memory_before(
+                        write.address,
+                        write.after.len(),
+                        self.deadline,
+                    )
+                });
+            let guard = current.and_then(|bytes| {
+                if bytes == write.after {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "temporary target changed at {:#010x}",
+                        write.address
+                    ))
+                }
+            });
+            if let Err(error) = self.journal.restoration_guard(guard) {
+                return vec![format!("restore guard: {error}")];
+            }
+            if let Err(error) =
+                self.debugger
+                    .write_memory_before(write.address, &write.before, self.deadline)
+            {
+                self.journal.synchronized = false;
+                return vec![format!("restore {:#010x}: {error}", write.address)];
+            }
+            self.journal.writes.pop();
+        }
+        Vec::new()
+    }
+
+    fn clear_breakpoints(&mut self) -> Vec<String> {
+        while let Some(address) = self.journal.breakpoints.last().copied() {
+            if let Err(error) = self
+                .debugger
+                .clear_breakpoint_before(address, self.deadline)
+            {
+                self.journal.synchronized = false;
+                return vec![format!("remove breakpoint {address:#010x}: {error}")];
+            }
+            self.journal.breakpoints.pop();
+        }
+        Vec::new()
+    }
+
+    fn restore_registers(&mut self) -> Vec<String> {
+        while let Some((index, value)) = self.journal.registers.last().copied() {
+            if let Err(error) = self
+                .debugger
+                .write_register_before(index, value, self.deadline)
+            {
+                self.journal.synchronized = false;
+                return vec![format!("restore register {index}: {error}")];
+            }
+            self.journal.registers.pop();
+        }
+        Vec::new()
+    }
+
+    fn resume(&mut self) -> Result<(), String> {
+        if let Err(error) = self
+            .debugger
+            .restore_state_before(self.was_running, self.deadline)
+        {
+            self.journal.synchronized = false;
+            return Err(error);
+        }
+        Ok(())
+    }
+}
+
+impl ProbeSession {
+    pub fn begin_before(
+        controller: &crate::debug::Controller,
+        deadline: std::time::Instant,
+    ) -> Result<Self, String> {
+        let debugger = controller.begin_before(deadline)?;
+        let mut session = Self {
+            debugger,
+            journal: crate::debug_journal::Journal::default(),
+            finalized: false,
+        };
+        let guard = verify(Model::L6max, &mut |address, length| {
+            session
+                .debugger
+                .guest_read_before(address, length, deadline)
+        });
+        if let Err(error) = guard {
+            let cleanup = session.debugger.close_before(deadline);
+            session.finalized = true;
+            return Err(match cleanup {
+                Ok(()) => error,
+                Err(cleanup) => {
+                    format!("{error}; knob probe acquisition cleanup failed: {cleanup}")
+                }
+            });
+        }
+        Ok(session)
+    }
+
+    pub fn read_memory_before(
+        &self,
+        address: u32,
+        length: usize,
+        deadline: std::time::Instant,
+    ) -> Result<Vec<u8>, String> {
+        self.debugger.guest_read_before(address, length, deadline)
+    }
+
+    pub fn stop_before(&self, deadline: std::time::Instant) -> Result<(), String> {
+        self.debugger.guest_stop_before(deadline)
+    }
+
+    pub fn stop(&self) -> Result<(), String> {
+        self.stop_before(std::time::Instant::now() + std::time::Duration::from_secs(5))
+    }
+
+    pub fn resume_guest_before(&mut self, deadline: std::time::Instant) -> Result<(), String> {
+        if !self.journal.synchronized {
+            return Err("debugger transport not synchronized; MAIN left stopped".into());
+        }
+        self.journal.registers.clear();
+        if let Err(error) = self.debugger.guest_resume_before(deadline) {
+            self.journal.synchronized = false;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn resume_guest(&mut self) -> Result<(), String> {
+        self.resume_guest_before(std::time::Instant::now() + std::time::Duration::from_secs(5))
+    }
+
+    pub fn write_before(
+        &mut self,
+        address: u32,
+        data: &[u8],
+        deadline: std::time::Instant,
+        mut check: impl FnMut() -> Result<(), String>,
+    ) -> Result<(), String> {
+        check()?;
+        verify(Model::L6max, &mut |at, length| {
+            check()?;
+            let bytes = self.debugger.guest_read_before(at, length, deadline)?;
+            check()?;
+            Ok(bytes)
+        })?;
+        let before = self
+            .debugger
+            .guest_read_before(address, data.len(), deadline)?;
+        check()?;
+        let restoring = self
+            .journal
+            .begin_write(address, before, data)
+            .map_err(|e| e.to_string())?;
+        if let Err(error) = self.debugger.write_memory_before(address, data, deadline) {
+            self.journal.synchronized = false;
+            return Err(error);
+        }
+        check()?;
+        self.journal.commit_write(restoring);
+        Ok(())
+    }
+
+    pub fn write_register_before(
+        &mut self,
+        index: u32,
+        value: u32,
+        deadline: std::time::Instant,
+    ) -> Result<(), String> {
+        let before = self.debugger.register_before(index, deadline)?;
+        self.journal.registers.push((index, before));
+        if let Err(error) = self.debugger.write_register_before(index, value, deadline) {
+            self.journal.synchronized = false;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn write_register(&mut self, index: u32, value: u32) -> Result<(), String> {
+        self.write_register_before(
+            index,
+            value,
+            std::time::Instant::now() + std::time::Duration::from_secs(5),
+        )
+    }
+
+    pub fn register_before(
+        &mut self,
+        index: u32,
+        deadline: std::time::Instant,
+    ) -> Result<u32, String> {
+        let result = self.debugger.register_before(index, deadline);
+        if result.is_err() {
+            self.journal.synchronized = false;
+        }
+        result
+    }
+
+    pub fn register(&mut self, index: u32) -> Result<u32, String> {
+        self.register_before(
+            index,
+            std::time::Instant::now() + std::time::Duration::from_secs(5),
+        )
+    }
+
+    pub fn breakpoint_before(
+        &mut self,
+        address: u32,
+        enable: bool,
+        deadline: std::time::Instant,
+    ) -> Result<(), String> {
+        if enable && !self.journal.breakpoints.contains(&address) {
+            self.journal.breakpoints.push(address);
+        }
+        if let Err(error) = self.debugger.breakpoint_before(address, enable, deadline) {
+            self.journal.synchronized = false;
+            return Err(error);
+        }
+        if !enable {
+            self.journal.breakpoints.retain(|item| *item != address);
+        }
+        Ok(())
+    }
+
+    pub fn breakpoint(&mut self, address: u32, enable: bool) -> Result<(), String> {
+        self.breakpoint_before(
+            address,
+            enable,
+            std::time::Instant::now() + std::time::Duration::from_secs(5),
+        )
+    }
+
+    pub fn continue_before(&mut self, deadline: std::time::Instant) -> Result<String, String> {
+        self.journal.registers.clear();
+        let result = self.debugger.continue_before(deadline, || false);
+        if result.is_err() {
+            self.journal.synchronized = false;
+        }
+        result
+    }
+
+    pub fn continue_until_stop(&mut self, timeout: std::time::Duration) -> Result<String, String> {
+        self.continue_before(std::time::Instant::now() + timeout)
+    }
+
+    pub fn call_thumb_before(
+        &mut self,
+        address: u32,
+        arguments: &[u32],
+        deadline: std::time::Instant,
+    ) -> Result<String, String> {
+        self.journal.registers.clear();
+        let result = self
+            .debugger
+            .call_thumb_before(address, arguments, deadline);
+        if result.is_err() {
+            self.journal.synchronized = false;
+        }
+        result
+    }
+
+    pub fn call_thumb(
+        &mut self,
+        address: u32,
+        arguments: &[u32],
+        timeout: std::time::Duration,
+    ) -> Result<String, String> {
+        self.call_thumb_before(address, arguments, std::time::Instant::now() + timeout)
+    }
+
+    pub fn handoff_mailbox(&mut self, address: u32) {
+        self.journal.handoff_mailbox(address);
+    }
+
+    pub fn acknowledge_mailbox(&mut self) {
+        self.journal.acknowledge_mailbox();
+    }
+
+    pub fn restoration_guard(&mut self, result: Result<(), String>) -> Result<(), String> {
+        self.journal.restoration_guard(result)
+    }
+
+    pub fn finish<T>(
+        mut self,
+        result: Result<T, String>,
+        deadline: std::time::Instant,
+    ) -> Result<T, String> {
+        match result {
+            Ok(value) if self.journal.clean() => {
+                let close = self.debugger.close_preserving_guest_state_before(deadline);
+                self.finalized = true;
+                close.map(|()| value)
+            }
+            Ok(_) => {
+                let failures = self.cleanup(deadline);
+                self.finalized = true;
+                Err(format!(
+                    "knob probe ended with active mutations; cleanup: {}",
+                    if failures.is_empty() {
+                        "completed".to_owned()
+                    } else {
+                        failures.join("; ")
+                    }
+                ))
+            }
+            Err(error) => {
+                let failures = self.cleanup(deadline);
+                self.finalized = true;
+                if failures.is_empty() {
+                    Err(error)
+                } else {
+                    Err(format!(
+                        "{error}; knob probe cleanup failed: {}",
+                        failures.join("; ")
+                    ))
+                }
+            }
+        }
+    }
+
+    pub fn abort(mut self, deadline: std::time::Instant) -> Result<(), String> {
+        let failures = self.cleanup(deadline);
+        self.finalized = true;
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
+    }
+
+    fn cleanup(&mut self, deadline: std::time::Instant) -> Vec<String> {
+        let was_running = self
+            .debugger
+            .guest_running_before(deadline)
+            .unwrap_or(false);
+        let failures = crate::debug_journal::cleanup(&mut ProbeCleanup {
+            debugger: &mut self.debugger,
+            journal: &mut self.journal,
+            deadline,
+            was_running,
+        });
+        if failures.is_empty() {
+            if let Err(error) = self.debugger.close_preserving_guest_state_before(deadline) {
+                return vec![format!("close debugger: {error}")];
+            }
+            return Vec::new();
+        }
+        let mut errors = failures;
+        if let Err(error) = self.debugger.close_stopped_before(deadline) {
+            errors.push(format!("close stopped debugger: {error}"));
+        }
+        errors
+    }
+}
+
+impl Drop for ProbeSession {
+    fn drop(&mut self) {
+        if !self.finalized {
+            let failures =
+                self.cleanup(std::time::Instant::now() + std::time::Duration::from_secs(3));
+            if !failures.is_empty() {
+                tracing::error!(
+                    "abandoned knob probe cleanup failed: {}",
+                    failures.join("; ")
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod probe_cleanup_tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    struct FakeDebugger {
+        calls: RefCell<Vec<&'static str>>,
+        bytes: Vec<u8>,
+        revision_fails: bool,
+        restore_fails: bool,
+    }
+
+    impl FakeDebugger {
+        fn new(bytes: Vec<u8>) -> Self {
+            Self {
+                calls: RefCell::new(Vec::new()),
+                bytes,
+                revision_fails: false,
+                restore_fails: false,
+            }
+        }
+
+        fn calls(&self) -> Vec<&'static str> {
+            self.calls.borrow().clone()
+        }
+    }
+
+    impl ProbeDebugger for FakeDebugger {
+        fn stop_before(&self, _: std::time::Instant) -> Result<(), String> {
+            self.calls.borrow_mut().push("stop");
+            Ok(())
+        }
+
+        fn verify_revision_before(&self, _: std::time::Instant) -> Result<(), String> {
+            self.calls.borrow_mut().push("revision");
+            if self.revision_fails {
+                Err("revision changed".into())
+            } else {
+                Ok(())
+            }
+        }
+
+        fn read_memory_before(
+            &self,
+            _: u32,
+            _: usize,
+            _: std::time::Instant,
+        ) -> Result<Vec<u8>, String> {
+            self.calls.borrow_mut().push("read");
+            Ok(self.bytes.clone())
+        }
+
+        fn write_memory_before(
+            &mut self,
+            _: u32,
+            _: &[u8],
+            _: std::time::Instant,
+        ) -> Result<(), String> {
+            self.calls.borrow_mut().push("write");
+            if self.restore_fails {
+                Err("write failed".into())
+            } else {
+                Ok(())
+            }
+        }
+
+        fn clear_breakpoint_before(&mut self, _: u32, _: std::time::Instant) -> Result<(), String> {
+            self.calls.borrow_mut().push("breakpoint");
+            Ok(())
+        }
+
+        fn write_register_before(
+            &mut self,
+            _: u32,
+            _: u32,
+            _: std::time::Instant,
+        ) -> Result<(), String> {
+            self.calls.borrow_mut().push("register");
+            Ok(())
+        }
+
+        fn restore_state_before(&self, _: bool, _: std::time::Instant) -> Result<(), String> {
+            self.calls.borrow_mut().push("resume");
+            Ok(())
+        }
+    }
+
+    fn write_journal() -> crate::debug_journal::Journal {
+        let mut journal = crate::debug_journal::Journal::default();
+        journal
+            .begin_write(0x8000_1000, vec![0x11], &[0x22])
+            .unwrap();
+        journal.breakpoints.push(0x8000_2000);
+        journal.registers.push((0, 1));
+        journal
+    }
+
+    fn cleanup(
+        debugger: &mut FakeDebugger,
+        journal: &mut crate::debug_journal::Journal,
+    ) -> Vec<String> {
+        crate::debug_journal::cleanup(&mut ProbeCleanup {
+            debugger,
+            journal,
+            deadline: std::time::Instant::now() + std::time::Duration::from_secs(1),
+            was_running: true,
+        })
+    }
+
+    #[test]
+    fn host_cleanup_restores_in_order_before_restoring_guest_state() {
+        let mut debugger = FakeDebugger::new(vec![0x22]);
+        let mut journal = write_journal();
+        assert!(cleanup(&mut debugger, &mut journal).is_empty());
+        assert_eq!(
+            debugger.calls(),
+            [
+                "stop",
+                "revision",
+                "read",
+                "write",
+                "breakpoint",
+                "register",
+                "resume"
+            ]
+        );
+        assert!(journal.clean());
+    }
+
+    #[test]
+    fn failed_revision_guard_retains_mutations_and_never_resumes() {
+        let mut debugger = FakeDebugger::new(vec![0x22]);
+        debugger.revision_fails = true;
+        let mut journal = write_journal();
+        let failures = cleanup(&mut debugger, &mut journal);
+        assert!(failures.join(" ").contains("revision changed"));
+        assert_eq!(debugger.calls(), ["stop", "revision"]);
+        assert_eq!(journal.writes.len(), 1);
+        assert!(!journal.synchronized);
+    }
+
+    #[test]
+    fn failed_after_image_check_retains_mutations_and_never_resumes() {
+        let mut debugger = FakeDebugger::new(vec![0x99]);
+        let mut journal = write_journal();
+        let failures = cleanup(&mut debugger, &mut journal);
+        assert!(failures.join(" ").contains("temporary target changed"));
+        assert_eq!(debugger.calls(), ["stop", "revision", "read"]);
+        assert_eq!(journal.writes.len(), 1);
+        assert!(!journal.synchronized);
+    }
+
+    #[test]
+    fn failed_restore_write_keeps_journal_and_skips_later_cleanup() {
+        let mut debugger = FakeDebugger::new(vec![0x22]);
+        debugger.restore_fails = true;
+        let mut journal = write_journal();
+        let failures = cleanup(&mut debugger, &mut journal);
+        assert!(failures.join(" ").contains("write failed"));
+        assert_eq!(debugger.calls(), ["stop", "revision", "read", "write"]);
+        assert_eq!(journal.writes.len(), 1);
+        assert!(!journal.synchronized);
+    }
+}
+
 /// GUI reader additionally guarded by the parameter-mode getter code.
 pub struct ParameterReader<'a> {
     qmp: &'a QmpClient,

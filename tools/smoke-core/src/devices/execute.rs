@@ -4097,12 +4097,12 @@ impl State {
             Operation::KnobBitmapReactivate { delta } => {
                 let budget = shared.ok_or("missing shared deadline")?;
                 let check = || notification_observation_check(session, budget, budget.3);
-                self.overlay_reader = Some(l6max_host::knob_popup::overlay_reader_before_checked(
-                    &session.engine.management[0],
-                    l6fw::Model::L6max,
-                    budget.0 + Duration::from_secs(budget.3),
-                    &check,
-                )?);
+                self.overlay_reader = Some(
+                    l6ctl::OwnedControl::new(&session.engine).knob_overlay_reader_before_checked(
+                        budget.0 + Duration::from_secs(budget.3),
+                        &check,
+                    )?,
+                );
                 reactivate_zero_overlay(
                     session,
                     self.knob_dialog_preflight
@@ -4141,12 +4141,12 @@ impl State {
                 )?;
                 let budget = shared.ok_or("missing shared deadline")?;
                 let check = || notification_observation_check(session, budget, budget.3);
-                self.overlay_reader = Some(l6max_host::knob_popup::overlay_reader_before_checked(
-                    &session.engine.management[0],
-                    l6fw::Model::L6max,
-                    budget.0 + Duration::from_secs(budget.3),
-                    &check,
-                )?);
+                self.overlay_reader = Some(
+                    l6ctl::OwnedControl::new(&session.engine).knob_overlay_reader_before_checked(
+                        budget.0 + Duration::from_secs(budget.3),
+                        &check,
+                    )?,
+                );
                 Ok(value)
             }
             Operation::KnobBitmapCheckBackground {

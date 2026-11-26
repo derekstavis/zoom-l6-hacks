@@ -1530,6 +1530,92 @@ impl Scenario {
                 return Err("unterminated L6 input sweep".into());
             }
         }
+        for model in &value.models {
+            let mut scope: Option<(u8, u8, usize, usize, f32, u32, u64)> = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                if matches!(step.action, Action::SignalPwmBegin) {
+                    if *model != Model::L6max || scope.is_some() {
+                        return Err("SIGNAL PWM requires a fresh L6max scope".into());
+                    }
+                    scope = Some((0, 0, 0, 0, 0.0, step.guest_timeout_ms, step.wall_timeout_s));
+                    continue;
+                }
+                let is_signal = matches!(
+                    step.action,
+                    Action::SignalPwmWarmup { .. }
+                        | Action::SignalPwmDrain { .. }
+                        | Action::SignalPwmStage { .. }
+                        | Action::SignalPwmAssert { .. }
+                        | Action::SignalPwmEnd
+                );
+                if let Some((phase, band, stages, assertions, last, guest, wall)) = scope.as_mut() {
+                    if (*guest, *wall) != (step.guest_timeout_ms, step.wall_timeout_s) {
+                        return Err("SIGNAL PWM changed shared budget".into());
+                    }
+                    match step.action {
+                        Action::SignalPwmWarmup {
+                            start: 0,
+                            end: 4,
+                            value,
+                        } if *phase == 0
+                            && value.is_finite()
+                            && value > 0.0
+                            && value <= 40_000_000.0 =>
+                        {
+                            *phase = 1
+                        }
+                        Action::SignalPwmDrain { band: b } if *phase == 1 && b == *band => {
+                            *phase = 2;
+                            *stages = 0;
+                            *last = 0.0;
+                        }
+                        Action::SignalPwmStage {
+                            band: b,
+                            start,
+                            end,
+                            value,
+                        } if *phase == 2
+                            && b == *band
+                            && (start, end) == if b == 0 { (0, 4) } else { (4, 12) }
+                            && value.is_finite()
+                            && value > *last
+                            && value <= 40_000_000.0 =>
+                        {
+                            *stages += 1;
+                            *last = value;
+                            if *stages == 5 {
+                                *phase = 3;
+                                *assertions = 0;
+                            }
+                        }
+                        Action::SignalPwmAssert { band: b, channel }
+                            if *phase == 3
+                                && b == *band
+                                && channel == b * 4 + *assertions as u8 =>
+                        {
+                            *assertions += 1;
+                            if *assertions == 4 {
+                                if *band == 0 {
+                                    *band = 1;
+                                    *phase = 1;
+                                } else {
+                                    *phase = 4;
+                                }
+                            }
+                        }
+                        Action::SignalPwmEnd if *phase == 4 => {
+                            scope = None;
+                        }
+                        _ => return Err("invalid SIGNAL PWM sequence or stimulus".into()),
+                    }
+                } else if is_signal {
+                    return Err("SIGNAL PWM step outside scope".into());
+                }
+            }
+            if scope.is_some() {
+                return Err("unterminated SIGNAL PWM scope".into());
+            }
+        }
         for step in &value.step {
             if let Action::KnobDialogAdaptive { plan } = &step.action {
                 plan.validate()?;

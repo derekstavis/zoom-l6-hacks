@@ -727,6 +727,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         || device_state.has_editor_playback()
                         || device_state.has_editor_assignment()
                         || device_state.has_l6_sweep()
+                        || device_state.has_signal_pwm()
                     {
                         return Err("device transaction interrupted by guest shutdown".into());
                     }
@@ -1169,6 +1170,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         || device_state.has_editor_playback()
                         || device_state.has_editor_assignment()
                         || device_state.has_l6_sweep()
+                        || device_state.has_signal_pwm()
                     {
                         return Err("device transaction interrupted by guest shutdown".into());
                     }
@@ -1226,6 +1228,9 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
     }
     if result.is_ok() && device_state.has_midi_sync() {
         result = Err("MIDI sync transaction ended before completion".into());
+    }
+    if result.is_ok() && device_state.has_signal_pwm() {
+        result = Err("SIGNAL PWM ended before completion".into());
     }
     if result.is_ok() && device_state.has_l6_sweep() {
         result = Err("L6 input sweep ended before completion".into());

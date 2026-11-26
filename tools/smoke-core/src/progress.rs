@@ -307,6 +307,14 @@ pub fn step_label(action: &crate::Action) -> String {
         Action::KnobRaceSample => "Sample callback rejection state".into(),
         Action::KnobRaceRestore => "Restore raced descriptor".into(),
         Action::KnobRaceAssert => "Check callback rejection and retry readiness".into(),
+        Action::SignalPwmBegin => "Begin SIGNAL PWM sweep".into(),
+        Action::SignalPwmWarmup { .. } => "Warm up SIGNAL 1".into(),
+        Action::SignalPwmDrain { band } => format!("Clear SIGNAL band {}", band + 1),
+        Action::SignalPwmStage { band, value, .. } => {
+            format!("Sample SIGNAL band {} at {value}", band + 1)
+        }
+        Action::SignalPwmAssert { channel, .. } => format!("Check SIGNAL {} PWM", channel + 1),
+        Action::SignalPwmEnd => "Finish SIGNAL PWM sweep".into(),
         Action::L6SweepBegin => "Begin L6 input sweep".into(),
         Action::L6SweepRejectMain { target } => format!("Check MAIN rejects target {target}"),
         Action::L6SweepPanelBaseline { target } => {

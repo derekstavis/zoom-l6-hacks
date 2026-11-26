@@ -69,7 +69,13 @@ pub fn of(action: &Action) -> Requirement {
             ..
         } => stock_on(L6MAX),
         Action::ExpectSettings { .. } | Action::ExpectRecorder => stock_on(L6MAX),
-        Action::L6maxChannelSignalPwm | Action::L6maxTapHandler => stock_on(L6MAX),
+        Action::SignalPwmBegin
+        | Action::SignalPwmWarmup { .. }
+        | Action::SignalPwmDrain { .. }
+        | Action::SignalPwmStage { .. }
+        | Action::SignalPwmAssert { .. }
+        | Action::SignalPwmEnd
+        | Action::L6maxTapHandler => stock_on(L6MAX),
         Action::WaitL6SoundPadFile { .. }
         | Action::L6LevelMeterPwm
         | Action::L6DinSweep

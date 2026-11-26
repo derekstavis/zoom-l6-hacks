@@ -1839,8 +1839,42 @@ impl Runner {
                 Action::L6maxPanelKeyEnd => {
                     return Ok(Progress::Device(devices::Operation::L6maxPanelKeyEnd));
                 }
-                Action::L6maxChannelSignalPwm => {
-                    return Ok(Progress::Device(devices::Operation::L6maxChannelSignalPwm));
+                Action::SignalPwmBegin => {
+                    return Ok(Progress::Device(devices::Operation::SignalPwmBegin));
+                }
+                Action::SignalPwmWarmup { start, end, value } => {
+                    return Ok(Progress::Device(devices::Operation::SignalPwmWarmup {
+                        start,
+                        end,
+                        value,
+                    }));
+                }
+                Action::SignalPwmDrain { band } => {
+                    return Ok(Progress::Device(devices::Operation::SignalPwmDrain {
+                        band,
+                    }));
+                }
+                Action::SignalPwmStage {
+                    band,
+                    start,
+                    end,
+                    value,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::SignalPwmStage {
+                        band,
+                        start,
+                        end,
+                        value,
+                    }));
+                }
+                Action::SignalPwmAssert { band, channel } => {
+                    return Ok(Progress::Device(devices::Operation::SignalPwmAssert {
+                        band,
+                        channel,
+                    }));
+                }
+                Action::SignalPwmEnd => {
+                    return Ok(Progress::Device(devices::Operation::SignalPwmEnd));
                 }
                 Action::L6LevelMeterPwm => {
                     return Ok(Progress::Device(devices::Operation::L6LevelMeterPwm));

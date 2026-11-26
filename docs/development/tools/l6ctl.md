@@ -361,6 +361,16 @@ the panel continues independently. Commands are `register` (indices 0–15),
 `add-breakpoint` and `remove-breakpoint` (aligned MAIN SDRAM `address`),
 `continue` (`timeout_ms` from 1 to 60000, with an owned breakpoint), `step`,
 `l6-scratch-read`, `l6-scratch-write` (exactly eight `bytes`), and `close`.
+`l6max-signal-write` accepts twelve finite `values` between 0 and
+40,000,000 and `timeout_ms`; it checks the L6max 1.10 SIGNAL snapshot
+routine before writing the channel accumulators. These values are transient
+firmware state and are not restored. In-process callers can use
+`OwnedControl::debug_session_before` and `signal_write_before` with one
+absolute deadline, then `close_signal_before`. If bounded cleanup cannot
+verify MAIN is stopped, it reports that uncertainty, retains the lease and
+requires a guest restart. A failed cleanup may spend up to three additional
+seconds attempting an emergency stop.
+
 The L6 scratch operations verify the supported L6 1.10 MIDI code before using
 the legacy emulator probe page at `0x841ff000`. This is a scoped diagnostic
 buffer, not evidence that physical firmware reserves that address.

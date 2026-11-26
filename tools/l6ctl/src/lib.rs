@@ -497,6 +497,20 @@ impl<'a> OwnedControl<'a> {
             .map_err(ControlError::Rejected)
     }
 
+    /// Begin a bounded in-process debugger session.
+    pub fn debug_session_before(
+        &self,
+        deadline: std::time::Instant,
+    ) -> Result<l6max_host::debug::Session, ControlError> {
+        self.engine
+            .debugger()
+            .ok_or(ControlError::Unavailable(
+                "debugger unavailable; launch with --gdb-socket",
+            ))?
+            .begin_before(deadline)
+            .map_err(ControlError::Rejected)
+    }
+
     pub fn info(&self) -> Result<Info, ControlError> {
         let inputs = self
             .engine

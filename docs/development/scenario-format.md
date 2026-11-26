@@ -325,7 +325,7 @@ message delivered just after the interval.
 | `expect-recorder` | — | L6max startup mode restored after restart |
 | `expect-settings` | `restored` | L6max edited RTC/NOR/version records, or reload and RTC startup timing after restart |
 | `l6max-panel-key-map` | — | Verify that L6max sound-pad targets 15, 20, 25 and 30 set their MAIN key-state bits and clear them after release |
-| `l6max-channel-signal-pwm` | — | Seed the twelve firmware channel-level accumulators and verify five distinct increasing sampled PWM levels on all eight green SIGNAL lamps; requires L6max MAIN 1.10 and GDB. This qualifies the firmware-to-panel brightness path, not audio-input routing. |
+| `signal-pwm-*` | `band`, `start`, `end`, `value`, `channel` on selected steps | Seed L6max 1.10 channel accumulators and verify five increasing PWM levels on eight SIGNAL lamps. A contiguous scope shares deadlines and requires GDB. This tests firmware-to-panel brightness, not audio-input routing. |
 | `l6-level-meter-pwm` | — | Seed ten L6 1.10 level accumulators at the measured brightness thresholds and sample the raw panel matrix; require at least one output cell with five distinct nonzero duty means. Uses GDB and no SD, USB, MIDI, or host audio. |
 | `l6-main-gpio-event` | `target`, `event` | L6 GDB check that Tap target 48 submits event `0x19` and Sound Pad targets 49–52 submit `0x15`–`0x18` |
 | `audio-input-transport` | `command` (`play`, `pause`, `stop` or `seek`), `position_ms` for `seek` | Control input playback |

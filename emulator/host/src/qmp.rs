@@ -159,6 +159,12 @@ impl QmpClient {
         })
     }
 
+    /// Query run state within a caller-owned deadline.
+    pub fn running_before(&self, deadline: Instant) -> io::Result<bool> {
+        self.execute_before(&qmp::query_status {}, deadline)
+            .map(|status| status.running)
+    }
+
     pub fn stop(&self) -> io::Result<()> {
         self.execute(&qmp::stop {}).map(|_| ())
     }

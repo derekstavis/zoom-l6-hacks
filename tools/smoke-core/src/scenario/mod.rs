@@ -1114,7 +1114,26 @@ pub enum Action {
         pressed: bool,
     },
     L6maxPanelKeyEnd,
-    L6maxChannelSignalPwm,
+    SignalPwmBegin,
+    SignalPwmWarmup {
+        start: u8,
+        end: u8,
+        value: f32,
+    },
+    SignalPwmDrain {
+        band: u8,
+    },
+    SignalPwmStage {
+        band: u8,
+        start: u8,
+        end: u8,
+        value: f32,
+    },
+    SignalPwmAssert {
+        band: u8,
+        channel: u8,
+    },
+    SignalPwmEnd,
     L6LevelMeterPwm,
     ExpectEncoderReports,
     ExpectRing {

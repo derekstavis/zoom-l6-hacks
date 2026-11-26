@@ -25,6 +25,10 @@ const MAX_CONTINUE_MS: u64 = 60_000;
 const IDLE_GUARD: &str = "f4870ac4ce0c3cb238f92e437a9f5511912eee645168943b43a0166622b85ba2";
 const SENDER_GUARD: &str = "f07c456c512bff15fb7112a0f8ad5993dab518b4fbfd4ed1544de2208681c27d";
 const XPSR: u32 = 25;
+const SIGNAL_ACCUMULATORS: u32 = 0x2001_50e0;
+const SIGNAL_ROUTINE: u32 = 0x8001_0aa8;
+const SIGNAL_ROUTINE_SHA256: &str =
+    "75aa1f22ed2934b38a18a09cb0c9ec2fe01aa09c1cc1d362473eae39b6216f52";
 
 /// Identity derived from the selected patch report and, for SD, its module.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -58,6 +62,10 @@ pub enum Command {
         timeout_ms: u64,
     },
     Step,
+    L6maxSignalWrite {
+        values: [f32; 12],
+        timeout_ms: u64,
+    },
     L6ScratchRead,
     L6ScratchWrite {
         bytes: [u8; SCRATCH_LEN],
@@ -112,6 +120,9 @@ pub enum Observation {
     Stopped {
         reply: String,
     },
+    SignalWritten {
+        address: u32,
+    },
     Scratch {
         address: u32,
         bytes: Vec<u8>,
@@ -145,6 +156,16 @@ pub enum Observation {
     Closed,
 }
 
+fn validate_signal_guard(model: Model, bytes: &[u8]) -> Result<(), String> {
+    if model != Model::L6max {
+        return Err("SIGNAL accumulators require L6max".into());
+    }
+    if bytes.len() != 32 || format!("{:x}", Sha256::digest(bytes)) != SIGNAL_ROUTINE_SHA256 {
+        return Err("unsupported L6max SIGNAL routine revision".into());
+    }
+    Ok(())
+}
+
 fn l6_probe_deadline(timeout_ms: u64) -> Result<Instant, String> {
     if timeout_ms == 0 || timeout_ms > MAX_CONTINUE_MS {
         return Err("L6 MIDI probe timeout must be 1..60000 ms".into());
@@ -168,9 +189,12 @@ fn validate_stop(reply: String) -> Result<String, String> {
 
 trait Guest: Send + Sync {
     fn running(&self) -> Result<bool, String>;
+    fn running_before(&self, deadline: Instant) -> Result<bool, String>;
+    fn resume_before(&self, deadline: Instant) -> Result<(), String>;
     fn stop(&self) -> Result<(), String>;
     fn resume(&self) -> Result<(), String>;
     fn guard_l6_scratch(&self) -> Result<(), String>;
+    fn guard_l6max_signal(&self, deadline: Instant) -> Result<(), String>;
     fn stop_before(&self, deadline: Instant) -> Result<(), String>;
     fn guard_l6_midi_probe(
         &self,
@@ -197,6 +221,22 @@ impl Guest for MainGuest {
             .map(|s| s.running)
             .map_err(|e| e.to_string())
     }
+    fn running_before(&self, deadline: Instant) -> Result<bool, String> {
+        self.qmp.running_before(deadline).map_err(|e| e.to_string())
+    }
+    fn resume_before(&self, deadline: Instant) -> Result<(), String> {
+        self.qmp
+            .resume_before(deadline)
+            .map_err(|e| e.to_string())?;
+        if !self
+            .qmp
+            .running_before(deadline)
+            .map_err(|e| e.to_string())?
+        {
+            return Err("MAIN still stopped after resume".into());
+        }
+        Ok(())
+    }
     fn stop(&self) -> Result<(), String> {
         self.qmp.stop().map_err(|e| e.to_string())?;
         if self.qmp.query_status().map_err(|e| e.to_string())?.running {
@@ -213,6 +253,16 @@ impl Guest for MainGuest {
     }
     fn stop_before(&self, deadline: Instant) -> Result<(), String> {
         self.qmp.stop_before(deadline).map_err(|e| e.to_string())
+    }
+    fn guard_l6max_signal(&self, deadline: Instant) -> Result<(), String> {
+        if self.model != Model::L6max {
+            return Err("SIGNAL accumulators require L6max".into());
+        }
+        let bytes = self
+            .qmp
+            .read_memory_before(0, SIGNAL_ROUTINE, 32, deadline)
+            .map_err(|e| e.to_string())?;
+        validate_signal_guard(self.model, &bytes)
     }
     fn guard_l6_scratch(&self) -> Result<(), String> {
         midi_config::config(&self.qmp, self.model).map(|_| ())
@@ -358,6 +408,8 @@ trait Transport: Send {
     fn write_register(&mut self, index: u32, value: u32) -> Result<(), String>;
     fn read(&mut self, address: u32, length: usize) -> Result<Vec<u8>, String>;
     fn write(&mut self, address: u32, bytes: &[u8]) -> Result<(), String>;
+    fn write_before(&mut self, address: u32, bytes: &[u8], deadline: Instant)
+    -> Result<(), String>;
     fn breakpoint(&mut self, address: u32, enable: bool) -> Result<(), String>;
     fn resume(&mut self) -> Result<(), String>;
     fn poll_stop(&mut self, wait: Duration) -> Result<Option<String>, String>;
@@ -380,6 +432,14 @@ impl Transport for Gdb {
     }
     fn write(&mut self, address: u32, bytes: &[u8]) -> Result<(), String> {
         Gdb::write(self, address, bytes).map_err(|e| e.to_string())
+    }
+    fn write_before(
+        &mut self,
+        address: u32,
+        bytes: &[u8],
+        deadline: Instant,
+    ) -> Result<(), String> {
+        Gdb::write_before(self, address, bytes, deadline).map_err(|e| e.to_string())
     }
     fn breakpoint(&mut self, address: u32, enable: bool) -> Result<(), String> {
         Gdb::breakpoint(self, address, enable).map_err(|e| e.to_string())
@@ -417,6 +477,71 @@ impl Controller {
             retained_lease: Arc::new(Mutex::new(None)),
         }
     }
+    /// Acquire and stop MAIN within the caller's shared deadline. Failure
+    /// after stopping retains ownership and requires a guest restart.
+    pub fn begin_before(&self, deadline: Instant) -> Result<Session, String> {
+        if self.unusable.load(Ordering::Acquire) {
+            return Err("debugger is unusable; restart the guest".into());
+        }
+        if Instant::now() >= deadline {
+            return Err("debugger acquisition deadline exceeded".into());
+        }
+        let lease =
+            l6max_diagnostics::gdb::Lease::acquire(&self.path).map_err(|e| e.to_string())?;
+        if self.unusable.load(Ordering::Acquire) {
+            return Err("debugger is unusable; restart the guest".into());
+        }
+        let connection_lease = lease.try_clone().map_err(|e| e.to_string())?;
+        let running = self.guest.running_before(deadline)?;
+        if let Err(error) = self.guest.stop_before(deadline) {
+            self.unusable.store(true, Ordering::Release);
+            *self
+                .retained_lease
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(lease);
+            let stop = self
+                .guest
+                .stop_before(Instant::now() + Duration::from_secs(3));
+            return Err(match stop {
+                Ok(()) => {
+                    format!("debugger acquisition failed: {error}; MAIN stopped; restart the guest")
+                }
+                Err(stop) => format!(
+                    "debugger acquisition failed: {error}; could not verify MAIN stopped: {stop}; restart the guest"
+                ),
+            });
+        }
+        let gdb = match Gdb::connect_leased_before(connection_lease, deadline) {
+            Ok(gdb) => gdb,
+            Err(error) => {
+                self.unusable.store(true, Ordering::Release);
+                *self
+                    .retained_lease
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = Some(lease);
+                let stop = self
+                    .guest
+                    .stop_before(Instant::now() + Duration::from_secs(3));
+                return Err(match stop {
+                    Ok(()) => {
+                        format!("GDB connection failed: {error}; MAIN stopped; restart the guest")
+                    }
+                    Err(stop) => format!(
+                        "GDB connection failed: {error}; could not verify MAIN stopped: {stop}; restart the guest"
+                    ),
+                });
+            }
+        };
+        Ok(Session::new(
+            Box::new(gdb),
+            self.guest.clone(),
+            running,
+            self.unusable.clone(),
+            Some(lease),
+            self.retained_lease.clone(),
+        ))
+    }
+
     /// Acquire the cross-process GDB lease and pause MAIN. The prior running
     /// state is restored on successful close; failure is fail-closed.
     pub fn begin(&self) -> Result<Session, String> {
@@ -561,6 +686,39 @@ impl Session {
         Ok(value)
     }
 
+    /// Write the guarded SIGNAL accumulators under one caller-owned deadline.
+    pub fn signal_write_before(
+        &mut self,
+        values: [f32; 12],
+        deadline: Instant,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<Observation, String> {
+        if self.l6_midi.is_some() {
+            return Err("L6 MIDI injection is already active".into());
+        }
+        if values
+            .iter()
+            .any(|value| !value.is_finite() || *value < 0.0 || *value > 40_000_000.0)
+        {
+            return Err("invalid SIGNAL accumulator value".into());
+        }
+        if cancelled() || Instant::now() >= deadline {
+            return Err("SIGNAL write cancelled or deadline exceeded".into());
+        }
+        self.guest.guard_l6max_signal(deadline)?;
+        if cancelled() || Instant::now() >= deadline {
+            return Err("SIGNAL write cancelled or deadline exceeded".into());
+        }
+        let bytes: Vec<u8> = values.into_iter().flat_map(f32::to_le_bytes).collect();
+        self.transact(|g| g.write_before(SIGNAL_ACCUMULATORS, &bytes, deadline))?;
+        if cancelled() || Instant::now() >= deadline {
+            return Err("SIGNAL write cancelled or deadline exceeded".into());
+        }
+        Ok(Observation::SignalWritten {
+            address: SIGNAL_ACCUMULATORS,
+        })
+    }
+
     pub fn execute(&mut self, command: Command) -> Result<Observation, String> {
         self.execute_cancellable(command, || false)
     }
@@ -574,7 +732,8 @@ impl Session {
         if self.l6_midi.is_some()
             && matches!(
                 command,
-                Command::L6ScratchRead
+                Command::L6maxSignalWrite { .. }
+                    | Command::L6ScratchRead
                     | Command::L6ScratchWrite { .. }
                     | Command::L6MidiInject { .. }
             )
@@ -582,6 +741,10 @@ impl Session {
             return Err("L6 MIDI injection is already active".into());
         }
         match command {
+            Command::L6maxSignalWrite { values, timeout_ms } => {
+                let deadline = l6_probe_deadline(timeout_ms)?;
+                self.signal_write_before(values, deadline, cancelled)
+            }
             Command::L6MidiResolveSd {
                 dispatcher,
                 site_index,
@@ -915,6 +1078,68 @@ impl Session {
             }
         }
     }
+    /// Close a bounded, write-only SIGNAL session. No breakpoint or scratch
+    /// restoration may be pending. An uncertain restore retains the lease.
+    pub fn close_signal_before(&mut self, deadline: Instant) -> Result<(), String> {
+        if self.transport.is_none() {
+            return Ok(());
+        }
+        if self.poisoned
+            || self.scratch.is_some()
+            || !self.breakpoints.is_empty()
+            || self.l6_midi.is_some()
+        {
+            self.unusable.store(true, Ordering::Release);
+            if let Some(lease) = self.lease.take() {
+                *self
+                    .retained_lease
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = Some(lease);
+            }
+            let stop = self
+                .guest
+                .stop_before(Instant::now() + Duration::from_secs(3));
+            self.transport.take();
+            return Err(match stop {
+                Ok(()) => "debugger state uncertain; MAIN stopped; restart the guest".into(),
+                Err(error) => format!(
+                    "debugger state uncertain; could not verify MAIN stopped: {error}; restart the guest"
+                ),
+            });
+        }
+        let disconnected = self.transport.as_deref_mut().unwrap().disconnect();
+        self.transport.take();
+        let restore = if disconnected.is_err() {
+            Err("GDB disconnect failed".to_owned())
+        } else if self.was_running {
+            self.guest.resume_before(deadline)
+        } else {
+            self.guest.stop_before(deadline)
+        };
+        if let Err(error) = restore {
+            self.unusable.store(true, Ordering::Release);
+            if let Some(lease) = self.lease.take() {
+                *self
+                    .retained_lease
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = Some(lease);
+            }
+            let stop = self
+                .guest
+                .stop_before(Instant::now() + Duration::from_secs(3));
+            return Err(match stop {
+                Ok(()) => format!(
+                    "bounded debugger cleanup failed: {error}; MAIN stopped; restart the guest"
+                ),
+                Err(stop) => format!(
+                    "bounded debugger cleanup failed: {error}; could not verify MAIN stopped: {stop}; restart the guest"
+                ),
+            });
+        }
+        self.lease.take();
+        Ok(())
+    }
+
     /// Restore leased scratch and remove owned breakpoints before resuming.
     /// If cleanup is uncertain, leave MAIN stopped rather than resume it.
     pub fn close(&mut self) -> Result<(), String> {
@@ -1003,21 +1228,54 @@ mod tests {
         fail: Option<&'static str>,
         guarded: bool,
         pending: bool,
+        running_after_cont: bool,
+        stop_before_calls: usize,
+        cancel_on_guard: Option<Arc<AtomicBool>>,
     }
     struct FakeGuest(Arc<Mutex<FakeState>>);
     impl Guest for FakeGuest {
         fn running(&self) -> Result<bool, String> {
             Ok(true)
         }
+        fn running_before(&self, _deadline: Instant) -> Result<bool, String> {
+            let mut state = self.0.lock().unwrap();
+            state.operations.push("running-before".into());
+            if state.fail == Some("running-before") {
+                Err("timeout".into())
+            } else {
+                Ok(true)
+            }
+        }
+        fn resume_before(&self, _deadline: Instant) -> Result<(), String> {
+            let mut state = self.0.lock().unwrap();
+            state.operations.push("resume-before".into());
+            state.running_after_cont = true;
+            if matches!(state.fail, Some("resume-before" | "resume-and-stop")) {
+                Err("timeout".into())
+            } else {
+                Ok(())
+            }
+        }
         fn stop(&self) -> Result<(), String> {
-            self.0.lock().unwrap().operations.push("stop".into());
+            let mut state = self.0.lock().unwrap();
+            state.operations.push("stop".into());
+            state.running_after_cont = false;
             Ok(())
         }
         fn resume(&self) -> Result<(), String> {
             self.0.lock().unwrap().operations.push("resume".into());
             Ok(())
         }
-        fn stop_before(&self, _deadline: Instant) -> Result<(), String> {
+        fn stop_before(&self, deadline: Instant) -> Result<(), String> {
+            let mut state = self.0.lock().unwrap();
+            state.stop_before_calls += 1;
+            if Instant::now() >= deadline
+                || matches!(state.fail, Some("stop-before" | "resume-and-stop"))
+                || (state.fail == Some("first-stop") && state.stop_before_calls == 1)
+            {
+                return Err("timeout".into());
+            }
+            drop(state);
             self.stop()
         }
         fn guard_l6_midi_probe(
@@ -1037,6 +1295,17 @@ mod tests {
         fn resolve_l6_sd_hook(&self, _: Instant, _: u32, _: u32, _: u32) -> Result<u32, String> {
             self.guard_l6_scratch()?;
             Ok(0x800b_6b14)
+        }
+        fn guard_l6max_signal(&self, _deadline: Instant) -> Result<(), String> {
+            let state = self.0.lock().unwrap();
+            if let Some(flag) = &state.cancel_on_guard {
+                flag.store(true, Ordering::Release);
+            }
+            if state.guarded {
+                Ok(())
+            } else {
+                Err("unsupported revision".into())
+            }
         }
         fn guard_l6_scratch(&self) -> Result<(), String> {
             if self.0.lock().unwrap().guarded {
@@ -1084,6 +1353,17 @@ mod tests {
             self.0.lock().unwrap().scratch = bytes.to_vec();
             Ok(())
         }
+        fn write_before(
+            &mut self,
+            address: u32,
+            bytes: &[u8],
+            deadline: Instant,
+        ) -> Result<(), String> {
+            if Instant::now() >= deadline {
+                return Err("timeout".into());
+            }
+            self.write(address, bytes)
+        }
         fn breakpoint(&mut self, _: u32, enable: bool) -> Result<(), String> {
             self.record(if enable { "add" } else { "remove" })
         }
@@ -1130,6 +1410,206 @@ mod tests {
             ),
             state,
         )
+    }
+    #[test]
+    fn bounded_acquisition_fails_closed_when_qmp_stop_stalls() {
+        use std::os::unix::net::UnixListener;
+        let dir = std::env::temp_dir().join(format!(
+            "l6-debug-acquire-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("stub.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let state = Arc::new(Mutex::new(FakeState {
+            fail: Some("stop-before"),
+            ..Default::default()
+        }));
+        let unusable = Arc::new(AtomicBool::new(false));
+        let retained = Arc::new(Mutex::new(None));
+        let controller = Controller {
+            path,
+            guest: Arc::new(FakeGuest(state.clone())),
+            unusable: unusable.clone(),
+            retained_lease: retained.clone(),
+        };
+        let error = match controller.begin_before(Instant::now() + Duration::from_millis(50)) {
+            Ok(_) => panic!("unexpected acquisition"),
+            Err(error) => error,
+        };
+        assert!(error.contains("could not verify MAIN stopped"));
+        assert_eq!(state.lock().unwrap().stop_before_calls, 2);
+        assert!(unusable.load(Ordering::Acquire));
+        assert!(retained.lock().unwrap().is_some());
+        assert!(
+            !state
+                .lock()
+                .unwrap()
+                .operations
+                .contains(&"resume".to_owned())
+        );
+        drop(controller);
+        drop(retained);
+        drop(listener);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn bounded_acquisition_retries_a_timed_out_stop_with_emergency_budget() {
+        use std::os::unix::net::UnixListener;
+        let dir = std::env::temp_dir().join(format!(
+            "l6-debug-recovery-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("stub.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let state = Arc::new(Mutex::new(FakeState {
+            fail: Some("first-stop"),
+            running_after_cont: true,
+            ..Default::default()
+        }));
+        let unusable = Arc::new(AtomicBool::new(false));
+        let retained = Arc::new(Mutex::new(None));
+        let controller = Controller {
+            path,
+            guest: Arc::new(FakeGuest(state.clone())),
+            unusable: unusable.clone(),
+            retained_lease: retained.clone(),
+        };
+        let error = match controller.begin_before(Instant::now() + Duration::from_millis(50)) {
+            Ok(_) => panic!("unexpected acquisition"),
+            Err(error) => error,
+        };
+        assert!(error.contains("MAIN stopped"));
+        assert!(!state.lock().unwrap().running_after_cont);
+        assert!(unusable.load(Ordering::Acquire));
+        assert!(retained.lock().unwrap().is_some());
+        drop(controller);
+        drop(retained);
+        drop(listener);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn bounded_signal_close_reports_when_emergency_stop_cannot_be_verified() {
+        let (mut session, state) = fake(true, true);
+        state.lock().unwrap().fail = Some("resume-and-stop");
+        let error = session
+            .close_signal_before(Instant::now() + Duration::from_secs(1))
+            .unwrap_err();
+        assert!(error.contains("could not verify MAIN stopped"));
+        assert!(state.lock().unwrap().running_after_cont);
+        assert!(session.unusable.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn bounded_signal_close_marks_uncertain_restore_unusable_and_stops() {
+        let (mut session, state) = fake(true, true);
+        state.lock().unwrap().fail = Some("resume-before");
+        assert!(
+            session
+                .close_signal_before(Instant::now() + Duration::from_secs(1))
+                .is_err()
+        );
+        let state = state.lock().unwrap();
+        assert!(state.operations.contains(&"resume-before".into()));
+        assert!(state.operations.contains(&"stop".into()));
+        assert!(!state.running_after_cont);
+        assert!(!state.operations.contains(&"resume".into()));
+    }
+    #[test]
+    fn signal_write_does_not_mutate_after_cancellation_during_guard() {
+        let (mut session, state) = fake(true, true);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        state.lock().unwrap().cancel_on_guard = Some(cancelled.clone());
+        assert!(
+            session
+                .signal_write_before([1.0; 12], Instant::now() + Duration::from_secs(1), || {
+                    cancelled.load(Ordering::Acquire)
+                })
+                .is_err()
+        );
+        assert!(!state.lock().unwrap().operations.contains(&"write".into()));
+    }
+
+    #[test]
+    fn signal_write_reuses_absolute_deadline_after_delayed_acquisition() {
+        let (mut session, state) = fake(true, true);
+        let deadline = Instant::now();
+        assert!(
+            session
+                .signal_write_before([1.0; 12], deadline, || false)
+                .is_err()
+        );
+        assert!(!state.lock().unwrap().operations.contains(&"write".into()));
+    }
+
+    #[test]
+    fn signal_guard_checks_exact_recovered_routine_and_model() {
+        let mut code = [
+            0x10, 0xb5, 0x04, 0x46, 0x10, 0xf0, 0xec, 0xfc, 0x4e, 0xf2, 0x00, 0x41, 0x46, 0xf6,
+            0xe0, 0x42, 0xc2, 0xf2, 0x00, 0x01, 0x88, 0x18, 0x8b, 0x58, 0x23, 0x60, 0x43, 0x68,
+            0x63, 0x60, 0x83, 0x68,
+        ];
+        assert!(validate_signal_guard(Model::L6max, &code).is_ok());
+        assert!(validate_signal_guard(Model::L6, &code).is_err());
+        code[0] ^= 1;
+        assert!(validate_signal_guard(Model::L6max, &code).is_err());
+    }
+    #[test]
+    fn signal_write_is_guarded_bounded_and_fails_closed_on_write_error() {
+        let (mut unguarded, state) = fake(true, false);
+        assert!(
+            unguarded
+                .execute(Command::L6maxSignalWrite {
+                    values: [1.0; 12],
+                    timeout_ms: 1000
+                })
+                .is_err()
+        );
+        assert!(
+            !state
+                .lock()
+                .unwrap()
+                .operations
+                .contains(&"write".to_owned())
+        );
+        let (mut bad, state) = fake(true, true);
+        assert!(
+            bad.execute(Command::L6maxSignalWrite {
+                values: [f32::NAN; 12],
+                timeout_ms: 1000
+            })
+            .is_err()
+        );
+        assert!(
+            !state
+                .lock()
+                .unwrap()
+                .operations
+                .contains(&"write".to_owned())
+        );
+        let (mut failed, state) = fake(true, true);
+        state.lock().unwrap().fail = Some("write");
+        assert!(
+            failed
+                .execute(Command::L6maxSignalWrite {
+                    values: [1.0; 12],
+                    timeout_ms: 1000
+                })
+                .is_err()
+        );
+        assert!(failed.close().is_err());
+        assert!(
+            !state
+                .lock()
+                .unwrap()
+                .operations
+                .contains(&"resume".to_owned())
+        );
     }
     fn prepared_midi() -> (Session, Arc<Mutex<FakeState>>, u32) {
         let (mut session, state) = fake(true, true);

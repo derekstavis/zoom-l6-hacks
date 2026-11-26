@@ -2823,8 +2823,8 @@ impl State {
                 if (pressed && scope.held.is_some()) || (!pressed && scope.held != Some(target)) {
                     return Err("panel key held state mismatch".into());
                 }
-                let before = scope.inputs.panel.snapshot().applied;
                 let control = l6ctl::OwnedControl::new(&session.engine);
+                let before = control.input_status(l6ctl::InputSource::Panel)?.applied;
                 if pressed {
                     scope.held = Some(target);
                     control.down(target, 0)?;
@@ -2837,7 +2837,7 @@ impl State {
                     if Instant::now() >= deadline {
                         return Err("panel key input acknowledgement timed out".into());
                     }
-                    if scope.inputs.panel.snapshot().applied > before {
+                    if control.input_status(l6ctl::InputSource::Panel)?.applied > before {
                         break;
                     }
                     thread::sleep(Duration::from_millis(5));

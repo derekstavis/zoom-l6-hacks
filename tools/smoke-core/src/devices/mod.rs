@@ -1330,11 +1330,9 @@ impl State {
 }
 
 fn guest_now(session: &Session) -> u32 {
-    session
-        .engine
-        .inputs
-        .as_ref()
-        .map_or(0, |inputs| inputs.panel.snapshot().guest_ms)
+    l6ctl::OwnedControl::new(&session.engine)
+        .input_status(l6ctl::InputSource::Panel)
+        .map_or(0, |status| status.guest_ms)
 }
 
 fn wait_guest_duration(
@@ -1342,13 +1340,15 @@ fn wait_guest_duration(
     duration_ms: u32,
     deadline: Instant,
 ) -> Result<(), String> {
-    let inputs = session
-        .engine
-        .inputs
-        .as_ref()
-        .ok_or("guest wait needs inputs")?;
-    let start = inputs.panel.snapshot().guest_ms;
-    while inputs.panel.snapshot().guest_ms.wrapping_sub(start) < duration_ms {
+    let control = l6ctl::OwnedControl::new(&session.engine);
+    let clock = || {
+        control
+            .input_status(l6ctl::InputSource::Panel)
+            .map(|status| status.guest_ms)
+            .map_err(|_| "guest wait needs inputs".to_string())
+    };
+    let start = clock()?;
+    while clock()?.wrapping_sub(start) < duration_ms {
         session.poll()?;
         if Instant::now() >= deadline {
             return Err(format!(
@@ -1370,13 +1370,8 @@ fn wait_guest(
     let wall = Instant::now();
     loop {
         session.poll()?;
-        let elapsed = session
-            .engine
-            .inputs
-            .as_ref()
-            .unwrap()
-            .panel
-            .snapshot()
+        let elapsed = l6ctl::OwnedControl::new(&session.engine)
+            .input_status(l6ctl::InputSource::Panel)?
             .guest_ms
             .wrapping_sub(start);
         if elapsed >= duration {

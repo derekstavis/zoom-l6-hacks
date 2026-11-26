@@ -102,4 +102,3 @@ wall_timeout_s = 600
 action = "knob-dialog-expect-restored-heap"
 guest_timeout_ms = 180000
 wall_timeout_s = 600
-

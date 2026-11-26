@@ -39,4 +39,3 @@ wall_timeout_s = 600
 action = "knob-race-assert"
 guest_timeout_ms = 180000
 wall_timeout_s = 600
-

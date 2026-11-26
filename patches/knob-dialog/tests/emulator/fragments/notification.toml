@@ -48,4 +48,3 @@ action = "knob-dialog-expect-notification-invariants"
 clear = true
 guest_timeout_ms = 180000
 wall_timeout_s = 600
-

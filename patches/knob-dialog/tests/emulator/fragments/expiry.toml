@@ -23,4 +23,3 @@ action = "knob-dialog-expect-expiry-frame"
 after = false
 guest_timeout_ms = 180000
 wall_timeout_s = 600
-

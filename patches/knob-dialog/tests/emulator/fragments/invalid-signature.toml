@@ -30,4 +30,3 @@ action = "knob-dialog-settle-level"
 artifact = "window-scene-after-invalid-state-metadata"
 guest_timeout_ms = 180000
 wall_timeout_s = 600
-

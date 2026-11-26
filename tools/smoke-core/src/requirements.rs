@@ -363,7 +363,8 @@ pub fn of(action: &Action) -> Requirement {
         | Action::L6MuteSample { .. }
         | Action::L6IndicatorEnd => on(L6),
         Action::SdCard { .. }
-        | Action::UsbDescriptors
+        | Action::UsbControllerReady
+        | Action::UsbEnumerate
         | Action::UsbStorageBegin
         | Action::UsbStorageInquiry
         | Action::UsbStorageReady
@@ -652,10 +653,10 @@ mod tests {
             "{late}"
         );
         let gui = Scenario::from_text(
-            "version=1\nname='t'\nmodels=['l6max']\nbackends=['headless','gui']\n[[step]]\naction='usb-descriptors'\n",
+            "version=1\nname='t'\nmodels=['l6max']\nbackends=['headless','gui']\n[[step]]\naction='usb-controller-ready'\n[[step]]\naction='usb-enumerate'\n",
         )
         .unwrap_err();
-        assert!(gui.contains("usb-descriptors requires backends"), "{gui}");
+        assert!(gui.contains("usb-controller-ready requires backends"), "{gui}");
         let undeclared = Scenario::from_text(
             "version=1\nname='t'\nmodels=['l6','l6max']\nbackends=['headless']\n[[step]]\naction='expect-memory'\nsymbol='system_mode'\nbytes=[0]\n",
         )

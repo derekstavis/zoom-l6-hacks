@@ -1,0 +1,9 @@
+[[step]]
+action = "usb-controller-ready"
+guest_timeout_ms = 60000
+wall_timeout_s = 300
+
+[[step]]
+action = "usb-enumerate"
+guest_timeout_ms = 60000
+wall_timeout_s = 300

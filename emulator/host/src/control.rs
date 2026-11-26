@@ -522,6 +522,37 @@ fn installer_observation(
     serde_json::to_value(outcome).map_err(|error| error.to_string())
 }
 
+fn client_disconnected(stream: &UnixStream) -> bool {
+    let fd = stream.as_raw_fd();
+    let mut descriptor = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let ready = unsafe { libc::poll(&mut descriptor, 1, 0) };
+    if ready < 0 {
+        return std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted;
+    }
+    if descriptor.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+        return true;
+    }
+    let mut byte = 0u8;
+    let received = unsafe {
+        libc::recv(
+            fd,
+            &mut byte as *mut u8 as *mut libc::c_void,
+            1,
+            libc::MSG_PEEK | libc::MSG_DONTWAIT,
+        )
+    };
+    received == 0
+        || (received < 0
+            && !matches!(
+                std::io::Error::last_os_error().kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+            ))
+}
+
 fn handle(
     mut stream: UnixStream,
     inputs: &InputHub,
@@ -530,7 +561,7 @@ fn handle(
     installer_outcome: Option<&crate::update_bootloader::Outcome>,
     usb_controller: Option<&crate::usb::Controller>,
     debugger: Option<&crate::debug::Controller>,
-    stopping: &AtomicBool,
+    stopping: &Arc<AtomicBool>,
 ) {
     if let Err(error) = configure_client(&stream) {
         tracing::warn!(%error, "cannot configure control client socket");
@@ -581,6 +612,18 @@ fn handle(
                 .ok_or("USB controller unavailable")?
                 .running()?;
             return Ok(json!({"running":running}));
+        }
+        if request.get("command").and_then(Value::as_str) == Some("usb-enumerate") {
+            let peer = stream.try_clone().map_err(|e| e.to_string())?;
+            let stopping = stopping.clone();
+            let budget = crate::usb::Budget::new(
+                std::time::Instant::now() + std::time::Duration::from_secs(100),
+                move || stopping.load(Ordering::Relaxed) || client_disconnected(&peer),
+            );
+            let result = usb_controller
+                .ok_or("USB controller unavailable")?
+                .enumerate_before(&budget)?;
+            return serde_json::to_value(result).map_err(|e| e.to_string());
         }
         if request.get("command").and_then(Value::as_str) == Some("installer-outcome") {
             return installer_observation(installer_outcome);
@@ -799,6 +842,15 @@ fn send_response(stream: &mut UnixStream, reply: &Value) -> std::io::Result<()> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn enumeration_peer_disconnect_is_detected_with_queued_bytes() {
+        use std::io::Write;
+        let (observer, mut peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        assert!(!super::client_disconnected(&observer));
+        peer.write_all(b"queued").unwrap();
+        drop(peer);
+        assert!(super::client_disconnected(&observer));
+    }
     use super::*;
 
     #[test]

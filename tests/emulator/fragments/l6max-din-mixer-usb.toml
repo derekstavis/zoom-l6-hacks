@@ -1,8 +1,6 @@
 [[step]]
-action = "usb-descriptors"
-# Covers firmware starting its USB controller after boot.
-guest_timeout_ms = 60000
-wall_timeout_s = 300
+action = "include"
+path = "tests/emulator/fragments/usb-enumerate.toml"
 
 [[step]]
 action = "usb-sysex-begin"

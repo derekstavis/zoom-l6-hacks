@@ -478,7 +478,8 @@ pub enum Action {
     SdCard {
         inserted: bool,
     },
-    UsbDescriptors,
+    UsbControllerReady,
+    UsbEnumerate,
     UsbStorageBegin,
     UsbStorageInquiry,
     UsbStorageReady,

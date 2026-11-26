@@ -32,6 +32,7 @@ pub use l6max_host::menu::Snapshot as MenuSnapshot;
 pub use l6max_host::midi_config::Config as MidiConfig;
 pub use l6max_host::qmp::Status as QmpStatus;
 pub use l6max_host::sd_loader::{Site as SdLoaderSite, Snapshot as SdLoaderSnapshot};
+pub use l6max_host::usb::Enumeration as UsbEnumeration;
 
 pub use l6max_host::editor::pad_assignment_present as editor_pad_assignment_present;
 pub use l6max_host::editor::{
@@ -116,6 +117,7 @@ pub enum Request {
     UsbAttach,
     UsbRelease,
     UsbController,
+    UsbEnumerate,
     KnobPopup {
         with_text: bool,
     },
@@ -349,7 +351,9 @@ impl ControlClient {
             })?;
         // SD inspection itself owns a 30-second deadline; leave room to
         // serialize and return its bounded error to this client.
-        let timeout = if matches!(
+        let timeout = if matches!(request, Request::UsbEnumerate) {
+            105
+        } else if matches!(
             request,
             Request::SdLoaderStatus | Request::SdLoaderSite { .. } | Request::Menu { .. }
         ) {
@@ -463,6 +467,9 @@ impl ControlClient {
     }
     pub fn usb_controller(&self) -> Result<UsbControllerStatus, ControlError> {
         self.request_as(&Request::UsbController)
+    }
+    pub fn usb_enumerate(&self) -> Result<UsbEnumeration, ControlError> {
+        self.request_as(&Request::UsbEnumerate)
     }
 
     pub fn update_state(&self) -> Result<UpdateState, ControlError> {
@@ -589,6 +596,38 @@ impl<'a> OwnedControl<'a> {
             cancelled,
         )
         .map_err(ControlError::Rejected)
+    }
+    /// In-process USB enumeration retains its MIDI pump on this engine. This
+    /// is not a control-socket operation; callers must coordinate USB ownership.
+    pub fn usb_enumerate_before(
+        &self,
+        budget: &l6max_host::usb::Budget,
+    ) -> Result<(Vec<u8>, Vec<u8>, l6max_host::usb::Configuration), ControlError> {
+        self.engine
+            .usb
+            .as_ref()
+            .ok_or(ControlError::Unavailable("USB host unavailable"))?
+            .enumerate_with_descriptors_before(budget)
+            .map_err(|e| ControlError::Rejected(e.to_string()))
+    }
+    pub fn usb_attach_before(&self, budget: &l6max_host::usb::Budget) -> Result<(), ControlError> {
+        self.engine
+            .usb
+            .as_ref()
+            .ok_or(ControlError::Unavailable("USB host unavailable"))?
+            .attach_before(budget)
+            .map_err(|e| ControlError::Rejected(e.to_string()))
+    }
+    pub fn usb_controller_before(
+        &self,
+        budget: &l6max_host::usb::Budget,
+    ) -> Result<bool, ControlError> {
+        self.engine
+            .usb
+            .as_ref()
+            .ok_or(ControlError::Unavailable("USB host unavailable"))?
+            .controller_running_before(budget)
+            .map_err(|e| ControlError::Rejected(e.to_string()))
     }
     pub fn debug_session(&self) -> Result<l6max_host::debug::Session, ControlError> {
         self.engine

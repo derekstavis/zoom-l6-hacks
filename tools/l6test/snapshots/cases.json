@@ -177,7 +177,7 @@
     "suites": [
       "full"
     ],
-    "definition": "f818f5777ad221729674d95fce71a9ef36d918465832abc13983645985044dcd"
+    "definition": "83f676bfaa4a208339f915e57592b39bd76d5a6324caab86142b84ee4d0280af"
   },
   {
     "case": "editor-pad-assignments",
@@ -186,7 +186,7 @@
     "suites": [
       "full"
     ],
-    "definition": "eb8b07fd40da2e4ded86a1e9240a1163b5f7cde755e0005349ec17ce19b99f7d"
+    "definition": "3f7fe81f7b0064e772b828cf01dc654a5a1e7b7c6ae8966bb65253a4ed497d1a"
   },
   {
     "case": "editor-pad-assignments-fresh",
@@ -195,7 +195,7 @@
     "suites": [
       "full"
     ],
-    "definition": "d21c80f83882190619cf11f219706e70df5a9e381fa2116d5252ccc440e839fb"
+    "definition": "62a2b70133314d8799112a6cdb93a51da2c6b5f3d74a7897b534a957b0705670"
   },
   {
     "case": "editor-pad-assignments-fresh",
@@ -204,7 +204,7 @@
     "suites": [
       "full"
     ],
-    "definition": "d4e641a1a2b3a65e7c355cfc07bae46f3d008542674cac51e94a8d50e8fedf77"
+    "definition": "f90001f56e2283136c8b4478d3577038ad9ba9213a227b073396e9586c4f6265"
   },
   {
     "case": "encoder",
@@ -241,7 +241,7 @@
     "suites": [
       "full"
     ],
-    "definition": "c2bcdd4656a76349878937e2575387205492edaaef51fdfcfe974691d19b6896"
+    "definition": "8f96bcd01cbc67f10826afe73a0c2a08df529c8e57cd859ac3d1ee88a542b379"
   },
   {
     "case": "firmware-update",
@@ -500,7 +500,7 @@
     "suites": [
       "full"
     ],
-    "definition": "accece9e76199ed9504937f7b2b1b2b41a5fdb7d24365a857950f3a7eafa44c6"
+    "definition": "bd0b4a96dcde4a0b4b687f035f71bd47740fddef26d561f6c456ebcaf357c608"
   },
   {
     "case": "l6-eq-audio-update",
@@ -687,7 +687,7 @@
     "suites": [
       "full"
     ],
-    "definition": "7ce1d17fc453d0384bced64354d347e7c0c0d7fef05a7f723ada801b21b7d82c"
+    "definition": "2d6d50fee57549b57733086d54f347db7ec43cfc78ed7fdece7ac89db75b7605"
   },
   {
     "case": "l6max-din-mixer-control-fresh",
@@ -696,14 +696,14 @@
     "suites": [
       "full"
     ],
-    "definition": "41fd0d88fc0dbc0c83d6aa1ea4d17fb21510c249f5fbac31ef8ee82aa7762c68"
+    "definition": "e3b858e6cbf5cb27b79374743845247f009715363e24a7241199c80f164a47ca"
   },
   {
     "case": "l6max-din-mixer-control-patched",
     "model": "l6max",
     "backend": "headless",
     "suites": [],
-    "definition": "19df9021dafc165532f0edc1a0539955cc757f8c7373dcae39f6010e12929021"
+    "definition": "3cd623384043b7b921d984a93f7e8bc564e806e51076b0261bcffc5764740b8c"
   },
   {
     "case": "l6max-din-native-reuse",
@@ -815,7 +815,7 @@
     "suites": [
       "full"
     ],
-    "definition": "4e7959b3988168b682b41b094aec170933425a70adf71bb8082af14f9188b82d"
+    "definition": "5098cfa7776ee56b8ef9a5c8077d0d2ec38113d6f8f9693cac2c33a433a0ed18"
   },
   {
     "case": "l6max-update-bad-checksum",
@@ -3020,7 +3020,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "2ea0f2949fe395c54847c19c9325d395d5d710427927cab89be78c2e82696198"
+    "definition": "364c97f28cdb8b47e08ea24d4e43e3d37a3e0da3951178302f076435606b8ea3"
   },
   {
     "case": "sd-din-mixer-control",
@@ -3029,7 +3029,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "1baa70dc40a3c75147b95b1ce9e3fd6507cf061fabdd3921cf10d06bcd7b9a87"
+    "definition": "b4fdc6cd856d98d5b54190dc814c02989413183529fcc71ef65a428ef2895b78"
   },
   {
     "case": "sd-duplicate-bundle",
@@ -3226,7 +3226,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "ccb945b75d2c986d1bb6e128baf81a0cd7e81e2e06884f08cad65896140972a2"
+    "definition": "cd29fd38cb7cfd4c8a70dfd4971f28e888cd56349ccfcff8fd133b17ef326f2c"
   },
   {
     "case": "sd-older-module",
@@ -3244,7 +3244,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "d5c524daa2361fd61d41764da9cd626ff95e96047e489c1289f09f26d268a89a"
+    "definition": "c57894de55174c0d0f383289ec5cfa7647c28efe7ad27a87fedc8928225a03dc"
   },
   {
     "case": "sd-warm-reset",
@@ -3386,7 +3386,7 @@
       "devices",
       "full"
     ],
-    "definition": "ec600f391cc8d42bf2bf4611f66003db74002d408be6ceed5d138d23edef7bd2"
+    "definition": "503ec67c261fc27028cd3b693c0c2d169035fad5c2f431bb8deec97d4f5db56f"
   },
   {
     "case": "usb",
@@ -3396,7 +3396,7 @@
       "devices",
       "full"
     ],
-    "definition": "8369bc0f38b21596ba54721ddbada278892247b49852464a0c7b38a952dabdf2"
+    "definition": "953c4124e1180188b77512ab719227619770601ceb8ce50fa8fae5563bb643df"
   },
   {
     "case": "usb-storage",

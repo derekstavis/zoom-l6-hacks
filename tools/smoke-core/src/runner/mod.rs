@@ -545,8 +545,11 @@ impl Runner {
                 Action::SdCard { inserted } => {
                     return Ok(Progress::Device(devices::Operation::SdCard { inserted }));
                 }
-                Action::UsbDescriptors => {
-                    return Ok(Progress::Device(devices::Operation::UsbDescriptors));
+                Action::UsbControllerReady => {
+                    return Ok(Progress::Device(devices::Operation::UsbControllerReady));
+                }
+                Action::UsbEnumerate => {
+                    return Ok(Progress::Device(devices::Operation::UsbEnumerate));
                 }
                 Action::UsbMidiOpen => {
                     return Ok(Progress::Device(devices::Operation::UsbMidiOpen));

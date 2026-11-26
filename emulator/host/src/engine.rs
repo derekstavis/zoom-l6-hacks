@@ -856,6 +856,7 @@ impl Engine {
             crate::usb::UsbOwner::Raw
                 | crate::usb::UsbOwner::Direct
                 | crate::usb::UsbOwner::RawDirect
+                | crate::usb::UsbOwner::Unusable
         ) {
             return;
         }

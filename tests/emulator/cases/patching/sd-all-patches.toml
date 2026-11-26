@@ -30,6 +30,10 @@ action = "capture-sd-module"
 loaded = true
 
 [[step]]
+action = "expect-sd-allocation"
+loaded = true
+
+[[step]]
 action = "expect-sd-module"
 loaded = true
 
@@ -46,6 +50,10 @@ action = "expect-sd-loader"
 
 [[step]]
 action = "capture-sd-module"
+loaded = true
+
+[[step]]
+action = "expect-sd-allocation"
 loaded = true
 
 [[step]]
@@ -74,6 +82,10 @@ action = "expect-sd-loader"
 
 [[step]]
 action = "capture-sd-module"
+loaded = true
+
+[[step]]
+action = "expect-sd-allocation"
 loaded = true
 
 [[step]]
@@ -178,6 +190,10 @@ action = "expect-sd-loader"
 
 [[step]]
 action = "capture-sd-module"
+loaded = true
+
+[[step]]
+action = "expect-sd-allocation"
 loaded = true
 
 [[step]]

@@ -19,10 +19,42 @@ pub(super) type SdEdits = (
 pub(super) struct SdInspectionContext {
     pub fixture: FrozenSdFixture,
     pub snapshot: Option<(bool, l6ctl::SdLoaderSnapshot)>,
+    pub allocation_checked: bool,
     pub wall_deadline: Instant,
     pub guest_start: u32,
     pub guest_timeout_ms: u32,
     pub wall_timeout_s: u64,
+}
+
+/// Validate the captured allocation and claim against the frozen module sizes.
+pub(super) fn check_sd_allocation(
+    snapshot: &l6ctl::SdLoaderSnapshot,
+    loaded: bool,
+    module_sizes: impl Iterator<Item = usize>,
+) -> Result<Value, String> {
+    if snapshot.registry.is_none() {
+        if loaded {
+            return Err("the Patch loader has not allocated its registry".into());
+        }
+        return Ok(json!({"loaded":false,"registry":null}));
+    }
+    let base = snapshot.module_base.ok_or("SD module base missing")?;
+    let len = snapshot.module_len.ok_or("SD module length missing")?;
+    let known_size = module_sizes.into_iter().any(|size| size == len as usize);
+    if loaded != (base != 0) || (loaded && !known_size) {
+        let stage = snapshot.stage.unwrap_or_default();
+        return Err(format!(
+            "SD allocation state loaded={loaded}, base={base:#010x}, len={len}, loader stage={stage:#x}"
+        ));
+    }
+    let claim = snapshot.claim.ok_or("SD claim missing")?;
+    if (claim == 1) != loaded {
+        let stage = snapshot.stage.unwrap_or_default();
+        return Err(format!(
+            "SD module loaded={loaded}, claim={claim:#x}, loader stage={stage:#x}"
+        ));
+    }
+    Ok(json!({"loaded":loaded,"module_base":base,"module_len":len,"claim":claim}))
 }
 
 /// Compare the pinned loader image's persistent stubs with running MAIN.
@@ -866,5 +898,37 @@ mod effect_slot_readiness_tests {
             None,
             false
         ));
+    }
+}
+
+#[cfg(test)]
+mod allocation_tests {
+    use super::*;
+    fn sample() -> l6ctl::SdLoaderSnapshot {
+        l6ctl::SdLoaderSnapshot {
+            revision_guard: "test".into(),
+            atomic: false,
+            registry: Some(0x80200000),
+            stage: Some(0x400),
+            claim: Some(1),
+            module_base: Some(0x80201000),
+            module_len: Some(64),
+            site_count: Some(1),
+        }
+    }
+    #[test]
+    fn distinguishes_absence_invalid_size_and_unclaimed_module() {
+        let mut value = sample();
+        assert!(check_sd_allocation(&value, true, [64].into_iter()).is_ok());
+        assert!(check_sd_allocation(&value, true, [32].into_iter()).is_err());
+        value.claim = Some(0);
+        assert!(check_sd_allocation(&value, true, [64].into_iter()).is_err());
+        value.registry = None;
+        assert!(check_sd_allocation(&value, true, [64].into_iter()).is_err());
+        assert!(check_sd_allocation(&value, false, [].into_iter()).is_ok());
+        value.registry = Some(0x80200000);
+        value.module_base = Some(0);
+        value.module_len = Some(0);
+        assert!(check_sd_allocation(&value, false, [].into_iter()).is_ok());
     }
 }

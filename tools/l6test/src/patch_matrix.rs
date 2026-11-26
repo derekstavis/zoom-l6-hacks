@@ -413,6 +413,7 @@ fn checks(text: &mut String, combination: &Combination, all: &Checks) -> Result<
     if !combination.sd.is_empty() {
         step(text, "action = \"expect-sd-loader\"");
         step(text, "action = \"capture-sd-module\"\nloaded = true");
+        step(text, "action = \"expect-sd-allocation\"\nloaded = true");
         step(text, "action = \"expect-sd-module\"\nloaded = true");
     }
     for (name, patch) in &all.order {
@@ -1409,7 +1410,20 @@ wall_timeout_s = 120
                     "{}",
                     case.id
                 );
-                let module = &steps[index + 2];
+                let allocation = &steps[index + 2];
+                assert_eq!(
+                    allocation.get("action").and_then(toml::Value::as_str),
+                    Some("expect-sd-allocation"),
+                    "{}",
+                    case.id
+                );
+                assert_eq!(
+                    allocation.get("loaded").and_then(toml::Value::as_bool),
+                    Some(true),
+                    "{}",
+                    case.id
+                );
+                let module = &steps[index + 3];
                 assert_eq!(
                     module.get("action").and_then(toml::Value::as_str),
                     Some("expect-sd-module"),

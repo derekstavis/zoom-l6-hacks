@@ -391,6 +391,9 @@ pub enum Operation {
     CaptureSdModule {
         loaded: bool,
     },
+    ExpectSdAllocation {
+        loaded: bool,
+    },
     ExpectSdModule {
         loaded: bool,
         chain_count: Option<u8>,

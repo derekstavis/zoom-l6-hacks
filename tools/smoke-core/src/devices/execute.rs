@@ -889,7 +889,9 @@ impl State {
         if self.sd_inspection.is_some()
             && !matches!(
                 operation,
-                Operation::CaptureSdModule { .. } | Operation::ExpectSdModule { .. }
+                Operation::CaptureSdModule { .. }
+                    | Operation::ExpectSdAllocation { .. }
+                    | Operation::ExpectSdModule { .. }
             )
         {
             self.sd_inspection = None;
@@ -1619,6 +1621,7 @@ impl State {
                 self.sd_inspection = Some(sd::SdInspectionContext {
                     fixture,
                     snapshot: None,
+                    allocation_checked: false,
                     wall_deadline,
                     guest_start: operation_start.1,
                     guest_timeout_ms,
@@ -1654,6 +1657,28 @@ impl State {
                 context.snapshot = Some((loaded, snapshot));
                 Ok(evidence)
             }
+            Operation::ExpectSdAllocation { loaded } => {
+                let context = self.sd_inspection.as_mut().ok_or("SD inspection missing")?;
+                let (captured_loaded, snapshot) = context
+                    .snapshot
+                    .as_ref()
+                    .ok_or("SD module snapshot missing")?;
+                if *captured_loaded != loaded || context.allocation_checked {
+                    return Err("SD allocation assertion has unexpected state".into());
+                }
+                let evidence = check_sd_allocation(
+                    snapshot,
+                    loaded,
+                    context
+                        .fixture
+                        .edits
+                        .6
+                        .iter()
+                        .map(|(bytes, _, _)| bytes.len()),
+                )?;
+                context.allocation_checked = true;
+                Ok(evidence)
+            }
             Operation::ExpectSdModule {
                 loaded,
                 chain_count,
@@ -1662,6 +1687,9 @@ impl State {
                     .sd_inspection
                     .take()
                     .ok_or("SD module assertion needs preceding loader assertion")?;
+                if !context.allocation_checked {
+                    return Err("SD allocation assertion missing".into());
+                }
                 let (captured_loaded, typed_snapshot) =
                     context.snapshot.ok_or("SD module snapshot missing")?;
                 if captured_loaded != loaded {
@@ -1725,21 +1753,6 @@ impl State {
                 let loaded_len = typed_snapshot
                     .module_len
                     .ok_or("SD module length missing")?;
-                let known_module_size = module_images
-                    .iter()
-                    .any(|(module_payload, _, _)| module_payload.len() == loaded_len as usize);
-                if loaded != (loaded_base != 0) || (loaded && !known_module_size) {
-                    let stage = typed_snapshot.stage.unwrap_or_default();
-                    return Err(format!("SD allocation state loaded={loaded}, base={loaded_base:#010x}, len={loaded_len}, loader stage={stage:#x}").into());
-                }
-                let claim = typed_snapshot.claim.ok_or("SD claim missing")?;
-                if (claim == 1) != loaded {
-                    let stage = typed_snapshot.stage.unwrap_or_default();
-                    return Err(format!(
-                        "SD module loaded={loaded}, claim={claim:#x}, loader stage={stage:#x}"
-                    )
-                    .into());
-                }
                 let expected_function = if chain_count.is_some() {
                     module_hooks
                         .iter()

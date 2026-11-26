@@ -1093,6 +1093,11 @@ impl Runner {
                         loaded,
                     }));
                 }
+                Action::ExpectSdAllocation { loaded } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectSdAllocation {
+                        loaded,
+                    }));
+                }
                 Action::ExpectSdModule {
                     loaded,
                     chain_count,

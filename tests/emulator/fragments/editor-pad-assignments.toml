@@ -59,6 +59,12 @@ guest_timeout_ms = 60000
 wall_timeout_s = 900
 
 [[step]]
+action = "editor-assign-assert"
+pad = 0
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
 action = "editor-assign-count"
 pad = 1
 guest_timeout_ms = 60000
@@ -89,6 +95,12 @@ guest_timeout_ms = 60000
 wall_timeout_s = 900
 
 [[step]]
+action = "editor-assign-assert"
+pad = 1
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
 action = "editor-assign-count"
 pad = 2
 guest_timeout_ms = 60000
@@ -119,6 +131,12 @@ guest_timeout_ms = 60000
 wall_timeout_s = 900
 
 [[step]]
+action = "editor-assign-assert"
+pad = 2
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
 action = "editor-assign-count"
 pad = 3
 guest_timeout_ms = 60000
@@ -144,6 +162,12 @@ wall_timeout_s = 900
 
 [[step]]
 action = "editor-assign-state"
+pad = 3
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-assert"
 pad = 3
 guest_timeout_ms = 60000
 wall_timeout_s = 900

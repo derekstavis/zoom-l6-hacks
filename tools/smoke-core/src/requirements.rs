@@ -432,6 +432,7 @@ pub fn of(action: &Action) -> Requirement {
         | Action::EditorAssignSend { .. }
         | Action::EditorAssignDialog { .. }
         | Action::EditorAssignState { .. }
+        | Action::EditorAssignAssert { .. }
         | Action::EditorAssignEnd
         | Action::EditorPlaybackBegin { .. }
         | Action::EditorPlaybackPlay

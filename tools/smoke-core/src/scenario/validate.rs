@@ -2144,7 +2144,8 @@ impl Scenario {
                     Action::EditorAssignSend { pad } => Some((7, Some(*pad))),
                     Action::EditorAssignDialog { pad } => Some((8, Some(*pad))),
                     Action::EditorAssignState { pad } => Some((9, Some(*pad))),
-                    Action::EditorAssignEnd => Some((10, None)),
+                    Action::EditorAssignAssert { pad } => Some((10, Some(*pad))),
+                    Action::EditorAssignEnd => Some((11, None)),
                     _ => None,
                 };
                 match (scope, phase) {
@@ -2153,10 +2154,10 @@ impl Scenario {
                             && actual_pad.is_none_or(|v| v == pad)
                             && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
                     {
-                        scope = if actual == 10 {
+                        scope = if actual == 11 {
                             None
-                        } else if actual == 9 {
-                            Some((if pad == 3 { 10 } else { 5 }, pad + 1, guest, wall))
+                        } else if actual == 10 {
+                            Some((if pad == 3 { 11 } else { 5 }, pad + 1, guest, wall))
                         } else {
                             Some((want + 1, pad, guest, wall))
                         };

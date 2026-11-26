@@ -974,6 +974,13 @@ fn editor_pad_assignment_requires_prior_usb_midi_enumeration() {
     ] {
         assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='usb-controller-ready'\n[[step]]\naction='usb-enumerate'\n{altered}")).is_err());
     }
+    let assertion = "[[step]]\naction = \"editor-assign-assert\"\npad = 0\nguest_timeout_ms = 60000\nwall_timeout_s = 900\n\n";
+    for altered in [
+        assignment_steps.replacen(assertion, "", 1),
+        assignment_steps.replacen(assertion, &assertion.replace("pad = 0", "pad = 1"), 1),
+    ] {
+        assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='usb-controller-ready'\n[[step]]\naction='usb-enumerate'\n{altered}")).is_err());
+    }
     let shortened = assignment_steps.replace(
         "action = \"editor-assign-end\"",
         "action = \"editor-assign-identity\"",

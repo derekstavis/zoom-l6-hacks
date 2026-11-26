@@ -876,6 +876,11 @@ impl Runner {
                         pad,
                     }));
                 }
+                Action::EditorAssignAssert { pad } => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignAssert {
+                        pad,
+                    }));
+                }
                 Action::EditorAssignEnd => {
                     return Ok(Progress::Device(devices::Operation::EditorAssignEnd));
                 }

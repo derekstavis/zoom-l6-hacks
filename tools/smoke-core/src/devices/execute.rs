@@ -659,7 +659,8 @@ impl State {
                 Operation::EditorAssignSend { pad } => Some((7, Some(pad))),
                 Operation::EditorAssignDialog { pad } => Some((8, Some(pad))),
                 Operation::EditorAssignState { pad } => Some((9, Some(pad))),
-                Operation::EditorAssignEnd => Some((10, None)),
+                Operation::EditorAssignAssert { pad } => Some((10, Some(pad))),
+                Operation::EditorAssignEnd => Some((11, None)),
                 _ => None,
             };
             if !expected.is_some_and(|(phase, pad)| {
@@ -3531,6 +3532,7 @@ impl State {
             | Operation::EditorAssignSend { .. }
             | Operation::EditorAssignDialog { .. }
             | Operation::EditorAssignState { .. }
+            | Operation::EditorAssignAssert { .. }
             | Operation::EditorAssignEnd) => {
                 let scope = self
                     .editor_assignment
@@ -3562,13 +3564,14 @@ impl State {
                     Operation::EditorAssignSend { pad } => scope.assign(session, pad)?,
                     Operation::EditorAssignDialog { pad } => scope.dialog(session, pad)?,
                     Operation::EditorAssignState { pad } => scope.state(session, pad)?,
+                    Operation::EditorAssignAssert { pad } => scope.assert_state(pad)?,
                     Operation::EditorAssignEnd => scope.finish(options)?,
                     _ => unreachable!(),
                 };
                 scope.check(session, guest_timeout_ms, wall_timeout_s)?;
-                if matches!(operation, Operation::EditorAssignState { .. }) {
+                if matches!(operation, Operation::EditorAssignAssert { .. }) {
                     scope.pad += 1;
-                    scope.phase = if scope.pad == 4 { 10 } else { 5 };
+                    scope.phase = if scope.pad == 4 { 11 } else { 5 };
                 } else {
                     scope.phase += 1;
                 }

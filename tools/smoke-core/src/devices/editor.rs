@@ -604,6 +604,7 @@ pub(super) struct EditorAssignmentScope {
     filename: Option<Vec<u8>>,
     assignment_args: Option<Vec<u8>>,
     assignment_replies: Vec<Vec<u8>>,
+    state_replies: Option<Vec<Vec<u8>>>,
     assignments: Vec<Value>,
 }
 impl EditorAssignmentScope {
@@ -634,6 +635,7 @@ impl EditorAssignmentScope {
             filename: None,
             assignment_args: None,
             assignment_replies: vec![],
+            state_replies: None,
             assignments: vec![],
         })
     }
@@ -905,16 +907,30 @@ impl EditorAssignmentScope {
                 )?);
             }
             if l6ctl::editor_pad_assignment_matches(&replies, pad, &args) {
-                let evidence = json!({"pad":pad+1,"file_count":self.file_count,"filename_reply":self.filename,"assignment_replies":self.assignment_replies,"assignment_state":replies});
-                self.assignments.push(evidence.clone());
-                self.file_count = None;
-                self.filename = None;
-                self.assignment_args = None;
-                self.assignment_replies.clear();
-                return Ok(evidence);
+                break;
             }
         }
-        Err(format!("Editor assignment query did not match the selected file for Sound Pad {}: {replies:02x?}",pad+1).into())
+        let matched = l6ctl::editor_pad_assignment_matches(&replies, pad, &args);
+        self.state_replies = Some(replies.clone());
+        Ok(json!({"pad":pad+1,"matched":matched,"assignment_state":replies}))
+    }
+    pub(super) fn assert_state(&mut self, pad: u8) -> Result<Value, Box<dyn std::error::Error>> {
+        let args = self
+            .assignment_args
+            .as_ref()
+            .ok_or("missing selected filename")?;
+        let replies = self
+            .state_replies
+            .take()
+            .ok_or("missing Editor assignment state")?;
+        verify_assignment_state(&replies, pad, args)?;
+        let evidence = json!({"pad":pad+1,"file_count":self.file_count,"filename_reply":self.filename,"assignment_replies":self.assignment_replies,"assignment_state":replies});
+        self.assignments.push(evidence.clone());
+        self.file_count = None;
+        self.filename = None;
+        self.assignment_args = None;
+        self.assignment_replies.clear();
+        Ok(evidence)
     }
     pub(super) fn finish(&self, options: &Options) -> Result<Value, Box<dyn std::error::Error>> {
         let evidence = json!({"assignments":self.assignments});
@@ -923,5 +939,29 @@ impl EditorAssignmentScope {
             serde_json::to_vec_pretty(&evidence)?,
         )?;
         Ok(evidence)
+    }
+}
+
+fn verify_assignment_state(replies: &[Vec<u8>], pad: u8, args: &[u8]) -> Result<(), String> {
+    if l6ctl::editor_pad_assignment_matches(replies, pad, args) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Editor assignment query did not match the selected file for Sound Pad {}: {replies:02x?}",
+            pad + 1
+        ))
+    }
+}
+
+#[cfg(test)]
+mod assignment_assertion_tests {
+    use super::verify_assignment_state;
+    #[test]
+    fn mismatch_reports_pad_and_received_reply() {
+        let reply = vec![0xf0, 0x52, 0, 0, 0x45, 0x02, 1, 2, 3, 0xf7];
+        assert!(verify_assignment_state(std::slice::from_ref(&reply), 1, &[1, 2, 3]).is_ok());
+        let failure = verify_assignment_state(&[reply], 1, &[1, 2, 4]).unwrap_err();
+        assert!(failure.contains("Sound Pad 2"));
+        assert!(failure.contains("45, 02, 01, 02, 03"));
     }
 }

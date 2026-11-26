@@ -177,7 +177,7 @@
     "suites": [
       "full"
     ],
-    "definition": "0de3aa67efaee78ec6d7b586088e256c2c6f55153754e958ea0464bf5c3a1628"
+    "definition": "b2de866142fb637bc5ba1c0866b3859f276f4027b406e39c4708efdcd5d82e3b"
   },
   {
     "case": "editor-pad-assignments",
@@ -186,7 +186,7 @@
     "suites": [
       "full"
     ],
-    "definition": "4dfecfe5288da422cfa6711ee9e112051343fd7b8cabc53240936c2cc942cad2"
+    "definition": "f8ccf14ca0182c8f1fce95c352250e85365bd9ca2eb72efbdd096cd9f98a3f73"
   },
   {
     "case": "editor-pad-assignments-fresh",
@@ -195,7 +195,7 @@
     "suites": [
       "full"
     ],
-    "definition": "315c6623466cacfba34f93c68f4ce599205b27dfa0d72d8fddf7836b89ff546d"
+    "definition": "fd8b85af089a2ee5ba08a2ec00e7afe75f4943458ae804b76ebd6a7aefeac2e6"
   },
   {
     "case": "editor-pad-assignments-fresh",
@@ -204,7 +204,7 @@
     "suites": [
       "full"
     ],
-    "definition": "83127006580b88c8df292c3620bcea41b9bd05a40f31d7547e49612a9d871589"
+    "definition": "7f964bdfd841e93392e300247c1ab32d5fd7e6a02e0b3d945ca1d1714958ef1d"
   },
   {
     "case": "encoder",
@@ -500,7 +500,7 @@
     "suites": [
       "full"
     ],
-    "definition": "fe484a8645e0f029733a29e1bca0a29048582f22427c97d85a797ee9f4fa3420"
+    "definition": "504fa2625b41bf9470bf4329907794923e0fa3bed85dc95bed73f5452b5641be"
   },
   {
     "case": "l6-eq-audio-update",

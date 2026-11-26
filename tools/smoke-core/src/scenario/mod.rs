@@ -651,6 +651,9 @@ pub enum Action {
     EditorAssignState {
         pad: u8,
     },
+    EditorAssignAssert {
+        pad: u8,
+    },
     EditorAssignEnd,
     EditorPlaybackBegin {
         pad: u8,

@@ -366,6 +366,11 @@ impl State {
     }
     /// Release held inputs and owned transport scopes before the guest exits.
     pub fn abort_auxiliary_scopes(&mut self) -> Result<(), String> {
+        let tap = self
+            .tap_handler
+            .take()
+            .map(|mut scope| scope.abort())
+            .transpose();
         let din_sweep = self
             .l6_din_sweep
             .take()
@@ -396,6 +401,9 @@ impl State {
         self.editor_assignment = None;
         self.signal_pwm = None;
         let mut errors = Vec::new();
+        if let Err(error) = tap {
+            errors.push(error);
+        }
         if let Err(error) = din_sweep {
             errors.push(error);
         }
@@ -2223,52 +2231,35 @@ impl State {
                 }
                 Ok(evidence)
             }
-            Operation::L6maxTapHandler => {
-                const TAP_TARGET: u32 = 48;
-                use firmware_api::l6max::l6max_tap_press_handler;
-                let inputs = &session.engine.inputs.as_ref().unwrap().main;
-                let qmp = &session.engine.management[0];
-                let socket = options
-                    .gdb_socket
-                    .as_ref()
-                    .ok_or("l6max-tap-handler requires a configured GDB socket")?;
-                if self.gdb.is_none() {
-                    self.gdb = Some(l6max_diagnostics::gdb::Gdb::connect(socket)?);
+            Operation::L6maxTapBegin => {
+                if self.tap_handler.is_some() {
+                    return Err("tap scope already active".into());
                 }
-                let gdb = self.gdb.as_mut().unwrap();
-                qmp.stop()?;
-                gdb.breakpoint(l6max_tap_press_handler, true)?;
-                let applied = inputs.snapshot().applied;
-                inputs.down(TAP_TARGET, 0)?;
-                wait_l6_input(
+                self.tap_handler = Some(tap_handler::Scope::begin(
                     session,
-                    || inputs.snapshot().applied > applied,
-                    "TAP press acknowledgement",
-                )?;
-                let stopped =
-                    continue_within_guest(session, gdb, 5_000, Duration::from_secs(wall_timeout_s));
-                if let Err(error) = stopped {
-                    let _ = gdb.breakpoint(l6max_tap_press_handler, false);
-                    let _ = qmp.resume();
-                    return Err(format!("TAP press did not reach its handler: {error}").into());
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            operation @ (Operation::L6maxTapPress
+            | Operation::L6maxTapWait
+            | Operation::L6maxTapAssert
+            | Operation::L6maxTapRelease
+            | Operation::L6maxTapEnd) => {
+                let scope = self.tap_handler.as_mut().ok_or("tap scope missing")?;
+                let result = match operation {
+                    Operation::L6maxTapPress => scope.press(session),
+                    Operation::L6maxTapWait => scope.wait(session),
+                    Operation::L6maxTapAssert => scope.assert(session),
+                    Operation::L6maxTapRelease => scope.release(session),
+                    Operation::L6maxTapEnd => scope.finish(session),
+                    _ => unreachable!(),
+                }?;
+                if matches!(operation, Operation::L6maxTapEnd) {
+                    self.tap_handler = None;
                 }
-                let pc = gdb.read_register(15)? & !1;
-                gdb.breakpoint(l6max_tap_press_handler, false)?;
-                qmp.resume()?;
-                if pc != l6max_tap_press_handler {
-                    return Err(format!(
-                        "TAP press stopped at {pc:#010x}, expected {l6max_tap_press_handler:#010x}"
-                    )
-                    .into());
-                }
-                let applied = inputs.snapshot().applied;
-                inputs.up(TAP_TARGET)?;
-                wait_l6_input(
-                    session,
-                    || inputs.snapshot().applied > applied,
-                    "TAP release acknowledgement",
-                )?;
-                Ok(json!({"target":TAP_TARGET,"handler":l6max_tap_press_handler}))
+                Ok(result)
             }
             Operation::L6MainGpioEvent { target, event } => {
                 use firmware_api::l6::main_event_submit;

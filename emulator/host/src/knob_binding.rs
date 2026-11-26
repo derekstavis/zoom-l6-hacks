@@ -76,6 +76,34 @@ pub fn verify_preflight_widget60(
     }
     Ok(())
 }
+/// Check the stock notification semaphore slot and count-field span while
+/// MAIN is stopped. This does not establish allocation ownership.
+pub fn verify_notification_semaphore(
+    semaphore: u32,
+    read_word: impl FnOnce(u32) -> Result<u32, String>,
+) -> Result<(), String> {
+    let end = semaphore
+        .checked_add(60)
+        .ok_or("semaphore range overflow")?;
+    if semaphore & 3 != 0
+        || !((semaphore >= 0x2000_0000 && end <= 0x2030_0000)
+            || (semaphore >= 0x8020_0000 && end <= 0x8420_0000))
+    {
+        return Err("notification semaphore outside writable MAIN RAM".into());
+    }
+    if read_word(firmware_api::l6max::notification_slot)? != semaphore {
+        return Err("notification semaphore slot changed".into());
+    }
+    Ok(())
+}
+/// Validate the initialized slot-zero state before a signature or mailbox
+/// probe. The mailbox's idle tag is required only when handing it to guest.
+pub fn verify_bitmap_probe_state(state: [u8; 4], require_idle_mailbox: bool) -> Result<(), String> {
+    if state[..2] != [0x4e, 0x4b] || (require_idle_mailbox && state[3] != 0xff) {
+        return Err("knob bitmap state is not ready for the probe".into());
+    }
+    Ok(())
+}
 /// Exact callback and hook bytes derived from a report-identical firmware image.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -378,6 +406,19 @@ mod tests {
         assert!(verify_preflight_widget60(alias, |_| Ok(alias)).is_ok());
         assert!(verify_preflight_widget60(alias, |_| Ok(alias + 4)).is_err());
         assert!(verify_preflight_widget60(0x841f_fff8, |_| Ok(0)).is_err());
+    }
+    #[test]
+    fn semaphore_and_bitmap_guards_reject_changed_or_wrong_phase_state() {
+        let semaphore = 0x8020_3000;
+        assert!(verify_notification_semaphore(semaphore, |_| Ok(semaphore)).is_ok());
+        assert!(verify_notification_semaphore(semaphore, |_| Ok(semaphore + 4)).is_err());
+        assert!(verify_notification_semaphore(semaphore | 1, |_| Ok(semaphore)).is_err());
+        assert!(verify_notification_semaphore(0x841f_ffc8, |_| Ok(0)).is_err());
+        assert!(verify_notification_semaphore(semaphore, |_| Err("deadline".into())).is_err());
+        assert!(verify_bitmap_probe_state([0x4e, 0x4b, 1, 0xff], true).is_ok());
+        assert!(verify_bitmap_probe_state([0x4e, 0x4b, 1, 2], false).is_ok());
+        assert!(verify_bitmap_probe_state([0x4e, 0x4b, 1, 2], true).is_err());
+        assert!(verify_bitmap_probe_state([0x4f, 0x4b, 1, 0xff], false).is_err());
     }
     #[test]
     fn firmware_binding_requires_exact_export_image_and_live_bytes() {

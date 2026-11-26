@@ -352,6 +352,9 @@ First activation shares the existing knob preflight debugger. Journal state
 and cleanup ordering live in `l6max-host`; the debugger lease, semaphore
 restoration and pause/resume ownership still live in the test harness.
 Migrating that existing ownership to the host is separate work.
+If legacy debugger cleanup fails, it leaves MAIN stopped but can release its
+cross-process debugger lease; the stopped state alone does not exclude another
+debugger client.
 During preflight, an in-process host check stops MAIN and compares the widget 7,
 background 10 and notification semaphore pointers with their live table slots
 and mapped writable spans. Before each widget/background probe write, it

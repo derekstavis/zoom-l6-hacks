@@ -20,7 +20,8 @@ pub use l6max_host::input::button_source;
 pub use l6max_host::input::{InputAck, InputAckState, InputCounters, InputSource};
 pub use l6max_host::knob_binding::{
     FirmwareBinding as KnobFirmwareBinding, PreflightTargets as KnobPreflightTargets,
-    SdBinding as KnobSdBinding, verify_preflight_widget60,
+    SdBinding as KnobSdBinding, verify_bitmap_probe_state, verify_notification_semaphore,
+    verify_preflight_widget60,
 };
 pub use l6max_host::knob_popup::{
     NavigationSnapshot, OverlayDescriptors, ParameterState, RecorderState, RestorationPointers,

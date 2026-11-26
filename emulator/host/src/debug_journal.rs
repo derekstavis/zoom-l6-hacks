@@ -23,6 +23,14 @@ impl Default for Journal {
     }
 }
 impl Journal {
+    /// A failed restoration precondition leaves all records in place and
+    /// forbids further cleanup writes or resume until the guest is restarted.
+    pub fn restoration_guard(&mut self, result: Result<(), String>) -> Result<(), String> {
+        if result.is_err() {
+            self.synchronized = false;
+        }
+        result
+    }
     /// Record before attempting a write, including a write that may partially fail.
     pub fn begin_write(
         &mut self,
@@ -124,6 +132,52 @@ mod tests {
         assert!(!j.clean());
         j.acknowledge_mailbox();
         assert!(j.clean());
+    }
+    #[test]
+    fn failed_restoration_guard_retains_journal_and_prevents_cleanup_mutations() {
+        struct Fake {
+            journal: Journal,
+            calls: Vec<&'static str>,
+        }
+        impl Cleanup for Fake {
+            fn stop(&mut self) -> Result<(), String> {
+                self.calls.push("stop");
+                Ok(())
+            }
+            fn synchronized(&self) -> bool {
+                self.journal.synchronized && !self.journal.mailbox_pending
+            }
+            fn restore_writes(&mut self) -> Vec<String> {
+                self.calls.push("write");
+                vec![]
+            }
+            fn clear_breakpoints(&mut self) -> Vec<String> {
+                self.calls.push("breakpoint");
+                vec![]
+            }
+            fn restore_registers(&mut self) -> Vec<String> {
+                self.calls.push("register");
+                vec![]
+            }
+            fn resume(&mut self) -> Result<(), String> {
+                self.calls.push("resume");
+                Ok(())
+            }
+        }
+        let mut fake = Fake {
+            journal: Journal::default(),
+            calls: vec![],
+        };
+        fake.journal.begin_write(0x100, vec![1], &[0]).unwrap();
+        assert!(
+            fake.journal
+                .restoration_guard(Err("changed slot".into()))
+                .is_err()
+        );
+        let errors = cleanup(&mut fake);
+        assert_eq!(fake.calls, ["stop"]);
+        assert_eq!(fake.journal.writes, [(0x100, vec![1])]);
+        assert!(errors.iter().any(|e| e.contains("guest left stopped")));
     }
     #[test]
     fn failed_write_restoration_stops_before_other_cleanup_or_resume() {

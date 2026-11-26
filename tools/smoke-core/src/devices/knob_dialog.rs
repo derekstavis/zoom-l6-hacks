@@ -116,6 +116,25 @@ impl KnobDebugSession {
         }
         Ok(())
     }
+    fn breakpoint_before(
+        &mut self,
+        address: u32,
+        enable: bool,
+        deadline: Instant,
+    ) -> std::io::Result<()> {
+        if enable && !self.journal.breakpoints.contains(&address) {
+            self.journal.breakpoints.push(address);
+        }
+        let result = self.gdb.breakpoint_before(address, enable, deadline);
+        if result.is_err() {
+            self.journal.synchronized = false;
+        }
+        result?;
+        if !enable {
+            self.journal.breakpoints.retain(|&item| item != address);
+        }
+        Ok(())
+    }
     fn read_register(&mut self, index: u32) -> std::io::Result<u32> {
         let result = self.gdb.read_register(index);
         if result.is_err() {
@@ -1331,6 +1350,16 @@ fn callback_first_use_ready(state: &[u8], slot: u32, expected_callback: u32, run
         && running == 0
 }
 
+fn verify_stopped_semaphore(
+    session: &Session,
+    semaphore: u32,
+    shared: (Instant, u32, u32, u64, u16),
+) -> Result<(), String> {
+    l6ctl::verify_notification_semaphore(semaphore, |address| {
+        activation_word(session, address, shared).map_err(|e| e.to_string())
+    })
+}
+
 pub(super) fn begin_callback_race(
     session: &Session,
     context: &mut PreflightContext,
@@ -1346,16 +1375,33 @@ pub(super) fn begin_callback_race(
         .as_mut()
         .ok_or("missing knob-dialog debugger")?;
     remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
-    qmp.stop()?;
-    let semaphore_count = qmp.read_memory(0, context.notification_semaphore + 56, 4)?;
+    let deadline = shared.0 + Duration::from_secs(shared.3);
+    qmp.stop_before(deadline)?;
+    verify_stopped_semaphore(session, context.notification_semaphore, shared)?;
+    let semaphore_count = activation_read(session, context.notification_semaphore + 56, 4, shared)?;
     if semaphore_count != 1u32.to_le_bytes() {
-        debugger.resume_guest()?;
+        remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+        debugger.resume_guest_before(deadline)?;
         return Err("notification semaphore was not available before contention check".into());
     }
-    debugger.write(context.notification_semaphore + 56, &0u32.to_le_bytes())?;
-    debugger.breakpoint(firmware_api::l6max::gui_display_callback_register, true)?;
+    debugger.write_before(
+        context.notification_semaphore + 56,
+        &0u32.to_le_bytes(),
+        deadline,
+        || {
+            remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)
+                .map(|_| ())
+                .map_err(|e| std::io::Error::other(e.to_string()))
+        },
+    )?;
     remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
-    debugger.resume_guest()?;
+    debugger.breakpoint_before(
+        firmware_api::l6max::gui_display_callback_register,
+        true,
+        deadline,
+    )?;
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    debugger.resume_guest_before(deadline)?;
     inputs.knob(0, -1)?;
     context.callback_race = Some(CallbackRace {
         semaphore_count,
@@ -1965,6 +2011,13 @@ pub(super) fn activation_restore(
     let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
     let deadline = shared.0 + Duration::from_secs(shared.3);
     remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    let guard = verify_stopped_semaphore(session, context.notification_semaphore, shared);
+    context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob debugger")?
+        .journal
+        .restoration_guard(guard)?;
     let debugger = context
         .debugger
         .as_mut()
@@ -3167,7 +3220,8 @@ pub(super) fn expecting_locked_capture(context: &PreflightContext) -> bool {
 pub(super) fn acquire_locked_update(
     session: &Session,
     context: &mut PreflightContext,
-    reader: &l6max_host::knob_popup::OverlayReader,
+    _reader: &l6max_host::knob_popup::OverlayReader,
+    shared: (Instant, u32, u32, u64, u16),
 ) -> Result<Value, Box<dyn std::error::Error>> {
     if context.next != 13 || context.locked_update.is_some() {
         return Err("knob-dialog locked update step is out of order".into());
@@ -3177,16 +3231,31 @@ pub(super) fn acquire_locked_update(
         .debugger
         .as_mut()
         .ok_or("missing knob-dialog debugger")?;
-    qmp.stop()?;
-    let count = reader.notification_count(context.notification_semaphore)?;
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    let deadline = shared.0 + Duration::from_secs(shared.3);
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    qmp.stop_before(deadline)?;
+    verify_stopped_semaphore(session, context.notification_semaphore, shared)?;
+    let count = activation_read(session, context.notification_semaphore + 56, 4, shared)?;
     if count != 1u32.to_le_bytes() {
-        debugger.resume_guest()?;
+        remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+        debugger.resume_guest_before(deadline)?;
         return Err(
             "notification semaphore was not available before callback contention check".into(),
         );
     }
-    debugger.write(context.notification_semaphore + 56, &0u32.to_le_bytes())?;
-    debugger.resume_guest()?;
+    debugger.write_before(
+        context.notification_semaphore + 56,
+        &0u32.to_le_bytes(),
+        deadline,
+        || {
+            remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)
+                .map(|_| ())
+                .map_err(|e| std::io::Error::other(e.to_string()))
+        },
+    )?;
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    debugger.resume_guest_before(deadline)?;
     context.locked_update = Some(LockedUpdate {
         count,
         guest_start: None,
@@ -3315,19 +3384,35 @@ pub(super) fn sample_locked_update(
 }
 
 pub(super) fn restore_locked_update(
+    session: &Session,
     context: &mut PreflightContext,
+    shared: (Instant, u32, u32, u64, u16),
 ) -> Result<Value, Box<dyn std::error::Error>> {
     let count = &context
         .locked_update
         .as_ref()
         .ok_or("missing locked update")?
         .count;
+    let guard = verify_stopped_semaphore(session, context.notification_semaphore, shared);
+    context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob debugger")?
+        .journal
+        .restoration_guard(guard)?;
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    let deadline = shared.0 + Duration::from_secs(shared.3);
     let debugger = context
         .debugger
         .as_mut()
         .ok_or("missing knob-dialog debugger")?;
-    debugger.write(context.notification_semaphore + 56, count)?;
-    debugger.resume_guest()?;
+    debugger.write_before(context.notification_semaphore + 56, count, deadline, || {
+        remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)
+            .map(|_| ())
+            .map_err(|e| std::io::Error::other(e.to_string()))
+    })?;
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    debugger.resume_guest_before(deadline)?;
     Ok(json!({"notification_lock_restored":true}))
 }
 
@@ -4675,23 +4760,39 @@ pub(super) fn settle_level(
 pub(super) fn inject_invalid_signature(
     session: &Session,
     context: &mut PreflightContext,
+    shared: (Instant, u32, u32, u64, u16),
 ) -> Result<Value, Box<dyn std::error::Error>> {
     if context.final_phase != 8 {
         return Err("signature injection out of order".into());
     }
     let qmp = &session.engine.management[0];
     let debugger = context.debugger.as_mut().ok_or("missing knob debugger")?;
-    qmp.stop()?;
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    let deadline = shared.0 + Duration::from_secs(shared.3);
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    qmp.stop_before(deadline)?;
     let address = l6max::gui_bitmap_table_entry_0;
-    let original = qmp.read_memory(0, address, 4)?;
+    let original = activation_read(session, address, 4, shared)?;
+    l6ctl::verify_bitmap_probe_state(
+        original
+            .clone()
+            .try_into()
+            .map_err(|_| "short bitmap state")?,
+        false,
+    )?;
     let invalid = u32::from_le_bytes(
         original
             .clone()
             .try_into()
             .map_err(|_| "short signature read")?,
     ) ^ 1;
-    debugger.write(address, &invalid.to_le_bytes())?;
-    debugger.resume_guest()?;
+    debugger.write_before(address, &invalid.to_le_bytes(), deadline, || {
+        remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)
+            .map(|_| ())
+            .map_err(|e| std::io::Error::other(e.to_string()))
+    })?;
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    debugger.resume_guest_before(deadline)?;
     let guest_start = session
         .engine
         .inputs
@@ -4777,7 +4878,9 @@ pub(super) fn sample_invalid_signature(
 }
 
 pub(super) fn restore_invalid_signature(
+    session: &Session,
     context: &mut PreflightContext,
+    shared: (Instant, u32, u32, u64, u16),
 ) -> Result<Value, Box<dyn std::error::Error>> {
     if context.final_phase != 11 {
         return Err("signature restoration out of order".into());
@@ -4787,9 +4890,33 @@ pub(super) fn restore_invalid_signature(
         .as_ref()
         .ok_or("missing signature probe")?;
     let rejected = pending.rejected.ok_or("missing signature sample")?;
+    let current = activation_read(session, l6max::gui_bitmap_table_entry_0, 4, shared);
+    let guard = match current {
+        Ok(bytes) if bytes == pending.invalid.to_le_bytes() => Ok(()),
+        Ok(_) => Err("invalid bitmap signature changed before restoration".to_owned()),
+        Err(error) => Err(format!("bitmap restoration guard failed: {error}")),
+    };
+    context
+        .debugger
+        .as_mut()
+        .ok_or("missing knob debugger")?
+        .journal
+        .restoration_guard(guard)?;
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    let deadline = shared.0 + Duration::from_secs(shared.3);
     let debugger = context.debugger.as_mut().ok_or("missing knob debugger")?;
-    debugger.write(l6max::gui_bitmap_table_entry_0, &pending.original)?;
-    debugger.resume_guest()?;
+    debugger.write_before(
+        l6max::gui_bitmap_table_entry_0,
+        &pending.original,
+        deadline,
+        || {
+            remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)
+                .map(|_| ())
+                .map_err(|e| std::io::Error::other(e.to_string()))
+        },
+    )?;
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    debugger.resume_guest_before(deadline)?;
     if !rejected {
         return Err("the payload accepted an invalid state signature".into());
     }
@@ -4818,6 +4945,23 @@ impl PendingInvalidTag {
     }
 }
 
+fn read_invalid_tag_if_live<T>(
+    pending: &PendingInvalidTag,
+    guest: u32,
+    now: Instant,
+    guest_timeout_ms: u32,
+    read: impl FnOnce() -> Result<T, Box<dyn std::error::Error>>,
+) -> Result<T, Box<dyn std::error::Error>> {
+    if pending.expired(guest, now, guest_timeout_ms) {
+        return Err(format!(
+            "display callback did not safely discard {}",
+            pending.description()
+        )
+        .into());
+    }
+    read()
+}
+
 pub(super) fn final_phase(context: &PreflightContext) -> u8 {
     context.final_phase
 }
@@ -4827,17 +4971,28 @@ pub(super) fn inject_invalid_tag(
     context: &mut PreflightContext,
     tag: u8,
     wall_timeout_s: u64,
+    shared: (Instant, u32, u32, u64, u16),
 ) -> Result<Value, Box<dyn std::error::Error>> {
     if !matches!(context.final_phase, 1 | 4) {
         return Err("invalid tag injection out of order".into());
     }
     let qmp = &session.engine.management[0];
     let debugger = context.debugger.as_mut().ok_or("missing knob debugger")?;
-    qmp.stop()?;
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    let deadline = shared.0 + Duration::from_secs(shared.3);
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    qmp.stop_before(deadline)?;
+    let state = activation_read(session, l6max::gui_bitmap_table_entry_0, 4, shared)?;
+    l6ctl::verify_bitmap_probe_state(state.try_into().map_err(|_| "short bitmap state")?, true)?;
     let address = l6max::gui_bitmap_table_entry_0 + 3;
-    debugger.write(address, &[tag])?;
+    debugger.write_before(address, &[tag], deadline, || {
+        remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)
+            .map(|_| ())
+            .map_err(|e| std::io::Error::other(e.to_string()))
+    })?;
     debugger.handoff_mailbox(address);
-    debugger.resume_guest()?;
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    debugger.resume_guest_before(deadline)?;
     let guest_start = session
         .engine
         .inputs
@@ -4860,21 +5015,36 @@ pub(super) fn wait_invalid_tag(
     context: &mut PreflightContext,
     guest_timeout_ms: u32,
     _wall_timeout_s: u64,
+    shared: (Instant, u32, u32, u64, u16),
 ) -> Result<Value, Box<dyn std::error::Error>> {
     if !matches!(context.final_phase, 2 | 5) {
         return Err("invalid tag wait out of order".into());
     }
-    let qmp = &session.engine.management[0];
     let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
     let pending = context
         .pending_invalid_tag
         .as_ref()
         .ok_or("missing pending invalid tag")?;
     loop {
+        remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
         session.poll()?;
-        if qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 3, 1)? == [0xff] {
-            break;
-        }
+        remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+        let deadline = (shared.0 + Duration::from_secs(shared.3)).min(pending.wall_deadline);
+        let discarded = read_invalid_tag_if_live(
+            pending,
+            inputs.panel.snapshot().guest_ms,
+            Instant::now(),
+            guest_timeout_ms,
+            || {
+                Ok(session.engine.management[0].read_memory_before(
+                    0,
+                    l6max::gui_bitmap_table_entry_0 + 3,
+                    1,
+                    deadline,
+                )? == [0xff])
+            },
+        )?;
+        remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
         if pending.expired(
             inputs.panel.snapshot().guest_ms,
             Instant::now(),
@@ -4886,6 +5056,9 @@ pub(super) fn wait_invalid_tag(
             )
             .into());
         }
+        if discarded {
+            break;
+        }
         thread::sleep(Duration::from_millis(5));
     }
     context.final_phase += 1;
@@ -4895,6 +5068,7 @@ pub(super) fn wait_invalid_tag(
 pub(super) fn confirm_invalid_tag(
     session: &Session,
     context: &mut PreflightContext,
+    shared: (Instant, u32, u32, u64, u16),
 ) -> Result<Value, Box<dyn std::error::Error>> {
     if !matches!(context.final_phase, 3 | 6) {
         return Err("invalid tag confirmation out of order".into());
@@ -4905,10 +5079,15 @@ pub(super) fn confirm_invalid_tag(
         .ok_or("missing pending invalid tag")?
         .description();
     let qmp = &session.engine.management[0];
+    let inputs = session.engine.inputs.as_ref().ok_or("missing inputs")?;
+    let deadline = shared.0 + Duration::from_secs(shared.3);
     let debugger = context.debugger.as_mut().ok_or("missing knob debugger")?;
-    qmp.stop()?;
-    let discarded = qmp.read_memory(0, l6max::gui_bitmap_table_entry_0 + 3, 1)? == [0xff];
-    debugger.resume_guest()?;
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    qmp.stop_before(deadline)?;
+    let discarded =
+        activation_read(session, l6max::gui_bitmap_table_entry_0 + 3, 1, shared)? == [0xff];
+    remaining_debug_wait(shared, inputs.panel.snapshot().guest_ms, shared.3)?;
+    debugger.resume_guest_before(deadline)?;
     if !discarded {
         return Err(format!("display callback did not safely discard {description}").into());
     }
@@ -5672,6 +5851,24 @@ mod invalid_tag_deadline_tests {
             PendingInvalidTag { tag: 240, ..tag }.description(),
             "invalid channel 15"
         );
+    }
+    #[test]
+    fn poll_crossing_guest_deadline_does_not_read_mailbox() {
+        let now = Instant::now();
+        let pending = PendingInvalidTag {
+            tag: 15,
+            guest_start: 100,
+            wall_deadline: now + Duration::from_secs(180),
+        };
+        let mut reads = 0;
+        assert!(
+            read_invalid_tag_if_live(&pending, 10_100, now, 10_000, || {
+                reads += 1;
+                Ok(())
+            })
+            .is_err()
+        );
+        assert_eq!(reads, 0);
     }
 }
 

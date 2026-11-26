@@ -747,6 +747,14 @@ pub enum Action {
         #[serde(default)]
         edit_mode: Option<bool>,
     },
+    WaitEffectSlot {
+        expected_effect_type: u8,
+        expected_processor_type: u8,
+        #[serde(default)]
+        expected_effect: Option<String>,
+        #[serde(default)]
+        require_output: bool,
+    },
     EffectReplacementState {
         #[serde(default)]
         expected_effect_type: Option<u8>,
@@ -772,8 +780,6 @@ pub enum Action {
         /// The selected slot's replacement has produced nonzero output.
         #[serde(default)]
         require_output: bool,
-        #[serde(default)]
-        wait_for_slot: bool,
     },
     ExpectHeap {
         minimum_free: u32,

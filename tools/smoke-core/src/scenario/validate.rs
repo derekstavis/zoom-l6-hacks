@@ -2580,6 +2580,39 @@ impl Scenario {
                 .iter()
                 .filter(|step| step.applies_to(*model))
                 .collect();
+            for (index, step) in steps.iter().enumerate() {
+                if let Action::WaitEffectSlot {
+                    expected_effect_type,
+                    expected_processor_type,
+                    expected_effect,
+                    require_output,
+                } = &step.action
+                {
+                    if expected_effect
+                        .as_ref()
+                        .is_some_and(|effect| effect.is_empty())
+                    {
+                        return Err("effect slot wait needs a nonempty effect ID".into());
+                    }
+                    let next = steps
+                        .get(index + 1)
+                        .ok_or("effect slot wait needs a following assertion")?;
+                    if (step.guest_timeout_ms, step.wall_timeout_s)
+                        != (next.guest_timeout_ms, next.wall_timeout_s)
+                        || !matches!(&next.action, Action::EffectReplacementState { expected_effect_type: Some(effect), expected_processor_type: Some(processor), expected_effect: actual_effect, require_output: actual_output, .. }
+                            if effect == expected_effect_type && processor == expected_processor_type && actual_effect == expected_effect && actual_output == require_output)
+                    {
+                        return Err("effect slot wait needs a matching adjacent assertion with the same budget".into());
+                    }
+                }
+            }
+        }
+        for model in &value.models {
+            let steps: Vec<_> = value
+                .step
+                .iter()
+                .filter(|step| step.applies_to(*model))
+                .collect();
             let has_audio = steps.iter().any(|step| {
                 matches!(
                     step.action,

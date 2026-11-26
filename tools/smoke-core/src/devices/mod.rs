@@ -398,6 +398,12 @@ pub enum Operation {
         panel_mode: Option<u8>,
         edit_mode: Option<bool>,
     },
+    WaitEffectSlot {
+        expected_effect_type: u8,
+        expected_processor_type: u8,
+        expected_effect: Option<String>,
+        require_output: bool,
+    },
     EffectReplacementState {
         expected_effect_type: Option<u8>,
         expected_processor_type: Option<u8>,
@@ -410,7 +416,6 @@ pub enum Operation {
         minimum_exit_ring_refreshes: Option<u32>,
         expected_effect: Option<String>,
         require_output: bool,
-        wait_for_slot: bool,
     },
     ExpectHeap {
         minimum_free: u32,
@@ -1102,6 +1107,7 @@ pub struct State {
     l6_recorder: Option<audio::recorder::Scope>,
     l6max_recorder: Option<audio::max_recorder::Scope>,
     audio_callbacks: Option<audio::callbacks::Scope>,
+    effect_slot_deadline: Option<sd::EffectSlotScope>,
     l6max_timing: Option<timing::Scope>,
     usb_storage_scope: Option<usb_storage_steps::Scope>,
     native_midi: Option<l6ctl::midi::MidiSession>,

@@ -1095,6 +1095,19 @@ impl Runner {
                         edit_mode,
                     }));
                 }
+                Action::WaitEffectSlot {
+                    expected_effect_type,
+                    expected_processor_type,
+                    expected_effect,
+                    require_output,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::WaitEffectSlot {
+                        expected_effect_type,
+                        expected_processor_type,
+                        expected_effect,
+                        require_output,
+                    }));
+                }
                 Action::EffectReplacementState {
                     expected_effect_type,
                     expected_processor_type,
@@ -1107,7 +1120,6 @@ impl Runner {
                     minimum_exit_ring_refreshes,
                     expected_effect,
                     require_output,
-                    wait_for_slot,
                 } => {
                     return Ok(Progress::Device(
                         devices::Operation::EffectReplacementState {
@@ -1122,7 +1134,6 @@ impl Runner {
                             minimum_exit_ring_refreshes,
                             expected_effect,
                             require_output,
-                            wait_for_slot,
                         },
                     ));
                 }

@@ -27,7 +27,11 @@ action = "select-mode"
 mode = "efx"
 
 [[step]]
+action = "wait-effect-slot"
+expected_effect_type = 1
+expected_processor_type = 1
+
+[[step]]
 action = "effect-replacement-state"
 expected_effect_type = 1
 expected_processor_type = 1
-wait_for_slot = true

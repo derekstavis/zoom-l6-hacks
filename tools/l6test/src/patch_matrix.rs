@@ -476,7 +476,7 @@ fn effect_slot_checks(text: &mut String, combination: &Combination) {
             press(text, "efx-select", 1);
         }
         let mut body = format!(
-            "action = \"effect-replacement-state\"\nwait_for_slot = true\nexpected_effect_type = {}\nexpected_processor_type = {}",
+            "expected_effect_type = {}\nexpected_processor_type = {}",
             slot.expected_effect_type, slot.expected_processor_type
         );
         if let Some(effect) = slot.effect {
@@ -486,7 +486,11 @@ fn effect_slot_checks(text: &mut String, combination: &Combination) {
                 slot.require_output
             );
         }
-        step(text, &body);
+        step(text, &format!("action = \"wait-effect-slot\"\n{body}"));
+        step(
+            text,
+            &format!("action = \"effect-replacement-state\"\n{body}"),
+        );
     }
     step(text, "action = \"select-mode\"\nmode = \"level\"");
 }

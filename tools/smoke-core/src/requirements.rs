@@ -387,6 +387,7 @@ pub fn of(action: &Action) -> Requirement {
         | Action::ExpectSdModule { .. }
         | Action::EffectPacedTurn { .. }
         | Action::EffectParameterEdit { .. }
+        | Action::WaitEffectSlot { .. }
         | Action::EffectReplacementState { .. }
         | Action::ExpectHeap { .. }
         | Action::HoldChord { .. }

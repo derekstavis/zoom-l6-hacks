@@ -10,7 +10,9 @@ pub use l6max_host::audio_trace::{
 pub use l6max_host::control::Info;
 pub use l6max_host::debug::{Command as DebugCommand, Observation as DebugObservation};
 pub use l6max_host::effect_editor::{
-    Binding as EffectEditorBinding, Snapshot as EffectEditorSnapshot,
+    Binding as EffectEditorBinding, SlotBinding as EffectSlotBinding,
+    SlotFields as EffectSlotFields, SlotSnapshot as EffectSlotSnapshot,
+    Snapshot as EffectEditorSnapshot,
 };
 pub use l6max_host::heap::Counters as HeapCounters;
 pub use l6max_host::indicators::rings as decode_indicator_rings;
@@ -67,33 +69,72 @@ pub enum RtosKind {
 pub enum Request {
     Info,
     QmpStatus,
-    InputStatus { source: InputSource },
-    InputAck { source: InputSource, sequence: u32 },
+    InputStatus {
+        source: InputSource,
+    },
+    InputAck {
+        source: InputSource,
+        sequence: u32,
+    },
     SdLoaderStatus,
-    SdLoaderSite { index: u32 },
+    SdLoaderSite {
+        index: u32,
+    },
     HeapCounters,
-    MemoryRead { address: u32, length: usize },
+    MemoryRead {
+        address: u32,
+        length: usize,
+    },
     MidiConfig,
-    EffectEditor { binding: EffectEditorBinding },
+    EffectEditor {
+        binding: EffectEditorBinding,
+    },
+    EffectSlot {
+        binding: EffectSlotBinding,
+        fields: EffectSlotFields,
+    },
 
     MixerLevel,
-    PanelKey { code: u32 },
+    PanelKey {
+        code: u32,
+    },
     UpdateState,
     UpdateGuiState,
     InstallerOutcome,
     UsbAttach,
     UsbRelease,
     UsbController,
-    KnobPopup { with_text: bool },
+    KnobPopup {
+        with_text: bool,
+    },
     RecorderState,
     KnobParameterState,
-    Rtos { kind: RtosKind },
-    Tap { target: u32, hold_ms: u32 },
-    Down { target: u32, duration_ms: u32 },
-    Up { target: u32 },
-    Encoder { channel: u32, steps: i32 },
-    Analog { channel: u32, steps: i32 },
-    SetAnalog { channel: u32, value: u16 },
+    Rtos {
+        kind: RtosKind,
+    },
+    Tap {
+        target: u32,
+        hold_ms: u32,
+    },
+    Down {
+        target: u32,
+        duration_ms: u32,
+    },
+    Up {
+        target: u32,
+    },
+    Encoder {
+        channel: u32,
+        steps: i32,
+    },
+    Analog {
+        channel: u32,
+        steps: i32,
+    },
+    SetAnalog {
+        channel: u32,
+        value: u16,
+    },
 }
 
 /// The attach request only signals cable attachment, not enumeration.
@@ -305,6 +346,7 @@ impl ControlClient {
                 | Request::MemoryRead { .. }
                 | Request::MidiConfig
                 | Request::EffectEditor { .. }
+                | Request::EffectSlot { .. }
                 | Request::MixerLevel
                 | Request::PanelKey { .. }
                 | Request::UpdateState
@@ -361,6 +403,14 @@ impl ControlClient {
         binding: EffectEditorBinding,
     ) -> Result<EffectEditorSnapshot, ControlError> {
         self.request_as(&Request::EffectEditor { binding })
+    }
+
+    pub fn effect_slot(
+        &self,
+        binding: EffectSlotBinding,
+        fields: EffectSlotFields,
+    ) -> Result<EffectSlotSnapshot, ControlError> {
+        self.request_as(&Request::EffectSlot { binding, fields })
     }
 
     pub fn panel_key(&self, code: u32) -> Result<PanelKeySnapshot, ControlError> {
@@ -698,6 +748,22 @@ impl<'a> OwnedControl<'a> {
             .ok_or_else(|| ControlError::Rejected("USB backend unavailable".into()))?;
         l6max_host::usb_midi::poll_sysex(usb, endpoints.input, cable, decoder)
             .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+
+    pub fn effect_slot_reader_before_checked(
+        &self,
+        binding: EffectSlotBinding,
+        deadline: std::time::Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<l6max_host::effect_editor::SlotReader, ControlError> {
+        l6max_host::effect_editor::SlotReader::new_before_checked(
+            self.main_qmp()?,
+            self.engine.model(),
+            binding,
+            deadline,
+            check,
+        )
+        .map_err(ControlError::Rejected)
     }
 
     pub fn effect_editor_reader_before(

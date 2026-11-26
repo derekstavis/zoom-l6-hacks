@@ -380,6 +380,13 @@ pub fn step_label(action: &crate::Action) -> String {
         }
         Action::WaitInputApplied => "Wait for input applied".into(),
         Action::WaitKnobParameterMode { mode } => format!("Wait for knob parameter mode {mode}"),
+        Action::WaitKnobDisplayImage { image, .. } => format!(
+            "Wait for {} screen",
+            image
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("expected")
+        ),
         Action::CaptureDisplay { guest_ms, artifact } => {
             format!("Capture {artifact} after {guest_ms} ms guest time")
         }

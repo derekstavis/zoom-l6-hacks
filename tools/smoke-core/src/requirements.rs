@@ -186,6 +186,7 @@ pub fn of(action: &Action) -> Requirement {
         | Action::KnobLockFinish
         | Action::KnobDialogModeBegin { .. }
         | Action::WaitKnobParameterMode { .. }
+        | Action::WaitKnobDisplayImage { .. }
         | Action::KnobDialogExpectHeap
         | Action::KnobDialogModeEnd
         | Action::KnobDialogAdaptive { .. }

@@ -476,6 +476,10 @@ pub enum Operation {
     WaitKnobParameterMode {
         mode: u8,
     },
+    WaitKnobDisplayImage {
+        image: PathBuf,
+        main_timeout_ms: u32,
+    },
     CaptureDisplay {
         guest_ms: u32,
         artifact: String,

@@ -421,7 +421,7 @@
     "suites": [
       "full"
     ],
-    "definition": "9fd52c96ce44a7703f1081e2470451368eb51333cfc9a89e74a430fefb514025"
+    "definition": "4938f794d889acebe44e140f64f2f0a95fbb9132e11df6d3195c9f3e61f803a1"
   },
   {
     "case": "knob-dialog-menu",
@@ -833,7 +833,7 @@
     "suites": [
       "full"
     ],
-    "definition": "c7de3bb2fa63ff47a007b3d3eb9f7936024c81e6dc2c10f92c2025eab175a5e9"
+    "definition": "5ed26826a29c46b2ecf248b2ecbdb07490d81405087a0391363883dfd5e714f2"
   },
   {
     "case": "l6max-update-patched-knob-midi",
@@ -842,7 +842,7 @@
     "suites": [
       "full"
     ],
-    "definition": "22ea205c6bf2f612975609742550d16b8b89e5cbd8991712d298e88aa7d402e6"
+    "definition": "d6218131034e85253bd63568472b939290eb71b7553be83c171f75e1bacd137b"
   },
   {
     "case": "l6max-update-patched-midi",
@@ -3020,7 +3020,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "aa804feb27b59f16479bac3eb6d09d548d591bcd5d4e2793fa196f08a803d352"
+    "definition": "c583114f1c82e61f738fb37ea8374c43a0eeff07634fa92b785c7fe6a5495864"
   },
   {
     "case": "sd-din-mixer-control",
@@ -3105,7 +3105,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "29a48ed02e04473579261f60b6fded0ada3e22286b7d59c7f3d2fda034af09d6"
+    "definition": "faf47844ad4981bf409378801aed5fa4fae2689350a960d59556892f7631efa4"
   },
   {
     "case": "sd-knob-dialog-dynamic",
@@ -3114,7 +3114,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "9436be6b556e48dc1d106d33928e5b2e564c2ca29ce18288f47bc359bacf72c6"
+    "definition": "a0959811b9ae4d7cf075c0e60f899061113ddfcc37d3ac247353f7155ae2ad05"
   },
   {
     "case": "sd-knob-midi",
@@ -3123,7 +3123,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "e4cf83de9160b345dc769cea3a9068d10b8198d32aeaff476c4d82fc196f6966"
+    "definition": "100c94160b25eb28287cb0ac177d04ed2f0a0439d44196f49c98030d47c6c2e8"
   },
   {
     "case": "sd-knob-midi-sync-dynamic",
@@ -3244,7 +3244,7 @@
     "suites": [
       "sd-matrix"
     ],
-    "definition": "dc4e49186ec60e13d382dce361edb49440ab695b93bbc8badb7c7e206e4d6e95"
+    "definition": "a9187c5df132893e3b854a1f9560ff252d0773afc75538730c3d2a280d33ae54"
   },
   {
     "case": "sd-warm-reset",

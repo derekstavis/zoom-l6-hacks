@@ -1322,6 +1322,15 @@ impl Runner {
                         devices::Operation::WaitKnobParameterMode { mode },
                     ));
                 }
+                Action::WaitKnobDisplayImage {
+                    image,
+                    main_timeout_ms,
+                } => {
+                    return Ok(Progress::Device(devices::Operation::WaitKnobDisplayImage {
+                        image,
+                        main_timeout_ms,
+                    }));
+                }
                 Action::CaptureDisplay { guest_ms, artifact } => {
                     return Ok(Progress::Device(devices::Operation::CaptureDisplay {
                         guest_ms,

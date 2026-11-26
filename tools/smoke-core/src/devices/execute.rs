@@ -111,7 +111,7 @@ fn knob_dialog_phase(
             },
         ),
         Operation::KnobDialogModeBegin { .. } => {
-            next_mode.and_then(|index| u16::try_from(109 + index * 10).ok())
+            next_mode.and_then(|index| u16::try_from(109 + index * 11).ok())
         }
         Operation::KnobDialogAdaptive { .. }
         | Operation::KnobDialogInjectInvalidTag { .. }
@@ -140,12 +140,12 @@ fn knob_dialog_phase(
         | Operation::KnobDialogSnapshotNavigation
         | Operation::KnobDialogCheckNavigation { .. }
         | Operation::KnobDialog => next_mode
-            .and_then(|index| u16::try_from(109 + index * 10 + usize::from(final_phase?)).ok()),
+            .and_then(|index| u16::try_from(109 + index * 11 + usize::from(final_phase?)).ok()),
         Operation::CaptureDisplay { .. }
             if scope.is_none() && matches!(final_phase, Some(22 | 44 | 47)) =>
         {
             next_mode
-                .and_then(|index| u16::try_from(109 + index * 10 + usize::from(final_phase?)).ok())
+                .and_then(|index| u16::try_from(109 + index * 11 + usize::from(final_phase?)).ok())
         }
         _ => None,
     };
@@ -164,13 +164,14 @@ fn knob_dialog_phase(
             midi_transaction: false,
             ..
         } => 4,
-        Operation::CaptureDisplay { .. } => 6,
-        Operation::ExpectCapturedDisplayImage { .. } => 7,
-        Operation::KnobDialogExpectHeap => 8,
-        Operation::KnobDialogModeEnd => 9,
+        Operation::WaitKnobDisplayImage { .. } => 6,
+        Operation::CaptureDisplay { .. } => 7,
+        Operation::ExpectCapturedDisplayImage { .. } => 8,
+        Operation::KnobDialogExpectHeap => 9,
+        Operation::KnobDialogModeEnd => 10,
         _ => return None,
     };
-    Some(109 + scope.index as u16 * 10 + offset)
+    Some(109 + scope.index as u16 * 11 + offset)
 }
 
 type KnobDeadline = (Instant, u32, u32, u64, u16);
@@ -3749,6 +3750,7 @@ impl State {
             | Operation::EnqueueTap { .. }
             | Operation::WaitInputApplied
             | Operation::WaitKnobParameterMode { .. }
+            | Operation::WaitKnobDisplayImage { .. }
             | Operation::CaptureDisplay { .. }
             | Operation::ExpectCapturedDisplayImage { .. }
             | Operation::KnobDialogExpectHeap
@@ -4361,6 +4363,13 @@ mod knob_phase_tests {
                     None,
                 ),
                 (Operation::WaitInputApplied, Some(&encoder)),
+                (
+                    Operation::WaitKnobDisplayImage {
+                        image: Path::new(KNOB_DIALOG_REFERENCES).join("pan.png"),
+                        main_timeout_ms: 5000,
+                    },
+                    None,
+                ),
                 (
                     Operation::CaptureDisplay {
                         guest_ms: 400,

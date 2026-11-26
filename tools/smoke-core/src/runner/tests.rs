@@ -812,22 +812,42 @@ fn usb_sysex_scenario_requires_scoped_complete_messages() {
 }
 #[test]
 fn editor_pad_assignment_requires_prior_usb_midi_enumeration() {
+    let assignment_steps =
+        include_str!("../../../../tests/emulator/fragments/editor-pad-assignments.toml");
     let prefix = "version=1\nname='pads'\nmodels=['l6max']\nbackends=['headless']\n";
-    let without_usb = Scenario::parse(&format!(
-        "{prefix}[[step]]\naction='editor-pad-assignments'\n"
-    ));
+    let without_usb = Scenario::parse(&format!("{prefix}{assignment_steps}"));
     assert!(
         without_usb
             .unwrap_err()
             .contains("requires a preceding usb-descriptors step")
     );
+    let reordered = assignment_steps.replacen(
+        "action = \"editor-assign-count\"\npad = 0",
+        "action = \"editor-assign-count\"\npad = 1",
+        1,
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}[[step]]\naction='usb-descriptors'\n{reordered}"
+        ))
+        .is_err()
+    );
+    let shortened = assignment_steps.replace(
+        "action = \"editor-assign-end\"",
+        "action = \"editor-assign-identity\"",
+    );
+    assert!(
+        Scenario::parse(&format!(
+            "{prefix}[[step]]\naction='usb-descriptors'\n{shortened}"
+        ))
+        .is_err()
+    );
     let with_usb = Scenario::parse(&format!(
-        "{prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n"
+        "{prefix}[[step]]\naction='usb-descriptors'\n{assignment_steps}"
     ));
     assert!(with_usb.is_ok());
     let playback_steps = "[[step]]\naction='editor-playback-begin'\npad=3\n[[step]]\naction='editor-playback-play'\n[[step]]\naction='editor-playback-wait'\n[[step]]\naction='editor-playback-observe'\n[[step]]\naction='editor-playback-sample'\n[[step]]\naction='editor-playback-assert'\n[[step]]\naction='editor-playback-end'\n";
-    let prefix_steps =
-        "[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n";
+    let prefix_steps = format!("[[step]]\naction='usb-descriptors'\n{assignment_steps}");
     assert!(Scenario::parse(&format!("{prefix}{prefix_steps}{playback_steps}")).is_err());
     let l6_prefix = prefix.replace("l6max", "l6");
     assert!(Scenario::parse(&format!("{l6_prefix}{prefix_steps}{playback_steps}")).is_ok());
@@ -894,6 +914,8 @@ fn editor_pad_assignment_requires_prior_usb_midi_enumeration() {
 }
 #[test]
 fn sound_pad_playback_supports_editor_or_saved_assignment() {
+    let assignment_steps =
+        include_str!("../../../../tests/emulator/fragments/editor-pad-assignments.toml");
     let prefix = "version=1\nname='pad-playback'\nmodels=['l6']\nbackends=['headless']\n";
     let suffix = [
         "press",
@@ -910,7 +932,9 @@ fn sound_pad_playback_supports_editor_or_saved_assignment() {
     .iter()
     .map(|part| format!("[[step]]\naction='sound-pad-{part}'\n"))
     .collect::<String>();
-    let action = "[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n[[step]]\naction='sound-pad-begin'\npad=0\ntarget=49\n";
+    let action = format!(
+        "[[step]]\naction='usb-descriptors'\n{assignment_steps}[[step]]\naction='sound-pad-begin'\npad=0\ntarget=49\n"
+    );
     assert!(Scenario::parse(&format!("{prefix}{action}{suffix}")).is_ok());
     let l6max = prefix.replace("models=['l6']", "models=['l6max']");
     assert!(Scenario::parse(&format!("{l6max}{action}{suffix}")).is_ok());
@@ -936,7 +960,7 @@ fn sound_pad_playback_supports_editor_or_saved_assignment() {
     assert!(Scenario::parse(&format!("{prefix}[[step]]\naction='sound-pad-begin'\npad=0\ntarget=49\nassignment='saved-state'\n{wrong_budget}")).is_err());
 
     let invalid_target = Scenario::parse(&format!(
-        "{prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n[[step]]\naction='sound-pad-begin'\npad=0\ntarget=53\n{suffix}"
+        "{prefix}[[step]]\naction='usb-descriptors'\n{assignment_steps}[[step]]\naction='sound-pad-begin'\npad=0\ntarget=53\n{suffix}"
     ));
     assert!(
         invalid_target
@@ -944,7 +968,7 @@ fn sound_pad_playback_supports_editor_or_saved_assignment() {
             .contains("target must match pad")
     );
     let mismatched_target = Scenario::parse(&format!(
-        "{prefix}[[step]]\naction='usb-descriptors'\n[[step]]\naction='editor-pad-assignments'\n[[step]]\naction='sound-pad-begin'\npad=1\ntarget=49\n{suffix}"
+        "{prefix}[[step]]\naction='usb-descriptors'\n{assignment_steps}[[step]]\naction='sound-pad-begin'\npad=1\ntarget=49\n{suffix}"
     ));
     assert!(
         mismatched_target

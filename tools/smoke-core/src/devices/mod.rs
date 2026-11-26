@@ -27,7 +27,6 @@ mod usb;
 
 use audio::*;
 pub use display::*;
-use editor::*;
 pub use knob_dialog::*;
 pub use lifecycle::*;
 use midi::*;
@@ -253,7 +252,25 @@ pub enum Operation {
         complete_on_match: bool,
     },
     UsbSysexEnd,
-    EditorPadAssignments,
+    EditorAssignBegin,
+    EditorAssignIdentity,
+    EditorAssignGlobal,
+    EditorAssignVersion,
+    EditorAssignSdInfo,
+    EditorAssignRefresh,
+    EditorAssignCount {
+        pad: u8,
+    },
+    EditorAssignFilename {
+        pad: u8,
+    },
+    EditorAssignSend {
+        pad: u8,
+    },
+    EditorAssignState {
+        pad: u8,
+    },
+    EditorAssignEnd,
     EditorPlaybackBegin {
         pad: u8,
     },
@@ -662,7 +679,7 @@ fn validate_native_midi_capabilities(
                     | crate::Action::UsbSysexBegin
                     | crate::Action::UsbSysexExchange { .. }
                     | crate::Action::UsbSysexEnd
-                    | crate::Action::EditorPadAssignments
+                    | crate::Action::EditorAssignBegin
                     | crate::Action::EditorPlaybackBegin { .. }
                     | crate::Action::UiPadBegin { .. }
                     | crate::Action::L6DinSweep
@@ -847,7 +864,7 @@ pub(crate) fn prepare_with_report(
                     | crate::Action::UsbSysexBegin
                     | crate::Action::UsbSysexExchange { .. }
                     | crate::Action::UsbSysexEnd
-                    | crate::Action::EditorPadAssignments
+                    | crate::Action::EditorAssignBegin
                     | crate::Action::EditorPlaybackBegin { .. }
                     | crate::Action::UiPadBegin { .. }
             )
@@ -920,6 +937,7 @@ pub struct State {
     sysex_deadline: Option<(Instant, u32, u32, u64)>,
     ui_pad: Option<editor::UiPadScope>,
     editor_playback: Option<editor::EditorPlaybackScope>,
+    editor_assignment: Option<editor::EditorAssignmentScope>,
     l6_indicator: Option<L6IndicatorScope>,
     gdb: Option<l6max_diagnostics::gdb::Gdb>,
     host_midi: Option<Box<dyn crate::host_midi::Client>>,
@@ -1229,10 +1247,10 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     use super::{
-        create_factory_card, display_difference_count, editor_pad_assignment_matches,
-        editor_pad_file_count, editor_pad_filename_valid, knob_display_matches, sound_pad_led,
+        create_factory_card, display_difference_count, knob_display_matches, sound_pad_led,
         verify_sai_edma_trace,
     };
+    use l6ctl::{editor_pad_assignment_matches, editor_pad_file_count, editor_pad_filename_valid};
     use l6fw::Model;
     use std::{
         fs,
@@ -1390,7 +1408,7 @@ mod native_midi_capability_tests {
                 cable: 1,
                 expect_ring_change: true,
             },
-            crate::Action::EditorPadAssignments,
+            crate::Action::EditorAssignBegin,
             crate::Action::EditorPlaybackBegin { pad: 1 },
             crate::Action::UiPadBegin { pad: 1 },
             crate::Action::L6DinSweep,

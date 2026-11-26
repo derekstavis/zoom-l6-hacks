@@ -725,11 +725,34 @@ fn delivery_cases(model: Model, all: &Checks) -> Result<Vec<GeneratedCase>, Stri
                 quoted_list(&closure)
             );
             let mut campaign = Vec::new();
-            if model == Model::L6max && patch == "midi-sync" {
-                text = include_str!(
-                    "../../../tests/emulator/cases/boot/l6max-update-patched-midi.toml"
-                )
-                .to_owned();
+            if model == Model::L6max
+                && matches!(patch, "midi-sync" | "knob-dialog" | "din-mixer-control")
+            {
+                let (scenario, name, path) = match patch {
+                    "midi-sync" => (
+                        include_str!(
+                            "../../../tests/emulator/cases/boot/l6max-update-patched-midi.toml"
+                        ),
+                        "patched-midi-install",
+                        "tests/emulator/cases/boot/l6max-update-patched-midi.toml",
+                    ),
+                    "knob-dialog" => (
+                        include_str!(
+                            "../../../tests/emulator/cases/boot/l6max-update-patched-knob.toml"
+                        ),
+                        "patched-knob-install",
+                        "tests/emulator/cases/boot/l6max-update-patched-knob.toml",
+                    ),
+                    "din-mixer-control" => (
+                        include_str!(
+                            "../../../tests/emulator/scenarios/l6max-update-patched-din.toml"
+                        ),
+                        "patched-din-install",
+                        "tests/emulator/scenarios/l6max-update-patched-din.toml",
+                    ),
+                    _ => unreachable!(),
+                };
+                text = scenario.to_owned();
                 campaign = vec![
                     crate::catalog::CampaignMember {
                         name: "stock-checksum-rejection".into(),
@@ -738,8 +761,8 @@ fn delivery_cases(model: Model, all: &Checks) -> Result<Vec<GeneratedCase>, Stri
                         fingerprint: String::new(),
                     },
                     crate::catalog::CampaignMember {
-                        name: "patched-midi-install".into(),
-                        scenario: "tests/emulator/cases/boot/l6max-update-patched-midi.toml".into(),
+                        name: name.into(),
+                        scenario: path.into(),
                         fingerprint: String::new(),
                     },
                 ];
@@ -1018,11 +1041,31 @@ mod tests {
             second.update_fixture,
             Some(smoke_core::UpdateFixture::PatchedMidi)
         );
-        assert!(
+        for (id, expected) in [
+            (
+                "patches-l6max_update_knob-dialog",
+                smoke_core::UpdateFixture::PatchedKnob,
+            ),
+            (
+                "patches-l6max_update_din-mixer-control",
+                smoke_core::UpdateFixture::PatchedDin,
+            ),
+        ] {
+            let other = cases.iter().find(|case| case.id == id).unwrap();
+            assert_eq!(other.campaign.len(), 2);
+            assert_eq!(other.campaign[0].name, "stock-checksum-rejection");
+            let second = smoke_core::Scenario::load(&crate::catalog::scenario_file(
+                &other.campaign[1].scenario,
+            ))
+            .unwrap();
+            assert_eq!(second.update_fixture, Some(expected));
+        }
+        assert_eq!(
             cases
                 .iter()
-                .filter(|other| other.id != case.id)
-                .all(|other| other.campaign.is_empty())
+                .filter(|case| !case.campaign.is_empty())
+                .count(),
+            3
         );
     }
 

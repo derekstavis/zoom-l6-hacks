@@ -2068,3 +2068,28 @@ fn boot_ready_main_frame_quiet_uses_fresh_main_clock_across_wrap() {
     // A new guest/session must wait for both a frame and a new clock.
     assert!(!main_display_quiet(&InputStatus::default()));
 }
+
+#[test]
+fn patched_din_update_requires_full_install_and_setup_without_din_probe() {
+    let source = include_str!("../../../../tests/emulator/scenarios/l6max-update-patched-din.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    for block in [
+        "[[step]]\naction = \"expect-installer-outcome\"\nexpected = \"installed\"\n\n",
+        "[[step]]\naction = \"expect-update-comparison\"\nfield = \"protected-region\"\n\n",
+        "[[step]]\naction = \"expect-panel-unchanged\"\n\n",
+        "[[step]]\naction = \"end-wall-deadline\"\n\n",
+    ] {
+        assert!(source.contains(block));
+        assert!(
+            Scenario::from_text(&source.replacen(block, "", 1)).is_err(),
+            "missing {block}"
+        );
+    }
+    assert!(
+        Scenario::from_text(&source.replace("[\"din-mixer-control\"]", "[\"midi-sync\"]")).is_err()
+    );
+    assert!(
+        Scenario::from_text(&source.replacen("[[step]]\naction = \"lifecycle-stop\"\n", "", 1))
+            .is_err()
+    );
+}

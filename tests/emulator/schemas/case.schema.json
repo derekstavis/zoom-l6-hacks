@@ -14830,6 +14830,7 @@
         "l6-patched-midi",
         "synthetic-valid",
         "patched-midi",
+        "patched-din",
         "patched-knob",
         "patched-knob-midi"
       ],

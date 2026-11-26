@@ -48,7 +48,7 @@ tables. Unknown header fields fail parsing.
 | `installed_patches` | no | Patches the engine installs on a device seeded with the model's stock package, as `--patch` does. |
 | `installed_sd_patches` | no | Patches the engine delivers on the case's card, as `--sd-patch` does: it installs the Patch loader and writes the hosted modules to `PATCHES/`. Requires `card`; cannot combine with `sd_patches`. |
 | `update_patches` | no | Patches per model for the case's update package, built from the model's package. |
-| `update_fixture` | no | Build a case-local update card: stock L6 `l6-stock`, synthetic L6max `bad-checksum` or `synthetic-valid`, or browser-built L6max `patched-midi`. Managed update scenarios require an isolated headless lifecycle. |
+| `update_fixture` | no | Build a case-local update card: stock L6 `l6-stock`, synthetic L6max `bad-checksum` or `synthetic-valid`, or browser-built L6max `patched-midi`, `patched-knob`, `patched-knob-midi`, or `patched-din`. Managed update scenarios require an isolated headless lifecycle. |
 | `update_goal` | no | Select the complete valid-update `handoff` or `install` lifecycle. |
 | `gdb` | no | Enable the debugger socket. |
 | `audio_device` | no | QEMU audio-device syntax; `{logs}` expands to the case's log directory. |

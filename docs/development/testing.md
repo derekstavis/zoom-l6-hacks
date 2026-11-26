@@ -624,9 +624,9 @@ these cases the diagnostic leaves the guest stopped and reports the cleanup fail
 cleanup is best effort and does not run after process termination or panic; it
 does not roll back firmware activity that ran while the guest was resumed.
 
-Generated `patches-l6max_update_midi-sync` is one ordered campaign: it first
+Each generated `patches-l6max_update_midi-sync`, `patches-l6max_update_knob-dialog`, and `patches-l6max_update_din-mixer-control` case is an ordered campaign: it first
 checks rejection of the stock package with one checksum byte flipped, then
-installs and verifies the browser-patched MIDI package. Each member gets its
+installs and verifies the corresponding browser-patched package. The DIN update case verifies installation and first-boot setup; the installed-patch case covers DIN behavior. Each member gets its
 own fixture, card, saved state and artifact directory. The case fails at the
 first failing member; `campaign.json` and the case identity retain the results
 and fixture identities of the members that ran. The watcher names the active

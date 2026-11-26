@@ -98,6 +98,11 @@ normal model or target routing checks. They support protocol rejection tests;
 they are not exposed by the control socket or CLI. `panel_uart_count` counts
 exact L6 panel trace markers in supplied text.
 
+`cargo l6ctl knob-sd-inspect REPORT MODULE` reads a local composed SD report
+and module and prints the derived immutable identity and knob callback/hook
+offsets. It requires no emulator connection. This is fixture inspection; it
+does not verify a running guest or authorize debugger mutations.
+
 `ControlClient::heap_counters()` returns one guarded, non-atomic sample of the
 four allocator counters. In-process callers can create
 `OwnedControl::heap_counter_reader()` once for a bounded observation, then

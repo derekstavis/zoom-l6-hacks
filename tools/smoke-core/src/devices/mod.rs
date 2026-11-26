@@ -440,7 +440,9 @@ pub enum Operation {
     KnobDialogReady,
     KnobDialogGuard,
     KnobDialogBaseline,
-    KnobDialogPreflightBegin,
+    KnobDialogPreflightBegin {
+        sd_knob: bool,
+    },
     KnobProbePrepare {
         probe: crate::scenario::PreflightProbe,
     },

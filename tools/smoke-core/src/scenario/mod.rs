@@ -1380,6 +1380,12 @@ pub enum Action {
 }
 
 impl Scenario {
+    pub(crate) fn expects_sd_knob(&self) -> bool {
+        self.sd_patches
+            .as_ref()
+            .is_some_and(|patches| patches.iter().any(|p| p == "knob-dialog"))
+            || self.installed_sd_patches.iter().any(|p| p == "knob-dialog")
+    }
     pub fn parse(text: &str) -> Result<Self, String> {
         let mut value: Self = toml::from_str(text).map_err(|e| e.to_string())?;
         value.apply_defaults();
@@ -2274,5 +2280,39 @@ mod panel_event_fragment_tests {
             .unwrap();
         broken.step.remove(i);
         assert!(broken.validate().is_err());
+    }
+}
+
+#[cfg(test)]
+mod knob_delivery_tests {
+    use super::*;
+    #[test]
+    fn preflight_delivery_comes_from_the_scenario_plan() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for (path, expected) in [
+            (
+                "patches/knob-dialog/tests/emulator/cases/knob-dialog.toml",
+                false,
+            ),
+            (
+                "patches/knob-dialog/tests/emulator/cases/sd-knob-dialog.toml",
+                false,
+            ),
+            (
+                "patches/knob-dialog/tests/emulator/cases/sd-knob-dialog-dynamic.toml",
+                true,
+            ),
+            ("tests/emulator/cases/patching/sd-all-patches.toml", true),
+            (
+                "tests/emulator/cases/boot/l6max-update-patched-knob.toml",
+                false,
+            ),
+        ] {
+            assert_eq!(
+                Scenario::load(&root.join(path)).unwrap().expects_sd_knob(),
+                expected,
+                "{path}"
+            );
+        }
     }
 }

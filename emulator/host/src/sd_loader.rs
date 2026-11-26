@@ -278,11 +278,35 @@ pub struct Reader<'a> {
     qmp: &'a QmpClient,
     model: Model,
 }
+fn bounded_read<T>(
+    deadline: Instant,
+    cancelled: &mut impl FnMut() -> bool,
+    read: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    if cancelled() || Instant::now() >= deadline {
+        return Err("SD loader inspection deadline or cancellation".into());
+    }
+    let value = read()?;
+    if cancelled() || Instant::now() >= deadline {
+        return Err("SD loader inspection deadline or cancellation".into());
+    }
+    Ok(value)
+}
 impl<'a> Reader<'a> {
     pub fn new(qmp: &'a QmpClient, model: Model, deadline: Instant) -> Result<Self, String> {
+        Self::new_cancellable(qmp, model, deadline, || false)
+    }
+    pub fn new_cancellable(
+        qmp: &'a QmpClient,
+        model: Model,
+        deadline: Instant,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<Self, String> {
         verify(model, &mut |a, n| {
-            qmp.read_memory_before(0, a, n, deadline)
-                .map_err(|e| e.to_string())
+            bounded_read(deadline, &mut cancelled, || {
+                qmp.read_memory_before(0, a, n, deadline)
+                    .map_err(|e| e.to_string())
+            })
         })?;
         Ok(Self { qmp, model })
     }
@@ -340,17 +364,11 @@ impl<'a> Reader<'a> {
         deadline: Instant,
         cancelled: &mut impl FnMut() -> bool,
     ) -> Result<Vec<u8>, String> {
-        if cancelled() || Instant::now() >= deadline {
-            return Err("SD loader inspection deadline or cancellation".into());
-        }
-        let bytes = self
-            .qmp
-            .read_memory_before(0, address, length, deadline)
-            .map_err(|e| e.to_string())?;
-        if cancelled() || Instant::now() >= deadline {
-            return Err("SD loader inspection deadline or cancellation".into());
-        }
-        Ok(bytes)
+        bounded_read(deadline, cancelled, || {
+            self.qmp
+                .read_memory_before(0, address, length, deadline)
+                .map_err(|e| e.to_string())
+        })
     }
 }
 pub fn snapshot(qmp: &QmpClient, model: Model) -> Result<Snapshot, String> {
@@ -365,6 +383,17 @@ pub fn site(qmp: &QmpClient, model: Model, index: u32) -> Result<Site, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn guard_read_rejects_cancellation_while_read_is_in_flight() {
+        use std::cell::Cell;
+        let cancelled = Cell::new(false);
+        let mut check = || cancelled.get();
+        let result = bounded_read(Instant::now() + Duration::from_secs(1), &mut check, || {
+            cancelled.set(true);
+            Ok(vec![1u8])
+        });
+        assert!(result.is_err());
+    }
     use std::collections::BTreeMap;
     fn put(map: &mut BTreeMap<u32, Vec<u8>>, address: u32, value: u32) {
         map.insert(address, value.to_le_bytes().to_vec());

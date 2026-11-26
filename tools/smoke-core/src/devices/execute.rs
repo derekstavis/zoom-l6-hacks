@@ -24,7 +24,7 @@ fn knob_dialog_phase(
     let fixed = match operation {
         Operation::KnobDialogGuard => Some(0),
         Operation::KnobDialogBaseline => Some(1),
-        Operation::KnobDialogPreflightBegin => Some(2),
+        Operation::KnobDialogPreflightBegin { .. } => Some(2),
         Operation::KnobProbePrepare { probe } => u16::try_from(3 + probe.index() * 6).ok(),
         Operation::KnobProbeInject => probe_index.and_then(|i| u16::try_from(4 + i * 6).ok()),
         Operation::KnobProbeTrigger { .. } => {
@@ -3550,8 +3550,13 @@ impl State {
                 self.knob_dialog_baseline = Some(frame);
                 Ok(json!({"baseline_captured": true}))
             }
-            Operation::KnobDialogPreflightBegin => {
-                self.knob_dialog_preflight = Some(begin_preflight(session, options)?);
+            Operation::KnobDialogPreflightBegin { sd_knob } => {
+                self.knob_dialog_preflight = Some(begin_preflight(
+                    session,
+                    options,
+                    sd_knob,
+                    shared.ok_or("missing shared deadline")?,
+                )?);
                 let control = l6ctl::OwnedControl::new(&session.engine);
                 self.overlay_reader = Some(control.knob_overlay_reader()?);
                 self.knob_heap_reader = Some(control.heap_counter_reader()?);
@@ -4568,7 +4573,7 @@ mod knob_phase_tests {
         let phases = vec![
             Operation::KnobDialogGuard,
             Operation::KnobDialogBaseline,
-            Operation::KnobDialogPreflightBegin,
+            Operation::KnobDialogPreflightBegin { sd_knob: false },
             Operation::KnobProbePrepare {
                 probe: crate::scenario::PreflightProbe::Descriptor,
             },

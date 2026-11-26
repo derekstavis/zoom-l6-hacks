@@ -406,21 +406,29 @@ pub struct SlotIdentity {
 }
 impl SlotIdentity {
     fn from_fixture(report: &[u8], bytes: &[u8]) -> Result<Self, String> {
+        Self::from_fixture_member(report, bytes, "efx-loader")
+    }
+    /// Build an immutable identity for one named member of a composed module.
+    pub(crate) fn from_fixture_member(
+        report: &[u8],
+        bytes: &[u8],
+        member: &str,
+    ) -> Result<Self, String> {
         let report: serde_json::Value =
             serde_json::from_slice(report).map_err(|e| e.to_string())?;
         let patches = report["patches"]
             .as_array()
             .ok_or("module report has no patches")?;
         if patches.len() != 1 {
-            return Err("effect slot requires one composed SD module".into());
+            return Err("fixture requires one composed SD module".into());
         }
         let patch = &patches[0];
         if !patch["members"]
             .as_array()
-            .is_some_and(|m| m.iter().any(|v| v.as_str() == Some("efx-loader")))
+            .is_some_and(|m| m.iter().any(|v| v.as_str() == Some(member)))
             || patch["file_length"].as_u64() != Some(bytes.len() as u64)
         {
-            return Err("module report does not describe effect loader".into());
+            return Err(format!("module report does not describe member {member}"));
         }
         let module = Module::decode(bytes).map_err(|e| format!("invalid SD module: {e:?}"))?;
         if patch["memory_length"].as_u64() != Some(module.memory_len as u64)
@@ -431,7 +439,7 @@ impl SlotIdentity {
         let state_offset = patch["writable_data"]["offset"]
             .as_u64()
             .and_then(|v| u32::try_from(v).ok())
-            .ok_or("effect writable state missing")?;
+            .ok_or("module writable state missing")?;
         let mut mask = BTreeSet::new();
         for relocation in &module.relocations {
             let [kind, first, second] = relocation.record();
@@ -453,7 +461,7 @@ impl SlotIdentity {
         let mut immutable = module
             .code
             .get(..state_offset as usize)
-            .ok_or("effect state starts outside module code")?
+            .ok_or("module state starts outside code")?
             .to_vec();
         for offset in &masked_words {
             let start = *offset as usize;
@@ -469,11 +477,11 @@ impl SlotIdentity {
                     *offset >= start + GUARD_LEN as u32 || offset.saturating_add(4) <= *start
                 })
             })
-            .ok_or("no relocation-free effect identity guard")?;
+            .ok_or("no relocation-free module identity guard")?;
         let guard = module
             .code
             .get(guard_offset as usize..guard_offset as usize + GUARD_LEN)
-            .ok_or("effect guard outside code")?
+            .ok_or("module guard outside code")?
             .try_into()
             .unwrap();
         let result = Self {
@@ -489,7 +497,7 @@ impl SlotIdentity {
         result.validate()?;
         Ok(result)
     }
-    fn validate(&self) -> Result<(), String> {
+    pub(crate) fn validate(&self) -> Result<(), String> {
         if self.module_len == 0
             || self.module_len > patch_abi::dynamic::MAX_MEMORY_LEN as u32
             || self.code_len > self.module_len
@@ -516,7 +524,7 @@ impl SlotIdentity {
                 *o < self.guard_offset + GUARD_LEN as u32 && o.saturating_add(4) > self.guard_offset
             })
         {
-            return Err("invalid effect module identity".into());
+            return Err("invalid module identity".into());
         }
         Ok(())
     }

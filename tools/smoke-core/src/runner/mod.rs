@@ -942,10 +942,51 @@ impl Runner {
                 Action::L6RecorderEnd => {
                     return Ok(Progress::Device(devices::Operation::L6RecorderEnd));
                 }
-                Action::L6maxRecorderPlayback { target } => {
+                Action::L6maxRecorderBegin { target } => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderBegin {
+                        target,
+                    }));
+                }
+                Action::L6maxRecorderPress => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderPress));
+                }
+                Action::L6maxRecorderSubmit => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderSubmit));
+                }
+                Action::L6maxRecorderQueue => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderQueue));
+                }
+                Action::L6maxRecorderDispatch => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderDispatch));
+                }
+                Action::L6maxRecorderScheduler => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderScheduler));
+                }
+                Action::L6maxRecorderCallback => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderCallback));
+                }
+                Action::L6maxRecorderAction => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderAction));
+                }
+                Action::L6maxRecorderStream => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderStream));
+                }
+                Action::L6maxRecorderObserve => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderObserve));
+                }
+                Action::L6maxRecorderSample => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderSample));
+                }
+                Action::L6maxRecorderEvidence => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderEvidence));
+                }
+                Action::L6maxRecorderAssertAudio => {
                     return Ok(Progress::Device(
-                        devices::Operation::L6maxRecorderPlayback { target },
+                        devices::Operation::L6maxRecorderAssertAudio,
                     ));
+                }
+                Action::L6maxRecorderEnd => {
+                    return Ok(Progress::Device(devices::Operation::L6maxRecorderEnd));
                 }
                 Action::ExpectMemory { symbol, bytes } => {
                     let address = crate::firmware::symbol(self.model, &symbol)

@@ -718,6 +718,7 @@ impl Scenario {
         for model in &value.models {
             let mut sound_pad: Option<(u8, u32, u64)> = None;
             let mut recorder: Option<(u8, u32, u64)> = None;
+            let mut max_recorder: Option<(u8, u32, u64)> = None;
             let mut sd_inspection: Option<(u32, u64)> = None;
 
             let panel_steps: Vec<_> = value
@@ -837,6 +838,43 @@ impl Scenario {
             let mut probe_ring = None;
             let mut probe_tap = None;
             for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                let max_recorder_phase = match &step.action {
+                    Action::L6maxRecorderPress => Some(0),
+                    Action::L6maxRecorderSubmit => Some(1),
+                    Action::L6maxRecorderQueue => Some(2),
+                    Action::L6maxRecorderDispatch => Some(3),
+                    Action::L6maxRecorderScheduler => Some(4),
+                    Action::L6maxRecorderCallback => Some(5),
+                    Action::L6maxRecorderAction => Some(6),
+                    Action::L6maxRecorderStream => Some(7),
+                    Action::L6maxRecorderObserve => Some(8),
+                    Action::L6maxRecorderSample => Some(9),
+                    Action::L6maxRecorderEvidence => Some(10),
+                    Action::L6maxRecorderAssertAudio => Some(11),
+                    Action::L6maxRecorderEnd => Some(12),
+                    _ => None,
+                };
+                match (&step.action, max_recorder, max_recorder_phase) {
+                    (Action::L6maxRecorderBegin { .. }, None, None) => {
+                        max_recorder = Some((0, step.guest_timeout_ms, step.wall_timeout_s))
+                    }
+                    (_, Some((phase, guest, wall)), Some(actual))
+                        if phase == actual
+                            && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        max_recorder = if phase == 12 {
+                            None
+                        } else {
+                            Some((phase + 1, guest, wall))
+                        }
+                    }
+                    (_, Some(_), _) | (_, None, Some(_)) => {
+                        return Err(
+                            "L6max recorder requires ordered steps with matching budgets".into(),
+                        );
+                    }
+                    _ => {}
+                }
                 let recorder_phase = match &step.action {
                     Action::L6RecorderPress => Some(0),
                     Action::L6RecorderDispatcher => Some(1),
@@ -1053,6 +1091,9 @@ impl Scenario {
                     }
                     _ => {}
                 }
+            }
+            if max_recorder.is_some() {
+                return Err("L6max recorder transaction is incomplete".into());
             }
             if recorder.is_some() {
                 return Err("recorder transaction is incomplete".into());
@@ -1851,7 +1892,7 @@ impl Scenario {
                     return Err("l6-din-event-dispatch requires a group from 0 to 15".into());
                 }
             }
-            if let Action::L6maxRecorderPlayback { target } = step.action {
+            if let Action::L6maxRecorderBegin { target } = step.action {
                 if target != 4 {
                     return Err("l6max-recorder-playback requires MAIN target 4".into());
                 }

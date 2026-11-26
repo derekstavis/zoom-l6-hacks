@@ -331,9 +331,22 @@ pub enum Operation {
     L6RecorderAssertTrace,
     L6RecorderAssertDma,
     L6RecorderEnd,
-    L6maxRecorderPlayback {
+    L6maxRecorderBegin {
         target: u32,
     },
+    L6maxRecorderPress,
+    L6maxRecorderSubmit,
+    L6maxRecorderQueue,
+    L6maxRecorderDispatch,
+    L6maxRecorderScheduler,
+    L6maxRecorderCallback,
+    L6maxRecorderAction,
+    L6maxRecorderStream,
+    L6maxRecorderObserve,
+    L6maxRecorderSample,
+    L6maxRecorderEvidence,
+    L6maxRecorderAssertAudio,
+    L6maxRecorderEnd,
     ExpectMemory {
         symbol: String,
         address: u32,
@@ -1023,6 +1036,7 @@ pub struct State {
     sd_inspection: Option<sd::SdInspectionContext>,
     sound_pad: Option<audio::sound_pad::SoundPadContext>,
     l6_recorder: Option<audio::recorder::Scope>,
+    l6max_recorder: Option<audio::max_recorder::Scope>,
     native_midi: Option<l6ctl::midi::MidiSession>,
     midi_probe: Option<MidiProbeContext>,
 }

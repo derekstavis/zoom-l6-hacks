@@ -724,6 +724,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                 Progress::Device(devices::Operation::LifecycleStop) => {
                     if device_state.has_sound_pad()
                         || device_state.has_l6_recorder()
+                        || device_state.has_l6max_recorder()
                         || device_state.has_ui_pad()
                         || device_state.has_editor_playback()
                         || device_state.has_editor_assignment()
@@ -1168,6 +1169,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     }
                     if device_state.has_sound_pad()
                         || device_state.has_l6_recorder()
+                        || device_state.has_l6max_recorder()
                         || device_state.has_ui_pad()
                         || device_state.has_editor_playback()
                         || device_state.has_editor_assignment()
@@ -1257,6 +1259,21 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
     }
     if result.is_ok() && device_state.has_ui_pad() {
         result = Err("UI pad verification ended before completion".into());
+    }
+    if result.is_ok() && device_state.has_l6max_recorder() {
+        result = Err("L6max recorder transaction ended before completion".into());
+    }
+    if device_state.has_l6max_recorder() {
+        let cleanup = match session.as_ref() {
+            Some(current) => device_state.abort_l6max_recorder(current),
+            None => Err("no active guest for recorder cleanup".into()),
+        };
+        if let Err(cleanup) = cleanup {
+            result = Err(match result {
+                Ok(()) => format!("L6max recorder cleanup failed: {cleanup}"),
+                Err(e) => format!("{e}; L6max recorder cleanup failed: {cleanup}"),
+            })
+        }
     }
     if result.is_ok() && device_state.has_l6_recorder() {
         result = Err("recorder transaction ended before completion".into());

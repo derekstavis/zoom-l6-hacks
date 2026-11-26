@@ -379,6 +379,13 @@ or firmware changes. Pointer reads require an entire non-wrapping span in a
 mapped MAIN RAM region; observations are separate reads and are not atomic.
 The reader and bounded recorder breakpoint methods are not socket or CLI APIs.
 
+`l6max_recorder_reader_before` likewise guards six L6max 1.10 code spans
+and reads the event, current-window callback target and recorder DMA source
+while MAIN is stopped. It checks entire pointer spans and rejects wrapping or
+unmapped reads; these reads are non-atomic. The caller owns the deadline and
+cancellation and must recreate the reader after restarting or changing firmware.
+This reader and bounded single-step/optional-stop helpers are in-process APIs.
+
 The L6 scratch operations verify the supported L6 1.10 MIDI code before using
 the legacy emulator probe page at `0x841ff000`. This is a scoped diagnostic
 buffer, not evidence that physical firmware reserves that address.

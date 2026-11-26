@@ -673,9 +673,22 @@ pub enum Action {
     L6RecorderAssertTrace,
     L6RecorderAssertDma,
     L6RecorderEnd,
-    L6maxRecorderPlayback {
+    L6maxRecorderBegin {
         target: u32,
     },
+    L6maxRecorderPress,
+    L6maxRecorderSubmit,
+    L6maxRecorderQueue,
+    L6maxRecorderDispatch,
+    L6maxRecorderScheduler,
+    L6maxRecorderCallback,
+    L6maxRecorderAction,
+    L6maxRecorderStream,
+    L6maxRecorderObserve,
+    L6maxRecorderSample,
+    L6maxRecorderEvidence,
+    L6maxRecorderAssertAudio,
+    L6maxRecorderEnd,
     ExpectMemory {
         /// A name declared in `patches/api` for the model the step runs on.
         #[schemars(schema_with = "crate::firmware::symbol_schema")]

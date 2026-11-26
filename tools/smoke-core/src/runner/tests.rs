@@ -1037,13 +1037,38 @@ name='recorder-playback'
 models=['l6max']
 backends=['headless']
 ";
-    let scenario = format!(
-        "{prefix}[[step]]
-action='l6max-recorder-playback'
-target=4
-"
-    );
+    let mut scenario = format!("{prefix}[[step]]\naction='l6max-recorder-begin'\ntarget=4\n");
+    for action in [
+        "press",
+        "submit",
+        "queue",
+        "dispatch",
+        "scheduler",
+        "callback",
+        "action",
+        "stream",
+        "observe",
+        "sample",
+        "evidence",
+        "assert-audio",
+        "end",
+    ] {
+        scenario.push_str(&format!("[[step]]\naction='l6max-recorder-{action}'\n"));
+    }
     assert!(Scenario::parse(&scenario).is_ok());
+    assert!(
+        Scenario::parse(&scenario.replace("l6max-recorder-queue", "l6max-recorder-stream"))
+            .unwrap_err()
+            .contains("ordered steps")
+    );
+    assert!(
+        Scenario::parse(&scenario.replace(
+            "action='l6max-recorder-press'",
+            "action='l6max-recorder-press'\nwall_timeout_s=1"
+        ))
+        .unwrap_err()
+        .contains("matching budgets")
+    );
     assert!(Scenario::parse(&scenario.replace("target=4", "target=5")).is_err());
     assert!(Scenario::parse(&scenario.replace("models=['l6max']", "models=['l6']")).is_err());
 }

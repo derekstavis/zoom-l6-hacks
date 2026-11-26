@@ -525,6 +525,19 @@ impl<'a> OwnedControl<'a> {
     }
 
     /// Create a revision-guarded L6 recorder reader for a bounded transaction.
+    /// Create a guarded reader for one stopped L6max guest transaction.
+    pub fn l6max_recorder_reader_before(
+        &self,
+        deadline: std::time::Instant,
+        cancelled: impl FnMut() -> bool,
+    ) -> Result<l6max_host::l6max_recorder::Reader, String> {
+        l6max_host::l6max_recorder::Reader::new(
+            &self.engine.management[0],
+            self.engine.model(),
+            deadline,
+            cancelled,
+        )
+    }
     pub fn l6_recorder_reader_before(
         &self,
         deadline: std::time::Instant,

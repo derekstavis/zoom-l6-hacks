@@ -401,6 +401,15 @@ impl State {
     pub fn has_ui_pad(&self) -> bool {
         self.ui_pad.is_some()
     }
+    pub fn has_l6max_recorder(&self) -> bool {
+        self.l6max_recorder.is_some()
+    }
+    pub fn abort_l6max_recorder(&mut self, session: &Session) -> Result<(), String> {
+        match self.l6max_recorder.take() {
+            Some(mut context) => context.abort(session),
+            None => Ok(()),
+        }
+    }
     pub fn has_l6_recorder(&self) -> bool {
         self.l6_recorder.is_some()
     }
@@ -608,6 +617,35 @@ impl State {
             ) {
                 self.l6_indicator = None;
                 return Err("L6 indicator campaign exceeded its shared deadline".into());
+            }
+        }
+        if let Some(context) = self.l6max_recorder.as_ref() {
+            let expected = match operation {
+                Operation::L6maxRecorderPress => Some(0),
+                Operation::L6maxRecorderSubmit => Some(1),
+                Operation::L6maxRecorderQueue => Some(2),
+                Operation::L6maxRecorderDispatch => Some(3),
+                Operation::L6maxRecorderScheduler => Some(4),
+                Operation::L6maxRecorderCallback => Some(5),
+                Operation::L6maxRecorderAction => Some(6),
+                Operation::L6maxRecorderStream => Some(7),
+                Operation::L6maxRecorderObserve => Some(8),
+                Operation::L6maxRecorderSample => Some(9),
+                Operation::L6maxRecorderEvidence => Some(10),
+                Operation::L6maxRecorderAssertAudio => Some(11),
+                Operation::L6maxRecorderEnd => Some(12),
+                _ => None,
+            };
+            if expected != Some(context.phase)
+                || context
+                    .check(session, guest_timeout_ms, wall_timeout_s)
+                    .is_err()
+            {
+                let error = "L6max recorder interrupted or exceeded its shared deadline";
+                return match self.abort_l6max_recorder(session) {
+                    Ok(()) => Err(error.into()),
+                    Err(cleanup) => Err(format!("{error}; cleanup failed: {cleanup}")),
+                };
             }
         }
         if let Some(context) = self.l6_recorder.as_ref() {
@@ -3161,13 +3199,58 @@ impl State {
                 }
                 Ok(result)
             }
-            Operation::L6maxRecorderPlayback { target } => self.run_l6max_recorder_playback(
-                session,
-                options,
-                target,
-                guest_timeout_ms,
-                wall_timeout_s,
-            ),
+            Operation::L6maxRecorderBegin { target } => {
+                if self.l6max_recorder.is_some() {
+                    return Err("L6max recorder already active".into());
+                }
+                self.l6max_recorder = Some(audio::max_recorder::Scope::begin(
+                    session,
+                    options,
+                    target,
+                    guest_timeout_ms,
+                    wall_timeout_s,
+                )?);
+                Ok(json!({"started":true}))
+            }
+            operation @ (Operation::L6maxRecorderPress
+            | Operation::L6maxRecorderSubmit
+            | Operation::L6maxRecorderQueue
+            | Operation::L6maxRecorderDispatch
+            | Operation::L6maxRecorderScheduler
+            | Operation::L6maxRecorderCallback
+            | Operation::L6maxRecorderAction
+            | Operation::L6maxRecorderStream
+            | Operation::L6maxRecorderObserve
+            | Operation::L6maxRecorderSample
+            | Operation::L6maxRecorderEvidence
+            | Operation::L6maxRecorderAssertAudio
+            | Operation::L6maxRecorderEnd) => {
+                let context = self
+                    .l6max_recorder
+                    .as_mut()
+                    .ok_or("missing L6max recorder")?;
+                let result = match operation {
+                    Operation::L6maxRecorderPress => context.press(session),
+                    Operation::L6maxRecorderSubmit => context.submit(session),
+                    Operation::L6maxRecorderQueue => context.queue(session),
+                    Operation::L6maxRecorderDispatch => context.dispatch(session),
+                    Operation::L6maxRecorderScheduler => context.scheduler(session),
+                    Operation::L6maxRecorderCallback => context.callback(session),
+                    Operation::L6maxRecorderAction => context.action(session),
+                    Operation::L6maxRecorderStream => context.stream(session),
+                    Operation::L6maxRecorderObserve => context.observe(session),
+                    Operation::L6maxRecorderSample => context.sample(session, options),
+                    Operation::L6maxRecorderEvidence => context.save(options),
+                    Operation::L6maxRecorderAssertAudio => context.assert_audio(),
+                    Operation::L6maxRecorderEnd => Ok(json!({"finished":true})),
+                    _ => unreachable!(),
+                }?;
+                context.phase += 1;
+                if matches!(operation, Operation::L6maxRecorderEnd) {
+                    self.l6max_recorder = None;
+                }
+                Ok(result)
+            }
             Operation::UsbStorage => {
                 let usb = session
                     .engine

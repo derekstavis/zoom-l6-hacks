@@ -1194,7 +1194,9 @@ impl State {
                 Err("managed lifecycle operation must run at the session boundary".into())
             }
             Operation::ExpectRecorder => {
-                let mode = session.engine.management[0].read_memory(0, l6max::system_mode, 4)?;
+                let mode = l6ctl::OwnedControl::new(&session.engine)
+                    .read_main_memory(l6max::system_mode, 4)?
+                    .bytes;
                 if mode != 0u32.to_le_bytes() {
                     return Err(
                         format!("restart did not restore recorder mode: {mode:02x?}").into(),
@@ -1826,8 +1828,7 @@ impl State {
                 )
             }
             Operation::ExpectHeap { minimum_free } => {
-                let heap =
-                    l6max_host::heap::read(&session.engine.management[0], session.engine.model())?;
+                let heap = l6ctl::OwnedControl::new(&session.engine).checked_heap()?;
                 if heap.minimum_ever_free < minimum_free {
                     return Err(format!(
                         "heap fell to {} free bytes, below the required {minimum_free}: {heap:?}",
@@ -1847,8 +1848,9 @@ impl State {
                 let factory_mode =
                     matches!(until, Some(crate::scenario::ChordCondition::FactoryMode));
                 if factory_mode {
-                    let initial =
-                        session.engine.management[0].read_memory(0, l6max::system_mode, 4)?;
+                    let initial = l6ctl::OwnedControl::new(&session.engine)
+                        .read_main_memory(l6max::system_mode, 4)?
+                        .bytes;
                     if initial == 7u32.to_le_bytes() {
                         return Err("factory mode was already active before the chord".into());
                     }
@@ -1882,9 +1884,10 @@ impl State {
                     }
                     let elapsed = panel.guest_ms.wrapping_sub(start);
                     if factory_mode && !factory_reached && Instant::now() >= next_mode_poll {
-                        factory_reached =
-                            session.engine.management[0].read_memory(0, l6max::system_mode, 4)?
-                                == 7u32.to_le_bytes();
+                        factory_reached = l6ctl::OwnedControl::new(&session.engine)
+                            .read_main_memory_before(l6max::system_mode, 4, deadline)?
+                            .bytes
+                            == 7u32.to_le_bytes();
                         next_mode_poll = Instant::now() + Duration::from_millis(10);
                     }
                     if main.applied >= main.sent

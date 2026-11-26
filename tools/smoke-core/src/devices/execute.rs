@@ -718,15 +718,16 @@ impl State {
                 Operation::UsbStorageAssertBoot => Some(4),
                 Operation::UsbStorageLastRead => Some(5),
                 Operation::UsbStorageLastWrite => Some(6),
-                Operation::UsbStorageLastAssert => Some(7),
-                Operation::UsbStorageFatOpen => Some(8),
-                Operation::UsbStorageCreate { .. } => Some(9),
-                Operation::UsbStorageFlushCreated => Some(10),
-                Operation::UsbStorageReadFile => Some(11),
-                Operation::UsbStorageRemoveFile => Some(12),
-                Operation::UsbStorageAssertFile => Some(13),
-                Operation::UsbStorageFlushRemoved => Some(14),
-                Operation::UsbStorageEnd => Some(15),
+                Operation::UsbStorageLastReadback => Some(7),
+                Operation::UsbStorageLastAssert => Some(8),
+                Operation::UsbStorageFatOpen => Some(9),
+                Operation::UsbStorageCreate { .. } => Some(10),
+                Operation::UsbStorageFlushCreated => Some(11),
+                Operation::UsbStorageReadFile => Some(12),
+                Operation::UsbStorageRemoveFile => Some(13),
+                Operation::UsbStorageAssertFile => Some(14),
+                Operation::UsbStorageFlushRemoved => Some(15),
+                Operation::UsbStorageEnd => Some(16),
                 _ => None,
             };
             if expected != Some(context.phase)
@@ -3733,6 +3734,7 @@ impl State {
             | Operation::UsbStorageAssertBoot
             | Operation::UsbStorageLastRead
             | Operation::UsbStorageLastWrite
+            | Operation::UsbStorageLastReadback
             | Operation::UsbStorageLastAssert
             | Operation::UsbStorageFatOpen
             | Operation::UsbStorageCreate { .. }
@@ -3754,6 +3756,7 @@ impl State {
                     Operation::UsbStorageAssertBoot => context.assert_boot(options),
                     Operation::UsbStorageLastRead => context.last_read(),
                     Operation::UsbStorageLastWrite => context.last_write(),
+                    Operation::UsbStorageLastReadback => context.last_readback(),
                     Operation::UsbStorageLastAssert => context.last_assert(),
                     Operation::UsbStorageFatOpen => context.fat_open(),
                     Operation::UsbStorageCreate {

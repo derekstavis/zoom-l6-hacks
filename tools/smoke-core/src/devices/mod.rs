@@ -146,6 +146,7 @@ pub enum Operation {
     UsbStorageAssertBoot,
     UsbStorageLastRead,
     UsbStorageLastWrite,
+    UsbStorageLastReadback,
     UsbStorageLastAssert,
     UsbStorageFatOpen,
     UsbStorageCreate {

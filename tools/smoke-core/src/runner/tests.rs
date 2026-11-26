@@ -2570,6 +2570,7 @@ fn usb_storage_requires_ordered_scope_and_matching_budgets() {
         "assert-boot",
         "last-read",
         "last-write",
+        "last-readback",
         "last-assert",
         "fat-open",
         "create",
@@ -2595,6 +2596,10 @@ fn usb_storage_requires_ordered_scope_and_matching_budgets() {
             "action='usb-storage-ready'\nwall_timeout_s=1"
         ))
         .is_err()
+    );
+    assert!(
+        Scenario::parse(&scenario.replace("[[step]]\naction='usb-storage-last-readback'\n", ""))
+            .is_err()
     );
     assert!(
         Scenario::parse(&scenario.replace("[[step]]\naction='usb-storage-end'\n", "")).is_err()

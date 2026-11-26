@@ -387,6 +387,7 @@ pub fn of(action: &Action) -> Requirement {
         | Action::UsbStorageAssertBoot
         | Action::UsbStorageLastRead
         | Action::UsbStorageLastWrite
+        | Action::UsbStorageLastReadback
         | Action::UsbStorageLastAssert
         | Action::UsbStorageFatOpen
         | Action::UsbStorageCreate { .. }

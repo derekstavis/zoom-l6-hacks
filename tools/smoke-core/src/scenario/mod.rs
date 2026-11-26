@@ -490,6 +490,7 @@ pub enum Action {
     UsbStorageAssertBoot,
     UsbStorageLastRead,
     UsbStorageLastWrite,
+    UsbStorageLastReadback,
     UsbStorageLastAssert,
     UsbStorageFatOpen,
     UsbStorageCreate {

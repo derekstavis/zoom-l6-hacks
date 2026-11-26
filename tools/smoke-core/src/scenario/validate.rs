@@ -1356,15 +1356,16 @@ impl Scenario {
                     Action::UsbStorageAssertBoot => Some(4),
                     Action::UsbStorageLastRead => Some(5),
                     Action::UsbStorageLastWrite => Some(6),
-                    Action::UsbStorageLastAssert => Some(7),
-                    Action::UsbStorageFatOpen => Some(8),
-                    Action::UsbStorageCreate { .. } => Some(9),
-                    Action::UsbStorageFlushCreated => Some(10),
-                    Action::UsbStorageReadFile => Some(11),
-                    Action::UsbStorageRemoveFile => Some(12),
-                    Action::UsbStorageAssertFile => Some(13),
-                    Action::UsbStorageFlushRemoved => Some(14),
-                    Action::UsbStorageEnd => Some(15),
+                    Action::UsbStorageLastReadback => Some(7),
+                    Action::UsbStorageLastAssert => Some(8),
+                    Action::UsbStorageFatOpen => Some(9),
+                    Action::UsbStorageCreate { .. } => Some(10),
+                    Action::UsbStorageFlushCreated => Some(11),
+                    Action::UsbStorageReadFile => Some(12),
+                    Action::UsbStorageRemoveFile => Some(13),
+                    Action::UsbStorageAssertFile => Some(14),
+                    Action::UsbStorageFlushRemoved => Some(15),
+                    Action::UsbStorageEnd => Some(16),
                     _ => None,
                 };
                 match (&step.action, usb_storage, storage_phase) {
@@ -1375,7 +1376,7 @@ impl Scenario {
                         if phase == actual
                             && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
                     {
-                        usb_storage = if phase == 15 {
+                        usb_storage = if phase == 16 {
                             None
                         } else {
                             Some((phase + 1, guest, wall))

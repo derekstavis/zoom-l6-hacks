@@ -1259,6 +1259,9 @@ impl Runner {
                 Action::UsbStorageLastWrite => {
                     return Ok(Progress::Device(devices::Operation::UsbStorageLastWrite));
                 }
+                Action::UsbStorageLastReadback => {
+                    return Ok(Progress::Device(devices::Operation::UsbStorageLastReadback));
+                }
                 Action::UsbStorageLastAssert => {
                     return Ok(Progress::Device(devices::Operation::UsbStorageLastAssert));
                 }

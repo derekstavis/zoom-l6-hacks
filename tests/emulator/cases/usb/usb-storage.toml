@@ -99,6 +99,11 @@ guest_timeout_ms = 30000
 wall_timeout_s = 180
 
 [[step]]
+action = "usb-storage-last-readback"
+guest_timeout_ms = 30000
+wall_timeout_s = 180
+
+[[step]]
 action = "usb-storage-last-assert"
 guest_timeout_ms = 30000
 wall_timeout_s = 180

@@ -16,6 +16,868 @@ guest_timeout_ms = 600000
 wall_timeout_s = 1800
 
 [[step]]
-action = "l6-input-sweep"
+action = "l6-sweep-begin"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-reject-main"
+target = 0
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-reject-main"
+target = 5
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 7
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 8
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 9
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 10
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 11
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 12
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 13
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 14
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 15
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 16
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 17
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 18
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 19
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 20
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 21
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 22
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 23
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 24
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 25
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 26
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 27
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 28
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 29
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 30
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 1
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 2
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 3
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 6
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-baseline"
+target = 47
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-tap"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-panel-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-encoder-baseline"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-encoder-send"
+index = 0
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-encoder-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-encoder-send"
+index = 1
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-encoder-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-encoder-send"
+index = 2
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-encoder-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-encoder-send"
+index = 3
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-encoder-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-encoder-send"
+index = 4
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-encoder-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-encoder-send"
+index = 5
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-encoder-wait"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-encoder-trace"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-encoder-assert"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-reject-panel"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-reject-encoder"
+guest_timeout_ms = 600000
+wall_timeout_s = 1800
+
+[[step]]
+action = "l6-sweep-end"
 guest_timeout_ms = 600000
 wall_timeout_s = 1800

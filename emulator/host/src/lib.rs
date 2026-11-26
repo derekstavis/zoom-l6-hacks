@@ -12,6 +12,7 @@ pub mod firmware_patches;
 pub mod freertos;
 pub mod heap;
 pub mod input;
+pub mod input_trace;
 pub mod knob_popup;
 pub mod memory;
 pub mod midi_config;

@@ -726,6 +726,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         || device_state.has_ui_pad()
                         || device_state.has_editor_playback()
                         || device_state.has_editor_assignment()
+                        || device_state.has_l6_sweep()
                     {
                         return Err("device transaction interrupted by guest shutdown".into());
                     }
@@ -1167,6 +1168,7 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                         || device_state.has_ui_pad()
                         || device_state.has_editor_playback()
                         || device_state.has_editor_assignment()
+                        || device_state.has_l6_sweep()
                     {
                         return Err("device transaction interrupted by guest shutdown".into());
                     }
@@ -1224,6 +1226,21 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
     }
     if result.is_ok() && device_state.has_midi_sync() {
         result = Err("MIDI sync transaction ended before completion".into());
+    }
+    if result.is_ok() && device_state.has_l6_sweep() {
+        result = Err("L6 input sweep ended before completion".into());
+    }
+    if device_state.has_l6_sweep() {
+        let cleanup = match session.as_ref() {
+            Some(current) => device_state.abort_l6_sweep(current),
+            None => Err("no active guest to release L6 panel input".to_owned()),
+        };
+        if let Err(cleanup) = cleanup {
+            result = Err(match result {
+                Ok(()) => format!("L6 sweep cleanup failed: {cleanup}"),
+                Err(error) => format!("{error}; L6 sweep cleanup failed: {cleanup}"),
+            });
+        }
     }
     if result.is_ok() && device_state.has_editor_assignment() {
         result = Err("Editor assignment ended before completion".into());

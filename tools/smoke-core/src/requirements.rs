@@ -85,7 +85,21 @@ pub fn of(action: &Action) -> Requirement {
         | Action::DinUsbSend { .. }
         | Action::DinUsbExpect { .. }
         | Action::DinUsbEnd
-        | Action::L6InputSweep => on(L6),
+        | Action::L6SweepBegin
+        | Action::L6SweepRejectMain { .. }
+        | Action::L6SweepPanelBaseline { .. }
+        | Action::L6SweepPanelTap
+        | Action::L6SweepPanelWait
+        | Action::L6SweepPanelTrace
+        | Action::L6SweepPanelAssert
+        | Action::L6SweepEncoderBaseline
+        | Action::L6SweepEncoderSend { .. }
+        | Action::L6SweepEncoderWait
+        | Action::L6SweepEncoderTrace
+        | Action::L6SweepEncoderAssert
+        | Action::L6SweepRejectPanel
+        | Action::L6SweepRejectEncoder
+        | Action::L6SweepEnd => on(L6),
         Action::L6maxRecorderPlayback { .. }
         | Action::L6maxInputTiming
         | Action::L6maxPanelKeyBegin

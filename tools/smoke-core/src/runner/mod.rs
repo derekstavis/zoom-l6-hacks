@@ -1740,8 +1740,54 @@ impl Runner {
                         value,
                     }));
                 }
-                Action::L6InputSweep => {
-                    return Ok(Progress::Device(devices::Operation::L6InputSweep));
+                Action::L6SweepBegin => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepBegin));
+                }
+                Action::L6SweepPanelTap => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepPanelTap));
+                }
+                Action::L6SweepPanelWait => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepPanelWait));
+                }
+                Action::L6SweepPanelTrace => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepPanelTrace));
+                }
+                Action::L6SweepPanelAssert => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepPanelAssert));
+                }
+                Action::L6SweepEncoderBaseline => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepEncoderBaseline));
+                }
+                Action::L6SweepEncoderWait => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepEncoderWait));
+                }
+                Action::L6SweepEncoderTrace => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepEncoderTrace));
+                }
+                Action::L6SweepEncoderAssert => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepEncoderAssert));
+                }
+                Action::L6SweepRejectPanel => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepRejectPanel));
+                }
+                Action::L6SweepRejectEncoder => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepRejectEncoder));
+                }
+                Action::L6SweepEnd => return Ok(Progress::Device(devices::Operation::L6SweepEnd)),
+                Action::L6SweepRejectMain { target } => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepRejectMain {
+                        target,
+                    }));
+                }
+                Action::L6SweepPanelBaseline { target } => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepPanelBaseline {
+                        target,
+                    }));
+                }
+                Action::L6SweepEncoderSend { index } => {
+                    return Ok(Progress::Device(devices::Operation::L6SweepEncoderSend {
+                        index,
+                    }));
                 }
                 Action::L6DinSweep => {
                     return Ok(Progress::Device(devices::Operation::L6DinSweep));

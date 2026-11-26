@@ -92,6 +92,12 @@ existing snapshots directly; it does not create a second guest or open a
 control socket. RTOS decoding and model/revision guards remain in
 `l6max-host`, and the two transports do not yet expose identical capabilities.
 
+The in-process `OwnedControl::raw_tap`, `raw_down`, `raw_up`, and
+`raw_panel_encoder` methods target a specified input channel without the
+normal model or target routing checks. They support protocol rejection tests;
+they are not exposed by the control socket or CLI. `panel_uart_count` counts
+exact L6 panel trace markers in supplied text.
+
 `ControlClient::heap_counters()` returns one guarded, non-atomic sample of the
 four allocator counters. In-process callers can create
 `OwnedControl::heap_counter_reader()` once for a bounded observation, then

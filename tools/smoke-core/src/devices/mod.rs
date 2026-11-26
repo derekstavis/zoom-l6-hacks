@@ -17,6 +17,7 @@ mod display;
 mod editor;
 mod execute;
 mod knob_dialog;
+mod l6_input_sweep;
 mod lifecycle;
 mod midi;
 mod midi_probe;
@@ -616,7 +617,27 @@ pub enum Operation {
         size: Option<u64>,
         matches_state: Option<String>,
     },
-    L6InputSweep,
+    L6SweepBegin,
+    L6SweepRejectMain {
+        target: u32,
+    },
+    L6SweepPanelBaseline {
+        target: u32,
+    },
+    L6SweepPanelTap,
+    L6SweepPanelWait,
+    L6SweepPanelTrace,
+    L6SweepPanelAssert,
+    L6SweepEncoderBaseline,
+    L6SweepEncoderSend {
+        index: u32,
+    },
+    L6SweepEncoderWait,
+    L6SweepEncoderTrace,
+    L6SweepEncoderAssert,
+    L6SweepRejectPanel,
+    L6SweepRejectEncoder,
+    L6SweepEnd,
     L6DinSweep,
     L6maxInputTiming,
     L6maxPanelKeyBegin,
@@ -938,6 +959,7 @@ pub struct State {
     ui_pad: Option<editor::UiPadScope>,
     editor_playback: Option<editor::EditorPlaybackScope>,
     editor_assignment: Option<editor::EditorAssignmentScope>,
+    l6_input_sweep: Option<l6_input_sweep::Scope>,
     l6_indicator: Option<L6IndicatorScope>,
     gdb: Option<l6max_diagnostics::gdb::Gdb>,
     host_midi: Option<Box<dyn crate::host_midi::Client>>,

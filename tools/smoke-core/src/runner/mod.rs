@@ -1726,8 +1726,12 @@ impl Runner {
                         devices::Operation::ExpectUpdateMarkerAbsent,
                     ));
                 }
-                Action::WasmPatch => {
-                    return Ok(Progress::Device(devices::Operation::WasmPatch));
+                Action::PatchParityPrepare
+                | Action::PatchParityFirmware { .. }
+                | Action::PatchParityLoader { .. }
+                | Action::PatchParityUnsupported { .. }
+                | Action::PatchParityFinish => {
+                    return Ok(Progress::Device(devices::Operation::PatchParityHostOnly));
                 }
                 Action::PanelEvent {
                     target,

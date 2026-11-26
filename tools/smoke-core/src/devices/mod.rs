@@ -30,7 +30,7 @@ mod usb;
 use audio::*;
 pub use display::*;
 pub use knob_dialog::*;
-pub use lifecycle::*;
+use lifecycle::*;
 use midi::*;
 use midi_probe::*;
 use mode_primitives::wait_parameter_mode_checked;
@@ -583,7 +583,7 @@ pub enum Operation {
         path: Vec<String>,
         items: Vec<String>,
     },
-    WasmPatch,
+    PatchParityHostOnly,
     WarmReset,
     Restart,
     ExpectRecorder,

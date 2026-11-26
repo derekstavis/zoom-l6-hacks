@@ -393,7 +393,7 @@ does not change what cases boot.
 
 See [the version-1 format](scenario-format.md). New behavior belongs in a shared
 scenario or a typed operation in `smoke-core`, not another one-off binary.
-Each case file's `[case]` table gives its suites, environment and time limit. WASM patch parity runs as a typed host-side driver operation.
+Each case file's `[case]` table gives its suites, environment and time limit. WASM patch parity runs as typed host-side steps. It compares the browser builder's Rust library and embedded templates against native output; it does not execute WebAssembly or boot a guest.
 The focused panel cases compose reusable fragments rather
 than copying setup or asserting results separately.
 

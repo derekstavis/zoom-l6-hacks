@@ -225,6 +225,20 @@ impl CaseProgress {
 pub fn step_label(action: &crate::Action) -> String {
     use crate::Action;
     match action {
+        Action::PatchParityPrepare => "Prepare patch parity".into(),
+        Action::PatchParityFirmware { patches } => {
+            format!("Compare firmware: {}", patches.join(", "))
+        }
+        Action::PatchParityLoader { patches } => format!(
+            "Compare loader: {}",
+            if patches.is_empty() {
+                "loader only".into()
+            } else {
+                patches.join(", ")
+            }
+        ),
+        Action::PatchParityUnsupported { patch } => format!("Reject unsupported: {patch}"),
+        Action::PatchParityFinish => "Finish patch parity".into(),
         Action::L6IndicatorBegin => "Begin L6 indicator campaign".into(),
         Action::L6RingSample {
             cc, value, ring, ..

@@ -2194,3 +2194,21 @@ fn l6max_timing_requires_ordered_scope_and_matching_budgets() {
     );
     assert!(Scenario::parse(&scenario.replace("models=['l6max']", "models=['l6']")).is_err());
 }
+
+#[test]
+fn patch_parity_rejects_missing_duplicate_or_mixed_steps() {
+    let source = include_str!("../../../../tests/emulator/cases/patching/wasm-patch.toml");
+    assert!(Scenario::from_text(source).is_ok());
+    let profile =
+        "[[step]]\naction = \"patch-parity-loader\"\nmodels = [\"l6max\"]\npatches = []\n\n";
+    assert!(source.contains(profile));
+    assert!(Scenario::from_text(&source.replacen(profile, "", 1)).is_err());
+    assert!(Scenario::from_text(&source.replace(profile, &format!("{profile}{profile}"))).is_err());
+    assert!(
+        Scenario::from_text(&source.replace(
+            "action = \"patch-parity-finish\"",
+            "action = \"checkpoint\"\nname = \"wrong\""
+        ))
+        .is_err()
+    );
+}

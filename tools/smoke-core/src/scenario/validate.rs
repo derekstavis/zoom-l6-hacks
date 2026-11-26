@@ -9,6 +9,18 @@ impl Scenario {
         }
         validate_models(&value.models)?;
         crate::requirements::check_scope(value)?;
+        if value.step.iter().any(|step| {
+            matches!(
+                step.action,
+                Action::PatchParityPrepare
+                    | Action::PatchParityFirmware { .. }
+                    | Action::PatchParityLoader { .. }
+                    | Action::PatchParityUnsupported { .. }
+                    | Action::PatchParityFinish
+            )
+        }) {
+            validate_patch_parity(value)?;
+        }
         if let Some(fixture) = value.update_fixture {
             let fixture_model = if fixture.is_l6() {
                 Model::L6
@@ -1962,11 +1974,6 @@ impl Scenario {
             {
                 return Err(format!("expect-menu names an unknown menu {menu:?}"));
             }
-            if matches!(step.action, Action::WasmPatch)
-                && (value.models.is_empty() || value.step.len() != 1)
-            {
-                return Err("wasm-patch is a standalone L6/L6max scenario operation".into());
-            }
             if let Action::UsbSysexExchange { request, .. } = &step.action {
                 if request.bytes.len() < 2
                     || request.bytes.first() != Some(&0xf0)
@@ -2609,4 +2616,67 @@ mod din_usb_scope_tests {
             crate::Scenario::parse(&text.replace("models=['l6']", "models=['l6max']")).is_err()
         );
     }
+}
+
+fn validate_patch_parity(scenario: &Scenario) -> Result<(), String> {
+    if scenario.models != [Model::L6, Model::L6max]
+        || scenario.backends != [Backend::Headless]
+        || scenario.step.iter().any(|step| step.setup_input)
+    {
+        return Err("patch parity requires both models and host-only headless steps".into());
+    }
+    for model in [Model::L6, Model::L6max] {
+        let actual = scenario
+            .step
+            .iter()
+            .filter(|step| step.applies_to(model))
+            .map(|step| match &step.action {
+                Action::PatchParityPrepare => Ok(("prepare", Vec::new())),
+                Action::PatchParityFirmware { patches } => Ok(("firmware", patches.clone())),
+                Action::PatchParityLoader { patches } => Ok(("loader", patches.clone())),
+                Action::PatchParityUnsupported { patch } => {
+                    Ok(("unsupported", vec![patch.clone()]))
+                }
+                Action::PatchParityFinish => Ok(("finish", Vec::new())),
+                _ => Err("patch parity cannot include other actions"),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut expected = vec![("prepare", Vec::new())];
+        if model == Model::L6 {
+            expected.push(("firmware", vec!["midi-sync".into()]));
+            expected.push(("unsupported", vec!["knob-dialog".into()]));
+            expected.push(("unsupported", vec!["din-mixer-control".into()]));
+        } else {
+            let patches = &patch_core::WASM_PATCHES;
+            for mask in 1..(1usize << patches.len()) {
+                expected.push((
+                    "firmware",
+                    patches
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| mask & (1 << i) != 0)
+                        .map(|(_, p)| p.to_string())
+                        .collect(),
+                ));
+            }
+            for mask in 0..(1usize << patches.len()) {
+                expected.push((
+                    "loader",
+                    patches
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| mask & (1 << i) != 0)
+                        .map(|(_, p)| p.to_string())
+                        .collect(),
+                ));
+            }
+        }
+        expected.push(("finish", Vec::new()));
+        if actual != expected {
+            return Err(format!(
+                "patch parity profiles for {model} are incomplete or out of order"
+            ));
+        }
+    }
+    Ok(())
 }

@@ -3415,7 +3415,7 @@
     "suites": [
       "full"
     ],
-    "definition": "63f67d99fe5f0821ab28d834275450042f6622ec81e7cdac36a1edcd4c0bce6a"
+    "definition": "a4e732f73f57ad2a7605a6508c6536b800290ffaa8ea6656fb20d3abca28a3a6"
   },
   {
     "case": "wasm-patch",
@@ -3424,6 +3424,6 @@
     "suites": [
       "full"
     ],
-    "definition": "5b9561b1a83b792240b4cc8cc614a1a8bb524f164ba1c4575a7d4557cebe9e98"
+    "definition": "de81b4be3fbfc97937928187b3de40f188f8e5b7078154371f576f75b588c92f"
   }
 ]

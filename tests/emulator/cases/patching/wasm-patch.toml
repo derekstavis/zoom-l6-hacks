@@ -10,4 +10,97 @@ no_sd = true
 wall_timeout_s = 900
 
 [[step]]
-action = "wasm-patch"
+action = "patch-parity-prepare"
+
+[[step]]
+action = "patch-parity-firmware"
+models = ["l6max"]
+patches = ["knob-dialog"]
+
+[[step]]
+action = "patch-parity-firmware"
+models = ["l6max"]
+patches = ["midi-sync"]
+
+[[step]]
+action = "patch-parity-firmware"
+models = ["l6max"]
+patches = ["knob-dialog", "midi-sync"]
+
+[[step]]
+action = "patch-parity-firmware"
+models = ["l6max"]
+patches = ["din-mixer-control"]
+
+[[step]]
+action = "patch-parity-firmware"
+models = ["l6max"]
+patches = ["knob-dialog", "din-mixer-control"]
+
+[[step]]
+action = "patch-parity-firmware"
+models = ["l6max"]
+patches = ["midi-sync", "din-mixer-control"]
+
+[[step]]
+action = "patch-parity-firmware"
+models = ["l6max"]
+patches = ["knob-dialog", "midi-sync", "din-mixer-control"]
+
+[[step]]
+action = "patch-parity-firmware"
+models = ["l6"]
+patches = ["midi-sync"]
+
+[[step]]
+action = "patch-parity-loader"
+models = ["l6max"]
+patches = []
+
+[[step]]
+action = "patch-parity-loader"
+models = ["l6max"]
+patches = ["knob-dialog"]
+
+[[step]]
+action = "patch-parity-loader"
+models = ["l6max"]
+patches = ["midi-sync"]
+
+[[step]]
+action = "patch-parity-loader"
+models = ["l6max"]
+patches = ["knob-dialog", "midi-sync"]
+
+[[step]]
+action = "patch-parity-loader"
+models = ["l6max"]
+patches = ["din-mixer-control"]
+
+[[step]]
+action = "patch-parity-loader"
+models = ["l6max"]
+patches = ["knob-dialog", "din-mixer-control"]
+
+[[step]]
+action = "patch-parity-loader"
+models = ["l6max"]
+patches = ["midi-sync", "din-mixer-control"]
+
+[[step]]
+action = "patch-parity-loader"
+models = ["l6max"]
+patches = ["knob-dialog", "midi-sync", "din-mixer-control"]
+
+[[step]]
+action = "patch-parity-unsupported"
+models = ["l6"]
+patch = "knob-dialog"
+
+[[step]]
+action = "patch-parity-unsupported"
+models = ["l6"]
+patch = "din-mixer-control"
+
+[[step]]
+action = "patch-parity-finish"

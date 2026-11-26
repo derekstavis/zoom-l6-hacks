@@ -9,6 +9,7 @@ mod gui_probe;
 mod hashing;
 mod identity;
 mod patch_matrix;
+mod patch_parity;
 mod progress;
 mod report;
 mod schedule;
@@ -200,7 +201,16 @@ fn child_scenario() -> Result<(), String> {
     let mut args = env::args_os().skip(2);
     let path = PathBuf::from(args.next().ok_or("missing scenario")?);
     let options = Options::parse_args(args)?;
-    smoke_core::run(Scenario::load_for_case(&path)?, options)
+    let scenario = Scenario::load_for_case(&path)?;
+    if scenario
+        .step
+        .iter()
+        .any(|step| matches!(step.action, smoke_core::Action::PatchParityPrepare))
+    {
+        patch_parity::run(scenario, options)
+    } else {
+        smoke_core::run(scenario, options)
+    }
 }
 struct RunJournal(PathBuf);
 impl Drop for RunJournal {

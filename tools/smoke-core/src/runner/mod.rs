@@ -1119,6 +1119,22 @@ impl Runner {
                         devices::Operation::ExpectEffectRingChanged { encoder },
                     ));
                 }
+                Action::CaptureEffectModes => {
+                    return Ok(Progress::Device(devices::Operation::CaptureEffectModes));
+                }
+                Action::ExpectEffectPanelMode { value } => {
+                    return Ok(Progress::Device(
+                        devices::Operation::ExpectEffectPanelMode { value },
+                    ));
+                }
+                Action::ExpectEffectEditMode { enabled } => {
+                    return Ok(Progress::Device(devices::Operation::ExpectEffectEditMode {
+                        enabled,
+                    }));
+                }
+                Action::EffectModesEnd => {
+                    return Ok(Progress::Device(devices::Operation::EffectModesEnd));
+                }
                 Action::WaitEffectMode {
                     panel_mode,
                     edit_mode,

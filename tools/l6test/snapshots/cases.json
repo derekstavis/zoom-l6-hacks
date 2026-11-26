@@ -3057,7 +3057,7 @@
       "sd-matrix",
       "effect-replacement-matrix"
     ],
-    "definition": "5482ec45ecc870ac76aaa274caf2b46624872ce0549899a8a280720b7d600e41"
+    "definition": "c5fcfa8af42a153cf83e2a1ae4eddb2f84c5b779ef367df0760e474a131d9097"
   },
   {
     "case": "sd-effect-replacement-map",
@@ -3087,7 +3087,7 @@
       "sd-matrix",
       "effect-replacement-matrix"
     ],
-    "definition": "e3dd7a8a63623a0ee6dfd7a267462e71a36b3327486a2f0a737e7340cf810fd2"
+    "definition": "98f55a9c536140122da5bea1cdd86d92f1892126d781961101654a47accca886"
   },
   {
     "case": "sd-hook-chain",

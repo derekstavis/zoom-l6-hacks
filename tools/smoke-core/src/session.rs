@@ -725,8 +725,9 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     if device_state.has_sound_pad()
                         || device_state.has_ui_pad()
                         || device_state.has_editor_playback()
+                        || device_state.has_editor_assignment()
                     {
-                        return Err("sound-pad transaction interrupted by guest shutdown".into());
+                        return Err("device transaction interrupted by guest shutdown".into());
                     }
                     device_state.restarted()?;
                     let mut current = session
@@ -1165,8 +1166,9 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
                     if device_state.has_sound_pad()
                         || device_state.has_ui_pad()
                         || device_state.has_editor_playback()
+                        || device_state.has_editor_assignment()
                     {
-                        return Err("sound-pad transaction interrupted by guest shutdown".into());
+                        return Err("device transaction interrupted by guest shutdown".into());
                     }
                     device_state.restarted()?;
                     drop(session.take());
@@ -1222,6 +1224,9 @@ pub fn run(scenario: Scenario, mut options: Options) -> Result<(), String> {
     }
     if result.is_ok() && device_state.has_midi_sync() {
         result = Err("MIDI sync transaction ended before completion".into());
+    }
+    if result.is_ok() && device_state.has_editor_assignment() {
+        result = Err("Editor assignment ended before completion".into());
     }
     if result.is_ok() && device_state.has_editor_playback() {
         result = Err("Editor playback ended before completion".into());

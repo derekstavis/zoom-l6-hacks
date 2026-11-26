@@ -307,6 +307,17 @@ pub fn step_label(action: &crate::Action) -> String {
         Action::KnobRaceSample => "Sample callback rejection state".into(),
         Action::KnobRaceRestore => "Restore raced descriptor".into(),
         Action::KnobRaceAssert => "Check callback rejection and retry readiness".into(),
+        Action::EditorAssignBegin => "Begin Editor pad assignments".into(),
+        Action::EditorAssignIdentity => "Check Editor identity".into(),
+        Action::EditorAssignGlobal => "Check Editor global settings".into(),
+        Action::EditorAssignVersion => "Check Editor app version".into(),
+        Action::EditorAssignSdInfo => "Check Editor SD information".into(),
+        Action::EditorAssignRefresh => "Refresh Editor session".into(),
+        Action::EditorAssignCount { pad } => format!("Check pad {} file count", pad + 1),
+        Action::EditorAssignFilename { pad } => format!("Select pad {} filename", pad + 1),
+        Action::EditorAssignSend { pad } => format!("Assign pad {} file", pad + 1),
+        Action::EditorAssignState { pad } => format!("Check pad {} assignment", pad + 1),
+        Action::EditorAssignEnd => "Finish Editor pad assignments".into(),
         Action::EditorPlaybackBegin { pad } => {
             format!("Prepare Editor playback for pad {}", pad + 1)
         }

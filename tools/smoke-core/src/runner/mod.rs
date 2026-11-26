@@ -743,8 +743,46 @@ impl Runner {
                 Action::UsbSysexEnd => {
                     return Ok(Progress::Device(devices::Operation::UsbSysexEnd));
                 }
-                Action::EditorPadAssignments => {
-                    return Ok(Progress::Device(devices::Operation::EditorPadAssignments));
+                Action::EditorAssignBegin => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignBegin));
+                }
+                Action::EditorAssignIdentity => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignIdentity));
+                }
+                Action::EditorAssignGlobal => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignGlobal));
+                }
+                Action::EditorAssignVersion => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignVersion));
+                }
+                Action::EditorAssignSdInfo => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignSdInfo));
+                }
+                Action::EditorAssignRefresh => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignRefresh));
+                }
+                Action::EditorAssignCount { pad } => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignCount {
+                        pad,
+                    }));
+                }
+                Action::EditorAssignFilename { pad } => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignFilename {
+                        pad,
+                    }));
+                }
+                Action::EditorAssignSend { pad } => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignSend {
+                        pad,
+                    }));
+                }
+                Action::EditorAssignState { pad } => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignState {
+                        pad,
+                    }));
+                }
+                Action::EditorAssignEnd => {
+                    return Ok(Progress::Device(devices::Operation::EditorAssignEnd));
                 }
                 Action::EditorPlaybackBegin { pad } => {
                     return Ok(Progress::Device(devices::Operation::EditorPlaybackBegin {

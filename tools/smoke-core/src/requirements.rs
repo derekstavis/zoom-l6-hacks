@@ -271,7 +271,17 @@ pub fn of(action: &Action) -> Requirement {
         | Action::UsbSysexBegin
         | Action::UsbSysexExchange { .. }
         | Action::UsbSysexEnd
-        | Action::EditorPadAssignments
+        | Action::EditorAssignBegin
+        | Action::EditorAssignIdentity
+        | Action::EditorAssignGlobal
+        | Action::EditorAssignVersion
+        | Action::EditorAssignSdInfo
+        | Action::EditorAssignRefresh
+        | Action::EditorAssignCount { .. }
+        | Action::EditorAssignFilename { .. }
+        | Action::EditorAssignSend { .. }
+        | Action::EditorAssignState { .. }
+        | Action::EditorAssignEnd
         | Action::EditorPlaybackBegin { .. }
         | Action::EditorPlaybackPlay
         | Action::EditorPlaybackWait

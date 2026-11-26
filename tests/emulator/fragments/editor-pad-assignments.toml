@@ -1,0 +1,130 @@
+[[step]]
+action = "editor-assign-begin"
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-identity"
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-global"
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-version"
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-sd-info"
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-refresh"
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-count"
+pad = 0
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-filename"
+pad = 0
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-send"
+pad = 0
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-state"
+pad = 0
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-count"
+pad = 1
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-filename"
+pad = 1
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-send"
+pad = 1
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-state"
+pad = 1
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-count"
+pad = 2
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-filename"
+pad = 2
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-send"
+pad = 2
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-state"
+pad = 2
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-count"
+pad = 3
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-filename"
+pad = 3
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-send"
+pad = 3
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-state"
+pad = 3
+guest_timeout_ms = 60000
+wall_timeout_s = 900
+
+[[step]]
+action = "editor-assign-end"
+guest_timeout_ms = 60000
+wall_timeout_s = 900

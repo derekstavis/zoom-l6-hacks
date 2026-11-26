@@ -584,7 +584,25 @@ pub enum Action {
         complete_on_match: bool,
     },
     UsbSysexEnd,
-    EditorPadAssignments,
+    EditorAssignBegin,
+    EditorAssignIdentity,
+    EditorAssignGlobal,
+    EditorAssignVersion,
+    EditorAssignSdInfo,
+    EditorAssignRefresh,
+    EditorAssignCount {
+        pad: u8,
+    },
+    EditorAssignFilename {
+        pad: u8,
+    },
+    EditorAssignSend {
+        pad: u8,
+    },
+    EditorAssignState {
+        pad: u8,
+    },
+    EditorAssignEnd,
     EditorPlaybackBegin {
         pad: u8,
     },

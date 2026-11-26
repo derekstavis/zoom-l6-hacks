@@ -1414,11 +1414,60 @@ impl Scenario {
                 return Err("unterminated Editor playback".into());
             }
         }
+        for model in &value.models {
+            let mut scope: Option<(u8, u8, u32, u64)> = None;
+            for step in value.step.iter().filter(|step| step.applies_to(*model)) {
+                let phase = match &step.action {
+                    Action::EditorAssignBegin => {
+                        if scope.is_some() {
+                            return Err("nested Editor assignment".into());
+                        }
+                        scope = Some((0, 0, step.guest_timeout_ms, step.wall_timeout_s));
+                        continue;
+                    }
+                    Action::EditorAssignIdentity => Some((0, None)),
+                    Action::EditorAssignGlobal => Some((1, None)),
+                    Action::EditorAssignVersion => Some((2, None)),
+                    Action::EditorAssignSdInfo => Some((3, None)),
+                    Action::EditorAssignRefresh => Some((4, None)),
+                    Action::EditorAssignCount { pad } => Some((5, Some(*pad))),
+                    Action::EditorAssignFilename { pad } => Some((6, Some(*pad))),
+                    Action::EditorAssignSend { pad } => Some((7, Some(*pad))),
+                    Action::EditorAssignState { pad } => Some((8, Some(*pad))),
+                    Action::EditorAssignEnd => Some((9, None)),
+                    _ => None,
+                };
+                match (scope, phase) {
+                    (Some((want, pad, guest, wall)), Some((actual, actual_pad)))
+                        if want == actual
+                            && actual_pad.is_none_or(|v| v == pad)
+                            && (guest, wall) == (step.guest_timeout_ms, step.wall_timeout_s) =>
+                    {
+                        scope = if actual == 9 {
+                            None
+                        } else if actual == 8 {
+                            Some((if pad == 3 { 9 } else { 5 }, pad + 1, guest, wall))
+                        } else {
+                            Some((want + 1, pad, guest, wall))
+                        };
+                    }
+                    (Some(_), _) | (None, Some(_)) => {
+                        return Err(
+                            "invalid Editor assignment sequence, pad or shared budget".into()
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            if scope.is_some() {
+                return Err("unterminated Editor assignment".into());
+            }
+        }
         for step in &value.step {
             if let Action::KnobDialogAdaptive { plan } = &step.action {
                 plan.validate()?;
             }
-            if matches!(step.action, Action::EditorPadAssignments) && !usb_descriptors_seen {
+            if matches!(step.action, Action::EditorAssignBegin) && !usb_descriptors_seen {
                 return Err(
                     "editor-pad-assignments requires a preceding usb-descriptors step".into(),
                 );
@@ -1427,7 +1476,7 @@ impl Scenario {
                 usb_descriptors_seen = true;
             }
             match &step.action {
-                Action::EditorPadAssignments => pad_assignments_seen = true,
+                Action::EditorAssignEnd => pad_assignments_seen = true,
                 Action::UiPadBegin { pad } => {
                     if !usb_descriptors_seen {
                         return Err(

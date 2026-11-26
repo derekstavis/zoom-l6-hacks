@@ -18,9 +18,8 @@ action = "include"
 path = "tests/emulator/fragments/editor-pad-usb-ready.toml"
 
 [[step]]
-action = "editor-pad-assignments"
-guest_timeout_ms = 60000
-wall_timeout_s = 900
+action = "include"
+path = "tests/emulator/fragments/editor-pad-assignments.toml"
 
 # Exercise the Editor SysEx play command and the firmware's per-pad playing
 # state, then require nonzero SAI1 TX samples for each assigned WAV.

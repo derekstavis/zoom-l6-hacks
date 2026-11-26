@@ -10,6 +10,30 @@ pub fn pad_assignment_present(reply: &[u8], pad: u8) -> bool {
         && reply.get(9..11) != Some(&[0, 0])
 }
 
+/// Decode the first file-count reply for the requested pad.
+pub fn pad_file_count(replies: &[Vec<u8>], pad: u8) -> Option<u16> {
+    replies.iter().find_map(|reply| {
+        (reply.get(4..7) == Some(&[0x45, 0x00, pad]) && reply.len() >= 10)
+            .then(|| ((reply[7] as u16) << 7) | reply[8] as u16)
+    })
+}
+
+/// Validate the fields consumed from a filename reply.
+pub fn pad_filename_valid(reply: &[u8], pad: u8) -> bool {
+    reply.get(4..7) == Some(&[0x45, 0x01, pad])
+        && reply.len() >= 12
+        && reply.get(7..9) != Some(&[0x7f, 0x7f])
+        && reply.get(9..11) != Some(&[0, 0])
+}
+
+/// Match the state reply's exact assignment bytes against the chosen file.
+pub fn pad_assignment_matches(replies: &[Vec<u8>], pad: u8, args: &[u8]) -> bool {
+    replies.iter().any(|reply| {
+        reply.get(4..7) == Some(&[0x45, 0x02, pad])
+            && reply.get(6..reply.len().saturating_sub(1)) == Some(args)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

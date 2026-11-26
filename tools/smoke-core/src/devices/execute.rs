@@ -370,7 +370,11 @@ impl State {
         self.l6_indicator = None;
         self.ui_pad = None;
         self.editor_playback = None;
+        self.editor_assignment = None;
         panel.map(|_| ())
+    }
+    pub fn has_editor_assignment(&self) -> bool {
+        self.editor_assignment.is_some()
     }
     pub fn has_editor_playback(&self) -> bool {
         self.editor_playback.is_some()
@@ -429,6 +433,31 @@ impl State {
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
     ) -> Result<Value, String> {
+        if let Some(scope) = self.editor_assignment.as_ref() {
+            let expected = match operation {
+                Operation::EditorAssignIdentity => Some((0, None)),
+                Operation::EditorAssignGlobal => Some((1, None)),
+                Operation::EditorAssignVersion => Some((2, None)),
+                Operation::EditorAssignSdInfo => Some((3, None)),
+                Operation::EditorAssignRefresh => Some((4, None)),
+                Operation::EditorAssignCount { pad } => Some((5, Some(pad))),
+                Operation::EditorAssignFilename { pad } => Some((6, Some(pad))),
+                Operation::EditorAssignSend { pad } => Some((7, Some(pad))),
+                Operation::EditorAssignState { pad } => Some((8, Some(pad))),
+                Operation::EditorAssignEnd => Some((9, None)),
+                _ => None,
+            };
+            if !expected.is_some_and(|(phase, pad)| {
+                phase == scope.phase && pad.is_none_or(|pad| pad == scope.pad)
+            }) {
+                self.editor_assignment = None;
+                return Err("Editor assignment interrupted or wrong pad".into());
+            }
+            if let Err(error) = scope.check(session, guest_timeout_ms, wall_timeout_s) {
+                self.editor_assignment = None;
+                return Err(error.to_string());
+            }
+        }
         if let Some(scope) = self.editor_playback.as_ref() {
             let expected = match operation {
                 Operation::EditorPlaybackPlay => Some(0),
@@ -2616,17 +2645,73 @@ impl State {
                 }
                 Ok(json!({"sent":request.bytes,"replies":replies}))
             }
-            Operation::EditorPadAssignments => {
+            Operation::EditorAssignBegin => {
                 let endpoints = self
                     .midi
-                    .ok_or("editor-pad-assignments needs a preceding USB MIDI enumeration")?;
-                run_editor_pad_assignments(
+                    .ok_or("Editor assignments require USB enumeration")?;
+                self.editor_assignment = Some(editor::EditorAssignmentScope::begin(
                     session,
-                    options,
                     endpoints,
                     guest_timeout_ms,
                     wall_timeout_s,
-                )
+                )?);
+                Ok(json!({"started":true}))
+            }
+            operation @ (Operation::EditorAssignIdentity
+            | Operation::EditorAssignGlobal
+            | Operation::EditorAssignVersion
+            | Operation::EditorAssignSdInfo
+            | Operation::EditorAssignRefresh
+            | Operation::EditorAssignCount { .. }
+            | Operation::EditorAssignFilename { .. }
+            | Operation::EditorAssignSend { .. }
+            | Operation::EditorAssignState { .. }
+            | Operation::EditorAssignEnd) => {
+                let scope = self
+                    .editor_assignment
+                    .as_mut()
+                    .ok_or("Editor assignment is not active")?;
+                let value = match operation {
+                    Operation::EditorAssignIdentity => scope.identity(session)?,
+                    Operation::EditorAssignGlobal => scope.expected(
+                        session,
+                        &[0xf0, 0x52, 0, 0, 0x2b, 0xf7],
+                        &[0xf0, 0x52, 0, 0, 0x2a],
+                        "global settings",
+                    )?,
+                    Operation::EditorAssignVersion => scope.expected(
+                        session,
+                        &[
+                            0xf0, 0x52, 0, 0, 0x45, 0x05, 0x02, 0, 0, 0, 0, 0, 0x27, 0, 0xf7,
+                        ],
+                        &[0xf0, 0x52, 0, 0, 0, 0x11],
+                        "application version",
+                    )?,
+                    Operation::EditorAssignSdInfo => scope.expected(
+                        session,
+                        &[0xf0, 0x52, 0, 0, 0x67, 0x01, 0xf7],
+                        &[0xf0, 0x52, 0, 0, 0x67, 0x00],
+                        "SD card information",
+                    )?,
+                    Operation::EditorAssignRefresh => scope.initial_refresh(session)?,
+                    Operation::EditorAssignCount { pad } => scope.count(session, pad)?,
+                    Operation::EditorAssignFilename { pad } => scope.filename(session, pad)?,
+                    Operation::EditorAssignSend { pad } => scope.assign(session, pad)?,
+                    Operation::EditorAssignState { pad } => scope.state(session, pad)?,
+                    Operation::EditorAssignEnd => scope.finish(options)?,
+                    _ => unreachable!(),
+                };
+                scope.check(session, guest_timeout_ms, wall_timeout_s)?;
+                if matches!(operation, Operation::EditorAssignState { .. }) {
+                    scope.pad += 1;
+                    scope.phase = if scope.pad == 4 { 9 } else { 5 };
+                } else {
+                    scope.phase += 1;
+                }
+                if matches!(operation, Operation::EditorAssignEnd) {
+                    self.editor_assignment = None;
+                }
+                Ok(value)
             }
             Operation::EditorPlaybackBegin { pad } => {
                 let endpoints = self

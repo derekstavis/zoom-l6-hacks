@@ -197,20 +197,14 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
             let elapsed_ms = guest.guest_ms().wrapping_sub(start_guest_ms);
             while event_index < events.len() && events[event_index].at_ms <= elapsed_ms {
                 match events[event_index].kind {
-                    EventKind::Tap { target, hold_ms } => guest
-                        .engine
-                        .inputs
-                        .as_ref()
-                        .ok_or("QEMU input unavailable")?
-                        .tap(target, hold_ms)
+                    EventKind::Tap { target, hold_ms } => l6ctl::OwnedControl::new(&guest.engine)
+                        .raw_tap(l6ctl::InputSource::Panel, target, hold_ms)
                         .map_err(|error| error.to_string())?,
-                    EventKind::Encoder { channel, steps } => guest
-                        .engine
-                        .inputs
-                        .as_ref()
-                        .ok_or("QEMU input unavailable")?
-                        .encoder(channel - 1, steps)
-                        .map_err(|error| error.to_string())?,
+                    EventKind::Encoder { channel, steps } => {
+                        l6ctl::OwnedControl::new(&guest.engine)
+                            .raw_panel_encoder(channel - 1, steps)
+                            .map_err(|error| error.to_string())?
+                    }
                 };
                 event_index += 1;
             }

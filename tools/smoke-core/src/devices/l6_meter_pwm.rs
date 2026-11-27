@@ -2,7 +2,8 @@
 use super::*;
 
 fn panel_ms(session: &Session) -> Result<u32, String> {
-    Ok(l6ctl::OwnedControl::new(&session.engine)
+    Ok(session
+        .control()
         .input_status(l6ctl::InputSource::Panel)
         .map_err(|e| e.to_string())?
         .guest_ms)
@@ -42,14 +43,14 @@ pub(super) struct Scope {
 }
 impl Scope {
     pub(super) fn begin(session: &Session, guest: u32, wall: u64) -> Result<Self, String> {
-        if session.engine.model() != l6fw::Model::L6 {
+        if session.model() != l6fw::Model::L6 {
             return Err("L6 level-meter requires L6".into());
         }
         let start = panel_ms(session)?;
         let deadline = Instant::now()
             .checked_add(Duration::from_secs(wall))
             .ok_or("level-meter deadline overflow")?;
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         let mut debug = control
             .debug_session_before(deadline)
             .map_err(|e| e.to_string())?;
@@ -200,7 +201,7 @@ impl Scope {
         if count == 0 {
             return Err("L6 level-meter PWM captured no panel samples".into());
         }
-        let ctl = l6ctl::OwnedControl::new(&session.engine);
+        let ctl = session.control();
         let read = |address, length| -> Result<Vec<u8>, String> {
             check(session, self.start, self.guest, self.deadline)?;
             let bytes = ctl

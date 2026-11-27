@@ -357,7 +357,7 @@ pub(in crate::devices) fn run(
     if main.get(0x40c..0x410) != Some(&0x8007eea9u32.to_le_bytes()) {
         return Err("patched startup hook does not reserve popup RAM".into());
     }
-    let control = l6ctl::OwnedControl::new(&session.engine);
+    let control = session.control();
     let deadline = SharedDeadline {
         start: shared.0,
         guest_start: shared.1,
@@ -406,7 +406,7 @@ fn with_level_host<T>(
     shared: (Instant, u32, u32, u64, u16),
     f: impl FnOnce(&mut LiveHost<'_, '_>, &Reporter<'_>) -> Result<T, Box<dyn std::error::Error>>,
 ) -> Result<T, Box<dyn std::error::Error>> {
-    let control = l6ctl::OwnedControl::new(&session.engine);
+    let control = session.control();
     let deadline = SharedDeadline {
         start: shared.0,
         guest_start: shared.1,

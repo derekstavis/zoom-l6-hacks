@@ -37,7 +37,7 @@ impl State {
             }
         };
         check()?;
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         let before = if reuse_previous {
             let (previous_cc, rows) = self
                 .l6_indicator
@@ -503,7 +503,7 @@ impl State {
         wall_timeout_s: u64,
     ) -> Result<Value, Box<dyn std::error::Error>> {
         use l6ctl::midi::{ControlChange, MidiSession};
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         control
             .input_status(l6ctl::InputSource::Panel)
             .map_err(|_| "MIDI test needs inputs")?;
@@ -515,7 +515,7 @@ impl State {
             let guest_start = guest_now(session);
             let endpoint = l6max_host::host_midi::endpoint_name(
                 &l6max_host::host_midi::port_names_for_model_with_namespace(
-                    session.engine.model(),
+                    session.model(),
                     midi_namespace().as_deref(),
                 )[1],
             );
@@ -534,10 +534,8 @@ impl State {
             )
             .map_err(|error| {
                 let bridge = session
-                    .engine
-                    .midi
-                    .as_ref()
-                    .map(|midi| midi.status.lock().unwrap().clone())
+                    .control()
+                    .midi_bridge_status()
                     .unwrap_or_else(|| "USB MIDI bridge unavailable".into());
                 std::io::Error::other(format!("{error}; bridge status: {bridge}"))
             })?;
@@ -571,7 +569,7 @@ impl State {
             self.release_retained_host_midi();
             let started = Instant::now();
             let guest_start = guest_now(session);
-            let control = l6ctl::OwnedControl::new(&session.engine);
+            let control = session.control();
             let budget = control.usb_panel_budget(
                 started + Duration::from_secs(wall_timeout_s),
                 guest_start,
@@ -602,8 +600,8 @@ impl State {
             }
             let guest_start = guest_now(session);
             let mut remaining = Vec::new();
-            let (expected_count, expected_status) = if session.engine.model() == l6fw::Model::L6 {
-                let config = l6ctl::OwnedControl::new(&session.engine).midi_config()?;
+            let (expected_count, expected_status) = if session.model() == l6fw::Model::L6 {
+                let config = session.control().midi_config()?;
                 for cc in config.cc_map.into_iter().filter(|cc| *cc != 0xff) {
                     if let Some((_, count)) = remaining.iter_mut().find(|(mapped, _)| *mapped == cc)
                     {
@@ -799,7 +797,7 @@ impl State {
                 return Err("host MIDI receive deadline elapsed before encoder input".into());
             }
             let steps = next_midi_encoder_steps(&mut self.encoder_turned_up);
-            let receipt = l6ctl::OwnedControl::new(&session.engine).encoder(1, steps)?;
+            let receipt = session.control().encoder(1, steps)?;
             return Ok(json!({"channel":receipt.channel,"steps":receipt.steps}));
         }
         let result = match operation {
@@ -816,8 +814,7 @@ impl State {
                 {
                     return Err("host MIDI receive deadline elapsed before encoder input".into());
                 }
-                let receipt =
-                    l6ctl::OwnedControl::new(&session.engine).encoder(channel as u32, steps)?;
+                let receipt = session.control().encoder(channel as u32, steps)?;
                 json!({"channel": receipt.channel, "steps": receipt.steps})
             }
             Operation::HostMidiDrain { quiet_wall_ms } => {
@@ -1610,7 +1607,7 @@ impl State {
         use firmware_api::l6::{idle_loop, midi_in, midi_send};
         use l6max_host::debug::{Command as C, L6MidiBinding as B, Observation as O};
         if matches!(operation, Operation::L6MidiProbeBegin) {
-            if self.l6_midi_probe.is_some() || session.engine.model() != l6fw::Model::L6 {
+            if self.l6_midi_probe.is_some() || session.model() != l6fw::Model::L6 {
                 return Err("L6 MIDI probe requires a fresh L6 guest".into());
             }
             let started = Instant::now();
@@ -1672,7 +1669,8 @@ impl State {
                 )?;
                 (B::Firmware, Some(hook.target))
             };
-            let debug = l6ctl::OwnedControl::new(&session.engine)
+            let debug = session
+                .control()
                 .debug_session()
                 .map_err(|e| e.to_string())?;
             let mut scope = L6MidiProbe {
@@ -1955,10 +1953,10 @@ impl State {
         operation: Operation,
     ) -> Result<Value, Box<dyn std::error::Error>> {
         if matches!(operation, Operation::DinUsbBegin) {
-            if self.din_usb.is_some() || session.engine.model() != l6fw::Model::L6 {
+            if self.din_usb.is_some() || session.model() != l6fw::Model::L6 {
                 return Err("DIN USB forwarding requires a fresh L6 scope".into());
             }
-            l6ctl::OwnedControl::new(&session.engine).connect_din()?;
+            session.control().connect_din()?;
             let endpoint = l6max_host::host_midi::endpoint_name(
                 &l6max_host::host_midi::din_port_name_for_model_with_namespace(
                     l6fw::Model::L6,
@@ -1988,7 +1986,7 @@ impl State {
         let scope = self.din_usb.as_mut().ok_or("missing DIN USB scope")?;
         match operation {
             Operation::DinUsbAttach if scope.usb.is_none() => {
-                let mut usb = l6ctl::OwnedControl::new(&session.engine).raw_usb_midi()?;
+                let mut usb = session.control().raw_usb_midi()?;
                 let deadline = Instant::now() + Duration::from_secs(15);
                 loop {
                     match usb.enumerate() {
@@ -2167,7 +2165,8 @@ impl State {
             let endpoints = self
                 .midi
                 .ok_or("USB MIDI needs prior descriptor enumeration")?;
-            let receiver = l6ctl::OwnedControl::new(&session.engine)
+            let receiver = session
+                .control()
                 .raw_usb_midi_enumerated(endpoints)
                 .map_err(|e| e.to_string())?;
             self.usb_midi = Some(UsbMidiScope {
@@ -2191,7 +2190,7 @@ impl State {
             return Ok(json!({"started":true}));
         }
         scope.check(session)?;
-        let cc = if session.engine.model() == l6fw::Model::L6 {
+        let cc = if session.model() == l6fw::Model::L6 {
             0x53
         } else {
             0x51
@@ -2236,7 +2235,8 @@ impl State {
                 Ok(json!({"received":captured, "controller":cc, "cable":"any"}))
             }
             UsbMidiPrepareLevel { value } if scope.phase == 2 && value <= 127 => {
-                let sample = l6ctl::OwnedControl::new(&session.engine)
+                let sample = session
+                    .control()
                     .mixer_level_cancellable(scope.wall_deadline()?, || {
                         scope.check(session).is_err()
                     })
@@ -2258,7 +2258,7 @@ impl State {
                     scope.target
                 };
                 if let Some(level) = level {
-                    let control = l6ctl::OwnedControl::new(&session.engine);
+                    let control = session.control();
                     let local_start = guest_now(session);
                     let (_, _, outer_guest, outer_wall) = scope.started.unwrap();
                     let local_guest = outer_guest.min(10_000);

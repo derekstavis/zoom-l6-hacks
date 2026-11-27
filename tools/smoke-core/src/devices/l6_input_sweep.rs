@@ -46,10 +46,11 @@ impl Scope {
         guest_budget: u32,
         wall_budget: u64,
     ) -> Result<Self, String> {
-        if session.engine.model() != l6fw::Model::L6 {
+        if session.model() != l6fw::Model::L6 {
             return Err("L6 input sweep requires L6".into());
         }
-        let guest_start = l6ctl::OwnedControl::new(&session.engine)
+        let guest_start = session
+            .control()
             .input_status(InputSource::Panel)
             .map_err(|e| e.to_string())?
             .guest_ms;
@@ -75,7 +76,8 @@ impl Scope {
         })
     }
     pub(super) fn check(&self, session: &Session, guest: u32, wall: u64) -> Result<(), String> {
-        let now = l6ctl::OwnedControl::new(&session.engine)
+        let now = session
+            .control()
             .input_status(InputSource::Panel)
             .map_err(|e| e.to_string())?
             .guest_ms;
@@ -131,7 +133,7 @@ impl Scope {
         if !matches!(target, 0 | 5) {
             return Err("unsupported MAIN test target must be 0 or 5".into());
         }
-        let c = l6ctl::OwnedControl::new(&session.engine);
+        let c = session.control();
         let before = c
             .input_status(InputSource::Main)
             .map_err(|e| e.to_string())?
@@ -168,7 +170,8 @@ impl Scope {
     ) -> Result<Value, String> {
         self.presses = Self::count(options, 0x91)?;
         self.releases = Self::count(options, 0x90)?;
-        let p = l6ctl::OwnedControl::new(&session.engine)
+        let p = session
+            .control()
             .input_status(InputSource::Panel)
             .map_err(|e| e.to_string())?;
         self.panel_applied = p.applied;
@@ -179,14 +182,15 @@ impl Scope {
     pub(super) fn panel_tap(&mut self, session: &Session) -> Result<Value, String> {
         let target = self.target.ok_or("missing panel target")?;
         self.held = Some(target);
-        let sequence = l6ctl::OwnedControl::new(&session.engine)
+        let sequence = session
+            .control()
             .raw_tap(InputSource::Panel, target, 120)
             .map_err(|e| e.to_string())?;
         self.wait_deadline = Some(Instant::now() + Duration::from_secs(10));
         Ok(json!({"target":target,"sequence":sequence}))
     }
     pub(super) fn panel_wait(&mut self, session: &Session) -> Result<Value, String> {
-        let c = l6ctl::OwnedControl::new(&session.engine);
+        let c = session.control();
         self.wait_at(
             session,
             "panel tap application and release",
@@ -241,7 +245,7 @@ impl Scope {
         if index >= 6 {
             return Err("encoder test index must be 0..5".into());
         }
-        let c = l6ctl::OwnedControl::new(&session.engine);
+        let c = session.control();
         self.encoder_applied = c
             .input_status(InputSource::Panel)
             .map_err(|e| e.to_string())?
@@ -252,7 +256,7 @@ impl Scope {
         Ok(json!({"encoder":index,"sequence":seq}))
     }
     pub(super) fn encoder_wait(&mut self, session: &Session) -> Result<Value, String> {
-        let c = l6ctl::OwnedControl::new(&session.engine);
+        let c = session.control();
         self.wait_at(
             session,
             "encoder input application",
@@ -293,7 +297,7 @@ impl Scope {
         Ok(json!({"encoder_reports":count}))
     }
     pub(super) fn reject_panel(&self, session: &Session) -> Result<Value, String> {
-        let c = l6ctl::OwnedControl::new(&session.engine);
+        let c = session.control();
         let before = c
             .input_status(InputSource::Panel)
             .map_err(|e| e.to_string())?
@@ -323,7 +327,7 @@ impl Scope {
         Ok(json!({"target":31,"rejections":{"main":main,"panel":panel}}))
     }
     pub(super) fn reject_encoder(&self, session: &Session) -> Result<Value, String> {
-        let c = l6ctl::OwnedControl::new(&session.engine);
+        let c = session.control();
         let before = c
             .input_status(InputSource::Panel)
             .map_err(|e| e.to_string())?
@@ -352,7 +356,7 @@ impl Scope {
         Ok(json!({"encoder":6,"rejections":{"main":main,"panel":panel}}))
     }
     pub(super) fn end(&self, session: &Session) -> Result<Value, String> {
-        let c = l6ctl::OwnedControl::new(&session.engine);
+        let c = session.control();
         let main = c
             .input_status(InputSource::Main)
             .map_err(|e| e.to_string())?
@@ -372,7 +376,8 @@ impl Scope {
     }
     pub(super) fn abort(&mut self, session: &Session) -> Result<(), String> {
         if let Some(target) = self.held.take() {
-            l6ctl::OwnedControl::new(&session.engine)
+            session
+                .control()
                 .raw_up(InputSource::Panel, target)
                 .map_err(|e| e.to_string())?;
         }

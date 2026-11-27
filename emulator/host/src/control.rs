@@ -358,6 +358,14 @@ fn execute(
             };
             serde_json::to_value(inputs.counters(source)).map_err(|error| error.to_string())
         }
+        "input-snapshot" => {
+            let source = match request.get("source").and_then(Value::as_str) {
+                Some("main") => InputSource::Main,
+                Some("panel") => InputSource::Panel,
+                _ => return Err("input-snapshot source must be main or panel".into()),
+            };
+            serde_json::to_value(inputs.snapshot(source)).map_err(|error| error.to_string())
+        }
         "input-ack" => {
             let source = match request.get("source").and_then(Value::as_str) {
                 Some("main") => InputSource::Main,
@@ -563,6 +571,24 @@ fn execute(
             let steps = signed(request, "steps")?;
             let channel = u32::try_from(channel).map_err(|_| "encoder channel is too large")?;
             let sequence = enqueue_encoder(inputs, model, channel, steps)?;
+            Ok(json!({"channel":channel,"steps":steps,"sequence":sequence}))
+        }
+        "panel-knob" => {
+            let channel = number(request, "channel")?;
+            if channel == 0 || channel > model.channels() as u64 {
+                return Err(format!(
+                    "panel knob channel must be 1..{}",
+                    model.channels()
+                ));
+            }
+            let steps = signed(request, "steps")?;
+            if steps == 0 || steps.unsigned_abs() > 1000 {
+                return Err("steps must be between -1000 and 1000, excluding zero".into());
+            }
+            let channel = channel as u32;
+            let sequence = inputs
+                .knob(channel as usize - 1, steps)
+                .map_err(|error| error.to_string())?;
             Ok(json!({"channel":channel,"steps":steps,"sequence":sequence}))
         }
         "analog" => {
@@ -1065,7 +1091,7 @@ mod tests {
     fn input_status_request_dispatches_and_rejects_invalid_sources() {
         use crate::input::EngineInput;
         let (main, _main_peer) = EngineInput::pair().unwrap();
-        let (panel, _panel_peer) = EngineInput::pair().unwrap();
+        let (panel, mut panel_peer) = EngineInput::pair().unwrap();
         let inputs = InputHub::new(main, panel, Model::L6max);
         let (stream, mut peer) = UnixStream::pair().unwrap();
         let server = thread::spawn(move || {
@@ -1092,7 +1118,32 @@ mod tests {
                 result,
                 serde_json::to_value(inputs.counters(expected)).unwrap()
             );
+            let snapshot = execute(
+                &json!({"command":"input-snapshot", "source":source}),
+                &inputs,
+                Model::L6max,
+                &qmp,
+            )
+            .unwrap();
+            assert_eq!(
+                snapshot,
+                serde_json::to_value(inputs.snapshot(expected)).unwrap()
+            );
         }
+        let gesture = execute(
+            &json!({"command":"panel-knob","channel":2,"steps":-3}),
+            &inputs,
+            Model::L6max,
+            &qmp,
+        )
+        .unwrap();
+        let message = crate::protocol::Message::read(&mut panel_peer).unwrap();
+        assert_eq!(
+            (message.kind, message.target, message.value),
+            (crate::protocol::ENCODER_STEP, 1, 3)
+        );
+        assert_eq!(gesture["channel"], 2);
+        assert_eq!(gesture["steps"], -3);
         assert!(
             execute(
                 &json!({"command":"input-status", "source":"other"}),

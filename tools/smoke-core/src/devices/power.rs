@@ -71,7 +71,7 @@ impl State {
         guest_timeout_ms: u32,
         wall_timeout_s: u64,
     ) -> Result<Value, Box<dyn std::error::Error>> {
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         match operation {
             Operation::PowerBegin { hold_ms, powered } => {
                 if self.power.is_some() {

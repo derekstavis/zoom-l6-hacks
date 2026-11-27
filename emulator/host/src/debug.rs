@@ -294,6 +294,13 @@ fn l6_readable_ram(address: u32, length: u32) -> bool {
     })
 }
 
+fn l6_readable_main_memory(address: u32, length: u32) -> bool {
+    address.checked_add(length).is_some_and(|end| {
+        (address >= 0x2000_0000 && end <= 0x2030_0000)
+            || (address >= 0x8000_0000 && end <= 0x8420_0000)
+    })
+}
+
 trait Guest: Send + Sync {
     fn running(&self) -> Result<bool, String>;
     fn running_before(&self, deadline: Instant) -> Result<bool, String>;
@@ -319,6 +326,12 @@ trait Guest: Send + Sync {
         check: &dyn Fn() -> Result<(), String>,
     ) -> Result<(), String>;
     fn stop_before(&self, deadline: Instant) -> Result<(), String>;
+    fn read_memory_before(
+        &self,
+        address: u32,
+        length: usize,
+        deadline: Instant,
+    ) -> Result<Vec<u8>, String>;
     fn guard_l6_midi_probe(
         &self,
         deadline: Instant,
@@ -421,6 +434,19 @@ impl Guest for MainGuest {
     }
     fn stop_before(&self, deadline: Instant) -> Result<(), String> {
         self.qmp.stop_before(deadline).map_err(|e| e.to_string())
+    }
+    fn read_memory_before(
+        &self,
+        address: u32,
+        length: usize,
+        deadline: Instant,
+    ) -> Result<Vec<u8>, String> {
+        if length == 0 || length > 0x1000 || !l6_readable_main_memory(address, length as u32) {
+            return Err("debug observation outside bounded MAIN memory".into());
+        }
+        self.qmp
+            .read_memory_before(0, address, length, deadline)
+            .map_err(|error| error.to_string())
     }
     fn guard_l6max_signal(&self, deadline: Instant) -> Result<(), String> {
         if self.model != Model::L6max {
@@ -589,6 +615,18 @@ trait Transport: Send {
         deadline: Instant,
     ) -> Result<(), String>;
     fn register_before(&mut self, index: u32, deadline: Instant) -> Result<u32, String>;
+    fn write_register_before(
+        &mut self,
+        index: u32,
+        value: u32,
+        deadline: Instant,
+    ) -> Result<(), String>;
+    fn call_thumb(
+        &mut self,
+        address: u32,
+        arguments: &[u32],
+        timeout: Duration,
+    ) -> Result<String, String>;
     fn resume_before(&mut self, deadline: Instant) -> Result<(), String>;
     fn step_start_before(&mut self, deadline: Instant) -> Result<(), String>;
     fn poll_stop_before(
@@ -640,6 +678,22 @@ impl Transport for Gdb {
     }
     fn register_before(&mut self, index: u32, deadline: Instant) -> Result<u32, String> {
         Gdb::read_register_before(self, index, deadline).map_err(|e| e.to_string())
+    }
+    fn write_register_before(
+        &mut self,
+        index: u32,
+        value: u32,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        Gdb::write_register_before(self, index, value, deadline).map_err(|e| e.to_string())
+    }
+    fn call_thumb(
+        &mut self,
+        address: u32,
+        arguments: &[u32],
+        timeout: Duration,
+    ) -> Result<String, String> {
+        Gdb::call_thumb(self, address, arguments, timeout).map_err(|e| e.to_string())
     }
     fn resume_before(&mut self, deadline: Instant) -> Result<(), String> {
         Gdb::resume_before(self, deadline).map_err(|e| e.to_string())
@@ -1270,6 +1324,90 @@ impl Session {
         }
         Ok(value)
     }
+    /// Write one ARM register as part of a host-owned retained probe.
+    pub fn write_register_before(
+        &mut self,
+        index: u32,
+        value: u32,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        if index > 15 || Instant::now() >= deadline {
+            return Err("invalid register or deadline exceeded".into());
+        }
+        self.transact(|g| g.write_register_before(index, value, deadline))?;
+        if Instant::now() >= deadline {
+            return Err("register write deadline exceeded".into());
+        }
+        Ok(())
+    }
+    /// Write MAIN RAM under this session's GDB lease and an absolute deadline.
+    /// Callers that need rollback must journal a QMP before-image first.
+    pub fn write_memory_before(
+        &mut self,
+        address: u32,
+        bytes: &[u8],
+        deadline: Instant,
+    ) -> Result<(), String> {
+        if bytes.is_empty()
+            || bytes.len() > 0x1000
+            || !l6_readable_ram(address, bytes.len() as u32)
+            || Instant::now() >= deadline
+        {
+            return Err("memory write outside bounded MAIN RAM or deadline exceeded".into());
+        }
+        self.transact(|g| g.write_before(address, bytes, deadline))?;
+        if Instant::now() >= deadline {
+            return Err("memory write deadline exceeded".into());
+        }
+        Ok(())
+    }
+    /// Read bounded MAIN RAM through the QMP endpoint owned by this session.
+    pub fn guest_read_before(
+        &self,
+        address: u32,
+        length: usize,
+        deadline: Instant,
+    ) -> Result<Vec<u8>, String> {
+        if Instant::now() >= deadline {
+            return Err("guest observation deadline exceeded".into());
+        }
+        let bytes = self.guest.read_memory_before(address, length, deadline)?;
+        if Instant::now() >= deadline {
+            return Err("guest observation deadline exceeded".into());
+        }
+        Ok(bytes)
+    }
+    /// Stop MAIN through the QMP endpoint owned by this session.
+    pub fn guest_stop_before(&self, deadline: Instant) -> Result<(), String> {
+        self.guest.stop_before(deadline)
+    }
+    /// Resume MAIN through the QMP endpoint owned by this session.
+    pub fn guest_resume_before(&self, deadline: Instant) -> Result<(), String> {
+        self.guest.resume_before(deadline)
+    }
+    /// Call a bounded Thumb routine while retaining this session's GDB lease.
+    pub fn call_thumb_before(
+        &mut self,
+        address: u32,
+        arguments: &[u32],
+        deadline: Instant,
+    ) -> Result<String, String> {
+        if address & 1 != 0
+            || !(0x8000_0000..0x8420_0000).contains(&address)
+            || !(1..=5).contains(&arguments.len())
+        {
+            return Err("Thumb call target or arguments are outside supported bounds".into());
+        }
+        let timeout = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or("Thumb call deadline exceeded")?;
+        let result = self.transact(|g| g.call_thumb(address, arguments, timeout))?;
+        if Instant::now() >= deadline {
+            return Err("Thumb call deadline exceeded".into());
+        }
+        Ok(result)
+    }
     /// Resume MAIN under the retained debugger lease while an in-process
     /// observer polls for owned breakpoints and handles concurrent inputs.
     pub fn resume_owned_before(&mut self, deadline: Instant) -> Result<(), String> {
@@ -1374,6 +1512,31 @@ impl Session {
     pub fn close_stopped_before(&mut self, deadline: Instant) -> Result<(), String> {
         self.was_running = false;
         self.close_before(deadline)
+    }
+
+    /// Release this session without changing MAIN's current run state.
+    pub fn close_preserving_guest_state_before(&mut self, deadline: Instant) -> Result<(), String> {
+        self.was_running = self.guest.running_before(deadline)?;
+        self.close_before(deadline)
+    }
+
+    /// Report whether MAIN is currently running through this session's QMP.
+    pub fn guest_running_before(&self, deadline: Instant) -> Result<bool, String> {
+        self.guest.running_before(deadline)
+    }
+
+    /// Restore a previously observed MAIN run state through this session's QMP.
+    pub fn guest_restore_state_before(
+        &self,
+        running: bool,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        let current = self.guest.running_before(deadline)?;
+        match (current, running) {
+            (true, false) => self.guest.stop_before(deadline),
+            (false, true) => self.guest.resume_before(deadline),
+            _ => Ok(()),
+        }
     }
 
     /// Restore any scratch and owned breakpoints, then restore the prior run state.
@@ -2200,10 +2363,14 @@ impl Session {
         self.transport.take();
         let restore = if disconnected.is_err() {
             Err("GDB disconnect failed".to_owned())
-        } else if self.was_running {
-            self.guest.resume_before(deadline)
         } else {
-            self.guest.stop_before(deadline)
+            self.guest.running_before(deadline).and_then(|running| {
+                match (running, self.was_running) {
+                    (true, false) => self.guest.stop_before(deadline),
+                    (false, true) => self.guest.resume_before(deadline),
+                    _ => Ok(()),
+                }
+            })
         };
         if let Err(error) = restore {
             self.unusable.store(true, Ordering::Release);
@@ -2528,6 +2695,7 @@ mod tests {
             let mut state = self.0.lock().unwrap();
             state.operations.push("resume-before".into());
             state.running_after_cont = true;
+            state.idle_snapshot = false;
             if matches!(state.fail, Some("resume-before" | "resume-and-stop")) {
                 Err("timeout".into())
             } else {
@@ -2538,10 +2706,13 @@ mod tests {
             let mut state = self.0.lock().unwrap();
             state.operations.push("stop".into());
             state.running_after_cont = false;
+            state.idle_snapshot = true;
             Ok(())
         }
         fn resume(&self) -> Result<(), String> {
-            self.0.lock().unwrap().operations.push("resume".into());
+            let mut state = self.0.lock().unwrap();
+            state.operations.push("resume".into());
+            state.idle_snapshot = false;
             Ok(())
         }
         fn stop_before(&self, deadline: Instant) -> Result<(), String> {
@@ -2555,6 +2726,18 @@ mod tests {
             }
             drop(state);
             self.stop()
+        }
+        fn read_memory_before(
+            &self,
+            _address: u32,
+            length: usize,
+            deadline: Instant,
+        ) -> Result<Vec<u8>, String> {
+            if length == 0 || length > 0x1000 || Instant::now() >= deadline {
+                Err("invalid fake read".into())
+            } else {
+                Ok(vec![0; length])
+            }
         }
         fn guard_l6_midi_probe(
             &self,
@@ -2681,6 +2864,26 @@ mod tests {
             }
             self.read_register(index)
         }
+        fn write_register_before(
+            &mut self,
+            index: u32,
+            value: u32,
+            deadline: Instant,
+        ) -> Result<(), String> {
+            if Instant::now() >= deadline {
+                return Err("timeout".into());
+            }
+            self.write_register(index, value)
+        }
+        fn call_thumb(
+            &mut self,
+            _address: u32,
+            _arguments: &[u32],
+            _timeout: Duration,
+        ) -> Result<String, String> {
+            self.record("call-thumb")?;
+            Ok("S05".into())
+        }
         fn resume_before(&mut self, deadline: Instant) -> Result<(), String> {
             if Instant::now() >= deadline {
                 return Err("timeout".into());
@@ -2738,6 +2941,7 @@ mod tests {
             scratch: vec![9; SCRATCH_LEN],
             registers: [42; 26],
             guarded,
+            idle_snapshot: true,
             ..Default::default()
         }));
         let guest = Arc::new(FakeGuest(state.clone()));
@@ -3086,6 +3290,7 @@ mod tests {
     #[test]
     fn idle_evidence_rejects_running_guest_before_register_reads() {
         let (mut session, state) = fake(true, true);
+        state.lock().unwrap().idle_snapshot = false;
         let error = session
             .execute(Command::L6DinIdleEvidence { timeout_ms: 1000 })
             .unwrap_err();

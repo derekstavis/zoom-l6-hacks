@@ -26,8 +26,15 @@ analog audio behavior, and physical jack routing remain unverified.
 - The full L6 panel scenario and exact encoder reversal need further
   qualification on both headless and GPUI backends.
 - L6 DIN-to-USB forwarding and USB startup scenarios need further qualification.
-- L6 scene-save GUI coverage, startup-key parity, and the packaged-app menu
-  and bundle cases require further validation.
+- L6 scene-save GUI coverage and startup-key parity need further validation.
+- Capella Linux qualification on 2026-11-26 completed the `stack` suite with
+  314 PASS and 2 BLOCKED when no app bundle was supplied. The two packaged-app
+  cases were then run against the Linux AppDir: `gui-bundle` failed because
+  the L6 window aspect ratio was 2.589 instead of 2.027, and `gui-menu`
+  requires macOS. A macOS packaged-app run is still needed to qualify the menu;
+  the Linux bundle sizing failure remains unresolved. These runs pinned QEMU
+  SHA-256 `73f770d3129dbd50e8d352a0f6c33f4c8d242d96a5afabe3c3d2805a9fb3b7b4`
+  (external binary; build source unattested).
 - Sound-pad playback and MASTER meter response are exercised for both models
   using saved assignments. The waveform cases compare SAI output with the
   source WAV. Cards must meet the firmware's

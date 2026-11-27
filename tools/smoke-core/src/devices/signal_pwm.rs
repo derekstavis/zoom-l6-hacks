@@ -21,10 +21,11 @@ impl Scope {
         guest_budget: u32,
         wall_budget: u64,
     ) -> Result<Self, String> {
-        if session.engine.model() != l6fw::Model::L6max {
+        if session.model() != l6fw::Model::L6max {
             return Err("SIGNAL PWM requires L6max".into());
         }
-        let guest_start = l6ctl::OwnedControl::new(&session.engine)
+        let guest_start = session
+            .control()
             .input_status(l6ctl::InputSource::Panel)
             .map_err(|e| e.to_string())?
             .guest_ms;
@@ -44,7 +45,8 @@ impl Scope {
         })
     }
     fn guest(session: &Session) -> Result<u32, String> {
-        Ok(l6ctl::OwnedControl::new(&session.engine)
+        Ok(session
+            .control()
             .input_status(l6ctl::InputSource::Panel)
             .map_err(|e| e.to_string())?
             .guest_ms)
@@ -60,7 +62,7 @@ impl Scope {
     }
     fn seed(&self, session: &Session, values: [f32; 12]) -> Result<(), String> {
         self.check(session, self.guest_budget, self.wall_budget)?;
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         let deadline = self.started + Duration::from_secs(self.wall_budget);
         let mut debugger = control
             .debug_session_before(deadline)

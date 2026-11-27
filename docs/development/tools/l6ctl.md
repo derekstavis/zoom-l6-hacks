@@ -14,6 +14,7 @@ Then run commands in another terminal:
 ```sh
 cargo l6ctl --socket /tmp/l6-control.sock info
 cargo l6ctl --socket /tmp/l6-control.sock input status panel
+cargo l6ctl --socket /tmp/l6-control.sock input snapshot panel
 cargo l6ctl --socket /tmp/l6-control.sock heap-counters
 cargo l6ctl --socket /tmp/l6-control.sock midi-config
 cargo l6ctl --socket /tmp/l6-control.sock mixer-level
@@ -27,6 +28,7 @@ cargo l6ctl --socket /tmp/l6-control.sock button channel.1.mute
 cargo l6ctl --socket /tmp/l6-control.sock down play 500
 cargo l6ctl --socket /tmp/l6-control.sock up play
 cargo l6ctl --socket /tmp/l6-control.sock encoder 1 -2
+cargo l6ctl --socket /tmp/l6-control.sock panel-knob 1 -2
 cargo l6ctl --socket /tmp/l6-control.sock analog 1 3
 cargo l6ctl --socket /tmp/l6-control.sock set-analog 1 512
 cargo l6ctl --socket /tmp/l6-control.sock rtos tasks --pretty
@@ -44,10 +46,14 @@ are bounded and revision-guarded, but non-atomic: a concurrent loader update
 can make a snapshot inconsistent or cause an inspection to fail. Retry only
 when a caller's own readiness condition and deadline allow it.
 
-`input status main|panel` returns a compact JSON observation of one input
-channel: its `source`, `connected` state, `guest_ms`, `clock_updates`, `powered_off`, `powered_off_guest_ms`, `sent`, `applied`,
-`released`, `rejected`, and optional `error`. The counters aggregate all
-clients on that channel and live for that host connection. They are not a
+`input status main|panel` returns enqueue and acknowledgement counters for one
+input channel. `input snapshot main|panel` returns the full point-in-time
+observation used by the scenario runner: guest clock and power state, display
+frame counters, indicators and PWM levels, GPIO, ADC samples and knob positions,
+audio position, input counters, and optional error. Channel status fields are
+copied under the channel's status lock; knob positions use a separate lock.
+Neither is atomic with firmware execution or the other channel. The counters
+aggregate all clients on that channel and live for that host connection. They are not a
 per-command acknowledgement: another input can advance them, and a socket
 command's receipt still means enqueueing only. The 32-bit guest clock wraps;
 values can lag guest execution. Status fields are copied under one host lock,
@@ -68,8 +74,10 @@ firmware action or display update has completed.
 bounded duration, while `up NAME|TARGET` releases it. Names are semantic names
 from the shared host control map (for example `channel.1.mute`, `mode.level`,
 or `recorder.menu`); numeric GPIO targets `0..53` are also accepted.
-`encoder CHANNEL STEPS` uses one-based channels and signed detents.
-`analog CHANNEL STEPS` moves one of five knobs by signed steps; `set-analog`
+`encoder CHANNEL STEPS` queues signed raw encoder detents. `panel-knob CHANNEL
+STEPS` applies a physical panel gesture and performs the panel encoder polarity
+mapping in the host. `analog CHANNEL STEPS` moves one of five knobs by signed
+steps; `set-analog`
 sets a knob position from `0..1023`.
 
 Use `cargo l6ctl --help` for the syntax summary. The endpoint is

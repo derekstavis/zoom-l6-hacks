@@ -140,7 +140,7 @@ impl Scope {
         if !session.supervised_din {
             return Err("L6 DIN sweep requires a direct supervised headless case".into());
         }
-        if session.engine.model() != l6fw::Model::L6 {
+        if session.model() != l6fw::Model::L6 {
             return Err("L6 DIN sweep requires L6".into());
         }
         let started = Instant::now();
@@ -174,7 +174,8 @@ impl Scope {
                 Err(error) => return Err(error),
             }
         };
-        let reader = l6ctl::OwnedControl::new(&session.engine)
+        let reader = session
+            .control()
             .l6_din_reader_before_checked(deadline, &check)
             .map_err(|e| e.to_string())?;
         Ok(Self {
@@ -187,7 +188,8 @@ impl Scope {
             cancel: Arc::new(AtomicBool::new(false)),
             monitor: None,
             emergency: None,
-            main_stop: l6ctl::OwnedControl::new(&session.engine)
+            main_stop: session
+                .control()
                 .main_stop_handle()
                 .map_err(|e| e.to_string())?,
             before_ring: 0,
@@ -256,7 +258,7 @@ impl Scope {
             return Err("L6 DIN monitor already active".into());
         }
         let deadline = self.deadline();
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         let mut debugger = control
             .debug_session_before(deadline)
             .map_err(|e| e.to_string())?;
@@ -284,7 +286,8 @@ impl Scope {
             }
         });
         let cancel = self.cancel.clone();
-        let panel = l6ctl::OwnedControl::new(&session.engine)
+        let panel = session
+            .control()
             .input_observer()
             .map_err(|_| "DIN sweep needs panel inputs")?;
         let (started, guest_start, guest, wall) = (
@@ -371,7 +374,8 @@ impl Scope {
         self.check(session)?;
         let deadline = self.deadline();
         let before_ring = l6max_host::indicators::rings(
-            l6ctl::OwnedControl::new(&session.engine)
+            session
+                .control()
                 .info()
                 .map_err(|_| "DIN sweep needs inputs")?
                 .panel_indicators,
@@ -404,7 +408,8 @@ impl Scope {
         }
         self.check(session)?;
         let ring = l6max_host::indicators::rings(
-            l6ctl::OwnedControl::new(&session.engine)
+            session
+                .control()
                 .info()
                 .map_err(|_| "DIN sweep needs inputs")?
                 .panel_indicators,

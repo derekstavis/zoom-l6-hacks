@@ -5,11 +5,17 @@
 use std::io;
 
 pub struct Journal {
-    pub writes: Vec<(u32, Vec<u8>)>,
+    pub writes: Vec<Write>,
     pub breakpoints: Vec<u32>,
     pub registers: Vec<(u32, u32)>,
     pub synchronized: bool,
     pub mailbox_pending: bool,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Write {
+    pub address: u32,
+    pub before: Vec<u8>,
+    pub after: Vec<u8>,
 }
 impl Default for Journal {
     fn default() -> Self {
@@ -40,17 +46,24 @@ impl Journal {
     ) -> io::Result<Option<usize>> {
         let end = u64::from(address) + data.len() as u64;
         let mut restoring = None;
-        for (index, (at, original)) in self.writes.iter().enumerate() {
-            let other_end = u64::from(*at) + original.len() as u64;
-            if u64::from(address) < other_end && u64::from(*at) < end {
-                if *at == address && original == data && restoring.is_none() {
+        for (index, write) in self.writes.iter().enumerate() {
+            let other_end = u64::from(write.address) + write.before.len() as u64;
+            if u64::from(address) < other_end && u64::from(write.address) < end {
+                if write.address == address
+                    && write.before.as_slice() == data
+                    && restoring.is_none()
+                {
                     restoring = Some(index);
                 } else {
                     return Err(io::Error::other("overlapping temporary debugger writes"));
                 }
             }
         }
-        self.writes.push((address, before));
+        self.writes.push(Write {
+            address,
+            before,
+            after: data.to_vec(),
+        });
         Ok(restoring)
     }
     pub fn commit_write(&mut self, restoring: Option<usize>) {
@@ -60,7 +73,7 @@ impl Journal {
         }
     }
     pub fn handoff_mailbox(&mut self, address: u32) {
-        self.writes.retain(|(at, _)| *at != address);
+        self.writes.retain(|write| write.address != address);
         self.mailbox_pending = true;
     }
     pub fn acknowledge_mailbox(&mut self) {
@@ -176,7 +189,8 @@ mod tests {
         );
         let errors = cleanup(&mut fake);
         assert_eq!(fake.calls, ["stop"]);
-        assert_eq!(fake.journal.writes, [(0x100, vec![1])]);
+        assert_eq!(fake.journal.writes[0].address, 0x100);
+        assert_eq!(fake.journal.writes[0].before, [1]);
         assert!(errors.iter().any(|e| e.contains("guest left stopped")));
     }
     #[test]

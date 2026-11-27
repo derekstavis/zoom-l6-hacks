@@ -19,7 +19,7 @@ pub use l6max_host::indicators::rings as decode_indicator_rings;
 pub use l6max_host::input::button_source;
 pub use l6max_host::input::{
     AudioInputReceipt, AudioInputStatus, AudioTransport, InputAck, InputAckState, InputCounters,
-    InputSource,
+    InputSnapshot, InputSource,
 };
 pub use l6max_host::knob_binding::{
     FirmwareBinding as KnobFirmwareBinding, PreflightTargets as KnobPreflightTargets,
@@ -47,6 +47,7 @@ pub use l6max_host::editor::{
     pad_file_count as editor_pad_file_count, pad_filename_valid as editor_pad_filename_valid,
 };
 pub use l6max_host::input_trace::panel_uart_count;
+pub use l6max_host::knob_popup::ProbeSession as KnobPopupProbeSession;
 pub use l6max_host::l6_din::Snapshot as L6DinSnapshot;
 pub use l6max_host::l6_recorder::{
     Dma as L6RecorderDma, Event as L6RecorderEvent, Selection as L6RecorderSelection,
@@ -103,6 +104,9 @@ pub enum Request {
         path: Option<String>,
     },
     InputStatus {
+        source: InputSource,
+    },
+    InputSnapshot {
         source: InputSource,
     },
     InputAck {
@@ -175,6 +179,10 @@ pub enum Request {
         steps: i32,
     },
     Analog {
+        channel: u32,
+        steps: i32,
+    },
+    PanelKnob {
         channel: u32,
         steps: i32,
     },
@@ -392,6 +400,9 @@ impl ControlClient {
     pub fn input_status(&self, source: InputSource) -> Result<InputCounters, ControlError> {
         self.request_as(&Request::InputStatus { source })
     }
+    pub fn input_snapshot(&self, source: InputSource) -> Result<InputSnapshot, ControlError> {
+        self.request_as(&Request::InputSnapshot { source })
+    }
     pub fn input_ack(&self, source: InputSource, sequence: u32) -> Result<InputAck, ControlError> {
         self.request_as(&Request::InputAck { source, sequence })
     }
@@ -608,6 +619,12 @@ impl ControlClient {
         self.request_as(&Request::Analog { channel, steps })
     }
 
+    /// Apply a physical panel-knob gesture, including the panel encoder's
+    /// polarity mapping.
+    pub fn panel_knob(&self, channel: u32, steps: i32) -> Result<AxisReceipt, ControlError> {
+        self.request_as(&Request::PanelKnob { channel, steps })
+    }
+
     pub fn set_analog(
         &self,
         channel: u32,
@@ -721,8 +738,17 @@ pub struct InputObserver {
     inputs: std::sync::Arc<l6max_host::input::InputHub>,
 }
 impl InputObserver {
+    /// Observe input state from an already-owned host input hub.
+    pub fn from_hub(inputs: std::sync::Arc<l6max_host::input::InputHub>) -> Self {
+        Self { inputs }
+    }
+
     pub fn status(&self, source: InputSource) -> InputCounters {
         self.inputs.counters(source)
+    }
+
+    pub fn snapshot(&self, source: InputSource) -> InputSnapshot {
+        self.inputs.snapshot(source)
     }
 }
 
@@ -744,6 +770,16 @@ impl<'a> OwnedControl<'a> {
         }
         self.engine.connect_midi();
         Ok(())
+    }
+    /// Return the current status text for the in-process USB MIDI bridge.
+    pub fn midi_bridge_status(&self) -> Option<String> {
+        self.engine.midi.as_ref().map(|bridge| {
+            bridge
+                .status
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+        })
     }
     /// Connect a direct MIDI consumer without exposing the engine's USB transport.
     pub fn direct_midi_before(
@@ -877,6 +913,19 @@ impl<'a> OwnedControl<'a> {
             .map_err(ControlError::Rejected)
     }
 
+    /// Begin the retained L6max knob-dialog probe through the host-owned
+    /// debugger, QMP reader, mutation journal, and cleanup scope.
+    pub fn knob_popup_probe_before(
+        &self,
+        deadline: std::time::Instant,
+    ) -> Result<KnobPopupProbeSession, ControlError> {
+        let controller = self.engine.debugger().ok_or(ControlError::Unavailable(
+            "debugger unavailable; launch with --gdb-socket",
+        ))?;
+        l6max_host::knob_popup::ProbeSession::begin_before(controller, deadline)
+            .map_err(ControlError::Rejected)
+    }
+
     /// Coordinate breakpoints while both initially paused guests and input
     /// replay are observed by the caller. This is an in-process API only.
     pub fn debug_observer_before(
@@ -907,6 +956,52 @@ impl<'a> OwnedControl<'a> {
             .map_err(|e| ControlError::Rejected(e.to_string()))?;
         Ok(ResetReceipt {
             reset: "qmp-system-reset".into(),
+        })
+    }
+
+    /// Enqueue a one-based analog-knob gesture on the MAIN input channel.
+    pub fn analog(&self, channel: u32, steps: i32) -> Result<AxisReceipt, ControlError> {
+        if !(1..=5).contains(&channel) || steps == 0 || steps.unsigned_abs() > 1000 {
+            return Err(ControlError::Rejected(
+                "invalid analog channel or steps".into(),
+            ));
+        }
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
+        let sequence = inputs
+            .knob(8 + channel as usize - 1, steps)
+            .map_err(|error| ControlError::Rejected(error.to_string()))?;
+        Ok(AxisReceipt {
+            channel,
+            steps,
+            sequence,
+        })
+    }
+
+    /// Apply a one-based physical panel-knob gesture. The host input mapping
+    /// owns the polarity conversion from gesture direction to encoder steps.
+    pub fn panel_knob(&self, channel: u32, steps: i32) -> Result<AxisReceipt, ControlError> {
+        if channel == 0 || channel > self.engine.model().channels() as u32 {
+            return Err(ControlError::Rejected("invalid panel knob channel".into()));
+        }
+        if steps == 0 || steps.unsigned_abs() > 1000 {
+            return Err(ControlError::Rejected("invalid panel knob steps".into()));
+        }
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
+        let sequence = inputs
+            .knob(channel as usize - 1, steps)
+            .map_err(|error| ControlError::Rejected(error.to_string()))?;
+        Ok(AxisReceipt {
+            channel,
+            steps,
+            sequence,
         })
     }
     pub fn sd_card(&self, path: Option<&std::path::Path>) -> Result<SdCardReceipt, ControlError> {
@@ -1055,6 +1150,14 @@ impl<'a> OwnedControl<'a> {
             .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
         Ok(inputs.counters(source))
     }
+    pub fn input_snapshot(&self, source: InputSource) -> Result<InputSnapshot, ControlError> {
+        let inputs = self
+            .engine
+            .inputs
+            .as_ref()
+            .ok_or(ControlError::Unavailable("QEMU input unavailable"))?;
+        Ok(inputs.snapshot(source))
+    }
     pub fn input_ack(&self, source: InputSource, sequence: u32) -> Result<InputAck, ControlError> {
         let inputs = self
             .engine
@@ -1148,6 +1251,44 @@ impl<'a> OwnedControl<'a> {
     ) -> Result<MemoryRead, ControlError> {
         l6max_host::memory::read_main_before(self.main_qmp()?, address, length, deadline)
             .map_err(ControlError::Rejected)
+    }
+
+    /// Query the owned MAIN guest's QMP run state.
+    pub fn main_guest_status(&self) -> Result<QmpStatus, ControlError> {
+        self.main_qmp()?
+            .query_status()
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+
+    /// Stop the owned MAIN guest through its QMP management channel.
+    pub fn stop_main_guest(&self) -> Result<(), ControlError> {
+        self.main_qmp()?
+            .stop()
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+
+    /// Stop the owned MAIN guest under a caller-supplied wall deadline.
+    pub fn stop_main_guest_before(&self, deadline: std::time::Instant) -> Result<(), ControlError> {
+        self.main_qmp()?
+            .stop_before(deadline)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+
+    /// Resume the owned MAIN guest through its QMP management channel.
+    pub fn resume_main_guest(&self) -> Result<(), ControlError> {
+        self.main_qmp()?
+            .resume()
+            .map_err(|error| ControlError::Rejected(error.to_string()))
+    }
+
+    /// Resume the owned MAIN guest under a caller-supplied wall deadline.
+    pub fn resume_main_guest_before(
+        &self,
+        deadline: std::time::Instant,
+    ) -> Result<(), ControlError> {
+        self.main_qmp()?
+            .resume_before(deadline)
+            .map_err(|error| ControlError::Rejected(error.to_string()))
     }
 
     /// Send through an already-enumerated USB endpoint owned by the caller.
@@ -1590,6 +1731,54 @@ impl<'a> OwnedControl<'a> {
     ) -> Result<l6max_host::knob_popup::OverlayReader, ControlError> {
         l6max_host::knob_popup::overlay_reader(self.main_qmp()?, self.engine.model())
             .map_err(ControlError::Rejected)
+    }
+
+    /// Verify an overlay observation against the owned MAIN guest under a
+    /// caller deadline and cancellation check.
+    pub fn knob_overlay_reader_before_checked(
+        &self,
+        deadline: std::time::Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<l6max_host::knob_popup::OverlayReader, ControlError> {
+        l6max_host::knob_popup::overlay_reader_before_checked(
+            self.main_qmp()?,
+            self.engine.model(),
+            deadline,
+            check,
+        )
+        .map_err(ControlError::Rejected)
+    }
+
+    /// Read the guarded FreeRTOS tick count with shared cancellation/deadline
+    /// checks on the owned MAIN guest.
+    pub fn freertos_ticks_before_checked(
+        &self,
+        deadline: std::time::Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<u32, ControlError> {
+        l6max_host::freertos::ticks_before_checked(
+            self.main_qmp()?,
+            self.engine.model(),
+            deadline,
+            check,
+        )
+        .map_err(ControlError::Rejected)
+    }
+
+    /// Observe guarded notification state with shared cancellation/deadline
+    /// checks on the owned MAIN guest.
+    pub fn notification_state_before_checked(
+        &self,
+        deadline: std::time::Instant,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<(u8, u16), ControlError> {
+        l6max_host::knob_popup::notification_state_before_checked(
+            self.main_qmp()?,
+            self.engine.model(),
+            deadline,
+            check,
+        )
+        .map_err(ControlError::Rejected)
     }
 
     /// Verify the GUI revision once for a bounded in-process observation step.

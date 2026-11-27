@@ -105,7 +105,7 @@ pub(super) fn verify_module_images(
         .as_ref()
         .ok_or("dynamic report missing")?;
     let ordered_chain = context.fixture.chain_first.is_some();
-    let control = l6ctl::OwnedControl::new(&session.engine);
+    let control = session.control();
     let reader = control
         .sd_loader_reader(context.wall_deadline)
         .map_err(|error| error.to_string())?;
@@ -213,7 +213,7 @@ pub(super) fn verify_latest_module(
         .patch_report
         .as_ref()
         .ok_or("dynamic report missing")?;
-    let control = l6ctl::OwnedControl::new(&session.engine);
+    let control = session.control();
     let reader = control
         .sd_loader_reader(context.wall_deadline)
         .map_err(|error| error.to_string())?;
@@ -314,9 +314,9 @@ pub(super) fn verify_sd_loader_hooks(
     guest_start: u32,
     guest_timeout_ms: u32,
 ) -> Result<usize, String> {
-    let model = session.engine.model();
+    let model = session.model();
     let image_base = model.main_base();
-    let control = l6ctl::OwnedControl::new(&session.engine);
+    let control = session.control();
     let check = || -> Result<(), String> {
         if Instant::now() >= deadline
             || guest_now(session).wrapping_sub(guest_start) >= guest_timeout_ms
@@ -429,7 +429,7 @@ pub(super) fn wait_effect_slot(
     const GUEST_TIMEOUT_MS: u32 = 10_000;
     const WALL_TIMEOUT_S: u64 = 180;
     const POLL_INTERVAL_MS: u64 = 10;
-    if session.engine.model() != l6fw::Model::L6max {
+    if session.model() != l6fw::Model::L6max {
         return Err("effect slot readiness requires L6max".into());
     }
     let selected =
@@ -762,7 +762,7 @@ fn wait_sd_patch_result(
     const POLL_INTERVAL_MS: u64 = 10;
     let start = guest_now(session);
     let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
-    let control = l6ctl::OwnedControl::new(&session.engine);
+    let control = session.control();
     let reader = control.sd_loader_reader(deadline)?;
     let mut last_state = String::from("registry not allocated");
     loop {
@@ -873,7 +873,7 @@ pub(super) fn effect_slot_reader(
 ) -> Result<l6max_host::effect_editor::SlotReader, String> {
     check()?;
     let main = selected_main_image(options)?;
-    sd_fixture_edits(options, &main, session.engine.model())?;
+    sd_fixture_edits(options, &main, session.model())?;
     check()?;
     let output = sd_fixture_root(options)?.join(crate::fixture_layout::SD_BUNDLE_BUILD);
     let report_bytes =
@@ -889,7 +889,8 @@ pub(super) fn effect_slot_reader(
     check()?;
     let binding = l6ctl::EffectSlotBinding::from_fixture(&report_bytes, &bytes)?;
     check()?;
-    l6ctl::OwnedControl::new(&session.engine)
+    session
+        .control()
         .effect_slot_reader_before_checked(binding, deadline, check)
         .map_err(|e| e.to_string())
 }
@@ -902,7 +903,7 @@ pub(super) fn effect_editor_reader(
     check: &dyn Fn() -> Result<(), String>,
 ) -> Result<l6max_host::effect_editor::Reader, String> {
     let main = selected_main_image(options)?;
-    sd_fixture_edits(options, &main, session.engine.model())?;
+    sd_fixture_edits(options, &main, session.model())?;
     let root = sd_fixture_root(options)?;
     let output = root.join(crate::fixture_layout::SD_BUNDLE_BUILD);
     let report_bytes =
@@ -920,7 +921,8 @@ pub(super) fn effect_editor_reader(
         .ok_or("effect module file missing")?;
     let bytes = fs::read(output.join("PATCHES").join(filename)).map_err(|e| e.to_string())?;
     let binding = l6ctl::EffectEditorBinding::from_fixture(&report_bytes, &bytes)?;
-    l6ctl::OwnedControl::new(&session.engine)
+    session
+        .control()
         .effect_editor_reader_before_checked(binding, deadline, check)
         .map_err(|e| e.to_string())
 }
@@ -963,7 +965,7 @@ pub(super) fn effect_paced_turn(
     progress: crate::progress::CaseProgress,
     index: usize,
 ) -> Result<Value, String> {
-    if session.engine.model() != l6fw::Model::L6max
+    if session.model() != l6fw::Model::L6max
         || !(1..=8).contains(&channel)
         || steps == 0
         || steps.unsigned_abs() > 128
@@ -986,7 +988,7 @@ pub(super) fn effect_paced_turn(
         .checked_add(Duration::from_secs(wall_timeout_s))
         .ok_or("paced effect deadline overflow")?;
     let reader = effect_editor_reader(options, session, deadline, &check)?;
-    let control = l6ctl::OwnedControl::new(&session.engine);
+    let control = session.control();
     let total = steps.unsigned_abs();
     let mut prior = None;
     let mut before = loop {

@@ -26,7 +26,7 @@ pub(super) fn hold(
     guest_timeout_ms: u32,
     wall_timeout_s: u64,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    let control = l6ctl::OwnedControl::new(&session.engine);
+    let control = session.control();
     let start = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
     let factory = matches!(until, Some(crate::scenario::ChordCondition::FactoryMode));
     if factory && control.read_main_memory(l6max::system_mode, 4)?.bytes == 7u32.to_le_bytes() {

@@ -42,6 +42,65 @@ pub struct InputStatus {
     pub error: Option<String>,
 }
 
+/// Serializable point-in-time view of one emulator input channel. This is the
+/// typed observation shared by in-process controls and the optional control
+/// socket; the internal last wire message is intentionally excluded.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct InputSnapshot {
+    pub connected: bool,
+    pub powered_off: bool,
+    pub powered_off_guest_ms: Option<u32>,
+    pub sent: u64,
+    pub applied: u64,
+    pub released: u64,
+    pub rejected: u64,
+    pub frame_ready: u64,
+    pub frame_guest_ms: u32,
+    pub frame_clock_updates: u64,
+    pub indicator_updates: u64,
+    pub indicators: [u32; 8],
+    pub indicator_levels: [[u8; 24]; 8],
+    pub main_gpio: [u32; 5],
+    pub adc_samples: [u16; 5],
+    pub adc_updates: u64,
+    pub analog_positions: [u16; 5],
+    pub guest_ms: u32,
+    pub clock_updates: u64,
+    pub audio_input_position_ms: u32,
+    pub audio_input_playing: bool,
+    pub error: Option<String>,
+}
+
+impl From<InputStatus> for InputSnapshot {
+    fn from(status: InputStatus) -> Self {
+        Self {
+            connected: status.connected,
+            powered_off: status.powered_off,
+            powered_off_guest_ms: status.powered_off_guest_ms,
+            sent: status.sent,
+            applied: status.applied,
+            released: status.released,
+            rejected: status.rejected,
+            frame_ready: status.frame_ready,
+            frame_guest_ms: status.frame_guest_ms,
+            frame_clock_updates: status.frame_clock_updates,
+            indicator_updates: status.indicator_updates,
+            indicators: status.indicators,
+            indicator_levels: status.indicator_levels,
+            main_gpio: status.main_gpio,
+            adc_samples: status.adc_samples,
+            adc_updates: status.adc_updates,
+            analog_positions: [0; 5],
+            guest_ms: status.guest_ms,
+            clock_updates: status.clock_updates,
+            audio_input_position_ms: status.audio_input_position_ms,
+            audio_input_playing: status.audio_input_playing,
+            error: status.error,
+        }
+    }
+}
+
 /// Audio transport command; a returned sequence only confirms enqueueing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -574,6 +633,16 @@ impl InputHub {
         }
     }
 
+    pub fn snapshot(&self, source: InputSource) -> InputSnapshot {
+        let mut snapshot: InputSnapshot = match source {
+            InputSource::Main => self.main.snapshot(),
+            InputSource::Panel => self.panel.snapshot(),
+        }
+        .into();
+        snapshot.analog_positions = self.analog_positions();
+        snapshot
+    }
+
     pub fn new(main: EngineInput, panel: EngineInput, model: l6fw::Model) -> Self {
         Self {
             main,
@@ -649,6 +718,39 @@ impl InputHub {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn input_snapshot_keeps_observation_fields_and_is_serializable() {
+        let status = InputStatus {
+            connected: true,
+            guest_ms: 42,
+            frame_guest_ms: 30,
+            indicators: [7; 8],
+            indicator_levels: [[128; 24]; 8],
+            adc_samples: [512; 5],
+            ..Default::default()
+        };
+        let mut snapshot = InputSnapshot::from(status);
+        snapshot.analog_positions = [256; 5];
+        let json = serde_json::to_string(&snapshot).unwrap();
+        let decoded: InputSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, snapshot);
+        assert_eq!(decoded.guest_ms, 42);
+        assert_eq!(decoded.indicator_levels[0], [128; 24]);
+        assert_eq!(decoded.adc_samples, [512; 5]);
+        assert_eq!(decoded.analog_positions, [256; 5]);
+    }
+
+    #[test]
+    fn input_hub_snapshot_includes_current_analog_positions() {
+        let (main, _main_peer) = EngineInput::pair().unwrap();
+        let (panel, _panel_peer) = EngineInput::pair().unwrap();
+        let hub = InputHub::new(main, panel, l6fw::Model::L6max);
+        assert_eq!(
+            hub.snapshot(InputSource::Main).analog_positions,
+            hub.analog_positions()
+        );
+    }
     #[test]
     fn receipts_match_the_exact_sequence_and_eviction_is_unknown() {
         let (main, _main_wire) = EngineInput::pair().unwrap();

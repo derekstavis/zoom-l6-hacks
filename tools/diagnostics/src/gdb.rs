@@ -503,6 +503,25 @@ impl Gdb {
             .collect::<String>();
         self.ok(&format!("P{index:x}={hex}"))
     }
+    /// Write one ARM register before an absolute deadline.
+    pub fn write_register_before(
+        &mut self,
+        index: u32,
+        value: u32,
+        deadline: Instant,
+    ) -> io::Result<()> {
+        let hex = value
+            .to_le_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let command = format!("P{index:x}={hex}");
+        let response = self.request_before(&command, deadline)?;
+        if response != "OK" {
+            return Err(io::Error::other(format!("{command}: {response}")));
+        }
+        Ok(())
+    }
     pub fn read_register(&mut self, index: u32) -> io::Result<u32> {
         let value = self.request(&format!("p{index:x}"))?;
         if value.len() != 8 {

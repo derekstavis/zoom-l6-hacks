@@ -7,7 +7,7 @@ use crate::{
 use l6fw::Model;
 use l6max_host::{
     indicators::{l6_button_leds, l6_mode_leds, leds, rings},
-    input::{InputHub, InputStatus},
+    input::InputSnapshot,
     panel::PanelData,
     readiness::BootReadiness,
 };
@@ -21,8 +21,8 @@ use std::{
 #[derive(Clone)]
 struct Observation {
     data: PanelData,
-    main: InputStatus,
-    panel: InputStatus,
+    main: InputSnapshot,
+    panel: InputSnapshot,
     reports: u64,
     traces: BTreeMap<String, u64>,
 }
@@ -43,7 +43,7 @@ struct MomentaryState {
 // MAIN and panel have independent virtual clocks. A CLOCK sampled before the
 // last frame cannot establish how long MAIN has held that frame. Half-range
 // arithmetic rejects a stale sample while permitting the u32 millisecond wrap.
-fn main_display_quiet(main: &InputStatus) -> bool {
+fn main_display_quiet(main: &InputSnapshot) -> bool {
     let elapsed = main.guest_ms.wrapping_sub(main.frame_guest_ms);
     main.connected
         && main.frame_ready > 0
@@ -210,13 +210,21 @@ impl Runner {
     }
     /// Advance the scenario. After `Complete`, the adapter must call `finish`
     /// only after its own cleanup and result checks succeed.
-    pub fn tick(&mut self, data: PanelData, inputs: &InputHub) -> Result<Progress, String> {
-        self.tick_observation(data, inputs.main.snapshot(), inputs.panel.snapshot())
+    pub fn tick(
+        &mut self,
+        data: PanelData,
+        inputs: &l6ctl::InputObserver,
+    ) -> Result<Progress, String> {
+        self.tick_observation(
+            data,
+            inputs.snapshot(l6ctl::InputSource::Main),
+            inputs.snapshot(l6ctl::InputSource::Panel),
+        )
     }
     /// Advance without input; completion has the same explicit `finish` contract as `tick`.
     pub fn tick_without_input(&mut self, data: PanelData) -> Result<Progress, String> {
         let guest_ms = self.last.as_ref().map_or(0, |last| last.panel.guest_ms);
-        let status = l6max_host::input::InputStatus {
+        let status = InputSnapshot {
             connected: true,
             powered_off: !data.powered,
             guest_ms,
@@ -227,8 +235,8 @@ impl Runner {
     fn tick_observation(
         &mut self,
         data: PanelData,
-        main: InputStatus,
-        panel: InputStatus,
+        main: InputSnapshot,
+        panel: InputSnapshot,
     ) -> Result<Progress, String> {
         let result = self.trace.sample(&self.trace_path).and_then(|reports| {
             self.advance(

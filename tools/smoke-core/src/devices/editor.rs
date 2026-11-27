@@ -2,7 +2,8 @@
 use super::*;
 
 fn panel_guest(session: &Session) -> Result<u32, Box<dyn std::error::Error>> {
-    Ok(l6ctl::OwnedControl::new(&session.engine)
+    Ok(session
+        .control()
         .input_status(l6ctl::InputSource::Panel)?
         .guest_ms)
 }
@@ -67,7 +68,7 @@ pub(super) fn refresh_editor_session(
     guest_timeout_ms: u32,
     wall_deadline: Instant,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if session.engine.model() == l6fw::Model::L6 {
+    if session.model() == l6fw::Model::L6 {
         return Ok(());
     }
     let replies = editor_exchange_expected(
@@ -193,7 +194,7 @@ impl UiPadScope {
         guest_budget: u32,
         wall_budget: u64,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        if session.engine.model() != l6fw::Model::L6max || pad > 3 {
+        if session.model() != l6fw::Model::L6max || pad > 3 {
             return Err("UI pad verification requires L6max and pad 0..3".into());
         }
         let start_guest = panel_guest(session)?;
@@ -232,7 +233,7 @@ impl UiPadScope {
         &mut self,
         session: &Session,
     ) -> Result<Value, Box<dyn std::error::Error>> {
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         let usb = &control;
         usb.usb_sysex_send(self.endpoints, 2, &l6ctl::EditorRequest::Identity.encode())?;
         self.identity = collect_editor_sysex(
@@ -265,7 +266,7 @@ impl UiPadScope {
         expected: &[u8],
         label: &str,
     ) -> Result<Value, Box<dyn std::error::Error>> {
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         let usb = &control;
         let replies = editor_exchange_expected(
             session,
@@ -282,7 +283,7 @@ impl UiPadScope {
     }
 
     pub(super) fn query(&mut self, session: &Session) -> Result<Value, Box<dyn std::error::Error>> {
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         let usb = &control;
         for _ in 0..8 {
             self.check(session, self.guest_budget, self.wall_budget)?;
@@ -360,7 +361,7 @@ impl EditorPlaybackScope {
         guest_budget: u32,
         wall_budget: u64,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        if session.engine.model() != l6fw::Model::L6 || pad > 3 {
+        if session.model() != l6fw::Model::L6 || pad > 3 {
             return Err("Editor playback requires L6 and pad 0..3".into());
         }
         if std::env::var_os("L6_AUDIO_SAMPLE_TRACE").is_none() {
@@ -410,7 +411,7 @@ impl EditorPlaybackScope {
             .filter(|line| line.starts_with(l6ctl::SAI1_TX_PREFIX))
             .count();
         self.check(session, self.guest_budget, self.wall_budget)?;
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         let usb = &control;
         self.play = editor_exchange(
             session,
@@ -430,7 +431,7 @@ impl EditorPlaybackScope {
         &mut self,
         session: &Session,
     ) -> Result<Value, Box<dyn std::error::Error>> {
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         let usb = &control;
         for _ in 0..12 {
             self.check(session, self.guest_budget, self.wall_budget)?;
@@ -573,7 +574,7 @@ impl EditorAssignmentScope {
         &mut self,
         session: &Session,
     ) -> Result<Value, Box<dyn std::error::Error>> {
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         let usb = &control;
         usb.usb_sysex_send(self.endpoints, 2, &l6ctl::EditorRequest::Identity.encode())?;
         let replies = collect_editor_sysex(
@@ -600,7 +601,7 @@ impl EditorAssignmentScope {
         expected: &[u8],
         label: &str,
     ) -> Result<Value, Box<dyn std::error::Error>> {
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         let usb = &control;
         let replies = editor_exchange_expected(
             session,
@@ -617,7 +618,7 @@ impl EditorAssignmentScope {
     }
     fn refresh(&mut self, session: &Session) -> Result<(), Box<dyn std::error::Error>> {
         self.check(session, self.guest_budget, self.wall_budget)?;
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         let usb = &control;
         refresh_editor_session(
             session,
@@ -633,7 +634,7 @@ impl EditorAssignmentScope {
         session: &Session,
     ) -> Result<Value, Box<dyn std::error::Error>> {
         self.refresh(session)?;
-        Ok(json!({"model":format!("{:?}",session.engine.model())}))
+        Ok(json!({"model":format!("{:?}",session.model())}))
     }
     pub(super) fn count(
         &mut self,
@@ -642,7 +643,7 @@ impl EditorAssignmentScope {
     ) -> Result<Value, Box<dyn std::error::Error>> {
         self.refresh(session)?;
         self.check(session, self.guest_budget, self.wall_budget)?;
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         let usb = &control;
         usb.usb_sysex_send(
             self.endpoints,
@@ -679,7 +680,7 @@ impl EditorAssignmentScope {
         for _ in 0..4 {
             self.refresh(session)?;
             self.check(session, self.guest_budget, self.wall_budget)?;
-            let control = l6ctl::OwnedControl::new(&session.engine);
+            let control = session.control();
             let usb = &control;
             usb.usb_sysex_send(
                 self.endpoints,
@@ -721,7 +722,7 @@ impl EditorAssignmentScope {
             .as_ref()
             .ok_or("missing selected filename")?;
         let request = l6ctl::EditorRequest::AssignPad { args: args.clone() }.encode();
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         let usb = &control;
         usb.usb_sysex_send(self.endpoints, 2, &request)?;
         self.assignment_replies = collect_editor_sysex(
@@ -740,7 +741,7 @@ impl EditorAssignmentScope {
         session: &Session,
         pad: u8,
     ) -> Result<Value, Box<dyn std::error::Error>> {
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         let usb = &control;
         let answered = answer_editor_pad_dialog(usb, self.endpoints, &self.assignment_replies)?;
         if answered {
@@ -771,7 +772,7 @@ impl EditorAssignmentScope {
         for _ in 0..8 {
             self.refresh(session)?;
             self.check(session, self.guest_budget, self.wall_budget)?;
-            let control = l6ctl::OwnedControl::new(&session.engine);
+            let control = session.control();
             let usb = &control;
             usb.usb_sysex_send(
                 self.endpoints,

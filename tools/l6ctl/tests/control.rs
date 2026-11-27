@@ -91,6 +91,60 @@ fn input_status_client_and_cli_use_the_same_typed_wire_contract() {
 }
 
 #[test]
+fn input_snapshot_client_and_cli_use_the_same_typed_wire_contract() {
+    let path = socket_path();
+    let snapshot = json!({
+        "connected":true,"powered_off":false,"powered_off_guest_ms":null,
+        "sent":3,"applied":2,"released":1,"rejected":0,
+        "frame_ready":4,"frame_guest_ms":40,"frame_clock_updates":5,
+        "indicator_updates":6,"indicators":vec![7;8],
+        "indicator_levels":vec![vec![8;24];8],"main_gpio":vec![9;5],
+        "adc_samples":vec![10;5],"adc_updates":11,"analog_positions":vec![14;5],"guest_ms":42,
+        "clock_updates":12,"audio_input_position_ms":13,
+        "audio_input_playing":true,"error":null
+    });
+    let response = json!({"ok":true,"result":snapshot});
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"input-snapshot","source":"panel"}),
+                response.clone(),
+            ),
+            (
+                json!({"command":"input-snapshot","source":"panel"}),
+                response,
+            ),
+        ],
+    );
+    let observed = ControlClient::new(&path)
+        .input_snapshot(InputSource::Panel)
+        .unwrap();
+    assert_eq!(observed.guest_ms, 42);
+    assert_eq!(observed.indicator_levels[0], [8; 24]);
+    assert_eq!(observed.adc_samples, [10; 5]);
+    assert_eq!(observed.analog_positions, [14; 5]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["input", "snapshot", "panel"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        snapshot
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn sd_loader_status_and_site_use_typed_socket_and_cli() {
     let path = socket_path();
     let status = json!({"revision_guard":"l6_1_10","atomic":false,"registry":null,"stage":null,"claim":null,"module_base":null,"module_len":null,"site_count":null});
@@ -173,7 +227,7 @@ fn input_status_cli_rejects_unknown_channel_before_connecting() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("input status main|panel"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("input status|snapshot main|panel"));
 }
 
 #[test]
@@ -647,6 +701,41 @@ fn cli_keeps_existing_one_based_encoder_and_output_contract() {
     assert_eq!(
         serde_json::from_slice::<Value>(&output.stdout).unwrap(),
         json!({"channel":1,"steps":-4,"sequence":17})
+    );
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn panel_knob_cli_uses_the_semantic_gesture_operation() {
+    let path = socket_path();
+    let server = server(
+        &path,
+        vec![
+            (
+                json!({"command":"info"}),
+                json!({"ok":true,"result":info()}),
+            ),
+            (
+                json!({"command":"panel-knob","channel":2,"steps":-3}),
+                json!({"ok":true,"result":{"channel":2,"steps":-3,"sequence":19}}),
+            ),
+        ],
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_l6ctl"))
+        .arg("--socket")
+        .arg(&path)
+        .args(["panel-knob", "2", "-3"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        json!({"channel":2,"steps":-3,"sequence":19})
     );
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();

@@ -24,7 +24,7 @@ impl Scope {
         let deadline = start
             .checked_add(Duration::from_secs(wall))
             .ok_or("USB storage wall deadline overflow")?;
-        let ctl = l6ctl::OwnedControl::new(&s.engine);
+        let ctl = s.control();
         let guest_start = ctl
             .input_status(l6ctl::InputSource::Panel)
             .map_err(|e| e.to_string())?
@@ -49,7 +49,8 @@ impl Scope {
         })
     }
     pub(super) fn check(&self, s: &Session, g: u32, w: u64) -> Result<(), String> {
-        let now = l6ctl::OwnedControl::new(&s.engine)
+        let now = s
+            .control()
             .input_status(l6ctl::InputSource::Panel)
             .map_err(|e| e.to_string())?
             .guest_ms;

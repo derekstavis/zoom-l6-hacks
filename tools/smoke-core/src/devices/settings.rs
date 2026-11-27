@@ -74,7 +74,7 @@ impl Scope {
         let rtc = fs::read(state.join("panel-rtc.bin")).map_err(|e| e.to_string())?;
         let panel = fs::read(state.join("panel-flash.bin")).map_err(|e| e.to_string())?;
         let nor = fs::read(state.join("main-nor.bin")).map_err(|e| e.to_string())?;
-        if session.engine.model() != l6fw::Model::L6max {
+        if session.model() != l6fw::Model::L6max {
             return Err("settings layout currently supports L6max 1.10 only".into());
         }
         let scope = Self {

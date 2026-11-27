@@ -90,12 +90,12 @@ fn release_held(
 }
 impl Scope {
     pub(super) fn begin(s: &Session, guest: u32, wall: u64) -> Result<Self, String> {
-        if s.engine.model() != l6fw::Model::L6max {
+        if s.model() != l6fw::Model::L6max {
             return Err("input timing requires L6max".into());
         }
         let start = Instant::now();
         let d = deadline(start, wall)?;
-        let control = l6ctl::OwnedControl::new(&s.engine);
+        let control = s.control();
         let guest_start = control
             .input_status(InputSource::Panel)
             .map_err(|e| e.to_string())?
@@ -136,7 +136,8 @@ impl Scope {
         deadline(self.start, self.wall_budget)
     }
     pub(super) fn check(&self, s: &Session, g: u32, w: u64) -> Result<(), String> {
-        let now = l6ctl::OwnedControl::new(&s.engine)
+        let now = s
+            .control()
             .input_status(InputSource::Panel)
             .map_err(|e| e.to_string())?
             .guest_ms;
@@ -150,7 +151,7 @@ impl Scope {
         }
     }
     fn input(s: &Session) -> Result<InputCounters, String> {
-        l6ctl::OwnedControl::new(&s.engine)
+        s.control()
             .input_status(InputSource::Panel)
             .map_err(|e| e.to_string())
     }
@@ -208,7 +209,7 @@ impl Scope {
         if target != 1 || pairs != 2 || hold_ms != 50 {
             return Err("input timing requires the verified two Up pairs".into());
         }
-        let c = l6ctl::OwnedControl::new(&s.engine);
+        let c = s.control();
         for _ in 0..pairs {
             self.check(s, self.guest_budget, self.wall_budget)?;
             self.held = Some(target);
@@ -349,7 +350,8 @@ impl Scope {
         }
         self.encoder_before = report(o, 0xa1)?;
         self.encoder_applied = Self::input(s)?.applied;
-        let seq = l6ctl::OwnedControl::new(&s.engine)
+        let seq = s
+            .control()
             .encoder(index + 1, steps)
             .map_err(|e| e.to_string())?;
         self.wait_deadline = Some(Instant::now() + Duration::from_secs(10));
@@ -387,7 +389,7 @@ impl Scope {
     pub(super) fn abort(&mut self, s: &Session) -> Result<(), String> {
         let mut errors = Vec::new();
         if let Err(error) = release_held(&mut self.held, |target| {
-            l6ctl::OwnedControl::new(&s.engine)
+            s.control()
                 .up_with_sequence(target)
                 .map(|_| ())
                 .map_err(|e| e.to_string())

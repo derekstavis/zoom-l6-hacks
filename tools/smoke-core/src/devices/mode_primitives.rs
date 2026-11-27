@@ -184,7 +184,7 @@ impl State {
                 .into());
             }
         }
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         match operation {
             Operation::KnobDialogModeBegin { scene } => {
                 if self.knob_mode.is_some()
@@ -297,7 +297,7 @@ impl State {
                     }
                     Some(image)
                 };
-                let control = l6ctl::OwnedControl::new(&session.engine);
+                let control = session.control();
                 let main = control
                     .input_status(l6ctl::InputSource::Main)
                     .map_err(|_| "missing inputs")?;

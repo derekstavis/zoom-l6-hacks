@@ -98,12 +98,9 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
         }
         thread::sleep(Duration::from_millis(5));
     }
-    let inputs = guest
-        .engine
-        .inputs
-        .as_ref()
-        .ok_or("QEMU input unavailable")?;
-    let panel = inputs.panel.snapshot();
+    let panel = l6ctl::OwnedControl::new(&guest.engine)
+        .input_snapshot(l6ctl::InputSource::Panel)
+        .map_err(|error| error.to_string())?;
     let display = guest
         .sample_display()
         .map_err(|error| error.to_string())?
@@ -118,7 +115,7 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
             "indicators": panel.indicators,
             "indicator_levels": panel.indicator_levels,
             "switches": vec![false; 54],
-            "analog": inputs.analog_positions(),
+            "analog": panel.analog_positions,
             "powered": true,
             "display": display.to_vec(),
         }))

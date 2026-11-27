@@ -120,7 +120,7 @@ impl Scope {
         guest: u32,
         wall: u64,
     ) -> Result<Self, String> {
-        if session.engine.model() != l6fw::Model::L6 || group > 15 || cc > 127 || value > 127 {
+        if session.model() != l6fw::Model::L6 || group > 15 || cc > 127 || value > 127 {
             return Err("unsupported L6 DIN event".into());
         }
         let started = Instant::now();
@@ -128,7 +128,8 @@ impl Scope {
             .checked_add(Duration::from_secs(wall))
             .ok_or("DIN deadline overflow")?;
         let panel_start = guest_now(session);
-        let inputs = l6ctl::OwnedControl::new(&session.engine)
+        let inputs = session
+            .control()
             .input_observer()
             .map_err(|_| "DIN inputs missing")?;
         let check = || {
@@ -138,7 +139,7 @@ impl Scope {
                 Ok(())
             }
         };
-        let control = l6ctl::OwnedControl::new(&session.engine);
+        let control = session.control();
         let mut debugger = control
             .debug_session_before(deadline)
             .map_err(|e| e.to_string())?;

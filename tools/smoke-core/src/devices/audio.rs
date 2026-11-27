@@ -122,12 +122,12 @@ pub(super) fn wait_l6_sound_pad_file(
     const GUEST_TIMEOUT_MS: u32 = 10_000;
     const WALL_TIMEOUT_S: u64 = 180;
     const POLL_INTERVAL_MS: u64 = 10;
-    if session.engine.model() != l6fw::Model::L6 {
+    if session.model() != l6fw::Model::L6 {
         return Err("saved pad-file readiness requires L6".into());
     }
     let start = guest_now(session);
     let deadline = Instant::now() + Duration::from_secs(wall_timeout_s.min(WALL_TIMEOUT_S));
-    let control = l6ctl::OwnedControl::new(&session.engine);
+    let control = session.control();
     let reader = control.sound_pad_reader_before(deadline)?;
     loop {
         session.poll()?;

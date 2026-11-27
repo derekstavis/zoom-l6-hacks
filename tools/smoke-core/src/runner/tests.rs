@@ -6,11 +6,11 @@ fn sample(guest_ms: u32) -> Observation {
             powered: true,
             ..Default::default()
         },
-        main: InputStatus {
+        main: InputSnapshot {
             connected: true,
             ..Default::default()
         },
-        panel: InputStatus {
+        panel: InputSnapshot {
             connected: true,
             guest_ms,
             ..Default::default()
@@ -2484,7 +2484,7 @@ fn l6_indicator_campaign_requires_scope_coverage_and_previous_mute_snapshot() {
 
 #[test]
 fn boot_ready_main_frame_quiet_uses_fresh_main_clock_across_wrap() {
-    let mut main = InputStatus {
+    let mut main = InputSnapshot {
         connected: true,
         frame_ready: 1,
         frame_guest_ms: 10_000,
@@ -2508,7 +2508,7 @@ fn boot_ready_main_frame_quiet_uses_fresh_main_clock_across_wrap() {
     main.connected = false;
     assert!(!main_display_quiet(&main));
     // A new guest/session must wait for both a frame and a new clock.
-    assert!(!main_display_quiet(&InputStatus::default()));
+    assert!(!main_display_quiet(&InputSnapshot::default()));
 }
 
 #[test]

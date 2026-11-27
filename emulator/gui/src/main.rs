@@ -2131,10 +2131,13 @@ fn main() {
                                     }
                                 }
                                 if let Some(test) = &mut panel.scenario_smoke {
+                                    let input_observer = panel.controls.as_ref().map(|inputs| {
+                                        l6ctl::InputObserver::from_hub(inputs.clone())
+                                    });
                                     match scenario_smoke::tick(
                                         test,
                                         &panel.layout,
-                                        panel.controls.as_deref(),
+                                        input_observer.as_ref(),
                                         panel_data,
                                         &panel.scenario_press_duration,
                                         window,

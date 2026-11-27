@@ -174,7 +174,7 @@ pub(super) fn capture_menu(
     guest_timeout_ms: u32,
     wall_timeout_s: u64,
 ) -> Result<l6ctl::MenuSnapshot, String> {
-    let control = l6ctl::OwnedControl::new(&session.engine);
+    let control = session.control();
     let start = control
         .input_status(l6ctl::InputSource::Panel)
         .map_err(|e| e.to_string())?

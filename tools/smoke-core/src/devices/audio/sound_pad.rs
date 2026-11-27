@@ -53,7 +53,8 @@ pub(in crate::devices) fn check(
     context: &SoundPadContext,
     session: &Session,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let now = l6ctl::OwnedControl::new(&session.engine)
+    let now = session
+        .control()
         .input_status(l6ctl::InputSource::Panel)?
         .guest_ms;
     if deadline_expired(
@@ -76,17 +77,17 @@ fn sample(
     session: &Session,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let data = session.poll()?;
-    let control = l6ctl::OwnedControl::new(&session.engine);
+    let control = session.control();
     let panel = control.input_status(l6ctl::InputSource::Panel)?;
     if panel.guest_ms != context.last_sample {
         context.last_sample = panel.guest_ms;
-        context.indicators.push(json!({"elapsed_guest_ms": panel.guest_ms.wrapping_sub(context.guest_start), "master_meter": master_meter_levels(session.engine.model(), data.indicator_levels), "indicator_levels": data.indicator_levels}));
+        context.indicators.push(json!({"elapsed_guest_ms": panel.guest_ms.wrapping_sub(context.guest_start), "master_meter": master_meter_levels(session.model(), data.indicator_levels), "indicator_levels": data.indicator_levels}));
     }
     if !control.input_status(l6ctl::InputSource::Main)?.connected {
         return Err("MAIN input disconnected during pad playback".into());
     }
     Ok(context.led_before.is_some_and(|before| {
-        sound_pad_led(session.engine.model(), data.indicators, context.pad) != before
+        sound_pad_led(session.model(), data.indicators, context.pad) != before
     }))
 }
 
@@ -118,7 +119,7 @@ pub(in crate::devices) fn begin(
     wall_budget: u64,
     overall: (Instant, u32),
 ) -> Result<SoundPadContext, Box<dyn std::error::Error>> {
-    let model = session.engine.model();
+    let model = session.model();
     let capture_path = std::env::var_os("L6_AUDIO_RAW_CAPTURE");
     if source.is_some() && capture_path.is_none() {
         return Err("sound-pad-playback expect_source requires L6_AUDIO_RAW_CAPTURE in the case environment".into());
@@ -137,7 +138,7 @@ pub(in crate::devices) fn begin(
             "sound-pad-playback requires L6_AUDIO_SAMPLE_TRACE=1 in the case environment".into(),
         );
     }
-    let control = l6ctl::OwnedControl::new(&session.engine);
+    let control = session.control();
     let assignment_ready = if model == l6fw::Model::L6 {
         let start_guest = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
         let deadline = (Instant::now() + Duration::from_secs(30))
@@ -217,23 +218,22 @@ pub(in crate::devices) fn press(
         .filter(|line| line.starts_with(l6ctl::SAI1_TX_PREFIX))
         .count();
     check(context, session)?;
-    let control = l6ctl::OwnedControl::new(&session.engine);
+    let control = session.control();
     let initial = session.poll()?;
     check(context, session)?;
     let guest = control.input_status(l6ctl::InputSource::Panel)?.guest_ms;
     context.guest_start = guest;
     context.last_sample = guest;
     context.indicators = vec![
-        json!({"elapsed_guest_ms":0,"master_meter":master_meter_levels(session.engine.model(), initial.indicator_levels),"indicator_levels":initial.indicator_levels}),
+        json!({"elapsed_guest_ms":0,"master_meter":master_meter_levels(session.model(), initial.indicator_levels),"indicator_levels":initial.indicator_levels}),
     ];
     context.led_before = context
         .require_led
-        .then(|| sound_pad_led(session.engine.model(), initial.indicators, context.pad));
+        .then(|| sound_pad_led(session.model(), initial.indicators, context.pad));
     context.started = Instant::now();
     context.pressed = true;
     context.held = true;
-    context.down_sequence =
-        Some(l6ctl::OwnedControl::new(&session.engine).down_with_sequence(context.target, 500)?);
+    context.down_sequence = Some(session.control().down_with_sequence(context.target, 500)?);
     Ok(json!({"target":context.target,"sequence":context.down_sequence}))
 }
 
@@ -241,7 +241,7 @@ pub(in crate::devices) fn hold(
     context: &mut SoundPadContext,
     session: &Session,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    let control = l6ctl::OwnedControl::new(&session.engine);
+    let control = session.control();
     loop {
         let led_changed = sample(context, session)?;
         let applied = acknowledged(&control, context.down_sequence.ok_or("missing pad press")?)?;
@@ -270,7 +270,7 @@ pub(in crate::devices) fn release(
     session: &Session,
 ) -> Result<Value, Box<dyn std::error::Error>> {
     check(context, session)?;
-    let sequence = l6ctl::OwnedControl::new(&session.engine).up_with_sequence(context.target)?;
+    let sequence = session.control().up_with_sequence(context.target)?;
     context.up_sequence = Some(sequence);
     Ok(json!({"sequence":sequence}))
 }
@@ -280,7 +280,7 @@ pub(in crate::devices) fn observe(
     session: &Session,
     options: &Options,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    let control = l6ctl::OwnedControl::new(&session.engine);
+    let control = session.control();
     loop {
         context.led_changed |= sample(context, session)?;
         let applied = acknowledged(&control, context.up_sequence.ok_or("missing pad release")?)?;
@@ -332,7 +332,8 @@ pub(in crate::devices) fn abort(
     session: &Session,
 ) -> Result<(), String> {
     release_if_held(&mut context.held, || {
-        l6ctl::OwnedControl::new(&session.engine)
+        session
+            .control()
             .up_with_sequence(context.target)
             .map(|_| ())
             .map_err(|error| error.to_string())
@@ -379,8 +380,9 @@ pub(in crate::devices) fn collect(
             )
         })
         .transpose()?;
-    let model = session.engine.model();
-    let elapsed = l6ctl::OwnedControl::new(&session.engine)
+    let model = session.model();
+    let elapsed = session
+        .control()
         .input_status(l6ctl::InputSource::Panel)?
         .guest_ms
         .wrapping_sub(context.guest_start);
